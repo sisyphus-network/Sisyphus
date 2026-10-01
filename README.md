@@ -21,9 +21,9 @@ The AI orchestration layer turns a high-level request into work the network can 
 
 The network should support direct requests from users and AI agents. The AI is an important interface and coordinator, while the underlying compute market remains useful to other clients and tools too.
 
-## Proof of Useful Compute
+## Proof of Useful Work
 
-Sisyphus is working toward **Proof of Useful Compute (PoUC)**: providers are rewarded for useful computational work whose results can be validated, rather than for computation performed only to secure a ledger.
+Sisyphus is working toward **Proof of Useful Work (PoUW)**: providers are rewarded for useful computational work whose results can be validated, rather than for computation performed only to secure a ledger.
 
 ```text
 Work request
@@ -37,7 +37,7 @@ Provider receives a reward
 
 Useful workloads may include scientific simulations, model inference, rendering, optimization, and data processing. Measuring runtime alone is not enough to prove useful work. A permissionless network will need verification methods suited to each workload, such as reproducible execution, result comparison, or replicated computation, along with reputation and dispute mechanisms.
 
-PoUC is a long-term protocol goal, not a solved feature of the first version. V0 uses trusted machines and does not issue token rewards.
+PoUW is a long-term protocol goal, not a solved feature of the first version. V0 uses trusted machines and does not issue token rewards.
 
 ## The compute economy
 
@@ -159,7 +159,7 @@ V0 deliberately excludes:
 
 - Blockchain, SISY token, trading, and settlement.
 - Public permissionless workers and decentralized discovery.
-- Trustless result verification and PoUC rewards.
+- Trustless result verification and PoUW rewards.
 - A universal runtime for arbitrary workloads.
 - IPFS, quantum workloads, and a large decentralized protocol stack.
 
@@ -183,4 +183,4 @@ This is one product and one repository. The daemon owns execution and state; cli
 
 ## Project status
 
-Sisyphus is in the concept and early architecture stage. The immediate goal is to demonstrate the AI orchestration loop across a small pool of trusted machines. That prototype is the foundation for the larger decentralized compute market and its eventual Proof of Useful Compute economy.
+Sisyphus is in the concept and early architecture stage. The immediate goal is to demonstrate the AI orchestration loop across a small pool of trusted machines. That prototype is the foundation for the larger decentralized compute market and its eventual Proof of Useful Work economy.
