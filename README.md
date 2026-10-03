@@ -1,6 +1,10 @@
-# Sisyphus
+<p align="center">
+  <img src="assets/logo.png" alt="Sisyphus logo" width="240" />
+</p>
 
-**Sisyphus is a decentralized market for useful compute.** Independent providers contribute CPU and GPU capacity; users bring computational work and pay for the resources they use. SISY is the network's intended settlement and incentive token.
+<h1 align="center">Sisyphus</h1>
+
+**Sisyphus is a decentralized network for useful compute.** Independent participants contribute CPU and GPU capacity, and users and AI agents submit computational work to the network. Its planned economic layer uses SISY to coordinate incentives, supply, and demand.
 
 AI makes the network easier to use: describe a problem, and Sisyphus can plan the work, find suitable capacity, coordinate execution, inspect the results, and decide what to compute next.
 
@@ -11,15 +15,15 @@ Request compute        → spend SISY
 Reason → Compute → Observe → Reason → Compute
 ```
 
-The long-term goal is an open network where independent machines—from personal GPUs and homelabs to servers and cloud instances—can participate in a shared compute economy. Sisyphus is not a blockchain project looking for work for its token; it is a useful-compute network whose economy should emerge from real demand for computation.
+The long-term goal is an open network where independent machines—from personal GPUs and homelabs to servers and cloud instances—contribute to shared computation. SISY and the network's economy are intended to reward useful contributions and coordinate access to capacity. The token serves the network; it is not the reason for building it.
 
 ## Why Sisyphus
 
-Cloud providers sell compute from infrastructure they control. Sisyphus aims to coordinate compute supplied by many independent participants through an open market. Providers can put otherwise idle hardware to work, while users can access capacity from across the network.
+Cloud providers sell compute from infrastructure they control. Sisyphus aims to coordinate compute supplied by many independent participants across an open network. Providers can put otherwise idle hardware to work, while users can access capacity contributed by the network.
 
 The AI orchestration layer turns a high-level request into work the network can execute. For example, a user might ask Sisyphus to screen 100,000 molecular candidates. Sisyphus could inspect available resources, plan and schedule the computation, collect results, and propose a more expensive follow-up run for promising candidates.
 
-The network should support direct requests from users and AI agents. The AI is an important interface and coordinator, while the underlying compute market remains useful to other clients and tools too.
+The network should support direct requests from users and AI agents. The AI is an important interface and coordinator, while the underlying compute network remains useful to other clients and tools too.
 
 ## Proof of Useful Work
 
@@ -50,7 +54,7 @@ Providers      ◀── useful work and SISY rewards ─ Network
 
 The token should have utility within the network, including paying for jobs and compensating providers. Supply, emissions, founder and contributor allocations, vesting, and governance need transparent rules. Early founders and contributors can help bootstrap the network by building it and providing its first compute, under rules that are visible and defined in advance.
 
-Token design, trading, settlement, and governance are future protocol work. V0 has no token, blockchain, or public marketplace; it first tests whether independent machines can reliably contribute to one useful computation.
+Token design, trading, settlement, and governance are future protocol work. V0 has no token, blockchain, or open public network; it first tests whether independent machines can reliably contribute to one useful computation.
 
 ## Architecture
 
@@ -183,4 +187,4 @@ This is one product and one repository. The daemon owns execution and state; cli
 
 ## Project status
 
-Sisyphus is in the concept and early architecture stage. The immediate goal is to demonstrate the AI orchestration loop across a small pool of trusted machines. That prototype is the foundation for the larger decentralized compute market and its eventual Proof of Useful Work economy.
+Sisyphus is in the concept and early architecture stage. The immediate goal is to demonstrate the AI orchestration loop across a small pool of trusted machines. That prototype is the foundation for the larger decentralized compute network and its eventual Proof of Useful Work economy.
