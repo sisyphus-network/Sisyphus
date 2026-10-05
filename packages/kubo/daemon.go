@@ -2,7 +2,9 @@ package kubo
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +31,34 @@ type Config struct {
 	// ReadyTimeout is how long to wait for the daemon to start answering.
 	// Zero means a minute.
 	ReadyTimeout time.Duration
+	// Swarm, if set, puts the daemon on a private network with the other
+	// daemons that hold the same key. Without it the daemon runs offline.
+	Swarm *Swarm
+}
+
+// Swarm describes a private network of Kubo daemons. Only daemons holding
+// the same key can connect to each other; to anything else, including the
+// public IPFS network, they are unreachable and unintelligible.
+type Swarm struct {
+	// Key is the network's shared secret, as NewSwarmKey makes it.
+	Key string
+	// Port is the TCP port to accept other members on. Zero lets the
+	// system choose.
+	Port int
+	// Peers are members to connect to and stay connected to: their
+	// addresses, each ending in /p2p/ and the peer's ID.
+	Peers []string
+	// PeerTimeout is how long to look among peers for a block before
+	// giving it up as not found. Zero means thirty seconds.
+	PeerTimeout time.Duration
+}
+
+// NewSwarmKey generates the secret for a new private network, in the form
+// Kubo keeps it in its swarm.key file.
+func NewSwarmKey() string {
+	var secret [32]byte
+	rand.Read(secret[:]) // never fails; see crypto/rand
+	return "/key/swarm/psk/1.0.0/\n/base16/\n" + hex.EncodeToString(secret[:]) + "\n"
 }
 
 // Daemon is a running Kubo daemon and a client for it.
@@ -40,8 +70,8 @@ type Daemon struct {
 
 // Start sets up the repository if need be, starts a Kubo daemon on it and
 // waits until it answers. The daemon listens for API calls on a loopback
-// port of its own choosing and, for now, runs offline: it exchanges nothing
-// with other peers.
+// port of its own choosing. It exchanges blocks with the members of
+// cfg.Swarm, or with nobody if there is none.
 func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 	name := cfg.Binary
 	if name == "" {
@@ -63,8 +93,20 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 			return nil, fmt.Errorf("kubo: setting up a repository in %s: %w: %s", cfg.Repo, err, lastLine(out))
 		}
 	}
-	if err := configure(configFile, cfg.Identity); err != nil {
+	if err := configure(configFile, cfg.Identity, cfg.Swarm); err != nil {
 		return nil, fmt.Errorf("kubo: %w", err)
+	}
+	args := []string{"daemon", "--offline"}
+	var env []string
+	peerTimeout := time.Duration(0)
+	if cfg.Swarm != nil {
+		args = []string{"daemon"}
+		// Makes Kubo refuse to start rather than fall back to the public
+		// network if it cannot find the key.
+		env = []string{"LIBP2P_FORCE_PNET=1"}
+		if peerTimeout = cfg.Swarm.PeerTimeout; peerTimeout == 0 {
+			peerTimeout = 30 * time.Second
+		}
 	}
 
 	// Kubo writes its API address here once it is listening. One left by an
@@ -77,7 +119,8 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("kubo: %w", err)
 	}
 	defer output.Close()
-	cmd := run("daemon", "--offline")
+	cmd := run(args...)
+	cmd.Env = append(cmd.Env, env...)
 	cmd.Stdout, cmd.Stderr = output, output
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("kubo: %w", err)
@@ -103,6 +146,7 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 				// Not listening yet; the address file appears when it is.
 				if addr, ok := apiAddress(apiFile); ok {
 					d.Client = NewClient(addr)
+					d.Client.PeerTimeout = peerTimeout
 				}
 				continue
 			}
@@ -138,8 +182,10 @@ func (d *Daemon) Stop() {
 
 // configure edits a repository's settings: the node's own key as Kubo's
 // identity, an API port chosen at start-up, and nothing that reaches out to
-// the public IPFS network. Settings it does not mention are left alone.
-func configure(configFile string, ident *identity.Identity) error {
+// the public IPFS network. With a swarm it also installs the swarm's key and
+// the members to stay connected to. Settings it does not mention are left
+// alone.
+func configure(configFile string, ident *identity.Identity, swarm *Swarm) error {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return err
@@ -164,6 +210,46 @@ func configure(configFile string, ident *identity.Identity) error {
 	set("Discovery", "MDNS", map[string]any{"Enabled": false})
 	set("AutoConf", "Enabled", false)
 	config["Bootstrap"] = []string{}
+	set("Peering", "Peers", []any{})
+
+	keyFile := filepath.Join(filepath.Dir(configFile), "swarm.key")
+	if swarm == nil {
+		// A key left from an earlier run as a swarm member is of no use to
+		// an offline daemon.
+		os.Remove(keyFile)
+	} else {
+		// A private network runs over plain TCP only, and finds content
+		// through its own members rather than public indexers.
+		set("Addresses", "Swarm", []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", swarm.Port)})
+		set("Routing", "Type", "dht")
+		set("AutoTLS", "Enabled", false)
+		set("Swarm", "Transports", map[string]any{"Network": map[string]any{
+			"QUIC": false, "WebTransport": false, "Websocket": false, "WebRTCDirect": false,
+		}})
+		// Each member is both somewhere to start from and someone to stay
+		// connected to.
+		addressesOf := make(map[string][]string)
+		var order []string
+		for _, peer := range swarm.Peers {
+			address, id, ok := strings.Cut(peer, "/p2p/")
+			if !ok || address == "" || id == "" {
+				return fmt.Errorf("swarm member address %q does not end in /p2p/ and a peer ID", peer)
+			}
+			if _, seen := addressesOf[id]; !seen {
+				order = append(order, id)
+			}
+			addressesOf[id] = append(addressesOf[id], address)
+		}
+		peering := make([]any, 0, len(order))
+		for _, id := range order {
+			peering = append(peering, map[string]any{"ID": id, "Addrs": addressesOf[id]})
+		}
+		config["Bootstrap"] = swarm.Peers
+		set("Peering", "Peers", peering)
+		if err := os.WriteFile(keyFile, []byte(swarm.Key), 0o600); err != nil {
+			return err
+		}
+	}
 
 	edited, _ := json.MarshalIndent(config, "", "  ") // what was decoded always encodes
 	return os.WriteFile(configFile, edited, 0o600)

@@ -161,6 +161,98 @@ func (x *JoinResponse) GetRole() Role {
 	return Role_ROLE_UNSPECIFIED
 }
 
+type SwarmRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SwarmRequest) Reset() {
+	*x = SwarmRequest{}
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SwarmRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SwarmRequest) ProtoMessage() {}
+
+func (x *SwarmRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SwarmRequest.ProtoReflect.Descriptor instead.
+func (*SwarmRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{2}
+}
+
+type SwarmResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The contents of the swarm.key file that every member's Kubo daemon
+	// needs. Whoever holds it can join the network, so it is given only to
+	// admitted nodes and only over their encrypted connection.
+	SwarmKey string `protobuf:"bytes,1,opt,name=swarm_key,json=swarmKey,proto3" json:"swarm_key,omitempty"`
+	// Addresses of this node's Kubo daemon, each ending in /p2p/<peer ID>.
+	Addresses     []string `protobuf:"bytes,2,rep,name=addresses,proto3" json:"addresses,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SwarmResponse) Reset() {
+	*x = SwarmResponse{}
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SwarmResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SwarmResponse) ProtoMessage() {}
+
+func (x *SwarmResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SwarmResponse.ProtoReflect.Descriptor instead.
+func (*SwarmResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *SwarmResponse) GetSwarmKey() string {
+	if x != nil {
+		return x.SwarmKey
+	}
+	return ""
+}
+
+func (x *SwarmResponse) GetAddresses() []string {
+	if x != nil {
+		return x.Addresses
+	}
+	return nil
+}
+
 type InviteRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Role  Role                   `protobuf:"varint,1,opt,name=role,proto3,enum=sisyphus.v1.Role" json:"role,omitempty"`
@@ -172,7 +264,7 @@ type InviteRequest struct {
 
 func (x *InviteRequest) Reset() {
 	*x = InviteRequest{}
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[2]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -184,7 +276,7 @@ func (x *InviteRequest) String() string {
 func (*InviteRequest) ProtoMessage() {}
 
 func (x *InviteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[2]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -197,7 +289,7 @@ func (x *InviteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InviteRequest.ProtoReflect.Descriptor instead.
 func (*InviteRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{2}
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *InviteRequest) GetRole() Role {
@@ -227,7 +319,7 @@ type InviteResponse struct {
 
 func (x *InviteResponse) Reset() {
 	*x = InviteResponse{}
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[3]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -239,7 +331,7 @@ func (x *InviteResponse) String() string {
 func (*InviteResponse) ProtoMessage() {}
 
 func (x *InviteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[3]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -252,7 +344,7 @@ func (x *InviteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InviteResponse.ProtoReflect.Descriptor instead.
 func (*InviteResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{3}
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *InviteResponse) GetInvitation() string {
@@ -277,7 +369,7 @@ type ListMembersRequest struct {
 
 func (x *ListMembersRequest) Reset() {
 	*x = ListMembersRequest{}
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[4]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -289,7 +381,7 @@ func (x *ListMembersRequest) String() string {
 func (*ListMembersRequest) ProtoMessage() {}
 
 func (x *ListMembersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[4]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -302,7 +394,7 @@ func (x *ListMembersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMembersRequest.ProtoReflect.Descriptor instead.
 func (*ListMembersRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{4}
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{6}
 }
 
 type ListMembersResponse struct {
@@ -314,7 +406,7 @@ type ListMembersResponse struct {
 
 func (x *ListMembersResponse) Reset() {
 	*x = ListMembersResponse{}
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -326,7 +418,7 @@ func (x *ListMembersResponse) String() string {
 func (*ListMembersResponse) ProtoMessage() {}
 
 func (x *ListMembersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -339,7 +431,7 @@ func (x *ListMembersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMembersResponse.ProtoReflect.Descriptor instead.
 func (*ListMembersResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{5}
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListMembersResponse) GetMembers() []*Member {
@@ -360,7 +452,7 @@ type Member struct {
 
 func (x *Member) Reset() {
 	*x = Member{}
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -372,7 +464,7 @@ func (x *Member) String() string {
 func (*Member) ProtoMessage() {}
 
 func (x *Member) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -385,7 +477,7 @@ func (x *Member) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Member.ProtoReflect.Descriptor instead.
 func (*Member) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{6}
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Member) GetNodeId() string {
@@ -418,7 +510,7 @@ type RemoveMemberRequest struct {
 
 func (x *RemoveMemberRequest) Reset() {
 	*x = RemoveMemberRequest{}
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[7]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -430,7 +522,7 @@ func (x *RemoveMemberRequest) String() string {
 func (*RemoveMemberRequest) ProtoMessage() {}
 
 func (x *RemoveMemberRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[7]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -443,7 +535,7 @@ func (x *RemoveMemberRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveMemberRequest.ProtoReflect.Descriptor instead.
 func (*RemoveMemberRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{7}
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *RemoveMemberRequest) GetNodeId() string {
@@ -461,7 +553,7 @@ type RemoveMemberResponse struct {
 
 func (x *RemoveMemberResponse) Reset() {
 	*x = RemoveMemberResponse{}
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[8]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -473,7 +565,7 @@ func (x *RemoveMemberResponse) String() string {
 func (*RemoveMemberResponse) ProtoMessage() {}
 
 func (x *RemoveMemberResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_pool_proto_msgTypes[8]
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -486,7 +578,7 @@ func (x *RemoveMemberResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveMemberResponse.ProtoReflect.Descriptor instead.
 func (*RemoveMemberResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{8}
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{10}
 }
 
 var File_sisyphus_v1_pool_proto protoreflect.FileDescriptor
@@ -497,7 +589,11 @@ const file_sisyphus_v1_pool_proto_rawDesc = "" +
 	"\vJoinRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"5\n" +
 	"\fJoinResponse\x12%\n" +
-	"\x04role\x18\x01 \x01(\x0e2\x11.sisyphus.v1.RoleR\x04role\"W\n" +
+	"\x04role\x18\x01 \x01(\x0e2\x11.sisyphus.v1.RoleR\x04role\"\x0e\n" +
+	"\fSwarmRequest\"J\n" +
+	"\rSwarmResponse\x12\x1b\n" +
+	"\tswarm_key\x18\x01 \x01(\tR\bswarmKey\x12\x1c\n" +
+	"\taddresses\x18\x02 \x03(\tR\taddresses\"W\n" +
 	"\rInviteRequest\x12%\n" +
 	"\x04role\x18\x01 \x01(\x0e2\x11.sisyphus.v1.RoleR\x04role\x12\x1f\n" +
 	"\vttl_seconds\x18\x02 \x01(\x04R\n" +
@@ -521,9 +617,10 @@ const file_sisyphus_v1_pool_proto_rawDesc = "" +
 	"\x04Role\x12\x14\n" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vROLE_WORKER\x10\x01\x12\x0f\n" +
-	"\vROLE_CLIENT\x10\x022\xb4\x02\n" +
+	"\vROLE_CLIENT\x10\x022\xf4\x02\n" +
 	"\vPoolService\x12;\n" +
-	"\x04Join\x12\x18.sisyphus.v1.JoinRequest\x1a\x19.sisyphus.v1.JoinResponse\x12A\n" +
+	"\x04Join\x12\x18.sisyphus.v1.JoinRequest\x1a\x19.sisyphus.v1.JoinResponse\x12>\n" +
+	"\x05Swarm\x12\x19.sisyphus.v1.SwarmRequest\x1a\x1a.sisyphus.v1.SwarmResponse\x12A\n" +
 	"\x06Invite\x12\x1a.sisyphus.v1.InviteRequest\x1a\x1b.sisyphus.v1.InviteResponse\x12P\n" +
 	"\vListMembers\x12\x1f.sisyphus.v1.ListMembersRequest\x1a .sisyphus.v1.ListMembersResponse\x12S\n" +
 	"\fRemoveMember\x12 .sisyphus.v1.RemoveMemberRequest\x1a!.sisyphus.v1.RemoveMemberResponseBEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
@@ -541,37 +638,41 @@ func file_sisyphus_v1_pool_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_v1_pool_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sisyphus_v1_pool_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_sisyphus_v1_pool_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_sisyphus_v1_pool_proto_goTypes = []any{
 	(Role)(0),                     // 0: sisyphus.v1.Role
 	(*JoinRequest)(nil),           // 1: sisyphus.v1.JoinRequest
 	(*JoinResponse)(nil),          // 2: sisyphus.v1.JoinResponse
-	(*InviteRequest)(nil),         // 3: sisyphus.v1.InviteRequest
-	(*InviteResponse)(nil),        // 4: sisyphus.v1.InviteResponse
-	(*ListMembersRequest)(nil),    // 5: sisyphus.v1.ListMembersRequest
-	(*ListMembersResponse)(nil),   // 6: sisyphus.v1.ListMembersResponse
-	(*Member)(nil),                // 7: sisyphus.v1.Member
-	(*RemoveMemberRequest)(nil),   // 8: sisyphus.v1.RemoveMemberRequest
-	(*RemoveMemberResponse)(nil),  // 9: sisyphus.v1.RemoveMemberResponse
-	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
+	(*SwarmRequest)(nil),          // 3: sisyphus.v1.SwarmRequest
+	(*SwarmResponse)(nil),         // 4: sisyphus.v1.SwarmResponse
+	(*InviteRequest)(nil),         // 5: sisyphus.v1.InviteRequest
+	(*InviteResponse)(nil),        // 6: sisyphus.v1.InviteResponse
+	(*ListMembersRequest)(nil),    // 7: sisyphus.v1.ListMembersRequest
+	(*ListMembersResponse)(nil),   // 8: sisyphus.v1.ListMembersResponse
+	(*Member)(nil),                // 9: sisyphus.v1.Member
+	(*RemoveMemberRequest)(nil),   // 10: sisyphus.v1.RemoveMemberRequest
+	(*RemoveMemberResponse)(nil),  // 11: sisyphus.v1.RemoveMemberResponse
+	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
 }
 var file_sisyphus_v1_pool_proto_depIdxs = []int32{
 	0,  // 0: sisyphus.v1.JoinResponse.role:type_name -> sisyphus.v1.Role
 	0,  // 1: sisyphus.v1.InviteRequest.role:type_name -> sisyphus.v1.Role
-	10, // 2: sisyphus.v1.InviteResponse.expires_at:type_name -> google.protobuf.Timestamp
-	7,  // 3: sisyphus.v1.ListMembersResponse.members:type_name -> sisyphus.v1.Member
+	12, // 2: sisyphus.v1.InviteResponse.expires_at:type_name -> google.protobuf.Timestamp
+	9,  // 3: sisyphus.v1.ListMembersResponse.members:type_name -> sisyphus.v1.Member
 	0,  // 4: sisyphus.v1.Member.role:type_name -> sisyphus.v1.Role
-	10, // 5: sisyphus.v1.Member.joined_at:type_name -> google.protobuf.Timestamp
+	12, // 5: sisyphus.v1.Member.joined_at:type_name -> google.protobuf.Timestamp
 	1,  // 6: sisyphus.v1.PoolService.Join:input_type -> sisyphus.v1.JoinRequest
-	3,  // 7: sisyphus.v1.PoolService.Invite:input_type -> sisyphus.v1.InviteRequest
-	5,  // 8: sisyphus.v1.PoolService.ListMembers:input_type -> sisyphus.v1.ListMembersRequest
-	8,  // 9: sisyphus.v1.PoolService.RemoveMember:input_type -> sisyphus.v1.RemoveMemberRequest
-	2,  // 10: sisyphus.v1.PoolService.Join:output_type -> sisyphus.v1.JoinResponse
-	4,  // 11: sisyphus.v1.PoolService.Invite:output_type -> sisyphus.v1.InviteResponse
-	6,  // 12: sisyphus.v1.PoolService.ListMembers:output_type -> sisyphus.v1.ListMembersResponse
-	9,  // 13: sisyphus.v1.PoolService.RemoveMember:output_type -> sisyphus.v1.RemoveMemberResponse
-	10, // [10:14] is the sub-list for method output_type
-	6,  // [6:10] is the sub-list for method input_type
+	3,  // 7: sisyphus.v1.PoolService.Swarm:input_type -> sisyphus.v1.SwarmRequest
+	5,  // 8: sisyphus.v1.PoolService.Invite:input_type -> sisyphus.v1.InviteRequest
+	7,  // 9: sisyphus.v1.PoolService.ListMembers:input_type -> sisyphus.v1.ListMembersRequest
+	10, // 10: sisyphus.v1.PoolService.RemoveMember:input_type -> sisyphus.v1.RemoveMemberRequest
+	2,  // 11: sisyphus.v1.PoolService.Join:output_type -> sisyphus.v1.JoinResponse
+	4,  // 12: sisyphus.v1.PoolService.Swarm:output_type -> sisyphus.v1.SwarmResponse
+	6,  // 13: sisyphus.v1.PoolService.Invite:output_type -> sisyphus.v1.InviteResponse
+	8,  // 14: sisyphus.v1.PoolService.ListMembers:output_type -> sisyphus.v1.ListMembersResponse
+	11, // 15: sisyphus.v1.PoolService.RemoveMember:output_type -> sisyphus.v1.RemoveMemberResponse
+	11, // [11:16] is the sub-list for method output_type
+	6,  // [6:11] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -588,7 +689,7 @@ func file_sisyphus_v1_pool_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_pool_proto_rawDesc), len(file_sisyphus_v1_pool_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

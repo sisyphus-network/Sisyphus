@@ -79,3 +79,33 @@ func TestInvitationsCarryTheNodesIDAndLastAsLongAsAsked(t *testing.T) {
 		t.Errorf("an invitation with no role: %v, want InvalidArgument", err)
 	}
 }
+
+// network is a private IPFS network a node claims to run.
+type network struct {
+	addresses []string
+	err       error
+}
+
+func (network) Key() string { return "the-shared-secret" }
+
+func (n network) Addresses(context.Context) ([]string, error) { return n.addresses, n.err }
+
+func TestSwarmTellsMembersHowToJoinThePrivateNetwork(t *testing.T) {
+	ctx := context.Background()
+	running := &poolService{swarm: network{addresses: []string{"/ip4/10.0.0.5/tcp/4101/p2p/12D3KooWexample"}}}
+	got, err := running.Swarm(ctx, &pb.SwarmRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetSwarmKey() != "the-shared-secret" || len(got.GetAddresses()) != 1 || got.GetAddresses()[0] != "/ip4/10.0.0.5/tcp/4101/p2p/12D3KooWexample" {
+		t.Errorf("reply %v", got)
+	}
+
+	if _, err := (&poolService{}).Swarm(ctx, &pb.SwarmRequest{}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("a node with no private network: %v, want FailedPrecondition", err)
+	}
+	broken := &poolService{swarm: network{err: errors.New("kubo went away")}}
+	if _, err := broken.Swarm(ctx, &pb.SwarmRequest{}); status.Code(err) != codes.Internal {
+		t.Errorf("a node whose Kubo does not answer: %v, want Internal", err)
+	}
+}

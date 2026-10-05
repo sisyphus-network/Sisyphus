@@ -27,6 +27,9 @@ type Config struct {
 	// MaxStoreBytes is the most disk the store may use before uploads are
 	// refused. Zero means no limit.
 	MaxStoreBytes uint64
+	// Swarm is the private IPFS network admitted nodes are told how to
+	// join, if this node runs one.
+	Swarm Swarm
 }
 
 // NewServer returns a gRPC server for a node running the coordinator role:
@@ -45,7 +48,9 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	pb.RegisterCoordinatorServiceServer(srv, cfg.Coordinator)
 	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: cfg.Coordinator})
 	pb.RegisterBlobServiceServer(srv, &blobService{store: cfg.Store, quota: cfg.MaxStoreBytes})
-	pb.RegisterPoolServiceServer(srv, &poolService{id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator})
+	pb.RegisterPoolServiceServer(srv, &poolService{
+		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm,
+	})
 	return srv
 }
 

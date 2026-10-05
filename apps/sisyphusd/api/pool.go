@@ -23,6 +23,17 @@ type poolService struct {
 	id          string
 	access      accessList
 	coordinator *coordinator.Coordinator
+	// swarm is the pool's private IPFS network, or nil if this node does
+	// not run one.
+	swarm Swarm
+}
+
+// Swarm is a private IPFS network this node is on.
+type Swarm interface {
+	// Key returns the secret its members share.
+	Key() string
+	// Addresses returns where this node's own daemon can be reached on it.
+	Addresses(ctx context.Context) ([]string, error)
 }
 
 // accessList is the part of an access.List that the service uses.
@@ -47,6 +58,17 @@ func (s *poolService) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRe
 		return nil, status.Errorf(codes.Internal, "admit node: %v", err)
 	}
 	return &pb.JoinResponse{Role: fromRole[role]}, nil
+}
+
+func (s *poolService) Swarm(ctx context.Context, _ *pb.SwarmRequest) (*pb.SwarmResponse, error) {
+	if s.swarm == nil {
+		return nil, status.Error(codes.FailedPrecondition, "this node does not run a private IPFS network; start it with --kubo")
+	}
+	addresses, err := s.swarm.Addresses(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "ask Kubo for its addresses: %v", err)
+	}
+	return &pb.SwarmResponse{SwarmKey: s.swarm.Key(), Addresses: addresses}, nil
 }
 
 func (s *poolService) Invite(_ context.Context, req *pb.InviteRequest) (*pb.InviteResponse, error) {

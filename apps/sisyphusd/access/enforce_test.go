@@ -102,6 +102,8 @@ func try(conn *grpc.ClientConn) map[string]codes.Code {
 	result["join"] = status.Code(err)
 	_, err = pb.NewPoolServiceClient(conn).Invite(ctx, &pb.InviteRequest{})
 	result["invite"] = status.Code(err)
+	_, err = pb.NewPoolServiceClient(conn).Swarm(ctx, &pb.SwarmRequest{})
+	result["swarm key"] = status.Code(err)
 	_, err = pb.NewPoolServiceClient(conn).RemoveMember(ctx, &pb.RemoveMemberRequest{})
 	result["remove member"] = status.Code(err)
 
@@ -136,19 +138,19 @@ func TestEachRoleMayMakeOnlyItsOwnCalls(t *testing.T) {
 	}{
 		{"the owner", g.server, map[string]codes.Code{
 			"list nodes": yes, "submit job": stub, "stat blob": stub, "get blob": yes, "collect garbage": stub,
-			"take tasks": stub, "join": stub, "invite": stub, "remove member": stub,
+			"take tasks": stub, "join": stub, "invite": stub, "remove member": stub, "swarm key": stub,
 		}},
 		{"a worker", worker, map[string]codes.Code{
 			"list nodes": no, "submit job": no, "stat blob": stub, "get blob": yes, "collect garbage": no,
-			"take tasks": stub, "join": stub, "invite": no, "remove member": no,
+			"take tasks": stub, "join": stub, "invite": no, "remove member": no, "swarm key": stub,
 		}},
 		{"a client", client, map[string]codes.Code{
 			"list nodes": yes, "submit job": stub, "stat blob": stub, "get blob": yes, "collect garbage": stub,
-			"take tasks": no, "join": stub, "invite": no, "remove member": no,
+			"take tasks": no, "join": stub, "invite": no, "remove member": no, "swarm key": stub,
 		}},
 		{"a node never admitted", stranger, map[string]codes.Code{
 			"list nodes": no, "submit job": no, "stat blob": no, "get blob": no, "collect garbage": no,
-			"take tasks": no, "join": stub, "invite": no, "remove member": no,
+			"take tasks": no, "join": stub, "invite": no, "remove member": no, "swarm key": no,
 		}},
 	}
 	for _, tt := range tests {

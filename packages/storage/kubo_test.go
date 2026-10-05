@@ -363,3 +363,83 @@ func TestCollectionLeavesAloneWhatKuboItselfHasPinned(t *testing.T) {
 		t.Errorf("ipfs pin verify reports damage:\n%s", out)
 	}
 }
+
+func TestKuboCacheKeepsItsPinsInMemory(t *testing.T) {
+	api := &fakeKubo{}
+	cache := OpenKuboCache(api)
+	c := put(t, cache, blobA)
+	if err := cache.Pin(ctx, "cache", time.Time{}, c); err != nil {
+		t.Fatal(err)
+	}
+	gc(t, cache, afterGrace())
+	if !intact(t, cache, c, blobA) {
+		t.Error("a pinned blob was collected from the cache")
+	}
+	if err := cache.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	// A new cache over the same daemon starts with nothing pinned.
+	if pins := OpenKuboCache(api).Pins(); len(pins) != 0 {
+		t.Errorf("a new cache has pins: %v", pins)
+	}
+}
+
+// A worker's cache on one member of a swarm must be able to get a blob that
+// only another member holds, just by asking for it.
+func TestAKuboCacheFetchesFromOtherMembersOfItsSwarm(t *testing.T) {
+	if _, err := exec.LookPath("ipfs"); err != nil {
+		if os.Getenv("SISYPHUS_REQUIRE_KUBO") != "" {
+			t.Fatal("ipfs is not installed, and SISYPHUS_REQUIRE_KUBO is set")
+		}
+		t.Skip("ipfs is not installed")
+	}
+	start := func(key string, peers ...string) *kubo.Daemon {
+		ident, _, err := identity.LoadOrCreate(filepath.Join(t.TempDir(), "node.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := kubo.Start(ctx, kubo.Config{
+			Repo: filepath.Join(t.TempDir(), "ipfs"), Identity: ident,
+			Swarm: &kubo.Swarm{Key: key, Peers: peers, PeerTimeout: 3 * time.Second},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(d.Stop)
+		return d
+	}
+	key := kubo.NewSwarmKey()
+	holder := start(key)
+	addresses, err := holder.Addresses(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetcher := start(key, addresses...)
+
+	held := openKubo(t, holder, t.TempDir())
+	cache := OpenKuboCache(fetcher)
+	c := put(t, held, blobA)
+	if has, _ := cache.Has(ctx, c); has {
+		t.Fatal("the cache holds the blob before asking for it")
+	}
+
+	if err := cache.Verify(ctx, c); err != nil {
+		t.Fatalf("verifying a blob another member holds: %v", err)
+	}
+	if !intact(t, cache, c, blobA) {
+		t.Error("the blob fetched through the swarm differs from the original")
+	}
+	// It is now held locally, and can be pinned.
+	if err := cache.Pin(ctx, "cache", time.Time{}, c); err != nil {
+		t.Errorf("pinning a blob fetched through the swarm: %v", err)
+	}
+
+	// A blob nobody holds is reported missing once the swarm has been asked.
+	absent, _ := CID(ctx, strings.NewReader("held by nobody"))
+	if err := cache.Verify(ctx, absent); err == nil {
+		t.Error("Verify passed a blob no member holds")
+	}
+	if _, err := cache.Open(ctx, absent); !errors.Is(err, ErrNotFound) {
+		t.Errorf("opening a blob no member holds: %v, want ErrNotFound", err)
+	}
+}
