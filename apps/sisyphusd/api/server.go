@@ -11,12 +11,14 @@ import (
 
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/excho0/Sisyphus/packages/storage"
 )
 
-// NewServer returns a gRPC server serving both services for c. It has no
+// NewServer returns a gRPC server for a node running the coordinator role:
+// the job and worker services for c, and blob transfer for store. It has no
 // transport security or authentication yet, so only expose it to machines
 // you trust.
-func NewServer(c *coordinator.Coordinator) *grpc.Server {
+func NewServer(c *coordinator.Coordinator, store *storage.Store) *grpc.Server {
 	srv := grpc.NewServer(
 		// Pings notice workers that vanish without closing their connection.
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 10 * time.Second, Timeout: 5 * time.Second}),
@@ -24,6 +26,7 @@ func NewServer(c *coordinator.Coordinator) *grpc.Server {
 	)
 	pb.RegisterCoordinatorServiceServer(srv, c)
 	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: c})
+	pb.RegisterBlobServiceServer(srv, &blobService{store: store})
 	return srv
 }
 

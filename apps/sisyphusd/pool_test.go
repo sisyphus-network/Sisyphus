@@ -20,6 +20,7 @@ import (
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
+	"github.com/excho0/Sisyphus/packages/storage"
 )
 
 // These tests run a real coordinator and real workers in one process, talking
@@ -43,7 +44,7 @@ func startPool(t *testing.T, workloads *runtime.Registry) *pool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := api.NewServer(coordinator.New("coordinator", workloads, quiet))
+	srv := api.NewServer(coordinator.New("coordinator", workloads, quiet), storage.NewMemory())
 	go srv.Serve(lis)
 	t.Cleanup(srv.Stop)
 

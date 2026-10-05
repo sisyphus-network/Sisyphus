@@ -18,7 +18,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$BIN" run --listen "$ADDR" --node-id alpha --slots 4 >"$LOGS/alpha.log" 2>&1 &
+"$BIN" run --listen "$ADDR" --data-dir "$LOGS/data" --node-id alpha --slots 4 >"$LOGS/alpha.log" 2>&1 &
 pids+=($!)
 for node in beta gamma; do
 	"$BIN" run --role worker --coordinator "$ADDR" --node-id "$node" --slots 4 >"$LOGS/$node.log" 2>&1 &
