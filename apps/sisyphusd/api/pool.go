@@ -34,6 +34,11 @@ type Swarm interface {
 	Key() string
 	// Addresses returns where this node's own daemon can be reached on it.
 	Addresses(ctx context.Context) ([]string, error)
+	// Fingerprint identifies the current key without revealing it.
+	Fingerprint() string
+	// Rekey replaces the key with a new one and moves this node's daemon
+	// onto it.
+	Rekey(ctx context.Context) error
 }
 
 // accessList is the part of an access.List that the service uses.
@@ -92,7 +97,7 @@ func (s *poolService) ListMembers(context.Context, *pb.ListMembersRequest) (*pb.
 	return &res, nil
 }
 
-func (s *poolService) RemoveMember(_ context.Context, req *pb.RemoveMemberRequest) (*pb.RemoveMemberResponse, error) {
+func (s *poolService) RemoveMember(ctx context.Context, req *pb.RemoveMemberRequest) (*pb.RemoveMemberResponse, error) {
 	removed, err := s.access.Remove(req.GetNodeId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "remove node: %v", err)
@@ -103,5 +108,32 @@ func (s *poolService) RemoveMember(_ context.Context, req *pb.RemoveMemberReques
 	// Being off the list stops it connecting again; this ends the
 	// connection it has now.
 	s.coordinator.Remove(req.GetNodeId())
+	// It still holds the key to the pool's private network, so that changes
+	// too.
+	if s.swarm != nil {
+		if err := s.rekey(ctx); err != nil {
+			return nil, status.Errorf(codes.Internal, "node %s was removed, but it still holds the key to the pool's private IPFS network, which could not be changed: %v", req.GetNodeId(), err)
+		}
+	}
 	return &pb.RemoveMemberResponse{}, nil
+}
+
+func (s *poolService) Rekey(ctx context.Context, _ *pb.RekeyRequest) (*pb.RekeyResponse, error) {
+	if s.swarm == nil {
+		return nil, status.Error(codes.FailedPrecondition, "this node does not run a private IPFS network; start it with --kubo")
+	}
+	if err := s.rekey(ctx); err != nil {
+		return nil, status.Errorf(codes.Internal, "change the swarm key: %v", err)
+	}
+	return &pb.RekeyResponse{SwarmFingerprint: s.swarm.Fingerprint()}, nil
+}
+
+// rekey changes the key of the pool's private network and tells the
+// connected workers, who then ask for the new one.
+func (s *poolService) rekey(ctx context.Context) error {
+	if err := s.swarm.Rekey(ctx); err != nil {
+		return err
+	}
+	s.coordinator.AnnounceSwarm(s.swarm.Fingerprint())
+	return nil
 }

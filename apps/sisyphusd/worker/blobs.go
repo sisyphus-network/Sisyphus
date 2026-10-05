@@ -38,6 +38,11 @@ type RemoteBlobs struct {
 	// between arriving and being pinned.
 	trimming sync.RWMutex
 
+	// OnFallback is called when a blob the local store could not produce,
+	// which with a store on the pool's private network means the network
+	// did not supply it, was downloaded from the coordinator instead.
+	OnFallback func(c cid.Cid)
+
 	mu sync.Mutex
 	// ready holds the blobs known to be sound in the local store: checked,
 	// downloaded or stored during this run. Each is pinned, and maps to
@@ -88,12 +93,13 @@ func DialBlobs(coordinator string, creds credentials.TransportCredentials, local
 
 func newRemoteBlobs(local localStore, remote pb.BlobServiceClient, maxBytes uint64) *RemoteBlobs {
 	return &RemoteBlobs{
-		local:     local,
-		remote:    remote,
-		limit:     maxBytes,
-		ready:     make(map[cid.Cid]time.Time),
-		preparing: make(map[cid.Cid]*preparation),
-		held:      make(map[cid.Cid]int),
+		local:      local,
+		remote:     remote,
+		limit:      maxBytes,
+		OnFallback: func(cid.Cid) {},
+		ready:      make(map[cid.Cid]time.Time),
+		preparing:  make(map[cid.Cid]*preparation),
+		held:       make(map[cid.Cid]int),
 	}
 }
 
@@ -194,6 +200,7 @@ func (b *RemoteBlobs) obtain(ctx context.Context, c cid.Cid) error {
 		if err := blobclient.Fetch(ctx, b.remote, c, b.local); err != nil {
 			return fmt.Errorf("fetch from coordinator: %w", err)
 		}
+		b.OnFallback(c)
 	}
 	return b.local.Pin(ctx, cacheOwner, time.Time{}, c)
 }

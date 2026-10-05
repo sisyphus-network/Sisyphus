@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,9 +62,12 @@ func NewSwarmKey() string {
 	return "/key/swarm/psk/1.0.0/\n/base16/\n" + hex.EncodeToString(secret[:]) + "\n"
 }
 
-// Daemon is a running Kubo daemon and a client for it.
+// Daemon is a running Kubo daemon and a client for it. The client stays
+// valid if the daemon is restarted by Rekey: calls made meanwhile wait.
 type Daemon struct {
 	*Client
+	cfg    Config
+	binary string
 	cmd    *exec.Cmd
 	exited chan struct{}
 }
@@ -81,8 +85,35 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubo: %w", err)
 	}
+	d := &Daemon{Client: &Client{http: &http.Client{}}, cfg: cfg, binary: binary}
+	if d.cfg.ReadyTimeout == 0 {
+		d.cfg.ReadyTimeout = time.Minute
+	}
+	if err := d.launch(ctx); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// Rekey restarts the daemon as a member of swarm in place of the one it was
+// started on, keeping its repository and identity. Calls to the daemon made
+// while it restarts wait for it. If it returns an error the daemon is not
+// running.
+func (d *Daemon) Rekey(ctx context.Context, swarm *Swarm) error {
+	d.Client.mu.Lock()
+	defer d.Client.mu.Unlock()
+	d.stop()
+	d.cfg.Swarm = swarm
+	return d.launch(ctx)
+}
+
+// launch configures the repository for d.cfg, starts the daemon and waits
+// until it answers, then points the client at it. The caller must make sure
+// no call is in progress on the client.
+func (d *Daemon) launch(ctx context.Context) error {
+	cfg := d.cfg
 	run := func(args ...string) *exec.Cmd {
-		cmd := exec.Command(binary, args...)
+		cmd := exec.Command(d.binary, args...)
 		cmd.Env = append(os.Environ(), "IPFS_PATH="+cfg.Repo)
 		return cmd
 	}
@@ -90,11 +121,11 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 	configFile := filepath.Join(cfg.Repo, "config")
 	if _, err := os.Stat(configFile); errors.Is(err, os.ErrNotExist) {
 		if out, err := run("init", "--empty-repo").CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("kubo: setting up a repository in %s: %w: %s", cfg.Repo, err, lastLine(out))
+			return fmt.Errorf("kubo: setting up a repository in %s: %w: %s", cfg.Repo, err, lastLine(out))
 		}
 	}
 	if err := configure(configFile, cfg.Identity, cfg.Swarm); err != nil {
-		return nil, fmt.Errorf("kubo: %w", err)
+		return fmt.Errorf("kubo: %w", err)
 	}
 	args := []string{"daemon", "--offline"}
 	var env []string
@@ -116,51 +147,50 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 	logFile := filepath.Join(cfg.Repo, "daemon.log")
 	output, err := os.OpenFile(logFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("kubo: %w", err)
+		return fmt.Errorf("kubo: %w", err)
 	}
 	defer output.Close()
 	cmd := run(args...)
 	cmd.Env = append(cmd.Env, env...)
 	cmd.Stdout, cmd.Stderr = output, output
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("kubo: %w", err)
+		return fmt.Errorf("kubo: %w", err)
 	}
-	d := &Daemon{cmd: cmd, exited: make(chan struct{})}
-	go func() {
+	d.cmd, d.exited = cmd, make(chan struct{})
+	go func(exited chan struct{}) {
 		cmd.Wait()
-		close(d.exited)
-	}()
+		close(exited)
+	}(d.exited)
 
-	timeout := cfg.ReadyTimeout
-	if timeout == 0 {
-		timeout = time.Minute
-	}
-	deadline := time.NewTimer(timeout)
+	deadline := time.NewTimer(cfg.ReadyTimeout)
 	defer deadline.Stop()
 	poll := time.NewTicker(20 * time.Millisecond)
 	defer poll.Stop()
+	// The daemon is asked directly whether it is up, not through d.Client,
+	// which may be held still for the restart this is part of.
+	var probe *Client
 	for {
 		select {
 		case <-poll.C:
-			if d.Client == nil {
+			if probe == nil {
 				// Not listening yet; the address file appears when it is.
 				if addr, ok := apiAddress(apiFile); ok {
-					d.Client = NewClient(addr)
-					d.Client.PeerTimeout = peerTimeout
+					probe = NewClient(addr)
 				}
 				continue
 			}
-			if _, err := d.ID(ctx); err == nil {
-				return d, nil
+			if _, err := probe.ID(ctx); err == nil {
+				d.Client.base, d.Client.PeerTimeout = probe.base, peerTimeout
+				return nil
 			}
 		case <-d.exited:
-			return nil, fmt.Errorf("kubo: the daemon stopped while starting: %s (see %s)", lastLine(readFile(logFile)), logFile)
+			return fmt.Errorf("kubo: the daemon stopped while starting: %s (see %s)", lastLine(readFile(logFile)), logFile)
 		case <-deadline.C:
-			d.Stop()
-			return nil, fmt.Errorf("kubo: the daemon did not answer within %s (see %s)", timeout, logFile)
+			d.stop()
+			return fmt.Errorf("kubo: the daemon did not answer within %s (see %s)", cfg.ReadyTimeout, logFile)
 		case <-ctx.Done():
-			d.Stop()
-			return nil, ctx.Err()
+			d.stop()
+			return ctx.Err()
 		}
 	}
 }
@@ -169,8 +199,14 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 var stopGrace = 10 * time.Second
 
 // Stop asks the daemon to shut down and waits for it, killing it if it
-// takes more than ten seconds.
+// takes more than ten seconds. It waits for a restart in progress.
 func (d *Daemon) Stop() {
+	d.Client.mu.Lock()
+	defer d.Client.mu.Unlock()
+	d.stop()
+}
+
+func (d *Daemon) stop() {
 	d.cmd.Process.Signal(os.Interrupt)
 	select {
 	case <-d.exited:

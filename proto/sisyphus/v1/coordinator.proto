@@ -53,11 +53,22 @@ message CoordinatorMessage {
   oneof kind {
     Welcome welcome = 1;
     TaskAssignment assignment = 2;
+    SwarmUpdate swarm_update = 3;
   }
 }
 
 message Welcome {
   string coordinator_id = 1;
+  // Identifies the key of the pool's private IPFS network without giving it
+  // away; empty if the pool has no such network. A worker whose own Kubo is
+  // on a different key should ask PoolService.Swarm for the current one.
+  string swarm_fingerprint = 2;
+}
+
+// SwarmUpdate tells a connected worker that the key of the pool's private
+// IPFS network has changed, as it does when a member is removed.
+message SwarmUpdate {
+  string swarm_fingerprint = 1;
 }
 
 message TaskAssignment {

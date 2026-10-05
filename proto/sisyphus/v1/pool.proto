@@ -25,8 +25,13 @@ service PoolService {
   rpc Invite(InviteRequest) returns (InviteResponse);
   rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
   // RemoveMember takes a node off the list and, if it is a connected worker,
-  // disconnects it.
+  // disconnects it. If the pool has a private IPFS network its key is
+  // changed, since the removed node still holds the old one.
   rpc RemoveMember(RemoveMemberRequest) returns (RemoveMemberResponse);
+  // Rekey changes the key of the pool's private IPFS network. Connected
+  // workers are told and fetch the new one; anything else holding the old
+  // key is shut out.
+  rpc Rekey(RekeyRequest) returns (RekeyResponse);
 }
 
 enum Role {
@@ -87,3 +92,9 @@ message RemoveMemberRequest {
 }
 
 message RemoveMemberResponse {}
+
+message RekeyRequest {}
+
+message RekeyResponse {
+  string swarm_fingerprint = 1;
+}

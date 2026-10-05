@@ -69,10 +69,13 @@ type Coordinator struct {
 	cancel      context.CancelFunc
 	aggregating sync.WaitGroup
 
-	mu      sync.Mutex
-	jobs    map[string]*jobmodel.Job
-	active  []*jobmodel.Job // unfinished jobs in submission order
-	workers map[string]*worker
+	mu sync.Mutex
+	// swarmFingerprint identifies the current key of the pool's private
+	// IPFS network, if it has one.
+	swarmFingerprint string
+	jobs             map[string]*jobmodel.Job
+	active           []*jobmodel.Job // unfinished jobs in submission order
+	workers          map[string]*worker
 	// changed holds, per job, a channel that is closed and replaced every
 	// time the job changes. Watchers wait on it.
 	changed map[string]chan struct{}
@@ -89,11 +92,55 @@ type worker struct {
 	capabilities *pb.NodeCapabilities
 	connectedAt  time.Time
 	lastSeen     time.Time
-	// send is drained onto the worker's stream by its Connect call. It has
-	// room for a Welcome plus one assignment per slot, so sends made while
-	// holding the coordinator lock never block.
-	send    chan *pb.CoordinatorMessage
+	// send holds the messages waiting to go out on the worker's stream.
+	send    *outbox
 	running map[string]assignment // by task ID
+}
+
+// outbox is the queue of messages waiting to be written to a worker's
+// stream. Adding to it never blocks, which lets the coordinator queue a
+// message while holding its lock, and it never drops anything.
+type outbox struct {
+	mu      sync.Mutex
+	waiting sync.Cond
+	queue   []*pb.CoordinatorMessage
+	closed  bool
+}
+
+func newOutbox() *outbox {
+	o := &outbox{}
+	o.waiting.L = &o.mu
+	return o
+}
+
+func (o *outbox) add(msg *pb.CoordinatorMessage) {
+	o.mu.Lock()
+	o.queue = append(o.queue, msg)
+	o.mu.Unlock()
+	o.waiting.Signal()
+}
+
+// next returns the oldest message, waiting for one if need be. It reports
+// false once the outbox has been closed.
+func (o *outbox) next() (*pb.CoordinatorMessage, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for len(o.queue) == 0 && !o.closed {
+		o.waiting.Wait()
+	}
+	if o.closed {
+		return nil, false
+	}
+	msg := o.queue[0]
+	o.queue = o.queue[1:]
+	return msg, true
+}
+
+func (o *outbox) close() {
+	o.mu.Lock()
+	o.closed = true
+	o.mu.Unlock()
+	o.waiting.Signal()
 }
 
 type assignment struct {
@@ -264,7 +311,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 		capabilities: capabilities,
 		connectedAt:  now,
 		lastSeen:     now,
-		send:         make(chan *pb.CoordinatorMessage, capabilities.GetTaskSlots()+1),
+		send:         newOutbox(),
 		running:      make(map[string]assignment),
 		removed:      make(chan struct{}),
 	}
@@ -275,7 +322,9 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 		return status.Errorf(codes.AlreadyExists, "node %s is already connected", w.id)
 	}
 	c.workers[w.id] = w
-	w.send <- &pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Welcome{Welcome: &pb.Welcome{CoordinatorId: c.id}}}
+	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Welcome{Welcome: &pb.Welcome{
+		CoordinatorId: c.id, SwarmFingerprint: c.swarmFingerprint,
+	}}})
 	c.scheduleLocked()
 	c.mu.Unlock()
 	c.log.Info("worker connected", "node", w.id, "name", w.name, "slots", capabilities.GetTaskSlots())
@@ -284,16 +333,15 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	// one can also act on the worker being removed. A failed Send means the
 	// stream is broken, which the reader also sees, so the writer needs no
 	// way to report its error.
-	stop, stopped := make(chan struct{}), make(chan struct{})
+	written := make(chan struct{})
 	go func() {
-		defer close(stopped)
+		defer close(written)
 		for {
-			select {
-			case msg := <-w.send:
-				stream.Send(msg)
-			case <-stop:
+			msg, ok := w.send.next()
+			if !ok {
 				return
 			}
+			stream.Send(msg)
 		}
 	}()
 	broken := make(chan error, 1)
@@ -316,8 +364,8 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	}()
 	defer func() {
 		c.disconnect(w)
-		close(stop)
-		<-stopped
+		w.send.close()
+		<-written
 	}()
 
 	select {
@@ -328,6 +376,18 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 		return err
 	case <-w.removed:
 		return status.Errorf(codes.PermissionDenied, "node %s has been removed from the pool", w.id)
+	}
+}
+
+// AnnounceSwarm records the fingerprint of the key of the pool's private
+// IPFS network and tells every connected worker. Workers that connect later
+// are told as they are welcomed.
+func (c *Coordinator) AnnounceSwarm(fingerprint string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.swarmFingerprint = fingerprint
+	for _, w := range c.workers {
+		w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_SwarmUpdate{SwarmUpdate: &pb.SwarmUpdate{SwarmFingerprint: fingerprint}}})
 	}
 }
 
@@ -484,13 +544,13 @@ func (c *Coordinator) scheduleLocked() {
 			}
 			job.Start(task, w.id, w.name)
 			w.running[task.ID] = assignment{job: job, task: task}
-			w.send <- &pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
+			w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
 				TaskId:   task.ID,
 				JobId:    job.ID,
 				Attempt:  uint32(task.Attempt),
 				Workload: job.Workload,
 				Payload:  task.Payload,
-			}}}
+			}}})
 			c.notifyLocked(job)
 		}
 	}

@@ -113,9 +113,11 @@ func poolCommand(ctx context.Context, args []string) error {
 			return poolMembers(ctx, args[1:])
 		case "remove":
 			return poolRemove(ctx, args[1:])
+		case "rekey":
+			return poolRekey(ctx, args[1:])
 		}
 	}
-	return errors.New("expected pool invite, join, members or remove")
+	return errors.New("expected pool invite, join, members, remove or rekey")
 }
 
 func poolInvite(ctx context.Context, args []string) error {
@@ -224,4 +226,27 @@ func poolRemove(ctx context.Context, args []string) error {
 	defer conn.Close()
 	_, err = pb.NewPoolServiceClient(conn).RemoveMember(ctx, &pb.RemoveMemberRequest{NodeId: fs.Arg(0)})
 	return err
+}
+
+func poolRekey(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sisyphusd pool rekey", flag.ContinueOnError)
+	node := targetFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+
+	conn, err := node.connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	rekeyed, err := pb.NewPoolServiceClient(conn).Rekey(ctx, &pb.RekeyRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "the pool's private IPFS network has a new key (%s)\n", rekeyed.GetSwarmFingerprint())
+	return nil
 }

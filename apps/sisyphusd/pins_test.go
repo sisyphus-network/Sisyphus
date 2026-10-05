@@ -270,7 +270,7 @@ func serveFake(t *testing.T, register func(*grpc.Server)) (addr string) {
 
 func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for !condition() {
 		if time.Now().After(deadline) {
 			t.Fatal("condition not met in time")

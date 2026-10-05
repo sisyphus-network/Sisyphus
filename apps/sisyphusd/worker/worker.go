@@ -42,6 +42,10 @@ type Worker struct {
 	Workloads *runtime.Registry
 	// Blobs is the stored data this node's tasks can read and write.
 	Blobs runtime.Blobs
+	// OnSwarm, if set, is called with the fingerprint of the key of the
+	// pool's private IPFS network whenever the coordinator states it: on
+	// joining, and when the key changes. It must not block for long.
+	OnSwarm func(fingerprint string)
 	// HeartbeatInterval is how often the coordinator hears from this node
 	// while it is idle. Zero means five seconds.
 	HeartbeatInterval time.Duration
@@ -141,8 +145,11 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 			return welcomed, err
 		}
 		switch kind := msg.GetKind().(type) {
+		case *pb.CoordinatorMessage_SwarmUpdate:
+			w.swarmChanged(kind.SwarmUpdate.GetSwarmFingerprint())
 		case *pb.CoordinatorMessage_Welcome:
 			welcomed = true
+			w.swarmChanged(kind.Welcome.GetSwarmFingerprint())
 			w.Log.Info("joined pool", "node", w.Name, "coordinator", kind.Welcome.GetCoordinatorId(), "slots", w.Slots)
 		case *pb.CoordinatorMessage_Assignment:
 			running.Add(1)
@@ -158,6 +165,12 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				}
 			}()
 		}
+	}
+}
+
+func (w *Worker) swarmChanged(fingerprint string) {
+	if w.OnSwarm != nil {
+		w.OnSwarm(fingerprint)
 	}
 }
 

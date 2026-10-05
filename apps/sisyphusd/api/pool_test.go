@@ -3,6 +3,10 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,7 +14,10 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
+	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/excho0/Sisyphus/packages/runtime"
+	"github.com/excho0/Sisyphus/packages/storage"
 )
 
 // These tests cover what the pool service does when its access list cannot
@@ -84,15 +91,29 @@ func TestInvitationsCarryTheNodesIDAndLastAsLongAsAsked(t *testing.T) {
 type network struct {
 	addresses []string
 	err       error
+	// rekeyErr makes changing the key fail; rekeyed counts the changes.
+	rekeyErr error
+	rekeyed  *int
 }
 
 func (network) Key() string { return "the-shared-secret" }
 
 func (n network) Addresses(context.Context) ([]string, error) { return n.addresses, n.err }
 
+func (n network) Fingerprint() string { return fmt.Sprintf("key-%d", *n.rekeyed) }
+
+func (n network) Rekey(context.Context) error {
+	if n.rekeyErr != nil {
+		return n.rekeyErr
+	}
+	*n.rekeyed++
+	return nil
+}
+
 func TestSwarmTellsMembersHowToJoinThePrivateNetwork(t *testing.T) {
 	ctx := context.Background()
-	running := &poolService{swarm: network{addresses: []string{"/ip4/10.0.0.5/tcp/4101/p2p/12D3KooWexample"}}}
+	changes := 0
+	running := &poolService{swarm: network{addresses: []string{"/ip4/10.0.0.5/tcp/4101/p2p/12D3KooWexample"}, rekeyed: &changes}}
 	got, err := running.Swarm(ctx, &pb.SwarmRequest{})
 	if err != nil {
 		t.Fatal(err)
@@ -104,8 +125,67 @@ func TestSwarmTellsMembersHowToJoinThePrivateNetwork(t *testing.T) {
 	if _, err := (&poolService{}).Swarm(ctx, &pb.SwarmRequest{}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("a node with no private network: %v, want FailedPrecondition", err)
 	}
-	broken := &poolService{swarm: network{err: errors.New("kubo went away")}}
+	broken := &poolService{swarm: network{err: errors.New("kubo went away"), rekeyed: &changes}}
 	if _, err := broken.Swarm(ctx, &pb.SwarmRequest{}); status.Code(err) != codes.Internal {
 		t.Errorf("a node whose Kubo does not answer: %v, want Internal", err)
+	}
+}
+
+func newCoordinator(t *testing.T) *coordinator.Coordinator {
+	t.Helper()
+	c := coordinator.New(coordinator.Config{
+		ID: "owner-id", Workloads: runtime.Builtin(), Store: storage.NewMemory(),
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	t.Cleanup(c.Close)
+	return c
+}
+
+func TestRemovingAMemberChangesTheSwarmKey(t *testing.T) {
+	ctx := context.Background()
+	list := newList(t)
+	list.Admit("leaver", access.Worker, time.Now())
+	list.Admit("another", access.Worker, time.Now())
+	changes := 0
+	service := &poolService{id: "owner-id", access: list, coordinator: newCoordinator(t), swarm: network{rekeyed: &changes}}
+
+	if _, err := service.RemoveMember(ctx, &pb.RemoveMemberRequest{NodeId: "leaver"}); err != nil {
+		t.Fatal(err)
+	}
+	if changes != 1 {
+		t.Errorf("the key was changed %d times, want once", changes)
+	}
+	// Removing someone who is not a member changes nothing.
+	if _, err := service.RemoveMember(ctx, &pb.RemoveMemberRequest{NodeId: "stranger"}); status.Code(err) != codes.NotFound || changes != 1 {
+		t.Errorf("removing a non-member: %v, key changed %d times", err, changes)
+	}
+
+	// If the key cannot be changed the caller must be told: the node is off
+	// the list but still holds the key.
+	stuck := &poolService{id: "owner-id", access: list, coordinator: newCoordinator(t), swarm: network{rekeyed: &changes, rekeyErr: errors.New("kubo would not restart")}}
+	_, err := stuck.RemoveMember(ctx, &pb.RemoveMemberRequest{NodeId: "another"})
+	if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "was removed, but it still holds the key") {
+		t.Errorf("error %v, want a warning that the key is unchanged", err)
+	}
+	if _, onList := list.Role("another"); onList {
+		t.Error("the node is still on the list")
+	}
+}
+
+func TestRekeyOnRequest(t *testing.T) {
+	ctx := context.Background()
+	changes := 0
+	service := &poolService{id: "owner-id", coordinator: newCoordinator(t), swarm: network{rekeyed: &changes}}
+	got, err := service.Rekey(ctx, &pb.RekeyRequest{})
+	if err != nil || got.GetSwarmFingerprint() != "key-1" {
+		t.Errorf("Rekey = %v, %v; want the new key's fingerprint", got, err)
+	}
+
+	if _, err := (&poolService{}).Rekey(ctx, &pb.RekeyRequest{}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("a node with no private network: %v, want FailedPrecondition", err)
+	}
+	stuck := &poolService{coordinator: newCoordinator(t), swarm: network{rekeyed: &changes, rekeyErr: errors.New("kubo would not restart")}}
+	if _, err := stuck.Rekey(ctx, &pb.RekeyRequest{}); status.Code(err) != codes.Internal {
+		t.Errorf("a key that cannot be changed: %v, want Internal", err)
 	}
 }
