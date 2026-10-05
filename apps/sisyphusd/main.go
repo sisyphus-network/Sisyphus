@@ -13,6 +13,9 @@ import (
 
 const defaultAddr = "127.0.0.1:7700"
 
+// version is set by release builds; see scripts/build-release.sh.
+var version = "dev"
+
 const usage = `Usage:
   sisyphusd run [flags]            run a node (coordinator, worker or both)
   sisyphusd job submit [flags]     submit a job and follow it to completion
@@ -21,6 +24,7 @@ const usage = `Usage:
   sisyphusd blob put <file>        store a file on a node and print its CID
   sisyphusd blob get <cid>         fetch a blob, checking it against its CID
   sisyphusd blob stat <cid>        show a blob's size
+  sisyphusd version                print the version
 
 Run "sisyphusd <command> -h" for a command's flags.
 `
@@ -68,6 +72,9 @@ func run(ctx context.Context, args []string) error {
 		return listNodes(ctx, args[1:])
 	case "blob":
 		return blobCommand(ctx, args[1:])
+	case "version":
+		fmt.Fprintln(stdout, "sisyphusd", version)
+		return nil
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return nil
