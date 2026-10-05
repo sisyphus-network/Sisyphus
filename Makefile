@@ -1,5 +1,5 @@
 PROTO_FILES := $(wildcard proto/sisyphus/v1/*.proto)
-COVERED := ./apps/...,./packages/job-model/...,./packages/runtime/...,./packages/storage/...
+COVERED := ./apps/...,./packages/identity/...,./packages/job-model/...,./packages/runtime/...,./packages/storage/...
 
 .PHONY: build test cover demo proto tools fmt
 

@@ -176,6 +176,7 @@ sisyphus/
 │   └── desktop/          # Electron + React client (not started)
 ├── packages/
 │   ├── protocol/         # Go code generated from proto/
+│   ├── identity/         # node key pairs and IDs
 │   ├── job-model/        # job and task state machines
 │   ├── runtime/          # the Workload interface and built-in workloads
 │   ├── storage/          # content-addressed blob store, pins, garbage collection
@@ -199,6 +200,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Content-addressed storage for job data. Files are named by the same CID that `ipfs add --cid-version=1` gives them and laid out on disk as Kubo lays them out, without yet joining the IPFS network.
 - Jobs that pass large inputs and outputs by CID; workers fetch, verify and cache them.
 - Pins, retention periods, garbage collection and disk limits, so a node keeps data only as long as something needs it.
+- A key pair and ID for every node, not yet used to secure anything.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.
 

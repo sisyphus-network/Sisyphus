@@ -28,6 +28,7 @@ const usage = `Usage:
   sisyphusd blob unpin <cid>       stop keeping a blob
   sisyphusd blob pins              list what the node is keeping, and for whom
   sisyphusd blob gc                delete stored data that nothing is keeping
+  sisyphusd id                     print this node's ID, creating its key if it has none
   sisyphusd version                print the version
 
 Run "sisyphusd <command> -h" for a command's flags.
@@ -76,6 +77,8 @@ func run(ctx context.Context, args []string) error {
 		return listNodes(ctx, args[1:])
 	case "blob":
 		return blobCommand(ctx, args[1:])
+	case "id":
+		return showIdentity(args[1:])
 	case "version":
 		fmt.Fprintln(stdout, "sisyphusd", version)
 		return nil
