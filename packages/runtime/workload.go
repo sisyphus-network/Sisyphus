@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -39,6 +40,17 @@ type Workload interface {
 	// Aggregate combines task outputs, given in task order, into the job
 	// result.
 	Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error)
+}
+
+// mustJSON encodes a value of a type that always encodes: the plain structs
+// and string-keyed maps workloads pass around. It panics on anything else,
+// which would be a programming error.
+func mustJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 // Registry is a fixed set of workloads, looked up by name.

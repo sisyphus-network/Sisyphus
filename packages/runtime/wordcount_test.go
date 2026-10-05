@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math/rand/v2"
 	"reflect"
@@ -257,5 +259,119 @@ func TestWordCountRejectsBadInput(t *testing.T) {
 		if _, err := (WordCount{}).Aggregate(ctx, store, [][]byte{[]byte(output)}); err == nil {
 			t.Errorf("Aggregate(%s) succeeded, want an error", output)
 		}
+	}
+}
+
+// brokenSource is a file that fails after delivering some of its bytes.
+type brokenSource struct {
+	data     string
+	pos      int
+	failSeek bool
+	// failAt is the position at which reads start failing.
+	failAt int
+}
+
+var errBrokenSource = errors.New("source broke")
+
+func (s *brokenSource) Seek(offset int64, _ int) (int64, error) {
+	if s.failSeek {
+		return 0, errBrokenSource
+	}
+	s.pos = int(offset)
+	return offset, nil
+}
+
+func (s *brokenSource) Read(p []byte) (int, error) {
+	if s.pos >= s.failAt {
+		return 0, errBrokenSource
+	}
+	n := copy(p, s.data[s.pos:s.failAt])
+	s.pos += n
+	return n, nil
+}
+
+func TestCountWordsReportsAFailingSource(t *testing.T) {
+	const text = "one two three four five"
+	tests := []struct {
+		name   string
+		source *brokenSource
+		offset uint64
+	}{
+		{"seek fails", &brokenSource{data: text, failSeek: true, failAt: len(text)}, 4},
+		{"the byte before the range cannot be read", &brokenSource{data: text, failAt: 3}, 4},
+		{"reading fails inside the range", &brokenSource{data: text, failAt: 10}, 4},
+	}
+	for _, tt := range tests {
+		if _, err := countWords(ctx, tt.source, tt.offset, 15); !errors.Is(err, errBrokenSource) {
+			t.Errorf("%s: error %v, want the source's error", tt.name, err)
+		}
+	}
+}
+
+func TestCountWordsOfARangePastTheEndIsEmpty(t *testing.T) {
+	counts, err := countWords(ctx, strings.NewReader("short"), 50, 10)
+	if err != nil || len(counts) != 0 {
+		t.Errorf("counts %v, error %v; want none", counts, err)
+	}
+}
+
+// failingBlobs is a store whose reads or writes can be made to fail, standing
+// in for a worker that loses its coordinator mid-task.
+type failingBlobs struct {
+	*storage.Store
+	failPut  bool
+	failRead bool
+}
+
+var errBlobs = errors.New("blob storage broke")
+
+func (f failingBlobs) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
+	if f.failPut {
+		return cid.Undef, errBlobs
+	}
+	return f.Store.Put(ctx, r)
+}
+
+func (f failingBlobs) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) {
+	blob, err := f.Store.Open(ctx, c)
+	if err != nil || !f.failRead {
+		return blob, err
+	}
+	return failingBlob{blob}, nil
+}
+
+type failingBlob struct{ storage.Blob }
+
+func (failingBlob) Read([]byte) (int, error) { return 0, errBlobs }
+
+func TestWordCountReportsStorageFailures(t *testing.T) {
+	store := storage.NewMemory()
+	w := WordCount{}
+	input, err := store.Put(ctx, strings.NewReader("roll the boulder up the hill"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloads, err := w.Split(ctx, store, []byte(`{"input":"`+input.String()+`"}`), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := w.Execute(ctx, store, payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := w.Execute(ctx, failingBlobs{Store: store, failRead: true}, payloads[0]); !errors.Is(err, errBlobs) {
+		t.Errorf("Execute with an unreadable input: %v", err)
+	}
+	if _, err := w.Execute(ctx, failingBlobs{Store: store, failPut: true}, payloads[0]); !errors.Is(err, errBlobs) {
+		t.Errorf("Execute that cannot store its counts: %v", err)
+	}
+	if _, err := w.Aggregate(ctx, failingBlobs{Store: store, failPut: true}, [][]byte{output}); !errors.Is(err, errBlobs) {
+		t.Errorf("Aggregate that cannot store its table: %v", err)
+	}
+
+	// A task output that names a blob which is not a table of counts.
+	if _, err := w.Aggregate(ctx, store, [][]byte{[]byte(`{"counts":"` + input.String() + `"}`)}); err == nil {
+		t.Error("Aggregate accepted counts that are not JSON")
 	}
 }

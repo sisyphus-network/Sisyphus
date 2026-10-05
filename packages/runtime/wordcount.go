@@ -81,11 +81,7 @@ func (WordCount) Split(ctx context.Context, blobs Blobs, params []byte, parts in
 	for i := uint64(0); i < n; i++ {
 		start := size/n*i + size%n*i/n
 		end := size/n*(i+1) + size%n*(i+1)/n
-		payload, err := json.Marshal(wordCountRange{Input: p.Input, Offset: start, Length: end - start})
-		if err != nil {
-			return nil, err
-		}
-		payloads = append(payloads, payload)
+		payloads = append(payloads, mustJSON(wordCountRange{Input: p.Input, Offset: start, Length: end - start}))
 	}
 	return payloads, nil
 }
@@ -109,15 +105,11 @@ func (WordCount) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]by
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(counts)
-	if err != nil {
-		return nil, err
-	}
-	stored, err := blobs.Put(ctx, bytes.NewReader(encoded))
+	stored, err := blobs.Put(ctx, bytes.NewReader(mustJSON(counts)))
 	if err != nil {
 		return nil, fmt.Errorf("store word counts: %w", err)
 	}
-	return json.Marshal(wordCountPart{Counts: stored.String()})
+	return mustJSON(wordCountPart{Counts: stored.String()}), nil
 }
 
 func (WordCount) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error) {
@@ -168,7 +160,7 @@ func (WordCount) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) (
 		return nil, fmt.Errorf("store word table: %w", err)
 	}
 	result.Output = stored.String()
-	return json.Marshal(result)
+	return mustJSON(result), nil
 }
 
 // countWords counts the words in src that start at a byte position in

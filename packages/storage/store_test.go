@@ -5,7 +5,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/ipfs/boxo/ipld/merkledag"
+	blocks "github.com/ipfs/go-block-format"
 )
 
 var ctx = context.Background()
@@ -247,4 +253,147 @@ func TestLocalStoreIsExclusive(t *testing.T) {
 		t.Fatalf("reopening a closed store: %v", err)
 	}
 	reopened.Close()
+}
+
+func TestCacheStoresAndReturnsBlobs(t *testing.T) {
+	cache, err := OpenCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cache.Close()
+	data := pattern(600_000)
+	c, err := cache.Put(ctx, bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := cache.Open(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blob.Close()
+	if got, _ := io.ReadAll(blob); !bytes.Equal(got, data) {
+		t.Error("blob read back from a cache differs from what was stored")
+	}
+}
+
+// A cache does not sync its writes, so after a restart it cannot tell
+// complete blocks from torn ones and must start empty.
+func TestCacheIsEmptiedOnOpening(t *testing.T) {
+	dir := t.TempDir()
+	cache, err := OpenCache(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := cache.Put(ctx, bytes.NewReader(pattern(600_000)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cache, err = OpenCache(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cache.Close()
+	if has, err := cache.Has(ctx, c); err != nil || has {
+		t.Errorf("a reopened cache still holds a blob from its last run: has=%v err=%v", has, err)
+	}
+}
+
+func TestOpeningAStoreFails(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenLocal(filepath.Join(file, "store")); err == nil {
+		t.Error("opened a store beneath a regular file")
+	}
+
+	// The lock file's name is taken by a directory.
+	lockIsDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(lockIsDir, "LOCK"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenLocal(lockIsDir); err == nil {
+		t.Error("opened a store whose lock file cannot be created")
+	}
+
+	// The block directory's name is taken by a file.
+	blocksIsFile := t.TempDir()
+	if err := os.WriteFile(filepath.Join(blocksIsFile, "blocks"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenLocal(blocksIsFile); err == nil {
+		t.Error("opened a store whose block directory cannot be created")
+	}
+	// A failed open must release the lock, or the directory stays unusable.
+	if err := os.Remove(filepath.Join(blocksIsFile, "blocks")); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenLocal(blocksIsFile)
+	if err != nil {
+		t.Fatalf("opening after a failed open: %v", err)
+	}
+	store.Close()
+}
+
+func TestOpeningACacheThatCannotBeEmptiedFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can delete from a read-only directory")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "blocks", "kept")
+	if err := os.MkdirAll(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "block"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(locked, 0o700) // let the test's own cleanup remove it
+
+	if _, err := OpenCache(dir); err == nil {
+		t.Fatal("opened a cache whose old contents could not be removed")
+	}
+	// The failed open released the lock.
+	os.Chmod(locked, 0o700)
+	cache, err := OpenCache(dir)
+	if err != nil {
+		t.Fatalf("opening after a failed open: %v", err)
+	}
+	cache.Close()
+}
+
+func TestOpenReportsBlocksThatAreNotABlob(t *testing.T) {
+	store := NewMemory()
+
+	// A block stored under a file-tree CID whose bytes are not a tree node.
+	garbage := []byte("\xff\xff not a node")
+	mangled, err := cidBuilder.Sum(garbage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := blocks.NewBlockWithCid(garbage, mangled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.blocks.Put(ctx, block); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Open(ctx, mangled); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("Open of an undecodable block: %v, want a decoding error", err)
+	}
+
+	// A well-formed tree node that does not describe a file.
+	notAFile := merkledag.NodeWithData([]byte("no file metadata here"))
+	if err := store.dag.Add(ctx, notAFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Open(ctx, notAFile.Cid()); err == nil || !strings.Contains(err.Error(), "is not a blob") {
+		t.Errorf("Open of a node that is not a file: %v", err)
+	}
 }

@@ -45,11 +45,7 @@ func (Primes) Split(_ context.Context, _ Blobs, params []byte, parts int) ([][]b
 		// Computing each bound from the full span spreads the remainder
 		// instead of leaving it all in the last task.
 		sub := PrimesRange{From: r.From + span/n*i + span%n*i/n, To: r.From + span/n*(i+1) + span%n*(i+1)/n}
-		payload, err := json.Marshal(sub)
-		if err != nil {
-			return nil, err
-		}
-		payloads = append(payloads, payload)
+		payloads = append(payloads, mustJSON(sub))
 	}
 	return payloads, nil
 }
@@ -63,7 +59,7 @@ func (Primes) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(PrimesCount{Count: count})
+	return mustJSON(PrimesCount{Count: count}), nil
 }
 
 func (Primes) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, error) {
@@ -75,7 +71,7 @@ func (Primes) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, e
 		}
 		total.Count += c.Count
 	}
-	return json.Marshal(total)
+	return mustJSON(total), nil
 }
 
 func parsePrimesRange(b []byte) (PrimesRange, error) {
@@ -143,13 +139,9 @@ func primesUpTo(n uint64) []uint64 {
 	return primes
 }
 
+// isqrt returns the integer part of the square root of n. It is exact for
+// every n up to maxPrimesTo, which float64 represents with room to spare;
+// it must not be used for values near the top of the uint64 range.
 func isqrt(n uint64) uint64 {
-	r := uint64(math.Sqrt(float64(n)))
-	for r*r > n {
-		r--
-	}
-	for (r+1)*(r+1) <= n {
-		r++
-	}
-	return r
+	return uint64(math.Sqrt(float64(n)))
 }

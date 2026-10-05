@@ -119,3 +119,52 @@ func TestPrimesRejectsBadRanges(t *testing.T) {
 func contextWithCancel() (context.Context, context.CancelFunc) {
 	return context.WithCancel(ctx)
 }
+
+func TestPrimesReportsBadTaskData(t *testing.T) {
+	if _, err := (Primes{}).Execute(ctx, nil, []byte("not json")); err == nil {
+		t.Error("Execute accepted a payload that is not JSON")
+	}
+	if _, err := (Primes{}).Aggregate(ctx, nil, [][]byte{[]byte(`{"count":1}`), []byte("not json")}); err == nil {
+		t.Error("Aggregate accepted an output that is not JSON")
+	}
+	cancelled, cancel := contextWithCancel()
+	cancel()
+	if _, err := (Primes{}).Execute(cancelled, nil, []byte(`{"from":0,"to":1000}`)); err == nil {
+		t.Error("Execute ignored a cancelled context")
+	}
+}
+
+func TestIsqrtIsExactAcrossThePrimesRange(t *testing.T) {
+	for k := uint64(1); k*k <= maxPrimesTo; k += 997 {
+		for _, tt := range []struct{ n, want uint64 }{{k*k - 1, k - 1}, {k * k, k}, {k*k + 1, k}} {
+			if got := isqrt(tt.n); got != tt.want {
+				t.Fatalf("isqrt(%d) = %d, want %d", tt.n, got, tt.want)
+			}
+		}
+	}
+	if got := isqrt(maxPrimesTo); got != 1<<20 {
+		t.Errorf("isqrt(maxPrimesTo) = %d, want %d", got, 1<<20)
+	}
+}
+
+func TestRegistry(t *testing.T) {
+	r := Builtin()
+	if got := r.Names(); len(got) != 2 || got[0] != "primes" || got[1] != "wordcount" {
+		t.Errorf("built-in workloads: %v", got)
+	}
+	if _, err := r.Get("nope"); err == nil {
+		t.Error("Get of an unknown workload succeeded")
+	}
+	if w, err := r.Get("primes"); err != nil || w.Name() != "primes" {
+		t.Errorf("Get(primes) = %v, %v", w, err)
+	}
+}
+
+func TestMustJSONPanicsOnAValueThatCannotBeEncoded(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("mustJSON returned for a channel")
+		}
+	}()
+	mustJSON(make(chan int))
+}

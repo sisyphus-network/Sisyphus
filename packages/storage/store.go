@@ -55,11 +55,24 @@ type Store struct {
 	lock   *flock.Flock // nil for stores that are not on disk
 }
 
-// OpenLocal opens, creating if needed, a store kept in dir on this machine.
+// OpenLocal opens, creating if needed, a durable store kept in dir on this
+// machine: a blob that Put has returned survives a crash or power loss.
 // Only one process may have a directory open at a time.
 func OpenLocal(dir string) (*Store, error) {
+	return openDisk(dir, true)
+}
+
+// OpenCache opens a store in dir for blobs that can be fetched again from
+// somewhere else. It does not wait for the disk on every write, which makes
+// storing several times faster, and in exchange nothing in it is trusted
+// after a restart: whatever dir held before is discarded on opening.
+func OpenCache(dir string) (*Store, error) {
+	return openDisk(dir, false)
+}
+
+func openDisk(dir string, durable bool) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open blob store %s: %w", dir, err)
 	}
 	lock := flock.New(filepath.Join(dir, "LOCK"))
 	locked, err := lock.TryLock()
@@ -69,8 +82,18 @@ func OpenLocal(dir string) (*Store, error) {
 	if !locked {
 		return nil, fmt.Errorf("open blob store %s: in use by another process", dir)
 	}
-	// The same on-disk layout Kubo uses for its block store.
-	ds, err := flatfs.CreateOrOpen(filepath.Join(dir, "blocks"), flatfs.NextToLast(2), true)
+	blocks := filepath.Join(dir, "blocks")
+	if !durable {
+		// Blocks written without syncing may be incomplete after a crash,
+		// and nothing records whether the last run ended cleanly.
+		if err := os.RemoveAll(blocks); err != nil {
+			lock.Unlock()
+			return nil, fmt.Errorf("open blob store %s: %w", dir, err)
+		}
+	}
+	// The same on-disk layout Kubo uses for its block store. A durable store
+	// syncs every block file as it is written.
+	ds, err := flatfs.CreateOrOpen(blocks, flatfs.NextToLast(2), durable)
 	if err != nil {
 		lock.Unlock()
 		return nil, fmt.Errorf("open blob store %s: %w", dir, err)
@@ -110,10 +133,9 @@ func (s *Store) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
 		CidBuilder: cidBuilder,
 		Dagserv:    contextDAG{ctx: ctx, DAGService: s.dag},
 	}
-	builder, err := params.New(chunker.NewSizeSplitter(r, chunkSize))
-	if err != nil {
-		return cid.Undef, err
-	}
+	// New fails only when asked to reference files in place, which this
+	// never does.
+	builder, _ := params.New(chunker.NewSizeSplitter(r, chunkSize))
 	root, err := balanced.Layout(builder)
 	if err != nil {
 		return cid.Undef, err
