@@ -5,9 +5,6 @@ import tailwindcss from '@tailwindcss/vite'
 import { nodeBrowserApiPlugin } from './dev/node-browser-api'
 
 const protoSource = resolve(__dirname, '../../proto/sisyphus/node/v1/node.proto')
-const protoTarget = resolve(__dirname, 'resources/proto/sisyphus/node/v1/node.proto')
-mkdirSync(resolve(__dirname, 'resources/proto/sisyphus/node/v1'), { recursive: true })
-copyFileSync(protoSource, protoTarget)
 const logoSource = resolve(__dirname, '../../assets/logo.png')
 const logoTarget = resolve(__dirname, 'src/renderer/public/logo.png')
 mkdirSync(resolve(__dirname, 'src/renderer/public'), { recursive: true })
@@ -22,7 +19,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
-    plugins: [tailwindcss(), nodeBrowserApiPlugin(protoTarget)],
+    plugins: [tailwindcss(), nodeBrowserApiPlugin(protoSource)],
     server: {
       host: process.env.SISYPHUS_DEV_HOST ?? '127.0.0.1',
     },

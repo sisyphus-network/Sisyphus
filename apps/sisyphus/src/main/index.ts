@@ -1,13 +1,13 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
+import * as protobuf from 'protobufjs'
+import nodeProtoSource from '../../../../proto/sisyphus/node/v1/node.proto?raw'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
-const protoPath = app.isPackaged
-  ? join(process.resourcesPath, 'proto/sisyphus/node/v1/node.proto')
-  : resolve(here, '../../resources/proto/sisyphus/node/v1/node.proto')
+const nodeProtoJson = protobuf.parse(nodeProtoSource).root.toJSON()
 const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
 
 type Peer = {
@@ -96,7 +96,7 @@ function connectToNode() {
   publish({ status: 'connecting', error: null })
 
   try {
-    const definition = protoLoader.loadSync(protoPath, {
+    const definition = protoLoader.fromJSON(nodeProtoJson, {
       keepCase: false,
       longs: String,
       enums: String,
@@ -155,6 +155,7 @@ function createWindow() {
       sandbox: true,
     },
   })
+  window.removeMenu()
 
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   if (process.env.ELECTRON_RENDERER_URL) {

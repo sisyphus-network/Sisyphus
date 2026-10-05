@@ -95,41 +95,15 @@ Full-worker mode suits workloads that cannot be split safely, need one machine's
 
 The UI is a client, not a compute runtime. The daemon owns hardware access, workload execution, jobs, results, and node-local state.
 
-- **Electron desktop:** connects to the local `sisyphusd` and can expose local-machine capabilities through an Electron bridge.
+- **Sisyphus desktop:** the Electron + React client connects to the local `sisyphusd` over gRPC. The Electron main process owns the gRPC connection and exposes a narrow, isolated bridge to the renderer. The first screen visualizes node identity, daemon connectivity, and live peer state.
 - **Public Web UI:** can show public network information without requiring a personal node.
 - **Web UI with a linked node:** can control the user's personal node over a direct connection when possible, with a relay as fallback.
 
 Chats, model settings, and jobs belong to the relevant personal node. The Web UI presents and controls that state when connected; public visitors do not gain access to private node data.
 
-### Protocol
+For daemon-specific implementation and development details—including networking, storage, AI provider configuration, and run instructions—see [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md).
 
-Protocol Buffer schemas define Sisyphus messages and service contracts. gRPC is the primary RPC transport for daemon-to-daemon and native client communication, including streaming job and AI events. Browser clients may require a browser-compatible transport or gateway while reusing the same message definitions where practical.
-
-The `sisyphusd` AI layer calls model providers locally and translates their output into Sisyphus plans and events. Provider credentials stay on the personal node and are never sent to compute workers.
-
-## Local storage and future chain state
-
-For V0, each daemon needs durable storage for conversations, jobs, task graphs, node and model configuration, execution metadata, and coordinator state. SQLite is the proposed embedded database for this local state. Large datasets, model artifacts, and job outputs should live in files or blob storage, with identifiers and content hashes recorded in the database.
-
-If Sisyphus later adds a blockchain, consensus-critical records such as balances, settlements, and provider reputation will need authenticated protocol state. Its storage engine can be chosen with the chain implementation; RocksDB is one possible option. The database itself does not make state trustworthy: that depends on signed transactions, consensus, deterministic state transitions, and cryptographic commitments and proofs.
-
-```text
-V0 node state      → SQLite
-Large artifacts    → files / blob storage, referenced by content hash
-Future chain state → chain-specific database + authenticated commitments
-```
-
-## AI providers
-
-The node owner configures the provider, model, and credentials on their personal `sisyphusd`. V0 is bring-your-own-key (BYOK), with initial adapters planned for Ollama and the OpenAI API. The daemon owns provider calls; the UI only configures the node and displays streamed responses.
-
-The AI integration should be replaceable behind a small provider interface supporting streaming, tool calls, and structured plans. This keeps planning and compute orchestration independent from a single model vendor. Managed inference and billing may be added later as an optional convenience.
-
-## Workloads and runtimes
-
-Workloads can depend on very different software and hardware: Python, CUDA, PyTorch, GROMACS, Qiskit, Blender, and specific library versions. V0 keeps the environment fixed across trusted machines and supports a small set of known workloads.
-
-Longer term, a managed runtime should let a workload describe its requirements and run across supported CPU and GPU backends without every user manually installing each dependency. Runtime portability, broad heterogeneous hardware support, and arbitrary untrusted workloads come after the basic network loop works.
+Workload portability and managed runtimes are longer-term goals. V0 uses a fixed environment across a small number of trusted machines; a universal runtime is not a prerequisite for proving the basic network loop.
 
 ## V0: prove the loop
 
@@ -167,23 +141,27 @@ V0 deliberately excludes:
 - A universal runtime for arbitrary workloads.
 - IPFS, quantum workloads, and a large decentralized protocol stack.
 
-## Monorepo
+## Repository layout
 
 ```text
 sisyphus/
 ├── apps/
-│   ├── sisyphusd/        # daemon: API, coordinator, planner, worker
-│   └── desktop/          # Electron + React client
+│   ├── sisyphusd/        # Rust daemon
+│   │   ├── Cargo.toml
+│   │   ├── README.md     # daemon design, local gRPC API, and development
+│   │   ├── migrations/
+│   │   └── src/          # daemon, networking, RPC, and storage modules
+│   └── sisyphus/         # Sisyphus Electron + React desktop client
 ├── packages/
 │   ├── protocol/         # generated/shared protocol code
 │   ├── job-model/        # jobs, task graphs, results, state types
 │   ├── planner/          # planning interfaces and schemas
 │   └── runtime/          # workload execution abstractions
-├── proto/                # Protocol Buffer service and message definitions
+├── proto/                # versioned Protocol Buffer API definitions
 └── README.md
 ```
 
-This is one product and one repository. The daemon owns execution and state; clients use its protocol to observe and control nodes.
+This is one product and one repository: **Sisyphus** is the product and desktop app; **`sisyphusd`** is the headless node daemon. The daemon owns node identity and networking today; API, coordinator, planner, and worker modules will be added when those responsibilities are implemented. Clients will use the daemon protocol to observe and control nodes. Daemon-specific guidance lives in [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md), and desktop development details in [`apps/sisyphus/README.md`](apps/sisyphus/README.md).
 
 ## Project status
 
