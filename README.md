@@ -178,6 +178,7 @@ sisyphus/
 │   ├── protocol/         # Go code generated from proto/
 │   ├── identity/         # node key pairs and IDs
 │   ├── job-model/        # job and task state machines
+│   ├── kubo/             # running and calling a Kubo (IPFS) daemon
 │   ├── runtime/          # the Workload interface and built-in workloads
 │   ├── storage/          # content-addressed blob store, pins, garbage collection
 │   └── planner/          # planning interfaces and schemas (not started)
@@ -200,6 +201,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Content-addressed storage for job data. Files are named by the same CID that `ipfs add --cid-version=1` gives them and laid out on disk as Kubo lays them out, without yet joining the IPFS network.
 - Jobs that pass large inputs and outputs by CID; workers fetch, verify and cache them.
 - Pins, retention periods, garbage collection and disk limits, so a node keeps data only as long as something needs it.
+- Optionally, a Kubo (IPFS) daemon run beside a coordinator to hold its data, as the same peer as the node. It is kept offline for now.
 - Encrypted connections between nodes, each identified by its own key; nodes join a pool by invitation, as a worker or a client, and can be removed.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.

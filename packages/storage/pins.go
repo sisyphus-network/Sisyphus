@@ -12,7 +12,6 @@ import (
 
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-datastore"
 	ipld "github.com/ipfs/go-ipld-format"
 )
 
@@ -116,7 +115,7 @@ func (s *Store) Pins() []Pin {
 // Size returns how many bytes the store occupies on disk. It is zero for a
 // store that is not on disk.
 func (s *Store) Size(ctx context.Context) (uint64, error) {
-	return datastore.DiskUsage(ctx, s.ds)
+	return s.size(ctx)
 }
 
 // Collected reports what a garbage collection removed.

@@ -53,8 +53,11 @@ var ErrNotFound = errors.New("blob not found")
 type Store struct {
 	blocks blockstore.Blockstore
 	dag    ipld.DAGService
-	ds     datastore.Batching
-	lock   *flock.Flock // nil for stores that are not on disk
+	// size reports how much disk the blocks occupy, and close releases
+	// whatever holds them.
+	size  func(context.Context) (uint64, error)
+	close func() error
+	lock  *flock.Flock // nil for stores that hold no directory of their own
 
 	// gcMu lets garbage collection run alone: storing and pinning hold it
 	// shared, collection holds it exclusively.
@@ -121,21 +124,30 @@ func NewMemory() *Store {
 	return newStore(dssync.MutexWrap(datastore.NewMapDatastore()), nil, false)
 }
 
-// newStore builds a store over ds. With overwrite set, storing a block the
-// store already has writes it again instead of leaving the old copy.
+// newStore builds a store whose blocks are kept in the datastore ds. With
+// overwrite set, storing a block the store already has writes it again
+// instead of leaving the old copy.
 func newStore(ds datastore.Batching, lock *flock.Flock, overwrite bool) *Store {
 	blocks := blockstore.NewBlockstore(ds, blockstore.NoPrefix(), blockstore.WriteThrough(overwrite))
+	store := newStoreOver(blocks, overwrite)
+	store.size = func(ctx context.Context) (uint64, error) { return datastore.DiskUsage(ctx, ds) }
+	store.close = ds.Close
+	store.lock = lock
+	return store
+}
+
+// newStoreOver builds a store on any place blocks can be kept. The caller
+// fills in how to measure and close it.
+func newStoreOver(blocks blockstore.Blockstore, overwrite bool) *Store {
 	return &Store{
 		blocks: blocks,
 		dag:    merkledag.NewDAGService(blockservice.New(blocks, offline.Exchange(blocks), blockservice.WriteThrough(overwrite))),
-		ds:     ds,
-		lock:   lock,
 		pins:   make(map[pinKey]time.Time),
 	}
 }
 
 func (s *Store) Close() error {
-	err := s.ds.Close()
+	err := s.close()
 	if s.lock != nil {
 		err = errors.Join(err, s.lock.Unlock())
 	}

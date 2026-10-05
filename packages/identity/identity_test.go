@@ -12,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 func create(t *testing.T) (*Identity, string) {
@@ -218,5 +221,20 @@ func TestFailingToPutTheKeyInPlaceIsReported(t *testing.T) {
 	}
 	if _, _, err := LoadOrCreate(filepath.Join(t.TempDir(), "node.key")); err == nil {
 		t.Error("LoadOrCreate reported success with no key on disk")
+	}
+}
+
+func TestLibp2pKeyEncodesTheSameIdentity(t *testing.T) {
+	id, _ := create(t)
+	private, err := crypto.UnmarshalPrivateKey(id.Libp2pKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := peer.IDFromPrivateKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if derived.String() != id.ID() {
+		t.Errorf("the libp2p key belongs to %s, the node is %s", derived, id.ID())
 	}
 }

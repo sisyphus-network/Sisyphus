@@ -1,0 +1,194 @@
+// Package kubo runs and talks to Kubo, the reference IPFS implementation, as
+// a separate process beside sisyphusd.
+package kubo
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
+// ErrNotFound reports that Kubo does not have a block.
+var ErrNotFound = errors.New("block not found")
+
+// Client calls a Kubo daemon's RPC API, the one the ipfs command itself
+// uses. Blocks and CIDs pass through it as plain bytes and strings.
+type Client struct {
+	base string
+	http *http.Client
+}
+
+// NewClient returns a client for the Kubo API listening at addr, a host and
+// port such as "127.0.0.1:5001".
+func NewClient(addr string) *Client {
+	return &Client{base: "http://" + addr + "/api/v0/", http: &http.Client{}}
+}
+
+// call makes one API call and returns its response body, which the caller
+// must close. Kubo reports failures as a JSON object with an HTTP error
+// status; those come back as errors.
+func (c *Client) call(ctx context.Context, command string, args url.Values, body io.Reader, contentType string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+command+"?"+args.Encode(), body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	res, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("kubo %s: %w", command, err)
+	}
+	if res.StatusCode == http.StatusOK {
+		return res.Body, nil
+	}
+	defer res.Body.Close()
+	var failure struct{ Message string }
+	text, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+	if json.Unmarshal(text, &failure) != nil || failure.Message == "" {
+		failure.Message = strings.TrimSpace(string(text))
+	}
+	if strings.Contains(failure.Message, "not found") || strings.Contains(failure.Message, "could not find") {
+		return nil, fmt.Errorf("kubo %s: %w", command, ErrNotFound)
+	}
+	return nil, fmt.Errorf("kubo %s: %s (HTTP %d)", command, failure.Message, res.StatusCode)
+}
+
+// callJSON makes a call whose response is one JSON object and decodes it.
+func (c *Client) callJSON(ctx context.Context, command string, args url.Values, into any) error {
+	body, err := c.call(ctx, command, args, nil, "")
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	if err := json.NewDecoder(body).Decode(into); err != nil {
+		return fmt.Errorf("kubo %s: reading the reply: %w", command, err)
+	}
+	return nil
+}
+
+// ID returns the peer ID of the Kubo node.
+func (c *Client) ID(ctx context.Context) (string, error) {
+	var reply struct{ ID string }
+	err := c.callJSON(ctx, "id", nil, &reply)
+	return reply.ID, err
+}
+
+// BlockPut stores one block and returns the CID Kubo gave it. codec is the
+// block's format, "raw" or "dag-pb"; the CID is version 1 with a SHA-256
+// hash.
+func (c *Client) BlockPut(ctx context.Context, codec string, data []byte) (string, error) {
+	var form bytes.Buffer
+	writer := multipart.NewWriter(&form)
+	part, _ := writer.CreateFormFile("data", "block") // writing to a buffer cannot fail
+	part.Write(data)
+	writer.Close()
+
+	args := url.Values{"cid-codec": {codec}, "mhtype": {"sha2-256"}, "pin": {"false"}}
+	body, err := c.call(ctx, "block/put", args, &form, writer.FormDataContentType())
+	if err != nil {
+		return "", err
+	}
+	defer body.Close()
+	var reply struct{ Key string }
+	if err := json.NewDecoder(body).Decode(&reply); err != nil {
+		return "", fmt.Errorf("kubo block/put: reading the reply: %w", err)
+	}
+	return reply.Key, nil
+}
+
+// BlockGet returns a block's bytes, or ErrNotFound. Unless the daemon is
+// offline, a block it does not hold is looked for among its peers first,
+// for as long as ctx allows.
+func (c *Client) BlockGet(ctx context.Context, id string) ([]byte, error) {
+	body, err := c.call(ctx, "block/get", url.Values{"arg": {id}}, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("kubo block/get: %w", err)
+	}
+	return data, nil
+}
+
+// BlockSize returns the size of a block the daemon itself holds, or
+// ErrNotFound. It never asks peers.
+func (c *Client) BlockSize(ctx context.Context, id string) (int, error) {
+	var reply struct{ Size int }
+	err := c.callJSON(ctx, "block/stat", url.Values{"arg": {id}, "offline": {"true"}}, &reply)
+	return reply.Size, err
+}
+
+// BlockRemove deletes a block. Removing one that is not there is not an
+// error.
+func (c *Client) BlockRemove(ctx context.Context, id string) error {
+	body, err := c.call(ctx, "block/rm", url.Values{"arg": {id}, "force": {"true"}}, nil, "")
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	// Kubo answers 200 and reports a failed removal in the body.
+	var reply struct{ Error string }
+	json.NewDecoder(body).Decode(&reply)
+	if reply.Error != "" {
+		return fmt.Errorf("kubo block/rm: %s", reply.Error)
+	}
+	return nil
+}
+
+// LocalBlocks calls visit with the CID of every block the daemon holds,
+// until visit returns false or the blocks run out.
+func (c *Client) LocalBlocks(ctx context.Context, visit func(id string) bool) error {
+	body, err := c.call(ctx, "refs/local", nil, nil, "")
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	lines := bufio.NewScanner(body)
+	for lines.Scan() {
+		var entry struct{ Ref, Err string }
+		if err := json.Unmarshal(lines.Bytes(), &entry); err != nil {
+			return fmt.Errorf("kubo refs/local: reading the reply: %w", err)
+		}
+		if entry.Err != "" {
+			return fmt.Errorf("kubo refs/local: %s", entry.Err)
+		}
+		if !visit(entry.Ref) {
+			return nil
+		}
+	}
+	if err := lines.Err(); err != nil {
+		return fmt.Errorf("kubo refs/local: %w", err)
+	}
+	return nil
+}
+
+// Pinned calls visit with the CID of every block Kubo itself has pinned,
+// directly or as part of something pinned.
+func (c *Client) Pinned(ctx context.Context, visit func(id string)) error {
+	var reply struct{ Keys map[string]json.RawMessage }
+	if err := c.callJSON(ctx, "pin/ls", url.Values{"type": {"all"}}, &reply); err != nil {
+		return err
+	}
+	for id := range reply.Keys {
+		visit(id)
+	}
+	return nil
+}
+
+// RepoSize returns how many bytes the daemon's repository occupies.
+func (c *Client) RepoSize(ctx context.Context) (uint64, error) {
+	var reply struct{ RepoSize uint64 }
+	err := c.callJSON(ctx, "repo/stat", url.Values{"size-only": {"true"}}, &reply)
+	return reply.RepoSize, err
+}
