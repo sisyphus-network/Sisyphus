@@ -22,6 +22,7 @@ const (
 	BlobService_Put_FullMethodName            = "/sisyphus.v1.BlobService/Put"
 	BlobService_Get_FullMethodName            = "/sisyphus.v1.BlobService/Get"
 	BlobService_Stat_FullMethodName           = "/sisyphus.v1.BlobService/Stat"
+	BlobService_Locate_FullMethodName         = "/sisyphus.v1.BlobService/Locate"
 	BlobService_Pin_FullMethodName            = "/sisyphus.v1.BlobService/Pin"
 	BlobService_Unpin_FullMethodName          = "/sisyphus.v1.BlobService/Unpin"
 	BlobService_ListPins_FullMethodName       = "/sisyphus.v1.BlobService/ListPins"
@@ -42,6 +43,11 @@ type BlobServiceClient interface {
 	// they received hashes to the CID they asked for.
 	Get(ctx context.Context, in *GetBlobRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetBlobResponse], error)
 	Stat(ctx context.Context, in *StatBlobRequest, opts ...grpc.CallOption) (*StatBlobResponse, error)
+	// Locate names other workers of the pool believed to hold a blob and
+	// willing to serve it, so that a worker can fetch it from one of them
+	// rather than from the coordinator. The answer is a hint: a worker listed
+	// may have dropped the blob since.
+	Locate(ctx context.Context, in *LocateBlobRequest, opts ...grpc.CallOption) (*LocateBlobResponse, error)
 	// A node keeps a blob for as long as something pins it. Pin and Unpin act
 	// on the pin held on behalf of the node's user; jobs hold their own.
 	Pin(ctx context.Context, in *PinBlobRequest, opts ...grpc.CallOption) (*PinBlobResponse, error)
@@ -102,6 +108,16 @@ func (c *blobServiceClient) Stat(ctx context.Context, in *StatBlobRequest, opts 
 	return out, nil
 }
 
+func (c *blobServiceClient) Locate(ctx context.Context, in *LocateBlobRequest, opts ...grpc.CallOption) (*LocateBlobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LocateBlobResponse)
+	err := c.cc.Invoke(ctx, BlobService_Locate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *blobServiceClient) Pin(ctx context.Context, in *PinBlobRequest, opts ...grpc.CallOption) (*PinBlobResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PinBlobResponse)
@@ -156,6 +172,11 @@ type BlobServiceServer interface {
 	// they received hashes to the CID they asked for.
 	Get(*GetBlobRequest, grpc.ServerStreamingServer[GetBlobResponse]) error
 	Stat(context.Context, *StatBlobRequest) (*StatBlobResponse, error)
+	// Locate names other workers of the pool believed to hold a blob and
+	// willing to serve it, so that a worker can fetch it from one of them
+	// rather than from the coordinator. The answer is a hint: a worker listed
+	// may have dropped the blob since.
+	Locate(context.Context, *LocateBlobRequest) (*LocateBlobResponse, error)
 	// A node keeps a blob for as long as something pins it. Pin and Unpin act
 	// on the pin held on behalf of the node's user; jobs hold their own.
 	Pin(context.Context, *PinBlobRequest) (*PinBlobResponse, error)
@@ -182,6 +203,9 @@ func (UnimplementedBlobServiceServer) Get(*GetBlobRequest, grpc.ServerStreamingS
 }
 func (UnimplementedBlobServiceServer) Stat(context.Context, *StatBlobRequest) (*StatBlobResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Stat not implemented")
+}
+func (UnimplementedBlobServiceServer) Locate(context.Context, *LocateBlobRequest) (*LocateBlobResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Locate not implemented")
 }
 func (UnimplementedBlobServiceServer) Pin(context.Context, *PinBlobRequest) (*PinBlobResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Pin not implemented")
@@ -248,6 +272,24 @@ func _BlobService_Stat_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BlobServiceServer).Stat(ctx, req.(*StatBlobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlobService_Locate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LocateBlobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlobServiceServer).Locate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlobService_Locate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlobServiceServer).Locate(ctx, req.(*LocateBlobRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -334,6 +376,10 @@ var BlobService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Stat",
 			Handler:    _BlobService_Stat_Handler,
+		},
+		{
+			MethodName: "Locate",
+			Handler:    _BlobService_Locate_Handler,
 		},
 		{
 			MethodName: "Pin",

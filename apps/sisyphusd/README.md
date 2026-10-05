@@ -121,6 +121,21 @@ bin/sisyphusd job submit --workload wordcount --params "{\"input\":\"$cid\"}"
 bin/sisyphusd blob get <output CID from the result> | head
 ```
 
+### Workers serving each other
+
+A worker normally downloads a job's input from its coordinator. Started with `--serve`, it also lets the other workers of its pool download from it what it has cached, and every worker asks the coordinator who else holds a blob before asking the coordinator for the blob itself:
+
+```sh
+bin/sisyphusd run --role worker --coordinator <addr> --join <invitation> \
+    --serve 0.0.0.0:7701 --advertise <this-machine's-address>:7701
+```
+
+- `--serve` is where it listens; `--advertise` is the address other workers are told, needed when `--serve` names every interface.
+- A worker serves only nodes the coordinator confirms are members of the pool, only reads, and over the same encrypted, identified connections as everything else. What it receives is checked against its CID, so a worker cannot pass off different data.
+- The coordinator's knowledge of who holds what comes from which workers ran tasks that used a blob. It is a hint; if no worker named can supply the blob, the coordinator does.
+- A node removed from the pool may be served by a worker for up to a minute more, which is how long a worker remembers that a node is a member.
+- This needs no Kubo. With `--kubo` the pool's private IPFS network does the same job and is tried first.
+
 ### Kubo and the pool's private IPFS network
 
 By default a node keeps blocks in files of its own and sends them to other nodes itself. With `--kubo` it instead starts [Kubo](https://github.com/ipfs/kubo), the main IPFS implementation, beside itself, keeps its blocks there, and lets the pool's Kubo daemons exchange them directly. The `ipfs` program must be installed on every node that uses it.
@@ -209,4 +224,5 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - Whatever is on the pool's private network can be read by every member of it. The network keeps outsiders out; it does not keep members apart.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - A worker downloads a whole input even when its tasks need only part of it.
+- Workers that serve each other need a port of their own open to the other workers.
 - Without `--max-cache-bytes` a worker's cache grows until the disk is full. The limit is not strict: blobs that tasks have open are kept even if they alone exceed it.

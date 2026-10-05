@@ -5,6 +5,7 @@ Things to run against a pool, and a pool to run them against.
 | File | What it is |
 | --- | --- |
 | `local-pool.sh` | Starts a coordinator and two workers on this machine and leaves them running. `--kubo` gives each node Kubo and the pool a private IPFS network. |
+| `tmux-pool.sh` | The same in one terminal: the pool in one tmux pane, a shell ready to use it in another. |
 | `wordcount.sh` | Stores a file on the pool, counts its words across the workers, and prints the most frequent. |
 | `primes.sh` | Counts primes below a number, split across the pool and then as one task, to compare. |
 | `big-file.sh` | Makes a large text file to time jobs with. |
@@ -13,11 +14,21 @@ Things to run against a pool, and a pool to run them against.
 
 ## On one machine
 
+In one terminal, with tmux:
+
+```sh
+examples/tmux-pool.sh
+```
+
+The left pane runs the pool; the right is a shell already pointed at it. Leave with `Ctrl-b d`, which keeps it running, or end it and the pool with `tmux kill-session -t sisyphus`.
+
+Or in two terminals:
+
 ```sh
 examples/local-pool.sh            # terminal 1; Ctrl-C stops it
 ```
 
-It prints two variables to set in another terminal, and then:
+It prints two variables to set in the other terminal. Either way, then:
 
 ```sh
 examples/wordcount.sh                               # the sample text

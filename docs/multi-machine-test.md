@@ -83,7 +83,20 @@ sisyphusd job submit --tasks 24 --params '{"from":0,"to":20000000000}'
 
 ✎ Did tasks run on every worker?
 
-### 4. Break things
+### 4. Let workers serve each other
+
+Optional, and needs TCP port 7701 open on each worker to the others. Stop the workers and start each again with two more flags, giving its own address:
+
+```sh
+sisyphusd run --role worker --coordinator COORD:7700 --name <a-name> \
+    --serve 0.0.0.0:7701 --advertise <this-worker's-address>:7701
+```
+
+Run `wordcount` on a new big file with one worker stopped, start that worker, and run it again.
+
+✎ The second run makes the late worker fetch the file. With `-v` on the coordinator there is no direct sign of where from, so compare the time with step 3's first run: it should not be slower. A worker that cannot be reached on 7701 is simply skipped and the coordinator supplies the file.
+
+### 5. Break things
 
 Each of these has a right answer. Note any that go otherwise.
 
@@ -96,7 +109,7 @@ Each of these has a right answer. Note any that go otherwise.
 | On the coordinator: `sisyphusd pool remove <worker-id>`. | That worker's process exits saying it was removed. `sisyphusd nodes` no longer lists it. Restarting it is refused. |
 | Stop the coordinator mid-job and start it again. | The job is gone: jobs are not yet saved. Workers reconnect by themselves within half a minute. Stored files and pins are still there (`sisyphusd blob pins`). |
 
-### 5. Use the pool from another machine
+### 6. Use the pool from another machine
 
 On the coordinator:
 

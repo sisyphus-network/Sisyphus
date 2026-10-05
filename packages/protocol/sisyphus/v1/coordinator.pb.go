@@ -123,7 +123,10 @@ type Hello struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	Capabilities *NodeCapabilities      `protobuf:"bytes,2,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
 	// A label for people to recognise the node by. It need not be unique.
-	Name          string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Name string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	// Where other workers of the pool can fetch blobs from this one, as
+	// host:port, or empty if it does not serve them.
+	ServeAddress  string `protobuf:"bytes,4,opt,name=serve_address,json=serveAddress,proto3" json:"serve_address,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -168,6 +171,13 @@ func (x *Hello) GetCapabilities() *NodeCapabilities {
 func (x *Hello) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *Hello) GetServeAddress() string {
+	if x != nil {
+		return x.ServeAddress
 	}
 	return ""
 }
@@ -618,10 +628,11 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\theartbeat\x18\x02 \x01(\v2\x16.sisyphus.v1.HeartbeatH\x00R\theartbeat\x12:\n" +
 	"\vtask_result\x18\x03 \x01(\v2\x17.sisyphus.v1.TaskResultH\x00R\n" +
 	"taskResultB\x06\n" +
-	"\x04kind\"d\n" +
+	"\x04kind\"\x89\x01\n" +
 	"\x05Hello\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04nameJ\x04\b\x01\x10\x02\"0\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12#\n" +
+	"\rserve_address\x18\x04 \x01(\tR\fserveAddressJ\x04\b\x01\x10\x02\"0\n" +
 	"\tHeartbeat\x12#\n" +
 	"\rrunning_tasks\x18\x01 \x01(\rR\frunningTasks\"\xc0\x01\n" +
 	"\n" +

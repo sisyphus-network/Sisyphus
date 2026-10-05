@@ -30,6 +30,10 @@ var allowed = map[string][]Role{
 	pb.BlobService_Put_FullMethodName:  {Worker, Client},
 	pb.BlobService_Get_FullMethodName:  {Worker, Client},
 	pb.BlobService_Stat_FullMethodName: {Worker, Client},
+	// Workers fetch from each other, and ask who is a fellow member before
+	// serving one that asks.
+	pb.BlobService_Locate_FullMethodName:   {Worker},
+	pb.PoolService_IsMember_FullMethodName: {Worker},
 
 	pb.BlobService_Pin_FullMethodName:            {Client},
 	pb.BlobService_Unpin_FullMethodName:          {Client},
@@ -45,9 +49,9 @@ var allowed = map[string][]Role{
 // anyone stands for a node that has no role yet.
 const anyone Role = ""
 
-// authorize identifies the caller of a method and checks it may call it,
-// returning the caller's ID.
-func (l *List) authorize(ctx context.Context, method string) (string, error) {
+// Identify returns the node ID of whoever is making the call that ctx
+// belongs to, from the key it connected with.
+func Identify(ctx context.Context) (string, error) {
 	p, _ := peer.FromContext(ctx)
 	var tlsInfo credentials.TLSInfo
 	if p != nil {
@@ -56,6 +60,16 @@ func (l *List) authorize(ctx context.Context, method string) (string, error) {
 	id, err := identity.PeerID(tlsInfo.State)
 	if err != nil {
 		return "", status.Errorf(codes.Unauthenticated, "cannot tell who is calling: %v", err)
+	}
+	return id, nil
+}
+
+// authorize identifies the caller of a method and checks it may call it,
+// returning the caller's ID.
+func (l *List) authorize(ctx context.Context, method string) (string, error) {
+	id, err := Identify(ctx)
+	if err != nil {
+		return "", err
 	}
 	role, _ := l.Role(id)
 	if role == Owner {

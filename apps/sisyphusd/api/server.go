@@ -47,7 +47,7 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	)...)
 	pb.RegisterCoordinatorServiceServer(srv, cfg.Coordinator)
 	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: cfg.Coordinator})
-	pb.RegisterBlobServiceServer(srv, &blobService{store: cfg.Store, quota: cfg.MaxStoreBytes})
+	pb.RegisterBlobServiceServer(srv, &blobService{store: cfg.Store, quota: cfg.MaxStoreBytes, holders: cfg.Coordinator.Holders})
 	pb.RegisterPoolServiceServer(srv, &poolService{
 		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm,
 	})

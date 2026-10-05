@@ -42,6 +42,9 @@ type Worker struct {
 	Workloads *runtime.Registry
 	// Blobs is the stored data this node's tasks can read and write.
 	Blobs runtime.Blobs
+	// ServeAddress, if not empty, is where other workers of the pool can
+	// fetch blobs from this one.
+	ServeAddress string
 	// OnSwarm, if set, is called with the fingerprint of the key of the
 	// pool's private IPFS network whenever the coordinator states it: on
 	// joining, and when the key changes. It must not block for long.
@@ -116,6 +119,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
 		Name:         w.Name,
 		Capabilities: w.capabilities(),
+		ServeAddress: w.ServeAddress,
 	}}})
 
 	var running atomic.Int32

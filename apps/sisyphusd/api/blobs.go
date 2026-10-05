@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/storage"
 )
@@ -28,6 +29,9 @@ type blobService struct {
 	store blobStore
 	// quota is the most disk the store may use; zero means no limit.
 	quota uint64
+	// holders names the workers likely to hold a blob, other than the one
+	// asking.
+	holders func(blob, asker string) []*pb.BlobHolder
 }
 
 // blobStore is the part of a storage.Store that the service uses.
@@ -113,6 +117,10 @@ func (s *blobService) Get(req *pb.GetBlobRequest, stream grpc.ServerStreamingSer
 			return status.Errorf(codes.Internal, "read blob: %v", err)
 		}
 	}
+}
+
+func (s *blobService) Locate(ctx context.Context, req *pb.LocateBlobRequest) (*pb.LocateBlobResponse, error) {
+	return &pb.LocateBlobResponse{Holders: s.holders(req.GetCid(), access.Caller(ctx))}, nil
 }
 
 func (s *blobService) Stat(ctx context.Context, req *pb.StatBlobRequest) (*pb.StatBlobResponse, error) {

@@ -36,6 +36,7 @@ func (p *pool) connectRaw(first *pb.WorkerMessage) *rawWorker {
 	ident, creds := p.admit(access.Worker)
 	w := p.connectRawAs(creds, first)
 	w.id = ident.ID()
+	p.rawIdents[w] = ident
 	return w
 }
 
