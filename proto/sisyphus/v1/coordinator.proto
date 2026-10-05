@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package sisyphus.v1;
+
+import "sisyphus/v1/types.proto";
+
+option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+
+// CoordinatorService is the worker-facing side of a coordinator.
+service CoordinatorService {
+  // Connect is dialled by the worker and held open for as long as it belongs
+  // to the pool, so workers behind NAT need no inbound port. The first
+  // message on the stream must be a Hello.
+  rpc Connect(stream WorkerMessage) returns (stream CoordinatorMessage);
+}
+
+message WorkerMessage {
+  oneof kind {
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    TaskResult task_result = 3;
+  }
+}
+
+message Hello {
+  string node_id = 1;
+  NodeCapabilities capabilities = 2;
+}
+
+message Heartbeat {
+  uint32 running_tasks = 1;
+}
+
+message TaskResult {
+  string task_id = 1;
+  // Echoes TaskAssignment.attempt so the coordinator can drop stale results.
+  uint32 attempt = 2;
+  oneof outcome {
+    bytes output = 3;
+    string error = 4;
+  }
+}
+
+message CoordinatorMessage {
+  oneof kind {
+    Welcome welcome = 1;
+    TaskAssignment assignment = 2;
+  }
+}
+
+message Welcome {
+  string coordinator_id = 1;
+}
+
+message TaskAssignment {
+  string task_id = 1;
+  string job_id = 2;
+  uint32 attempt = 3;
+  string workload = 4;
+  bytes payload = 5;
+}

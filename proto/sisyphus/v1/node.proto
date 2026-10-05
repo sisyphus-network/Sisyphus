@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package sisyphus.v1;
+
+import "sisyphus/v1/types.proto";
+
+option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+
+// NodeService is the client-facing API of a node running the coordinator
+// role. The CLI, desktop app and agents talk to it.
+service NodeService {
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+  // WatchJob sends the job's current state, then a fresh snapshot after
+  // every change, and closes once the job reaches a terminal state.
+  rpc WatchJob(WatchJobRequest) returns (stream WatchJobResponse);
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+}
+
+message SubmitJobRequest {
+  JobSpec spec = 1;
+}
+
+message SubmitJobResponse {
+  Job job = 1;
+}
+
+message GetJobRequest {
+  string job_id = 1;
+}
+
+message GetJobResponse {
+  Job job = 1;
+}
+
+message WatchJobRequest {
+  string job_id = 1;
+}
+
+message WatchJobResponse {
+  Job job = 1;
+}
+
+message ListNodesRequest {}
+
+message ListNodesResponse {
+  repeated NodeInfo nodes = 1;
+}
