@@ -31,12 +31,13 @@ func (j *Job) ToProto() *pb.Job {
 	}
 	for _, t := range j.Tasks {
 		out.Tasks = append(out.Tasks, &pb.Task{
-			TaskId:  t.ID,
-			Index:   uint32(t.Index),
-			State:   pb.TaskState(t.State + 1),
-			Attempt: uint32(t.Attempt),
-			NodeId:  t.NodeID,
-			Error:   t.Err,
+			TaskId:   t.ID,
+			Index:    uint32(t.Index),
+			State:    pb.TaskState(t.State + 1),
+			Attempt:  uint32(t.Attempt),
+			NodeId:   t.NodeID,
+			NodeName: t.NodeName,
+			Error:    t.Err,
 		})
 	}
 	return out

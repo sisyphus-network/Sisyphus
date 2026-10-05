@@ -188,7 +188,7 @@ func follow(t *testing.T, client pb.NodeServiceClient) (string, error) {
 func TestFollowingAJobThatFails(t *testing.T) {
 	started := time.Unix(1_700_000_000, 0)
 	task := func(state pb.TaskState, attempt uint32, reason string) []*pb.Task {
-		return []*pb.Task{{TaskId: "j/0", State: state, Attempt: attempt, NodeId: "a", Error: reason}}
+		return []*pb.Task{{TaskId: "j/0", State: state, Attempt: attempt, NodeId: "12D3KooWexample", NodeName: "a", Error: reason}}
 	}
 	client := &scriptedJobs{updates: []*pb.Job{
 		{JobId: "j", State: pb.JobState_JOB_STATE_RUNNING, Tasks: task(pb.TaskState_TASK_STATE_RUNNING, 1, "")},
@@ -232,13 +232,31 @@ func TestDaemonStartupFailures(t *testing.T) {
 	}
 	defer taken.Close()
 
+	// Data directories left in particular states by earlier runs.
+	withFile := func(name, content string) string {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	joinedBadAddr := withFile("known.json", `{"bad\u0000address":"12D3KooWexample"}`)
+	brokenKnown := withFile("known.json", "not json")
+	brokenAccess := withFile("access.json", "not json")
+
 	tests := []struct {
 		name string
 		args []string
 		want string
 	}{
 		{"the listen address is in use", []string{"--listen", taken.Addr().String()}, "address already in use"},
-		{"the coordinator address is unusable", []string{"--role", "worker", "--coordinator", badAddr}, "invalid control character"},
+		{"a worker has not joined its coordinator", []string{"--role", "worker", "--coordinator", "127.0.0.1:1"}, "has not joined a coordinator at 127.0.0.1:1"},
+		{"the address to join is unusable", []string{"--role", "worker", "--coordinator", badAddr, "--join", "12D3KooWexample:token"}, "invalid control character"},
+		{"an invitation is malformed", []string{"--role", "worker", "--coordinator", "127.0.0.1:1", "--join", "no-colon-here"}, "an invitation looks like"},
+		{"a coordinator is given an invitation", []string{"--join", "12D3KooWexample:token"}, "--join is for worker-only nodes"},
+		{"the joined coordinator's address is unusable", []string{"--role", "worker", "--coordinator", badAddr, "--data-dir", joinedBadAddr}, "invalid control character"},
+		{"the record of joined nodes is unreadable", []string{"--role", "worker", "--coordinator", "127.0.0.1:1", "--data-dir", brokenKnown}, "known nodes"},
+		{"the list of admitted nodes is unreadable", []string{"--listen", freeAddr(t), "--data-dir", brokenAccess}, "access list"},
 	}
 	for _, tt := range tests {
 		args := append([]string{"run", "--data-dir", t.TempDir()}, tt.args...)
@@ -248,14 +266,30 @@ func TestDaemonStartupFailures(t *testing.T) {
 	}
 }
 
-func TestDaemonStopsWhenItsCoordinatorRejectsIt(t *testing.T) {
+func TestDaemonStopsWhenItsCoordinatorRemovesIt(t *testing.T) {
 	addr := freeAddr(t)
-	startDaemon(t, "--listen", addr, "--node-id", "twin", "--slots", "1")
-	waitForOutput(t, "twin", "nodes", "--addr", addr)
+	startDaemon(t, "--role", "coordinator", "--listen", addr)
+	workerDir := t.TempDir()
+	invitation := invite(t, addr, "worker")
 
-	_, err := cli(t, "run", "--data-dir", t.TempDir(), "--role", "worker", "--coordinator", addr, "--node-id", "twin")
-	if err == nil || !strings.Contains(err.Error(), `coordinator rejected node "twin"`) {
-		t.Errorf("error %v, want the rejection", err)
+	// Run the worker here rather than through startDaemon, to see why it stops.
+	stopped := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		stopped <- run(ctx, []string{"run", "--data-dir", workerDir, "--role", "worker", "--coordinator", addr, "--join", invitation, "--name", "outcast"})
+	}()
+	waitForOutput(t, "outcast", "nodes", "--addr", addr)
+
+	workerID := strings.TrimSpace(mustCLI(t, "id", "--data-dir", workerDir))
+	mustCLI(t, "pool", "remove", "--addr", addr, workerID)
+
+	err := <-stopped
+	if err == nil || !strings.Contains(err.Error(), `coordinator rejected node "outcast"`) || !strings.Contains(err.Error(), "removed from the pool") {
+		t.Errorf("worker stopped with %v, want it to say it was removed", err)
+	}
+	if out := mustCLI(t, "nodes", "--addr", addr); out != "no workers connected\n" {
+		t.Errorf("the removed worker is still listed:\n%s", out)
 	}
 }
 
@@ -286,22 +320,17 @@ func TestVerboseDaemonLogsEachTask(t *testing.T) {
 	}
 }
 
-func TestDefaultNodeID(t *testing.T) {
+func TestDefaultName(t *testing.T) {
 	realHostname := hostname
 	defer func() { hostname = realHostname }()
 
 	hostname = func() (string, error) { return "rig", nil }
-	first, second := defaultNodeID(), defaultNodeID()
-	if !strings.HasPrefix(first, "rig-") || len(first) != len("rig-")+6 {
-		t.Errorf("node ID %q, want the hostname and a six-character suffix", first)
+	if got := defaultName(); got != "rig" {
+		t.Errorf("default name %q, want the host name", got)
 	}
-	if first == second {
-		t.Errorf("two node IDs on one host are both %q", first)
-	}
-
 	hostname = func() (string, error) { return "", errors.New("no hostname") }
-	if got := defaultNodeID(); !strings.HasPrefix(got, "node-") {
-		t.Errorf("node ID without a hostname is %q", got)
+	if got := defaultName(); got != "node" {
+		t.Errorf("default name without a host name is %q", got)
 	}
 }
 

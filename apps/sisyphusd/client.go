@@ -10,9 +10,6 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
@@ -25,12 +22,8 @@ var stdin io.Reader = os.Stdin
 // stderr is where usage and errors are printed; tests replace it.
 var stderr io.Writer = os.Stderr
 
-func connect(addr string) (*grpc.ClientConn, error) {
-	return grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-}
-
-func dial(addr string) (pb.NodeServiceClient, func(), error) {
-	conn, err := connect(addr)
+func dial(node *target) (pb.NodeServiceClient, func(), error) {
+	conn, err := node.connect()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -39,7 +32,7 @@ func dial(addr string) (pb.NodeServiceClient, func(), error) {
 
 func jobSubmit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd job submit", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "coordinator address")
+	node := targetFlags(fs)
 	workload := fs.String("workload", "primes", "workload to run")
 	params := fs.String("params", "", `workload parameters, e.g. '{"from":0,"to":100000000}' for primes`)
 	mode := fs.String("mode", "distributed", "distributed (split across workers) or full-worker (whole job on one worker)")
@@ -62,7 +55,7 @@ func jobSubmit(ctx context.Context, args []string) error {
 		return fmt.Errorf("unknown mode %q", *mode)
 	}
 
-	client, closeConn, err := dial(*addr)
+	client, closeConn, err := dial(node)
 	if err != nil {
 		return err
 	}
@@ -111,7 +104,7 @@ func followJob(ctx context.Context, client pb.NodeServiceClient, job *pb.Job) er
 
 func jobGet(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd job get", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "coordinator address")
+	node := targetFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -119,7 +112,7 @@ func jobGet(ctx context.Context, args []string) error {
 		return errors.New("expected exactly one job ID")
 	}
 
-	client, closeConn, err := dial(*addr)
+	client, closeConn, err := dial(node)
 	if err != nil {
 		return err
 	}
@@ -142,7 +135,7 @@ func jobGet(ctx context.Context, args []string) error {
 
 func listNodes(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd nodes", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "coordinator address")
+	node := targetFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -150,7 +143,7 @@ func listNodes(ctx context.Context, args []string) error {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 
-	client, closeConn, err := dial(*addr)
+	client, closeConn, err := dial(node)
 	if err != nil {
 		return err
 	}
@@ -165,11 +158,11 @@ func listNodes(ctx context.Context, args []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NODE\tHOST\tPLATFORM\tCORES\tTASKS\tWORKLOADS")
+	fmt.Fprintln(tw, "NAME\tNODE\tHOST\tPLATFORM\tCORES\tTASKS\tWORKLOADS")
 	for _, node := range listed.GetNodes() {
 		c := node.GetCapabilities()
-		fmt.Fprintf(tw, "%s\t%s\t%s/%s\t%d\t%d/%d\t%s\n",
-			node.GetNodeId(), c.GetHostname(), c.GetOs(), c.GetArch(), c.GetCpuCores(),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s/%s\t%d\t%d/%d\t%s\n",
+			node.GetName(), node.GetNodeId(), c.GetHostname(), c.GetOs(), c.GetArch(), c.GetCpuCores(),
 			node.GetRunningTasks(), c.GetTaskSlots(), strings.Join(c.GetWorkloads(), ","))
 	}
 	return tw.Flush()
@@ -188,7 +181,7 @@ func reportOutcome(job *pb.Job) error {
 func describeTask(task *pb.Task) string {
 	line := fmt.Sprintf("task %d %s", task.GetIndex(), stateName(task.GetState().String()))
 	if task.GetNodeId() != "" {
-		line += fmt.Sprintf(" on %s (attempt %d)", task.GetNodeId(), task.GetAttempt())
+		line += fmt.Sprintf(" on %s (attempt %d)", task.GetNodeName(), task.GetAttempt())
 	}
 	if task.GetError() != "" {
 		line += ": " + task.GetError()

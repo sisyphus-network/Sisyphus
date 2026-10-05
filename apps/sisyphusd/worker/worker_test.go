@@ -64,17 +64,17 @@ func TestWorkerAdvertisesItselfAndReportsAnUnknownWorkload(t *testing.T) {
 		hello:      make(chan *pb.Hello, 1),
 		result:     make(chan *pb.TaskResult, 1),
 	}
-	srv := grpc.NewServer()
+	srv := newServer()
 	pb.RegisterCoordinatorServiceServer(srv, coordinator)
 	addr, _ := serve(t, srv)
 	runWorker(t, &worker.Worker{
-		NodeID: "w", Coordinator: addr, Slots: 3,
+		Name: "w", Coordinator: addr, Credentials: workerCreds, Slots: 3,
 		Workloads: runtime.Builtin(), Blobs: storage.NewMemory(), Log: quiet(),
 	})
 
 	hello := <-coordinator.hello
 	caps := hello.GetCapabilities()
-	if hello.GetNodeId() != "w" || caps.GetTaskSlots() != 3 || caps.GetCpuCores() == 0 || caps.GetOs() == "" {
+	if hello.GetName() != "w" || caps.GetTaskSlots() != 3 || caps.GetCpuCores() == 0 || caps.GetOs() == "" {
 		t.Errorf("hello: %v", hello)
 	}
 	if got := strings.Join(caps.GetWorkloads(), ","); got != "primes,wordcount" {
@@ -93,7 +93,7 @@ func TestWorkerAdvertisesItselfAndReportsAnUnknownWorkload(t *testing.T) {
 func TestWorkerKeepsRetryingAnAddressItCannotUse(t *testing.T) {
 	var logs bytes.Buffer
 	w := &worker.Worker{
-		NodeID: "w", Coordinator: "bad\x00address", Slots: 1,
+		Name: "w", Coordinator: "bad\x00address", Credentials: workerCreds, Slots: 1,
 		Workloads: runtime.Builtin(), Blobs: storage.NewMemory(),
 		Log: slog.New(slog.NewTextHandler(&logs, nil)),
 	}
@@ -111,7 +111,7 @@ func TestWorkerStopsAtOnceWhenAlreadyCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	w := &worker.Worker{
-		NodeID: "w", Coordinator: "127.0.0.1:1", Slots: 1,
+		Name: "w", Coordinator: "127.0.0.1:1", Credentials: workerCreds, Slots: 1,
 		Workloads: runtime.Builtin(), Blobs: storage.NewMemory(), Log: quiet(),
 	}
 	done := make(chan error, 1)

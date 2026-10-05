@@ -19,8 +19,8 @@ func TestJobSucceedsWhenEveryTaskSucceeds(t *testing.T) {
 		t.Fatalf("new job: state %v, %d assignable", j.State, len(j.Assignable()))
 	}
 
-	j.Start(j.Tasks[0], "a")
-	j.Start(j.Tasks[1], "b")
+	j.Start(j.Tasks[0], "a", "node a")
+	j.Start(j.Tasks[1], "b", "node b")
 	if j.State != Running || len(j.Assignable()) != 0 {
 		t.Fatalf("after start: state %v, %d assignable", j.State, len(j.Assignable()))
 	}
@@ -45,13 +45,13 @@ func TestFailedTaskRetriesThenFailsJob(t *testing.T) {
 	j := newJob(2)
 	task := j.Tasks[0]
 
-	j.Start(task, "a")
+	j.Start(task, "a", "node a")
 	j.Fail(task, "boom", 2, now)
 	if task.State != Pending || task.Attempt != 1 || j.Terminal() {
 		t.Fatalf("after first failure: task %v attempt %d, job %v", task.State, task.Attempt, j.State)
 	}
 
-	j.Start(task, "b")
+	j.Start(task, "b", "node b")
 	j.Fail(task, "boom again", 2, now)
 	if task.State != Failed || j.State != Failed {
 		t.Fatalf("after final failure: task %v, job %v", task.State, j.State)
@@ -66,9 +66,9 @@ func TestFailedTaskRetriesThenFailsJob(t *testing.T) {
 
 func TestSucceedClearsEarlierError(t *testing.T) {
 	j := newJob(1)
-	j.Start(j.Tasks[0], "a")
+	j.Start(j.Tasks[0], "a", "node a")
 	j.Fail(j.Tasks[0], "boom", 3, now)
-	j.Start(j.Tasks[0], "b")
+	j.Start(j.Tasks[0], "b", "node b")
 	j.Succeed(j.Tasks[0], nil)
 	if j.Tasks[0].Err != "" {
 		t.Errorf("succeeded task kept error %q", j.Tasks[0].Err)
@@ -77,7 +77,7 @@ func TestSucceedClearsEarlierError(t *testing.T) {
 
 func TestToProtoMapsStatesAndMode(t *testing.T) {
 	j := New("job", "primes", nil, FullWorker, 0, [][]byte{nil}, now)
-	j.Start(j.Tasks[0], "a")
+	j.Start(j.Tasks[0], "a", "node a")
 	p := j.ToProto()
 	if p.State != pb.JobState_JOB_STATE_RUNNING || p.Tasks[0].State != pb.TaskState_TASK_STATE_RUNNING {
 		t.Errorf("states: job %v, task %v", p.State, p.Tasks[0].State)

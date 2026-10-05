@@ -46,9 +46,11 @@ type Task struct {
 	State   State
 	// Attempt counts how many times the task has been handed to a worker.
 	Attempt int
-	// NodeID is the worker currently or most recently running the task.
-	NodeID string
-	Output []byte
+	// NodeID is the worker currently or most recently running the task, and
+	// NodeName the label that worker gave itself.
+	NodeID   string
+	NodeName string
+	Output   []byte
 	// Err is the reason for the most recent failed attempt.
 	Err string
 }
@@ -105,10 +107,11 @@ func (j *Job) Assignable() []*Task {
 }
 
 // Start records that a pending task was handed to a worker.
-func (j *Job) Start(t *Task, nodeID string) {
+func (j *Job) Start(t *Task, nodeID, nodeName string) {
 	t.State = Running
 	t.Attempt++
 	t.NodeID = nodeID
+	t.NodeName = nodeName
 	if j.State == Pending {
 		j.State = Running
 	}

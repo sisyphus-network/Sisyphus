@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,13 +20,15 @@ import (
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
+	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/blobclient"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
+	"github.com/excho0/Sisyphus/packages/identity"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
 	"github.com/excho0/Sisyphus/packages/storage"
@@ -61,6 +64,37 @@ type pool struct {
 	heartbeat time.Duration
 	// logs is everything the coordinator has logged.
 	logs *syncBuffer
+	// ident is the coordinator's identity and access its list of admitted
+	// nodes; workerIdents are the identities of workers started by name.
+	ident        *identity.Identity
+	access       *access.List
+	workerIdents map[string]*identity.Identity
+}
+
+// newIdentity makes a node identity that lasts for the test.
+func newIdentity(t *testing.T) *identity.Identity {
+	t.Helper()
+	ident, _, err := identity.LoadOrCreate(filepath.Join(t.TempDir(), "node.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ident
+}
+
+// admit creates a new node identity, admits it to the pool in the given
+// role, and returns it with the credentials it connects with.
+func (p *pool) admit(role access.Role) (*identity.Identity, credentials.TransportCredentials) {
+	p.t.Helper()
+	ident := newIdentity(p.t)
+	if err := p.access.Admit(ident.ID(), role, time.Now()); err != nil {
+		p.t.Fatal(err)
+	}
+	return ident, p.credentialsFor(ident)
+}
+
+// credentialsFor returns what ident connects to the coordinator with.
+func (p *pool) credentialsFor(ident *identity.Identity) credentials.TransportCredentials {
+	return credentials.NewTLS(ident.ClientTLS(p.ident.ID()))
 }
 
 // syncBuffer is a bytes.Buffer safe to write from one goroutine while
@@ -106,19 +140,29 @@ func startPoolOver(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 	}
 	store := storage.NewMemory()
 	logs := new(syncBuffer)
+	ident := newIdentity(t)
+	// Kept in memory: an access list with no file saves nothing.
+	admitted, err := access.Open("", ident.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
 	coord := coordinator.New(coordinator.Config{
-		ID: "coordinator", Workloads: workloads, Store: wrap(store), Retain: testRetain,
+		ID: ident.ID(), Workloads: workloads, Store: wrap(store), Retain: testRetain,
 		Log: slog.New(slog.NewTextHandler(logs, nil)),
 	})
 	gets := new(atomic.Int32)
-	srv := api.NewServer(api.Config{Coordinator: coord, Store: store}, grpc.StreamInterceptor(countBlobGets(gets)))
+	srv := api.NewServer(
+		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store},
+		grpc.StreamInterceptor(countBlobGets(gets)),
+	)
 	go srv.Serve(lis)
 	t.Cleanup(func() {
 		srv.Stop()
 		coord.Close()
 	})
 
-	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// The helpers' own calls are made as the node's owner.
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(credentials.NewTLS(ident.ClientTLS(ident.ID()))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +175,7 @@ func startPoolOver(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 		client: pb.NewNodeServiceClient(conn), blobs: pb.NewBlobServiceClient(conn),
 		store: store, blobGets: gets, workerStores: make(map[string]*storage.Store),
 		coord: coord, conn: conn, logs: logs,
+		ident: ident, access: admitted, workerIdents: make(map[string]*identity.Identity),
 	}
 }
 
@@ -143,13 +188,15 @@ func (p *pool) startWorker(id string, slots int) (stop func()) {
 	// Like a worker-only node, each test worker has a store of its own.
 	local := storage.NewMemory()
 	p.workerStores[id] = local
-	blobs, err := worker.DialBlobs(p.addr, local, 0)
+	ident, creds := p.admit(access.Worker)
+	p.workerIdents[id] = ident
+	blobs, err := worker.DialBlobs(p.addr, creds, local, 0)
 	if err != nil {
 		p.t.Fatal(err)
 	}
 	p.t.Cleanup(func() { blobs.Close() })
 	w := &worker.Worker{
-		NodeID: id, Coordinator: p.addr, Slots: slots, Workloads: p.workloads, Blobs: blobs, Log: quiet,
+		Name: id, Coordinator: p.addr, Credentials: creds, Slots: slots, Workloads: p.workloads, Blobs: blobs, Log: quiet,
 		HeartbeatInterval: p.heartbeat,
 	}
 	go func() {
@@ -234,7 +281,7 @@ func TestDistributedJobRunsAcrossWorkers(t *testing.T) {
 		if task.GetState() != pb.TaskState_TASK_STATE_SUCCEEDED || task.GetAttempt() != 1 {
 			t.Errorf("task %d: %v after %d attempt(s)", task.GetIndex(), task.GetState(), task.GetAttempt())
 		}
-		ranOn[task.GetNodeId()]++
+		ranOn[task.GetNodeName()]++
 	}
 	if len(ranOn) != 3 {
 		t.Errorf("tasks ran on %v, want all three workers used", ranOn)
@@ -345,8 +392,8 @@ func TestTasksMoveToAnotherWorkerWhenTheirsDies(t *testing.T) {
 		t.Errorf("result = %s, want 2", job.GetResult())
 	}
 	for _, task := range job.GetTasks() {
-		if task.GetNodeId() != "survivor" || task.GetAttempt() != 2 {
-			t.Errorf("task %d finished on %q at attempt %d, want survivor at attempt 2", task.GetIndex(), task.GetNodeId(), task.GetAttempt())
+		if task.GetNodeName() != "survivor" || task.GetAttempt() != 2 {
+			t.Errorf("task %d finished on %q at attempt %d, want survivor at attempt 2", task.GetIndex(), task.GetNodeName(), task.GetAttempt())
 		}
 	}
 }
@@ -404,12 +451,16 @@ func TestPanickingWorkloadFailsTheTaskNotTheWorker(t *testing.T) {
 	p.waitForWorkers(1)
 }
 
-func TestSecondWorkerWithSameNodeIDIsRejected(t *testing.T) {
+func TestANodeCanOnlyBeConnectedOnce(t *testing.T) {
 	p := startPool(t, runtime.Builtin())
-	p.startWorker("twin", 1)
+	p.startWorker("original", 1)
 	p.waitForWorkers(1)
 
-	twin := &worker.Worker{NodeID: "twin", Coordinator: p.addr, Slots: 1, Workloads: p.workloads, Blobs: storage.NewMemory(), Log: quiet}
+	// A second worker using the same key, whatever it calls itself.
+	twin := &worker.Worker{
+		Name: "copy", Coordinator: p.addr, Credentials: p.credentialsFor(p.workerIdents["original"]),
+		Slots: 1, Workloads: p.workloads, Blobs: storage.NewMemory(), Log: quiet,
+	}
 	err := twin.Run(p.ctx)
 	if status.Code(errors.Unwrap(err)) != codes.AlreadyExists {
 		t.Errorf("second worker returned %v, want an AlreadyExists rejection", err)

@@ -7,14 +7,21 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
+	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
+	"github.com/excho0/Sisyphus/packages/identity"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/storage"
 )
 
 type Config struct {
+	// Identity is the key the node answers with.
+	Identity *identity.Identity
+	// Access says which other nodes may call, and what.
+	Access      *access.List
 	Coordinator *coordinator.Coordinator
 	Store       *storage.Store
 	// MaxStoreBytes is the most disk the store may use before uploads are
@@ -23,10 +30,13 @@ type Config struct {
 }
 
 // NewServer returns a gRPC server for a node running the coordinator role:
-// the job and worker services for its coordinator, and blob transfer and
-// pinning for its store. It has no transport security or authentication yet,
-// so only expose it to machines you trust.
+// the job and worker services for its coordinator, blob transfer and pinning
+// for its store, and management of who may connect. Every connection is TLS
+// with both ends identified by their node keys, and every call is checked
+// against the caller's role.
 func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
+	opts = append(opts, grpc.Creds(credentials.NewTLS(cfg.Identity.ServerTLS())))
+	opts = append(opts, cfg.Access.ServerOptions()...)
 	srv := grpc.NewServer(append(opts,
 		// Pings notice workers that vanish without closing their connection.
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 10 * time.Second, Timeout: 5 * time.Second}),
@@ -35,6 +45,7 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	pb.RegisterCoordinatorServiceServer(srv, cfg.Coordinator)
 	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: cfg.Coordinator})
 	pb.RegisterBlobServiceServer(srv, &blobService{store: cfg.Store, quota: cfg.MaxStoreBytes})
+	pb.RegisterPoolServiceServer(srv, &poolService{id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator})
 	return srv
 }
 

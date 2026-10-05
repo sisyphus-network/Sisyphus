@@ -15,7 +15,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
@@ -30,9 +30,13 @@ const (
 )
 
 type Worker struct {
-	NodeID string
-	// Coordinator is the host:port of the coordinator to join.
+	// Name is a label for people to recognise this node by. The node's ID is
+	// that of the key in Credentials.
+	Name string
+	// Coordinator is the host:port of the coordinator to connect to, and
+	// Credentials how to prove who this node is and check who answers.
 	Coordinator string
+	Credentials credentials.TransportCredentials
 	// Slots is how many tasks this node runs at once.
 	Slots     int
 	Workloads *runtime.Registry
@@ -55,13 +59,13 @@ func (w *Worker) Run(ctx context.Context) error {
 			return nil
 		}
 		switch status.Code(err) {
-		case codes.AlreadyExists, codes.InvalidArgument:
-			return fmt.Errorf("coordinator rejected node %q: %w", w.NodeID, err)
+		case codes.AlreadyExists, codes.InvalidArgument, codes.PermissionDenied:
+			return fmt.Errorf("coordinator rejected node %q: %w", w.Name, err)
 		}
 		if welcomed {
 			backoff = minBackoff
 		}
-		w.Log.Warn("lost coordinator, reconnecting", "node", w.NodeID, "in", backoff.String(), "error", err)
+		w.Log.Warn("lost coordinator, reconnecting", "node", w.Name, "in", backoff.String(), "error", err)
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
@@ -75,7 +79,7 @@ func (w *Worker) Run(ctx context.Context) error {
 // whether the coordinator accepted this node.
 func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	conn, err := grpc.NewClient(w.Coordinator,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(w.Credentials),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 10 * time.Second, Timeout: 5 * time.Second, PermitWithoutStream: true}),
 	)
 	if err != nil {
@@ -106,7 +110,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	// from Recv below, so send errors are not checked here or in the
 	// heartbeat.
 	send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
-		NodeId:       w.NodeID,
+		Name:         w.Name,
 		Capabilities: w.capabilities(),
 	}}})
 
@@ -139,7 +143,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 		switch kind := msg.GetKind().(type) {
 		case *pb.CoordinatorMessage_Welcome:
 			welcomed = true
-			w.Log.Info("joined pool", "node", w.NodeID, "coordinator", kind.Welcome.GetCoordinatorId(), "slots", w.Slots)
+			w.Log.Info("joined pool", "node", w.Name, "coordinator", kind.Welcome.GetCoordinatorId(), "slots", w.Slots)
 		case *pb.CoordinatorMessage_Assignment:
 			running.Add(1)
 			tasks.Add(1)
@@ -182,7 +186,7 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 		return result
 	}
 	result.ReadBlobs, result.WrittenBlobs = touched.Read(), touched.Written()
-	w.Log.Debug("task done", "node", w.NodeID, "task", a.GetTaskId(), "took", time.Since(started).String())
+	w.Log.Debug("task done", "node", w.Name, "task", a.GetTaskId(), "took", time.Since(started).String())
 	result.Outcome = &pb.TaskResult_Output{Output: output}
 	return result
 }

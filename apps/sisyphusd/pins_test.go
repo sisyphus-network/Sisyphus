@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/storage"
@@ -245,13 +246,26 @@ func TestPeriodicCollection(t *testing.T) {
 	}
 }
 
-func listen(t *testing.T) net.Listener {
+// serveFake runs a stand-in node, with a key of its own, offering whatever
+// services register adds. Commands sent to its address are run with that
+// same key, so they reach it expecting, and finding, their own node.
+func serveFake(t *testing.T, register func(*grpc.Server)) (addr string) {
 	t.Helper()
+	dataDir := t.TempDir()
+	ident, err := loadIdentity(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return lis
+	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(ident.ServerTLS())))
+	register(srv)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	dataDirs.Store(lis.Addr().String(), dataDir)
+	return lis.Addr().String()
 }
 
 func waitFor(t *testing.T, condition func() bool) {
@@ -290,12 +304,7 @@ func (pinlessNode) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.P
 }
 
 func TestBlobCommandsReportANodeThatCannotPin(t *testing.T) {
-	lis := listen(t)
-	srv := grpc.NewServer()
-	pb.RegisterBlobServiceServer(srv, pinlessNode{})
-	go srv.Serve(lis)
-	t.Cleanup(srv.Stop)
-	addr := lis.Addr().String()
+	addr := serveFake(t, func(srv *grpc.Server) { pb.RegisterBlobServiceServer(srv, pinlessNode{}) })
 
 	stored, err := storage.CID(context.Background(), strings.NewReader("stored but not pinned"))
 	if err != nil {

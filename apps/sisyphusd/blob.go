@@ -41,7 +41,7 @@ func blobCommand(ctx context.Context, args []string) error {
 
 func blobPut(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob put", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "node address")
+	node := targetFlags(fs)
 	ttl := fs.Duration("ttl", 0, "how long the node keeps the blob; 0 keeps it until unpinned")
 	noPin := fs.Bool("no-pin", false, "do not pin the blob: the node may delete it after an hour")
 	if err := fs.Parse(args); err != nil {
@@ -60,7 +60,7 @@ func blobPut(ctx context.Context, args []string) error {
 		in = file
 	}
 
-	conn, err := connect(*addr)
+	conn, err := node.connect()
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func blobPut(ctx context.Context, args []string) error {
 
 func blobGet(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob get", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "node address")
+	node := targetFlags(fs)
 	output := fs.String("o", "", "file to write the blob to (default: standard output)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -96,7 +96,7 @@ func blobGet(ctx context.Context, args []string) error {
 		return fmt.Errorf("invalid CID %q: %w", fs.Arg(0), err)
 	}
 
-	conn, err := connect(*addr)
+	conn, err := node.connect()
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func blobGet(ctx context.Context, args []string) error {
 
 func blobStat(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob stat", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "node address")
+	node := targetFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func blobStat(ctx context.Context, args []string) error {
 		return errors.New("expected exactly one CID")
 	}
 
-	conn, err := connect(*addr)
+	conn, err := node.connect()
 	if err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ func blobStat(ctx context.Context, args []string) error {
 
 func blobPin(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob pin", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "node address")
+	node := targetFlags(fs)
 	ttl := fs.Duration("ttl", 0, "how long the node keeps the blob; 0 keeps it until unpinned")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -156,7 +156,7 @@ func blobPin(ctx context.Context, args []string) error {
 		return errors.New("expected exactly one CID")
 	}
 
-	conn, err := connect(*addr)
+	conn, err := node.connect()
 	if err != nil {
 		return err
 	}
@@ -168,7 +168,7 @@ func blobPin(ctx context.Context, args []string) error {
 
 func blobUnpin(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob unpin", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "node address")
+	node := targetFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -176,7 +176,7 @@ func blobUnpin(ctx context.Context, args []string) error {
 		return errors.New("expected exactly one CID")
 	}
 
-	conn, err := connect(*addr)
+	conn, err := node.connect()
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func blobUnpin(ctx context.Context, args []string) error {
 
 func blobPins(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob pins", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "node address")
+	node := targetFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func blobPins(ctx context.Context, args []string) error {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 
-	conn, err := connect(*addr)
+	conn, err := node.connect()
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func blobPins(ctx context.Context, args []string) error {
 
 func blobGC(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob gc", flag.ContinueOnError)
-	addr := fs.String("addr", defaultAddr, "node address")
+	node := targetFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -230,7 +230,7 @@ func blobGC(ctx context.Context, args []string) error {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 
-	conn, err := connect(*addr)
+	conn, err := node.connect()
 	if err != nil {
 		return err
 	}
