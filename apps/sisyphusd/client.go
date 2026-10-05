@@ -16,6 +16,9 @@ import (
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
+// stdout is where client commands print; tests replace it.
+var stdout io.Writer = os.Stdout
+
 func dial(addr string) (pb.NodeServiceClient, func(), error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -61,10 +64,10 @@ func jobSubmit(ctx context.Context, args []string) error {
 	}
 	job := submitted.GetJob()
 	if *detach {
-		fmt.Println(job.GetJobId())
+		fmt.Fprintln(stdout, job.GetJobId())
 		return nil
 	}
-	fmt.Printf("job %s: %d task(s)\n", job.GetJobId(), len(job.GetTasks()))
+	fmt.Fprintf(stdout, "job %s: %d task(s)\n", job.GetJobId(), len(job.GetTasks()))
 
 	stream, err := client.WatchJob(ctx, &pb.WatchJobRequest{JobId: job.GetJobId()})
 	if err != nil {
@@ -84,7 +87,7 @@ func jobSubmit(ctx context.Context, args []string) error {
 		for _, task := range job.GetTasks() {
 			line := describeTask(task)
 			if task.GetState() != pb.TaskState_TASK_STATE_PENDING && seen[task.GetTaskId()] != line {
-				fmt.Println("  " + line)
+				fmt.Fprintln(stdout, "  "+line)
 			}
 			seen[task.GetTaskId()] = line
 		}
@@ -113,9 +116,9 @@ func jobGet(ctx context.Context, args []string) error {
 		return err
 	}
 	job := got.GetJob()
-	fmt.Printf("job %s: %s, workload %s\n", job.GetJobId(), stateName(job.GetState().String()), job.GetSpec().GetWorkload())
+	fmt.Fprintf(stdout, "job %s: %s, workload %s\n", job.GetJobId(), stateName(job.GetState().String()), job.GetSpec().GetWorkload())
 	for _, task := range job.GetTasks() {
-		fmt.Println("  " + describeTask(task))
+		fmt.Fprintln(stdout, "  "+describeTask(task))
 	}
 	if job.GetState() == pb.JobState_JOB_STATE_SUCCEEDED || job.GetState() == pb.JobState_JOB_STATE_FAILED {
 		return reportOutcome(job)
@@ -144,10 +147,10 @@ func listNodes(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(listed.GetNodes()) == 0 {
-		fmt.Println("no workers connected")
+		fmt.Fprintln(stdout, "no workers connected")
 		return nil
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NODE\tHOST\tPLATFORM\tCORES\tTASKS\tWORKLOADS")
 	for _, node := range listed.GetNodes() {
 		c := node.GetCapabilities()
@@ -164,7 +167,7 @@ func reportOutcome(job *pb.Job) error {
 	if job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
 		return fmt.Errorf("job %s failed after %s: %s", job.GetJobId(), took, job.GetError())
 	}
-	fmt.Printf("job %s succeeded in %s\n%s\n", job.GetJobId(), took, job.GetResult())
+	fmt.Fprintf(stdout, "job %s succeeded in %s\n%s\n", job.GetJobId(), took, job.GetResult())
 	return nil
 }
 
