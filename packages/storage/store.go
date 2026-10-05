@@ -16,6 +16,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/ipfs/boxo/blockservice"
@@ -51,8 +53,18 @@ var ErrNotFound = errors.New("blob not found")
 type Store struct {
 	blocks blockstore.Blockstore
 	dag    ipld.DAGService
-	closer io.Closer
+	ds     datastore.Batching
 	lock   *flock.Flock // nil for stores that are not on disk
+
+	// gcMu lets garbage collection run alone: storing and pinning hold it
+	// shared, collection holds it exclusively.
+	gcMu sync.RWMutex
+
+	pinMu sync.Mutex
+	pins  map[pinKey]time.Time
+	// pinFile is where a durable store keeps its pins; empty for stores
+	// whose pins live only in memory.
+	pinFile string
 }
 
 // OpenLocal opens, creating if needed, a durable store kept in dir on this
@@ -98,7 +110,15 @@ func openDisk(dir string, durable bool) (*Store, error) {
 		lock.Unlock()
 		return nil, fmt.Errorf("open blob store %s: %w", dir, err)
 	}
-	return newStore(ds, lock), nil
+	store := newStore(ds, lock)
+	if durable {
+		store.pinFile = filepath.Join(dir, "pins.json")
+		if store.pins, err = loadPins(store.pinFile); err != nil {
+			store.Close()
+			return nil, fmt.Errorf("open blob store %s: %w", dir, err)
+		}
+	}
+	return store, nil
 }
 
 // NewMemory returns a store that keeps blobs in memory.
@@ -111,13 +131,14 @@ func newStore(ds datastore.Batching, lock *flock.Flock) *Store {
 	return &Store{
 		blocks: blocks,
 		dag:    merkledag.NewDAGService(blockservice.New(blocks, offline.Exchange(blocks))),
-		closer: ds,
+		ds:     ds,
 		lock:   lock,
+		pins:   make(map[pinKey]time.Time),
 	}
 }
 
 func (s *Store) Close() error {
-	err := s.closer.Close()
+	err := s.ds.Close()
 	if s.lock != nil {
 		err = errors.Join(err, s.lock.Unlock())
 	}
@@ -125,8 +146,11 @@ func (s *Store) Close() error {
 }
 
 // Put stores everything read from r and returns the blob's CID. Storing the
-// same bytes twice gives the same CID and uses no extra space.
+// same bytes twice gives the same CID and uses no extra space. The blob is
+// kept for GracePeriod; pin it to keep it longer.
 func (s *Store) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
+	s.gcMu.RLock()
+	defer s.gcMu.RUnlock()
 	params := helpers.DagBuilderParams{
 		Maxlinks:   linksPerNode,
 		RawLeaves:  true,
@@ -140,6 +164,9 @@ func (s *Store) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	if err != nil {
 		return cid.Undef, err
 	}
+	s.pinMu.Lock()
+	s.pins[pinKey{root.Cid(), graceOwner}] = time.Now().Add(GracePeriod)
+	s.pinMu.Unlock()
 	return root.Cid(), nil
 }
 
