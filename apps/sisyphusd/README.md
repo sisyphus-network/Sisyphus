@@ -16,7 +16,18 @@ make cover   # fails unless the tests execute every statement of hand-written co
 
 ## Releases
 
-Pushing a tag such as `v0.1.0` makes GitHub build `sisyphusd` for Linux, macOS and Windows and publish the binaries, with checksums, as a release. `scripts/build-release.sh <version> <dir>` does the same build locally.
+Pushing a tag such as `v0.1.0` makes GitHub build `sisyphusd` and publish the binaries, with checksums, as a release. `scripts/build-release.sh <version> <dir>` does the same build locally.
+
+| System | Processors |
+| --- | --- |
+| Linux | x86-64, ARM64, 32-bit ARM (v7), RISC-V 64 |
+| macOS | Intel, Apple silicon |
+| Windows | x86-64, ARM64 |
+| FreeBSD | x86-64, ARM64 |
+| OpenBSD, NetBSD | x86-64 |
+| Android | ARM64, for use in a terminal such as Termux |
+
+Only Linux on x86-64 is run by the test suite. The others are compiled and have not been run. Solaris, illumos, AIX and Plan 9 are not built because a dependency does not support them.
 
 ## Try it on one machine
 
@@ -57,7 +68,7 @@ bin/sisyphusd run --role worker --coordinator <coordinator-ip>:7700
 
 ## Storing data
 
-Every node keeps a content-addressed store under `--data-dir`. A coordinator's store is durable: a blob it has accepted survives a crash or power loss. A worker-only node's store is a cache of what its coordinator holds. It skips waiting for the disk on each write, which makes fetching several times faster on a slow disk, and it is kept across restarts. Because a power cut can then leave a cached block incomplete, a worker checks a cached blob in full the first time it is used in each run and downloads it again if it does not hold up. On a fast disk, `--sync-cache` makes the cache wait for the disk after all, so that it survives a power cut without downloading again. The `blob` commands talk to a node running the coordinator role.
+Every node keeps a content-addressed store under `--data-dir`. A coordinator's store is durable: a blob it has accepted survives a crash or power loss. A worker-only node's store is a cache of what its coordinator holds. It skips waiting for the disk on each write, which makes fetching several times faster on a slow disk, and it is kept across restarts. Because a power cut can then leave a cached block incomplete, a worker checks a cached blob in full the first time it is used in each run and downloads it again if it does not hold up. On a fast disk, `--sync-cache` makes the cache wait for the disk after all, so that it survives a power cut without downloading again. With `--max-cache-bytes`, a worker evicts cached blobs once the cache passes that size: first those it has not used since it started, then the least recently used, and never one a task has open. The `blob` commands talk to a node running the coordinator role.
 
 ```sh
 bin/sisyphusd blob put results.tar     # prints the blob's CID
@@ -128,5 +139,5 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - Workers are chosen by free slots only, not by hardware.
 - Without `--max-store-bytes` there is no limit on what can be uploaded, and anyone who can reach the port can pin, unpin and collect.
 - Jobs are forgotten when a coordinator restarts. Pins they held open are given the retention period to lapse.
-- Worker caches are never trimmed: there is no size limit and nothing is evicted.
+- Without `--max-cache-bytes` a worker's cache grows until the disk is full. The limit is not strict: blobs that tasks have open are kept even if they alone exceed it.
 - A worker downloads a whole input even when its tasks need only part of it.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
@@ -30,19 +31,38 @@ type RemoteBlobs struct {
 	conn   *grpc.ClientConn
 	remote pb.BlobServiceClient
 
+	// limit is the most disk the cache should use; zero means no limit.
+	limit uint64
+	// trimming lets eviction run alone. Whatever adds a blob to the cache
+	// holds it shared until the blob is pinned, so a blob is never swept
+	// between arriving and being pinned.
+	trimming sync.RWMutex
+
 	mu sync.Mutex
 	// ready holds the blobs known to be sound in the local store: checked,
-	// downloaded or stored during this run.
-	ready map[cid.Cid]struct{}
+	// downloaded or stored during this run. Each is pinned, and maps to
+	// when it was last opened.
+	ready map[cid.Cid]time.Time
 	// preparing holds the blobs being checked or downloaded right now.
 	preparing map[cid.Cid]*preparation
+	// held counts, per blob, the tasks that have it open or are opening it.
+	held map[cid.Cid]int
 }
+
+// cacheOwner holds the pin on every blob this run has used. Blobs left by
+// earlier runs and not used since are unpinned, and so are the first to go
+// when the cache is trimmed.
+const cacheOwner = "cache"
 
 // localStore is the part of a storage.Store that RemoteBlobs uses.
 type localStore interface {
 	Open(ctx context.Context, c cid.Cid) (storage.Blob, error)
 	Put(ctx context.Context, r io.Reader) (cid.Cid, error)
 	Verify(ctx context.Context, c cid.Cid) error
+	Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error
+	Unpin(owner string, cids ...cid.Cid) error
+	GC(ctx context.Context, now time.Time) (storage.Collected, error)
+	Size(ctx context.Context) (uint64, error)
 }
 
 // preparation is a blob being made ready, which other tasks wanting the same
@@ -53,36 +73,84 @@ type preparation struct {
 }
 
 // DialBlobs returns blob access backed by local and the coordinator at the
-// given address. It does not connect until first used.
-func DialBlobs(coordinator string, local *storage.Store) (*RemoteBlobs, error) {
+// given address. It does not connect until first used. If maxBytes is not
+// zero, the least recently used blobs are evicted from local whenever it
+// grows past that size.
+func DialBlobs(coordinator string, local *storage.Store, maxBytes uint64) (*RemoteBlobs, error) {
 	conn, err := grpc.NewClient(coordinator, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
+	b := newRemoteBlobs(local, pb.NewBlobServiceClient(conn), maxBytes)
+	b.conn = conn
+	return b, nil
+}
+
+func newRemoteBlobs(local localStore, remote pb.BlobServiceClient, maxBytes uint64) *RemoteBlobs {
 	return &RemoteBlobs{
 		local:     local,
-		conn:      conn,
-		remote:    pb.NewBlobServiceClient(conn),
-		ready:     make(map[cid.Cid]struct{}),
+		remote:    remote,
+		limit:     maxBytes,
+		ready:     make(map[cid.Cid]time.Time),
 		preparing: make(map[cid.Cid]*preparation),
-	}, nil
+		held:      make(map[cid.Cid]int),
+	}
 }
 
 func (b *RemoteBlobs) Close() error {
 	return b.conn.Close()
 }
 
+// Open returns a blob, downloading it first if the cache lacks a sound copy.
+// The blob cannot be evicted until it is closed.
 func (b *RemoteBlobs) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) {
+	b.hold(c)
+	blob, err := b.open(ctx, c)
+	if err != nil {
+		b.release(c)
+		return nil, err
+	}
+	return &heldBlob{Blob: blob, release: func() { b.release(c) }}, nil
+}
+
+func (b *RemoteBlobs) open(ctx context.Context, c cid.Cid) (storage.Blob, error) {
 	if err := b.prepare(ctx, c); err != nil {
 		return nil, err
 	}
 	return b.local.Open(ctx, c)
 }
 
+func (b *RemoteBlobs) hold(c cid.Cid) {
+	b.mu.Lock()
+	b.held[c]++
+	b.mu.Unlock()
+}
+
+func (b *RemoteBlobs) release(c cid.Cid) {
+	b.mu.Lock()
+	if b.held[c]--; b.held[c] == 0 {
+		delete(b.held, c)
+	}
+	b.mu.Unlock()
+}
+
+// heldBlob is an open blob that tells the cache when it is closed.
+type heldBlob struct {
+	storage.Blob
+	once    sync.Once
+	release func()
+}
+
+func (h *heldBlob) Close() error {
+	h.once.Do(h.release)
+	return h.Blob.Close()
+}
+
 // prepare makes sure the local store holds a sound copy of c, once per run.
 func (b *RemoteBlobs) prepare(ctx context.Context, c cid.Cid) error {
 	b.mu.Lock()
 	if _, ok := b.ready[c]; ok {
+		b.ready[c] = time.Now()
 		b.mu.Unlock()
 		return nil
 	}
@@ -102,26 +170,102 @@ func (b *RemoteBlobs) prepare(ctx context.Context, c cid.Cid) error {
 		}
 	}
 
+	p.err = b.obtain(ctx, c)
+	b.mu.Lock()
+	delete(b.preparing, c)
+	if p.err == nil {
+		b.ready[c] = time.Now()
+	}
+	b.mu.Unlock()
+	close(p.done)
+	if p.err == nil {
+		b.trim(ctx)
+	}
+	return p.err
+}
+
+// obtain leaves a sound, pinned copy of c in the local store.
+func (b *RemoteBlobs) obtain(ctx context.Context, c cid.Cid) error {
+	b.trimming.RLock()
+	defer b.trimming.RUnlock()
 	// A copy that checks out is used as it is; anything else, from "not
 	// there" to "damaged", is put right by downloading it.
 	if b.local.Verify(ctx, c) != nil {
 		if err := blobclient.Fetch(ctx, b.remote, c, b.local); err != nil {
-			p.err = fmt.Errorf("fetch from coordinator: %w", err)
+			return fmt.Errorf("fetch from coordinator: %w", err)
 		}
 	}
-	b.mu.Lock()
-	delete(b.preparing, c)
-	if p.err == nil {
-		b.ready[c] = struct{}{}
+	return b.local.Pin(ctx, cacheOwner, time.Time{}, c)
+}
+
+// trim evicts blobs until the cache is within its limit: first everything
+// this run has not used, then what it has, least recently opened first.
+// Blobs that tasks have open are never evicted, so a cache whose open blobs
+// alone exceed the limit stays over it.
+func (b *RemoteBlobs) trim(ctx context.Context) {
+	if b.limit == 0 || !b.over(ctx) {
+		return
 	}
-	b.mu.Unlock()
-	close(p.done)
-	return p.err
+	b.trimming.Lock()
+	defer b.trimming.Unlock()
+	// Collecting as of the far future ignores the short pin every new blob
+	// gets, leaving only this run's own pins to decide what stays.
+	collect := func() { b.local.GC(ctx, time.Now().AddDate(100, 0, 0)) }
+	collect()
+	for b.over(ctx) {
+		victim, found := b.leastRecentlyUsed()
+		if !found {
+			return
+		}
+		b.local.Unpin(cacheOwner, victim)
+		collect()
+	}
+}
+
+func (b *RemoteBlobs) over(ctx context.Context) bool {
+	size, err := b.local.Size(ctx)
+	return err == nil && size > b.limit
+}
+
+// leastRecentlyUsed removes from the ready set, and returns, the blob no
+// task has open that was opened longest ago.
+func (b *RemoteBlobs) leastRecentlyUsed() (victim cid.Cid, found bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var oldest time.Time
+	for c, used := range b.ready {
+		if b.held[c] > 0 {
+			continue
+		}
+		if !found || used.Before(oldest) {
+			victim, oldest, found = c, used, true
+		}
+	}
+	delete(b.ready, victim)
+	return victim, found
 }
 
 func (b *RemoteBlobs) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
+	c, err := b.store(ctx, r)
+	if err != nil {
+		return cid.Undef, err
+	}
+	b.mu.Lock()
+	b.ready[c] = time.Now()
+	b.mu.Unlock()
+	b.trim(ctx)
+	return c, nil
+}
+
+// store puts a blob in the local store, pinned, and on the coordinator.
+func (b *RemoteBlobs) store(ctx context.Context, r io.Reader) (cid.Cid, error) {
+	b.trimming.RLock()
+	defer b.trimming.RUnlock()
 	c, err := b.local.Put(ctx, r)
 	if err != nil {
+		return cid.Undef, err
+	}
+	if err := b.local.Pin(ctx, cacheOwner, time.Time{}, c); err != nil {
 		return cid.Undef, err
 	}
 	blob, err := b.local.Open(ctx, c)
@@ -136,8 +280,5 @@ func (b *RemoteBlobs) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	if !uploaded.Equals(c) {
 		return cid.Undef, fmt.Errorf("blob %s read back from the local store as %s", c, uploaded)
 	}
-	b.mu.Lock()
-	b.ready[c] = struct{}{}
-	b.mu.Unlock()
 	return c, nil
 }

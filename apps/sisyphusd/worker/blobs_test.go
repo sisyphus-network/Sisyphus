@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 
 	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
@@ -52,7 +53,7 @@ func startCoordinator(t *testing.T, store *storage.Store) (addr string, stop fun
 
 func dial(t *testing.T, addr string, local *storage.Store) *worker.RemoteBlobs {
 	t.Helper()
-	blobs, err := worker.DialBlobs(addr, local)
+	blobs, err := worker.DialBlobs(addr, local, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +174,7 @@ func TestOpenRejectsBytesThatDoNotMatchTheCID(t *testing.T) {
 }
 
 func TestDialBlobsRejectsAMalformedAddress(t *testing.T) {
-	if _, err := worker.DialBlobs("bad\x00address", storage.NewMemory()); err == nil {
+	if _, err := worker.DialBlobs("bad\x00address", storage.NewMemory(), 0); err == nil {
 		t.Error("dialled an address containing a control character")
 	}
 }
@@ -252,11 +253,17 @@ func TestOpenWaitingOnAnotherDownloadStopsWhenCancelled(t *testing.T) {
 // ends or stop is called.
 func cachedRun(t *testing.T, dir, addr string) (blobs *worker.RemoteBlobs, cache *storage.Store, stop func()) {
 	t.Helper()
+	return limitedRun(t, dir, addr, 0)
+}
+
+// limitedRun is cachedRun with a limit on the cache's size.
+func limitedRun(t *testing.T, dir, addr string, maxBytes uint64) (blobs *worker.RemoteBlobs, cache *storage.Store, stop func()) {
+	t.Helper()
 	cache, err := storage.OpenCache(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	blobs, err = worker.DialBlobs(addr, cache)
+	blobs, err = worker.DialBlobs(addr, cache, maxBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,5 +369,182 @@ func TestDamagedCacheEntryIsDownloadedAgain(t *testing.T) {
 	third, _, _ := cachedRun(t, dir, addr)
 	if _, err := third.Open(ctx, c); err == nil || !strings.Contains(err.Error(), "fetch from coordinator") {
 		t.Errorf("error %v, want a failed download", err)
+	}
+}
+
+// Eviction tests use blobs of 300 kB and a cache limited to 800 kB: room for
+// two, not three.
+const (
+	evictionBlobSize = 300_000
+	evictionLimit    = 800_000
+)
+
+// evictionSetup stores n distinct blobs on a coordinator and returns their
+// CIDs and the coordinator's address.
+func evictionSetup(t *testing.T, n int) (cids []cid.Cid, remote *storage.Store, addr string) {
+	t.Helper()
+	remote = storage.NewMemory()
+	for i := range n {
+		data := bytes.Repeat([]byte{byte('a' + i)}, evictionBlobSize)
+		c, err := remote.Put(ctx, bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cids = append(cids, c)
+	}
+	addr, _ = startCoordinator(t, remote)
+	return cids, remote, addr
+}
+
+// use opens and closes a blob, as a task reading an input does.
+func use(t *testing.T, blobs *worker.RemoteBlobs, c cid.Cid) {
+	t.Helper()
+	blob, err := blobs.Open(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, blob); len(got) != evictionBlobSize {
+		t.Fatalf("read %d bytes of a %d-byte blob", len(got), evictionBlobSize)
+	}
+}
+
+// cached reports which of the blobs the cache holds, as a string of letters:
+// "ac" means the first and third.
+func cached(t *testing.T, cache *storage.Store, cids []cid.Cid) string {
+	t.Helper()
+	var held []byte
+	for i, c := range cids {
+		if has, err := cache.Has(ctx, c); err != nil {
+			t.Fatal(err)
+		} else if has {
+			held = append(held, byte('a'+i))
+		}
+	}
+	return string(held)
+}
+
+func TestCacheEvictsTheLeastRecentlyUsedBlobWhenOverItsLimit(t *testing.T) {
+	cids, _, addr := evictionSetup(t, 4)
+	blobs, cache, _ := limitedRun(t, t.TempDir(), addr, evictionLimit)
+
+	use(t, blobs, cids[0])
+	use(t, blobs, cids[1])
+	if got := cached(t, cache, cids); got != "ab" {
+		t.Fatalf("cache holds %q with room to spare, want ab", got)
+	}
+	use(t, blobs, cids[2])
+	if got := cached(t, cache, cids); got != "bc" {
+		t.Errorf("after a third blob the cache holds %q, want the oldest gone: bc", got)
+	}
+
+	// Using a blob again makes it the newest.
+	use(t, blobs, cids[1])
+	use(t, blobs, cids[3])
+	if got := cached(t, cache, cids); got != "bd" {
+		t.Errorf("cache holds %q, want the one used longest ago gone: bd", got)
+	}
+	if size, _ := cache.Size(ctx); size > evictionLimit {
+		t.Errorf("cache is %d bytes, over its %d limit", size, evictionLimit)
+	}
+
+	// An evicted blob is simply downloaded again when next wanted.
+	use(t, blobs, cids[0])
+	if got := cached(t, cache, cids); got != "ad" {
+		t.Errorf("cache holds %q after re-fetching an evicted blob, want ad", got)
+	}
+}
+
+func TestCacheNeverEvictsABlobATaskHasOpen(t *testing.T) {
+	cids, _, addr := evictionSetup(t, 3)
+	blobs, cache, _ := limitedRun(t, t.TempDir(), addr, evictionLimit)
+
+	// The oldest blob is still open when the cache fills.
+	open, err := blobs.Open(ctx, cids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	use(t, blobs, cids[1])
+	use(t, blobs, cids[2])
+	if got := cached(t, cache, cids); got != "ac" {
+		t.Errorf("cache holds %q, want the open blob kept and the next oldest gone: ac", got)
+	}
+	if got := read(t, open); len(got) != evictionBlobSize {
+		t.Errorf("the open blob read back as %d bytes", len(got))
+	}
+
+	// Closing twice must not make the cache think a second holder let go.
+	second, err := blobs.Open(ctx, cids[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := blobs.Open(ctx, cids[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+	first.Close()
+	use(t, blobs, cids[0])
+	use(t, blobs, cids[1])
+	if got := cached(t, cache, cids); !strings.Contains(got, "c") {
+		t.Errorf("cache holds %q: a blob still open was evicted after another holder closed twice", got)
+	}
+	second.Close()
+}
+
+func TestCacheStaysOverItsLimitRatherThanEvictOpenBlobs(t *testing.T) {
+	cids, _, addr := evictionSetup(t, 3)
+	blobs, cache, _ := limitedRun(t, t.TempDir(), addr, evictionLimit)
+
+	var open []storage.Blob
+	for _, c := range cids {
+		blob, err := blobs.Open(ctx, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		open = append(open, blob)
+	}
+	if got := cached(t, cache, cids); got != "abc" {
+		t.Errorf("cache holds %q, want all three open blobs kept", got)
+	}
+	for _, blob := range open {
+		if got := read(t, blob); len(got) != evictionBlobSize {
+			t.Errorf("an open blob read back as %d bytes", len(got))
+		}
+	}
+}
+
+func TestCacheEvictsLeftoversFromEarlierRunsFirst(t *testing.T) {
+	cids, _, addr := evictionSetup(t, 4)
+	dir := t.TempDir()
+
+	earlier, _, endEarlierRun := limitedRun(t, dir, addr, evictionLimit)
+	use(t, earlier, cids[0])
+	use(t, earlier, cids[1])
+	endEarlierRun()
+
+	blobs, cache, _ := limitedRun(t, dir, addr, evictionLimit)
+	use(t, blobs, cids[1]) // one leftover is used again in this run
+	use(t, blobs, cids[2])
+	if got := cached(t, cache, cids); got != "bc" {
+		t.Errorf("cache holds %q, want the leftover this run never used gone: bc", got)
+	}
+}
+
+func TestCacheCountsAndEvictsWhatTasksStore(t *testing.T) {
+	cids, remote, addr := evictionSetup(t, 2)
+	blobs, cache, _ := limitedRun(t, t.TempDir(), addr, evictionLimit)
+
+	output, err := blobs.Put(ctx, bytes.NewReader(bytes.Repeat([]byte("z"), evictionBlobSize)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	use(t, blobs, cids[0])
+	use(t, blobs, cids[1])
+
+	if has, _ := cache.Has(ctx, output); has {
+		t.Error("a task's output, the oldest thing in a full cache, was not evicted")
+	}
+	if has, _ := remote.Has(ctx, output); !has {
+		t.Error("the output is not on the coordinator")
 	}
 }

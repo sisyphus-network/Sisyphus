@@ -143,7 +143,7 @@ func (p *pool) startWorker(id string, slots int) (stop func()) {
 	// Like a worker-only node, each test worker has a store of its own.
 	local := storage.NewMemory()
 	p.workerStores[id] = local
-	blobs, err := worker.DialBlobs(p.addr, local)
+	blobs, err := worker.DialBlobs(p.addr, local, 0)
 	if err != nil {
 		p.t.Fatal(err)
 	}
