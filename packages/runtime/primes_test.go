@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+var ctx = context.Background()
+
 func TestCountPrimes(t *testing.T) {
 	tests := []struct {
 		from, to, want uint64
@@ -54,7 +56,7 @@ func TestPrimesSplitCoversRangeExactly(t *testing.T) {
 		{0, 1000, 1, 1},
 	} {
 		params, _ := json.Marshal(PrimesRange{From: tt.from, To: tt.to})
-		payloads, err := Primes{}.Split(params, tt.parts)
+		payloads, err := Primes{}.Split(ctx, nil, params, tt.parts)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -81,19 +83,19 @@ func TestPrimesSplitCoversRangeExactly(t *testing.T) {
 func TestPrimesSplitExecuteAggregate(t *testing.T) {
 	w := Primes{}
 	params, _ := json.Marshal(PrimesRange{From: 0, To: 1_000_000})
-	payloads, err := w.Split(params, 9)
+	payloads, err := w.Split(ctx, nil, params, 9)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var outputs [][]byte
 	for _, payload := range payloads {
-		output, err := w.Execute(context.Background(), payload)
+		output, err := w.Execute(ctx, nil, payload)
 		if err != nil {
 			t.Fatal(err)
 		}
 		outputs = append(outputs, output)
 	}
-	result, err := w.Aggregate(outputs)
+	result, err := w.Aggregate(ctx, nil, outputs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +110,12 @@ func TestPrimesSplitExecuteAggregate(t *testing.T) {
 
 func TestPrimesRejectsBadRanges(t *testing.T) {
 	for _, params := range []string{`{"from":10,"to":5}`, `{"from":0,"to":2199023255552}`, `not json`} {
-		if _, err := (Primes{}).Split([]byte(params), 2); err == nil {
+		if _, err := (Primes{}).Split(ctx, nil, []byte(params), 2); err == nil {
 			t.Errorf("Split(%s) succeeded, want an error", params)
 		}
 	}
+}
+
+func contextWithCancel() (context.Context, context.CancelFunc) {
+	return context.WithCancel(ctx)
 }

@@ -6,23 +6,39 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
+
+	"github.com/ipfs/go-cid"
+
+	"github.com/excho0/Sisyphus/packages/storage"
 )
+
+// Blobs gives a workload access to content-addressed data: bulk inputs and
+// outputs that are too large to pass inline. On a worker, opening a blob
+// fetches it from the coordinator if it is not already held locally, and
+// storing one also uploads it to the coordinator.
+type Blobs interface {
+	Open(ctx context.Context, c cid.Cid) (storage.Blob, error)
+	Put(ctx context.Context, r io.Reader) (cid.Cid, error)
+}
 
 // Workload is a unit of computation the network knows how to run.
 //
 // Split and Aggregate run on the coordinator. Execute runs on a worker.
+// Parameters, payloads and outputs are small and travel inline; anything
+// large goes through Blobs and is referred to by CID.
 type Workload interface {
 	Name() string
 	// Split divides params into at most parts task payloads. Asking for one
 	// part must return a single payload covering the whole job.
-	Split(params []byte, parts int) ([][]byte, error)
+	Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error)
 	// Execute runs one task payload and returns its output. It must stop
 	// promptly when ctx is cancelled.
-	Execute(ctx context.Context, payload []byte) ([]byte, error)
+	Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error)
 	// Aggregate combines task outputs, given in task order, into the job
 	// result.
-	Aggregate(outputs [][]byte) ([]byte, error)
+	Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error)
 }
 
 // Registry is a fixed set of workloads, looked up by name.
@@ -40,7 +56,7 @@ func NewRegistry(workloads ...Workload) *Registry {
 
 // Builtin returns the workloads shipped with the daemon.
 func Builtin() *Registry {
-	return NewRegistry(Primes{})
+	return NewRegistry(Primes{}, WordCount{})
 }
 
 func (r *Registry) Get(name string) (Workload, error) {

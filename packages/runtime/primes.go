@@ -30,7 +30,7 @@ const maxPrimesTo = 1 << 40
 
 func (Primes) Name() string { return "primes" }
 
-func (Primes) Split(params []byte, parts int) ([][]byte, error) {
+func (Primes) Split(_ context.Context, _ Blobs, params []byte, parts int) ([][]byte, error) {
 	r, err := parsePrimesRange(params)
 	if err != nil {
 		return nil, err
@@ -54,7 +54,7 @@ func (Primes) Split(params []byte, parts int) ([][]byte, error) {
 	return payloads, nil
 }
 
-func (Primes) Execute(ctx context.Context, payload []byte) ([]byte, error) {
+func (Primes) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, error) {
 	r, err := parsePrimesRange(payload)
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func (Primes) Execute(ctx context.Context, payload []byte) ([]byte, error) {
 	return json.Marshal(PrimesCount{Count: count})
 }
 
-func (Primes) Aggregate(outputs [][]byte) ([]byte, error) {
+func (Primes) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, error) {
 	var total PrimesCount
 	for i, output := range outputs {
 		var c PrimesCount
