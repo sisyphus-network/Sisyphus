@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -242,5 +244,123 @@ func TestOpenWaitingOnAnotherDownloadStopsWhenCancelled(t *testing.T) {
 	}
 	if got := len(node.started); got != 0 {
 		t.Errorf("%d further download(s) were started for the same blob", got)
+	}
+}
+
+// cachedRun stands for one run of a worker-only node: it opens the cache in
+// dir, connects to the coordinator at addr, and closes both when the test
+// ends or stop is called.
+func cachedRun(t *testing.T, dir, addr string) (blobs *worker.RemoteBlobs, cache *storage.Store, stop func()) {
+	t.Helper()
+	cache, err := storage.OpenCache(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs, err = worker.DialBlobs(addr, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := false
+	stop = func() {
+		if !stopped {
+			stopped = true
+			blobs.Close()
+			cache.Close()
+		}
+	}
+	t.Cleanup(stop)
+	return blobs, cache, stop
+}
+
+// largestBlock returns the file holding the biggest block in a cache.
+func largestBlock(t *testing.T, dir string) string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "blocks", "*", "*.data"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no block files under %s (%v)", dir, err)
+	}
+	largest, size := "", int64(-1)
+	for _, file := range files {
+		if info, err := os.Stat(file); err == nil && info.Size() > size {
+			largest, size = file, info.Size()
+		}
+	}
+	return largest
+}
+
+var cachedData = bytes.Repeat([]byte("one must imagine Sisyphus happy. "), 30_000)
+
+func TestCacheFromAnEarlierRunIsUsedWithoutTheCoordinator(t *testing.T) {
+	remote := storage.NewMemory()
+	c, err := remote.Put(ctx, bytes.NewReader(cachedData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, stopCoordinator := startCoordinator(t, remote)
+	dir := t.TempDir()
+
+	first, _, endFirstRun := cachedRun(t, dir, addr)
+	blob, err := first.Open(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob.Close()
+	endFirstRun()
+	stopCoordinator()
+
+	second, _, _ := cachedRun(t, dir, addr)
+	blob, err = second.Open(ctx, c)
+	if err != nil {
+		t.Fatalf("a blob cached by an earlier run needed the coordinator: %v", err)
+	}
+	if got := read(t, blob); !bytes.Equal(got, cachedData) {
+		t.Error("the cached blob differs from the original")
+	}
+}
+
+func TestDamagedCacheEntryIsDownloadedAgain(t *testing.T) {
+	remote := storage.NewMemory()
+	c, err := remote.Put(ctx, bytes.NewReader(cachedData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, stopCoordinator := startCoordinator(t, remote)
+	dir := t.TempDir()
+
+	first, _, endFirstRun := cachedRun(t, dir, addr)
+	blob, err := first.Open(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob.Close()
+	endFirstRun()
+
+	// What a power cut during the first run could have left behind.
+	if err := os.Truncate(largestBlock(t, dir), 1000); err != nil {
+		t.Fatal(err)
+	}
+
+	second, cache, endSecondRun := cachedRun(t, dir, addr)
+	blob, err = second.Open(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, blob); !bytes.Equal(got, cachedData) {
+		t.Error("a task was given the damaged copy")
+	}
+	if err := cache.Verify(ctx, c); err != nil {
+		t.Errorf("the cache was not repaired: %v", err)
+	}
+	endSecondRun()
+
+	// With the coordinator gone, a damaged entry cannot be made good, and
+	// must not be handed to a task as it is.
+	if err := os.Truncate(largestBlock(t, dir), 1000); err != nil {
+		t.Fatal(err)
+	}
+	stopCoordinator()
+	third, _, _ := cachedRun(t, dir, addr)
+	if _, err := third.Open(ctx, c); err == nil || !strings.Contains(err.Error(), "fetch from coordinator") {
+		t.Errorf("error %v, want a failed download", err)
 	}
 }

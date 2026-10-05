@@ -521,3 +521,18 @@ func TestGCReportsABlockItCannotDelete(t *testing.T) {
 		t.Errorf("error %v, want a collection failure", err)
 	}
 }
+
+func TestPinningOrUnpinningNothingDoesNothing(t *testing.T) {
+	dir := t.TempDir()
+	s := openLocal(t, dir)
+	if err := s.Pin(ctx, "user", time.Time{}); err != nil {
+		t.Error(err)
+	}
+	if err := s.Unpin("user"); err != nil {
+		t.Error(err)
+	}
+	// Neither touched the disk.
+	if _, err := os.Stat(filepath.Join(dir, "pins.json")); !os.IsNotExist(err) {
+		t.Errorf("an empty pin request wrote the pin file (stat error: %v)", err)
+	}
+}

@@ -57,7 +57,7 @@ bin/sisyphusd run --role worker --coordinator <coordinator-ip>:7700
 
 ## Storing data
 
-Every node keeps a content-addressed store under `--data-dir`. A coordinator's store is durable: a blob it has accepted survives a crash or power loss. A worker-only node's store is a cache of what its coordinator holds; it skips waiting for the disk on each write, which makes fetching several times faster, and is emptied whenever the node starts. The `blob` commands talk to a node running the coordinator role.
+Every node keeps a content-addressed store under `--data-dir`. A coordinator's store is durable: a blob it has accepted survives a crash or power loss. A worker-only node's store is a cache of what its coordinator holds. It skips waiting for the disk on each write, which makes fetching several times faster on a slow disk, and it is kept across restarts. Because a power cut can then leave a cached block incomplete, a worker checks a cached blob in full the first time it is used in each run and downloads it again if it does not hold up. On a fast disk, `--sync-cache` makes the cache wait for the disk after all, so that it survives a power cut without downloading again. The `blob` commands talk to a node running the coordinator role.
 
 ```sh
 bin/sisyphusd blob put results.tar     # prints the blob's CID
@@ -128,5 +128,5 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - Workers are chosen by free slots only, not by hardware.
 - Without `--max-store-bytes` there is no limit on what can be uploaded, and anyone who can reach the port can pin, unpin and collect.
 - Jobs are forgotten when a coordinator restarts. Pins they held open are given the retention period to lapse.
-- Worker caches are never trimmed while a worker runs; they are emptied when it starts.
-- A worker downloads a whole input even when its tasks need only part of it, and downloads it again after a restart.
+- Worker caches are never trimmed: there is no size limit and nothing is evicted.
+- A worker downloads a whole input even when its tasks need only part of it.

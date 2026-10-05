@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -255,50 +256,156 @@ func TestLocalStoreIsExclusive(t *testing.T) {
 	reopened.Close()
 }
 
-func TestCacheStoresAndReturnsBlobs(t *testing.T) {
-	cache, err := OpenCache(t.TempDir())
+func openCache(t *testing.T, dir string, syncWrites bool) *Store {
+	t.Helper()
+	cache, err := OpenCache(dir, syncWrites)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cache.Close()
-	data := pattern(600_000)
-	c, err := cache.Put(ctx, bytes.NewReader(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob, err := cache.Open(ctx, c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer blob.Close()
-	if got, _ := io.ReadAll(blob); !bytes.Equal(got, data) {
-		t.Error("blob read back from a cache differs from what was stored")
+	t.Cleanup(func() { cache.Close() })
+	return cache
+}
+
+func TestCacheKeepsBlobsAcrossReopening(t *testing.T) {
+	for _, syncWrites := range []bool{false, true} {
+		dir := t.TempDir()
+		data := pattern(600_000)
+		cache, err := OpenCache(dir, syncWrites)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := cache.Put(ctx, bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cache.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		cache = openCache(t, dir, syncWrites)
+		if err := cache.Verify(ctx, c); err != nil {
+			t.Fatalf("sync=%v: blob does not verify after reopening: %v", syncWrites, err)
+		}
+		blob, err := cache.Open(ctx, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := io.ReadAll(blob)
+		blob.Close()
+		if !bytes.Equal(got, data) {
+			t.Errorf("sync=%v: blob read back after reopening differs from what was stored", syncWrites)
+		}
 	}
 }
 
-// A cache does not sync its writes, so after a restart it cannot tell
-// complete blocks from torn ones and must start empty.
-func TestCacheIsEmptiedOnOpening(t *testing.T) {
-	dir := t.TempDir()
-	cache, err := OpenCache(dir)
+// blockFiles returns the files holding a disk store's blocks, largest first.
+func blockFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "blocks", "*", "*.data"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no block files under %s (%v)", dir, err)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		a, _ := os.Stat(files[i])
+		b, _ := os.Stat(files[j])
+		return a.Size() > b.Size()
+	})
+	return files
+}
+
+// A power cut can leave a block file short or missing. Verify must notice,
+// and storing the blob again must put it right.
+func TestCacheDetectsAndRepairsDamagedBlocks(t *testing.T) {
+	damage := map[string]func(file string) error{
+		"cut short": func(file string) error { return os.Truncate(file, 100) },
+		"emptied":   func(file string) error { return os.Truncate(file, 0) },
+		"missing":   os.Remove,
+		"altered": func(file string) error {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				return err
+			}
+			data[len(data)/2] ^= 0xff
+			return os.WriteFile(file, data, 0o600)
+		},
+	}
+	for name, spoil := range damage {
+		dir := t.TempDir()
+		data := pattern(600_000)
+		cache := openCache(t, dir, false)
+		c, err := cache.Put(ctx, bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cache.Verify(ctx, c); err != nil {
+			t.Fatalf("%s: a freshly stored blob does not verify: %v", name, err)
+		}
+
+		if err := spoil(blockFiles(t, dir)[0]); err != nil {
+			t.Fatal(err)
+		}
+		if err := cache.Verify(ctx, c); err == nil {
+			t.Fatalf("%s: Verify passed a blob with a damaged block", name)
+		}
+
+		if _, err := cache.Put(ctx, bytes.NewReader(data)); err != nil {
+			t.Fatal(err)
+		}
+		if err := cache.Verify(ctx, c); err != nil {
+			t.Errorf("%s: storing the blob again did not repair it: %v", name, err)
+		}
+	}
+}
+
+func TestVerifyChecksEveryBlock(t *testing.T) {
+	s := NewMemory()
+	data := pattern(50_000_000) // a root, two inner nodes and many leaves
+	c, err := s.Put(ctx, bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := cache.Put(ctx, bytes.NewReader(pattern(600_000)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cache.Close(); err != nil {
-		t.Fatal(err)
+	if err := s.Verify(ctx, c); err != nil {
+		t.Fatalf("an intact blob does not verify: %v", err)
 	}
 
-	cache, err = OpenCache(dir)
+	absent, err := CID(ctx, strings.NewReader("never stored"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cache.Close()
-	if has, err := cache.Has(ctx, c); err != nil || has {
-		t.Errorf("a reopened cache still holds a blob from its last run: has=%v err=%v", has, err)
+	if err := s.Verify(ctx, absent); err == nil {
+		t.Error("Verify passed a blob the store does not hold")
+	}
+
+	// Remove the very last leaf, which only a full walk reaches.
+	last, err := CID(ctx, bytes.NewReader(data[len(data)-len(data)%chunkSize:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.blocks.DeleteBlock(ctx, last); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify(ctx, c); err == nil {
+		t.Error("Verify passed a blob missing its last block")
+	}
+}
+
+func TestVerifyRejectsATreeNodeThatCannotBeDecoded(t *testing.T) {
+	s := NewMemory()
+	garbage := []byte("\xff\xff not a node")
+	mangled, err := cidBuilder.Sum(garbage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := blocks.NewBlockWithCid(garbage, mangled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.blocks.Put(ctx, block); err != nil {
+		t.Fatal(err)
+	}
+	// Its bytes match its CID, so only decoding shows it is not a node.
+	if err := s.Verify(ctx, mangled); err == nil || strings.Contains(err.Error(), "corrupt") {
+		t.Errorf("error %v, want a decoding failure", err)
 	}
 }
 
@@ -337,35 +444,6 @@ func TestOpeningAStoreFails(t *testing.T) {
 		t.Fatalf("opening after a failed open: %v", err)
 	}
 	store.Close()
-}
-
-func TestOpeningACacheThatCannotBeEmptiedFails(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root can delete from a read-only directory")
-	}
-	dir := t.TempDir()
-	locked := filepath.Join(dir, "blocks", "kept")
-	if err := os.MkdirAll(locked, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(locked, "block"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(locked, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(locked, 0o700) // let the test's own cleanup remove it
-
-	if _, err := OpenCache(dir); err == nil {
-		t.Fatal("opened a cache whose old contents could not be removed")
-	}
-	// The failed open released the lock.
-	os.Chmod(locked, 0o700)
-	cache, err := OpenCache(dir)
-	if err != nil {
-		t.Fatalf("opening after a failed open: %v", err)
-	}
-	cache.Close()
 }
 
 func TestOpenReportsBlocksThatAreNotABlob(t *testing.T) {
