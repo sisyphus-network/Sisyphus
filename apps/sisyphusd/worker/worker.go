@@ -36,7 +36,9 @@ type Worker struct {
 	// Slots is how many tasks this node runs at once.
 	Slots     int
 	Workloads *runtime.Registry
-	Log       *slog.Logger
+	// Blobs is the stored data this node's tasks can read and write.
+	Blobs runtime.Blobs
+	Log   *slog.Logger
 }
 
 // Run keeps the worker connected to its coordinator, reconnecting with
@@ -167,7 +169,7 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 		return result
 	}
 	started := time.Now()
-	output, err := workload.Execute(ctx, a.GetPayload())
+	output, err := workload.Execute(ctx, w.Blobs, a.GetPayload())
 	if err != nil {
 		fail(err)
 		return result

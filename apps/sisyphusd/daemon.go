@@ -29,7 +29,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	join := fs.String("coordinator", "", "worker-only node: host:port of the coordinator to join")
 	nodeID := fs.String("node-id", "", "name of this node in the pool (default: hostname plus a random suffix)")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
-	dataDir := fs.String("data-dir", defaultDataDir(), "coordinator role: directory for this node's stored data")
+	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
 	verbose := fs.Bool("v", false, "log per-task detail")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -74,29 +74,52 @@ func runDaemon(ctx context.Context, args []string) error {
 	// Each role reports once when it stops; the first to stop ends the node.
 	stopped := make(chan error, 2)
 
+	// Every node keeps a blob store. Deferred calls run last-in first-out, so
+	// it closes only after everything using it has stopped.
+	store, err := storage.OpenLocal(filepath.Join(*dataDir, "blobs"))
+	if err != nil {
+		return fmt.Errorf("%w (nodes sharing a machine each need their own --data-dir)", err)
+	}
+	defer store.Close()
+	// A node that is its own coordinator reads and writes the one store
+	// directly; a worker-only node caches the coordinator's blobs in its own.
+	var blobs runtime.Blobs = store
+
 	if isCoordinator {
 		lis, err := net.Listen("tcp", *listen)
 		if err != nil {
 			return err
 		}
-		store, err := storage.OpenLocal(filepath.Join(*dataDir, "blobs"))
-		if err != nil {
-			lis.Close()
-			return err
-		}
-		defer store.Close()
-		srv := api.NewServer(coordinator.New(*nodeID, workloads, log), store)
+		coord := coordinator.New(*nodeID, workloads, store, log)
+		defer coord.Close()
+		srv := api.NewServer(coord, store)
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish.
 		defer srv.Stop()
 		log.Info("coordinator listening", "addr", lis.Addr().String(), "node", *nodeID)
 		go func() { stopped <- srv.Serve(lis) }()
 		*join = loopback(lis.Addr())
+	} else {
+		remote, err := worker.DialBlobs(*join, store)
+		if err != nil {
+			return err
+		}
+		defer remote.Close()
+		blobs = remote
 	}
 
 	if isWorker {
-		w := &worker.Worker{NodeID: *nodeID, Coordinator: *join, Slots: *slots, Workloads: workloads, Log: log}
-		go func() { stopped <- w.Run(ctx) }()
+		w := &worker.Worker{NodeID: *nodeID, Coordinator: *join, Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log}
+		done := make(chan struct{})
+		// Tasks must finish before the store they use closes.
+		defer func() {
+			cancel()
+			<-done
+		}()
+		go func() {
+			defer close(done)
+			stopped <- w.Run(ctx)
+		}()
 	}
 
 	select {

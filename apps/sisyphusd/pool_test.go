@@ -2,20 +2,26 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
+	"github.com/excho0/Sisyphus/apps/sisyphusd/blobclient"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
@@ -35,7 +41,22 @@ type pool struct {
 	ctx       context.Context
 	addr      string
 	client    pb.NodeServiceClient
+	blobs     pb.BlobServiceClient
 	workloads *runtime.Registry
+	// store is the coordinator's blob store; workerStores are the workers'.
+	store        *storage.Store
+	workerStores map[string]*storage.Store
+	// blobGets counts downloads served by the coordinator.
+	blobGets *atomic.Int32
+}
+
+func countBlobGets(n *atomic.Int32) grpc.StreamServerInterceptor {
+	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if info.FullMethod == pb.BlobService_Get_FullMethodName {
+			n.Add(1)
+		}
+		return handler(srv, stream)
+	}
 }
 
 func startPool(t *testing.T, workloads *runtime.Registry) *pool {
@@ -44,9 +65,15 @@ func startPool(t *testing.T, workloads *runtime.Registry) *pool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := api.NewServer(coordinator.New("coordinator", workloads, quiet), storage.NewMemory())
+	store := storage.NewMemory()
+	coord := coordinator.New("coordinator", workloads, store, quiet)
+	gets := new(atomic.Int32)
+	srv := api.NewServer(coord, store, grpc.StreamInterceptor(countBlobGets(gets)))
 	go srv.Serve(lis)
-	t.Cleanup(srv.Stop)
+	t.Cleanup(func() {
+		srv.Stop()
+		coord.Close()
+	})
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -56,7 +83,11 @@ func startPool(t *testing.T, workloads *runtime.Registry) *pool {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
-	return &pool{t: t, ctx: ctx, addr: lis.Addr().String(), client: pb.NewNodeServiceClient(conn), workloads: workloads}
+	return &pool{
+		t: t, ctx: ctx, addr: lis.Addr().String(), workloads: workloads,
+		client: pb.NewNodeServiceClient(conn), blobs: pb.NewBlobServiceClient(conn),
+		store: store, blobGets: gets, workerStores: make(map[string]*storage.Store),
+	}
 }
 
 // startWorker runs a worker until the test ends or the returned stop function
@@ -65,7 +96,15 @@ func (p *pool) startWorker(id string, slots int) (stop func()) {
 	p.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	w := &worker.Worker{NodeID: id, Coordinator: p.addr, Slots: slots, Workloads: p.workloads, Log: quiet}
+	// Like a worker-only node, each test worker has a store of its own.
+	local := storage.NewMemory()
+	p.workerStores[id] = local
+	blobs, err := worker.DialBlobs(p.addr, local)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	p.t.Cleanup(func() { blobs.Close() })
+	w := &worker.Worker{NodeID: id, Coordinator: p.addr, Slots: slots, Workloads: p.workloads, Blobs: blobs, Log: quiet}
 	go func() {
 		defer close(done)
 		w.Run(ctx)
@@ -215,11 +254,11 @@ type gated struct {
 
 func (gated) Name() string { return "gated" }
 
-func (gated) Split(_ []byte, parts int) ([][]byte, error) {
+func (gated) Split(_ context.Context, _ runtime.Blobs, _ []byte, parts int) ([][]byte, error) {
 	return make([][]byte, parts), nil
 }
 
-func (g gated) Execute(ctx context.Context, _ []byte) ([]byte, error) {
+func (g gated) Execute(ctx context.Context, _ runtime.Blobs, _ []byte) ([]byte, error) {
 	g.started <- struct{}{}
 	select {
 	case <-g.release:
@@ -229,7 +268,7 @@ func (g gated) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	}
 }
 
-func (gated) Aggregate(outputs [][]byte) ([]byte, error) {
+func (gated) Aggregate(_ context.Context, _ runtime.Blobs, outputs [][]byte) ([]byte, error) {
 	return []byte(strconv.Itoa(len(outputs))), nil
 }
 
@@ -267,11 +306,18 @@ func TestTasksMoveToAnotherWorkerWhenTheirsDies(t *testing.T) {
 
 type broken struct{}
 
-func (broken) Name() string                                { return "broken" }
-func (broken) Split(_ []byte, parts int) ([][]byte, error) { return make([][]byte, parts), nil }
-func (broken) Aggregate([][]byte) ([]byte, error)          { return nil, errors.New("unreachable") }
-func (broken) Execute(context.Context, []byte) ([]byte, error) {
+func (broken) Name() string { return "broken" }
+
+func (broken) Split(_ context.Context, _ runtime.Blobs, _ []byte, parts int) ([][]byte, error) {
+	return make([][]byte, parts), nil
+}
+
+func (broken) Execute(context.Context, runtime.Blobs, []byte) ([]byte, error) {
 	return nil, errors.New("disk on fire")
+}
+
+func (broken) Aggregate(context.Context, runtime.Blobs, [][]byte) ([]byte, error) {
+	return nil, errors.New("unreachable")
 }
 
 func TestJobFailsAfterATaskExhaustsItsAttempts(t *testing.T) {
@@ -294,8 +340,9 @@ func TestJobFailsAfterATaskExhaustsItsAttempts(t *testing.T) {
 
 type panicky struct{ broken }
 
-func (panicky) Name() string                                    { return "panicky" }
-func (panicky) Execute(context.Context, []byte) ([]byte, error) { panic("oh no") }
+func (panicky) Name() string { return "panicky" }
+
+func (panicky) Execute(context.Context, runtime.Blobs, []byte) ([]byte, error) { panic("oh no") }
 
 func TestPanickingWorkloadFailsTheTaskNotTheWorker(t *testing.T) {
 	p := startPool(t, runtime.NewRegistry(panicky{}))
@@ -315,7 +362,7 @@ func TestSecondWorkerWithSameNodeIDIsRejected(t *testing.T) {
 	p.startWorker("twin", 1)
 	p.waitForWorkers(1)
 
-	twin := &worker.Worker{NodeID: "twin", Coordinator: p.addr, Slots: 1, Workloads: p.workloads, Log: quiet}
+	twin := &worker.Worker{NodeID: "twin", Coordinator: p.addr, Slots: 1, Workloads: p.workloads, Blobs: storage.NewMemory(), Log: quiet}
 	err := twin.Run(p.ctx)
 	if status.Code(errors.Unwrap(err)) != codes.AlreadyExists {
 		t.Errorf("second worker returned %v, want an AlreadyExists rejection", err)
@@ -358,5 +405,179 @@ func TestInvalidRequestsAreRejected(t *testing.T) {
 		if got := status.Code(tt.call()); got != tt.want {
 			t.Errorf("%s: code %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+// sampleText is a few megabytes of varied words, enough to span many storage
+// chunks.
+func sampleText() string {
+	var text strings.Builder
+	for i := 0; text.Len() < 3_000_000; i++ {
+		fmt.Fprintf(&text, "Line %d: the boulder rolls down hill %d, and Sisyphus walks after it. ", i, i%97)
+		if i%7 == 0 {
+			text.WriteString("One must imagine him happy!\n")
+		}
+	}
+	return text.String()
+}
+
+// wordCountLocally runs the wordcount workload in this process as a single
+// task, giving the result a distributed run must reproduce exactly.
+func wordCountLocally(t *testing.T, text string) (result string, table string) {
+	t.Helper()
+	ctx := context.Background()
+	store := storage.NewMemory()
+	input, err := store.Put(ctx, strings.NewReader(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := runtime.WordCount{}
+	payloads, err := w.Split(ctx, store, []byte(`{"input":"`+input.String()+`"}`), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := w.Execute(ctx, store, payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := w.Aggregate(ctx, store, [][]byte{output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed runtime.WordCountResult
+	if err := json.Unmarshal(encoded, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := store.Open(ctx, cid.MustParse(parsed.Output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blob.Close()
+	data, err := io.ReadAll(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded), string(data)
+}
+
+func TestWordCountJobMovesItsDataThroughTheStore(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	for _, id := range []string{"a", "b", "c"} {
+		p.startWorker(id, 2)
+	}
+	p.waitForWorkers(3)
+
+	text := sampleText()
+	input, err := blobclient.Upload(p.ctx, p.blobs, strings.NewReader(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := p.wait(p.submit(&pb.JobSpec{
+		Workload: "wordcount",
+		Params:   []byte(`{"input":"` + input.String() + `"}`),
+		MaxTasks: 12,
+	}).GetJobId())
+	if job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("job %v: %s", job.GetState(), job.GetError())
+	}
+
+	wantResult, wantTable := wordCountLocally(t, text)
+	if string(job.GetResult()) != wantResult {
+		t.Fatalf("result %s, but a single local task gives %s", job.GetResult(), wantResult)
+	}
+	var result runtime.WordCountResult
+	if err := json.Unmarshal(job.GetResult(), &result); err != nil {
+		t.Fatal(err)
+	}
+	var table strings.Builder
+	if err := blobclient.Download(p.ctx, p.blobs, cid.MustParse(result.Output), &table); err != nil {
+		t.Fatalf("fetching the result blob: %v", err)
+	}
+	if table.String() != wantTable {
+		t.Error("the result table differs from the one a single local task produces")
+	}
+
+	// Every worker ran tasks, so each must have pulled the input into its
+	// own store, and only once however many tasks it ran. The one further
+	// download is this test fetching the table.
+	for id, store := range p.workerStores {
+		if has, err := store.Has(p.ctx, input); err != nil || !has {
+			t.Errorf("worker %s does not hold the input: has=%v err=%v", id, has, err)
+		}
+	}
+	if got := p.blobGets.Load(); got != 4 {
+		t.Errorf("coordinator served %d downloads, want 3 input fetches and 1 result fetch", got)
+	}
+}
+
+func TestJobWithAMissingInputIsRejectedAtSubmission(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	absent, err := storage.CID(p.ctx, strings.NewReader("never stored"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.client.SubmitJob(p.ctx, &pb.SubmitJobRequest{Spec: &pb.JobSpec{
+		Workload: "wordcount",
+		Params:   []byte(`{"input":"` + absent.String() + `"}`),
+	}})
+	if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "blob not found") {
+		t.Errorf("error %v, want InvalidArgument naming the missing blob", err)
+	}
+}
+
+// slowAggregate is a workload whose tasks finish at once but whose
+// aggregation blocks until released.
+type slowAggregate struct {
+	broken
+	aggregating chan struct{}
+	release     chan struct{}
+}
+
+func (slowAggregate) Name() string { return "slow-aggregate" }
+
+func (slowAggregate) Execute(context.Context, runtime.Blobs, []byte) ([]byte, error) {
+	return []byte("ok"), nil
+}
+
+func (s slowAggregate) Aggregate(ctx context.Context, _ runtime.Blobs, _ [][]byte) ([]byte, error) {
+	close(s.aggregating)
+	select {
+	case <-s.release:
+		return []byte("done"), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestCoordinatorStaysResponsiveWhileAJobAggregates(t *testing.T) {
+	slow := slowAggregate{aggregating: make(chan struct{}), release: make(chan struct{})}
+	p := startPool(t, runtime.NewRegistry(slow, runtime.Primes{}))
+	p.startWorker("a", 2)
+	p.waitForWorkers(1)
+
+	stuck := p.submit(&pb.JobSpec{Workload: "slow-aggregate", MaxTasks: 2})
+	<-slow.aggregating
+
+	got, err := p.client.GetJob(p.ctx, &pb.GetJobRequest{JobId: stuck.GetJobId()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetJob().GetState() != pb.JobState_JOB_STATE_RUNNING {
+		t.Errorf("job is %v while aggregating, want running", got.GetJob().GetState())
+	}
+	for _, task := range got.GetJob().GetTasks() {
+		if task.GetState() != pb.TaskState_TASK_STATE_SUCCEEDED {
+			t.Errorf("task %d is %v while the job aggregates", task.GetIndex(), task.GetState())
+		}
+	}
+	// Another job runs start to finish in the meantime.
+	other := p.wait(p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED, 2)).GetJobId())
+	if string(other.GetResult()) != primesBelowTwoMillion {
+		t.Errorf("a job submitted during another's aggregation: %s (%s)", other.GetResult(), other.GetError())
+	}
+
+	close(slow.release)
+	if job := p.wait(stuck.GetJobId()); string(job.GetResult()) != "done" {
+		t.Errorf("after release: result %q, state %v, error %s", job.GetResult(), job.GetState(), job.GetError())
 	}
 }
