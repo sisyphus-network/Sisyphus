@@ -1,6 +1,6 @@
 PROTO_FILES := $(wildcard proto/sisyphus/v1/*.proto)
 
-.PHONY: build test proto tools fmt
+.PHONY: build test demo proto tools fmt
 
 build:
 	go build -o bin/sisyphusd ./apps/sisyphusd
@@ -8,6 +8,10 @@ build:
 test:
 	go vet ./...
 	go test -race ./...
+
+# Runs a three-node pool and a job on this machine, in one terminal.
+demo:
+	./scripts/demo.sh
 
 fmt:
 	gofmt -w apps packages

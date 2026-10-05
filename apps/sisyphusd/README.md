@@ -15,6 +15,10 @@ make test    # go vet and the test suite with the race detector
 
 ## Try it on one machine
 
+The quick way, in one terminal, is `make demo`: it starts three nodes, runs a job across them, and shuts them down.
+
+To run the nodes yourself, use one terminal per node (or one `tmux` pane each):
+
 ```sh
 # Terminal 1: a coordinator that is also a worker
 bin/sisyphusd run --node-id alpha --slots 4
