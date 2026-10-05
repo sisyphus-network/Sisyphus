@@ -3,11 +3,13 @@ package worker_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -20,6 +22,10 @@ import (
 )
 
 var ctx = context.Background()
+
+func quiet() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 // serve runs srv on a loopback port and returns its address and a function
 // that stops it.
@@ -37,7 +43,7 @@ func serve(t *testing.T, srv *grpc.Server) (addr string, stop func()) {
 // startCoordinator serves a real coordinator's blob service over store.
 func startCoordinator(t *testing.T, store *storage.Store) (addr string, stop func()) {
 	t.Helper()
-	coord := coordinator.New("coordinator", runtime.Builtin(), store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	coord := coordinator.New("coordinator", runtime.Builtin(), store, quiet())
 	t.Cleanup(coord.Close)
 	return serve(t, api.NewServer(coord, store))
 }
@@ -161,5 +167,80 @@ func TestOpenRejectsBytesThatDoNotMatchTheCID(t *testing.T) {
 	}
 	if has, _ := local.Has(ctx, wanted); has {
 		t.Error("the wrong bytes were stored under the requested CID")
+	}
+}
+
+func TestDialBlobsRejectsAMalformedAddress(t *testing.T) {
+	if _, err := worker.DialBlobs("bad\x00address", storage.NewMemory()); err == nil {
+		t.Error("dialled an address containing a control character")
+	}
+}
+
+// stalledNode is a blob service that starts a download and never finishes
+// it until released.
+type stalledNode struct {
+	pb.UnimplementedBlobServiceServer
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s stalledNode) Get(_ *pb.GetBlobRequest, stream grpc.ServerStreamingServer[pb.GetBlobResponse]) error {
+	s.started <- struct{}{}
+	select {
+	case <-s.release:
+	case <-stream.Context().Done():
+	}
+	return stream.Send(&pb.GetBlobResponse{Data: []byte("the input")})
+}
+
+// A task waiting on another task's download of the same blob must still stop
+// when it is cancelled, and must not start a second download.
+func TestOpenWaitingOnAnotherDownloadStopsWhenCancelled(t *testing.T) {
+	node := stalledNode{started: make(chan struct{}, 4), release: make(chan struct{})}
+	srv := grpc.NewServer()
+	pb.RegisterBlobServiceServer(srv, node)
+	addr, _ := serve(t, srv)
+	blobs := dial(t, addr, storage.NewMemory())
+	wanted, err := storage.CID(ctx, strings.NewReader("the input"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := make(chan error, 1)
+	go func() {
+		blob, err := blobs.Open(ctx, wanted)
+		if err == nil {
+			blob.Close()
+		}
+		first <- err
+	}()
+	<-node.started // the first task's download is under way
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := blobs.Open(cancelled, wanted); !errors.Is(err, context.Canceled) {
+		t.Errorf("waiting task: error %v, want context.Canceled", err)
+	}
+
+	// A task that is not cancelled waits and then gets the blob.
+	patient := make(chan error, 1)
+	go func() {
+		blob, err := blobs.Open(ctx, wanted)
+		if err == nil {
+			blob.Close()
+		}
+		patient <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // let it reach the wait
+
+	close(node.release)
+	if err := <-first; err != nil {
+		t.Errorf("the task doing the download: %v", err)
+	}
+	if err := <-patient; err != nil {
+		t.Errorf("the task that waited: %v", err)
+	}
+	if got := len(node.started); got != 0 {
+		t.Errorf("%d further download(s) were started for the same blob", got)
 	}
 }

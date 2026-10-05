@@ -74,15 +74,22 @@ func runDaemon(ctx context.Context, args []string) error {
 	// Each role reports once when it stops; the first to stop ends the node.
 	stopped := make(chan error, 2)
 
-	// Every node keeps a blob store. Deferred calls run last-in first-out, so
-	// it closes only after everything using it has stopped.
-	store, err := storage.OpenLocal(filepath.Join(*dataDir, "blobs"))
+	// Every node keeps a blob store. A coordinator's is durable, because it
+	// is where a job's inputs and results live. A worker-only node's is a
+	// cache of what its coordinator holds, kept in a directory of its own so
+	// the two kinds never mix. Deferred calls run last-in first-out, so the
+	// store closes only after everything using it has stopped.
+	openStore, storeDir := storage.OpenLocal, "blobs"
+	if !isCoordinator {
+		openStore, storeDir = storage.OpenCache, "cache"
+	}
+	store, err := openStore(filepath.Join(*dataDir, storeDir))
 	if err != nil {
 		return fmt.Errorf("%w (nodes sharing a machine each need their own --data-dir)", err)
 	}
 	defer store.Close()
 	// A node that is its own coordinator reads and writes the one store
-	// directly; a worker-only node caches the coordinator's blobs in its own.
+	// directly; a worker-only node fetches into its cache.
 	var blobs runtime.Blobs = store
 
 	if isCoordinator {
@@ -141,16 +148,17 @@ func loopback(addr net.Addr) string {
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(tcp.Port))
 }
 
+// hostname is os.Hostname; tests replace it.
+var hostname = os.Hostname
+
 func defaultNodeID() string {
-	hostname, err := os.Hostname()
+	name, err := hostname()
 	if err != nil {
-		hostname = "node"
+		name = "node"
 	}
 	var suffix [3]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		panic(err)
-	}
-	return hostname + "-" + hex.EncodeToString(suffix[:])
+	rand.Read(suffix[:]) // never fails; see crypto/rand
+	return name + "-" + hex.EncodeToString(suffix[:])
 }
 
 // defaultDataDir is ~/.sisyphus, falling back to the working directory when

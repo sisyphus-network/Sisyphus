@@ -48,6 +48,12 @@ type pool struct {
 	workerStores map[string]*storage.Store
 	// blobGets counts downloads served by the coordinator.
 	blobGets *atomic.Int32
+	// coord is the coordinator itself, for calls that bypass the network,
+	// and conn a connection to it for clients the helpers do not cover.
+	coord *coordinator.Coordinator
+	conn  *grpc.ClientConn
+	// heartbeat, if set, is how often workers started later report in.
+	heartbeat time.Duration
 }
 
 func countBlobGets(n *atomic.Int32) grpc.StreamServerInterceptor {
@@ -87,6 +93,7 @@ func startPool(t *testing.T, workloads *runtime.Registry) *pool {
 		t: t, ctx: ctx, addr: lis.Addr().String(), workloads: workloads,
 		client: pb.NewNodeServiceClient(conn), blobs: pb.NewBlobServiceClient(conn),
 		store: store, blobGets: gets, workerStores: make(map[string]*storage.Store),
+		coord: coord, conn: conn,
 	}
 }
 
@@ -104,7 +111,10 @@ func (p *pool) startWorker(id string, slots int) (stop func()) {
 		p.t.Fatal(err)
 	}
 	p.t.Cleanup(func() { blobs.Close() })
-	w := &worker.Worker{NodeID: id, Coordinator: p.addr, Slots: slots, Workloads: p.workloads, Blobs: blobs, Log: quiet}
+	w := &worker.Worker{
+		NodeID: id, Coordinator: p.addr, Slots: slots, Workloads: p.workloads, Blobs: blobs, Log: quiet,
+		HeartbeatInterval: p.heartbeat,
+	}
 	go func() {
 		defer close(done)
 		w.Run(ctx)

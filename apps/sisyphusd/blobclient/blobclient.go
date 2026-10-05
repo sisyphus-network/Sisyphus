@@ -83,9 +83,14 @@ func Download(ctx context.Context, client pb.BlobServiceClient, want cid.Cid, ds
 	return check(got, want)
 }
 
+// Putter is somewhere a blob can be stored, such as a storage.Store.
+type Putter interface {
+	Put(ctx context.Context, r io.Reader) (cid.Cid, error)
+}
+
 // Fetch copies a blob from the node into a local store, failing if the bytes
 // received do not hash to want.
-func Fetch(ctx context.Context, client pb.BlobServiceClient, want cid.Cid, into *storage.Store) error {
+func Fetch(ctx context.Context, client pb.BlobServiceClient, want cid.Cid, into Putter) error {
 	src, err := open(ctx, client, want)
 	if err != nil {
 		return err

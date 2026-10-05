@@ -246,9 +246,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 		for {
 			select {
 			case msg := <-w.send:
-				if stream.Send(msg) != nil {
-					return
-				}
+				stream.Send(msg)
 			case <-stop:
 				return
 			}
@@ -263,10 +261,10 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 
 	for {
 		msg, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil // the worker closed its side cleanly
+		}
 		if err != nil {
-			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled {
-				return nil
-			}
 			return err
 		}
 		switch kind := msg.GetKind().(type) {
@@ -416,8 +414,6 @@ func (c *Coordinator) notifyLocked(job *jobmodel.Job) {
 
 func newID() string {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(err)
-	}
+	rand.Read(b[:]) // never fails; see crypto/rand
 	return hex.EncodeToString(b[:])
 }

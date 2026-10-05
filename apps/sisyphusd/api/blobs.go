@@ -20,7 +20,13 @@ const blobChunkSize = 256 << 10
 
 type blobService struct {
 	pb.UnimplementedBlobServiceServer
-	store *storage.Store
+	store blobStore
+}
+
+// blobStore is the part of a storage.Store that the service uses.
+type blobStore interface {
+	Open(ctx context.Context, c cid.Cid) (storage.Blob, error)
+	Put(ctx context.Context, r io.Reader) (cid.Cid, error)
 }
 
 func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]) error {

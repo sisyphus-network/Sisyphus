@@ -24,9 +24,9 @@ import (
 )
 
 const (
-	heartbeatInterval = 5 * time.Second
-	minBackoff        = time.Second
-	maxBackoff        = 30 * time.Second
+	defaultHeartbeatInterval = 5 * time.Second
+	minBackoff               = time.Second
+	maxBackoff               = 30 * time.Second
 )
 
 type Worker struct {
@@ -38,7 +38,10 @@ type Worker struct {
 	Workloads *runtime.Registry
 	// Blobs is the stored data this node's tasks can read and write.
 	Blobs runtime.Blobs
-	Log   *slog.Logger
+	// HeartbeatInterval is how often the coordinator hears from this node
+	// while it is idle. Zero means five seconds.
+	HeartbeatInterval time.Duration
+	Log               *slog.Logger
 }
 
 // Run keeps the worker connected to its coordinator, reconnecting with
@@ -99,26 +102,29 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 		return stream.Send(msg)
 	}
 
-	if err := send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
+	// A send on a broken stream fails without saying why; the reason comes
+	// from Recv below, so send errors are not checked here or in the
+	// heartbeat.
+	send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
 		NodeId:       w.NodeID,
 		Capabilities: w.capabilities(),
-	}}}); err != nil {
-		return false, err
-	}
+	}}})
 
 	var running atomic.Int32
 	tasks.Add(1)
 	go func() {
 		defer tasks.Done()
-		ticker := time.NewTicker(heartbeatInterval)
+		interval := w.HeartbeatInterval
+		if interval == 0 {
+			interval = defaultHeartbeatInterval
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				heartbeat := &pb.Heartbeat{RunningTasks: uint32(running.Load())}
-				if send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: heartbeat}}) != nil {
-					return
-				}
+				send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: heartbeat}})
 			case <-ctx.Done():
 				return
 			}
@@ -144,7 +150,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				// A result from a cancelled session is of no use: the
 				// coordinator has already given the task to someone else.
 				if ctx.Err() == nil {
-					_ = send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskResult{TaskResult: result}})
+					send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskResult{TaskResult: result}})
 				}
 			}()
 		}

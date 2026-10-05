@@ -22,12 +22,18 @@ import (
 // kept, and every blob a task stores is also uploaded, so the coordinator
 // holds a job's outputs before it hears the task has finished.
 type RemoteBlobs struct {
-	local  *storage.Store
+	local  localStore
 	conn   *grpc.ClientConn
 	remote pb.BlobServiceClient
 
 	mu       sync.Mutex
 	fetching map[cid.Cid]*fetch
+}
+
+// localStore is the part of a storage.Store that RemoteBlobs uses.
+type localStore interface {
+	Open(ctx context.Context, c cid.Cid) (storage.Blob, error)
+	Put(ctx context.Context, r io.Reader) (cid.Cid, error)
 }
 
 // fetch is a download in progress that other tasks wanting the same blob

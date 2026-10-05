@@ -11,6 +11,7 @@ Needs Go 1.27 or newer.
 ```sh
 make build   # produces bin/sisyphusd
 make test    # go vet and the test suite with the race detector
+make cover   # fails unless the tests execute every statement of hand-written code
 ```
 
 ## Try it on one machine
@@ -52,7 +53,7 @@ bin/sisyphusd run --role worker --coordinator <coordinator-ip>:7700
 
 ## Storing data
 
-Every node keeps a content-addressed store under `--data-dir`. The `blob` commands talk to a node running the coordinator role.
+Every node keeps a content-addressed store under `--data-dir`. A coordinator's store is durable: a blob it has accepted survives a crash or power loss. A worker-only node's store is a cache of what its coordinator holds; it skips waiting for the disk on each write, which makes fetching several times faster, and is emptied whenever the node starts. The `blob` commands talk to a node running the coordinator role.
 
 ```sh
 bin/sisyphusd blob put results.tar     # prints the blob's CID
@@ -99,5 +100,5 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - When a job fails, its other running tasks are left to finish and their results discarded; there is no cancellation.
 - Workers are chosen by free slots only, not by hardware.
 - Stored blobs are never deleted and there is no size limit or quota, so anyone who can reach the port can fill the disk.
-- A worker downloads a whole input even when its tasks need only part of it.
+- A worker downloads a whole input even when its tasks need only part of it, and downloads it again after a restart.
 - The coordinator does not record which blobs belong to which job.
