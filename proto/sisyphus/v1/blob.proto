@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package sisyphus.v1;
+
+option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+
+// BlobService moves content-addressed artifacts to and from a node's store.
+// Blobs are named by the CID that `ipfs add --cid-version=1` gives the same
+// bytes.
+service BlobService {
+  // Put stores the concatenation of every message's data as one blob.
+  rpc Put(stream PutBlobRequest) returns (PutBlobResponse);
+  // Get streams a blob's bytes in order. Receivers should check that what
+  // they received hashes to the CID they asked for.
+  rpc Get(GetBlobRequest) returns (stream GetBlobResponse);
+  rpc Stat(StatBlobRequest) returns (StatBlobResponse);
+}
+
+message PutBlobRequest {
+  bytes data = 1;
+}
+
+message PutBlobResponse {
+  string cid = 1;
+  uint64 size = 2;
+}
+
+message GetBlobRequest {
+  string cid = 1;
+}
+
+message GetBlobResponse {
+  bytes data = 1;
+}
+
+message StatBlobRequest {
+  string cid = 1;
+}
+
+message StatBlobResponse {
+  uint64 size = 1;
+}
