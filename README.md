@@ -167,6 +167,60 @@ V0 deliberately excludes:
 - A universal runtime for arbitrary workloads.
 - IPFS, quantum workloads, and a large decentralized protocol stack.
 
+## Trying it
+
+You need Go 1.27 or newer. Everything here runs on one machine.
+
+**The one-minute version.** Starts three nodes, runs a few jobs across them and shuts them down:
+
+```sh
+make demo
+```
+
+**A pool to play with.** Leave this running in one terminal:
+
+```sh
+examples/local-pool.sh
+```
+
+It starts a coordinator and two workers and prints two variables to set. With those set, in another terminal:
+
+```sh
+examples/primes.sh                # the same job split across the pool, then on one worker
+examples/wordcount.sh             # store a file, count its words across the pool
+examples/wordcount.sh my.txt 20   # your own file, the top 20 words
+```
+
+A `primes` run looks like this, here on one 32-core machine with two workers of four task slots each:
+
+```text
+counting the primes below 2000000000
+  split into 8 tasks     1.307816647s     {"count":98222287}
+  as a single task       9.163948934s     {"count":98222287}
+```
+
+**With IPFS.** If the `ipfs` program ([Kubo](https://github.com/ipfs/kubo/releases)) is installed, `examples/local-pool.sh --kubo` gives every node a Kubo daemon and the pool a private IPFS network of its own. Anything stored is then an ordinary IPFS file:
+
+```sh
+IPFS_PATH=sisyphus-pool/alpha/ipfs ipfs cat <a CID that wordcount.sh printed>
+```
+
+**By hand.** What the scripts do, a command at a time:
+
+```sh
+make build
+bin/sisyphusd run --name alpha                      # a coordinator that is also a worker
+bin/sisyphusd pool invite                           # prints an invitation for one worker
+bin/sisyphusd run --role worker --coordinator 127.0.0.1:7700 --join <invitation> \
+    --name beta --data-dir ~/.sisyphus-beta
+bin/sisyphusd nodes
+bin/sisyphusd job submit --params '{"from":0,"to":3000000000}'
+```
+
+**On more than one machine.** [`docs/multi-machine-test.md`](docs/multi-machine-test.md) is a step-by-step test of a pool across two or three machines, including what to break and what should happen when you do. Nobody has run it yet; if you do, the results belong on [#18](https://github.com/excho0/Sisyphus/issues/18).
+
+More in [`examples/`](examples/README.md).
+
 ## Monorepo
 
 ```text
@@ -183,8 +237,9 @@ sisyphus/
 │   ├── storage/          # content-addressed blob store, pins, garbage collection
 │   └── planner/          # planning interfaces and schemas (not started)
 ├── proto/                # Protocol Buffer service and message definitions
+├── examples/             # sample input and scripts to run against a pool
 ├── scripts/              # demo, release build, coverage check
-├── docs/                 # developer guide
+├── docs/                 # developer guide; multi-machine test guide
 └── README.md
 ```
 
@@ -208,6 +263,6 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 
 **Not built yet**: the AI planner and model providers, the desktop client, real workloads in containers, hardware discovery, and persistence of jobs across a coordinator restart. A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
 
-Try it with `make demo`; see [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) for usage and [`docs/development.md`](docs/development.md) for building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/excho0/Sisyphus/issues/23).
+Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/excho0/Sisyphus/issues/23).
 
 Two things in this section go beyond what the sections above describe and are still open for discussion: the choice of Go ([#1](https://github.com/excho0/Sisyphus/issues/1)), and building storage on IPFS formats while V0 lists IPFS as out of scope ([#25](https://github.com/excho0/Sisyphus/issues/25)).

@@ -37,7 +37,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	roles := fs.String("role", "coordinator,worker", "comma-separated roles this node runs: coordinator, worker")
 	listen := fs.String("listen", defaultAddr, "coordinator role: address to serve workers and clients on")
 	join := fs.String("coordinator", "", "worker-only node: host:port of its coordinator")
-	invitation := fs.String("join", "", "worker-only node: an invitation from the coordinator, needed the first time this node connects to it")
+	invitation := fs.String("join", "", "worker-only node: an invitation from the coordinator, needed the first time this node connects to it and ignored after that")
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
@@ -106,14 +106,17 @@ func runDaemon(ctx context.Context, args []string) error {
 		// A worker only ever talks to the coordinator it joined. The first
 		// time, an invitation says which node that is and gets this one
 		// admitted; after that the coordinator's ID is remembered.
-		if *invitation != "" {
-			if _, err := joinPool(ctx, *dataDir, ident, *join, *invitation); err != nil {
-				return err
-			}
-		}
 		known, err := loadKnown(*dataDir)
 		if err != nil {
 			return err
+		}
+		// An invitation works once, so it is only presented by a node that
+		// has not joined yet. That lets a worker be restarted with the very
+		// command it was first started with.
+		if known[*join] == "" && *invitation != "" {
+			if _, known, err = joinPool(ctx, *dataDir, ident, *join, *invitation); err != nil {
+				return err
+			}
 		}
 		if coordinatorID = known[*join]; coordinatorID == "" {
 			return fmt.Errorf("this node has not joined a coordinator at %s: start it once with --join and an invitation from that coordinator", *join)

@@ -50,7 +50,7 @@ bin/sisyphusd job submit --params '{"from":0,"to":3000000000}'
 bin/sisyphusd job submit --mode full-worker --params '{"from":0,"to":3000000000}'
 ```
 
-The first job is split across both workers; the second runs whole on one. Stop a worker with Ctrl-C while a job is running and its tasks move to the other. A worker needs `--join` only the first time; after that it remembers its coordinator.
+The first job is split across both workers; the second runs whole on one. Stop a worker with Ctrl-C while a job is running and its tasks move to the other. A worker needs `--join` only the first time. After that it remembers its coordinator, and an invitation left on its command line is ignored, so the same command restarts it.
 
 ## Try it across machines
 
@@ -98,6 +98,7 @@ Anyone else can complete the handshake and is then refused.
 ```sh
 bin/sisyphusd pool members            # who has been admitted, and as what
 bin/sisyphusd pool remove <node-id>   # take a node off the list and disconnect it
+bin/sisyphusd pool rekey              # change the key of the pool's private IPFS network
 ```
 
 ## Storing data
@@ -133,7 +134,8 @@ IPFS_PATH=~/.sisyphus/ipfs ipfs cat <cid>                  # anything stored is 
 - **Each node's Kubo is that node.** `ipfs id` and `sisyphusd id` print the same ID. Its repository is `ipfs` in the node's data directory, and it is started and stopped with the node.
 - **The pool has a network of its own.** A coordinator started with `--kubo` creates a swarm key, kept in `swarm.key` in its data directory. Only Kubo daemons holding that key can connect to each other; they have no bootstrap peers, no gateway, and no way to reach or be reached from the public IPFS network.
 - **Workers are given the key when they start**, over their encrypted connection to the coordinator, along with where to find the coordinator's Kubo and the other members'. A worker using `--kubo` needs a coordinator that does.
-- **Data comes from whoever has it.** When a task opens a blob its worker does not hold, the worker's Kubo fetches the blocks from the members that do, the coordinator or other workers. If the network cannot supply it within thirty seconds, the worker falls back to asking the coordinator directly.
+- **Data comes from whoever has it.** When a task opens a blob its worker does not hold, the worker's Kubo fetches the blocks from the members that do, the coordinator or other workers. If the network cannot supply it within thirty seconds, the worker falls back to asking the coordinator directly, and logs a warning saying so: the job still succeeds, but that warning means the private network is not working for that worker.
+- **Removing a member changes the key.** A removed node still holds the key it was given, so `pool remove` gives the network a new one. The coordinator's Kubo restarts on it, which takes a few seconds, and tells the remaining workers, who fetch the new key and restart theirs. The removed node cannot ask for it. `pool rekey` does the same without removing anyone, for when a key may have leaked.
 - **The coordinator's Kubo must be reachable** by the workers' on `--swarm-port` (default 4101), over TCP.
 - Files added with the `ipfs` command on a node's repository can be used as job inputs by CID.
 - The node's own pins decide what it keeps, as described below. Anything pinned with `ipfs pin add` is also kept. Do not run `ipfs repo gc` on the repository: Kubo's collector does not know about the node's pins.
@@ -161,6 +163,10 @@ bin/sisyphusd blob gc               # delete what nothing is keeping, now
 A coordinator also collects every `--gc-interval` (default one hour), and with `--max-store-bytes` refuses uploads once its store reaches that size.
 
 A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
+
+## Examples
+
+[`examples/`](../../examples/README.md) has a script that runs a pool on this machine and leaves it up, scripts that run each workload against a pool, and a sample input. [`docs/multi-machine-test.md`](../../docs/multi-machine-test.md) is a guided test of a pool across real machines.
 
 ## Workloads
 
@@ -198,7 +204,8 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - A node's key cannot be changed without becoming a different node, and there is no way to stop a copied key being used other than removing that node.
 - Encryption hides what nodes say to each other, not that they are talking, how much, or when.
 - If a node using `--kubo` is killed outright rather than stopped, its Kubo daemon keeps running and must be stopped by hand before the node will start again.
-- Removing a node from the pool does not take the swarm key away from it. Until the key is changed, which means every member joining again, a removed node's Kubo can still connect to the pool's private network and read what is on it.
+- A removed node keeps whatever it had already fetched from the pool's private network. Changing the key stops it fetching anything more.
+- Run `ipfs` commands against a node's repository only while the node is up. With its Kubo down, including for the few seconds of a key change, the `ipfs` command takes the repository's lock and the node cannot start Kubo until the command ends.
 - Whatever is on the pool's private network can be read by every member of it. The network keeps outsiders out; it does not keep members apart.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - A worker downloads a whole input even when its tasks need only part of it.
