@@ -175,11 +175,13 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 		return result
 	}
 	started := time.Now()
-	output, err := workload.Execute(ctx, w.Blobs, a.GetPayload())
+	touched := runtime.Record(w.Blobs)
+	output, err := workload.Execute(ctx, touched, a.GetPayload())
 	if err != nil {
 		fail(err)
 		return result
 	}
+	result.ReadBlobs, result.WrittenBlobs = touched.Read(), touched.Written()
 	w.Log.Debug("task done", "node", w.NodeID, "task", a.GetTaskId(), "took", time.Since(started).String())
 	result.Outcome = &pb.TaskResult_Output{Output: output}
 	return result

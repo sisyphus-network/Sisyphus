@@ -9,6 +9,7 @@ package sisyphusv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -293,11 +294,419 @@ func (x *StatBlobResponse) GetSize() uint64 {
 	return 0
 }
 
+type PinBlobRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Cid   string                 `protobuf:"bytes,1,opt,name=cid,proto3" json:"cid,omitempty"`
+	// How long to keep the blob. Zero means until it is unpinned.
+	TtlSeconds    uint64 `protobuf:"varint,2,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PinBlobRequest) Reset() {
+	*x = PinBlobRequest{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PinBlobRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PinBlobRequest) ProtoMessage() {}
+
+func (x *PinBlobRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PinBlobRequest.ProtoReflect.Descriptor instead.
+func (*PinBlobRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *PinBlobRequest) GetCid() string {
+	if x != nil {
+		return x.Cid
+	}
+	return ""
+}
+
+func (x *PinBlobRequest) GetTtlSeconds() uint64 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
+}
+
+type PinBlobResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PinBlobResponse) Reset() {
+	*x = PinBlobResponse{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PinBlobResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PinBlobResponse) ProtoMessage() {}
+
+func (x *PinBlobResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PinBlobResponse.ProtoReflect.Descriptor instead.
+func (*PinBlobResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{7}
+}
+
+type UnpinBlobRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Cid           string                 `protobuf:"bytes,1,opt,name=cid,proto3" json:"cid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnpinBlobRequest) Reset() {
+	*x = UnpinBlobRequest{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnpinBlobRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnpinBlobRequest) ProtoMessage() {}
+
+func (x *UnpinBlobRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnpinBlobRequest.ProtoReflect.Descriptor instead.
+func (*UnpinBlobRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *UnpinBlobRequest) GetCid() string {
+	if x != nil {
+		return x.Cid
+	}
+	return ""
+}
+
+type UnpinBlobResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnpinBlobResponse) Reset() {
+	*x = UnpinBlobResponse{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnpinBlobResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnpinBlobResponse) ProtoMessage() {}
+
+func (x *UnpinBlobResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnpinBlobResponse.ProtoReflect.Descriptor instead.
+func (*UnpinBlobResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{9}
+}
+
+type ListPinsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPinsRequest) Reset() {
+	*x = ListPinsRequest{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPinsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPinsRequest) ProtoMessage() {}
+
+func (x *ListPinsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPinsRequest.ProtoReflect.Descriptor instead.
+func (*ListPinsRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{10}
+}
+
+type ListPinsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pins          []*Pin                 `protobuf:"bytes,1,rep,name=pins,proto3" json:"pins,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPinsResponse) Reset() {
+	*x = ListPinsResponse{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPinsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPinsResponse) ProtoMessage() {}
+
+func (x *ListPinsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPinsResponse.ProtoReflect.Descriptor instead.
+func (*ListPinsResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ListPinsResponse) GetPins() []*Pin {
+	if x != nil {
+		return x.Pins
+	}
+	return nil
+}
+
+type Pin struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Cid   string                 `protobuf:"bytes,1,opt,name=cid,proto3" json:"cid,omitempty"`
+	// Who holds the pin: "user", "job:<id>", or "recent" for the short pin
+	// every newly stored blob gets.
+	Owner string `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
+	// Unset for a pin that holds until released.
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Pin) Reset() {
+	*x = Pin{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Pin) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Pin) ProtoMessage() {}
+
+func (x *Pin) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Pin.ProtoReflect.Descriptor instead.
+func (*Pin) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *Pin) GetCid() string {
+	if x != nil {
+		return x.Cid
+	}
+	return ""
+}
+
+func (x *Pin) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
+func (x *Pin) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+type CollectGarbageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CollectGarbageRequest) Reset() {
+	*x = CollectGarbageRequest{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CollectGarbageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CollectGarbageRequest) ProtoMessage() {}
+
+func (x *CollectGarbageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CollectGarbageRequest.ProtoReflect.Descriptor instead.
+func (*CollectGarbageRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{13}
+}
+
+type CollectGarbageResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ExpiredPins   uint32                 `protobuf:"varint,1,opt,name=expired_pins,json=expiredPins,proto3" json:"expired_pins,omitempty"`
+	BlocksRemoved uint64                 `protobuf:"varint,2,opt,name=blocks_removed,json=blocksRemoved,proto3" json:"blocks_removed,omitempty"`
+	BytesFreed    uint64                 `protobuf:"varint,3,opt,name=bytes_freed,json=bytesFreed,proto3" json:"bytes_freed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CollectGarbageResponse) Reset() {
+	*x = CollectGarbageResponse{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CollectGarbageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CollectGarbageResponse) ProtoMessage() {}
+
+func (x *CollectGarbageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CollectGarbageResponse.ProtoReflect.Descriptor instead.
+func (*CollectGarbageResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CollectGarbageResponse) GetExpiredPins() uint32 {
+	if x != nil {
+		return x.ExpiredPins
+	}
+	return 0
+}
+
+func (x *CollectGarbageResponse) GetBlocksRemoved() uint64 {
+	if x != nil {
+		return x.BlocksRemoved
+	}
+	return 0
+}
+
+func (x *CollectGarbageResponse) GetBytesFreed() uint64 {
+	if x != nil {
+		return x.BytesFreed
+	}
+	return 0
+}
+
 var File_sisyphus_v1_blob_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_blob_proto_rawDesc = "" +
 	"\n" +
-	"\x16sisyphus/v1/blob.proto\x12\vsisyphus.v1\"$\n" +
+	"\x16sisyphus/v1/blob.proto\x12\vsisyphus.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"$\n" +
 	"\x0ePutBlobRequest\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\"7\n" +
 	"\x0fPutBlobResponse\x12\x10\n" +
@@ -310,11 +719,37 @@ const file_sisyphus_v1_blob_proto_rawDesc = "" +
 	"\x0fStatBlobRequest\x12\x10\n" +
 	"\x03cid\x18\x01 \x01(\tR\x03cid\"&\n" +
 	"\x10StatBlobResponse\x12\x12\n" +
-	"\x04size\x18\x01 \x01(\x04R\x04size2\xda\x01\n" +
+	"\x04size\x18\x01 \x01(\x04R\x04size\"C\n" +
+	"\x0ePinBlobRequest\x12\x10\n" +
+	"\x03cid\x18\x01 \x01(\tR\x03cid\x12\x1f\n" +
+	"\vttl_seconds\x18\x02 \x01(\x04R\n" +
+	"ttlSeconds\"\x11\n" +
+	"\x0fPinBlobResponse\"$\n" +
+	"\x10UnpinBlobRequest\x12\x10\n" +
+	"\x03cid\x18\x01 \x01(\tR\x03cid\"\x13\n" +
+	"\x11UnpinBlobResponse\"\x11\n" +
+	"\x0fListPinsRequest\"8\n" +
+	"\x10ListPinsResponse\x12$\n" +
+	"\x04pins\x18\x01 \x03(\v2\x10.sisyphus.v1.PinR\x04pins\"h\n" +
+	"\x03Pin\x12\x10\n" +
+	"\x03cid\x18\x01 \x01(\tR\x03cid\x12\x14\n" +
+	"\x05owner\x18\x02 \x01(\tR\x05owner\x129\n" +
+	"\n" +
+	"expires_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"\x17\n" +
+	"\x15CollectGarbageRequest\"\x83\x01\n" +
+	"\x16CollectGarbageResponse\x12!\n" +
+	"\fexpired_pins\x18\x01 \x01(\rR\vexpiredPins\x12%\n" +
+	"\x0eblocks_removed\x18\x02 \x01(\x04R\rblocksRemoved\x12\x1f\n" +
+	"\vbytes_freed\x18\x03 \x01(\x04R\n" +
+	"bytesFreed2\x88\x04\n" +
 	"\vBlobService\x12B\n" +
 	"\x03Put\x12\x1b.sisyphus.v1.PutBlobRequest\x1a\x1c.sisyphus.v1.PutBlobResponse(\x01\x12B\n" +
 	"\x03Get\x12\x1b.sisyphus.v1.GetBlobRequest\x1a\x1c.sisyphus.v1.GetBlobResponse0\x01\x12C\n" +
-	"\x04Stat\x12\x1c.sisyphus.v1.StatBlobRequest\x1a\x1d.sisyphus.v1.StatBlobResponseBEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
+	"\x04Stat\x12\x1c.sisyphus.v1.StatBlobRequest\x1a\x1d.sisyphus.v1.StatBlobResponse\x12@\n" +
+	"\x03Pin\x12\x1b.sisyphus.v1.PinBlobRequest\x1a\x1c.sisyphus.v1.PinBlobResponse\x12F\n" +
+	"\x05Unpin\x12\x1d.sisyphus.v1.UnpinBlobRequest\x1a\x1e.sisyphus.v1.UnpinBlobResponse\x12G\n" +
+	"\bListPins\x12\x1c.sisyphus.v1.ListPinsRequest\x1a\x1d.sisyphus.v1.ListPinsResponse\x12Y\n" +
+	"\x0eCollectGarbage\x12\".sisyphus.v1.CollectGarbageRequest\x1a#.sisyphus.v1.CollectGarbageResponseBEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
 var (
 	file_sisyphus_v1_blob_proto_rawDescOnce sync.Once
@@ -328,27 +763,47 @@ func file_sisyphus_v1_blob_proto_rawDescGZIP() []byte {
 	return file_sisyphus_v1_blob_proto_rawDescData
 }
 
-var file_sisyphus_v1_blob_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_sisyphus_v1_blob_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_sisyphus_v1_blob_proto_goTypes = []any{
-	(*PutBlobRequest)(nil),   // 0: sisyphus.v1.PutBlobRequest
-	(*PutBlobResponse)(nil),  // 1: sisyphus.v1.PutBlobResponse
-	(*GetBlobRequest)(nil),   // 2: sisyphus.v1.GetBlobRequest
-	(*GetBlobResponse)(nil),  // 3: sisyphus.v1.GetBlobResponse
-	(*StatBlobRequest)(nil),  // 4: sisyphus.v1.StatBlobRequest
-	(*StatBlobResponse)(nil), // 5: sisyphus.v1.StatBlobResponse
+	(*PutBlobRequest)(nil),         // 0: sisyphus.v1.PutBlobRequest
+	(*PutBlobResponse)(nil),        // 1: sisyphus.v1.PutBlobResponse
+	(*GetBlobRequest)(nil),         // 2: sisyphus.v1.GetBlobRequest
+	(*GetBlobResponse)(nil),        // 3: sisyphus.v1.GetBlobResponse
+	(*StatBlobRequest)(nil),        // 4: sisyphus.v1.StatBlobRequest
+	(*StatBlobResponse)(nil),       // 5: sisyphus.v1.StatBlobResponse
+	(*PinBlobRequest)(nil),         // 6: sisyphus.v1.PinBlobRequest
+	(*PinBlobResponse)(nil),        // 7: sisyphus.v1.PinBlobResponse
+	(*UnpinBlobRequest)(nil),       // 8: sisyphus.v1.UnpinBlobRequest
+	(*UnpinBlobResponse)(nil),      // 9: sisyphus.v1.UnpinBlobResponse
+	(*ListPinsRequest)(nil),        // 10: sisyphus.v1.ListPinsRequest
+	(*ListPinsResponse)(nil),       // 11: sisyphus.v1.ListPinsResponse
+	(*Pin)(nil),                    // 12: sisyphus.v1.Pin
+	(*CollectGarbageRequest)(nil),  // 13: sisyphus.v1.CollectGarbageRequest
+	(*CollectGarbageResponse)(nil), // 14: sisyphus.v1.CollectGarbageResponse
+	(*timestamppb.Timestamp)(nil),  // 15: google.protobuf.Timestamp
 }
 var file_sisyphus_v1_blob_proto_depIdxs = []int32{
-	0, // 0: sisyphus.v1.BlobService.Put:input_type -> sisyphus.v1.PutBlobRequest
-	2, // 1: sisyphus.v1.BlobService.Get:input_type -> sisyphus.v1.GetBlobRequest
-	4, // 2: sisyphus.v1.BlobService.Stat:input_type -> sisyphus.v1.StatBlobRequest
-	1, // 3: sisyphus.v1.BlobService.Put:output_type -> sisyphus.v1.PutBlobResponse
-	3, // 4: sisyphus.v1.BlobService.Get:output_type -> sisyphus.v1.GetBlobResponse
-	5, // 5: sisyphus.v1.BlobService.Stat:output_type -> sisyphus.v1.StatBlobResponse
-	3, // [3:6] is the sub-list for method output_type
-	0, // [0:3] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	12, // 0: sisyphus.v1.ListPinsResponse.pins:type_name -> sisyphus.v1.Pin
+	15, // 1: sisyphus.v1.Pin.expires_at:type_name -> google.protobuf.Timestamp
+	0,  // 2: sisyphus.v1.BlobService.Put:input_type -> sisyphus.v1.PutBlobRequest
+	2,  // 3: sisyphus.v1.BlobService.Get:input_type -> sisyphus.v1.GetBlobRequest
+	4,  // 4: sisyphus.v1.BlobService.Stat:input_type -> sisyphus.v1.StatBlobRequest
+	6,  // 5: sisyphus.v1.BlobService.Pin:input_type -> sisyphus.v1.PinBlobRequest
+	8,  // 6: sisyphus.v1.BlobService.Unpin:input_type -> sisyphus.v1.UnpinBlobRequest
+	10, // 7: sisyphus.v1.BlobService.ListPins:input_type -> sisyphus.v1.ListPinsRequest
+	13, // 8: sisyphus.v1.BlobService.CollectGarbage:input_type -> sisyphus.v1.CollectGarbageRequest
+	1,  // 9: sisyphus.v1.BlobService.Put:output_type -> sisyphus.v1.PutBlobResponse
+	3,  // 10: sisyphus.v1.BlobService.Get:output_type -> sisyphus.v1.GetBlobResponse
+	5,  // 11: sisyphus.v1.BlobService.Stat:output_type -> sisyphus.v1.StatBlobResponse
+	7,  // 12: sisyphus.v1.BlobService.Pin:output_type -> sisyphus.v1.PinBlobResponse
+	9,  // 13: sisyphus.v1.BlobService.Unpin:output_type -> sisyphus.v1.UnpinBlobResponse
+	11, // 14: sisyphus.v1.BlobService.ListPins:output_type -> sisyphus.v1.ListPinsResponse
+	14, // 15: sisyphus.v1.BlobService.CollectGarbage:output_type -> sisyphus.v1.CollectGarbageResponse
+	9,  // [9:16] is the sub-list for method output_type
+	2,  // [2:9] is the sub-list for method input_type
+	2,  // [2:2] is the sub-list for extension type_name
+	2,  // [2:2] is the sub-list for extension extendee
+	0,  // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_blob_proto_init() }
@@ -362,7 +817,7 @@ func file_sisyphus_v1_blob_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_blob_proto_rawDesc), len(file_sisyphus_v1_blob_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

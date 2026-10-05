@@ -14,19 +14,27 @@ import (
 	"github.com/excho0/Sisyphus/packages/storage"
 )
 
+type Config struct {
+	Coordinator *coordinator.Coordinator
+	Store       *storage.Store
+	// MaxStoreBytes is the most disk the store may use before uploads are
+	// refused. Zero means no limit.
+	MaxStoreBytes uint64
+}
+
 // NewServer returns a gRPC server for a node running the coordinator role:
-// the job and worker services for c, and blob transfer for store. It has no
-// transport security or authentication yet, so only expose it to machines
-// you trust.
-func NewServer(c *coordinator.Coordinator, store *storage.Store, opts ...grpc.ServerOption) *grpc.Server {
+// the job and worker services for its coordinator, and blob transfer and
+// pinning for its store. It has no transport security or authentication yet,
+// so only expose it to machines you trust.
+func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	srv := grpc.NewServer(append(opts,
 		// Pings notice workers that vanish without closing their connection.
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 10 * time.Second, Timeout: 5 * time.Second}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}),
 	)...)
-	pb.RegisterCoordinatorServiceServer(srv, c)
-	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: c})
-	pb.RegisterBlobServiceServer(srv, &blobService{store: store})
+	pb.RegisterCoordinatorServiceServer(srv, cfg.Coordinator)
+	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: cfg.Coordinator})
+	pb.RegisterBlobServiceServer(srv, &blobService{store: cfg.Store, quota: cfg.MaxStoreBytes})
 	return srv
 }
 

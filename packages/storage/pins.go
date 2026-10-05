@@ -44,6 +44,9 @@ type pinKey struct {
 // Pin pins blobs the store holds for owner until expires, or until released
 // if expires is the zero time. Pinning again replaces the earlier expiry.
 func (s *Store) Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error {
+	if len(cids) == 0 {
+		return nil
+	}
 	// Holding off collection makes "present" and "pinned" one step: a blob
 	// cannot be swept between the check and the pin.
 	s.gcMu.RLock()
@@ -68,6 +71,9 @@ func (s *Store) Pin(ctx context.Context, owner string, expires time.Time, cids .
 // Unpin releases owner's pins on the given blobs. Blobs it has not pinned
 // are ignored.
 func (s *Store) Unpin(owner string, cids ...cid.Cid) error {
+	if len(cids) == 0 {
+		return nil
+	}
 	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
 	for _, c := range cids {

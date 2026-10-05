@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -33,14 +34,34 @@ const (
 	maxTasksPerJob = 10_000
 )
 
+// Store is the blob store a coordinator works against: workloads split from
+// it and aggregate into it, and the coordinator pins a job's blobs in it for
+// as long as they are needed. A storage.Store is one.
+type Store interface {
+	runtime.Blobs
+	Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error
+	Unpin(owner string, cids ...cid.Cid) error
+}
+
+type Config struct {
+	// ID names this coordinator to its workers.
+	ID        string
+	Workloads *runtime.Registry
+	Store     Store
+	// Retain is how long a job's inputs and results stay pinned after it
+	// finishes.
+	Retain time.Duration
+	Log    *slog.Logger
+}
+
 type Coordinator struct {
 	pb.UnimplementedCoordinatorServiceServer
 
 	id        string
 	workloads *runtime.Registry
-	// blobs is the store workloads split from and aggregate into.
-	blobs runtime.Blobs
-	log   *slog.Logger
+	store     Store
+	retain    time.Duration
+	log       *slog.Logger
 
 	// ctx bounds the aggregations still running when the coordinator closes.
 	ctx         context.Context
@@ -73,13 +94,14 @@ type assignment struct {
 	task *jobmodel.Task
 }
 
-func New(id string, workloads *runtime.Registry, blobs runtime.Blobs, log *slog.Logger) *Coordinator {
+func New(cfg Config) *Coordinator {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Coordinator{
-		id:        id,
-		workloads: workloads,
-		blobs:     blobs,
-		log:       log,
+		id:        cfg.ID,
+		workloads: cfg.Workloads,
+		store:     cfg.Store,
+		retain:    cfg.Retain,
+		log:       cfg.Log,
 		ctx:       ctx,
 		cancel:    cancel,
 		jobs:      make(map[string]*jobmodel.Job),
@@ -124,7 +146,8 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 		}
 	}
 	// Splitting may read stored data, so it runs without the lock.
-	payloads, err := workload.Split(ctx, c.blobs, spec.GetParams(), parts)
+	touched := runtime.Record(c.store)
+	payloads, err := workload.Split(ctx, touched, spec.GetParams(), parts)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -138,6 +161,9 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 	c.jobs[job.ID] = job
 	c.active = append(c.active, job)
 	c.changed[job.ID] = make(chan struct{})
+	// Hold the job's inputs until it is over, however long that takes.
+	job.NoteRead(touched.Read()...)
+	c.pin(job, time.Time{}, touched.Read())
 	c.log.Info("job submitted", "job", job.ID, "workload", job.Workload, "tasks", len(job.Tasks))
 
 	c.scheduleLocked()
@@ -288,6 +314,7 @@ func (c *Coordinator) disconnect(w *worker) {
 			continue
 		}
 		a.job.Fail(a.task, "worker "+w.id+" disconnected", maxAttempts, now)
+		c.settleLocked(a.job)
 		c.notifyLocked(a.job)
 	}
 	c.log.Info("worker disconnected", "node", w.id, "lost_tasks", len(w.running))
@@ -314,6 +341,11 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	now := time.Now()
 	switch outcome := result.GetOutcome().(type) {
 	case *pb.TaskResult_Output:
+		// What the task stored must outlive the hour a new blob is kept
+		// for, since the job may run longer than that.
+		a.job.NoteRead(result.GetReadBlobs()...)
+		a.job.NoteTaskOutput(result.GetWrittenBlobs()...)
+		c.pin(a.job, time.Time{}, result.GetWrittenBlobs())
 		if a.job.Succeed(a.task, outcome.Output) {
 			// Succeed reports the last task only once, so each job is
 			// aggregated once.
@@ -326,6 +358,7 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	default:
 		a.job.Fail(a.task, "worker reported no outcome", maxAttempts, now)
 	}
+	c.settleLocked(a.job)
 	c.notifyLocked(a.job)
 }
 
@@ -341,17 +374,61 @@ func (c *Coordinator) aggregate(job *jobmodel.Job) {
 
 	workload, err := c.workloads.Get(job.Workload)
 	var result []byte
+	touched := runtime.Record(c.store)
 	if err == nil {
-		result, err = workload.Aggregate(c.ctx, c.blobs, outputs)
+		result, err = workload.Aggregate(c.ctx, touched, outputs)
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
+	job.NoteRead(touched.Read()...)
+	job.NoteResult(touched.Written()...)
 	job.Finish(result, err, now)
+	c.settleLocked(job)
 	c.log.Info("job finished", "job", job.ID, "state", job.State.String(), "took", now.Sub(job.CreatedAt).String())
 	c.notifyLocked(job)
 	c.scheduleLocked()
+}
+
+// settleLocked sets how long a job's blobs are kept once it is over: its
+// inputs and results for the retention period, and what only passed between
+// its tasks no longer. It does nothing while the job is still going.
+func (c *Coordinator) settleLocked(job *jobmodel.Job) {
+	if !job.Terminal() {
+		return
+	}
+	keep := append(job.InputBlobs(), job.OutputBlobs()...)
+	c.pin(job, job.FinishedAt.Add(c.retain), keep)
+	if err := c.store.Unpin(owner(job), decode(job.IntermediateBlobs())...); err != nil {
+		c.log.Warn("could not release a job's intermediate blobs", "job", job.ID, "error", err)
+	}
+}
+
+// pin pins blobs on a job's behalf. Keeping data is best effort: a job is
+// not failed because its blobs could not be pinned, which a worker naming a
+// blob the coordinator does not hold is enough to cause.
+func (c *Coordinator) pin(job *jobmodel.Job, expires time.Time, cids []string) {
+	if err := c.store.Pin(c.ctx, owner(job), expires, decode(cids)...); err != nil {
+		c.log.Warn("could not pin a job's blobs", "job", job.ID, "error", err)
+	}
+}
+
+// owner is the name a job's pins are held under.
+func owner(job *jobmodel.Job) string {
+	return "job:" + job.ID
+}
+
+// decode parses CIDs, dropping any that are malformed. They can come from
+// workers, which may send anything.
+func decode(cids []string) []cid.Cid {
+	decoded := make([]cid.Cid, 0, len(cids))
+	for _, s := range cids {
+		if c, err := cid.Decode(s); err == nil {
+			decoded = append(decoded, c)
+		}
+	}
+	return decoded
 }
 
 // scheduleLocked hands pending tasks to workers with free slots, oldest job

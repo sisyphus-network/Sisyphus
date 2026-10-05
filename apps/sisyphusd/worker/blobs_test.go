@@ -43,9 +43,9 @@ func serve(t *testing.T, srv *grpc.Server) (addr string, stop func()) {
 // startCoordinator serves a real coordinator's blob service over store.
 func startCoordinator(t *testing.T, store *storage.Store) (addr string, stop func()) {
 	t.Helper()
-	coord := coordinator.New("coordinator", runtime.Builtin(), store, quiet())
+	coord := coordinator.New(coordinator.Config{ID: "coordinator", Workloads: runtime.Builtin(), Store: store, Log: quiet()})
 	t.Cleanup(coord.Close)
-	return serve(t, api.NewServer(coord, store))
+	return serve(t, api.NewServer(api.Config{Coordinator: coord, Store: store}))
 }
 
 func dial(t *testing.T, addr string, local *storage.Store) *worker.RemoteBlobs {

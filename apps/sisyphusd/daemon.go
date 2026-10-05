@@ -14,6 +14,7 @@ import (
 	goruntime "runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
@@ -30,6 +31,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	nodeID := fs.String("node-id", "", "name of this node in the pool (default: hostname plus a random suffix)")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
+	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
+	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
+	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
 	verbose := fs.Bool("v", false, "log per-task detail")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -97,15 +101,34 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		coord := coordinator.New(*nodeID, workloads, store, log)
+		// Jobs are not remembered across a restart, so nothing is left to
+		// release the pins they held open. Let those lapse instead.
+		if err := store.ExpireOpenPins("job:", time.Now().Add(*retain)); err != nil {
+			lis.Close()
+			return err
+		}
+		coord := coordinator.New(coordinator.Config{ID: *nodeID, Workloads: workloads, Store: store, Retain: *retain, Log: log})
 		defer coord.Close()
-		srv := api.NewServer(coord, store)
+		srv := api.NewServer(api.Config{Coordinator: coord, Store: store, MaxStoreBytes: *maxStore})
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish.
 		defer srv.Stop()
 		log.Info("coordinator listening", "addr", lis.Addr().String(), "node", *nodeID)
 		go func() { stopped <- srv.Serve(lis) }()
 		*join = loopback(lis.Addr())
+
+		if *gcInterval > 0 {
+			collected := make(chan struct{})
+			// The store must outlive the collector.
+			defer func() {
+				cancel()
+				<-collected
+			}()
+			go func() {
+				defer close(collected)
+				collectPeriodically(ctx, store, *gcInterval, log)
+			}()
+		}
 	} else {
 		remote, err := worker.DialBlobs(*join, store)
 		if err != nil {
@@ -135,6 +158,27 @@ func runDaemon(ctx context.Context, args []string) error {
 	case <-ctx.Done():
 		log.Info("shutting down")
 		return nil
+	}
+}
+
+// collectPeriodically garbage-collects store every interval until ctx ends.
+func collectPeriodically(ctx context.Context, store *storage.Store, interval time.Duration, log *slog.Logger) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			done, err := store.GC(ctx, time.Now())
+			if err != nil {
+				log.Warn("garbage collection failed", "error", err)
+				continue
+			}
+			if done != (storage.Collected{}) {
+				log.Info("collected garbage", "expired_pins", done.ExpiredPins, "blocks", done.Blocks, "bytes", done.Bytes)
+			}
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

@@ -18,11 +18,13 @@ func (j *Job) ToProto() *pb.Job {
 			Mode:     pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED,
 			MaxTasks: uint32(j.MaxTasks),
 		},
-		State:      pb.JobState(j.State + 1),
-		Result:     append([]byte(nil), j.Result...),
-		Error:      j.Err,
-		CreatedAt:  timestamp(j.CreatedAt),
-		FinishedAt: timestamp(j.FinishedAt),
+		State:       pb.JobState(j.State + 1),
+		Result:      append([]byte(nil), j.Result...),
+		Error:       j.Err,
+		CreatedAt:   timestamp(j.CreatedAt),
+		FinishedAt:  timestamp(j.FinishedAt),
+		InputBlobs:  j.InputBlobs(),
+		OutputBlobs: j.OutputBlobs(),
 	}
 	if j.Mode == FullWorker {
 		out.Spec.Mode = pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER

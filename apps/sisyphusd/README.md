@@ -75,6 +75,29 @@ bin/sisyphusd job submit --workload wordcount --params "{\"input\":\"$cid\"}"
 bin/sisyphusd blob get <output CID from the result> | head
 ```
 
+### How long data is kept
+
+A node keeps a blob for as long as something pins it, and deletes what nothing pins.
+
+| Pin held for | Placed by | Lasts |
+| --- | --- | --- |
+| `user` | `blob put` and `blob pin` | Until `blob unpin`, or for `--ttl` |
+| `job:<id>` | The coordinator, on a job's inputs and results | While the job runs, then for `--retain` (default 7 days) |
+| `recent` | Every upload | One hour, so there is time to pin it properly |
+
+Blobs that only pass between a job's tasks are released as soon as the job ends. Several pins can hold one blob; it goes when the last has lapsed.
+
+```sh
+bin/sisyphusd blob pins             # what is being kept, for whom, until when
+bin/sisyphusd blob pin --ttl 72h <cid>
+bin/sisyphusd blob unpin <cid>
+bin/sisyphusd blob gc               # delete what nothing is keeping, now
+```
+
+A coordinator also collects every `--gc-interval` (default one hour), and with `--max-store-bytes` refuses uploads once its store reaches that size.
+
+A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
+
 ## Workloads
 
 Both built-in workloads are stand-ins that exercise the network rather than compute anything valuable. Real workloads will sit behind the same `Workload` interface in `packages/runtime`.
@@ -103,6 +126,7 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - A task is tried at most three times, and losing its worker counts as a try.
 - When a job fails, its other running tasks are left to finish and their results discarded; there is no cancellation.
 - Workers are chosen by free slots only, not by hardware.
-- Stored blobs are never deleted and there is no size limit or quota, so anyone who can reach the port can fill the disk.
+- Without `--max-store-bytes` there is no limit on what can be uploaded, and anyone who can reach the port can pin, unpin and collect.
+- Jobs are forgotten when a coordinator restarts. Pins they held open are given the retention period to lapse.
+- Worker caches are never trimmed while a worker runs; they are emptied when it starts.
 - A worker downloads a whole input even when its tasks need only part of it, and downloads it again after a restart.
-- The coordinator does not record which blobs belong to which job.

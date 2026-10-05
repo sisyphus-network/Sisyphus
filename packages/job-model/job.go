@@ -66,11 +66,19 @@ type Job struct {
 	Err        string
 	CreatedAt  time.Time
 	FinishedAt time.Time
+
+	// The stored blobs the job has touched so far, by CID.
+	read         map[string]struct{} // opened by the split, a task or the aggregation
+	intermediate map[string]struct{} // stored by tasks
+	outputs      map[string]struct{} // stored by the aggregation
 }
 
 // New creates a pending job with one pending task per payload.
 func New(id, workload string, params []byte, mode Mode, maxTasks int, payloads [][]byte, now time.Time) *Job {
-	j := &Job{ID: id, Workload: workload, Params: params, Mode: mode, MaxTasks: maxTasks, CreatedAt: now}
+	j := &Job{
+		ID: id, Workload: workload, Params: params, Mode: mode, MaxTasks: maxTasks, CreatedAt: now,
+		read: make(map[string]struct{}), intermediate: make(map[string]struct{}), outputs: make(map[string]struct{}),
+	}
 	for i, payload := range payloads {
 		j.Tasks = append(j.Tasks, &Task{ID: fmt.Sprintf("%s/%d", id, i), Index: i, Payload: payload})
 	}

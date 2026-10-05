@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/storage"
@@ -18,19 +20,39 @@ import (
 // gRPC's default 4 MiB message limit.
 const blobChunkSize = 256 << 10
 
+// userOwner is who pins made through the service are held for.
+const userOwner = "user"
+
 type blobService struct {
 	pb.UnimplementedBlobServiceServer
 	store blobStore
+	// quota is the most disk the store may use; zero means no limit.
+	quota uint64
 }
 
 // blobStore is the part of a storage.Store that the service uses.
 type blobStore interface {
 	Open(ctx context.Context, c cid.Cid) (storage.Blob, error)
 	Put(ctx context.Context, r io.Reader) (cid.Cid, error)
+	Size(ctx context.Context) (uint64, error)
+	Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error
+	Unpin(owner string, cids ...cid.Cid) error
+	Pins() []storage.Pin
+	GC(ctx context.Context, now time.Time) (storage.Collected, error)
 }
 
 func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]) error {
 	upload := &uploadReader{stream: stream}
+	if s.quota > 0 {
+		used, err := s.store.Size(stream.Context())
+		if err != nil {
+			return status.Errorf(codes.Internal, "measure store: %v", err)
+		}
+		if used >= s.quota {
+			return status.Errorf(codes.ResourceExhausted, "store is full: %d of %d bytes used", used, s.quota)
+		}
+		upload.limit = s.quota - used
+	}
 	c, err := s.store.Put(stream.Context(), upload)
 	if err != nil {
 		if _, ok := status.FromError(err); ok {
@@ -46,6 +68,8 @@ type uploadReader struct {
 	stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]
 	rest   []byte
 	size   uint64
+	// limit is the most bytes the upload may carry; zero means no limit.
+	limit uint64
 }
 
 func (r *uploadReader) Read(p []byte) (int, error) {
@@ -59,6 +83,11 @@ func (r *uploadReader) Read(p []byte) (int, error) {
 	n := copy(p, r.rest)
 	r.rest = r.rest[n:]
 	r.size += uint64(n)
+	// What was stored before the limit was passed is unpinned, so the next
+	// collection removes it.
+	if r.limit > 0 && r.size > r.limit {
+		return 0, status.Errorf(codes.ResourceExhausted, "upload exceeds the %d bytes left in the store", r.limit)
+	}
 	return n, nil
 }
 
@@ -108,4 +137,58 @@ func (s *blobService) open(ctx context.Context, id string) (storage.Blob, error)
 		return nil, status.Errorf(codes.Internal, "open blob: %v", err)
 	}
 	return blob, nil
+}
+
+func (s *blobService) Pin(ctx context.Context, req *pb.PinBlobRequest) (*pb.PinBlobResponse, error) {
+	c, err := cid.Decode(req.GetCid())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", req.GetCid(), err)
+	}
+	var expires time.Time
+	if ttl := req.GetTtlSeconds(); ttl > 0 {
+		expires = time.Now().Add(time.Duration(ttl) * time.Second)
+	}
+	err = s.store.Pin(ctx, userOwner, expires, c)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, status.Errorf(codes.NotFound, "blob %s not found", c)
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "pin blob: %v", err)
+	}
+	return &pb.PinBlobResponse{}, nil
+}
+
+func (s *blobService) Unpin(_ context.Context, req *pb.UnpinBlobRequest) (*pb.UnpinBlobResponse, error) {
+	c, err := cid.Decode(req.GetCid())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", req.GetCid(), err)
+	}
+	if err := s.store.Unpin(userOwner, c); err != nil {
+		return nil, status.Errorf(codes.Internal, "unpin blob: %v", err)
+	}
+	return &pb.UnpinBlobResponse{}, nil
+}
+
+func (s *blobService) ListPins(context.Context, *pb.ListPinsRequest) (*pb.ListPinsResponse, error) {
+	var res pb.ListPinsResponse
+	for _, pin := range s.store.Pins() {
+		listed := &pb.Pin{Cid: pin.CID.String(), Owner: pin.Owner}
+		if !pin.Expires.IsZero() {
+			listed.ExpiresAt = timestamppb.New(pin.Expires)
+		}
+		res.Pins = append(res.Pins, listed)
+	}
+	return &res, nil
+}
+
+func (s *blobService) CollectGarbage(ctx context.Context, _ *pb.CollectGarbageRequest) (*pb.CollectGarbageResponse, error) {
+	done, err := s.store.GC(ctx, time.Now())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	return &pb.CollectGarbageResponse{
+		ExpiredPins:   uint32(done.ExpiredPins),
+		BlocksRemoved: uint64(done.Blocks),
+		BytesFreed:    done.Bytes,
+	}, nil
 }

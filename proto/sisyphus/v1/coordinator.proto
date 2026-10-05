@@ -39,6 +39,10 @@ message TaskResult {
     bytes output = 3;
     string error = 4;
   }
+  // CIDs of the stored blobs the task opened and stored. The coordinator
+  // uses them to keep a job's data for as long as the job needs it.
+  repeated string read_blobs = 5;
+  repeated string written_blobs = 6;
 }
 
 message CoordinatorMessage {
