@@ -1,0 +1,9 @@
+# Rust workspace build artifacts
+/target/
+
+# Repository-local development environment
+.direnv/
+.envrc
+
+# Secrets
+*.key
