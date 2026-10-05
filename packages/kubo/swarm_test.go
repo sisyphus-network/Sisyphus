@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -281,41 +282,50 @@ func TestCallsMadeDuringARekeyWaitForIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Something keeps calling the daemon, before, during and after.
+	var calls atomic.Int64
 	stop := make(chan struct{})
-	failures := make(chan error, 1)
-	calls := make(chan int, 1)
+	stopped := make(chan error, 1)
 	go func() {
-		n := 0
 		for {
 			select {
 			case <-stop:
-				calls <- n
+				stopped <- nil
 				return
 			default:
 			}
 			if _, err := d.BlockSize(ctx, id); err != nil {
-				select {
-				case failures <- err:
-				default:
-				}
+				stopped <- err
+				return
 			}
-			n++
+			calls.Add(1)
 		}
 	}()
+	callsReach := func(n int64) {
+		t.Helper()
+		deadline := time.Now().Add(30 * time.Second)
+		for calls.Load() < n {
+			select {
+			case err := <-stopped:
+				t.Fatalf("a call made around the restart failed: %v", err)
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("only %d calls completed", calls.Load())
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
 
+	callsReach(3)
 	if err := d.Rekey(ctx, &Swarm{Key: NewSwarmKey()}); err != nil {
 		t.Fatal(err)
 	}
-	// Let a few calls land on the restarted daemon as well.
-	time.Sleep(100 * time.Millisecond)
+	// Calls carry on against the restarted daemon.
+	callsReach(calls.Load() + 3)
 	close(stop)
-	if n := <-calls; n < 2 {
-		t.Errorf("only %d calls were made around the restart", n)
-	}
-	select {
-	case err := <-failures:
+	if err := <-stopped; err != nil {
 		t.Errorf("a call made around the restart failed: %v", err)
-	default:
 	}
 }
 

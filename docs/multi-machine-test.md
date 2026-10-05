@@ -109,7 +109,17 @@ Each of these has a right answer. Note any that go otherwise.
 | On the coordinator: `sisyphusd pool remove <worker-id>`. | That worker's process exits saying it was removed. `sisyphusd nodes` no longer lists it. Restarting it is refused. |
 | Stop the coordinator mid-job and start it again. | The job is gone: jobs are not yet saved. Workers reconnect by themselves within half a minute. Stored files and pins are still there (`sisyphusd blob pins`). |
 
-### 6. Use the pool from another machine
+### 6. Run a private job
+
+```sh
+examples/private-wordcount.sh "$(examples/big-file.sh 50)"
+```
+
+It seals the file with a key before storing it, runs the job with the key, and shows the first bytes of the stored result, which should be `SISYENC1` followed by noise, and then the table, unsealed.
+
+✎ On a worker, look in its cache (`cache/blocks` in its data directory) for a word you know is in the file: `grep -rl boulder ~/.sisyphus/cache/blocks`. It must find nothing.
+
+### 7. Use the pool from another machine
 
 On the coordinator:
 

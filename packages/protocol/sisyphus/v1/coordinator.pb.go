@@ -543,12 +543,14 @@ func (x *SwarmUpdate) GetSwarmFingerprint() string {
 }
 
 type TaskAssignment struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	JobId         string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	Attempt       uint32                 `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	Workload      string                 `protobuf:"bytes,4,opt,name=workload,proto3" json:"workload,omitempty"`
-	Payload       []byte                 `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TaskId   string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	JobId    string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Attempt  uint32                 `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Workload string                 `protobuf:"bytes,4,opt,name=workload,proto3" json:"workload,omitempty"`
+	Payload  []byte                 `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
+	// The job's sealing key, if it is a private job.
+	Key           []byte `protobuf:"bytes,6,opt,name=key,proto3" json:"key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -618,6 +620,13 @@ func (x *TaskAssignment) GetPayload() []byte {
 	return nil
 }
 
+func (x *TaskAssignment) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
 var File_sisyphus_v1_coordinator_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
@@ -656,13 +665,14 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\x0ecoordinator_id\x18\x01 \x01(\tR\rcoordinatorId\x12+\n" +
 	"\x11swarm_fingerprint\x18\x02 \x01(\tR\x10swarmFingerprint\":\n" +
 	"\vSwarmUpdate\x12+\n" +
-	"\x11swarm_fingerprint\x18\x01 \x01(\tR\x10swarmFingerprint\"\x90\x01\n" +
+	"\x11swarm_fingerprint\x18\x01 \x01(\tR\x10swarmFingerprint\"\xa2\x01\n" +
 	"\x0eTaskAssignment\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x15\n" +
 	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x12\x18\n" +
 	"\aattempt\x18\x03 \x01(\rR\aattempt\x12\x1a\n" +
 	"\bworkload\x18\x04 \x01(\tR\bworkload\x12\x18\n" +
-	"\apayload\x18\x05 \x01(\fR\apayload2`\n" +
+	"\apayload\x18\x05 \x01(\fR\apayload\x12\x10\n" +
+	"\x03key\x18\x06 \x01(\fR\x03key2`\n" +
 	"\x12CoordinatorService\x12J\n" +
 	"\aConnect\x12\x1a.sisyphus.v1.WorkerMessage\x1a\x1f.sisyphus.v1.CoordinatorMessage(\x010\x01BEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 

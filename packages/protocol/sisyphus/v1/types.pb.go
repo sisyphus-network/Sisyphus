@@ -372,7 +372,12 @@ type JobSpec struct {
 	Mode   ScheduleMode `protobuf:"varint,3,opt,name=mode,proto3,enum=sisyphus.v1.ScheduleMode" json:"mode,omitempty"`
 	// Distributed mode only: how many tasks to split into. Zero means one
 	// task per worker slot connected at submission time.
-	MaxTasks      uint32 `protobuf:"varint,4,opt,name=max_tasks,json=maxTasks,proto3" json:"max_tasks,omitempty"`
+	MaxTasks uint32 `protobuf:"varint,4,opt,name=max_tasks,json=maxTasks,proto3" json:"max_tasks,omitempty"`
+	// If set, a 32-byte key that makes the job private: everything it stores
+	// is sealed with the key, and sealed inputs are opened with it. The key
+	// is given to the workers that run the job's tasks and to nobody else,
+	// and is never returned in a Job.
+	Key           []byte `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -433,6 +438,13 @@ func (x *JobSpec) GetMaxTasks() uint32 {
 		return x.MaxTasks
 	}
 	return 0
+}
+
+func (x *JobSpec) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
 }
 
 type Task struct {
@@ -673,12 +685,13 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\fconnected_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\vconnectedAt\x12<\n" +
 	"\flast_seen_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"lastSeenAt\x12\x12\n" +
-	"\x04name\x18\x06 \x01(\tR\x04name\"\x89\x01\n" +
+	"\x04name\x18\x06 \x01(\tR\x04name\"\x9b\x01\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
 	"\x04mode\x18\x03 \x01(\x0e2\x19.sisyphus.v1.ScheduleModeR\x04mode\x12\x1b\n" +
-	"\tmax_tasks\x18\x04 \x01(\rR\bmaxTasks\"\xc9\x01\n" +
+	"\tmax_tasks\x18\x04 \x01(\rR\bmaxTasks\x12\x10\n" +
+	"\x03key\x18\x05 \x01(\fR\x03key\"\xc9\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\rR\x05index\x12,\n" +

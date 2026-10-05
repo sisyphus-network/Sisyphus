@@ -7,6 +7,7 @@ Things to run against a pool, and a pool to run them against.
 | `local-pool.sh` | Starts a coordinator and two workers on this machine and leaves them running. `--kubo` gives each node Kubo and the pool a private IPFS network. |
 | `tmux-pool.sh` | The same in one terminal: the pool in one tmux pane, a shell ready to use it in another. |
 | `wordcount.sh` | Stores a file on the pool, counts its words across the workers, and prints the most frequent. |
+| `private-wordcount.sh` | The same, sealed: the file and the result are encrypted with a key that only you and the job's workers hold. |
 | `primes.sh` | Counts primes below a number, split across the pool and then as one task, to compare. |
 | `big-file.sh` | Makes a large text file to time jobs with. |
 | `boulder.txt` | A short sample text, the default input for `wordcount.sh`. |
@@ -33,6 +34,7 @@ It prints two variables to set in the other terminal. Either way, then:
 ```sh
 examples/wordcount.sh                               # the sample text
 examples/wordcount.sh path/to/any/file.txt 20       # your own file, top 20 words
+examples/private-wordcount.sh                       # sealed with a key; shows what the pool holds
 examples/primes.sh                                  # split versus single, primes below 2 billion
 examples/wordcount.sh "$(examples/big-file.sh 50)"  # a 50 MB file
 ```

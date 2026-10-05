@@ -98,6 +98,25 @@ func TestWorkerAdvertisesItselfAndReportsAnUnknownWorkload(t *testing.T) {
 	}
 }
 
+func TestWorkerRefusesATaskWhoseKeyIsNotAKey(t *testing.T) {
+	coordinator := &scriptedCoordinator{
+		assignment: &pb.TaskAssignment{TaskId: "job/0", JobId: "job", Attempt: 1, Workload: "primes", Payload: []byte(`{"from":0,"to":10}`), Key: []byte("too short")},
+		hello:      make(chan *pb.Hello, 1),
+		result:     make(chan *pb.TaskResult, 1),
+	}
+	srv := newServer()
+	pb.RegisterCoordinatorServiceServer(srv, coordinator)
+	addr, _ := serve(t, srv)
+	runWorker(t, &worker.Worker{
+		Name: "w", Coordinator: addr, Credentials: workerCreds, Slots: 1,
+		Workloads: runtime.Builtin(), Blobs: storage.NewMemory(), Log: quiet(),
+	})
+
+	if result := <-coordinator.result; !strings.Contains(result.GetError(), "key of 9 bytes, which is not a key") {
+		t.Errorf("result %v, want the task refused for its key", result)
+	}
+}
+
 func TestWorkerKeepsRetryingAnAddressItCannotUse(t *testing.T) {
 	var logs bytes.Buffer
 	w := &worker.Worker{

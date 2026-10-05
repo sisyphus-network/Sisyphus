@@ -65,6 +65,11 @@ message JobSpec {
   // Distributed mode only: how many tasks to split into. Zero means one
   // task per worker slot connected at submission time.
   uint32 max_tasks = 4;
+  // If set, a 32-byte key that makes the job private: everything it stores
+  // is sealed with the key, and sealed inputs are opened with it. The key
+  // is given to the workers that run the job's tasks and to nobody else,
+  // and is never returned in a Job.
+  bytes key = 5;
 }
 
 message Task {

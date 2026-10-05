@@ -28,6 +28,7 @@ const usage = `Usage:
   sisyphusd blob unpin <cid>       stop keeping a blob
   sisyphusd blob pins              list what the node is keeping, and for whom
   sisyphusd blob gc                delete stored data that nothing is keeping
+  sisyphusd key new <file>         make a key for sealing a private job's data
   sisyphusd pool invite            issue an invitation for another node to join this one
   sisyphusd pool join <invitation> join another node, to use it from this machine
   sisyphusd pool members           list the nodes admitted to this one
@@ -82,6 +83,8 @@ func run(ctx context.Context, args []string) error {
 		return listNodes(ctx, args[1:])
 	case "blob":
 		return blobCommand(ctx, args[1:])
+	case "key":
+		return keyCommand(args[1:])
 	case "pool":
 		return poolCommand(ctx, args[1:])
 	case "id":

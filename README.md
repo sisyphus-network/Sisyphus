@@ -189,6 +189,7 @@ That starts a coordinator and two workers in the left pane and gives you a shell
 examples/primes.sh                # the same job split across the pool, then on one worker
 examples/wordcount.sh             # store a file, count its words across the pool
 examples/wordcount.sh my.txt 20   # your own file, the top 20 words
+examples/private-wordcount.sh     # the same, with the data sealed from the rest of the pool
 ```
 
 A `primes` run looks like this, here on one 32-core machine with two workers of four task slots each:
@@ -234,6 +235,7 @@ sisyphus/
 │   ├── job-model/        # job and task state machines
 │   ├── kubo/             # running and calling a Kubo (IPFS) daemon
 │   ├── runtime/          # the Workload interface and built-in workloads
+│   ├── sealed/           # encryption of a private job's blobs
 │   ├── storage/          # content-addressed blob store, pins, garbage collection
 │   └── planner/          # planning interfaces and schemas (not started)
 ├── proto/                # Protocol Buffer service and message definitions
@@ -257,6 +259,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Jobs that pass large inputs and outputs by CID; workers fetch them from the coordinator or from each other, verify and cache them.
 - Pins, retention periods, garbage collection and disk limits, so a node keeps data only as long as something needs it.
 - Optionally, a Kubo (IPFS) daemon run beside each node, as the same peer as the node. A pool's daemons form a private IPFS network that only its members can join, and workers fetch job data over it from whichever member has it.
+- Private jobs, whose inputs, intermediate data and results are sealed with a key held only by the submitter and the nodes working on the job.
 - Encrypted connections between nodes, each identified by its own key; nodes join a pool by invitation, as a worker or a client, and can be removed.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.

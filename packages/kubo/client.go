@@ -55,13 +55,16 @@ func (c *Client) call(ctx context.Context, command string, args url.Values, body
 		req.Header.Set("Content-Type", contentType)
 	}
 	res, err := c.http.Do(req)
-	c.mu.RUnlock()
 	if err != nil {
+		c.mu.RUnlock()
 		return nil, fmt.Errorf("kubo %s: %w", command, err)
 	}
 	if res.StatusCode == http.StatusOK {
-		return res.Body, nil
+		// The call lasts until its reply has been read, and the daemon must
+		// not be replaced before then.
+		return &heldBody{ReadCloser: res.Body, release: c.mu.RUnlock}, nil
 	}
+	defer c.mu.RUnlock()
 	defer res.Body.Close()
 	var failure struct{ Message string }
 	text, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
@@ -75,6 +78,20 @@ func (c *Client) call(ctx context.Context, command string, args url.Values, body
 		return nil, fmt.Errorf("kubo %s: %w", command, ErrNotFound)
 	}
 	return nil, fmt.Errorf("kubo %s: %s (HTTP %d)", command, failure.Message, res.StatusCode)
+}
+
+// heldBody is a reply that keeps its client's daemon from being replaced
+// until it is closed.
+type heldBody struct {
+	io.ReadCloser
+	once    sync.Once
+	release func()
+}
+
+func (h *heldBody) Close() error {
+	err := h.ReadCloser.Close()
+	h.once.Do(h.release)
+	return err
 }
 
 // callJSON makes a call whose response is one JSON object and decodes it.

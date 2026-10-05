@@ -60,6 +60,9 @@ type Job struct {
 	Workload string
 	Params   []byte
 	Mode     Mode
+	// Key, if set, is the key the job's blobs are sealed with. It is a
+	// secret and is not part of the job's public state.
+	Key []byte
 	// MaxTasks is the split the submitter asked for; zero means unspecified.
 	MaxTasks   int
 	State      State
