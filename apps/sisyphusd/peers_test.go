@@ -161,6 +161,8 @@ func TestWorkerDaemonsServeEachOther(t *testing.T) {
 	addr := freeAddr(t)
 	startDaemon(t, "--role", "coordinator", "--listen", addr)
 	firstDir, secondDir := t.TempDir(), t.TempDir()
+	// Wait for the coordinator to be up before storing anything on it.
+	waitForOutput(t, "no workers connected", "nodes", "--addr", addr)
 	text := strings.Repeat("the boulder rolls down, and Sisyphus walks after it.\n", 20_000)
 	input := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, text)))
 
