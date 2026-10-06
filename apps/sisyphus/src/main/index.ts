@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,7 +14,23 @@ const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
 // The daemon lets anything on this machine read from its local API, but only
 // a holder of its token change it. The token is in the daemon's data
 // directory, readable by the user who runs the daemon.
-const tokenFile = process.env.SISYPHUS_API_TOKEN_FILE ?? join(homedir(), '.sisyphus', 'api.token')
+const tokenFile = process.env.SISYPHUS_API_TOKEN_FILE ?? join(daemonDataDir(), 'api.token')
+
+// Where the daemon keeps its data unless told otherwise: ~/.sisyphus if
+// that is there, as it is for nodes set up by earlier versions, and
+// otherwise the place the operating system sets aside for a program's data.
+function daemonDataDir(): string {
+  const home = homedir()
+  const old = join(home, '.sisyphus')
+  if (existsSync(old)) return old
+  if (process.platform === 'win32') {
+    return join(process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'sisyphus')
+  }
+  if (process.platform === 'darwin') {
+    return join(home, 'Library', 'Application Support', 'sisyphus')
+  }
+  return join(process.env.XDG_DATA_HOME || join(home, '.local', 'share'), 'sisyphus')
+}
 
 function authorization(): grpc.Metadata {
   const metadata = new grpc.Metadata()

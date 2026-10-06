@@ -251,7 +251,7 @@ func TestDaemonStartupFailures(t *testing.T) {
 	}{
 		{"the listen address is in use", []string{"--listen", taken.Addr().String()}, "address already in use"},
 		{"a worker has not joined its coordinator", []string{"--role", "worker", "--coordinator", "127.0.0.1:1"}, "has not joined a coordinator at 127.0.0.1:1"},
-		{"the address to join is unusable", []string{"--role", "worker", "--coordinator", badAddr, "--join", "12D3KooWexample:token"}, "invalid control character"},
+		{"the address to join is unusable", []string{"--role", "worker", "--coordinator", badAddr, "--join", "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK:token"}, "invalid control character"},
 		{"an invitation is malformed", []string{"--role", "worker", "--coordinator", "127.0.0.1:1", "--join", "no-colon-here"}, "an invitation looks like"},
 		{"a coordinator is given an invitation", []string{"--join", "12D3KooWexample:token"}, "--join is for worker-only nodes"},
 		{"the joined coordinator's address is unusable", []string{"--role", "worker", "--coordinator", badAddr, "--data-dir", joinedBadAddr}, "invalid control character"},
@@ -323,9 +323,45 @@ func TestDefaultName(t *testing.T) {
 }
 
 func TestDefaultDataDir(t *testing.T) {
-	t.Setenv("HOME", "/home/camus")
-	if got := defaultDataDir(); got != "/home/camus/.sisyphus" {
+	nowhere := func(string) bool { return false }
+	env := func(vars map[string]string) func(string) string {
+		return func(name string) string { return vars[name] }
+	}
+	for _, tt := range []struct {
+		name, goos string
+		vars       map[string]string
+		exists     func(string) bool
+		want       string
+	}{
+		{"Linux", "linux", nil, nowhere, "/home/camus/.local/share/sisyphus"},
+		{"Linux with its data elsewhere", "linux", map[string]string{"XDG_DATA_HOME": "/data"}, nowhere, "/data/sisyphus"},
+		{"FreeBSD, as any other Unix", "freebsd", nil, nowhere, "/home/camus/.local/share/sisyphus"},
+		{"macOS", "darwin", nil, nowhere, "/home/camus/Library/Application Support/sisyphus"},
+		{"Windows", "windows", map[string]string{"LOCALAPPDATA": "/local"}, nowhere, "/local/sisyphus"},
+		{"Windows without the variable", "windows", nil, nowhere, "/home/camus/AppData/Local/sisyphus"},
+		// A node from before there was a choice stays where it is.
+		{"a node that already has ~/.sisyphus", "darwin", nil, func(dir string) bool { return dir == "/home/camus/.sisyphus" }, "/home/camus/.sisyphus"},
+	} {
+		if got := dataDirFor("/home/camus", tt.goos, env(tt.vars), tt.exists); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
+		}
+	}
+
+	// This machine, with a home of its own: first the system's place, and
+	// then the old one once it is there.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if got := defaultDataDir(); got != filepath.Join(home, ".local", "share", "sisyphus") {
 		t.Errorf("data directory %q", got)
+	}
+	if out := mustCLI(t, "data-dir"); strings.TrimSpace(out) != filepath.Join(home, ".local", "share", "sisyphus") {
+		t.Errorf("data-dir printed %q", out)
+	}
+	if err := os.Mkdir(filepath.Join(home, ".sisyphus"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultDataDir(); got != filepath.Join(home, ".sisyphus") {
+		t.Errorf("data directory with a ~/.sisyphus in place: %q", got)
 	}
 	t.Setenv("HOME", "")
 	if got := defaultDataDir(); got != ".sisyphus" {

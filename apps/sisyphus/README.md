@@ -21,7 +21,7 @@ go build ./apps/sisyphusd && ./sisyphusd run --api-listen 127.0.0.1:50051
 cargo run -p sisyphusd
 ```
 
-Against the Go daemon, peers are the nodes of the pool, and "trusted for compute" means admitted to it as a worker; [its README](../sisyphusd/README.md#the-desktop-app) has the details. It asks for a token before changing anything, which the client reads from `~/.sisyphus/api.token`. If the daemon keeps its data elsewhere, name the file with `SISYPHUS_API_TOKEN_FILE`. The Rust daemon ignores the token.
+Against the Go daemon, peers are the nodes of its pool and the nodes it has found, and trusting one for compute admits it to the pool as a worker; [its README](../sisyphusd/README.md#the-desktop-app) has the details. It asks for a token before changing anything, which the client reads from `api.token` in the daemon's default data directory (`sisyphusd data-dir` prints it). If the daemon keeps its data elsewhere, name the file with `SISYPHUS_API_TOKEN_FILE`. The Rust daemon ignores the token.
 
 `node dev/check-daemon.mjs [address] [token-file]` asks a running daemon the same questions the client does and prints the answers, which is a quick way to check one against the other without opening a window.
 

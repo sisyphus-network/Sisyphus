@@ -102,8 +102,9 @@ func TestACoordinatorsLocalAPIShowsItsPoolAndChangesIt(t *testing.T) {
 	if _, err := client.SetPeerComputeTrust(authorized, untrust); err != nil {
 		t.Fatal(err)
 	}
-	if state(worker) != nil {
-		t.Error("a node no longer trusted is still listed in the pool")
+	// The node is still known, having been met, but is trusted no longer.
+	if left := state(worker); left.GetTrustedForCompute() {
+		t.Errorf("a node no longer trusted is listed as %v", left)
 	}
 	if members := mustCLI(t, "pool", "members", "--addr", addr); strings.Contains(members, worker) {
 		t.Errorf("the pool still has the worker as a member:\n%s", members)
@@ -136,16 +137,17 @@ func TestAWorkersLocalAPIShowsItsCoordinator(t *testing.T) {
 	startDaemon(t, "--data-dir", workerDir, "--role", "worker", "--coordinator", addr, "--slots", "1", "--api-listen", apiAddr)
 	client := desktop(t, apiAddr)
 
-	coordinator := func() *nodepb.Peer {
-		peers := poolAsSeenBy(t, client)
-		if len(peers) != 1 {
-			t.Fatalf("a worker's peers: %v, want only its coordinator", peers)
+	coordinator := func() (found *nodepb.Peer) {
+		for _, peer := range poolAsSeenBy(t, client) {
+			if peer.GetPeerId() == nodeID(t, coordinatorDir) {
+				found = peer
+			}
 		}
-		return peers[0]
+		return found
 	}
 	waitFor(t, func() bool { return coordinator().GetConnectionState() == connected })
 	host, port, _ := net.SplitHostPort(addr)
-	if got := coordinator(); got.GetPeerId() != nodeID(t, coordinatorDir) || !slices.Equal(got.GetKnownAddresses(), []string{"/ip4/" + host + "/tcp/" + port}) {
+	if got := coordinator(); got.GetPeerId() != nodeID(t, coordinatorDir) || !slices.Contains(got.GetKnownAddresses(), "/ip4/"+host+"/tcp/"+port) {
 		t.Errorf("the coordinator as its worker sees it: %v", got)
 	}
 	// A worker listens on a port of the system's choosing, which nobody had
@@ -179,6 +181,12 @@ func TestAWorkersLocalAPIShowsItsCoordinator(t *testing.T) {
 	outsider := nodeID(t, t.TempDir())
 	if _, err := client.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: "/ip4/" + host + "/tcp/" + port + "/p2p/" + outsider}); status.Code(err) != codes.Unavailable {
 		t.Errorf("connecting to a node that is no member: %v, want Unavailable", err)
+	}
+	// A connection that was made goes in the address book, and one that
+	// was not does not.
+	book, err := client.GetBootstrapPeers(ctx, &nodepb.GetBootstrapPeersRequest{})
+	if err != nil || len(book.GetPeers()) != 1 || book.GetPeers()[0].GetPeerId() != nodeID(t, coordinatorDir) {
+		t.Errorf("the address book after connecting: %v, %v", book, err)
 	}
 
 	stopCoordinator()

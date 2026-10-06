@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,9 +76,11 @@ func (t *target) connect() (*grpc.ClientConn, error) {
 // node, so that later connections to addr are known to reach it. It returns
 // the role the node was admitted in and the nodes it now knows.
 func joinPool(ctx context.Context, dataDir string, ident *identity.Identity, addr, invitation string) (pb.Role, map[string]string, error) {
-	inviter, token, ok := strings.Cut(invitation, ":")
-	if !ok || inviter == "" || token == "" {
-		return 0, nil, errors.New("an invitation looks like <node ID>:<token>")
+	// A node that has been trusted directly joins with the ID of the node
+	// that trusts it, and no token.
+	inviter, token, _ := strings.Cut(invitation, ":")
+	if _, err := peer.Decode(inviter); err != nil {
+		return 0, nil, errors.New("an invitation looks like <node ID>:<token>, or for a node that has been trusted without one, <node ID>")
 	}
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(credentials.NewTLS(ident.ClientTLS(inviter))))
 	if err != nil {

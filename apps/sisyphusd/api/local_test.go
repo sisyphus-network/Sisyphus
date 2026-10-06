@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 )
 
@@ -211,11 +212,93 @@ func TestANodeThatCoordinatesNoPoolCannotChangeTrust(t *testing.T) {
 	}
 }
 
-func TestTheAddressBookIsNotKept(t *testing.T) {
+// book is an address book kept in memory, which can be made to fail.
+type book struct {
+	entries []nodedb.BootstrapPeer
+	err     error
+}
+
+func (b *book) BootstrapPeers() ([]nodedb.BootstrapPeer, error) { return b.entries, b.err }
+
+func (b *book) SetBootstrapPeers(entries []nodedb.BootstrapPeer) error {
+	if b.err == nil {
+		b.entries = entries
+	}
+	return b.err
+}
+
+func (b *book) AddBootstrapPeer(entry nodedb.BootstrapPeer) error {
+	b.entries = append(b.entries, entry)
+	return nil
+}
+
+func TestTheAddressBookIsReadAndReplaced(t *testing.T) {
+	const (
+		id      = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+		other   = "12D3KooWGMC9eNSqjbuxQN5gg7emLLsXsBxYAanwqcmCUALXtquU"
+		address = "/ip4/10.0.0.9/tcp/7700/p2p/" + id
+	)
+	kept := &book{}
+	started := make(chan []string, 1)
+	service := &localService{cfg: LocalConfig{Token: "the-token", Book: kept, Bootstrap: func(_ context.Context, addresses []string) { started <- addresses }}}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	entry := &nodepb.BootstrapPeer{PeerId: id, Address: address}
+
+	set, err := service.SetBootstrapPeers(ctx, &nodepb.SetBootstrapPeersRequest{Peers: []*nodepb.BootstrapPeer{entry}})
+	if err != nil || len(set.GetPeers()) != 1 || set.GetPeers()[0].GetAddress() != address {
+		t.Fatalf("SetBootstrapPeers = %v, %v", set, err)
+	}
+	// The node goes looking for what it was just given.
+	if dialled := <-started; len(dialled) != 1 || dialled[0] != address {
+		t.Errorf("connected to %v", dialled)
+	}
+	got, err := service.GetBootstrapPeers(context.Background(), &nodepb.GetBootstrapPeersRequest{})
+	if err != nil || len(got.GetPeers()) != 1 || got.GetPeers()[0].GetPeerId() != id {
+		t.Errorf("GetBootstrapPeers = %v, %v", got, err)
+	}
+
+	for name, bad := range map[string]*nodepb.BootstrapPeer{
+		"an address that is none":    {PeerId: id, Address: "10.0.0.9:7700"},
+		"an address with no node ID": {PeerId: id, Address: "/ip4/10.0.0.9/tcp/7700"},
+		"an address of another node": {PeerId: other, Address: address},
+	} {
+		_, err := service.SetBootstrapPeers(ctx, &nodepb.SetBootstrapPeersRequest{Peers: []*nodepb.BootstrapPeer{entry, bad}})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s: %v, want InvalidArgument", name, err)
+		}
+	}
+	if len(kept.entries) != 1 {
+		t.Errorf("a refused replacement changed the book: %v", kept.entries)
+	}
+	// Replacing it changes the node, so it needs the token. Reading does not.
+	if _, err := service.SetBootstrapPeers(context.Background(), &nodepb.SetBootstrapPeersRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("without the token: %v", err)
+	}
+
+	kept.err = errors.New("the disk is full")
+	if _, err := service.SetBootstrapPeers(ctx, &nodepb.SetBootstrapPeersRequest{}); status.Code(err) != codes.Internal {
+		t.Errorf("a book that cannot be saved: %v", err)
+	}
+	if _, err := service.GetBootstrapPeers(ctx, &nodepb.GetBootstrapPeersRequest{}); status.Code(err) != codes.Internal {
+		t.Errorf("a book that cannot be read: %v", err)
+	}
+}
+
+func TestANodeWithNoAddressBook(t *testing.T) {
 	n := startLocal(t, true)
-	_, err := n.client.SetBootstrapPeers(withToken("the-token"), &nodepb.SetBootstrapPeersRequest{})
-	if status.Code(err) != codes.Unimplemented || !strings.Contains(err.Error(), "pool join") {
-		t.Errorf("SetBootstrapPeers: %v, want an explanation of how pools are joined", err)
+	got, err := n.client.GetBootstrapPeers(context.Background(), &nodepb.GetBootstrapPeersRequest{})
+	if err != nil || len(got.GetPeers()) != 0 {
+		t.Errorf("GetBootstrapPeers = %v, %v", got, err)
+	}
+	if _, err := n.client.SetBootstrapPeers(withToken("the-token"), &nodepb.SetBootstrapPeersRequest{}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("SetBootstrapPeers: %v, want FailedPrecondition", err)
+	}
+}
+
+func TestANodeSaysWhichCountryItIsInOnlyIfItKnows(t *testing.T) {
+	plain := &localService{cfg: LocalConfig{Listen: func() []string { return nil }, Country: func() string { return "NL" }}}
+	if info, _ := plain.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{}); info.GetCountryCode() != "NL" {
+		t.Errorf("country code %q", info.GetCountryCode())
 	}
 }
 
@@ -232,6 +315,12 @@ func TestConnectPeerConnectsTheNodesHost(t *testing.T) {
 	got, err := service.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: address})
 	if err != nil || got.GetPeerId() != "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK" || len(dialled) != 1 || dialled[0] != address {
 		t.Fatalf("ConnectPeer = %v, %v, having dialled %v", got, err, dialled)
+	}
+	// And with an address book, the connection is noted in it.
+	kept := &book{}
+	service.cfg.Book = kept
+	if _, err := service.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: address}); err != nil || len(kept.entries) != 1 || kept.entries[0].Address != address {
+		t.Fatalf("connecting with an address book: %v, book %v", err, kept.entries)
 	}
 	failing = errors.New("nobody answers there")
 	if _, err := service.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: address}); status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), "nobody answers") {

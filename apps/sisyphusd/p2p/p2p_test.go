@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"path/filepath"
 	"slices"
@@ -14,10 +16,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 )
 
 const echoProtocol = "/sisyphus/test-echo/1"
+
+var quiet = slog.New(slog.DiscardHandler)
 
 func newIdentity(t *testing.T) *identity.Identity {
 	t.Helper()
@@ -56,6 +63,7 @@ func (p *pool) start(cfg Config) *Host {
 	p.t.Helper()
 	cfg.Identity = newIdentity(p.t)
 	cfg.Allow = p.allow
+	cfg.Log = quiet
 	p.admit(cfg.Identity.ID())
 	h, err := New(cfg)
 	if err != nil {
@@ -130,7 +138,7 @@ func roundTrip(t *testing.T, conn net.Conn, size int) {
 func routes(h, to *Host) []string {
 	for _, peer := range h.Peers() {
 		if peer.ID == to.ID() {
-			return peer.Addrs
+			return peer.Conns
 		}
 	}
 	return nil
@@ -407,4 +415,141 @@ func TestANodeTakesItsPlaceOnTheRelayAgainAfterLosingIt(t *testing.T) {
 	}
 	defer conn.Close()
 	roundTrip(t, conn, 1<<16)
+}
+
+// knows reports whether a host knows of another and, if it must be, is
+// connected to it.
+func knows(h, other *Host, connected bool) bool {
+	for _, peer := range h.Peers() {
+		if peer.ID == other.ID() {
+			return peer.Connected() || !connected
+		}
+	}
+	return false
+}
+
+func TestNodesOnOneNetworkFindEachOther(t *testing.T) {
+	p := newPool(t)
+	a := p.start(Config{Discover: true})
+	b := p.start(Config{Discover: true})
+	// Neither was told of the other.
+	waitFor(t, func() bool { return knows(a, b, true) && knows(b, a, true) })
+
+	for _, peer := range a.Peers() {
+		if peer.ID == a.ID() {
+			t.Error("a host lists itself among its peers")
+		}
+		if peer.ID == b.ID() && (len(peer.Addrs) == 0 || len(peer.Conns) == 0) {
+			t.Errorf("a knows b as %+v, want its addresses and a connection", peer)
+		}
+	}
+	// A node that does not discover is not found, and finds nobody.
+	hidden := p.start(Config{})
+	time.Sleep(300 * time.Millisecond)
+	if knows(a, hidden, false) || len(hidden.Peers()) != 0 {
+		t.Errorf("a node that does not discover was found, or found others: %v", hidden.Peers())
+	}
+}
+
+// withoutLAN stops hosts started during a test from announcing themselves
+// on the network, so that what they find, they find another way.
+func withoutLAN(t *testing.T, err error) {
+	old := announce
+	announce = func(host.Host, mdns.Notifee) (io.Closer, error) { return io.NopCloser(nil), err }
+	t.Cleanup(func() { announce = old })
+}
+
+func TestANodeFindsOthersThroughTheNodesItKnows(t *testing.T) {
+	withoutLAN(t, nil)
+	p := newPool(t)
+	a := p.start(Config{Discover: true})
+	b := p.start(Config{Listen: "127.0.0.1:0", Discover: true})
+	c := p.start(Config{Discover: true})
+	echo(t, c)
+	ctx := context.Background()
+
+	// c knows b, and then a is told of b and nothing else.
+	if n := c.Bootstrap(ctx, b.Addrs()); n != 1 {
+		t.Fatalf("c reached %d of the one node it was given", n)
+	}
+	if n := a.Bootstrap(ctx, append(b.Addrs(), "/ip4/127.0.0.1/tcp/1/p2p/"+newIdentity(t).ID(), "not an address")); n != 1 {
+		t.Fatalf("a reached %d of the nodes it was given, want only the one that is there", n)
+	}
+	// Each takes a moment to enter the others it has met in its table.
+	waitFor(t, func() bool { return a.table.RoutingTable().Size() > 0 && b.table.RoutingTable().Size() == 2 })
+	// a can reach c by its ID alone: b tells it where c is.
+	conn, err := a.Dial(ctx, c.ID(), echoProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	roundTrip(t, conn, 1<<16)
+	if !knows(a, c, true) {
+		t.Errorf("a's peers after reaching c: %+v", a.Peers())
+	}
+}
+
+func TestAStrangerMayConnectToANodeThatDiscoversButIsNotRelayedFor(t *testing.T) {
+	withoutLAN(t, nil)
+	p := newPool(t)
+	relay := p.start(Config{Listen: "127.0.0.1:0", Relay: true, Discover: true})
+	member := p.behind(relay)
+	echo(t, member)
+	ctx := context.Background()
+
+	stranger, err := New(Config{Identity: newIdentity(t), Via: relay.Addrs(), Allow: func(string) bool { return true }, Log: quiet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stranger.Close()
+	if err := stranger.Connect(ctx, relay.Addrs()[0]); err != nil {
+		t.Fatalf("a stranger connecting to a node that discovers: %v", err)
+	}
+	waitFor(t, func() bool { return knows(relay, stranger, true) })
+	// Being let in is not being carried for.
+	if _, err := stranger.Dial(ctx, member.ID(), echoProtocol); err == nil {
+		t.Error("the relay carried a stranger to a member")
+	}
+	if stranger.Relayed() {
+		t.Error("a stranger was given a place on the relay")
+	}
+}
+
+func TestANodeThatCannotAnnounceItselfStartsAllTheSame(t *testing.T) {
+	withoutLAN(t, errors.New("no multicast here"))
+	logs := new(bytes.Buffer)
+	h, err := New(Config{Identity: newIdentity(t), Allow: func(string) bool { return true }, Discover: true, Log: slog.New(slog.NewTextHandler(logs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	if !strings.Contains(logs.String(), "cannot look for nodes on this network") || !strings.Contains(logs.String(), "no multicast here") {
+		t.Errorf("logged:\n%s", logs)
+	}
+}
+
+func TestACallThatFailsWhileTheOtherNodeCallsBackIsNoFailure(t *testing.T) {
+	withoutLAN(t, nil)
+	p := newPool(t)
+	a := p.start(Config{Listen: "127.0.0.1:0", Discover: true})
+	b := p.start(Config{Discover: true})
+	// a calls b where b is not. The call fails at once, and b's own call
+	// to a lands a moment later.
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed.Close()
+	_, port, _ := net.SplitHostPort(closed.Addr().String())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		b.Connect(context.Background(), a.Addrs()[0])
+	}()
+	if err := a.Connect(context.Background(), "/ip4/127.0.0.1/tcp/"+port+"/p2p/"+b.ID()); err != nil {
+		t.Errorf("a's failed call, made good by b's: %v", err)
+	}
+	// With nobody calling back, a failure is a failure.
+	if err := a.Connect(context.Background(), "/ip4/127.0.0.1/tcp/"+port+"/p2p/"+newIdentity(t).ID()); err == nil {
+		t.Error("a call to nobody succeeded")
+	}
 }
