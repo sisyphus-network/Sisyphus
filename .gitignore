@@ -2,3 +2,12 @@
 /coverage.out
 /sisyphus-pool/
 *.key
+
+# Rust workspace build artifacts
+/target/
+
+# Repository-local development environment
+.direnv/
+.envrc
+
+# Secrets

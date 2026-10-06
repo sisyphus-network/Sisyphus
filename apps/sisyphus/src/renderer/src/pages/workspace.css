@@ -1,0 +1,85 @@
+.app-shell {
+  background-color: var(--app-bg);
+  background-image:
+    radial-gradient(ellipse at 92% 0%, color-mix(in srgb, var(--app-accent) 5%, transparent), transparent 42%),
+    radial-gradient(ellipse at 0% 100%, color-mix(in srgb, var(--app-accent) 3%, transparent), transparent 38%);
+}
+.app-shell--workspace { height: 100dvh; min-height: 0; overflow: hidden; }
+.app-shell--workspace .app-main { height: 100%; overflow: hidden; padding: 0; }
+.route-transition { min-width: 0; transform-origin: center top; }
+.app-shell--workspace .route-transition { height: 100%; }
+.workspace-shell { position: relative; box-sizing: border-box; height: 100%; min-height: 0; padding: 10px; overflow: hidden; }
+.workspace-panels { gap: 0; }
+.workspace-panel { min-width: 0; min-height: 0; padding: 6px; }
+.workspace-glass { isolation: isolate; overflow: hidden; }
+.workspace-chat { z-index: 2; }
+.workspace-network { background: color-mix(in srgb, var(--app-wash) 44%, var(--app-card)); }
+.workspace-resize-handle { position: relative; z-index: 5; width: 18px; flex: 0 0 18px; border: 0; background: transparent; cursor: col-resize; outline: none; }
+.workspace-resize-handle > div { width: 4px; height: 30px; border-radius: 99px; background: color-mix(in srgb, var(--app-muted) 45%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-line) 65%, transparent); transition: height .18s ease, background .18s ease, box-shadow .18s ease; }
+.workspace-resize-handle:hover > div, .workspace-resize-handle:focus-visible > div, .workspace-resize-handle[data-separator="active"] > div { height: 46px; background: var(--app-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-accent) 12%, transparent); }
+.workspace-chat textarea::placeholder { color: var(--app-muted); }
+@media (max-width: 900px) {
+  .workspace-shell--compact { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 10px 10px 84px; }
+  .workspace-mobile-stage { position: relative; flex: 1 1 auto; width: 100%; min-height: 0; overflow: hidden; isolation: isolate; }
+  .workspace-mobile-pane { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; overflow: hidden; border-radius: 22px; will-change: transform, opacity; backface-visibility: hidden; }
+  .workspace-mobile-pane > section { box-shadow: 0 16px 48px color-mix(in srgb, var(--app-ink) 10%, transparent); }
+  .workspace-mobile-dock { position: fixed; z-index: 20; left: 50%; bottom: max(8px, env(safe-area-inset-bottom)); transform: translateX(-50%); }
+  .workspace-mobile-dock .liquid-dock-wrap { width: 200px; margin: 0; }
+  .workspace-mobile-dock .liquid-dock { width: 200px; height: 70px; padding: 8px 12px 10px; }
+  .workspace-mobile-dock .liquid-dock__option { flex: 1 1 0; width: auto; padding-inline: 0; }
+  .workspace-mobile-dock .liquid-dock__active { right: 12px; width: 84px; transform: translateX(calc(var(--liquid-index) * -92px)); }
+  .workspace-mobile-dock .liquid-dock[data-active="false"] .liquid-dock__active { transform: translateX(calc(var(--liquid-index) * -92px)) scale(.82,.9); }
+  .workspace-chat { min-height: 0; padding-inline: 1rem; }
+  .workspace-chat textarea { min-height: 5rem; }
+  .workspace-shell--compact { touch-action: pan-y; }
+  html:has(.app-shell--workspace),
+  body:has(.app-shell--workspace) { overflow: hidden; }
+}
+
+.app-shell--advanced { min-height: 100dvh; }
+.app-main { flex: 1 1 auto; min-height: 0; }
+.app-mobile-dock { display: none; }
+@media (min-width: 761px) {
+  .app-shell--advanced { display: flex; flex-direction: row; width: 100%; height: 100dvh; min-height: 0; overflow: hidden; }
+  .app-shell-body--advanced { width: 100%; min-height: 0; overflow: hidden; }
+  .app-content-column--advanced { height: 100%; overflow: hidden; }
+  .app-global-header { position: relative; z-index: 4; flex: 0 0 68px; background: color-mix(in srgb, var(--app-bg) 90%, transparent); backdrop-filter: blur(14px); }
+  html:has(.app-shell--advanced),
+  body:has(.app-shell--advanced),
+  #root:has(.app-shell--advanced) { height: 100dvh; min-height: 0; overflow: hidden; }
+  .app-shell--advanced .app-main { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; max-width: none; height: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .app-shell--advanced .route-transition { flex: 0 0 auto; min-height: 100%; }
+  .app-shell--settings .app-main { overflow: hidden; }
+  .app-shell--settings .route-transition { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  .settings-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .settings-page__heading { flex: 0 0 auto; }
+  .settings-page__scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-bottom: 28px; }
+}
+@media (max-width: 760px) {
+  .app-shell--advanced { position: relative; display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  .app-shell-body--advanced { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; }
+  .app-content-column--advanced { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; }
+  .app-global-header { position: relative; z-index: 4; flex: 0 0 58px; background: color-mix(in srgb, var(--app-bg) 88%, transparent); backdrop-filter: blur(14px); }
+  .app-shell--advanced .app-main { display: flex; flex: 1 1 auto; flex-direction: column; height: 100%; min-height: 0; overflow: auto; padding-bottom: 96px; }
+  .app-shell--advanced .route-transition { flex: 1 0 auto; min-height: 100%; }
+  .app-mobile-dock { position: fixed; z-index: 10; inset-inline: 0; bottom: max(8px, env(safe-area-inset-bottom)); display: flex; justify-content: center; pointer-events: none; }
+  .app-mobile-dock .liquid-dock-wrap { width: min(244px, calc(100vw - 32px)); margin: 0; pointer-events: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-mobile-pane { will-change: auto; backface-visibility: visible; }
+}
+
+.network-visual {
+  isolation: isolate;
+  background: radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--app-accent) 9%, transparent), transparent 62%);
+}
+
+.network-globe-canvas { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; }
+.network-globe-stage { position: relative; flex: 0 0 auto; max-width: 100%; max-height: 100%; aspect-ratio: 1; overflow: hidden; }
+.network-globe-stage > div { width: 100% !important; height: 100% !important; outline: none; }
+.network-globe-stage canvas { display: block; max-width: 100%; max-height: 100%; }
+
+.network-map-caption { position: absolute; z-index: 3; inset-inline: 12px; bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--app-line); border-radius: 10px; background: color-mix(in srgb, var(--app-card) 88%, transparent); padding: 9px 10px; color: var(--app-muted); font-size: 9px; backdrop-filter: blur(12px); }
+.network-map-caption b { color: var(--app-ink); font-family: ui-monospace, monospace; font-size: 10px; font-weight: 600; }
+.network-caption-divider { height: 12px; width: 1px; margin-inline: 3px; background: var(--app-line); }

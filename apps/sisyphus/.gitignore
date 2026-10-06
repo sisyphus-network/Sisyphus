@@ -1,0 +1,7 @@
+# JavaScript dependencies and Electron/Vite build output.
+node_modules/
+out/
+
+# Copied at build time from the shared protocol and brand asset.
+resources/
+src/renderer/public/logo.png

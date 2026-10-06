@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package sisyphus.node.v1;
+
+service NodeService {
+  rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
+  rpc ListPeers(ListPeersRequest) returns (ListPeersResponse);
+  rpc WatchPeers(WatchPeersRequest) returns (stream ListPeersResponse);
+  rpc GetBootstrapPeers(GetBootstrapPeersRequest) returns (GetBootstrapPeersResponse);
+  rpc SetBootstrapPeers(SetBootstrapPeersRequest) returns (SetBootstrapPeersResponse);
+  rpc ConnectPeer(ConnectPeerRequest) returns (ConnectPeerResponse);
+  rpc SetPeerComputeTrust(SetPeerComputeTrustRequest) returns (SetPeerComputeTrustResponse);
+}
+
+message GetNodeInfoRequest {}
+
+message GetNodeInfoResponse {
+  string peer_id = 1;
+  string daemon_version = 2;
+  repeated string listen_addresses = 3;
+  string country_code = 4;
+}
+
+message ListPeersRequest {}
+
+message WatchPeersRequest {}
+
+message GetBootstrapPeersRequest {}
+
+message GetBootstrapPeersResponse {
+  repeated BootstrapPeer peers = 1;
+}
+
+message SetBootstrapPeersRequest {
+  repeated BootstrapPeer peers = 1;
+}
+
+message SetBootstrapPeersResponse {
+  repeated BootstrapPeer peers = 1;
+}
+
+message ConnectPeerRequest { string address = 1; }
+message ConnectPeerResponse { string peer_id = 1; }
+message SetPeerComputeTrustRequest {
+  string peer_id = 1;
+  bool trusted = 2;
+}
+message SetPeerComputeTrustResponse { bool trusted = 1; }
+
+message BootstrapPeer {
+  string peer_id = 1;
+  string address = 2;
+}
+
+message ListPeersResponse {
+  repeated Peer peers = 1;
+  uint64 revision = 2;
+}
+
+message Peer {
+  string peer_id = 1;
+  PeerConnectionState connection_state = 2;
+  repeated string known_addresses = 3;
+  bool trusted_for_compute = 4;
+}
+
+enum PeerConnectionState {
+  PEER_CONNECTION_STATE_UNSPECIFIED = 0;
+  PEER_CONNECTION_STATE_DISCONNECTED = 1;
+  PEER_CONNECTION_STATE_CONNECTED = 2;
+}
