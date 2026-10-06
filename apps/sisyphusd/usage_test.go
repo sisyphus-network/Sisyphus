@@ -294,15 +294,7 @@ func TestDaemonStopsWhenItsCoordinatorRemovesIt(t *testing.T) {
 }
 
 func TestVerboseDaemonLogsEachTask(t *testing.T) {
-	// The daemon logs to the real standard error, so point that at a file.
-	logFile, err := os.Create(filepath.Join(t.TempDir(), "log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	realStderr := os.Stderr
-	os.Stderr = logFile
-	defer func() { os.Stderr = realStderr }()
-
+	logs := captureLogs(t)
 	addr := freeAddr(t)
 	stop := startDaemon(t, "-v", "--listen", addr, "--slots", "1")
 	waitForOutput(t, "primes", "nodes", "--addr", addr)
@@ -311,12 +303,8 @@ func TestVerboseDaemonLogsEachTask(t *testing.T) {
 	}
 	stop()
 
-	logged, err := os.ReadFile(logFile.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(logged), `level=DEBUG msg="task done"`) {
-		t.Errorf("no per-task debug line in the log:\n%s", logged)
+	if !strings.Contains(logs.String(), `level=DEBUG msg="task done"`) {
+		t.Errorf("no per-task debug line in the log:\n%s", logs)
 	}
 }
 

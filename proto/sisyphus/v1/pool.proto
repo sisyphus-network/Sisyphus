@@ -69,7 +69,10 @@ message SwarmResponse {
   // needs. Whoever holds it can join the network, so it is given only to
   // admitted nodes and only over their encrypted connection.
   string swarm_key = 1;
-  // Addresses of this node's Kubo daemon, each ending in /p2p/<peer ID>.
+  // Addresses of the Kubo daemons on the network, each ending in
+  // /p2p/<peer ID>. Those of this node's own daemon are absent if it accepts
+  // no connections from outside; it is then reached through
+  // TunnelService.Open.
   repeated string addresses = 2;
 }
 

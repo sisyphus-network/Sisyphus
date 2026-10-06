@@ -100,6 +100,8 @@ func (network) Key() string { return "the-shared-secret" }
 
 func (n network) Addresses(context.Context) ([]string, error) { return n.addresses, n.err }
 
+func (network) Local(context.Context) (string, error) { return "127.0.0.1:4101", nil }
+
 func (n network) Fingerprint() string { return fmt.Sprintf("key-%d", *n.rekeyed) }
 
 func (n network) Rekey(context.Context) error {

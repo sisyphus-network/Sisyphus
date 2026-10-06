@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package sisyphus.v1;
+
+option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+
+// TunnelService carries connections to services that a node keeps to
+// itself, inside the one connection its members already have with it. It is
+// how a node behind a firewall or NAT reaches what would otherwise need a
+// port of its own opened on the node it is talking to.
+service TunnelService {
+  // Open carries one connection: bytes sent are written to the service and
+  // what the service writes is sent back, until either end closes. The
+  // first message names the service and may carry bytes as well.
+  rpc Open(stream TunnelData) returns (stream TunnelData);
+}
+
+enum TunnelTarget {
+  TUNNEL_TARGET_UNSPECIFIED = 0;
+  // The node's Kubo daemon, as a member of the pool's private IPFS network
+  // would connect to it.
+  TUNNEL_TARGET_SWARM = 1;
+}
+
+message TunnelData {
+  // Set in the first message from the caller only.
+  TunnelTarget target = 1;
+  bytes data = 2;
+}

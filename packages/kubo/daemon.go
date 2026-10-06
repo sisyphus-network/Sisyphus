@@ -46,6 +46,9 @@ type Swarm struct {
 	// Port is the TCP port to accept other members on. Zero lets the
 	// system choose.
 	Port int
+	// Loopback has the daemon accept connections from its own machine only.
+	// Members elsewhere must then be brought to it some other way.
+	Loopback bool
 	// Peers are members to connect to and stay connected to: their
 	// addresses, each ending in /p2p/ and the peer's ID.
 	Peers []string
@@ -256,7 +259,11 @@ func configure(configFile string, ident *identity.Identity, swarm *Swarm) error 
 	} else {
 		// A private network runs over plain TCP only, and finds content
 		// through its own members rather than public indexers.
-		set("Addresses", "Swarm", []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", swarm.Port)})
+		listen := "0.0.0.0"
+		if swarm.Loopback {
+			listen = "127.0.0.1"
+		}
+		set("Addresses", "Swarm", []string{fmt.Sprintf("/ip4/%s/tcp/%d", listen, swarm.Port)})
 		set("Routing", "Type", "dht")
 		set("AutoTLS", "Enabled", false)
 		set("Swarm", "Transports", map[string]any{"Network": map[string]any{

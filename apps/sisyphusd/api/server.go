@@ -51,6 +51,11 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	pb.RegisterPoolServiceServer(srv, &poolService{
 		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm,
 	})
+	tunnels := &tunnelService{}
+	if cfg.Swarm != nil {
+		tunnels.swarm = cfg.Swarm.Local
+	}
+	pb.RegisterTunnelServiceServer(srv, tunnels)
 	return srv
 }
 

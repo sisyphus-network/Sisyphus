@@ -16,8 +16,7 @@ cd "$(dirname "$0")/.."
 
 kubo=()
 if [ "${1:-}" = "--kubo" ]; then
-	# A random port for Kubo, so that two pools on one machine do not collide.
-	kubo=(--kubo --swarm-port 0)
+	kubo=(--kubo)
 fi
 ADDR=${ADDR:-127.0.0.1:7700}
 POOL_DIR=${POOL_DIR:-$PWD/sisyphus-pool}
