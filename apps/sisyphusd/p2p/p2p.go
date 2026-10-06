@@ -20,6 +20,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
@@ -36,6 +37,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	pbv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/pb"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
@@ -61,6 +63,9 @@ type Config struct {
 	// multiaddress ending in /p2p/ and the relay's ID. A host with any
 	// takes itself to be unreachable otherwise.
 	Via []string
+	// MoreRelays, if set, is asked from time to time for further relays to
+	// keep a place on, in the same form. Those it stops naming are let go.
+	MoreRelays func(ctx context.Context) []string
 	// Allow says whether the node with the given ID is one of this node's
 	// own: a member of its pool. Only those are relayed for. Unless Discover
 	// is set, only those may connect at all, and everyone else is turned
@@ -99,15 +104,44 @@ type Host struct {
 	renew map[peer.ID]time.Time
 	// lan is the host's announcing of itself on its own network.
 	lan io.Closer
+	// carried counts what the host has relayed for others.
+	carried carried
 }
+
+// Carried returns what the host has relayed between other nodes since it
+// started: how many times it joined two of them, and how many bytes passed
+// between them, counting both directions. A host that does not relay has
+// relayed nothing.
+func (h *Host) Carried() (connections, bytes uint64) {
+	return h.carried.connections.Load(), h.carried.bytes.Load()
+}
+
+// carried is told by the relay service of what it does, and keeps count of
+// the two things worth knowing later: how often it was used and how much
+// for. The rest of what it is told goes unrecorded.
+type carried struct {
+	connections, bytes atomic.Uint64
+}
+
+func (c *carried) ConnectionOpened()        { c.connections.Add(1) }
+func (c *carried) BytesTransferred(cnt int) { c.bytes.Add(uint64(cnt)) }
+
+func (*carried) RelayStatus(bool)                      {}
+func (*carried) ConnectionClosed(time.Duration)        {}
+func (*carried) ConnectionRequestHandled(pbv2.Status)  {}
+func (*carried) ReservationAllowed(bool)               {}
+func (*carried) ReservationClosed(int)                 {}
+func (*carried) ReservationRequestHandled(pbv2.Status) {}
 
 // New starts a host.
 func New(cfg Config) (*Host, error) {
 	key, _ := crypto.UnmarshalPrivateKey(cfg.Identity.Libp2pKey()) // a node's key is always one libp2p can read
-	listen := "/ip4/0.0.0.0/tcp/0"
+	// Left to itself the host takes a port of the system's choosing, on
+	// both kinds of address.
+	listen := []string{"/ip4/0.0.0.0/tcp/0", "/ip6/::/tcp/0"}
 	if cfg.Listen != "" {
 		var err error
-		if listen, err = multiaddrOf(cfg.Listen); err != nil {
+		if listen, err = multiaddrsOf(cfg.Listen); err != nil {
 			return nil, err
 		}
 	}
@@ -122,7 +156,9 @@ func New(cfg Config) (*Host, error) {
 
 	options := []libp2p.Option{
 		libp2p.Identity(key),
-		libp2p.ListenAddrStrings(listen),
+		// A machine without one of the two kinds of address listens on the
+		// other; only failing at both stops the host.
+		libp2p.ListenAddrStrings(listen...),
 		// One transport and one way of securing and sharing it, which every
 		// libp2p implementation has.
 		libp2p.Transport(tcp.NewTCPTransport),
@@ -138,7 +174,7 @@ func New(cfg Config) (*Host, error) {
 		members := relayRules(cfg.Allow)
 		options = append(options,
 			libp2p.ForceReachabilityPublic(),
-			libp2p.EnableRelayService(relay.WithACL(members), relay.WithResources(relay.Resources{
+			libp2p.EnableRelayService(relay.WithACL(members), relay.WithMetricsTracer(&h.carried), relay.WithResources(relay.Resources{
 				// A pool's relay carries its members' data, not strangers'
 				// handshakes, so nothing is rationed: no limit on how long
 				// or how much, and room for many nodes behind one address.
@@ -153,7 +189,7 @@ func New(cfg Config) (*Host, error) {
 			})),
 		)
 	}
-	if len(h.relays) > 0 {
+	if len(h.relays) > 0 && !cfg.Relay {
 		options = append(options, libp2p.ForceReachabilityPrivate())
 	}
 	h.ctx, h.stop = context.WithCancel(context.Background())
@@ -198,9 +234,9 @@ func New(cfg Config) (*Host, error) {
 		defer h.mu.Unlock()
 		delete(h.renew, conn.RemotePeer())
 	}})
-	for _, r := range h.relays {
+	if len(h.relays) > 0 {
 		h.kept.Add(1)
-		go h.keepPlace(h.ctx, r)
+		go h.keepPlaces(cfg.MoreRelays)
 	}
 	return h, nil
 }
@@ -258,36 +294,64 @@ func (h *Host) Bootstrap(ctx context.Context, addresses []string) (answered int)
 // on a relay.
 var placeCheck = 10 * time.Second
 
-// keepPlace keeps the host connected to a relay and holding a place on it,
-// which is what lets the relay bring other nodes to this one, until ctx
-// ends. A place lasts as long as the connection it was asked for on, and
-// then only for a time, so it is asked for again when either runs out.
+// keepPlaces keeps the host connected to its relays and holding a place on
+// each, which is what lets a relay bring other nodes to this one, until the
+// host closes. A place lasts as long as the connection it was asked for
+// on, and then only for a time, so it is asked for again when either runs
+// out. The relays are those the host was started with and whatever more
+// names besides, asked each time round.
 //
 // libp2p has a client that does this, but it will only take a place on a
 // relay with a public address, and a pool on one private network has none.
-func (h *Host) keepPlace(ctx context.Context, r peer.AddrInfo) {
+func (h *Host) keepPlaces(more func(ctx context.Context) []string) {
 	defer h.kept.Done()
+	fixed := h.relays
 	for {
-		if !h.placed(r.ID, time.Now()) {
-			err := h.host.Connect(ctx, r)
-			var place *client.Reservation
-			if err == nil {
-				place, err = client.Reserve(ctx, h.host, r)
+		relays := fixed
+		if more != nil {
+			for _, address := range more(h.ctx) {
+				// One that is no address, or is this host, is passed over.
+				if info, err := peer.AddrInfoFromString(address); err == nil && info.ID != h.host.ID() {
+					relays = append(relays[:len(relays):len(relays)], *info)
+				}
 			}
-			h.mu.Lock()
-			delete(h.renew, r.ID)
-			if err == nil {
-				// Renew with half its time still to run.
-				h.renew[r.ID] = time.Now().Add(time.Until(place.Expiration) / 2)
+		}
+		h.mu.Lock()
+		h.relays = relays
+		h.mu.Unlock()
+		for _, r := range relays {
+			if !h.placed(r.ID, time.Now()) {
+				h.takePlace(r)
 			}
-			h.mu.Unlock()
 		}
 		select {
 		case <-time.After(h.placeCheck):
-		case <-ctx.Done():
+		case <-h.ctx.Done():
 			return
 		}
 	}
+}
+
+func (h *Host) takePlace(r peer.AddrInfo) {
+	err := h.host.Connect(h.ctx, r)
+	var place *client.Reservation
+	if err == nil {
+		place, err = client.Reserve(h.ctx, h.host, r)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.renew, r.ID)
+	if err == nil {
+		// Renew with half its time still to run.
+		h.renew[r.ID] = time.Now().Add(time.Until(place.Expiration) / 2)
+	}
+}
+
+// via returns the relays the host now uses.
+func (h *Host) via() []peer.AddrInfo {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.relays
 }
 
 // placed reports whether the host holds a place on a relay that is not yet
@@ -302,7 +366,7 @@ func (h *Host) placed(relay peer.ID, now time.Time) bool {
 // Relayed reports whether the host can now be reached through one of its
 // relays. It takes a moment after starting.
 func (h *Host) Relayed() bool {
-	for _, r := range h.relays {
+	for _, r := range h.via() {
 		if h.placed(r.ID, time.Now()) {
 			return true
 		}
@@ -310,19 +374,21 @@ func (h *Host) Relayed() bool {
 	return false
 }
 
-// multiaddrOf gives a host:port address as the multiaddress of a TCP port.
-func multiaddrOf(hostport string) (string, error) {
+// multiaddrsOf gives a host:port address as the multiaddresses of the TCP
+// port to listen on. An address that names no host, such as ":7700", means
+// every address the machine has, of both kinds.
+func multiaddrsOf(hostport string) ([]string, error) {
 	addr, err := net.ResolveTCPAddr("tcp", hostport)
 	if err != nil {
-		return "", fmt.Errorf("p2p: listen address: %w", err)
+		return nil, fmt.Errorf("p2p: listen address: %w", err)
 	}
 	switch {
-	case addr.IP == nil || addr.IP.IsUnspecified() && addr.IP.To4() != nil:
-		return fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", addr.Port), nil
+	case addr.IP == nil:
+		return []string{fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", addr.Port), fmt.Sprintf("/ip6/::/tcp/%d", addr.Port)}, nil
 	case addr.IP.To4() != nil:
-		return fmt.Sprintf("/ip4/%s/tcp/%d", addr.IP, addr.Port), nil
+		return []string{fmt.Sprintf("/ip4/%s/tcp/%d", addr.IP, addr.Port)}, nil
 	}
-	return fmt.Sprintf("/ip6/%s/tcp/%d", addr.IP, addr.Port), nil
+	return []string{fmt.Sprintf("/ip6/%s/tcp/%d", addr.IP, addr.Port)}, nil
 }
 
 // Close stops the host and everything using it.
@@ -441,24 +507,67 @@ func (h *Host) call(ctx context.Context, info peer.AddrInfo) error {
 
 // TLSListener returns a listener for the connections arriving on the host's
 // port that open with a TLS handshake rather than a libp2p one, which is to
-// say the ones meant for the node's gRPC server.
+// say the ones meant for the node's gRPC server. A host listening on both
+// kinds of address gives one listener for the two.
 func (h *Host) TLSListener() (net.Listener, error) {
-	gated, err := h.shared.DemultiplexedListen(h.listening()[0], tcpreuse.DemultiplexedConnType_TLS)
-	if err != nil {
-		return nil, fmt.Errorf("p2p: %w", err)
+	all := &tlsListener{conns: make(chan net.Conn), closed: make(chan struct{})}
+	for _, addr := range h.listening() {
+		gated, err := h.shared.DemultiplexedListen(addr, tcpreuse.DemultiplexedConnType_TLS)
+		if err != nil {
+			all.Close()
+			return nil, fmt.Errorf("p2p: %w", err)
+		}
+		all.parts = append(all.parts, gated)
+		go all.accept(gated)
 	}
-	return &tlsListener{gated}, nil
+	return all, nil
 }
 
-type tlsListener struct{ transport.GatedMaListener }
+type tlsListener struct {
+	parts  []transport.GatedMaListener
+	conns  chan net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+// accept passes on what one of the listener's parts accepts, until that
+// part is closed.
+func (l *tlsListener) accept(part transport.GatedMaListener) {
+	for {
+		conn, scope, err := part.Accept()
+		if err != nil {
+			return
+		}
+		select {
+		case l.conns <- &scoped{Conn: conn, scope: scope}:
+		case <-l.closed:
+			scope.Done()
+			conn.Close()
+			return
+		}
+	}
+}
 
 func (l *tlsListener) Accept() (net.Conn, error) {
-	conn, scope, err := l.GatedMaListener.Accept()
-	if err != nil {
-		return nil, err
+	select {
+	case conn := <-l.conns:
+		return conn, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
 	}
-	return &scoped{Conn: conn, scope: scope}, nil
 }
+
+func (l *tlsListener) Close() error {
+	l.once.Do(func() {
+		close(l.closed)
+		for _, part := range l.parts {
+			part.Close()
+		}
+	})
+	return nil
+}
+
+func (l *tlsListener) Addr() net.Addr { return l.parts[0].Addr() }
 
 // scoped is a connection the host counted in, which must be counted out
 // again when it closes.
@@ -486,7 +595,7 @@ func (h *Host) Dial(ctx context.Context, nodeID string, proto protocol.ID) (net.
 	}
 	if h.host.Network().Connectedness(id) != network.Connected {
 		through := peer.AddrInfo{ID: id}
-		for _, r := range h.relays {
+		for _, r := range h.via() {
 			for _, addr := range r.Addrs {
 				through.Addrs = append(through.Addrs, addr.Encapsulate(ma.StringCast("/p2p/"+r.ID.String()+"/p2p-circuit")))
 			}

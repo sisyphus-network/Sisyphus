@@ -97,7 +97,11 @@ msg="fetched a blob from a fellow worker" cid=<the file's CID> node=<another wor
 
 ✎ If the workers are on one network, the second run should be about as fast as step 3's first. If they are on different private networks the data goes by way of the coordinator; note the time, and whether it improves on later runs, which would mean the two managed a direct connection.
 
-A worker with a port open to the others can also be given `--serve 0.0.0.0:7701 --advertise <this-worker's-address>:7701`. The others then fetch from it at that address, and the log line ends `at=<that address>`.
+A worker with a port open to the others can be made a full node with `--relay 0.0.0.0:7702`: it then relays between the others as the coordinator does, and `sisyphusd nodes` shows what it has carried under `RELAYED`.
+
+✎ With a full node running, repeat the run above with a new file. Does its `RELAYED` count go up? If it stays at zero the two workers went through the coordinator or connected directly, both of which are fine.
+
+It can also be given `--serve 0.0.0.0:7701 --advertise <this-worker's-address>:7701`. The others then fetch from it at that address, and the log line ends `at=<that address>`.
 
 ### 5. Break things
 

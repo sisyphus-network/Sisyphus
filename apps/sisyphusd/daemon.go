@@ -56,6 +56,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
+	relayAt := fs.String("relay", "", "worker-only node: listen on this address, as host:port, for the other members' libp2p hosts and relay between them; the port must be open to them. A coordinator relays already")
 	discovery := fs.String("discovery", "on", "whether to look for other nodes, on this network and through the nodes already known, and let them find this one: on or off")
 	bootstrap := fs.String("bootstrap", "", "addresses of nodes to connect to at startup, besides those in the address book: comma-separated, each ending in /p2p/<node ID>")
 	locate := fs.Bool("locate-country", false, "ask ipapi.co which country this node's address is in, to show in the desktop client; this tells that service the address")
@@ -94,6 +95,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if *slots < 1 {
 		return errors.New("--slots must be at least 1")
+	}
+	if isCoordinator && *relayAt != "" {
+		return errors.New("--relay is for worker-only nodes; a coordinator relays already, on --listen")
 	}
 	if *discovery != "on" && *discovery != "off" {
 		return fmt.Errorf("--discovery is on or off, not %q", *discovery)
@@ -350,7 +354,9 @@ func runDaemon(ctx context.Context, args []string) error {
 		// fellow workers through the coordinator, which relays for the pool,
 		// and reaches them the same way. Two that can connect directly then
 		// do. Only the coordinator and the pool's members are let in.
-		host, err = p2p.New(p2p.Config{Identity: ident, Via: relayAddrs(*join, coordinatorID), Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
+		// One that has a port open for the purpose relays as the coordinator
+		// does, and every worker keeps a place on each member that relays.
+		host, err = p2p.New(p2p.Config{Identity: ident, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
 			if id == coordinatorID {
 				return true
 			}
@@ -382,6 +388,11 @@ func runDaemon(ctx context.Context, args []string) error {
 			Name: *name, Coordinator: *join, Credentials: creds,
 			Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log,
 			ServeAddress: *advertise,
+		}
+		if *relayAt != "" {
+			w.RelayAddresses = host.Addrs()
+			w.Relayed = host.Carried
+			log.Info("relaying between the pool's members", "addrs", w.RelayAddresses)
 		}
 		if swarm != nil && !isCoordinator {
 			// Changing key restarts Kubo, which takes seconds, so it is

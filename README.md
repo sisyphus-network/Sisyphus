@@ -238,7 +238,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Jobs that pass large inputs and outputs by CID; workers fetch them from the coordinator or from each other, verify and cache them.
 - Pins, retention periods, garbage collection and disk limits, so a node keeps data only as long as something needs it.
 - Optionally, a Kubo (IPFS) daemon run beside each node, as the same peer as the node. A pool's daemons form a private IPFS network that only its members can join, and workers fetch job data over it from whichever member has it.
-- One open port per pool, on the coordinator. Workers connect outwards only, so they run behind home routers and firewalls as they are. Every node is a libp2p host under its own ID; the coordinator relays between workers that cannot reach each other, and those that can connect directly.
+- One open port per pool, on the coordinator. Workers connect outwards only, so they run behind home routers and firewalls as they are. Every node is a libp2p host under its own ID; the coordinator relays between workers that cannot reach each other, as does any worker that opens a port for it, and those that can connect directly do.
 - Private jobs, whose inputs, intermediate data and results are sealed with a key held only by the submitter and the nodes working on the job.
 - Encrypted connections between nodes, each identified by its own key; nodes join a pool by invitation, as a worker or a client, and can be removed.
 - Nodes that find each other: on one network by multicast DNS, beyond it through a distributed hash table, and from an address book. A node can be trusted for compute straight from the list of those found, or admitted by invitation.

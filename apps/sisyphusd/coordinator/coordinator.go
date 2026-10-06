@@ -119,6 +119,10 @@ type worker struct {
 	// or stored, which it is therefore likely to have.
 	serveAddress string
 	holds        map[string]struct{}
+	// relayAddresses are where the worker relays at, if it does, and
+	// relayed what it last said it had carried.
+	relayAddresses                   []string
+	relayedConnections, relayedBytes uint64
 	// removed is closed, once, to make the worker's connection end.
 	removed chan struct{}
 	remove  sync.Once
@@ -411,10 +415,22 @@ func (c *Coordinator) Nodes() []*pb.NodeInfo {
 			RunningTasks: uint32(len(w.running)),
 			ConnectedAt:  timestamppb.New(w.connectedAt),
 			LastSeenAt:   timestamppb.New(w.lastSeen),
+
+			RelayAddresses: w.relayAddresses, RelayedConnections: w.relayedConnections, RelayedBytes: w.relayedBytes,
 		})
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeId < nodes[j].NodeId })
 	return nodes
+}
+
+// Relays returns where the connected workers that relay can be reached,
+// ordered by node.
+func (c *Coordinator) Relays() []string {
+	var addresses []string
+	for _, node := range c.Nodes() {
+		addresses = append(addresses, node.GetRelayAddresses()...)
+	}
+	return addresses
 }
 
 // Connect serves one worker for as long as its stream stays open. The
@@ -443,16 +459,17 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 
 	now := time.Now()
 	w := &worker{
-		id:           id,
-		name:         hello.GetName(),
-		serveAddress: hello.GetServeAddress(),
-		holds:        make(map[string]struct{}),
-		capabilities: capabilities,
-		connectedAt:  now,
-		lastSeen:     now,
-		send:         newOutbox(),
-		running:      make(map[string]assignment),
-		removed:      make(chan struct{}),
+		id:             id,
+		name:           hello.GetName(),
+		serveAddress:   hello.GetServeAddress(),
+		relayAddresses: hello.GetRelayAddresses(),
+		holds:          make(map[string]struct{}),
+		capabilities:   capabilities,
+		connectedAt:    now,
+		lastSeen:       now,
+		send:           newOutbox(),
+		running:        make(map[string]assignment),
+		removed:        make(chan struct{}),
 	}
 
 	c.mu.Lock()
@@ -495,6 +512,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 			case *pb.WorkerMessage_Heartbeat:
 				c.mu.Lock()
 				w.lastSeen = time.Now()
+				w.relayedConnections, w.relayedBytes = kind.Heartbeat.GetRelayedConnections(), kind.Heartbeat.GetRelayedBytes()
 				c.mu.Unlock()
 			case *pb.WorkerMessage_TaskResult:
 				c.handleResult(w, kind.TaskResult)

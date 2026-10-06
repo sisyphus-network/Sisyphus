@@ -61,6 +61,15 @@ func (m *Members) IsMember(ctx context.Context, nodeID string) (bool, error) {
 	return answer.GetMember(), nil
 }
 
+// Relays asks the coordinator which members of the pool relay between the
+// others. It returns nothing if the coordinator cannot be asked.
+func (m *Members) Relays(ctx context.Context) []string {
+	ctx, cancel := context.WithTimeout(ctx, peerProbe)
+	defer cancel()
+	listed, _ := m.pool.Relays(ctx, &pb.RelaysRequest{})
+	return listed.GetAddresses()
+}
+
 // peerProbe is how long a worker waits for another to answer at all before
 // moving on to the next.
 var peerProbe = 5 * time.Second

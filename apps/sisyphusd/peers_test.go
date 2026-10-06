@@ -1,18 +1,22 @@
 package main
 
 import (
+	"context"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
@@ -236,6 +240,100 @@ func TestACoordinatorsAddressAsARelay(t *testing.T) {
 	} {
 		if got := relayAddrs(hostport, "12D3KooWx"); !slices.Equal(got, want) {
 			t.Errorf("relayAddrs(%q) = %v, want %v", hostport, got, want)
+		}
+	}
+}
+
+func TestTheCoordinatorKnowsWhichWorkersRelayAndWhatTheyHaveCarried(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	p.heartbeat = 10 * time.Millisecond
+	p.startWorker("plain", 1)
+	const at = "/ip4/203.0.113.7/tcp/7701/p2p/12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	var connections, carried atomic.Uint64
+	p.tune = func(w *worker.Worker) {
+		w.RelayAddresses = []string{at}
+		w.Relayed = func() (uint64, uint64) { return connections.Load(), carried.Load() }
+	}
+	p.startWorker("full-node", 1)
+	p.waitForWorkers(2)
+
+	relaying := func() (found *pb.NodeInfo) {
+		for _, node := range p.coord.Nodes() {
+			if node.GetName() == "full-node" {
+				found = node
+			}
+		}
+		return found
+	}
+	if got := relaying().GetRelayAddresses(); !slices.Equal(got, []string{at}) {
+		t.Errorf("the full node relays at %v", got)
+	}
+	// What it has carried arrives with its next report.
+	connections.Store(3)
+	carried.Store(5 << 20)
+	waitFor(t, func() bool { return relaying().GetRelayedConnections() == 3 && relaying().GetRelayedBytes() == 5<<20 })
+
+	// A worker asks which members relay, and is told of that one alone.
+	_, creds := p.admit(access.Worker)
+	conn, err := grpc.NewClient(p.addr, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	members := worker.NewMembers(conn)
+	if got := members.Relays(p.ctx); !slices.Equal(got, []string{at}) {
+		t.Errorf("relays as a worker is told: %v", got)
+	}
+	// With the coordinator out of reach there is nothing to add.
+	gone, cancel := context.WithCancel(p.ctx)
+	cancel()
+	if got := members.Relays(gone); len(got) != 0 {
+		t.Errorf("relays with nobody to ask: %v", got)
+	}
+}
+
+func TestByteCounts(t *testing.T) {
+	for n, want := range map[uint64]string{
+		0: "0 B", 1023: "1023 B", 1024: "1.0 KiB", 1536: "1.5 KiB", 5 << 20: "5.0 MiB", 3 << 30: "3.0 GiB", 1 << 62: "4096.0 PiB",
+	} {
+		if got := byteCount(n); got != want {
+			t.Errorf("byteCount(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func TestOnlyAWorkerOnlyNodeIsToldToRelay(t *testing.T) {
+	_, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--relay", freeAddr(t))
+	if err == nil || !strings.Contains(err.Error(), "--relay is for worker-only nodes") {
+		t.Errorf("error %v", err)
+	}
+}
+
+func TestAWorkerWithAPortOpenRelaysForThePool(t *testing.T) {
+	logs := captureLogs(t)
+	addr := freeAddr(t)
+	startDaemon(t, "--role", "coordinator", "--listen", addr)
+	waitForOutput(t, "no workers connected", "nodes", "--addr", addr)
+	relayAddr := freeAddr(t)
+	fullDir := t.TempDir()
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--data-dir", fullDir, "--name", "full-node", "--slots", "1", "--relay", relayAddr)
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "behind-nat", "--slots", "1")
+	waitForOutput(t, "behind-nat", "nodes", "--addr", addr)
+	out := waitForOutput(t, "full-node", "nodes", "--addr", addr)
+	if !strings.Contains(out, "RELAYED") {
+		t.Errorf("nodes output has no column for what was relayed:\n%s", out)
+	}
+
+	// The one that relays is listed as doing so, with what it has carried,
+	// and the one that does not is not.
+	host, port, _ := net.SplitHostPort(relayAddr)
+	if !strings.Contains(logs.String(), `msg="relaying between the pool's members" addrs=[/ip4/`+host+`/tcp/`+port+`/p2p/`+nodeID(t, fullDir)+`]`) {
+		t.Errorf("the full node did not say where it relays; the log:\n%s", logs)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		relays := strings.Contains(line, "0 B in 0 connections")
+		if strings.HasPrefix(line, "full-node") != relays && (strings.HasPrefix(line, "full-node") || strings.HasPrefix(line, "behind-nat")) {
+			t.Errorf("nodes line %q", line)
 		}
 	}
 }

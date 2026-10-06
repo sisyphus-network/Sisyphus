@@ -80,6 +80,10 @@ func (s *poolService) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRe
 	return &pb.JoinResponse{Role: fromRole[role]}, nil
 }
 
+func (s *poolService) Relays(context.Context, *pb.RelaysRequest) (*pb.RelaysResponse, error) {
+	return &pb.RelaysResponse{Addresses: s.coordinator.Relays()}, nil
+}
+
 func (s *poolService) IsMember(_ context.Context, req *pb.IsMemberRequest) (*pb.IsMemberResponse, error) {
 	_, member := s.access.Role(req.GetNodeId())
 	return &pb.IsMemberResponse{Member: member}, nil

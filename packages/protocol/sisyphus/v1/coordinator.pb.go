@@ -126,9 +126,13 @@ type Hello struct {
 	Name string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	// Where other workers of the pool can fetch blobs from this one, as
 	// host:port, or empty if it does not serve them.
-	ServeAddress  string `protobuf:"bytes,4,opt,name=serve_address,json=serveAddress,proto3" json:"serve_address,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ServeAddress string `protobuf:"bytes,4,opt,name=serve_address,json=serveAddress,proto3" json:"serve_address,omitempty"`
+	// Where this node's libp2p host can be reached, if it relays between the
+	// pool's members: multiaddresses ending in /p2p/ and its ID. Empty for a
+	// node that does not relay.
+	RelayAddresses []string `protobuf:"bytes,5,rep,name=relay_addresses,json=relayAddresses,proto3" json:"relay_addresses,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Hello) Reset() {
@@ -182,11 +186,22 @@ func (x *Hello) GetServeAddress() string {
 	return ""
 }
 
+func (x *Hello) GetRelayAddresses() []string {
+	if x != nil {
+		return x.RelayAddresses
+	}
+	return nil
+}
+
 type Heartbeat struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunningTasks  uint32                 `protobuf:"varint,1,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	RunningTasks uint32                 `protobuf:"varint,1,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
+	// What the node has relayed between other members since it started: how
+	// many times it joined two of them, and how many bytes passed.
+	RelayedConnections uint64 `protobuf:"varint,2,opt,name=relayed_connections,json=relayedConnections,proto3" json:"relayed_connections,omitempty"`
+	RelayedBytes       uint64 `protobuf:"varint,3,opt,name=relayed_bytes,json=relayedBytes,proto3" json:"relayed_bytes,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -222,6 +237,20 @@ func (*Heartbeat) Descriptor() ([]byte, []int) {
 func (x *Heartbeat) GetRunningTasks() uint32 {
 	if x != nil {
 		return x.RunningTasks
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetRelayedConnections() uint64 {
+	if x != nil {
+		return x.RelayedConnections
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetRelayedBytes() uint64 {
+	if x != nil {
+		return x.RelayedBytes
 	}
 	return 0
 }
@@ -637,13 +666,16 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\theartbeat\x18\x02 \x01(\v2\x16.sisyphus.v1.HeartbeatH\x00R\theartbeat\x12:\n" +
 	"\vtask_result\x18\x03 \x01(\v2\x17.sisyphus.v1.TaskResultH\x00R\n" +
 	"taskResultB\x06\n" +
-	"\x04kind\"\x89\x01\n" +
+	"\x04kind\"\xb2\x01\n" +
 	"\x05Hello\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12#\n" +
-	"\rserve_address\x18\x04 \x01(\tR\fserveAddressJ\x04\b\x01\x10\x02\"0\n" +
+	"\rserve_address\x18\x04 \x01(\tR\fserveAddress\x12'\n" +
+	"\x0frelay_addresses\x18\x05 \x03(\tR\x0erelayAddressesJ\x04\b\x01\x10\x02\"\x86\x01\n" +
 	"\tHeartbeat\x12#\n" +
-	"\rrunning_tasks\x18\x01 \x01(\rR\frunningTasks\"\xc0\x01\n" +
+	"\rrunning_tasks\x18\x01 \x01(\rR\frunningTasks\x12/\n" +
+	"\x13relayed_connections\x18\x02 \x01(\x04R\x12relayedConnections\x12#\n" +
+	"\rrelayed_bytes\x18\x03 \x01(\x04R\frelayedBytes\"\xc0\x01\n" +
 	"\n" +
 	"TaskResult\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +

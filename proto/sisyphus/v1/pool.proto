@@ -23,6 +23,11 @@ service PoolService {
   // it to decide whether to serve another node that asks them for a blob.
   rpc IsMember(IsMemberRequest) returns (IsMemberResponse);
 
+  // Relays lists the members that relay between the others, besides this
+  // node itself. A worker keeps a place on each, so that it can be reached
+  // through any of them.
+  rpc Relays(RelaysRequest) returns (RelaysResponse);
+
   // The rest may be called only by the node's owner: its own command line.
 
   // Invite issues a token for one node to join with.
@@ -60,6 +65,13 @@ message IsMemberRequest {
 
 message IsMemberResponse {
   bool member = 1;
+}
+
+message RelaysRequest {}
+
+message RelaysResponse {
+  // Multiaddresses, each ending in /p2p/ and the relay's ID.
+  repeated string addresses = 1;
 }
 
 message SwarmRequest {}

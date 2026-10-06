@@ -60,8 +60,10 @@ type pool struct {
 	// and conn a connection to it for clients the helpers do not cover.
 	coord *coordinator.Coordinator
 	conn  *grpc.ClientConn
-	// heartbeat, if set, is how often workers started later report in.
+	// heartbeat, if set, is how often workers started later report in, and
+	// tune, if set, changes each such worker before it starts.
 	heartbeat time.Duration
+	tune      func(*worker.Worker)
 	// logs is everything the coordinator has logged.
 	logs *syncBuffer
 	// stop shuts the coordinator down as a node being stopped would, before
@@ -227,6 +229,9 @@ func (p *pool) startWorker(id string, slots int) (stop func()) {
 	w := &worker.Worker{
 		Name: id, Coordinator: p.addr, Credentials: creds, Slots: slots, Workloads: p.workloads, Blobs: blobs, Log: quiet,
 		HeartbeatInterval: p.heartbeat, ServeAddress: lis.Addr().String(),
+	}
+	if p.tune != nil {
+		p.tune(w)
 	}
 	go func() {
 		defer close(done)
