@@ -199,6 +199,29 @@ A coordinator also collects every `--gc-interval` (default one hour), and with `
 
 A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
 
+## The desktop app
+
+[`apps/sisyphus`](../sisyphus/README.md) is a desktop client that shows a node and its peers. It talks to a node on the same machine through the local API, `sisyphus.node.v1` in [`proto/sisyphus/node/v1`](../../proto/sisyphus/node/v1/node.proto). The local API is off unless asked for:
+
+```sh
+./sisyphusd run --name alpha --api-listen 127.0.0.1:50051
+```
+
+`127.0.0.1:50051` is where the desktop app looks. The address must be a loopback one: the local API has no TLS, and is for programs on this machine only.
+
+What it shows, in this daemon's terms:
+
+| The desktop's word | What it is here |
+| --- | --- |
+| peer | On a coordinator, a node admitted to its pool. On a worker-only node, its coordinator. |
+| connected | The node has a live connection to this one right now. |
+| trusted for compute | The node is a worker in the pool. Trusting a peer admits it as a worker; ending trust is `pool remove`, re-keying included. |
+| bootstrap peers, connect to an address | Not offered. A pool is joined by invitation (`pool invite`, `pool join`), and those calls say so. |
+
+Anything on the machine can read from the local API. Changing something needs the token in `api.token` in the data directory, which the daemon makes on first use and only its own user can read. The desktop app reads it from `~/.sisyphus/api.token`, or the file named by `SISYPHUS_API_TOKEN_FILE`.
+
+The node's country, which the desktop can show, is left empty: finding it would mean telling an outside service this node's address.
+
 ## Examples
 
 [`examples/`](../../examples/README.md) has a script that runs a pool on this machine and leaves it up, scripts that run each workload against a pool, and a sample input. [`docs/multi-machine-test.md`](../../docs/multi-machine-test.md) is a guided test of a pool across real machines.
@@ -215,6 +238,7 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 | Path | What it holds |
 | --- | --- |
 | `proto/sisyphus/v1` | Message and service definitions. Edit these, then run `make proto`. |
+| `proto/sisyphus/node/v1` | The local API the desktop app uses. |
 | `packages/protocol` | Go code generated from `proto/`. Do not edit by hand. |
 | `packages/job-model` | Job and task state machines. No I/O. |
 | `packages/runtime` | The `Workload` interface and built-in workloads. |

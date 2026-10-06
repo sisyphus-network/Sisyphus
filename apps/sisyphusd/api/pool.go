@@ -48,6 +48,7 @@ type accessList interface {
 	Remove(id string) (bool, error)
 	Members() []access.Member
 	Role(id string) (access.Role, bool)
+	Admit(id string, role access.Role, now time.Time) error
 }
 
 var (
@@ -104,24 +105,33 @@ func (s *poolService) ListMembers(context.Context, *pb.ListMembersRequest) (*pb.
 }
 
 func (s *poolService) RemoveMember(ctx context.Context, req *pb.RemoveMemberRequest) (*pb.RemoveMemberResponse, error) {
-	removed, err := s.access.Remove(req.GetNodeId())
+	if err := s.removeMember(ctx, req.GetNodeId()); err != nil {
+		return nil, err
+	}
+	return &pb.RemoveMemberResponse{}, nil
+}
+
+// removeMember takes a node out of the pool in every respect: off the list,
+// disconnected, and without a working key to the pool's private network.
+func (s *poolService) removeMember(ctx context.Context, nodeID string) error {
+	removed, err := s.access.Remove(nodeID)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "remove node: %v", err)
+		return status.Errorf(codes.Internal, "remove node: %v", err)
 	}
 	if !removed {
-		return nil, status.Errorf(codes.NotFound, "node %s is not a member", req.GetNodeId())
+		return status.Errorf(codes.NotFound, "node %s is not a member", nodeID)
 	}
 	// Being off the list stops it connecting again; this ends the
 	// connection it has now.
-	s.coordinator.Remove(req.GetNodeId())
+	s.coordinator.Remove(nodeID)
 	// It still holds the key to the pool's private network, so that changes
 	// too.
 	if s.swarm != nil {
 		if err := s.rekey(ctx); err != nil {
-			return nil, status.Errorf(codes.Internal, "node %s was removed, but it still holds the key to the pool's private IPFS network, which could not be changed: %v", req.GetNodeId(), err)
+			return status.Errorf(codes.Internal, "node %s was removed, but it still holds the key to the pool's private IPFS network, which could not be changed: %v", nodeID, err)
 		}
 	}
-	return &pb.RemoveMemberResponse{}, nil
+	return nil
 }
 
 func (s *poolService) Rekey(ctx context.Context, _ *pb.RekeyRequest) (*pb.RekeyResponse, error) {

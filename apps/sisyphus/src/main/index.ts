@@ -1,4 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as grpc from '@grpc/grpc-js'
@@ -9,6 +11,20 @@ import nodeProtoSource from '../../../../proto/sisyphus/node/v1/node.proto?raw'
 const here = fileURLToPath(new URL('.', import.meta.url))
 const nodeProtoJson = protobuf.parse(nodeProtoSource).root.toJSON()
 const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
+// The daemon lets anything on this machine read from its local API, but only
+// a holder of its token change it. The token is in the daemon's data
+// directory, readable by the user who runs the daemon.
+const tokenFile = process.env.SISYPHUS_API_TOKEN_FILE ?? join(homedir(), '.sisyphus', 'api.token')
+
+function authorization(): grpc.Metadata {
+  const metadata = new grpc.Metadata()
+  try {
+    metadata.set('authorization', `Bearer ${readFileSync(tokenFile, 'utf8').trim()}`)
+  } catch {
+    // No token: the daemon will refuse the call and say why.
+  }
+  return metadata
+}
 
 type Peer = {
   peerId: string
@@ -37,8 +53,8 @@ type NodeSnapshot = {
 type GrpcNodeService = {
   getNodeInfo(request: object, callback: (error: grpc.ServiceError | null, value?: NodeInfo) => void): void
   watchPeers(request: object): grpc.ClientReadableStream<{ peers: Peer[]; revision: string | number | { toString(): string } }>
-  connectPeer(request: { address: string }, callback: (error: grpc.ServiceError | null, value?: { peerId: string }) => void): void
-  setPeerComputeTrust(request: { peerId: string; trusted: boolean }, callback: (error: grpc.ServiceError | null, value?: { trusted: boolean }) => void): void
+  connectPeer(request: { address: string }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { peerId: string }) => void): void
+  setPeerComputeTrust(request: { peerId: string; trusted: boolean }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { trusted: boolean }) => void): void
   close(): void
 }
 
@@ -182,7 +198,7 @@ app.whenReady().then(() => {
   ipcMain.handle('node:connect-peer', (_event, address: unknown) => new Promise<string>((resolve, reject) => {
     if (typeof address !== 'string' || !address.trim()) return reject(new Error('Enter a peer multiaddress.'))
     if (!client) return reject(new Error('The local daemon is not connected.'))
-    client.connectPeer({ address: address.trim() }, (error, response) => {
+    client.connectPeer({ address: address.trim() }, authorization(), (error, response) => {
       if (error) reject(new Error(error.message))
       else resolve(response?.peerId ?? '')
     })
@@ -191,7 +207,7 @@ app.whenReady().then(() => {
     if (!payload || typeof payload !== 'object' || !('peerId' in payload) || !('trusted' in payload)) return reject(new Error('Invalid peer trust request.'))
     const request = payload as { peerId: string; trusted: boolean }
     if (!client) return reject(new Error('The local daemon is not connected.'))
-    client.setPeerComputeTrust(request, (error) => error ? reject(new Error(error.message)) : resolve())
+    client.setPeerComputeTrust(request, authorization(), (error) => error ? reject(new Error(error.message)) : resolve())
   }))
   createWindow()
   connectToNode()
