@@ -1,5 +1,5 @@
 {
-  description = "Sisyphus Rust P2P development environment";
+  description = "Sisyphus development environment";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -18,18 +18,11 @@
         in {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              rustc
-              cargo
-              rustfmt
-              clippy
-              rust-analyzer
+              go
               protobuf
-              pkg-config
-              clang
-              cmake
-              cargo-watch
-              cargo-deny
-              cargo-audit
+              protoc-gen-go
+              protoc-gen-go-grpc
+              kubo
               nodejs_22
               gtk3
               gsettings-desktop-schemas
@@ -37,8 +30,8 @@
 
             shellHook = ''
               export XDG_DATA_DIRS="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS"
-              echo "Sisyphus development shell (Rust + Electron/React)"
-              echo "Rust: $(rustc --version)"
+              echo "Sisyphus development shell (Go + Electron/React)"
+              echo "Go: $(go version)"
               echo "Protobuf: $(protoc --version)"
               echo "Node: $(node --version)"
             '';

@@ -11,17 +11,13 @@ npm install
 npm run dev
 ```
 
-Start a daemon separately from the repository root. Either of the two in this repository serves the API the client uses:
+Start the daemon separately from the repository root, with its local API switched on:
 
 ```sh
-# The Go daemon, which runs pools and jobs. Its local API is off unless asked for.
 go build ./apps/sisyphusd && ./sisyphusd run --api-listen 127.0.0.1:50051
-
-# The Rust daemon, which discovers peers over libp2p.
-cargo run -p sisyphusd
 ```
 
-Against the Go daemon, peers are the nodes of its pool and the nodes it has found, and trusting one for compute admits it to the pool as a worker; [its README](../sisyphusd/README.md#the-desktop-app) has the details. It asks for a token before changing anything, which the client reads from `api.token` in the daemon's default data directory (`sisyphusd data-dir` prints it). If the daemon keeps its data elsewhere, name the file with `SISYPHUS_API_TOKEN_FILE`. The Rust daemon ignores the token.
+Peers are the nodes of the daemon's pool and the nodes it has found, and trusting one for compute admits it to the pool as a worker; [the daemon's README](../sisyphusd/README.md#the-desktop-app) has the details. The daemon asks for a token before changing anything, which the client reads from `api.token` in the daemon's default data directory (`sisyphusd data-dir` prints it). If the daemon keeps its data elsewhere, name the file with `SISYPHUS_API_TOKEN_FILE`.
 
 `node dev/check-daemon.mjs [address] [token-file]` asks a running daemon the same questions the client does and prints the answers, which is a quick way to check one against the other without opening a window.
 

@@ -22,7 +22,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | Path | What it holds |
 | --- | --- |
 | `proto/sisyphus/v1` | Message and service definitions. The source of truth for the protocol. |
-| `proto/sisyphus/node/v1` | The local API between a node and the desktop app on the same machine. Shared by the Go daemon, the Rust daemon and the app. |
+| `proto/sisyphus/node/v1` | The local API between a node and the desktop app on the same machine. Shared by the daemon and the app. |
 | `packages/protocol` | Go generated from `proto/`. Never edited by hand; committed so a fresh clone builds without `protoc`. |
 | `packages/identity` | A node's key pair and the ID derived from it; signing and verifying; the TLS settings nodes connect with. |
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
@@ -36,11 +36,10 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `apps/sisyphusd/api` | The gRPC server and the client-facing services. |
 | `apps/sisyphusd/access` | Which nodes have been admitted and in what role, invitations, and the check made on every call. |
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream, which is how a worker's Kubo reaches its coordinator's without a port being opened for it. |
-| `apps/sisyphusd/p2p` | The node's libp2p host. It shares the node's one port with gRPC, relays between members on a coordinator, and reaches a member by its ID. The Go counterpart of the Rust daemon's `networking` module. |
+| `apps/sisyphusd/p2p` | The node's libp2p host. It shares the node's one port with gRPC, relays between members on a coordinator, and reaches a member by its ID. It began as a Go version of the retired Rust daemon's `networking` module. |
 | `apps/sisyphusd/blobclient` | Uploading and downloading blobs, checked against their CIDs. |
 | `apps/sisyphusd` | The `sisyphusd` command: flags, startup, the command-line client. |
 | `apps/sisyphus` | The desktop app: Electron and React. `npm ci`, then `npm run typecheck` and `npm run build`. |
-| `apps/sisyphusd-rs` | The Rust daemon: libp2p peer discovery, node state in SQLite, the local API. `cargo test -p sisyphusd`. |
 
 ## Tests
 

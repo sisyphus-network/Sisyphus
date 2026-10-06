@@ -203,9 +203,7 @@ sisyphus/
 ├── apps/
 │   ├── sisyphusd/        # the node daemon and command-line client, in Go:
 │   │                     #   coordinator, worker, storage, security, node API
-│   ├── sisyphus/         # Sisyphus Electron + React desktop client
-│   └── sisyphusd-rs/     # an earlier Rust daemon: identity, libp2p discovery
-│                         #   and the node API the desktop client was built on
+│   └── sisyphus/         # Sisyphus Electron + React desktop client
 ├── packages/
 │   ├── protocol/         # Go code generated from proto/
 │   ├── identity/         # node key pairs and IDs
@@ -224,7 +222,7 @@ sisyphus/
 
 This is one product and one repository: **Sisyphus** is the product and desktop app; **`sisyphusd`** is the headless node daemon. Clients use the daemon's protocol to observe and control nodes. Daemon guidance lives in [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md), and desktop development details in [`apps/sisyphus/README.md`](apps/sisyphus/README.md).
 
-**Two daemons, for now.** The work so far was done in two halves that have just met: a Rust daemon with node identity, libp2p peer discovery and a local API, with the desktop client on top; and a Go daemon with the job loop, storage, security and IPFS. `apps/sisyphusd` is the Go one and is what the examples, tests and releases use. It serves the same local API, so the desktop client runs against it. `apps/sisyphusd-rs` is the Rust one, kept as it was written. Which language the daemon ends up in, and what moves where, is being decided in [#1](https://github.com/sisyphus-network/Sisyphus/issues/1).
+**One daemon.** The first version of the node's identity, peer discovery and local API was written in Rust, with the desktop client on top of it. The Go daemon now does all of that along with the job loop, storage and security, and serves the same local API, so the desktop client runs against it unchanged. The Rust daemon was retired once nothing was left in it that the Go one lacked; it is in the repository's history, last at `apps/sisyphusd-rs` before this change.
 
 ## Project status
 
