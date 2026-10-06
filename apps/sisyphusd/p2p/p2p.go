@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"sort"
 	"sync"
@@ -33,6 +34,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/transport"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
@@ -226,7 +228,7 @@ func (f found) HandlePeerFound(info peer.AddrInfo) {
 		defer cancel()
 		// Connecting is what puts the node in the table and in Peers. One
 		// that does not answer is forgotten.
-		h.host.Connect(ctx, info)
+		h.call(ctx, info)
 	}()
 }
 
@@ -403,31 +405,38 @@ func (h *Host) Connect(ctx context.Context, address string) error {
 	if err != nil {
 		return fmt.Errorf("p2p: address %q: %w", address, err)
 	}
-	// Two nodes that have just found each other may each call the other at
-	// the same instant, from and to the same two ports. Such calls collide
-	// and one of them fails, though the nodes end up connected. So a failed
-	// call is given a moment to turn out not to have mattered.
-	if err = h.host.Connect(ctx, *info); err == nil || h.connectedSoon(info.ID) {
-		return nil
-	}
-	return err
+	return h.call(ctx, *info)
 }
 
-// settle is how long a failed call is given, in steps, to be made good by
-// one coming the other way.
+// callAgain is how many more times a call that fails is made, and
+// callPause the longest wait before each.
 const (
-	settleSteps = 10
-	settleStep  = 50 * time.Millisecond
+	callAgain = 3
+	callPause = 300 * time.Millisecond
 )
 
-func (h *Host) connectedSoon(id peer.ID) bool {
-	for range settleSteps {
-		if h.host.Network().Connectedness(id) == network.Connected {
-			return true
+// call connects to a node, trying again if it fails.
+//
+// Two nodes that have just found each other may each call the other at the
+// same instant, from and to the same two ports. The two calls then become
+// one connection on which both sides think they are the caller, and it
+// fails for both. Waiting a different time each and calling again is what
+// lets one of them get there first.
+func (h *Host) call(ctx context.Context, info peer.AddrInfo) error {
+	for attempt := 0; ; attempt++ {
+		err := h.host.Connect(ctx, info)
+		if err == nil || attempt == callAgain {
+			return err
 		}
-		time.Sleep(settleStep)
+		select {
+		case <-time.After(rand.N(callPause)):
+		case <-ctx.Done():
+			return err
+		}
+		// A node that has just failed to answer is otherwise not called
+		// again for some seconds.
+		h.host.Network().(*swarm.Swarm).Backoff().Clear(info.ID)
 	}
-	return false
 }
 
 // TLSListener returns a listener for the connections arriving on the host's

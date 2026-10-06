@@ -528,28 +528,58 @@ func TestANodeThatCannotAnnounceItselfStartsAllTheSame(t *testing.T) {
 	}
 }
 
-func TestACallThatFailsWhileTheOtherNodeCallsBackIsNoFailure(t *testing.T) {
+func TestACallThatFailsIsMadeAgain(t *testing.T) {
 	withoutLAN(t, nil)
 	p := newPool(t)
-	a := p.start(Config{Listen: "127.0.0.1:0", Discover: true})
-	b := p.start(Config{Discover: true})
-	// a calls b where b is not. The call fails at once, and b's own call
-	// to a lands a moment later.
-	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	a := p.start(Config{Discover: true})
+	// A node that is not there yet when first called, at an address that
+	// nothing is listening on.
+	port := freePort(t)
+	identity := newIdentity(t)
+	p.admit(identity.ID())
+	late := make(chan *Host, 1)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		h, err := New(Config{Identity: identity, Listen: "127.0.0.1:" + port, Allow: p.allow, Discover: true, Log: quiet})
+		if err != nil {
+			t.Error(err)
+		}
+		late <- h
+	}()
+	address := "/ip4/127.0.0.1/tcp/" + port + "/p2p/" + identity.ID()
+	err := a.Connect(context.Background(), address)
+	if h := <-late; h != nil {
+		defer h.Close()
+	}
+	if err != nil {
+		t.Errorf("a call to a node that came up a moment later: %v", err)
+	}
+
+	// A node that never comes is given up on, soon.
+	nobody := "/ip4/127.0.0.1/tcp/" + freePort(t) + "/p2p/" + newIdentity(t).ID()
+	started := time.Now()
+	if err := a.Connect(context.Background(), nobody); err == nil {
+		t.Error("a call to nobody succeeded")
+	}
+	if took := time.Since(started); took > 10*time.Second {
+		t.Errorf("gave up on nobody after %v", took)
+	}
+	// And at once if the caller has stopped waiting.
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := a.Connect(stopped, nobody); err == nil {
+		t.Error("a call nobody was waiting for succeeded")
+	}
+}
+
+// freePort returns a port nothing is listening on.
+func freePort(t *testing.T) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed.Close()
-	_, port, _ := net.SplitHostPort(closed.Addr().String())
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		b.Connect(context.Background(), a.Addrs()[0])
-	}()
-	if err := a.Connect(context.Background(), "/ip4/127.0.0.1/tcp/"+port+"/p2p/"+b.ID()); err != nil {
-		t.Errorf("a's failed call, made good by b's: %v", err)
-	}
-	// With nobody calling back, a failure is a failure.
-	if err := a.Connect(context.Background(), "/ip4/127.0.0.1/tcp/"+port+"/p2p/"+newIdentity(t).ID()); err == nil {
-		t.Error("a call to nobody succeeded")
-	}
+	defer lis.Close()
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	return port
 }
