@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/ipfs/boxo/ipld/merkledag"
@@ -82,13 +81,13 @@ func (s *Store) Unpin(owner string, cids ...cid.Cid) error {
 }
 
 // ExpireOpenPins gives an expiry of at to every pin without one whose owner
-// starts with prefix. It is for pins whose owners are gone and can no longer
+// is orphaned. It is for pins whose owners are gone and can no longer
 // release them.
-func (s *Store) ExpireOpenPins(prefix string, at time.Time) error {
+func (s *Store) ExpireOpenPins(orphaned func(owner string) bool, at time.Time) error {
 	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
 	for key, expires := range s.pins {
-		if expires.IsZero() && strings.HasPrefix(key.owner, prefix) {
+		if expires.IsZero() && orphaned(key.owner) {
 			s.pins[key] = at
 		}
 	}

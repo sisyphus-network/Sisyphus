@@ -240,10 +240,12 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Optionally, a Kubo (IPFS) daemon run beside each node, as the same peer as the node. A pool's daemons form a private IPFS network that only its members can join, and workers fetch job data over it from whichever member has it.
 - Private jobs, whose inputs, intermediate data and results are sealed with a key held only by the submitter and the nodes working on the job.
 - Encrypted connections between nodes, each identified by its own key; nodes join a pool by invitation, as a worker or a client, and can be removed.
+- Jobs kept in a SQLite database, so a coordinator that is restarted takes up its unfinished jobs where they were.
+- A desktop client that shows a node and its pool, and admits or removes workers.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.
 
-**Not built yet**: the AI planner and model providers, the desktop client, real workloads in containers, hardware discovery, and persistence of jobs across a coordinator restart. A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
+**Not built yet**: the AI planner and model providers, real workloads in containers, hardware discovery, and finding peers without being told their address. A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
 
 Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/excho0/Sisyphus/issues/23).
 

@@ -259,7 +259,7 @@ func TestExpireOpenPinsOnlyTouchesOpenPinsOfMatchingOwners(t *testing.T) {
 		}
 	}
 
-	if err := s.ExpireOpenPins("job:", deadline); err != nil {
+	if err := s.ExpireOpenPins(func(owner string) bool { return strings.HasPrefix(owner, "job:") }, deadline); err != nil {
 		t.Fatal(err)
 	}
 

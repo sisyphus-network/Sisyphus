@@ -28,6 +28,7 @@ import (
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
 	"github.com/excho0/Sisyphus/packages/identity"
 	"github.com/excho0/Sisyphus/packages/kubo"
+	"github.com/excho0/Sisyphus/packages/nodedb"
 	nodepb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
@@ -198,19 +199,37 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		// Jobs are not remembered across a restart, so nothing is left to
-		// release the pins they held open. Let those lapse instead.
-		if err := store.ExpireOpenPins("job:", time.Now().Add(*retain)); err != nil {
-			lis.Close()
-			return err
-		}
 		admitted, err := access.Open(filepath.Join(*dataDir, "access.json"), ident.ID())
 		if err != nil {
 			lis.Close()
 			return err
 		}
-		coord := coordinator.New(coordinator.Config{ID: ident.ID(), Workloads: workloads, Store: store, Retain: *retain, Log: log})
+		// Jobs are kept in the node's database, so that a restart picks up
+		// the unfinished ones where they were.
+		db, err := nodedb.Open(filepath.Join(*dataDir, "node.db"))
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		defer db.Close()
+		coord := coordinator.New(coordinator.Config{ID: ident.ID(), Workloads: workloads, Store: store, Journal: db, Retain: *retain, Log: log})
 		defer coord.Close()
+		unfinished, err := coord.Recover()
+		if err == nil {
+			// A pin a job held open is released when the job ends. One whose
+			// job is not among the unfinished has nobody left to release it:
+			// let it lapse instead.
+			err = store.ExpireOpenPins(func(owner string) bool {
+				return coordinator.OwnsPin(owner) && !coord.Holds(owner)
+			}, time.Now().Add(*retain))
+		}
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		if unfinished > 0 {
+			log.Info("took up the jobs left unfinished", "jobs", unfinished)
+		}
 		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore}
 		if swarm != nil {
 			config.Swarm = swarm
@@ -221,8 +240,12 @@ func runDaemon(ctx context.Context, args []string) error {
 		local.Listen = func() []string { return multiaddrs(lis.Addr().String()) }
 		local.Peers = func() []*nodepb.Peer { return poolPeers(ident.ID(), coord.Nodes(), admitted.Members()) }
 		// Workers hold streams open indefinitely, so a graceful stop would
-		// never finish.
-		defer srv.Stop()
+		// never finish. The coordinator is closed first, so that it knows
+		// the workers it is about to lose are no fault of their tasks.
+		defer func() {
+			coord.Close()
+			srv.Stop()
+		}()
 		log.Info("coordinator listening", "addr", lis.Addr().String(), "name", *name)
 		go func() { stopped <- srv.Serve(lis) }()
 		// The node's own worker connects to it as any other would, and
