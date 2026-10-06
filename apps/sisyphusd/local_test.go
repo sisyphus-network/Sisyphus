@@ -61,7 +61,7 @@ func TestACoordinatorsLocalAPIShowsItsPoolAndChangesIt(t *testing.T) {
 	self := nodeID(t, coordinatorDir)
 	info, err := client.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
 	host, port, _ := net.SplitHostPort(addr)
-	if err != nil || info.GetPeerId() != self || !slices.Equal(info.GetListenAddresses(), []string{"/ip4/" + host + "/tcp/" + port}) {
+	if err != nil || info.GetPeerId() != self || !slices.Equal(info.GetListenAddresses(), []string{"/ip4/" + host + "/tcp/" + port + "/p2p/" + self}) {
 		t.Errorf("node info %v, %v", info, err)
 	}
 
@@ -148,9 +148,16 @@ func TestAWorkersLocalAPIShowsItsCoordinator(t *testing.T) {
 	if got := coordinator(); got.GetPeerId() != nodeID(t, coordinatorDir) || !slices.Equal(got.GetKnownAddresses(), []string{"/ip4/" + host + "/tcp/" + port}) {
 		t.Errorf("the coordinator as its worker sees it: %v", got)
 	}
-	// A worker that serves nothing to others has no address to give.
-	if info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{}); err != nil || len(info.GetListenAddresses()) != 0 {
-		t.Errorf("node info %v, %v", info, err)
+	// A worker listens on a port of the system's choosing, which nobody had
+	// to open, and says where.
+	info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+	if err != nil || len(info.GetListenAddresses()) == 0 {
+		t.Fatalf("node info %v, %v", info, err)
+	}
+	for _, address := range info.GetListenAddresses() {
+		if !strings.HasPrefix(address, "/ip4/") || !strings.HasSuffix(address, "/p2p/"+nodeID(t, workerDir)) {
+			t.Errorf("the worker gives %q as an address of its own", address)
+		}
 	}
 	// Who is in the pool is not a worker's to decide.
 	token, err := os.ReadFile(filepath.Join(workerDir, "api.token"))
@@ -160,6 +167,18 @@ func TestAWorkersLocalAPIShowsItsCoordinator(t *testing.T) {
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+strings.TrimSpace(string(token)))
 	if _, err := client.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: nodeID(t, coordinatorDir)}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("a worker changing trust: %v, want FailedPrecondition", err)
+	}
+
+	// The desktop's "connect to a peer" works between members: here, the
+	// worker to its coordinator, at the address the coordinator gives.
+	connected, err := client.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: "/ip4/" + host + "/tcp/" + port + "/p2p/" + nodeID(t, coordinatorDir)})
+	if err != nil || connected.GetPeerId() != nodeID(t, coordinatorDir) {
+		t.Errorf("ConnectPeer = %v, %v", connected, err)
+	}
+	// It admits nobody. A node that is no member is not even dialled.
+	outsider := nodeID(t, t.TempDir())
+	if _, err := client.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: "/ip4/" + host + "/tcp/" + port + "/p2p/" + outsider}); status.Code(err) != codes.Unavailable {
+		t.Errorf("connecting to a node that is no member: %v, want Unavailable", err)
 	}
 
 	stopCoordinator()

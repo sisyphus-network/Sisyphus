@@ -83,18 +83,21 @@ sisyphusd job submit --tasks 24 --params '{"from":0,"to":20000000000}'
 
 ✎ Did tasks run on every worker?
 
-### 4. Let workers serve each other
+### 4. Workers fetching from each other
 
-Optional, and needs TCP port 7701 open on each worker to the others. Stop the workers and start each again with two more flags, giving its own address:
+Workers do this with nothing opened and no flags: each can be reached through the coordinator, and two on the same network then connect directly.
 
-```sh
-sisyphusd run --role worker --coordinator COORD:7700 --name <a-name> \
-    --serve 0.0.0.0:7701 --advertise <this-worker's-address>:7701
+Start one worker with `-v`. Run `wordcount` on a new big file with that worker stopped, start it, and run the job again.
+
+✎ The late worker's log should have a line for the file like
+
+```
+msg="fetched a blob from a fellow worker" cid=<the file's CID> node=<another worker's ID> at=p2p
 ```
 
-Run `wordcount` on a new big file with one worker stopped, start that worker, and run it again.
+✎ If the workers are on one network, the second run should be about as fast as step 3's first. If they are on different private networks the data goes by way of the coordinator; note the time, and whether it improves on later runs, which would mean the two managed a direct connection.
 
-✎ The second run makes the late worker fetch the file. With `-v` on the coordinator there is no direct sign of where from, so compare the time with step 3's first run: it should not be slower. A worker that cannot be reached on 7701 is simply skipped and the coordinator supplies the file.
+A worker with a port open to the others can also be given `--serve 0.0.0.0:7701 --advertise <this-worker's-address>:7701`. The others then fetch from it at that address, and the log line ends `at=<that address>`.
 
 ### 5. Break things
 

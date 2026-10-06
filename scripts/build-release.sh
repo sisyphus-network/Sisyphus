@@ -32,11 +32,18 @@ for target in $targets; do
 		name="$name.exe"
 	fi
 	echo "building $name"
+	ldflags="-s -w -X main.version=$version"
+	if [ "$os" = android ]; then
+		# libp2p lists Android's network interfaces through a package that
+		# reaches into the standard library, which the linker refuses unless
+		# told otherwise.
+		ldflags="$ldflags -checklinkname=0"
+	fi
 	# No cgo, so the binaries are static and build without a C toolchain
 	# for the target.
 	# GOARM only affects 32-bit ARM, where 7 covers the Raspberry Pi 2 on.
 	CGO_ENABLED=0 GOOS=$os GOARCH=$arch GOARM=7 go build -trimpath \
-		-ldflags "-s -w -X main.version=$version" \
+		-ldflags "$ldflags" \
 		-o "$out/$name" ./apps/sisyphusd
 done
 

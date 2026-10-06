@@ -2,7 +2,9 @@ package main
 
 import (
 	"net"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -184,5 +186,56 @@ func TestWorkerDaemonsServeEachOther(t *testing.T) {
 	// The second worker has the input in its cache.
 	if blocks, _ := filepath.Glob(filepath.Join(secondDir, "cache", "blocks", "*", "*.data")); len(blocks) < 4 {
 		t.Errorf("the second worker's cache holds %d block files", len(blocks))
+	}
+}
+
+func TestWorkersWithNoPortOpenFetchFromEachOther(t *testing.T) {
+	addr := freeAddr(t)
+	startDaemon(t, "--role", "coordinator", "--listen", addr)
+	firstDir, secondDir := t.TempDir(), t.TempDir()
+	waitForOutput(t, "no workers connected", "nodes", "--addr", addr)
+	text := strings.Repeat("the boulder rolls down, and Sisyphus walks after it.\n", 20_000)
+	input := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, text)))
+
+	// Neither worker is told to serve anything or given an address.
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--data-dir", firstDir, "--name", "first", "--slots", "2")
+	waitForOutput(t, "first", "nodes", "--addr", addr)
+	mustCLI(t, "job", "submit", "--addr", addr, "--workload", "wordcount", "--tasks", "2", "--params", `{"input":"`+input+`"}`)
+
+	logs := captureLogs(t)
+	startDaemon(t, "-v", "--role", "worker", "--coordinator", addr, "--data-dir", secondDir, "--name", "second", "--slots", "2")
+	waitForOutput(t, "second", "nodes", "--addr", addr)
+	out := mustCLI(t, "job", "submit", "--addr", addr, "--workload", "wordcount", "--tasks", "4", "--params", `{"input":"`+input+`"}`)
+	if !strings.Contains(out, "on second") || !strings.Contains(out, `"words":180000`) {
+		t.Fatalf("job output:\n%s", out)
+	}
+	// The second worker got the input from the first, which it knew only
+	// by name, and not from the coordinator.
+	want := `msg="fetched a blob from a fellow worker" cid=` + input + ` node=` + nodeID(t, firstDir) + ` at=p2p`
+	if !strings.Contains(logs.String(), want) {
+		t.Errorf("the second worker did not log %s", want)
+	}
+}
+
+func TestAWorkerWhoseRecordOfItsCoordinatorIsNoNodeIDSaysSo(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "known.json"), []byte(`{"127.0.0.1:1":"not-a-node-id"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cli(t, "run", "--role", "worker", "--coordinator", "127.0.0.1:1", "--data-dir", dataDir)
+	if err == nil || !strings.Contains(err.Error(), "relay address") {
+		t.Errorf("error %v, want the coordinator's ID refused", err)
+	}
+}
+
+func TestACoordinatorsAddressAsARelay(t *testing.T) {
+	for hostport, want := range map[string][]string{
+		"10.0.0.5:7700":        {"/ip4/10.0.0.5/tcp/7700/p2p/12D3KooWx"},
+		"rig.example.net:7700": {"/dns/rig.example.net/tcp/7700/p2p/12D3KooWx"},
+		"no port":              nil,
+	} {
+		if got := relayAddrs(hostport, "12D3KooWx"); !slices.Equal(got, want) {
+			t.Errorf("relayAddrs(%q) = %v, want %v", hostport, got, want)
+		}
 	}
 }

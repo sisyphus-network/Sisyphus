@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -210,15 +211,44 @@ func TestANodeThatCoordinatesNoPoolCannotChangeTrust(t *testing.T) {
 	}
 }
 
-func TestAddressBookCallsExplainThemselves(t *testing.T) {
+func TestTheAddressBookIsNotKept(t *testing.T) {
 	n := startLocal(t, true)
-	ctx := withToken("the-token")
-	_, err := n.client.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: "/ip4/10.0.0.9/tcp/7700/p2p/12D3KooWexample"})
+	_, err := n.client.SetBootstrapPeers(withToken("the-token"), &nodepb.SetBootstrapPeersRequest{})
 	if status.Code(err) != codes.Unimplemented || !strings.Contains(err.Error(), "pool join") {
-		t.Errorf("ConnectPeer: %v, want an explanation of how pools are joined", err)
+		t.Errorf("SetBootstrapPeers: %v, want an explanation of how pools are joined", err)
 	}
-	if _, err := n.client.SetBootstrapPeers(ctx, &nodepb.SetBootstrapPeersRequest{}); status.Code(err) != codes.Unimplemented {
-		t.Errorf("SetBootstrapPeers: %v", err)
+}
+
+func TestConnectPeerConnectsTheNodesHost(t *testing.T) {
+	const address = "/ip4/10.0.0.9/tcp/7700/p2p/12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	var dialled []string
+	var failing error
+	service := &localService{cfg: LocalConfig{Token: "the-token", Connect: func(_ context.Context, address string) error {
+		dialled = append(dialled, address)
+		return failing
+	}}}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+
+	got, err := service.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: address})
+	if err != nil || got.GetPeerId() != "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK" || len(dialled) != 1 || dialled[0] != address {
+		t.Fatalf("ConnectPeer = %v, %v, having dialled %v", got, err, dialled)
+	}
+	failing = errors.New("nobody answers there")
+	if _, err := service.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: address}); status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), "nobody answers") {
+		t.Errorf("a connection that fails: %v", err)
+	}
+	for _, bad := range []string{"", "10.0.0.9:7700", "/ip4/10.0.0.9/tcp/7700"} {
+		if _, err := service.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: bad}); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("connecting to %q: %v, want InvalidArgument", bad, err)
+		}
+	}
+	// It changes what the node is connected to, so it needs the token.
+	if _, err := service.ConnectPeer(context.Background(), &nodepb.ConnectPeerRequest{Address: address}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("without the token: %v", err)
+	}
+	hostless := &localService{cfg: LocalConfig{Token: "the-token"}}
+	if _, err := hostless.ConnectPeer(ctx, &nodepb.ConnectPeerRequest{Address: address}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("a node with no host: %v", err)
 	}
 }
 
