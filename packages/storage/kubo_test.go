@@ -16,8 +16,8 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
 
-	"github.com/excho0/Sisyphus/packages/identity"
-	"github.com/excho0/Sisyphus/packages/kubo"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
+	"github.com/sisyphus-network/Sisyphus/packages/kubo"
 )
 
 // startKubo runs a real Kubo daemon on repo for the length of the test,

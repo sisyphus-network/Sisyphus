@@ -4,7 +4,7 @@ package sisyphus.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
 
 // BlobService moves content-addressed artifacts to and from a node's store.
 // Blobs are named by the CID that `ipfs add --cid-version=1` gives the same

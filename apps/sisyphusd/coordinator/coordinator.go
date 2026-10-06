@@ -23,11 +23,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
-	jobmodel "github.com/excho0/Sisyphus/packages/job-model"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/runtime"
-	"github.com/excho0/Sisyphus/packages/sealed"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
 
 const (

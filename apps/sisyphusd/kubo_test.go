@@ -13,8 +13,8 @@ import (
 
 	"github.com/ipfs/go-cid"
 
-	"github.com/excho0/Sisyphus/packages/identity"
-	"github.com/excho0/Sisyphus/packages/kubo"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
+	"github.com/sisyphus-network/Sisyphus/packages/kubo"
 )
 
 // requireKubo skips a test that needs the real ipfs program when it is not

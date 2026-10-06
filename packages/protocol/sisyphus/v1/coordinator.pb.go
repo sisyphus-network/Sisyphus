@@ -674,7 +674,7 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\apayload\x18\x05 \x01(\fR\apayload\x12\x10\n" +
 	"\x03key\x18\x06 \x01(\fR\x03key2`\n" +
 	"\x12CoordinatorService\x12J\n" +
-	"\aConnect\x12\x1a.sisyphus.v1.WorkerMessage\x1a\x1f.sisyphus.v1.CoordinatorMessage(\x010\x01BEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
+	"\aConnect\x12\x1a.sisyphus.v1.WorkerMessage\x1a\x1f.sisyphus.v1.CoordinatorMessage(\x010\x01BOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
 var (
 	file_sisyphus_v1_coordinator_proto_rawDescOnce sync.Once

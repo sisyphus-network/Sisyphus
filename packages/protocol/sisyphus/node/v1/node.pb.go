@@ -822,7 +822,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x11GetBootstrapPeers\x12*.sisyphus.node.v1.GetBootstrapPeersRequest\x1a+.sisyphus.node.v1.GetBootstrapPeersResponse\x12l\n" +
 	"\x11SetBootstrapPeers\x12*.sisyphus.node.v1.SetBootstrapPeersRequest\x1a+.sisyphus.node.v1.SetBootstrapPeersResponse\x12Z\n" +
 	"\vConnectPeer\x12$.sisyphus.node.v1.ConnectPeerRequest\x1a%.sisyphus.node.v1.ConnectPeerResponse\x12r\n" +
-	"\x13SetPeerComputeTrust\x12,.sisyphus.node.v1.SetPeerComputeTrustRequest\x1a-.sisyphus.node.v1.SetPeerComputeTrustResponseBFZDgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1b\x06proto3"
+	"\x13SetPeerComputeTrust\x12,.sisyphus.node.v1.SetPeerComputeTrustRequest\x1a-.sisyphus.node.v1.SetPeerComputeTrustResponseBPZNgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1b\x06proto3"
 
 var (
 	file_sisyphus_node_v1_node_proto_rawDescOnce sync.Once

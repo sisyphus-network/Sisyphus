@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/excho0/Sisyphus/packages/kubo"
+	"github.com/sisyphus-network/Sisyphus/packages/kubo"
 )
 
 // swarmPortOf returns the port a node's Kubo accepts members on, and the

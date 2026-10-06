@@ -12,8 +12,8 @@ import (
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/storage"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // chunkSize is how much of a blob goes in one upload message, well under

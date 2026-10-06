@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package sisyphus.v1;
 
-option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
 
 // TunnelService carries connections to services that a node keeps to
 // itself, inside the one connection its members already have with it. It is

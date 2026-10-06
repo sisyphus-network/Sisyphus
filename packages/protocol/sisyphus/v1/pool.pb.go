@@ -803,7 +803,7 @@ const file_sisyphus_v1_pool_proto_rawDesc = "" +
 	"\x06Invite\x12\x1a.sisyphus.v1.InviteRequest\x1a\x1b.sisyphus.v1.InviteResponse\x12P\n" +
 	"\vListMembers\x12\x1f.sisyphus.v1.ListMembersRequest\x1a .sisyphus.v1.ListMembersResponse\x12S\n" +
 	"\fRemoveMember\x12 .sisyphus.v1.RemoveMemberRequest\x1a!.sisyphus.v1.RemoveMemberResponse\x12>\n" +
-	"\x05Rekey\x12\x19.sisyphus.v1.RekeyRequest\x1a\x1a.sisyphus.v1.RekeyResponseBEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
+	"\x05Rekey\x12\x19.sisyphus.v1.RekeyRequest\x1a\x1a.sisyphus.v1.RekeyResponseBOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
 var (
 	file_sisyphus_v1_pool_proto_rawDescOnce sync.Once

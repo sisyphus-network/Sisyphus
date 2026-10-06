@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	jobmodel "github.com/excho0/Sisyphus/packages/job-model"
+	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
 )
 
 func open(t *testing.T, file string) *DB {

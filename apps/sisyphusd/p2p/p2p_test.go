@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/excho0/Sisyphus/packages/identity"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
 )
 
 const echoProtocol = "/sisyphus/test-echo/1"

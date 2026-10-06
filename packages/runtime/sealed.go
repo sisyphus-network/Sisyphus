@@ -7,8 +7,8 @@ import (
 
 	"github.com/ipfs/go-cid"
 
-	"github.com/excho0/Sisyphus/packages/sealed"
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // Sealed returns a Blobs that keeps what a job stores from everyone without

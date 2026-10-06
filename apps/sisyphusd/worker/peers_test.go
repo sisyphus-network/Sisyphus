@@ -11,11 +11,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
-	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
-	"github.com/excho0/Sisyphus/packages/identity"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/api"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // directory is a coordinator that says who holds a blob and can supply none

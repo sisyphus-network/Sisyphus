@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	jobmodel "github.com/excho0/Sisyphus/packages/job-model"
+	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
 )
 
 // The roles a blob can have in a job, as job_blobs records them.

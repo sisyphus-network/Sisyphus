@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/excho0/Sisyphus/packages/identity"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
 )
 
 // Config says how to run a Kubo daemon.

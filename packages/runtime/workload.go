@@ -12,7 +12,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // Blobs gives a workload access to content-addressed data: bulk inputs and

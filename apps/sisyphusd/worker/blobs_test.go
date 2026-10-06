@@ -17,14 +17,14 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
-	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
-	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
-	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
-	"github.com/excho0/Sisyphus/packages/identity"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/runtime"
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/api"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 var ctx = context.Background()

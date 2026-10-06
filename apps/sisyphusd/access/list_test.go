@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/excho0/Sisyphus/packages/nodedb"
+	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 )
 
 var now = time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)

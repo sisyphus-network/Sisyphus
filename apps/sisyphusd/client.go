@@ -10,7 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 // stdout is where client commands print; tests replace it.

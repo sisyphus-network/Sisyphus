@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	nodepb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/node/v1"
+	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 )
 
 // desktop connects to a node's local API the way the desktop client does.

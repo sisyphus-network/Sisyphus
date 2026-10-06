@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/excho0/Sisyphus/packages/identity"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 // allowed lists, for each call, the roles that may make it. The owner may

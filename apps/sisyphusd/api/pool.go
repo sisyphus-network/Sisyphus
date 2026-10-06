@@ -9,9 +9,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
-	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 // defaultInviteTTL is how long an invitation lasts if its issuer does not say.

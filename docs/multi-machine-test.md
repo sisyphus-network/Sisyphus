@@ -1,6 +1,6 @@
 # Testing a pool across machines
 
-Everything in the test suite runs on one machine. This is the guide for the test that cannot: a pool spread over two or three real machines, which is the exit test for V0 ([#18](https://github.com/excho0/Sisyphus/issues/18)). It takes about an hour. Work through it in order and write down what happens at each ✎.
+Everything in the test suite runs on one machine. This is the guide for the test that cannot: a pool spread over two or three real machines, which is the exit test for V0 ([#18](https://github.com/sisyphus-network/Sisyphus/issues/18)). It takes about an hour. Work through it in order and write down what happens at each ✎.
 
 ## What you need
 
@@ -210,7 +210,7 @@ The removed worker exits. Within a few seconds each remaining worker logs `moved
 
 ## What to report
 
-Add a comment to [#18](https://github.com/excho0/Sisyphus/issues/18) with:
+Add a comment to [#18](https://github.com/sisyphus-network/Sisyphus/issues/18) with:
 
 - the machines, as recorded at the start;
 - the times from part 1 step 3 and part 2 step 3;

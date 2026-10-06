@@ -10,8 +10,8 @@ import (
 
 	"github.com/ipfs/go-cid"
 
-	"github.com/excho0/Sisyphus/packages/sealed"
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 func TestSealedBlobsKeepPlaintextOutOfTheStore(t *testing.T) {

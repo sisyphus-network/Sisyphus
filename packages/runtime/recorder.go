@@ -8,7 +8,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // Recorder is a Blobs that notes which blobs were opened and which were
