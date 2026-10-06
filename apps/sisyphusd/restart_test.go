@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -284,6 +286,13 @@ func (j *faultyJournal) SaveJob(job *jobmodel.Job) error {
 	return j.Journal.SaveJob(job)
 }
 
+func (j *faultyJournal) DeleteJobs(ids []string) error {
+	if j.failing.Load() {
+		return errJournal
+	}
+	return j.Journal.DeleteJobs(ids)
+}
+
 func (j *faultyJournal) LoadJobs() ([]*jobmodel.Job, error) {
 	if j.failing.Load() {
 		return nil, errJournal
@@ -403,5 +412,142 @@ func TestANodeWillNotStartOnADatabaseItCannotUse(t *testing.T) {
 	raw.Close()
 	if _, err := cli(t, "run", "--data-dir", damaged, "--listen", freeAddr(t)); err == nil || !strings.Contains(err.Error(), "load job blobs") {
 		t.Errorf("error %v, want the jobs not loaded", err)
+	}
+}
+
+func TestFinishedJobsAreForgottenAfterTheKeepingPeriod(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "node.db")
+	g := gated{started: make(chan struct{}, 16), release: make(chan struct{})}
+	journal := &faultyJournal{Journal: journalIn(t, file)}
+	coord := coordinator.New(coordinator.Config{
+		Workloads: runtime.NewRegistry(g, runtime.Primes{}), Store: storage.NewMemory(), Journal: journal, KeepJobs: time.Hour, Log: quiet,
+	})
+	defer coord.Close()
+	// Two jobs with nobody to run them.
+	finished, err := coord.Submit(context.Background(), &pb.JobSpec{Workload: "primes", Params: []byte(`{"from":0,"to":10}`), MaxTasks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := coord.Submit(context.Background(), &pb.JobSpec{Workload: "gated", MaxTasks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Finish the first by hand, through the journal, as a job from long ago.
+	saved, _ := journal.LoadJobs()
+	saved[0].Finish([]byte("done"), nil, time.Now())
+	if err := journal.SaveJob(saved[0]); err != nil {
+		t.Fatal(err)
+	}
+	coord.Close()
+	coord = coordinator.New(coordinator.Config{
+		Workloads: runtime.NewRegistry(g, runtime.Primes{}), Store: storage.NewMemory(), Journal: journal, KeepJobs: time.Hour, Log: quiet,
+	})
+	defer coord.Close()
+	if _, err := coord.Recover(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Within the keeping period nothing goes.
+	if n, err := coord.Prune(time.Now().Add(30 * time.Minute)); n != 0 || err != nil {
+		t.Fatalf("pruned %d jobs half an hour on, %v", n, err)
+	}
+	// A journal that cannot delete leaves the job where it was.
+	journal.failing.Store(true)
+	if _, err := coord.Prune(time.Now().Add(2 * time.Hour)); !errors.Is(err, errJournal) {
+		t.Fatalf("Prune with a failing journal: %v", err)
+	}
+	journal.failing.Store(false)
+	if _, err := coord.Get(finished.GetJobId()); err != nil {
+		t.Fatalf("a job that could not be deleted was forgotten anyway: %v", err)
+	}
+
+	// Past it, the finished job goes and the unfinished one never does.
+	if n, err := coord.Prune(time.Now().Add(2 * time.Hour)); n != 1 || err != nil {
+		t.Fatalf("pruned %d jobs two hours on, %v; want the one finished job", n, err)
+	}
+	if _, err := coord.Get(finished.GetJobId()); status.Code(err) != codes.NotFound {
+		t.Errorf("the pruned job: %v, want NotFound", err)
+	}
+	if _, err := coord.Get(waiting.GetJobId()); err != nil {
+		t.Errorf("the unfinished job: %v", err)
+	}
+	if left, _ := journal.LoadJobs(); len(left) != 1 || left[0].ID != waiting.GetJobId() {
+		t.Errorf("jobs left on record: %+v", left)
+	}
+}
+
+func TestKeepingJobsForGood(t *testing.T) {
+	journal := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
+	old := jobmodel.New("ancient", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, time.Now().Add(-10000*time.Hour))
+	old.Finish([]byte("done"), nil, time.Now().Add(-9999*time.Hour))
+	if err := journal.SaveJob(old); err != nil {
+		t.Fatal(err)
+	}
+	coord := coordinator.New(coordinator.Config{Workloads: runtime.Builtin(), Store: storage.NewMemory(), Journal: journal, Log: quiet})
+	defer coord.Close()
+	if _, err := coord.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := coord.Prune(time.Now()); n != 0 || err != nil {
+		t.Errorf("with no keeping period, pruned %d jobs, %v", n, err)
+	}
+	// A coordinator that keeps its jobs in memory has nothing to clear out
+	// of anywhere else.
+	unrecorded := coordinator.New(coordinator.Config{Workloads: runtime.Builtin(), Store: storage.NewMemory(), KeepJobs: time.Hour, Log: quiet})
+	defer unrecorded.Close()
+	if n, err := unrecorded.Prune(time.Now()); n != 0 || err != nil {
+		t.Errorf("a coordinator with no journal pruned %d jobs, %v", n, err)
+	}
+}
+
+func TestANodeForgetsOldJobsAndKeepsItsMembersAndInvitations(t *testing.T) {
+	dataDir := t.TempDir()
+	// A job finished long ago, and a member list from an earlier version.
+	db := journalIn(t, filepath.Join(dataDir, "node.db"))
+	old := jobmodel.New("ancient", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, time.Now().Add(-100*time.Hour))
+	old.Finish([]byte("done"), nil, time.Now().Add(-99*time.Hour))
+	recent := jobmodel.New("recent", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, time.Now().Add(-2*time.Hour))
+	recent.Finish([]byte("done"), nil, time.Now().Add(-time.Hour))
+	for _, job := range []*jobmodel.Job{old, recent} {
+		if err := db.SaveJob(job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	const veteran = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	legacy := `[{"id":"` + veteran + `","role":"client","joined":"2026-10-05T12:00:00Z"}]`
+	if err := os.WriteFile(filepath.Join(dataDir, "access.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	addr := freeAddr(t)
+	stop := startDaemon(t, "--data-dir", dataDir, "--role", "coordinator", "--listen", addr, "--keep-jobs", "48h")
+	waitForOutput(t, "no workers", "nodes", "--addr", addr)
+	if _, err := cli(t, "job", "get", "--addr", addr, "ancient"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("a job finished 99 hours ago, kept 48: %v", err)
+	}
+	if out := mustCLI(t, "job", "get", "--addr", addr, "recent"); !strings.Contains(out, "succeeded") {
+		t.Errorf("a job finished an hour ago:\n%s", out)
+	}
+	if members := mustCLI(t, "pool", "members", "--addr", addr); !strings.Contains(members, veteran) {
+		t.Errorf("the member from the old list is missing:\n%s", members)
+	}
+	invitation := invite(t, addr, "worker")
+	stop()
+
+	// After a restart the invitation still admits a worker, and the member
+	// list is as it was, the old file no longer consulted.
+	addr = freeAddr(t)
+	startDaemon(t, "--data-dir", dataDir, "--role", "coordinator", "--listen", addr)
+	waitForOutput(t, "no workers", "nodes", "--addr", addr)
+	workerDir := t.TempDir()
+	startDaemon(t, "--data-dir", workerDir, "--role", "worker", "--coordinator", addr, "--join", invitation, "--name", "late", "--slots", "1")
+	waitForOutput(t, "late", "nodes", "--addr", addr)
+	members := mustCLI(t, "pool", "members", "--addr", addr)
+	if !strings.Contains(members, veteran) || !strings.Contains(members, nodeID(t, workerDir)) {
+		t.Errorf("members after the restart:\n%s", members)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "access.json")); !os.IsNotExist(err) {
+		t.Errorf("the old member list is still in place: %v", err)
 	}
 }

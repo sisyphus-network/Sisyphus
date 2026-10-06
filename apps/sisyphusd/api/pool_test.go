@@ -36,7 +36,7 @@ func (stuckList) Remove(string) (bool, error) { return false, errList }
 
 func newList(t *testing.T) *access.List {
 	t.Helper()
-	l, err := access.Open("", "owner-id")
+	l, err := access.Open(access.InMemory(), "owner-id")
 	if err != nil {
 		t.Fatal(err)
 	}

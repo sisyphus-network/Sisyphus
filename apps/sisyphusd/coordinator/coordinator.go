@@ -54,6 +54,8 @@ type Journal interface {
 	SaveJob(job *jobmodel.Job) error
 	// LoadJobs returns every saved job, oldest first.
 	LoadJobs() ([]*jobmodel.Job, error)
+	// DeleteJobs forgets the jobs with the given IDs.
+	DeleteJobs(ids []string) error
 }
 
 // noJournal is the journal of a coordinator that keeps its jobs in memory
@@ -62,6 +64,7 @@ type noJournal struct{}
 
 func (noJournal) SaveJob(*jobmodel.Job) error        { return nil }
 func (noJournal) LoadJobs() ([]*jobmodel.Job, error) { return nil, nil }
+func (noJournal) DeleteJobs([]string) error          { return nil }
 
 type Config struct {
 	// ID names this coordinator to its workers.
@@ -73,7 +76,10 @@ type Config struct {
 	// Retain is how long a job's inputs and results stay pinned after it
 	// finishes.
 	Retain time.Duration
-	Log    *slog.Logger
+	// KeepJobs is how long a finished job stays on record; see Prune. Zero
+	// keeps them for good.
+	KeepJobs time.Duration
+	Log      *slog.Logger
 }
 
 type Coordinator struct {
@@ -84,6 +90,7 @@ type Coordinator struct {
 	store     Store
 	journal   Journal
 	retain    time.Duration
+	keepJobs  time.Duration
 	log       *slog.Logger
 
 	// ctx bounds the aggregations still running when the coordinator closes.
@@ -186,6 +193,7 @@ func New(cfg Config) *Coordinator {
 		store:     cfg.Store,
 		journal:   cfg.Journal,
 		retain:    cfg.Retain,
+		keepJobs:  cfg.KeepJobs,
 		log:       cfg.Log,
 		ctx:       ctx,
 		cancel:    cancel,
@@ -239,6 +247,28 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 		}
 	}
 	return unfinished, nil
+}
+
+// Prune forgets the jobs that finished more than the keeping period before
+// now, and returns how many that was. Their stored data is not touched: how
+// long that is kept is the retention period's business.
+func (c *Coordinator) Prune(now time.Time) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var old []string
+	for id, job := range c.jobs {
+		if c.keepJobs > 0 && job.Terminal() && now.Sub(job.FinishedAt) > c.keepJobs {
+			old = append(old, id)
+		}
+	}
+	if err := c.journal.DeleteJobs(old); err != nil {
+		return 0, err
+	}
+	for _, id := range old {
+		delete(c.jobs, id)
+		delete(c.changed, id)
+	}
+	return len(old), nil
 }
 
 // Holds reports whether owner is the name an unfinished job holds its pins

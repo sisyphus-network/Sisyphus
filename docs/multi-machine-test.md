@@ -222,8 +222,8 @@ Logs go to each node's standard error. Start a node with `-v` to log each task. 
 | --- | --- |
 | `connection refused`, or a command hangs and then fails | The coordinator is not listening on an address the other machine can reach (`--listen 0.0.0.0:7700`), or a firewall is blocking port 7700. |
 | `authentication handshake failed: connected to node X, expected Y` | The machine running the command does not know the node at that address. On a worker, it needs `--join` with an invitation. For a command, it has not joined (`pool join`), or `--data-dir` points somewhere other than where it joined from. It also appears if the coordinator's data directory was replaced, giving it a new identity. |
-| `has not been admitted to this node` | This machine knows the node but is not on its list: it was removed, or the coordinator's `access.json` was lost. Invite it again. |
-| `invitation is unknown, already used or expired` | Invitations work once, last an hour, and do not survive a coordinator restart. Issue another. |
+| `has not been admitted to this node` | This machine knows the node but is not on its list: it was removed, or the coordinator's `node.db` was lost. Invite it again. |
+| `invitation is unknown, already used or expired` | Invitations work once and last an hour. Issue another. |
 | `this node has not joined a coordinator at ...` | A worker started without `--join` in a data directory that never joined that address. The address must match the one it joined with exactly. |
 | `is admitted as a worker, which may not call ...` | A command is being run with a worker's key. Commands that manage the pool run on the coordinator's machine; to submit jobs from elsewhere, join as a client. |
 | `in use by another process (nodes sharing a machine each need their own --data-dir)` | Two nodes on one machine are using the same data directory. |

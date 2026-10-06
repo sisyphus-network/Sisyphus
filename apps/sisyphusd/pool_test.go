@@ -154,7 +154,7 @@ func startPoolWith(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 	logs := new(syncBuffer)
 	ident := newIdentity(t)
 	// Kept in memory: an access list with no file saves nothing.
-	admitted, err := access.Open("", ident.ID())
+	admitted, err := access.Open(access.InMemory(), ident.ID())
 	if err != nil {
 		t.Fatal(err)
 	}

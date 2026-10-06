@@ -54,7 +54,7 @@ type guarded struct {
 func startGuarded(t *testing.T) *guarded {
 	t.Helper()
 	server := newIdentity(t)
-	list, err := Open("", server.ID())
+	list, err := Open(InMemory(), server.ID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestRefusalsSayWhoWasRefusedAndWhy(t *testing.T) {
 }
 
 func TestACallerWhoCannotBeIdentifiedIsRefused(t *testing.T) {
-	l, err := Open("", "owner-id")
+	l, err := Open(InMemory(), "owner-id")
 	if err != nil {
 		t.Fatal(err)
 	}

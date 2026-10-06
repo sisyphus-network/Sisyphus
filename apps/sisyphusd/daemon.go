@@ -48,6 +48,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
+	keepJobs := fs.Duration("keep-jobs", 30*24*time.Hour, "coordinator role: how long a finished job can still be asked after; 0 keeps them for good")
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
@@ -217,22 +218,32 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		admitted, err := access.Open(filepath.Join(*dataDir, "access.json"), ident.ID())
-		if err != nil {
-			lis.Close()
-			return err
-		}
-		// Jobs are kept in the node's database, so that a restart picks up
-		// the unfinished ones where they were.
+		// What a coordinator must not forget is kept in the node's database:
+		// who has been admitted, the invitations still out, and its jobs, so
+		// that a restart picks up the unfinished ones where they were.
 		db, err := nodedb.Open(filepath.Join(*dataDir, "node.db"))
 		if err != nil {
 			lis.Close()
 			return err
 		}
 		defer db.Close()
-		coord := coordinator.New(coordinator.Config{ID: ident.ID(), Workloads: workloads, Store: store, Journal: db, Retain: *retain, Log: log})
+		admitted, err := access.Open(db, ident.ID())
+		if err == nil {
+			// Earlier versions kept the list in a file of its own.
+			err = admitted.Import(filepath.Join(*dataDir, "access.json"))
+		}
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		coord := coordinator.New(coordinator.Config{
+			ID: ident.ID(), Workloads: workloads, Store: store, Journal: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+		})
 		defer coord.Close()
 		unfinished, err := coord.Recover()
+		if err == nil {
+			_, err = coord.Prune(time.Now())
+		}
 		if err == nil {
 			// A pin a job held open is released when the job ends. One whose
 			// job is not among the unfinished has nobody left to release it:
@@ -279,7 +290,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			}()
 			go func() {
 				defer close(collected)
-				collectPeriodically(ctx, store, *gcInterval, log)
+				collectPeriodically(ctx, store, coord.Prune, *gcInterval, log)
 			}()
 		}
 	} else {
@@ -717,8 +728,10 @@ func showIdentity(args []string) error {
 	return nil
 }
 
-// collectPeriodically garbage-collects store every interval until ctx ends.
-func collectPeriodically(ctx context.Context, store *storage.Store, interval time.Duration, log *slog.Logger) {
+// collectPeriodically clears out, every interval until ctx ends, what has
+// outlived its keeping: stored data nothing pins any longer, and the record
+// of jobs that finished long ago.
+func collectPeriodically(ctx context.Context, store *storage.Store, prune func(time.Time) (int, error), interval time.Duration, log *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -727,10 +740,14 @@ func collectPeriodically(ctx context.Context, store *storage.Store, interval tim
 			done, err := store.GC(ctx, time.Now())
 			if err != nil {
 				log.Warn("garbage collection failed", "error", err)
-				continue
-			}
-			if done != (storage.Collected{}) {
+			} else if done != (storage.Collected{}) {
 				log.Info("collected garbage", "expired_pins", done.ExpiredPins, "blocks", done.Blocks, "bytes", done.Bytes)
+			}
+			forgotten, err := prune(time.Now())
+			if err != nil {
+				log.Warn("could not clear out old jobs", "error", err)
+			} else if forgotten > 0 {
+				log.Info("forgot jobs that finished long ago", "jobs", forgotten)
 			}
 		case <-ctx.Done():
 			return
