@@ -158,21 +158,34 @@ IPFS_PATH=~/.sisyphus/ipfs ipfs cat <cid>                  # anything stored is 
 
 ### One port
 
-To take part in a pool a node needs to make one outgoing connection, to its coordinator. It opens no port, so it works from behind a home router or a firewall as it is. The coordinator is the one node that has to be reachable, on `--listen`.
+To take part in a pool a node needs to make outgoing connections to its coordinator and nothing else. It opens no port, so it works from behind a home router or a firewall as it is. The coordinator is the one node that has to be reachable, on `--listen`.
+
+That one port carries everything:
+
+- **The node's own protocol**: jobs, tasks, uploads and downloads, over TLS.
+- **A tunnel to the coordinator's Kubo**, for pools that use `--kubo`, inside that same TLS connection.
+- **libp2p**, by which the pool's nodes reach each other. The coordinator tells the two kinds of caller apart by how they begin.
+
+**Workers reach each other through the coordinator.** Every node runs a libp2p host under its own ID. A worker keeps a place on the coordinator, which relays: when one worker wants a blob another has cached, it asks for that worker by ID, and the coordinator joins the two. Having met, the two try each other's own addresses, and if either can reach the other, on the same network for instance, they connect directly and the coordinator carries nothing more. Only the pool's members are let in or relayed for.
 
 Opening more is optional, and buys speed:
 
 | What a node opens | What it gets |
 | --- | --- |
-| Nothing (any worker) | Takes tasks. Fetches data from the coordinator, and with `--kubo` from the coordinator's Kubo through a tunnel inside its connection. |
-| `--serve <addr>` on a worker | Other workers fetch what this one has cached from it, instead of all from the coordinator. |
+| Nothing (any worker) | Takes tasks. Fetches from the coordinator, and from other workers through it or directly where the network allows. With `--kubo`, reaches the coordinator's Kubo through the tunnel. |
+| `--serve <addr>` on a worker | Other workers fetch from it at that address without the coordinator's help. |
 | `--swarm-port <port>` on a coordinator with `--kubo` | Workers' Kubo daemons connect to the coordinator's directly rather than through the tunnel. |
 
 A worker's Kubo tries the coordinator's open port first, if it has one, and settles for the tunnel if nothing answers within two seconds, so opening the port and then forgetting the firewall rule costs speed, not the pool. The worker logs which it chose.
 
 What the tunnel costs: every byte between a worker's Kubo and the coordinator's passes through both `sisyphusd` processes and is encrypted a second time. On one machine it moves about 300 MB/s against 2 GB/s for a direct connection, so it matters on a fast network with fast disks and not otherwise. Run `go test -run xxx -bench . ./apps/sisyphusd/tunnel` to measure it on yours.
 
-Two workers that have opened nothing cannot reach each other, in Kubo or outside it. Each gets what it needs from the coordinator, which holds every job's data anyway.
+What is not there yet:
+
+- **Two workers on different private networks stay on the relay.** libp2p can sometimes connect such a pair directly ("hole punching"), and it is switched on, but it has not been tried across real home routers, so do not count on it.
+- **Only the coordinator relays.** A worker with a port open is connected to directly, but does not yet carry traffic for others.
+- **Kubo daemons do not use the relay.** Two workers' Kubo daemons with no route between them exchange blocks through the coordinator's.
+- **IPv6**: a coordinator started with `--listen :7700` listens on IPv4 only. Give it an IPv6 address to listen on one.
 
 ### Private jobs
 
@@ -254,7 +267,8 @@ What it shows, in this daemon's terms:
 | peer | On a coordinator, a node admitted to its pool. On a worker-only node, its coordinator. |
 | connected | The node has a live connection to this one right now. |
 | trusted for compute | The node is a worker in the pool. Trusting a peer admits it as a worker; ending trust is `pool remove`, re-keying included. |
-| bootstrap peers, connect to an address | Not offered. A pool is joined by invitation (`pool invite`, `pool join`), and those calls say so. |
+| connect to an address | Connects this node's libp2p host to another member's, at an address ending in `/p2p/<node ID>`, which is the form a node lists its own in. It admits nobody: a node that is not a member is not dialled. |
+| bootstrap peers | Not offered. A pool is joined by invitation (`pool invite`, `pool join`), and a node finds the other members through its coordinator. |
 
 Anything on the machine can read from the local API. Changing something needs the token in `api.token` in the data directory, which the daemon makes on first use and only its own user can read. The desktop app reads it from `~/.sisyphus/api.token`, or the file named by `SISYPHUS_API_TOKEN_FILE`.
 
@@ -286,6 +300,7 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 | `apps/sisyphusd/api` | gRPC server wiring and the client-facing services. |
 | `apps/sisyphusd/access` | Who has been admitted and in what role; invitations; checking every call. |
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream. |
+| `apps/sisyphusd/p2p` | The node's libp2p host: one port shared with gRPC, the relay, reaching a node by its ID. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
 | `packages/nodedb` | The node's SQLite database: jobs, tasks, attempts, members and invitations. |
 | `packages/storage` | Content-addressed blob store, pins, garbage collection. |
@@ -307,5 +322,5 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - Whatever is on the pool's private network can be fetched by every member of it. The network keeps outsiders out; it is private jobs, which seal their data, that keep members from reading each other's.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - A worker downloads a whole input even when its tasks need only part of it.
-- Workers exchange data directly only if at least one of the two has a port open to the other. Nothing relays between two workers that have opened none; both fetch from the coordinator.
+- Two workers that cannot reach each other exchange data through the coordinator, which is no faster than fetching from it.
 - Without `--max-cache-bytes` a worker's cache grows until the disk is full. The limit is not strict: blobs that tasks have open are kept even if they alone exceed it.

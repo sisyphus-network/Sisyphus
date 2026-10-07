@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 	"time"
 
@@ -45,6 +46,12 @@ type RemoteBlobs struct {
 	// PeerCredentials, if set, lets blobs be fetched from other workers of
 	// the pool before the coordinator is asked for them.
 	PeerCredentials PeerCredentialsFunc
+	// OnPeerFetch, if set, is told of each blob fetched from another worker
+	// and which one it came from.
+	OnPeerFetch func(c cid.Cid, holder *pb.BlobHolder)
+	// PeerDialer connects to a worker that gave no address of its own, by
+	// its node ID. It must be set if any worker of the pool does that.
+	PeerDialer func(ctx context.Context, nodeID string) (net.Conn, error)
 
 	mu sync.Mutex
 	// ready holds the blobs known to be sound in the local store: checked,

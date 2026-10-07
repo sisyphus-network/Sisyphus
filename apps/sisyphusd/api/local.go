@@ -40,6 +40,9 @@ type LocalConfig struct {
 	// Pool, if set, lets peers be admitted to and removed from the pool. A
 	// node that does not coordinate a pool has none.
 	Pool *PoolAdmin
+	// Connect, if set, connects this node's libp2p host to the node at a
+	// multiaddress ending in /p2p/ and its ID.
+	Connect func(ctx context.Context, address string) error
 	// Token is what a caller must present to change anything.
 	Token string
 	// Poll is how often a peer watcher is checked for news. Zero means once
@@ -113,8 +116,8 @@ func (s *localService) WatchPeers(_ *nodepb.WatchPeersRequest, stream grpc.Serve
 }
 
 // A pool is joined by invitation, not by dialling an address, and a node
-// finds its pool's members through its coordinator, so the address-book
-// calls have nothing to act on here.
+// finds its pool's members through its coordinator, so there is no address
+// book to keep.
 const noAddressBook = "this node joins a pool by invitation and has no address book: use `sisyphusd pool invite` and `sisyphusd pool join`"
 
 func (s *localService) GetBootstrapPeers(context.Context, *nodepb.GetBootstrapPeersRequest) (*nodepb.GetBootstrapPeersResponse, error) {
@@ -125,8 +128,24 @@ func (s *localService) SetBootstrapPeers(context.Context, *nodepb.SetBootstrapPe
 	return nil, status.Error(codes.Unimplemented, noAddressBook)
 }
 
-func (s *localService) ConnectPeer(context.Context, *nodepb.ConnectPeerRequest) (*nodepb.ConnectPeerResponse, error) {
-	return nil, status.Error(codes.Unimplemented, noAddressBook)
+// ConnectPeer connects this node directly to another member of its pool at
+// an address. It admits nobody: a node that is not a member is turned away
+// as it would be had it called by itself.
+func (s *localService) ConnectPeer(ctx context.Context, req *nodepb.ConnectPeerRequest) (*nodepb.ConnectPeerResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	info, err := peer.AddrInfoFromString(req.GetAddress())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%q is not an address ending in /p2p/ and a node ID", req.GetAddress())
+	}
+	if s.cfg.Connect == nil {
+		return nil, status.Error(codes.FailedPrecondition, "this node runs no libp2p host to connect with")
+	}
+	if err := s.cfg.Connect(ctx, req.GetAddress()); err != nil {
+		return nil, status.Errorf(codes.Unavailable, "connect: %v", err)
+	}
+	return &nodepb.ConnectPeerResponse{PeerId: info.ID.String()}, nil
 }
 
 // SetPeerComputeTrust admits a node to the pool as a worker, or removes it.

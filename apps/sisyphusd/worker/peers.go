@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"net"
 	"sync"
 	"time"
 
@@ -76,14 +77,31 @@ func (b *RemoteBlobs) fetchFromPeers(ctx context.Context, c cid.Cid) bool {
 	}
 	for _, holder := range located.GetHolders() {
 		if b.fetchFrom(ctx, holder, c) == nil {
+			if b.OnPeerFetch != nil {
+				b.OnPeerFetch(c, holder)
+			}
 			return true
 		}
 	}
 	return false
 }
 
+// ViaP2P is what a worker gives as its address when it has none of its own
+// to give and is to be reached by its node ID, through PeerDialer.
+const ViaP2P = "p2p"
+
 func (b *RemoteBlobs) fetchFrom(ctx context.Context, holder *pb.BlobHolder, c cid.Cid) error {
-	conn, err := grpc.NewClient(holder.GetAddress(), grpc.WithTransportCredentials(b.PeerCredentials(holder.GetNodeId())))
+	target := holder.GetAddress()
+	options := []grpc.DialOption{grpc.WithTransportCredentials(b.PeerCredentials(holder.GetNodeId()))}
+	if target == ViaP2P {
+		// The connection is made by name rather than to an address. The
+		// node at the far end is checked as on any other.
+		target = "passthrough:///" + holder.GetNodeId()
+		options = append(options, grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return b.PeerDialer(ctx, holder.GetNodeId())
+		}))
+	}
+	conn, err := grpc.NewClient(target, options...)
 	if err != nil {
 		return err
 	}

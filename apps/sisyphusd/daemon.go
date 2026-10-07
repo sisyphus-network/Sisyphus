@@ -25,6 +25,7 @@ import (
 	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
+	"github.com/excho0/Sisyphus/apps/sisyphusd/p2p"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/tunnel"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
 	"github.com/excho0/Sisyphus/packages/identity"
@@ -214,16 +215,11 @@ func runDaemon(ctx context.Context, args []string) error {
 	var blobs runtime.Blobs = store
 
 	if isCoordinator {
-		lis, err := net.Listen("tcp", *listen)
-		if err != nil {
-			return err
-		}
 		// What a coordinator must not forget is kept in the node's database:
 		// who has been admitted, the invitations still out, and its jobs, so
 		// that a restart picks up the unfinished ones where they were.
 		db, err := nodedb.Open(filepath.Join(*dataDir, "node.db"))
 		if err != nil {
-			lis.Close()
 			return err
 		}
 		defer db.Close()
@@ -233,7 +229,6 @@ func runDaemon(ctx context.Context, args []string) error {
 			err = admitted.Import(filepath.Join(*dataDir, "access.json"))
 		}
 		if err != nil {
-			lis.Close()
 			return err
 		}
 		coord := coordinator.New(coordinator.Config{
@@ -253,12 +248,25 @@ func runDaemon(ctx context.Context, args []string) error {
 			}, time.Now().Add(*retain))
 		}
 		if err != nil {
-			lis.Close()
 			return err
 		}
 		if unfinished > 0 {
 			log.Info("took up the jobs left unfinished", "jobs", unfinished)
 		}
+		// The node listens on one port for two kinds of caller: its gRPC
+		// clients and workers, and the libp2p hosts of its pool's members,
+		// for which it relays so that two of them with no port open can
+		// still reach each other.
+		host, err := p2p.New(p2p.Config{Identity: ident, Listen: *listen, Relay: true, Allow: func(id string) bool {
+			_, admitted := admitted.Role(id)
+			return admitted
+		}})
+		if err != nil {
+			return err
+		}
+		defer host.Close()
+		lis, _ := host.TLSListener() // fails only if asked for twice
+		local.Connect = host.Connect
 		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore}
 		if swarm != nil {
 			config.Swarm = swarm
@@ -266,7 +274,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		srv := api.NewServer(config)
 		local.Pool = api.NewPoolAdmin(config)
-		local.Listen = func() []string { return multiaddrs(lis.Addr().String()) }
+		local.Listen = host.Addrs
 		local.Peers = func() []*nodepb.Peer { return poolPeers(ident.ID(), coord.Nodes(), admitted.Members()) }
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish. The coordinator is closed first, so that it knows
@@ -308,15 +316,47 @@ func runDaemon(ctx context.Context, args []string) error {
 			return credentials.NewTLS(ident.ClientTLS(nodeID))
 		}
 		blobs = remote
+		members := worker.NewMembers(remote.Conn())
+		peers := api.NewPeerServer(ident, store, members.IsMember)
+		defer peers.Stop()
 		if *serve != "" {
 			lis, err := net.Listen("tcp", *serve)
 			if err != nil {
 				return err
 			}
-			peers := api.NewPeerServer(ident, store, worker.NewMembers(remote.Conn()).IsMember)
-			defer peers.Stop()
 			log.Info("serving cached data to fellow workers", "addr", lis.Addr().String(), "advertised", *advertise)
 			go peers.Serve(lis)
+		}
+		// Whether or not it has a port open, the node can be reached by its
+		// fellow workers through the coordinator, which relays for the pool,
+		// and reaches them the same way. Two that can connect directly then
+		// do. Only the coordinator and the pool's members are let in.
+		host, err := p2p.New(p2p.Config{Identity: ident, Via: relayAddrs(*join, coordinatorID), Allow: func(id string) bool {
+			if id == coordinatorID {
+				return true
+			}
+			asking, cancel := context.WithTimeout(ctx, memberCheck)
+			defer cancel()
+			member, _ := members.IsMember(asking, id)
+			return member
+		}})
+		if err != nil {
+			return err
+		}
+		defer host.Close()
+		go peers.Serve(host.Listen(blobProtocol))
+		remote.PeerDialer = func(ctx context.Context, nodeID string) (net.Conn, error) {
+			return host.Dial(ctx, nodeID, blobProtocol)
+		}
+		remote.OnPeerFetch = func(c cid.Cid, holder *pb.BlobHolder) {
+			log.Debug("fetched a blob from a fellow worker", "cid", c.String(), "node", holder.GetNodeId(), "at", holder.GetAddress())
+		}
+		local.Connect = host.Connect
+		local.Listen = host.Addrs
+		if *advertise == "" {
+			// With no address of its own to give, the node is asked for by
+			// name.
+			*advertise = worker.ViaP2P
 		}
 	}
 
@@ -343,7 +383,6 @@ func runDaemon(ctx context.Context, args []string) error {
 		if !isCoordinator {
 			// A worker's pool, as far as it knows, is its coordinator.
 			coordinatorAddr := *join
-			local.Listen = func() []string { return multiaddrs(*advertise) }
 			local.Peers = func() []*nodepb.Peer {
 				state := nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED
 				if w.Connected() {
@@ -386,6 +425,24 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("shutting down")
 		return nil
 	}
+}
+
+// blobProtocol names the streams on which one worker's libp2p host asks
+// another's for blobs. What runs over them is the same gRPC, with the same
+// TLS, that a worker with a port open serves there.
+const blobProtocol = "/sisyphus/blob/1"
+
+// memberCheck is how long a worker waits for its coordinator to say whether
+// a node that is connecting is a member of the pool.
+const memberCheck = 5 * time.Second
+
+// relayAddrs gives a coordinator's address as that of a libp2p relay.
+func relayAddrs(hostport, id string) []string {
+	var addrs []string
+	for _, addr := range multiaddrs(hostport) {
+		addrs = append(addrs, addr+"/p2p/"+id)
+	}
+	return addrs
 }
 
 // poolPeers describes the nodes admitted to a coordinator's pool, in order
