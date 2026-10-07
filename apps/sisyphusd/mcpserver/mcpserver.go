@@ -1,0 +1,474 @@
+// Package mcpserver lets an AI agent use a Sisyphus node. It speaks the
+// Model Context Protocol, which agents such as Claude Code, Claude Desktop
+// and many others speak, and offers the node's pool as a handful of tools:
+// see what the pool is, run a job on it, follow the job, move files in and
+// out.
+//
+// It is a client of the node's local API and nothing more. Whatever an
+// agent does through it, the node's owner could do from the command line
+// with the same token, and it can do nothing else.
+package mcpserver
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"slices"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+
+	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+)
+
+// Config is what a server is made from.
+type Config struct {
+	// Node is the node's local API, and Token what it wants shown.
+	Node  nodepb.NodeServiceClient
+	Token string
+	// Workloads is where the description of each workload is looked up.
+	Workloads *runtime.Registry
+	// Version is the daemon's, which the server gives as its own.
+	Version string
+}
+
+type server struct{ Config }
+
+const instructions = `Sisyphus is a pool of computers that run jobs. A job is one workload run over an input, split into tasks that the pool's machines run at once.
+
+Start with pool_status to see which machines there are, and list_workloads to see what they can run and what parameters each workload takes. Run something with run_job, which waits for the result. Inputs and outputs that are files are named by content ID: store_file puts a local file in the pool and returns its ID, and fetch_file brings one back.`
+
+// New returns a server offering cfg's node to an agent.
+func New(cfg Config) *mcp.Server {
+	s := &server{cfg}
+	out := mcp.NewServer(&mcp.Implementation{Name: "sisyphus", Title: "Sisyphus", Version: cfg.Version}, &mcp.ServerOptions{Instructions: instructions})
+	reads := &mcp.ToolAnnotations{ReadOnlyHint: true}
+	mcp.AddTool(out, &mcp.Tool{Name: "pool_status", Annotations: reads,
+		Description: "Says what the pool is now: this node, and each worker with its cores, memory, graphics cards, how many tasks it can run at once and how many it is running."}, s.poolStatus)
+	mcp.AddTool(out, &mcp.Tool{Name: "list_workloads", Annotations: reads,
+		Description: "Lists the workloads the pool can run, each with what it does and the parameters it takes. Read this before run_job."}, s.listWorkloads)
+	mcp.AddTool(out, &mcp.Tool{Name: "run_job",
+		Description: "Runs a job on the pool and waits for it to finish, returning its result. A job still running when the wait is over is returned as it stands, to be followed with get_job."}, s.runJob)
+	mcp.AddTool(out, &mcp.Tool{Name: "get_job", Annotations: reads,
+		Description: "Returns the state of a job and, if it has finished, its result."}, s.getJob)
+	mcp.AddTool(out, &mcp.Tool{Name: "list_jobs", Annotations: reads,
+		Description: "Lists the pool's jobs, newest first, without their results."}, s.listJobs)
+	mcp.AddTool(out, &mcp.Tool{Name: "cancel_job",
+		Description: "Stops a job that has not finished."}, s.cancelJob)
+	mcp.AddTool(out, &mcp.Tool{Name: "job_logs", Annotations: reads,
+		Description: "Returns what has happened to a job: the steps of its life and the lines its tasks have logged."}, s.jobLogs)
+	mcp.AddTool(out, &mcp.Tool{Name: "store_file",
+		Description: "Puts a file from this machine in the pool's store and returns its content ID, which is what a job takes as input."}, s.storeFile)
+	mcp.AddTool(out, &mcp.Tool{Name: "fetch_file",
+		Description: "Fetches a stored file by content ID, such as one of a job's stored outputs. It is written to the path given, or returned as text if it is short text and no path is given."}, s.fetchFile)
+	mcp.AddTool(out, &mcp.Tool{Name: "list_files", Annotations: reads,
+		Description: "Lists the files kept in the pool's store, with their content IDs."}, s.listFiles)
+	return out
+}
+
+// shown is how every tool answers: as JSON, in text.
+func shown(v any, err error) (*mcp.CallToolResult, any, error) {
+	if err != nil {
+		// What the node said, without the wrapping of how it was said.
+		return nil, nil, errors.New(status.Convert(err).Message())
+	}
+	// Written as it is to be read: a description's <angle brackets> are
+	// not escaped as they would be for a web page.
+	var encoded strings.Builder
+	writer := json.NewEncoder(&encoded)
+	writer.SetEscapeHTML(false)
+	writer.Encode(v) // maps of strings and numbers always encode
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.TrimSpace(encoded.String())}}}, nil, nil
+}
+
+// as returns ctx carrying the node's token.
+func (s *server) as(ctx context.Context) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+s.Token)
+}
+
+type none struct{}
+
+func (s *server) poolStatus(ctx context.Context, _ *mcp.CallToolRequest, _ none) (*mcp.CallToolResult, any, error) {
+	return shown(s.status(s.as(ctx)))
+}
+
+func (s *server) status(ctx context.Context) (any, error) {
+	node, err := s.Node.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil {
+		return nil, err
+	}
+	listed, err := s.Node.ListWorkers(ctx, &nodepb.ListWorkersRequest{})
+	if err != nil {
+		return nil, err
+	}
+	workers := []map[string]any{}
+	slots, running := 0, 0
+	for _, w := range listed.GetWorkers() {
+		worker := map[string]any{
+			"name": w.GetName(), "peer_id": w.GetPeerId(), "os": w.GetOs(), "arch": w.GetArch(),
+			"cpu_cores": w.GetCpuCores(), "memory_bytes": w.GetMemoryBytes(),
+			"task_slots": w.GetTaskSlots(), "running_tasks": w.GetRunningTasks(), "workloads": w.GetWorkloads(),
+		}
+		var cards []string
+		for _, g := range w.GetGpus() {
+			cards = append(cards, g.GetName())
+		}
+		if cards != nil {
+			worker["gpus"] = cards
+		}
+		workers = append(workers, worker)
+		slots += int(w.GetTaskSlots())
+		running += int(w.GetRunningTasks())
+	}
+	return map[string]any{
+		"node":    map[string]any{"peer_id": node.GetPeerId(), "version": node.GetDaemonVersion()},
+		"workers": workers, "task_slots": slots, "running_tasks": running,
+	}, nil
+}
+
+func (s *server) listWorkloads(ctx context.Context, _ *mcp.CallToolRequest, _ none) (*mcp.CallToolResult, any, error) {
+	return shown(s.workloads(s.as(ctx)))
+}
+
+// workloads lists what the node can coordinate, and for each which of the
+// workers now connected run it: a workload none runs would wait for one.
+func (s *server) workloads(ctx context.Context) (any, error) {
+	node, err := s.Node.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil {
+		return nil, err
+	}
+	listed, err := s.Node.ListWorkers(ctx, &nodepb.ListWorkersRequest{})
+	if err != nil {
+		return nil, err
+	}
+	out := []map[string]any{}
+	for _, name := range node.GetWorkloads() {
+		runBy := 0
+		for _, w := range listed.GetWorkers() {
+			for _, runs := range w.GetWorkloads() {
+				if runs == name {
+					runBy++
+				}
+			}
+		}
+		out = append(out, map[string]any{"name": name, "description": s.Workloads.Describe(name), "workers_running_it": runBy})
+	}
+	return out, nil
+}
+
+type runJobArgs struct {
+	Workload    string         `json:"workload" jsonschema:"the name of the workload to run, from list_workloads"`
+	Params      map[string]any `json:"params,omitempty" jsonschema:"the workload's parameters, as its description gives them"`
+	Tasks       uint32         `json:"tasks,omitempty" jsonschema:"how many tasks to split the job into; leave out for one per free worker slot"`
+	Private     bool           `json:"private,omitempty" jsonschema:"seal everything the job stores with this node's key, so that only it and the workers running the job can read it"`
+	MinGPUs     uint32         `json:"min_gpus,omitempty" jsonschema:"give its tasks only to workers with at least this many graphics cards"`
+	TaskTimeout uint32         `json:"task_timeout_seconds,omitempty" jsonschema:"stop and retry any attempt at a task that runs longer than this"`
+	WaitSeconds uint32         `json:"wait_seconds,omitempty" jsonschema:"how long to wait for the job to finish before returning it as it stands; 300 if left out, 0 with detach"`
+	Detach      bool           `json:"detach,omitempty" jsonschema:"return at once with the job's ID instead of waiting"`
+}
+
+// usualWait is how long run_job waits if not told.
+const usualWait = 300 * time.Second
+
+func (s *server) runJob(ctx context.Context, _ *mcp.CallToolRequest, args runJobArgs) (*mcp.CallToolResult, any, error) {
+	return shown(s.run(s.as(ctx), args))
+}
+
+func (s *server) run(ctx context.Context, args runJobArgs) (any, error) {
+	params, _ := json.Marshal(args.Params) // decoded from JSON a moment ago
+	if args.Params == nil {
+		params = nil
+	}
+	submitted, err := s.Node.SubmitJob(ctx, &nodepb.SubmitJobRequest{
+		Workload: args.Workload, Params: params, MaxTasks: args.Tasks, Private: args.Private,
+		MinGpus: args.MinGPUs, TaskTimeoutSeconds: args.TaskTimeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	id := submitted.GetJob().GetJobId()
+	if args.Detach {
+		return jobView(submitted.GetJob(), true), nil
+	}
+	wait := usualWait
+	if args.WaitSeconds > 0 {
+		wait = time.Duration(args.WaitSeconds) * time.Second
+	}
+	// The job's events end when the job does, so reading them to their end
+	// is waiting for it. If the wait runs out first the job runs on.
+	waiting, done := context.WithTimeout(ctx, wait)
+	defer done()
+	if events, err := s.Node.WatchJobEvents(waiting, &nodepb.WatchJobEventsRequest{JobId: id}); err == nil {
+		for {
+			if _, err := events.Recv(); err != nil {
+				break
+			}
+		}
+	}
+	got, err := s.Node.GetJob(ctx, &nodepb.GetJobRequest{JobId: id})
+	if err != nil {
+		return nil, fmt.Errorf("job %s was started and could not be followed to its end: %s", id, status.Convert(err).Message())
+	}
+	return jobView(got.GetJob(), true), nil
+}
+
+// maxResult is how much of a job's result an agent is shown.
+const maxResult = 32 << 10
+
+// jobView is a job as an agent is told of it, with or without its result.
+func jobView(job *nodepb.Job, result bool) map[string]any {
+	state := strings.ToLower(strings.TrimPrefix(job.GetState().String(), "JOB_STATE_"))
+	out := map[string]any{"job_id": job.GetJobId(), "workload": job.GetWorkload(), "state": state, "tasks": len(job.GetTasks())}
+	if job.GetFinishedAtMs() > 0 {
+		out["seconds"] = float64(job.GetFinishedAtMs()-job.GetCreatedAtMs()) / 1000
+	} else {
+		out["progress"] = job.GetProgress()
+		if result {
+			out["note"] = "the job has not finished: follow it with get_job or job_logs"
+		}
+	}
+	if job.GetError() != "" {
+		out["error"] = job.GetError()
+	}
+	if !result {
+		return out
+	}
+	// A result that is JSON is passed on as JSON, and anything else as text.
+	switch r := job.GetResult(); {
+	case len(r) > maxResult:
+		out["result"] = string(r[:maxResult]) + " [cut short]"
+	case json.Valid(r):
+		out["result"] = json.RawMessage(r)
+	case len(r) > 0:
+		out["result"] = string(r)
+	}
+	if len(job.GetOutputBlobs()) > 0 {
+		out["stored_outputs"] = job.GetOutputBlobs()
+	}
+	return out
+}
+
+type jobArgs struct {
+	JobID string `json:"job_id" jsonschema:"the job's ID, as run_job or list_jobs gave it"`
+}
+
+func (s *server) getJob(ctx context.Context, _ *mcp.CallToolRequest, args jobArgs) (*mcp.CallToolResult, any, error) {
+	got, err := s.Node.GetJob(s.as(ctx), &nodepb.GetJobRequest{JobId: args.JobID})
+	if err != nil {
+		return shown(nil, err)
+	}
+	return shown(jobView(got.GetJob(), true), nil)
+}
+
+func (s *server) cancelJob(ctx context.Context, _ *mcp.CallToolRequest, args jobArgs) (*mcp.CallToolResult, any, error) {
+	stopped, err := s.Node.CancelJob(s.as(ctx), &nodepb.CancelJobRequest{JobId: args.JobID})
+	if err != nil {
+		return shown(nil, err)
+	}
+	return shown(jobView(stopped.GetJob(), false), nil)
+}
+
+// mostJobs is how many jobs list_jobs lists.
+const mostJobs = 50
+
+func (s *server) listJobs(ctx context.Context, _ *mcp.CallToolRequest, _ none) (*mcp.CallToolResult, any, error) {
+	listed, err := s.Node.ListJobs(s.as(ctx), &nodepb.ListJobsRequest{})
+	if err != nil {
+		return shown(nil, err)
+	}
+	// Newest first, whichever way the node gave them.
+	newest := slices.SortedStableFunc(slices.Values(listed.GetJobs()), func(a, b *nodepb.Job) int {
+		return cmp.Compare(b.GetCreatedAtMs(), a.GetCreatedAtMs())
+	})
+	out := []map[string]any{}
+	for _, job := range newest[:min(len(newest), mostJobs)] {
+		out = append(out, jobView(job, false))
+	}
+	return shown(out, nil)
+}
+
+type logArgs struct {
+	JobID    string `json:"job_id" jsonschema:"the job's ID"`
+	AfterSeq uint64 `json:"after_seq,omitempty" jsonschema:"return only events numbered after this, to carry on from an earlier call"`
+}
+
+// How long job_logs listens to a job still running, and how many events it
+// returns at most: the last of them.
+const (
+	listenFor  = 2 * time.Second
+	mostEvents = 200
+)
+
+func (s *server) jobLogs(ctx context.Context, _ *mcp.CallToolRequest, args logArgs) (*mcp.CallToolResult, any, error) {
+	return shown(s.logs(s.as(ctx), args))
+}
+
+func (s *server) logs(ctx context.Context, args logArgs) (any, error) {
+	// A finished job's events end by themselves; a running job's go on, so
+	// they are listened to for a moment and what came is returned.
+	listening, done := context.WithTimeout(ctx, listenFor)
+	defer done()
+	events, err := s.Node.WatchJobEvents(listening, &nodepb.WatchJobEventsRequest{JobId: args.JobID, AfterSeq: args.AfterSeq})
+	if err != nil {
+		return nil, err
+	}
+	lines := []map[string]any{}
+	last, ended := args.AfterSeq, false
+	for {
+		e, err := events.Recv()
+		if errors.Is(err, io.EOF) {
+			ended = true
+			break
+		}
+		if err != nil {
+			if listening.Err() != nil && ctx.Err() == nil {
+				break
+			}
+			return nil, err
+		}
+		line := map[string]any{"seq": e.GetSeq(), "kind": e.GetKind()}
+		if e.GetTaskIndex() >= 0 {
+			line["task"] = e.GetTaskIndex()
+		}
+		if e.GetWorkerName() != "" {
+			line["worker"] = e.GetWorkerName()
+		}
+		if e.GetText() != "" {
+			line["text"] = e.GetText()
+		}
+		lines = append(lines, line)
+		last = e.GetSeq()
+	}
+	if len(lines) > mostEvents {
+		lines = lines[len(lines)-mostEvents:]
+	}
+	return map[string]any{"events": lines, "last_seq": last, "job_finished": ended}, nil
+}
+
+type storeArgs struct {
+	Path    string `json:"path" jsonschema:"the file on this machine to store"`
+	Name    string `json:"name,omitempty" jsonschema:"what to call it in the pool; the file's own name if left out"`
+	Private bool   `json:"private,omitempty" jsonschema:"seal it with this node's key before it leaves the machine; a job must then be private to read it"`
+}
+
+// piece is how much of a file goes in one message, as the daemon does it.
+const piece = 256 << 10
+
+func (s *server) storeFile(ctx context.Context, _ *mcp.CallToolRequest, args storeArgs) (*mcp.CallToolResult, any, error) {
+	return shown(s.store(s.as(ctx), args))
+}
+
+func (s *server) store(ctx context.Context, args storeArgs) (any, error) {
+	file, err := os.Open(args.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	name := args.Name
+	if name == "" {
+		name = file.Name()[strings.LastIndexAny(file.Name(), `/\`)+1:]
+	}
+	stream, err := s.Node.StoreFile(ctx)
+	if err != nil {
+		return nil, err
+	}
+	next := &nodepb.StoreFileRequest{Name: name, Private: args.Private}
+	buf := make([]byte, piece)
+	for {
+		n, readErr := file.Read(buf)
+		next.Data = buf[:n]
+		// A send that fails is explained by what closing the stream returns.
+		if stream.Send(next) != nil || readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, fmt.Errorf("read %s: %w", args.Path, readErr)
+		}
+		next = &nodepb.StoreFileRequest{}
+	}
+	stored, err := stream.CloseAndRecv()
+	if err != nil {
+		return nil, err
+	}
+	return fileView(stored), nil
+}
+
+func fileView(f *nodepb.File) map[string]any {
+	return map[string]any{"cid": f.GetCid(), "name": f.GetName(), "size_bytes": f.GetSizeBytes(), "private": f.GetPrivate()}
+}
+
+type fetchArgs struct {
+	CID  string `json:"cid" jsonschema:"the content ID of the file"`
+	Path string `json:"path,omitempty" jsonschema:"where on this machine to write it, replacing what is there; leave out to have a short text file returned instead"`
+}
+
+// maxInline is the longest file fetch_file returns as text.
+const maxInline = 64 << 10
+
+func (s *server) fetchFile(ctx context.Context, _ *mcp.CallToolRequest, args fetchArgs) (*mcp.CallToolResult, any, error) {
+	return shown(s.fetch(s.as(ctx), args))
+}
+
+func (s *server) fetch(ctx context.Context, args fetchArgs) (any, error) {
+	stream, err := s.Node.FetchFile(ctx, &nodepb.FetchFileRequest{Cid: args.CID})
+	if err != nil {
+		return nil, err
+	}
+	var into io.Writer
+	var text strings.Builder
+	if args.Path == "" {
+		into = &text
+	} else {
+		file, err := os.Create(args.Path)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		into = file
+	}
+	size := 0
+	for {
+		part, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		size += len(part.GetData())
+		if args.Path == "" && size > maxInline {
+			return nil, fmt.Errorf("the file is longer than %d bytes: give a path to write it to", maxInline)
+		}
+		if _, err := into.Write(part.GetData()); err != nil {
+			return nil, fmt.Errorf("write %s: %w", args.Path, err)
+		}
+	}
+	if args.Path != "" {
+		return map[string]any{"cid": args.CID, "path": args.Path, "size_bytes": size}, nil
+	}
+	if !utf8.ValidString(text.String()) {
+		return nil, errors.New("the file is not text: give a path to write it to")
+	}
+	return map[string]any{"cid": args.CID, "size_bytes": size, "text": text.String()}, nil
+}
+
+func (s *server) listFiles(ctx context.Context, _ *mcp.CallToolRequest, _ none) (*mcp.CallToolResult, any, error) {
+	listed, err := s.Node.ListFiles(s.as(ctx), &nodepb.ListFilesRequest{})
+	if err != nil {
+		return shown(nil, err)
+	}
+	out := []map[string]any{}
+	for _, f := range listed.GetFiles() {
+		out = append(out, fileView(f))
+	}
+	return shown(out, nil)
+}

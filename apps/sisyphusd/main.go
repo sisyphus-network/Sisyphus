@@ -38,7 +38,9 @@ const usage = `Usage:
   sisyphusd pool work-for <node-id>  take tasks from a node whenever it will have this one (--stop to stop)
   sisyphusd pool rekey             change the key of the pool's private IPFS network
   sisyphusd model set|show|list    which language model this node plans with (set --provider --model [--url] [--api-key-file])
+  sisyphusd model providers|pull|remove  the kinds of model service, and fetching a model into Ollama or deleting one
   sisyphusd ask <question>         put a question to a running node's planner (--chat <id> to carry on a conversation)
+  sisyphusd mcp                    offer a running node to an AI agent, as a Model Context Protocol server on standard input and output
   sisyphusd id                     print this node's ID, creating its key if it has none
   sisyphusd data-dir               print where this node keeps its data unless told otherwise
   sisyphusd version                print the version
@@ -101,6 +103,8 @@ func run(ctx context.Context, args []string) error {
 		return modelCommand(ctx, args[1:])
 	case "ask":
 		return ask(ctx, args[1:])
+	case "mcp":
+		return serveAgent(ctx, args[1:])
 	case "id":
 		return showIdentity(args[1:])
 	case "data-dir":

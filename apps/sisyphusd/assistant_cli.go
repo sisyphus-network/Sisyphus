@@ -155,16 +155,12 @@ func ask(ctx context.Context, args []string) error {
 	if fs.NArg() == 0 {
 		return errors.New("expected a question")
 	}
-	token, err := os.ReadFile(filepath.Join(*dataDir, "api.token"))
-	if err != nil {
-		return fmt.Errorf("read the node's API token (is it running with --api-listen?): %w", err)
-	}
-	conn, err := grpc.NewClient(*apiAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, token, err := localAPI(*dataDir, *apiAddr)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+strings.TrimSpace(string(token)))
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
 	stream, err := nodepb.NewNodeServiceClient(conn).Ask(ctx, &nodepb.AskRequest{ChatId: *chat, Text: strings.Join(fs.Args(), " ")})
 	if err != nil {
 		return err
@@ -179,6 +175,20 @@ func ask(ctx context.Context, args []string) error {
 		}
 		fmt.Fprint(stdout, describeAsk(event))
 	}
+}
+
+// localAPI reaches a running node's local API, and returns with it the
+// token the node wants shown.
+func localAPI(dataDir, addr string) (*grpc.ClientConn, string, error) {
+	token, err := os.ReadFile(filepath.Join(dataDir, "api.token"))
+	if err != nil {
+		return nil, "", fmt.Errorf("read the node's API token (is it running with --api-listen?): %w", err)
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, "", err
+	}
+	return conn, strings.TrimSpace(string(token)), nil
 }
 
 // maxShown is how much of what a tool returned is printed.
