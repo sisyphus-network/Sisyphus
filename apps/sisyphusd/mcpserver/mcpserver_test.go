@@ -288,7 +288,7 @@ func TestFetchingWhatCannotBeReturnedOrWritten(t *testing.T) {
 		"nowhere to write it":  {&node{content: []string{"some"}}, filepath.Join(t.TempDir(), "no", "such", "dir"), "no such file"},
 		"a full disk":          {&node{content: []string{"some"}}, "/dev/full", "write /dev/full"},
 	} {
-		if _, err := serving(tt.node).fetch(ctx, fetchArgs{CID: "cid-1", Path: tt.path}); err == nil || !strings.Contains(err.Error(), tt.want) {
+		if _, err := serving(tt.node).fetch(ctx, fetchArgs{CID: "cid-1", Path: tt.path, Overwrite: true}); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: %v, want %q", name, err, tt.want)
 		}
 	}
