@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -35,18 +36,24 @@ func freeAddr(t *testing.T) string {
 	return lis.Addr().String()
 }
 
-// startDaemon runs "sisyphusd run" with the given flags until the test ends.
-func startDaemon(t *testing.T, args ...string) {
+// startDaemon runs "sisyphusd run" with the given flags until the test ends
+// or the returned stop function is called, whichever comes first.
+func startDaemon(t *testing.T, args ...string) (stop func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- run(ctx, append([]string{"run"}, args...)) }()
-	t.Cleanup(func() {
+	// Keep each test daemon's data out of the real ~/.sisyphus. A --data-dir
+	// among args comes later and so takes precedence.
+	args = append([]string{"run", "--data-dir", t.TempDir()}, args...)
+	go func() { done <- run(ctx, args) }()
+	stop = sync.OnceFunc(func() {
 		cancel()
 		if err := <-done; err != nil {
 			t.Errorf("daemon %v exited with: %v", args, err)
 		}
 	})
+	t.Cleanup(stop)
+	return stop
 }
 
 // waitForOutput reruns a command until its output contains want.
@@ -129,6 +136,22 @@ func TestCLIWorkerOnlyNodeJoinsACoordinatorOnlyNode(t *testing.T) {
 	nodes := waitForOutput(t, "hand", "nodes", "--addr", addr)
 	if strings.Contains(nodes, "boss") {
 		t.Errorf("coordinator-only node appears as a worker:\n%s", nodes)
+	}
+}
+
+func TestCLIWorkerRejoinsARestartedCoordinator(t *testing.T) {
+	addr := freeAddr(t)
+	stopCoordinator := startDaemon(t, "--role", "coordinator", "--listen", addr)
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--node-id", "loyal", "--slots", "1")
+	waitForOutput(t, "loyal", "nodes", "--addr", addr)
+
+	stopCoordinator()
+	startDaemon(t, "--role", "coordinator", "--listen", addr)
+
+	waitForOutput(t, "loyal", "nodes", "--addr", addr)
+	out, err := cli(t, "job", "submit", "--addr", addr, "--params", `{"from":0,"to":100}`)
+	if err != nil || !strings.Contains(out, `{"count":25}`) {
+		t.Errorf("job after the worker rejoined: error %v, output:\n%s", err, out)
 	}
 }
 

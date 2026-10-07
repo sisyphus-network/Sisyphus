@@ -18,6 +18,9 @@ const usage = `Usage:
   sisyphusd job submit [flags]     submit a job and follow it to completion
   sisyphusd job get <job-id>       show a job
   sisyphusd nodes                  list the workers connected to a coordinator
+  sisyphusd blob put <file>        store a file on a node and print its CID
+  sisyphusd blob get <cid>         fetch a blob, checking it against its CID
+  sisyphusd blob stat <cid>        show a blob's size
 
 Run "sisyphusd <command> -h" for a command's flags.
 `
@@ -53,6 +56,8 @@ func run(ctx context.Context, args []string) error {
 		return errors.New(`expected "job submit" or "job get"`)
 	case "nodes":
 		return listNodes(ctx, args[1:])
+	case "blob":
+		return blobCommand(ctx, args[1:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	goruntime "runtime"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
 	"github.com/excho0/Sisyphus/packages/runtime"
+	"github.com/excho0/Sisyphus/packages/storage"
 )
 
 func runDaemon(ctx context.Context, args []string) error {
@@ -27,6 +29,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	join := fs.String("coordinator", "", "worker-only node: host:port of the coordinator to join")
 	nodeID := fs.String("node-id", "", "name of this node in the pool (default: hostname plus a random suffix)")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
+	dataDir := fs.String("data-dir", defaultDataDir(), "coordinator role: directory for this node's stored data")
 	verbose := fs.Bool("v", false, "log per-task detail")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -76,7 +79,13 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		srv := api.NewServer(coordinator.New(*nodeID, workloads, log))
+		store, err := storage.OpenLocal(filepath.Join(*dataDir, "blobs"))
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		defer store.Close()
+		srv := api.NewServer(coordinator.New(*nodeID, workloads, log), store)
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish.
 		defer srv.Stop()
@@ -119,4 +128,14 @@ func defaultNodeID() string {
 		panic(err)
 	}
 	return hostname + "-" + hex.EncodeToString(suffix[:])
+}
+
+// defaultDataDir is ~/.sisyphus, falling back to the working directory when
+// the home directory is unknown.
+func defaultDataDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".sisyphus"
+	}
+	return filepath.Join(home, ".sisyphus")
 }

@@ -19,8 +19,15 @@ import (
 // stdout is where client commands print; tests replace it.
 var stdout io.Writer = os.Stdout
 
+// stdin is what "blob put -" reads; tests replace it.
+var stdin io.Reader = os.Stdin
+
+func connect(addr string) (*grpc.ClientConn, error) {
+	return grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+}
+
 func dial(addr string) (pb.NodeServiceClient, func(), error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := connect(addr)
 	if err != nil {
 		return nil, nil, err
 	}
