@@ -215,8 +215,8 @@ func TestAJobIsShownAsItIs(t *testing.T) {
 		t.Errorf("a failed job: %v", failed)
 	}
 	long := jobView(&nodepb.Job{Result: []byte(strings.Repeat("9", maxResult+1))}, true)
-	if got := long["result"].(string); len(got) != maxResult+len(" [cut short]") || !strings.HasSuffix(got, " [cut short]") {
-		t.Errorf("a long result is shown as %d bytes", len(got))
+	if got := long["result_begins"].(string); len(got) != resultBegins || long["result"] != nil || long["result_bytes"] != maxResult+1 {
+		t.Errorf("a long result is shown as %v", long)
 	}
 }
 

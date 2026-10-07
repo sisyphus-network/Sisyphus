@@ -52,6 +52,7 @@ func Handler(pool Pool, token string) http.Handler {
 		answer(w, http.StatusOK, map[string]any{"object": "list", "data": listed})
 	})
 	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) { chat(pool, w, r) })
+	mux.HandleFunc("POST /v1/embeddings", func(w http.ResponseWriter, r *http.Request) { embeddings(pool, w, r) })
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		shown := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if subtle.ConstantTimeCompare([]byte(shown), []byte(token)) != 1 {
@@ -75,50 +76,48 @@ func served(pool Pool, worker string) []string {
 	return slices.Compact(names)
 }
 
-func chat(pool Pool, w http.ResponseWriter, r *http.Request) {
+// asked reads a request that names a model, and has it name the model as
+// the pool does. It returns false, having answered, if the request cannot
+// be read or the pool serves nothing it can mean.
+func asked(pool Pool, w http.ResponseWriter, r *http.Request) (body []byte, model string, stream, ok bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequest))
 	if err != nil {
 		refuse(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "the request could not be read, or is longer than this service takes")
-		return
+		return nil, "", false, false
 	}
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
 		refuse(w, http.StatusBadRequest, "invalid_request_error", "the request is not JSON")
-		return
+		return nil, "", false, false
 	}
-	var asked string
-	var stream bool
-	json.Unmarshal(request["model"], &asked)   // one that is no string names no model
+	var named string
+	json.Unmarshal(request["model"], &named)   // one that is no string names no model
 	json.Unmarshal(request["stream"], &stream) // and one that is no yes or no is a no
 	// Asked of a pool with no worker serving the model, the job would wait
 	// for one to come. Whoever is asking is told now instead. A model named
 	// loosely is taken to be the one the pool serves that it can only mean.
-	_, worker, _ := strings.Cut(asked, "@")
+	_, worker, _ := strings.Cut(named, "@")
 	models := served(pool, worker)
-	model, found := runtime.ResolveModel(asked, models)
+	model, found := runtime.ResolveModel(named, models)
 	if !found {
 		where := "no worker connected to the pool serves a model"
 		if worker != "" {
 			where = fmt.Sprintf("the worker %q is not connected to the pool, or serves no model", worker)
 		}
-		refuse(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("%s that %q can only mean; those served are: %s", where, strings.TrimSuffix(asked, "@"+worker), strings.Join(models, ", ")))
-		return
+		refuse(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("%s that %q can only mean; those served are: %s", where, strings.TrimSuffix(named, "@"+worker), strings.Join(models, ", ")))
+		return nil, "", false, false
 	}
 	request["model"], _ = json.Marshal(model) // a string always encodes
 	body, _ = json.Marshal(request)           // decoded from JSON a moment ago
-	job, err := pool.Submit(r.Context(), &pb.JobSpec{Workload: "chat", Params: body, Mode: pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER})
-	if err != nil {
-		refuse(w, http.StatusBadRequest, "invalid_request_error", err.Error())
-		return
-	}
-	w.Header().Set("X-Sisyphus-Job", job.GetJobId())
-	if stream {
-		streamed(pool, w, r, job.GetJobId(), model)
-		return
-	}
+	return body, model, stream, true
+}
+
+// finish runs a job to its end and answers with its result, or with why
+// there is none.
+func finish(pool Pool, w http.ResponseWriter, r *http.Request, job *pb.Job) {
 	if err := pool.Watch(r.Context(), job.GetJobId(), func(finished *pb.Job) error { job = finished; return nil }); err != nil {
 		// Whoever asked has gone, or the node is stopping: nobody is
-		// waiting for the reply, so the worker need not make it.
+		// waiting for the reply, so the workers need not make it.
 		pool.Cancel(job.GetJobId())
 		refuse(w, http.StatusServiceUnavailable, "server_error", "the reply was not waited for: "+err.Error())
 		return
@@ -129,6 +128,40 @@ func chat(pool Pool, w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(job.GetResult())
+}
+
+// embeddings turns texts into vectors, as a job shared out among the
+// workers that serve the model.
+func embeddings(pool Pool, w http.ResponseWriter, r *http.Request) {
+	body, _, _, ok := asked(pool, w, r)
+	if !ok {
+		return
+	}
+	job, err := pool.Submit(r.Context(), &pb.JobSpec{Workload: "embed", Params: body})
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	w.Header().Set("X-Sisyphus-Job", job.GetJobId())
+	finish(pool, w, r, job)
+}
+
+func chat(pool Pool, w http.ResponseWriter, r *http.Request) {
+	body, model, stream, ok := asked(pool, w, r)
+	if !ok {
+		return
+	}
+	job, err := pool.Submit(r.Context(), &pb.JobSpec{Workload: "chat", Params: body, Mode: pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER})
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	w.Header().Set("X-Sisyphus-Job", job.GetJobId())
+	if stream {
+		streamed(pool, w, r, job.GetJobId(), model)
+		return
+	}
+	finish(pool, w, r, job)
 }
 
 // streamed sends a reply as it is written. The worker logs what the model

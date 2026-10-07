@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -225,8 +224,12 @@ func (s *server) run(ctx context.Context, args runJobArgs) (any, error) {
 	return s.follow(ctx, id, waited(args.WaitSeconds), len(submitted.GetJob().GetTasks()))
 }
 
-// maxResult is how much of a job's result an agent is shown.
-const maxResult = 32 << 10
+// maxResult is the longest result an agent is shown, and resultBegins how
+// much it is shown of a longer one.
+const (
+	maxResult    = 32 << 10
+	resultBegins = 1 << 10
+)
 
 // jobView is a job as an agent is told of it, with or without its result.
 func jobView(job *nodepb.Job, result bool) map[string]any {
@@ -249,7 +252,10 @@ func jobView(job *nodepb.Job, result bool) map[string]any {
 	// A result that is JSON is passed on as JSON, and anything else as text.
 	switch r := job.GetResult(); {
 	case len(r) > maxResult:
-		out["result"] = string(r[:maxResult]) + " [cut short]"
+		// Too long to be read here: its beginning, and how to have it all.
+		out["result_begins"] = string(r[:resultBegins])
+		out["result_bytes"] = len(r)
+		out["note"] = "the result is too long to show: write it to a file with save_result"
 	case json.Valid(r):
 		out["result"] = json.RawMessage(r)
 	case len(r) > 0:
@@ -433,24 +439,7 @@ func (s *server) fetch(ctx context.Context, args fetchArgs) (any, error) {
 	if args.Path == "" {
 		into = &text
 	} else {
-		path, err := s.allowed(args.Path)
-		if err != nil {
-			return nil, err
-		}
-		// The directory it goes in is made if it is not there: it is
-		// inside what the server may write to, or allowed would have said.
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, err
-		}
-		// A file already there is left alone unless told otherwise.
-		how := os.O_WRONLY | os.O_CREATE | os.O_EXCL
-		if args.Overwrite {
-			how = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-		}
-		file, err := os.OpenFile(path, how, 0o644)
-		if errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("there is a file at %s already: fetch to another path, or pass overwrite to replace it", args.Path)
-		}
+		file, err := s.create(args.Path, args.Overwrite)
 		if err != nil {
 			return nil, err
 		}

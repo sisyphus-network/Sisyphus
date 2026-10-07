@@ -191,3 +191,65 @@ func TestTheLastOfTheToolsSayWhatTheNodeSaid(t *testing.T) {
 		t.Errorf("waits of %v and %v", waited(0), waited(7))
 	}
 }
+
+func TestAResultTooLongToShowIsSavedToAFile(t *testing.T) {
+	long := `{"data":"` + strings.Repeat("x", maxResult) + `"}`
+	n := &node{job: &nodepb.Job{JobId: "job-1", State: nodepb.JobState_JOB_STATE_SUCCEEDED, FinishedAtMs: 2, Result: []byte(long)}}
+	s := serving(n)
+	shown := jobView(n.job, true)
+	if shown["result"] != nil || shown["result_bytes"] != len(long) || len(shown["result_begins"].(string)) != resultBegins || !strings.Contains(shown["note"].(string), "save_result") {
+		t.Errorf("a long result is shown as %v", shown)
+	}
+	path := filepath.Join(t.TempDir(), "new", "result.json")
+	saved, err := s.saveResult(context.Background(), saveArgs{JobID: "job-1", Path: path})
+	if err != nil || saved.(map[string]any)["size_bytes"] != len(long) {
+		t.Fatalf("save_result = %v, %v", saved, err)
+	}
+	if written, _ := os.ReadFile(path); string(written) != long {
+		t.Errorf("saved %d bytes of %d", len(written), len(long))
+	}
+	if _, err := s.saveResult(context.Background(), saveArgs{JobID: "job-1", Path: path}); err == nil || !strings.Contains(err.Error(), "already") {
+		t.Errorf("saving over a file: %v", err)
+	}
+	if _, err := s.saveResult(context.Background(), saveArgs{JobID: "job-1", Path: "/dev/full", Overwrite: true}); err == nil || !strings.Contains(err.Error(), "write /dev/full") {
+		t.Errorf("saving to a full disk: %v", err)
+	}
+	if _, err := serving(&node{failing: "GetJob"}).saveResult(context.Background(), saveArgs{JobID: "job-1", Path: path}); err == nil {
+		t.Error("the result of a job that cannot be had was saved")
+	}
+}
+
+func TestTextsAreRankedByHowAlikeTheyMean(t *testing.T) {
+	ctx := context.Background()
+	vectors := func(v ...string) *node {
+		return &node{job: &nodepb.Job{JobId: "job-1", State: nodepb.JobState_JOB_STATE_SUCCEEDED, FinishedAtMs: 2,
+			Result: []byte(`{"data":[{"embedding":` + strings.Join(v, `},{"embedding":`) + `}]}`)}}
+	}
+	// Against a query, which is the first of what is turned into vectors.
+	got, err := serving(vectors("[1,0]", "[0,1]", "[1,0.1]", "[0,0]")).compareTexts(ctx, compareArgs{Model: "nomic", Query: "boulder", Texts: []string{"tax", "rock", "nothing"}, Top: 2})
+	ranked := got.(map[string]any)["most_alike"].([]map[string]any)
+	if err != nil || len(ranked) != 2 || ranked[0]["text"] != "rock" || ranked[0]["similarity"] != 0.995 || ranked[1]["similarity"] != float64(0) {
+		t.Fatalf("against a query: %v, %v", got, err)
+	}
+	// Among themselves, every pair.
+	got, err = serving(vectors("[1,0]", "[0,1]", "[0.9,0.1]")).compareTexts(ctx, compareArgs{Model: "nomic", Texts: []string{"a", "b", "c"}})
+	pairs := got.(map[string]any)["most_alike"].([]map[string]any)
+	if err != nil || len(pairs) != 3 || pairs[0]["a"] != "a" || pairs[0]["b"] != "c" || got.(map[string]any)["job_id"] != "job-1" {
+		t.Fatalf("among themselves: %v, %v", got, err)
+	}
+	for name, tt := range map[string]struct {
+		node  *node
+		texts []string
+		want  string
+	}{
+		"no texts":                      {vectors("[1]"), nil, "between 1 and 127"},
+		"too many":                      {vectors("[1]"), make([]string, 128), "between 1 and 127"},
+		"a node that refuses the job":   {&node{failing: "SubmitJob"}, []string{"a"}, "the node is down"},
+		"a job that cannot be followed": {&node{failing: "GetJob"}, []string{"a"}, "could not be followed"},
+		"a job that made no vectors":    {&node{job: &nodepb.Job{JobId: "job-1", State: nodepb.JobState_JOB_STATE_FAILED, Error: "no worker serves it"}}, []string{"a"}, "did not turn the texts into vectors: failed no worker serves it"},
+	} {
+		if _, err := serving(tt.node).compareTexts(ctx, compareArgs{Model: "nomic", Texts: tt.texts}); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: %v, want %q", name, err, tt.want)
+		}
+	}
+}

@@ -61,17 +61,28 @@ The first transcode on a worker builds its image and takes about a minute longer
 When the user wants the pool's machines to do the thinking: classify, summarise or extract from many texts.
 
 1. `pool_status` shows which models the workers serve. Pick one that is served; say so if none is.
-2. For a handful of prompts, call `ask_model` for each.
-3. For many, submit each as a `chat` job with `run_job` and `detach`, a few at a time and no more at once than the workers serving that model have task slots, then collect each with `wait_for_job`.
+2. For one prompt, `ask_model`.
+3. For many, one `prompts` job. The prompts are shared out among the workers that serve the model, and the answers come back in the order asked:
 
 ```json
-{ "workload": "chat", "detach": true,
-  "params": { "model": "llama3.1:8b", "messages": [
-    {"role": "system", "content": "Answer with one word: positive, negative or neutral."},
-    {"role": "user", "content": "<the text>"} ] } }
+{ "workload": "prompts",
+  "params": { "model": "llama3.1:8b",
+    "system": "Answer with one word: positive, negative or neutral.",
+    "options": {"temperature": 0},
+    "prompts": ["I love this.", "This is terrible.", "The meeting is at noon."] } }
 ```
 
-Write `"model": "llama3.1:8b@<worker's name>"` to keep a conversation on one machine, such as the user's own, when what is in it should not go to another.
+For more prompts than fit comfortably in a request, write them to a file one to a line, `store_file` it, and give its content ID as `"input"` instead of `"prompts"`. Many long answers come back as a stored file named in the result as `output`, one answer on each line as a JSON string; `fetch_file` it to a path.
+
+Try the system instruction on three or four prompts first. A model answering alone, many times over, repeats whatever it gets wrong.
+
+Write `"model": "llama3.1:8b@<worker's name>"` to keep the prompts on one machine, such as the user's own, when what is in them should not go to another.
+
+## Finding texts that mean alike
+
+`compare_texts` does this in one call: give it the model and the texts, and a `query` to rank them against or none to rank every pair. Reach for `embed` itself only when the vectors are wanted, and then `save_result` them to a file rather than read them: a result of vectors is far too long to show.
+
+`embed` turns texts into vectors with an embedding model the pool serves (look for `embed` in the names `pool_status` lists): `{"model": "nomic-embed-text:latest", "input": ["...", "..."]}`, at most 128 texts to a job. Texts whose vectors point the same way mean alike; compare them by cosine similarity.
 
 ## Private data
 

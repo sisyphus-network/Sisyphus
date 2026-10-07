@@ -152,7 +152,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		runs = workloads
 	}
 	if *modelsFrom != "" {
-		runs = runs.With(runtime.Chat{URL: *modelsFrom})
+		runs = runs.With(runtime.WithModels(*modelsFrom)...)
 	}
 
 	// The node's key lives beside its data and is created on first run.
