@@ -56,6 +56,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
+	reciprocate := fs.Bool("work-for-trusted", true, "a node with both roles: also work for the nodes it trusts for compute, whenever they trust it back")
 	relayAt := fs.String("relay", "", "worker-only node: listen on this address, as host:port, for the other members' libp2p hosts and relay between them; the port must be open to them. A coordinator relays already")
 	discovery := fs.String("discovery", "on", "whether to look for other nodes, on this network and through the nodes already known, and let them find this one: on or off")
 	bootstrap := fs.String("bootstrap", "", "addresses of nodes to connect to at startup, besides those in the address book: comma-separated, each ending in /p2p/<node ID>")
@@ -244,8 +245,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	// host is the node's libp2p host, started below according to its role.
+	// host is the node's libp2p host, started below according to its role,
+	// and trust the list of nodes a coordinator has admitted.
 	var host *p2p.Host
+	var trust *access.List
 
 	if isCoordinator {
 		admitted, err := access.Open(db, ident.ID())
@@ -256,6 +259,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		trust = admitted
 		coord := coordinator.New(coordinator.Config{
 			ID: ident.ID(), Workloads: workloads, Store: store, Journal: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
@@ -389,6 +393,29 @@ func runDaemon(ctx context.Context, args []string) error {
 			Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log,
 			ServeAddress: *advertise,
 		}
+		if isCoordinator && *reciprocate {
+			// The nodes this one lets work for it, it works for in turn,
+			// whenever they will have it. All of that shares the node's
+			// slots with the work of its own pool.
+			w.Limit = make(chan struct{}, *slots)
+			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, syncCache: *syncCache, maxCache: *maxCache}
+			mutual := &reciprocity{
+				trusted:   func() []string { return trustedWorkers(trust.Members()) },
+				addresses: func(id string) []string { return whereToAsk(host.Peers(), id) },
+				ask:       func(ctx context.Context, id, addr string) bool { return trustsThisNode(ctx, ident, id, addr) },
+				work:      guests.work,
+				every:     reciprocityCheck, most: maxWorkedFor, log: log,
+			}
+			working := make(chan struct{})
+			defer func() {
+				cancel()
+				<-working
+			}()
+			go func() {
+				defer close(working)
+				mutual.run(ctx)
+			}()
+		}
 		if *relayAt != "" {
 			w.RelayAddresses = host.Addrs()
 			w.Relayed = host.Carried
@@ -491,6 +518,13 @@ func runDaemon(ctx context.Context, args []string) error {
 		return nil
 	}
 }
+
+// reciprocityCheck is how often a node looks over the nodes it trusts and
+// asks those it does not yet work for whether they trust it, and
+// maxWorkedFor how many it will work for at once.
+var reciprocityCheck = 15 * time.Second
+
+const maxWorkedFor = 16
 
 // startingPoints lists the addresses a node connects to at startup: its
 // address book, then those given on the command line.
