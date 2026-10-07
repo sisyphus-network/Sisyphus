@@ -1049,8 +1049,12 @@ type Peer struct {
 	// The two sides of this node's trust in the peer: that it gives the peer
 	// work, and that it takes work from the peer. trusted_for_compute is set
 	// if either is.
-	GivesWork     bool `protobuf:"varint,7,opt,name=gives_work,json=givesWork,proto3" json:"gives_work,omitempty"`
-	TakesWork     bool `protobuf:"varint,8,opt,name=takes_work,json=takesWork,proto3" json:"takes_work,omitempty"`
+	GivesWork bool `protobuf:"varint,7,opt,name=gives_work,json=givesWork,proto3" json:"gives_work,omitempty"`
+	TakesWork bool `protobuf:"varint,8,opt,name=takes_work,json=takesWork,proto3" json:"takes_work,omitempty"`
+	// The two-letter code of the country the node's address is registered
+	// in, from a table the daemon carries; empty if none of its addresses
+	// has a place in the world, as on a home network.
+	CountryCode   string `protobuf:"bytes,9,opt,name=country_code,json=countryCode,proto3" json:"country_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1139,6 +1143,13 @@ func (x *Peer) GetTakesWork() bool {
 		return x.TakesWork
 	}
 	return false
+}
+
+func (x *Peer) GetCountryCode() string {
+	if x != nil {
+		return x.CountryCode
+	}
+	return ""
 }
 
 type ListWorkersRequest struct {
@@ -4547,7 +4558,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\"]\n" +
 	"\x11ListPeersResponse\x12,\n" +
 	"\x05peers\x18\x01 \x03(\v2\x16.sisyphus.node.v1.PeerR\x05peers\x12\x1a\n" +
-	"\brevision\x18\x02 \x01(\x04R\brevision\"\xe6\x02\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\"\x89\x03\n" +
 	"\x04Peer\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12P\n" +
 	"\x10connection_state\x18\x02 \x01(\x0e2%.sisyphus.node.v1.PeerConnectionStateR\x0fconnectionState\x12'\n" +
@@ -4558,7 +4569,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\n" +
 	"gives_work\x18\a \x01(\bR\tgivesWork\x12\x1d\n" +
 	"\n" +
-	"takes_work\x18\b \x01(\bR\ttakesWork\"\x14\n" +
+	"takes_work\x18\b \x01(\bR\ttakesWork\x12!\n" +
+	"\fcountry_code\x18\t \x01(\tR\vcountryCode\"\x14\n" +
 	"\x12ListWorkersRequest\"I\n" +
 	"\x13ListWorkersResponse\x122\n" +
 	"\aworkers\x18\x01 \x03(\v2\x18.sisyphus.node.v1.WorkerR\aworkers\"\xeb\x03\n" +

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -305,5 +306,50 @@ func TestHowANodeIsConnectedToAnother(t *testing.T) {
 		if got := routeTo(found, id); got != want {
 			t.Errorf("route to %s: %s, want %s", id, got, want)
 		}
+	}
+}
+
+func TestANodePlacesItselfAndItsPeersWithoutAskingAnyone(t *testing.T) {
+	// The table here has this machine's own address in a country of its
+	// own, where the real one has it nowhere.
+	old := countryOf
+	countryOf = func(addr netip.Addr) string {
+		if addr.IsLoopback() {
+			return "XT"
+		}
+		return ""
+	}
+	defer func() { countryOf = old }()
+
+	addr, apiAddr := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", t.TempDir(), "--listen", addr, "--api-listen", apiAddr)
+	client := desktop(t, apiAddr)
+	poolAsSeenBy(t, client)
+	if info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{}); err != nil || info.GetCountryCode() != "XT" {
+		t.Fatalf("node info %v, %v", info, err)
+	}
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--join", invite(t, addr, "worker"), "--data-dir", t.TempDir(), "--name", "second")
+	waitFor(t, func() bool {
+		peers, err := client.ListPeers(context.Background(), &nodepb.ListPeersRequest{})
+		return err == nil && len(peers.GetPeers()) == 1 && peers.GetPeers()[0].GetCountryCode() == "XT"
+	})
+
+	// Only an address with a place in the world places a node.
+	for _, tt := range []struct {
+		addrs []string
+		want  string
+	}{
+		{[]string{"/dns4/example.org/tcp/7700", "/ip4/not-an-address/tcp/1", "nonsense", "/ip4/10.0.0.5/tcp/7700", "/ip6/::1/tcp/7700"}, "XT"},
+		{[]string{"/ip4/10.0.0.5/tcp/7700", "/ip4/192.168.1.4/tcp/7700/p2p-circuit"}, ""},
+		{nil, ""},
+	} {
+		if got := placed(tt.addrs); got != tt.want {
+			t.Errorf("placed(%v) = %q, want %q", tt.addrs, got, tt.want)
+		}
+	}
+	// And with the table the daemon carries, a real address is placed.
+	countryOf = old
+	if got := placed([]string{"/ip4/192.168.1.4/tcp/7700", "/ip4/8.8.8.8/tcp/7700"}); got != "US" {
+		t.Errorf("a node at 8.8.8.8 is placed in %q", got)
 	}
 }

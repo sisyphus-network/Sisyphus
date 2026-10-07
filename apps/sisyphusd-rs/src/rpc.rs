@@ -550,6 +550,8 @@ fn into_proto_peers(peers: Vec<PeerSnapshot>) -> Vec<proto::Peer> {
             // Its one flag stands for both sides.
             gives_work: peer.trusted_for_compute,
             takes_work: peer.trusted_for_compute,
+            // This daemon carries no table of countries.
+            country_code: String::new(),
         })
         .collect()
 }

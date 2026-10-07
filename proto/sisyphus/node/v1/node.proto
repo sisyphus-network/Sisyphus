@@ -171,6 +171,10 @@ message Peer {
   // if either is.
   bool gives_work = 7;
   bool takes_work = 8;
+  // The two-letter code of the country the node's address is registered
+  // in, from a table the daemon carries; empty if none of its addresses
+  // has a place in the world, as on a home network.
+  string country_code = 9;
 }
 
 enum PeerConnectionState {
