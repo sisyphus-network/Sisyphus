@@ -36,6 +36,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/tunnel"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
+	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	"github.com/sisyphus-network/Sisyphus/packages/kubo"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
@@ -57,6 +58,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
+	maxMemory := fs.Uint64("offer-memory-mb", 0, "worker role: tell the pool this node has no more than this much memory, in mebibytes; 0 offers all it has")
+	maxGPUs := fs.Int("offer-gpus", -1, "worker role: tell the pool this node has no more than this many graphics cards; -1 offers all it has")
 	reciprocate := fs.Bool("work-for-trusted", true, "a node with both roles: also work for the nodes it trusts for compute, whenever they trust it back")
 	relayAt := fs.String("relay", "", "worker-only node: listen on this address, as host:port, for the other members' libp2p hosts and relay between them; the port must be open to them. A coordinator relays already")
 	discovery := fs.String("discovery", "on", "whether to look for other nodes, on this network and through the nodes already known, and let them find this one: on or off")
@@ -398,6 +401,8 @@ func runDaemon(ctx context.Context, args []string) error {
 			Name: *name, Coordinator: *join, Credentials: creds,
 			Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log,
 			ServeAddress: *advertise,
+			// What the machine has, as far as its owner offers it.
+			Hardware: hardware.Detect(ctx).Offer(*maxMemory<<20, *maxGPUs),
 		}
 		if *reciprocate {
 			// The node works for each node it has said it will take tasks

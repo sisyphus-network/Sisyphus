@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
+	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
@@ -49,6 +50,8 @@ type Worker struct {
 	Workloads *runtime.Registry
 	// Blobs is the stored data this node's tasks can read and write.
 	Blobs runtime.Blobs
+	// Hardware is what the machine has that its owner offers to the pool.
+	Hardware hardware.Info
 	// ServeAddress, if not empty, is where other workers of the pool can
 	// fetch blobs from this one.
 	ServeAddress string
@@ -291,14 +294,20 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 
 func (w *Worker) capabilities() *pb.NodeCapabilities {
 	hostname, _ := os.Hostname()
-	return &pb.NodeCapabilities{
+	capabilities := &pb.NodeCapabilities{
 		Hostname:  hostname,
 		Os:        goruntime.GOOS,
 		Arch:      goruntime.GOARCH,
 		CpuCores:  uint32(goruntime.NumCPU()),
 		TaskSlots: uint32(w.Slots),
 		Workloads: w.Workloads.Names(),
+
+		CpuModel: w.Hardware.CPUModel, MemoryBytes: w.Hardware.MemoryBytes,
 	}
+	for _, gpu := range w.Hardware.GPUs {
+		capabilities.Gpus = append(capabilities.Gpus, &pb.Gpu{Name: gpu.Name, MemoryBytes: gpu.MemoryBytes})
+	}
+	return capabilities
 }
 
 // updateInterval is how often the coordinator is told how a running task

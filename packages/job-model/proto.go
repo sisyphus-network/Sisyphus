@@ -19,6 +19,8 @@ func (j *Job) ToProto() *pb.Job {
 			MaxTasks: uint32(j.MaxTasks),
 
 			TaskTimeoutSeconds: uint32(j.TaskTimeout / time.Second),
+			MinMemoryBytes:     j.MinMemory,
+			MinGpus:            uint32(j.MinGPUs),
 		},
 		State:       pb.JobState(j.State + 1),
 		Result:      append([]byte(nil), j.Result...),

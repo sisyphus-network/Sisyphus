@@ -27,12 +27,12 @@ func (db *DB) SaveJob(job *jobmodel.Job) error {
 		key = nil
 	}
 	err := db.write(func(b *batch) {
-		b.exec(`INSERT INTO jobs (job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		b.exec(`INSERT INTO jobs (job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (job_id) DO UPDATE SET state = excluded.state, result = excluded.result, error = excluded.error,
 				sealing_key = excluded.sealing_key, finished_at_ns = excluded.finished_at_ns`,
 			job.ID, job.Workload, blob(job.Params), int(job.Mode), job.MaxTasks, int(job.State), blob(job.Result), job.Err,
-			key, nanos(job.CreatedAt), nanos(job.FinishedAt), int64(job.TaskTimeout))
+			key, nanos(job.CreatedAt), nanos(job.FinishedAt), int64(job.TaskTimeout), int64(job.MinMemory), job.MinGPUs)
 		for _, t := range changes.Tasks {
 			b.exec(`INSERT INTO tasks (job_id, task_index, payload, state, attempt, failures, node_id, node_name, output, error)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -72,14 +72,14 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 		job := new(jobmodel.Job)
 		var created, finished int64
 		err := rows.Scan(&job.ID, &job.Workload, &job.Params, &job.Mode, &job.MaxTasks, &job.State, &job.Result, &job.Err,
-			&job.Key, &created, &finished, &job.TaskTimeout)
+			&job.Key, &created, &finished, &job.TaskTimeout, &job.MinMemory, &job.MinGPUs)
 		if err != nil {
 			return err
 		}
 		job.CreatedAt, job.FinishedAt = moment(created), moment(finished)
 		saved, byID[job.ID] = append(saved, job), job
 		return nil
-	}, `SELECT job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns
+	}, `SELECT job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus
 		FROM jobs ORDER BY seq`)
 	if err != nil {
 		return nil, fmt.Errorf("load jobs: %w", err)

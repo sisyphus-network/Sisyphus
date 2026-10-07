@@ -202,7 +202,11 @@ type NodeCapabilities struct {
 	// How many tasks the owner allows this node to run at once.
 	TaskSlots uint32 `protobuf:"varint,6,opt,name=task_slots,json=taskSlots,proto3" json:"task_slots,omitempty"`
 	// Names of the workloads this node can execute.
-	Workloads     []string `protobuf:"bytes,7,rep,name=workloads,proto3" json:"workloads,omitempty"`
+	Workloads []string `protobuf:"bytes,7,rep,name=workloads,proto3" json:"workloads,omitempty"`
+	// The processor's name, if known. memory_bytes is likewise zero if not.
+	CpuModel string `protobuf:"bytes,8,opt,name=cpu_model,json=cpuModel,proto3" json:"cpu_model,omitempty"`
+	// The graphics cards the owner offers for computing on.
+	Gpus          []*Gpu `protobuf:"bytes,9,rep,name=gpus,proto3" json:"gpus,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -286,6 +290,72 @@ func (x *NodeCapabilities) GetWorkloads() []string {
 	return nil
 }
 
+func (x *NodeCapabilities) GetCpuModel() string {
+	if x != nil {
+		return x.CpuModel
+	}
+	return ""
+}
+
+func (x *NodeCapabilities) GetGpus() []*Gpu {
+	if x != nil {
+		return x.Gpus
+	}
+	return nil
+}
+
+type Gpu struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	MemoryBytes   uint64                 `protobuf:"varint,2,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Gpu) Reset() {
+	*x = Gpu{}
+	mi := &file_sisyphus_v1_types_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Gpu) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Gpu) ProtoMessage() {}
+
+func (x *Gpu) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_types_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Gpu.ProtoReflect.Descriptor instead.
+func (*Gpu) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Gpu) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Gpu) GetMemoryBytes() uint64 {
+	if x != nil {
+		return x.MemoryBytes
+	}
+	return 0
+}
+
 type NodeInfo struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	NodeId       string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
@@ -306,7 +376,7 @@ type NodeInfo struct {
 
 func (x *NodeInfo) Reset() {
 	*x = NodeInfo{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[1]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -318,7 +388,7 @@ func (x *NodeInfo) String() string {
 func (*NodeInfo) ProtoMessage() {}
 
 func (x *NodeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[1]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -331,7 +401,7 @@ func (x *NodeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeInfo.ProtoReflect.Descriptor instead.
 func (*NodeInfo) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{1}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *NodeInfo) GetNodeId() string {
@@ -415,13 +485,17 @@ type JobSpec struct {
 	// If not zero, how long any one attempt at a task may run, in seconds. An
 	// attempt that runs longer is stopped and counts as failed.
 	TaskTimeoutSeconds uint32 `protobuf:"varint,6,opt,name=task_timeout_seconds,json=taskTimeoutSeconds,proto3" json:"task_timeout_seconds,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// What a worker must have to be given this job's tasks: at least this
+	// much memory, and at least this many graphics cards. Zero asks nothing.
+	MinMemoryBytes uint64 `protobuf:"varint,7,opt,name=min_memory_bytes,json=minMemoryBytes,proto3" json:"min_memory_bytes,omitempty"`
+	MinGpus        uint32 `protobuf:"varint,8,opt,name=min_gpus,json=minGpus,proto3" json:"min_gpus,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *JobSpec) Reset() {
 	*x = JobSpec{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[2]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -433,7 +507,7 @@ func (x *JobSpec) String() string {
 func (*JobSpec) ProtoMessage() {}
 
 func (x *JobSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[2]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -446,7 +520,7 @@ func (x *JobSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobSpec.ProtoReflect.Descriptor instead.
 func (*JobSpec) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{2}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *JobSpec) GetWorkload() string {
@@ -491,6 +565,20 @@ func (x *JobSpec) GetTaskTimeoutSeconds() uint32 {
 	return 0
 }
 
+func (x *JobSpec) GetMinMemoryBytes() uint64 {
+	if x != nil {
+		return x.MinMemoryBytes
+	}
+	return 0
+}
+
+func (x *JobSpec) GetMinGpus() uint32 {
+	if x != nil {
+		return x.MinGpus
+	}
+	return 0
+}
+
 type Task struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -513,7 +601,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[3]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -525,7 +613,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[3]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -538,7 +626,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{3}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Task) GetTaskId() string {
@@ -622,7 +710,7 @@ type Job struct {
 
 func (x *Job) Reset() {
 	*x = Job{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[4]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -634,7 +722,7 @@ func (x *Job) String() string {
 func (*Job) ProtoMessage() {}
 
 func (x *Job) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[4]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -647,7 +735,7 @@ func (x *Job) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Job.ProtoReflect.Descriptor instead.
 func (*Job) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{4}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Job) GetJobId() string {
@@ -748,7 +836,7 @@ type JobEvent struct {
 
 func (x *JobEvent) Reset() {
 	*x = JobEvent{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -760,7 +848,7 @@ func (x *JobEvent) String() string {
 func (*JobEvent) ProtoMessage() {}
 
 func (x *JobEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -773,7 +861,7 @@ func (x *JobEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobEvent.ProtoReflect.Descriptor instead.
 func (*JobEvent) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{5}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *JobEvent) GetSeq() uint64 {
@@ -822,7 +910,7 @@ var File_sisyphus_v1_types_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x17sisyphus/v1/types.proto\x12\vsisyphus.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xcf\x01\n" +
+	"\x17sisyphus/v1/types.proto\x12\vsisyphus.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x92\x02\n" +
 	"\x10NodeCapabilities\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x12\n" +
@@ -831,7 +919,12 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\fmemory_bytes\x18\x05 \x01(\x04R\vmemoryBytes\x12\x1d\n" +
 	"\n" +
 	"task_slots\x18\x06 \x01(\rR\ttaskSlots\x12\x1c\n" +
-	"\tworkloads\x18\a \x03(\tR\tworkloads\"\x9b\x03\n" +
+	"\tworkloads\x18\a \x03(\tR\tworkloads\x12\x1b\n" +
+	"\tcpu_model\x18\b \x01(\tR\bcpuModel\x12$\n" +
+	"\x04gpus\x18\t \x03(\v2\x10.sisyphus.v1.GpuR\x04gpus\"<\n" +
+	"\x03Gpu\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\x9b\x03\n" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12#\n" +
@@ -842,14 +935,16 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x04name\x18\x06 \x01(\tR\x04name\x12'\n" +
 	"\x0frelay_addresses\x18\a \x03(\tR\x0erelayAddresses\x12/\n" +
 	"\x13relayed_connections\x18\b \x01(\x04R\x12relayedConnections\x12#\n" +
-	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\xcd\x01\n" +
+	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\x92\x02\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
 	"\x04mode\x18\x03 \x01(\x0e2\x19.sisyphus.v1.ScheduleModeR\x04mode\x12\x1b\n" +
 	"\tmax_tasks\x18\x04 \x01(\rR\bmaxTasks\x12\x10\n" +
 	"\x03key\x18\x05 \x01(\fR\x03key\x120\n" +
-	"\x14task_timeout_seconds\x18\x06 \x01(\rR\x12taskTimeoutSeconds\"\xe5\x01\n" +
+	"\x14task_timeout_seconds\x18\x06 \x01(\rR\x12taskTimeoutSeconds\x12(\n" +
+	"\x10min_memory_bytes\x18\a \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
+	"\bmin_gpus\x18\b \x01(\rR\aminGpus\"\xe5\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\rR\x05index\x12,\n" +
@@ -915,36 +1010,38 @@ func file_sisyphus_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_sisyphus_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_sisyphus_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_sisyphus_v1_types_proto_goTypes = []any{
 	(ScheduleMode)(0),             // 0: sisyphus.v1.ScheduleMode
 	(JobState)(0),                 // 1: sisyphus.v1.JobState
 	(TaskState)(0),                // 2: sisyphus.v1.TaskState
 	(*NodeCapabilities)(nil),      // 3: sisyphus.v1.NodeCapabilities
-	(*NodeInfo)(nil),              // 4: sisyphus.v1.NodeInfo
-	(*JobSpec)(nil),               // 5: sisyphus.v1.JobSpec
-	(*Task)(nil),                  // 6: sisyphus.v1.Task
-	(*Job)(nil),                   // 7: sisyphus.v1.Job
-	(*JobEvent)(nil),              // 8: sisyphus.v1.JobEvent
-	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
+	(*Gpu)(nil),                   // 4: sisyphus.v1.Gpu
+	(*NodeInfo)(nil),              // 5: sisyphus.v1.NodeInfo
+	(*JobSpec)(nil),               // 6: sisyphus.v1.JobSpec
+	(*Task)(nil),                  // 7: sisyphus.v1.Task
+	(*Job)(nil),                   // 8: sisyphus.v1.Job
+	(*JobEvent)(nil),              // 9: sisyphus.v1.JobEvent
+	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
 }
 var file_sisyphus_v1_types_proto_depIdxs = []int32{
-	3,  // 0: sisyphus.v1.NodeInfo.capabilities:type_name -> sisyphus.v1.NodeCapabilities
-	9,  // 1: sisyphus.v1.NodeInfo.connected_at:type_name -> google.protobuf.Timestamp
-	9,  // 2: sisyphus.v1.NodeInfo.last_seen_at:type_name -> google.protobuf.Timestamp
-	0,  // 3: sisyphus.v1.JobSpec.mode:type_name -> sisyphus.v1.ScheduleMode
-	2,  // 4: sisyphus.v1.Task.state:type_name -> sisyphus.v1.TaskState
-	5,  // 5: sisyphus.v1.Job.spec:type_name -> sisyphus.v1.JobSpec
-	1,  // 6: sisyphus.v1.Job.state:type_name -> sisyphus.v1.JobState
-	6,  // 7: sisyphus.v1.Job.tasks:type_name -> sisyphus.v1.Task
-	9,  // 8: sisyphus.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	9,  // 9: sisyphus.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
-	9,  // 10: sisyphus.v1.JobEvent.at:type_name -> google.protobuf.Timestamp
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	4,  // 0: sisyphus.v1.NodeCapabilities.gpus:type_name -> sisyphus.v1.Gpu
+	3,  // 1: sisyphus.v1.NodeInfo.capabilities:type_name -> sisyphus.v1.NodeCapabilities
+	10, // 2: sisyphus.v1.NodeInfo.connected_at:type_name -> google.protobuf.Timestamp
+	10, // 3: sisyphus.v1.NodeInfo.last_seen_at:type_name -> google.protobuf.Timestamp
+	0,  // 4: sisyphus.v1.JobSpec.mode:type_name -> sisyphus.v1.ScheduleMode
+	2,  // 5: sisyphus.v1.Task.state:type_name -> sisyphus.v1.TaskState
+	6,  // 6: sisyphus.v1.Job.spec:type_name -> sisyphus.v1.JobSpec
+	1,  // 7: sisyphus.v1.Job.state:type_name -> sisyphus.v1.JobState
+	7,  // 8: sisyphus.v1.Job.tasks:type_name -> sisyphus.v1.Task
+	10, // 9: sisyphus.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	10, // 10: sisyphus.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
+	10, // 11: sisyphus.v1.JobEvent.at:type_name -> google.protobuf.Timestamp
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_types_proto_init() }
@@ -958,7 +1055,7 @@ func file_sisyphus_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_types_proto_rawDesc), len(file_sisyphus_v1_types_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

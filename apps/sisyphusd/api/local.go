@@ -202,6 +202,7 @@ func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) 
 			PeerId: node.GetNodeId(), Name: node.GetName(), Hostname: c.GetHostname(), Os: c.GetOs(), Arch: c.GetArch(),
 			CpuCores: c.GetCpuCores(), TaskSlots: c.GetTaskSlots(), RunningTasks: node.GetRunningTasks(), Workloads: c.GetWorkloads(),
 			Relays: len(node.GetRelayAddresses()) > 0, RelayedConnections: node.GetRelayedConnections(), RelayedBytes: node.GetRelayedBytes(),
+			CpuModel: c.GetCpuModel(), MemoryBytes: c.GetMemoryBytes(), Gpus: localGPUs(c.GetGpus()),
 		})
 	}
 	return res, nil
@@ -218,7 +219,7 @@ func (s *localService) SubmitJob(ctx context.Context, req *nodepb.SubmitJobReque
 	}
 	job, err := s.cfg.Jobs.Submit(ctx, &pb.JobSpec{
 		Workload: req.GetWorkload(), Params: req.GetParams(), Mode: pb.ScheduleMode(req.GetMode()), MaxTasks: req.GetMaxTasks(),
-		TaskTimeoutSeconds: req.GetTaskTimeoutSeconds(),
+		TaskTimeoutSeconds: req.GetTaskTimeoutSeconds(), MinMemoryBytes: req.GetMinMemoryBytes(), MinGpus: req.GetMinGpus(),
 	})
 	if err != nil {
 		return nil, err
@@ -307,12 +308,21 @@ func localJob(job *pb.Job) *nodepb.Job {
 		CreatedAtMs: millis(job.GetCreatedAt()), FinishedAtMs: millis(job.GetFinishedAt()),
 		InputBlobs: job.GetInputBlobs(), OutputBlobs: job.GetOutputBlobs(),
 		Progress: job.GetProgress(), TaskTimeoutSeconds: job.GetSpec().GetTaskTimeoutSeconds(),
+		MinMemoryBytes: job.GetSpec().GetMinMemoryBytes(), MinGpus: job.GetSpec().GetMinGpus(),
 	}
 	for _, task := range job.GetTasks() {
 		out.Tasks = append(out.Tasks, &nodepb.JobTask{
 			Index: task.GetIndex(), State: nodepb.JobState(task.GetState()), Attempt: task.GetAttempt(),
 			PeerId: task.GetNodeId(), WorkerName: task.GetNodeName(), Error: task.GetError(), Progress: task.GetProgress(),
 		})
+	}
+	return out
+}
+
+func localGPUs(gpus []*pb.Gpu) []*nodepb.WorkerGpu {
+	var out []*nodepb.WorkerGpu
+	for _, gpu := range gpus {
+		out = append(out, &nodepb.WorkerGpu{Name: gpu.GetName(), MemoryBytes: gpu.GetMemoryBytes()})
 	}
 	return out
 }

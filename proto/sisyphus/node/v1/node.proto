@@ -161,6 +161,16 @@ message Worker {
   bool relays = 10;
   uint64 relayed_connections = 11;
   uint64 relayed_bytes = 12;
+  // What the machine has, as far as it could tell and its owner offers:
+  // zero and empty where unknown.
+  string cpu_model = 13;
+  uint64 memory_bytes = 14;
+  repeated WorkerGpu gpus = 15;
+}
+
+message WorkerGpu {
+  string name = 1;
+  uint64 memory_bytes = 2;
 }
 
 enum JobState {
@@ -200,6 +210,8 @@ message Job {
   double progress = 13;
   // If not zero, how long any one attempt at a task may run.
   uint32 task_timeout_seconds = 14;
+  uint64 min_memory_bytes = 15;
+  uint32 min_gpus = 16;
 }
 
 message JobTask {
@@ -225,6 +237,10 @@ message SubmitJobRequest {
   uint32 max_tasks = 4;
   // If not zero, stop and retry any attempt at a task that runs longer.
   uint32 task_timeout_seconds = 5;
+  // Give its tasks only to workers with at least this much memory and this
+  // many graphics cards. Zero asks nothing.
+  uint64 min_memory_bytes = 6;
+  uint32 min_gpus = 7;
 }
 
 message SubmitJobResponse { Job job = 1; }

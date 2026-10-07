@@ -360,7 +360,7 @@ func (g *guestWork) work(ctx context.Context, id, addr string) error {
 	log := g.template.Log
 	creds := credentials.NewTLS(g.ident.ClientTLS(id))
 	w := &worker.Worker{
-		Name: g.template.Name, Slots: g.template.Slots, Workloads: g.template.Workloads, Limit: g.template.Limit, Pool: id, Log: log,
+		Name: g.template.Name, Slots: g.template.Slots, Workloads: g.template.Workloads, Limit: g.template.Limit, Pool: id, Log: log, Hardware: g.template.Hardware,
 		Coordinator: addr, Credentials: creds,
 	}
 	ctx, cancel := context.WithCancel(ctx)
