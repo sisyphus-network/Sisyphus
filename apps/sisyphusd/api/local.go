@@ -51,6 +51,9 @@ type LocalConfig struct {
 	// Country returns the two-letter code of the country the node is in,
 	// if it has been allowed to find out, and otherwise nothing.
 	Country func() string
+	// WorkFor, if set, is the list of nodes this one takes work from. A
+	// node that runs no worker has none.
+	WorkFor WorkFor
 	// Token is what a caller must present to change anything.
 	Token string
 	// Poll is how often a peer watcher is checked for news. Zero means once
@@ -64,6 +67,13 @@ type AddressBook interface {
 	BootstrapPeers() ([]nodedb.BootstrapPeer, error)
 	SetBootstrapPeers([]nodedb.BootstrapPeer) error
 	AddBootstrapPeer(nodedb.BootstrapPeer) error
+}
+
+// WorkFor is the list of nodes a node is willing to take tasks from. It
+// works for one of them whenever that node, for its part, will have it.
+type WorkFor interface {
+	Set(id string, willing bool) error
+	List() []string
 }
 
 // PoolAdmin admits nodes to a coordinator's pool and removes them, exactly
@@ -213,26 +223,65 @@ func (s *localService) ConnectPeer(ctx context.Context, req *nodepb.ConnectPeerR
 	return &nodepb.ConnectPeerResponse{PeerId: info.ID.String()}, nil
 }
 
-// SetPeerComputeTrust admits a node to the pool as a worker, or removes it.
+// SetPeerComputeTrust sets both sides of this node's trust in a peer at
+// once, as far as the node has them: a node that runs no pool has no work
+// to give, and trusts by taking work alone.
 func (s *localService) SetPeerComputeTrust(ctx context.Context, req *nodepb.SetPeerComputeTrustRequest) (*nodepb.SetPeerComputeTrustResponse, error) {
-	if err := s.authorize(ctx); err != nil {
-		return nil, err
+	gives, takes := req.GetTrusted() && s.cfg.Pool != nil, req.GetTrusted() && s.cfg.WorkFor != nil
+	if req.GetTrusted() && !gives && !takes {
+		return nil, status.Error(codes.FailedPrecondition, "this node runs no pool and no worker, so it has no work to give and takes none")
 	}
-	if s.cfg.Pool == nil {
-		return nil, status.Error(codes.FailedPrecondition, "only the node that coordinates a pool can change who is trusted in it")
-	}
-	if _, err := peer.Decode(req.GetPeerId()); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "%q is not a node ID", req.GetPeerId())
-	}
-	pool := s.cfg.Pool.service
-	if req.GetTrusted() {
-		if err := pool.access.Admit(req.GetPeerId(), access.Worker, time.Now()); err != nil {
-			return nil, status.Errorf(codes.Internal, "admit node: %v", err)
-		}
-	} else if err := pool.removeMember(ctx, req.GetPeerId()); err != nil {
+	if err := s.permit(ctx, req.GetPeerId(), gives, takes); err != nil {
 		return nil, err
 	}
 	return &nodepb.SetPeerComputeTrustResponse{Trusted: req.GetTrusted()}, nil
+}
+
+// SetPeerComputePermissions sets the two sides of this node's trust in a
+// peer separately: whether it gives the peer work, which is admitting it to
+// the pool as a worker, and whether it takes work from the peer.
+func (s *localService) SetPeerComputePermissions(ctx context.Context, req *nodepb.SetPeerComputePermissionsRequest) (*nodepb.SetPeerComputePermissionsResponse, error) {
+	if req.GetGivesWork() && s.cfg.Pool == nil {
+		return nil, status.Error(codes.FailedPrecondition, "this node runs no pool, so it has no work to give")
+	}
+	if req.GetTakesWork() && s.cfg.WorkFor == nil {
+		return nil, status.Error(codes.FailedPrecondition, "this node runs no worker, so it takes no work")
+	}
+	if err := s.permit(ctx, req.GetPeerId(), req.GetGivesWork(), req.GetTakesWork()); err != nil {
+		return nil, err
+	}
+	return &nodepb.SetPeerComputePermissionsResponse{GivesWork: req.GetGivesWork(), TakesWork: req.GetTakesWork()}, nil
+}
+
+// permit makes the two sides of this node's trust in a peer what they are
+// asked to be. A side the node does not have is left alone.
+func (s *localService) permit(ctx context.Context, id string, gives, takes bool) error {
+	if err := s.authorize(ctx); err != nil {
+		return err
+	}
+	if _, err := peer.Decode(id); err != nil {
+		return status.Errorf(codes.InvalidArgument, "%q is not a node ID", id)
+	}
+	if s.cfg.Pool != nil {
+		pool := s.cfg.Pool.service
+		role, member := pool.access.Role(id)
+		switch {
+		case gives && role != access.Worker:
+			if err := pool.access.Admit(id, access.Worker, time.Now()); err != nil {
+				return status.Errorf(codes.Internal, "admit node: %v", err)
+			}
+		case !gives && member && role == access.Worker:
+			if err := pool.removeMember(ctx, id); err != nil {
+				return err
+			}
+		}
+	}
+	if s.cfg.WorkFor != nil {
+		if err := s.cfg.WorkFor.Set(id, takes); err != nil {
+			return status.Errorf(codes.Internal, "%v", err)
+		}
+	}
+	return nil
 }
 
 // authorize checks that the caller has presented the node's token, as

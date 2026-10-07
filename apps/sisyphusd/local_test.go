@@ -162,14 +162,14 @@ func TestAWorkersLocalAPIShowsItsCoordinator(t *testing.T) {
 			t.Errorf("the worker gives %q as an address of its own", address)
 		}
 	}
-	// Who is in the pool is not a worker's to decide.
+	// A worker with no pool of its own has no work to give anyone.
 	token, err := os.ReadFile(filepath.Join(workerDir, "api.token"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+strings.TrimSpace(string(token)))
-	if _, err := client.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: nodeID(t, coordinatorDir)}); status.Code(err) != codes.FailedPrecondition {
-		t.Errorf("a worker changing trust: %v, want FailedPrecondition", err)
+	if _, err := client.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: nodeID(t, coordinatorDir), GivesWork: true}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("a worker with no pool giving work: %v, want FailedPrecondition", err)
 	}
 
 	// The desktop's "connect to a peer" works between members: here, the

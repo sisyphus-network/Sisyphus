@@ -51,6 +51,9 @@ type Peer = {
   // leaves them out.
   worksForThisNode?: boolean
   thisNodeWorksFor?: boolean
+  // The two sides of this node's trust in the peer.
+  givesWork?: boolean
+  takesWork?: boolean
 }
 
 type NodeInfo = {
@@ -75,6 +78,7 @@ type GrpcNodeService = {
   watchPeers(request: object): grpc.ClientReadableStream<{ peers: Peer[]; revision: string | number | { toString(): string } }>
   connectPeer(request: { address: string }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { peerId: string }) => void): void
   setPeerComputeTrust(request: { peerId: string; trusted: boolean }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { trusted: boolean }) => void): void
+  setPeerComputePermissions(request: { peerId: string; givesWork: boolean; takesWork: boolean }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { givesWork: boolean; takesWork: boolean }) => void): void
   close(): void
 }
 
@@ -228,6 +232,12 @@ app.whenReady().then(() => {
     const request = payload as { peerId: string; trusted: boolean }
     if (!client) return reject(new Error('The local daemon is not connected.'))
     client.setPeerComputeTrust(request, authorization(), (error) => error ? reject(new Error(error.message)) : resolve())
+  }))
+  ipcMain.handle('node:set-peer-compute-permissions', (_event, payload: unknown) => new Promise<void>((resolve, reject) => {
+    if (!payload || typeof payload !== 'object' || !('peerId' in payload) || !('givesWork' in payload) || !('takesWork' in payload)) return reject(new Error('Invalid peer trust request.'))
+    const request = payload as { peerId: string; givesWork: boolean; takesWork: boolean }
+    if (!client) return reject(new Error('The local daemon is not connected.'))
+    client.setPeerComputePermissions(request, authorization(), (error) => error ? reject(new Error(error.message)) : resolve())
   }))
   createWindow()
   connectToNode()

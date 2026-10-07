@@ -95,6 +95,12 @@ Start one worker with `-v`. Run `wordcount` on a new big file with that worker s
 msg="fetched a blob from a fellow worker" cid=<the file's CID> node=<another worker's ID> at=p2p
 ```
 
+The line ends with how the two were connected: `route=direct` or `route=relayed`.
+
+✎ If the workers are on one network, expect `route=direct`, and the second run about as fast as step 3's first.
+
+✎ **Hole punching.** Put the two workers behind two different routers (a laptop on a phone's hotspot will do for one) with the coordinator somewhere both can reach. The first fetch between them will say `route=relayed`. Run the job again with another new file a minute later: `route=direct` means the two punched through to each other, and `route=relayed` again means their routers would not allow it, which some, mobile networks especially, will not. Note which, and what kind of connection each worker was on.
+
 ✎ If the workers are on one network, the second run should be about as fast as step 3's first. If they are on different private networks the data goes by way of the coordinator; note the time, and whether it improves on later runs, which would mean the two managed a direct connection.
 
 A worker with a port open to the others can be made a full node with `--relay 0.0.0.0:7702`: it then relays between the others as the coordinator does, and `sisyphusd nodes` shows what it has carried under `RELAYED`.

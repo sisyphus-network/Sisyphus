@@ -598,6 +598,120 @@ func (x *SetPeerComputeTrustResponse) GetTrusted() bool {
 	return false
 }
 
+type SetPeerComputePermissionsRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	PeerId string                 `protobuf:"bytes,1,opt,name=peer_id,json=peerId,proto3" json:"peer_id,omitempty"`
+	// This node gives the peer work: the peer may work for this node.
+	GivesWork bool `protobuf:"varint,2,opt,name=gives_work,json=givesWork,proto3" json:"gives_work,omitempty"`
+	// This node takes work from the peer: it will work for the peer.
+	TakesWork     bool `protobuf:"varint,3,opt,name=takes_work,json=takesWork,proto3" json:"takes_work,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetPeerComputePermissionsRequest) Reset() {
+	*x = SetPeerComputePermissionsRequest{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetPeerComputePermissionsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetPeerComputePermissionsRequest) ProtoMessage() {}
+
+func (x *SetPeerComputePermissionsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetPeerComputePermissionsRequest.ProtoReflect.Descriptor instead.
+func (*SetPeerComputePermissionsRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *SetPeerComputePermissionsRequest) GetPeerId() string {
+	if x != nil {
+		return x.PeerId
+	}
+	return ""
+}
+
+func (x *SetPeerComputePermissionsRequest) GetGivesWork() bool {
+	if x != nil {
+		return x.GivesWork
+	}
+	return false
+}
+
+func (x *SetPeerComputePermissionsRequest) GetTakesWork() bool {
+	if x != nil {
+		return x.TakesWork
+	}
+	return false
+}
+
+type SetPeerComputePermissionsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GivesWork     bool                   `protobuf:"varint,1,opt,name=gives_work,json=givesWork,proto3" json:"gives_work,omitempty"`
+	TakesWork     bool                   `protobuf:"varint,2,opt,name=takes_work,json=takesWork,proto3" json:"takes_work,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetPeerComputePermissionsResponse) Reset() {
+	*x = SetPeerComputePermissionsResponse{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetPeerComputePermissionsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetPeerComputePermissionsResponse) ProtoMessage() {}
+
+func (x *SetPeerComputePermissionsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetPeerComputePermissionsResponse.ProtoReflect.Descriptor instead.
+func (*SetPeerComputePermissionsResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SetPeerComputePermissionsResponse) GetGivesWork() bool {
+	if x != nil {
+		return x.GivesWork
+	}
+	return false
+}
+
+func (x *SetPeerComputePermissionsResponse) GetTakesWork() bool {
+	if x != nil {
+		return x.TakesWork
+	}
+	return false
+}
+
 type BootstrapPeer struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PeerId        string                 `protobuf:"bytes,1,opt,name=peer_id,json=peerId,proto3" json:"peer_id,omitempty"`
@@ -608,7 +722,7 @@ type BootstrapPeer struct {
 
 func (x *BootstrapPeer) Reset() {
 	*x = BootstrapPeer{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[12]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -620,7 +734,7 @@ func (x *BootstrapPeer) String() string {
 func (*BootstrapPeer) ProtoMessage() {}
 
 func (x *BootstrapPeer) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[12]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -633,7 +747,7 @@ func (x *BootstrapPeer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BootstrapPeer.ProtoReflect.Descriptor instead.
 func (*BootstrapPeer) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{12}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *BootstrapPeer) GetPeerId() string {
@@ -660,7 +774,7 @@ type ListPeersResponse struct {
 
 func (x *ListPeersResponse) Reset() {
 	*x = ListPeersResponse{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[13]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -672,7 +786,7 @@ func (x *ListPeersResponse) String() string {
 func (*ListPeersResponse) ProtoMessage() {}
 
 func (x *ListPeersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[13]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -685,7 +799,7 @@ func (x *ListPeersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPeersResponse.ProtoReflect.Descriptor instead.
 func (*ListPeersResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{13}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListPeersResponse) GetPeers() []*Peer {
@@ -713,13 +827,18 @@ type Peer struct {
 	// node, and this node is working for the peer.
 	WorksForThisNode bool `protobuf:"varint,5,opt,name=works_for_this_node,json=worksForThisNode,proto3" json:"works_for_this_node,omitempty"`
 	ThisNodeWorksFor bool `protobuf:"varint,6,opt,name=this_node_works_for,json=thisNodeWorksFor,proto3" json:"this_node_works_for,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The two sides of this node's trust in the peer: that it gives the peer
+	// work, and that it takes work from the peer. trusted_for_compute is set
+	// if either is.
+	GivesWork     bool `protobuf:"varint,7,opt,name=gives_work,json=givesWork,proto3" json:"gives_work,omitempty"`
+	TakesWork     bool `protobuf:"varint,8,opt,name=takes_work,json=takesWork,proto3" json:"takes_work,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Peer) Reset() {
 	*x = Peer{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[14]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -731,7 +850,7 @@ func (x *Peer) String() string {
 func (*Peer) ProtoMessage() {}
 
 func (x *Peer) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[14]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -744,7 +863,7 @@ func (x *Peer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Peer.ProtoReflect.Descriptor instead.
 func (*Peer) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{14}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Peer) GetPeerId() string {
@@ -789,6 +908,20 @@ func (x *Peer) GetThisNodeWorksFor() bool {
 	return false
 }
 
+func (x *Peer) GetGivesWork() bool {
+	if x != nil {
+		return x.GivesWork
+	}
+	return false
+}
+
+func (x *Peer) GetTakesWork() bool {
+	if x != nil {
+		return x.TakesWork
+	}
+	return false
+}
+
 var File_sisyphus_node_v1_node_proto protoreflect.FileDescriptor
 
 const file_sisyphus_node_v1_node_proto_rawDesc = "" +
@@ -817,24 +950,39 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12\x18\n" +
 	"\atrusted\x18\x02 \x01(\bR\atrusted\"7\n" +
 	"\x1bSetPeerComputeTrustResponse\x12\x18\n" +
-	"\atrusted\x18\x01 \x01(\bR\atrusted\"B\n" +
+	"\atrusted\x18\x01 \x01(\bR\atrusted\"y\n" +
+	" SetPeerComputePermissionsRequest\x12\x17\n" +
+	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12\x1d\n" +
+	"\n" +
+	"gives_work\x18\x02 \x01(\bR\tgivesWork\x12\x1d\n" +
+	"\n" +
+	"takes_work\x18\x03 \x01(\bR\ttakesWork\"a\n" +
+	"!SetPeerComputePermissionsResponse\x12\x1d\n" +
+	"\n" +
+	"gives_work\x18\x01 \x01(\bR\tgivesWork\x12\x1d\n" +
+	"\n" +
+	"takes_work\x18\x02 \x01(\bR\ttakesWork\"B\n" +
 	"\rBootstrapPeer\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\"]\n" +
 	"\x11ListPeersResponse\x12,\n" +
 	"\x05peers\x18\x01 \x03(\v2\x16.sisyphus.node.v1.PeerR\x05peers\x12\x1a\n" +
-	"\brevision\x18\x02 \x01(\x04R\brevision\"\xa8\x02\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\"\xe6\x02\n" +
 	"\x04Peer\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12P\n" +
 	"\x10connection_state\x18\x02 \x01(\x0e2%.sisyphus.node.v1.PeerConnectionStateR\x0fconnectionState\x12'\n" +
 	"\x0fknown_addresses\x18\x03 \x03(\tR\x0eknownAddresses\x12.\n" +
 	"\x13trusted_for_compute\x18\x04 \x01(\bR\x11trustedForCompute\x12-\n" +
 	"\x13works_for_this_node\x18\x05 \x01(\bR\x10worksForThisNode\x12-\n" +
-	"\x13this_node_works_for\x18\x06 \x01(\bR\x10thisNodeWorksFor*\x89\x01\n" +
+	"\x13this_node_works_for\x18\x06 \x01(\bR\x10thisNodeWorksFor\x12\x1d\n" +
+	"\n" +
+	"gives_work\x18\a \x01(\bR\tgivesWork\x12\x1d\n" +
+	"\n" +
+	"takes_work\x18\b \x01(\bR\ttakesWork*\x89\x01\n" +
 	"\x13PeerConnectionState\x12%\n" +
 	"!PEER_CONNECTION_STATE_UNSPECIFIED\x10\x00\x12&\n" +
 	"\"PEER_CONNECTION_STATE_DISCONNECTED\x10\x01\x12#\n" +
-	"\x1fPEER_CONNECTION_STATE_CONNECTED\x10\x022\xc5\x05\n" +
+	"\x1fPEER_CONNECTION_STATE_CONNECTED\x10\x022\xcc\x06\n" +
 	"\vNodeService\x12Z\n" +
 	"\vGetNodeInfo\x12$.sisyphus.node.v1.GetNodeInfoRequest\x1a%.sisyphus.node.v1.GetNodeInfoResponse\x12T\n" +
 	"\tListPeers\x12\".sisyphus.node.v1.ListPeersRequest\x1a#.sisyphus.node.v1.ListPeersResponse\x12X\n" +
@@ -843,7 +991,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x11GetBootstrapPeers\x12*.sisyphus.node.v1.GetBootstrapPeersRequest\x1a+.sisyphus.node.v1.GetBootstrapPeersResponse\x12l\n" +
 	"\x11SetBootstrapPeers\x12*.sisyphus.node.v1.SetBootstrapPeersRequest\x1a+.sisyphus.node.v1.SetBootstrapPeersResponse\x12Z\n" +
 	"\vConnectPeer\x12$.sisyphus.node.v1.ConnectPeerRequest\x1a%.sisyphus.node.v1.ConnectPeerResponse\x12r\n" +
-	"\x13SetPeerComputeTrust\x12,.sisyphus.node.v1.SetPeerComputeTrustRequest\x1a-.sisyphus.node.v1.SetPeerComputeTrustResponseBPZNgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1b\x06proto3"
+	"\x13SetPeerComputeTrust\x12,.sisyphus.node.v1.SetPeerComputeTrustRequest\x1a-.sisyphus.node.v1.SetPeerComputeTrustResponse\x12\x84\x01\n" +
+	"\x19SetPeerComputePermissions\x122.sisyphus.node.v1.SetPeerComputePermissionsRequest\x1a3.sisyphus.node.v1.SetPeerComputePermissionsResponseBPZNgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1b\x06proto3"
 
 var (
 	file_sisyphus_node_v1_node_proto_rawDescOnce sync.Once
@@ -858,30 +1007,32 @@ func file_sisyphus_node_v1_node_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_node_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sisyphus_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_sisyphus_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_sisyphus_node_v1_node_proto_goTypes = []any{
-	(PeerConnectionState)(0),            // 0: sisyphus.node.v1.PeerConnectionState
-	(*GetNodeInfoRequest)(nil),          // 1: sisyphus.node.v1.GetNodeInfoRequest
-	(*GetNodeInfoResponse)(nil),         // 2: sisyphus.node.v1.GetNodeInfoResponse
-	(*ListPeersRequest)(nil),            // 3: sisyphus.node.v1.ListPeersRequest
-	(*WatchPeersRequest)(nil),           // 4: sisyphus.node.v1.WatchPeersRequest
-	(*GetBootstrapPeersRequest)(nil),    // 5: sisyphus.node.v1.GetBootstrapPeersRequest
-	(*GetBootstrapPeersResponse)(nil),   // 6: sisyphus.node.v1.GetBootstrapPeersResponse
-	(*SetBootstrapPeersRequest)(nil),    // 7: sisyphus.node.v1.SetBootstrapPeersRequest
-	(*SetBootstrapPeersResponse)(nil),   // 8: sisyphus.node.v1.SetBootstrapPeersResponse
-	(*ConnectPeerRequest)(nil),          // 9: sisyphus.node.v1.ConnectPeerRequest
-	(*ConnectPeerResponse)(nil),         // 10: sisyphus.node.v1.ConnectPeerResponse
-	(*SetPeerComputeTrustRequest)(nil),  // 11: sisyphus.node.v1.SetPeerComputeTrustRequest
-	(*SetPeerComputeTrustResponse)(nil), // 12: sisyphus.node.v1.SetPeerComputeTrustResponse
-	(*BootstrapPeer)(nil),               // 13: sisyphus.node.v1.BootstrapPeer
-	(*ListPeersResponse)(nil),           // 14: sisyphus.node.v1.ListPeersResponse
-	(*Peer)(nil),                        // 15: sisyphus.node.v1.Peer
+	(PeerConnectionState)(0),                  // 0: sisyphus.node.v1.PeerConnectionState
+	(*GetNodeInfoRequest)(nil),                // 1: sisyphus.node.v1.GetNodeInfoRequest
+	(*GetNodeInfoResponse)(nil),               // 2: sisyphus.node.v1.GetNodeInfoResponse
+	(*ListPeersRequest)(nil),                  // 3: sisyphus.node.v1.ListPeersRequest
+	(*WatchPeersRequest)(nil),                 // 4: sisyphus.node.v1.WatchPeersRequest
+	(*GetBootstrapPeersRequest)(nil),          // 5: sisyphus.node.v1.GetBootstrapPeersRequest
+	(*GetBootstrapPeersResponse)(nil),         // 6: sisyphus.node.v1.GetBootstrapPeersResponse
+	(*SetBootstrapPeersRequest)(nil),          // 7: sisyphus.node.v1.SetBootstrapPeersRequest
+	(*SetBootstrapPeersResponse)(nil),         // 8: sisyphus.node.v1.SetBootstrapPeersResponse
+	(*ConnectPeerRequest)(nil),                // 9: sisyphus.node.v1.ConnectPeerRequest
+	(*ConnectPeerResponse)(nil),               // 10: sisyphus.node.v1.ConnectPeerResponse
+	(*SetPeerComputeTrustRequest)(nil),        // 11: sisyphus.node.v1.SetPeerComputeTrustRequest
+	(*SetPeerComputeTrustResponse)(nil),       // 12: sisyphus.node.v1.SetPeerComputeTrustResponse
+	(*SetPeerComputePermissionsRequest)(nil),  // 13: sisyphus.node.v1.SetPeerComputePermissionsRequest
+	(*SetPeerComputePermissionsResponse)(nil), // 14: sisyphus.node.v1.SetPeerComputePermissionsResponse
+	(*BootstrapPeer)(nil),                     // 15: sisyphus.node.v1.BootstrapPeer
+	(*ListPeersResponse)(nil),                 // 16: sisyphus.node.v1.ListPeersResponse
+	(*Peer)(nil),                              // 17: sisyphus.node.v1.Peer
 }
 var file_sisyphus_node_v1_node_proto_depIdxs = []int32{
-	13, // 0: sisyphus.node.v1.GetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
-	13, // 1: sisyphus.node.v1.SetBootstrapPeersRequest.peers:type_name -> sisyphus.node.v1.BootstrapPeer
-	13, // 2: sisyphus.node.v1.SetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
-	15, // 3: sisyphus.node.v1.ListPeersResponse.peers:type_name -> sisyphus.node.v1.Peer
+	15, // 0: sisyphus.node.v1.GetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
+	15, // 1: sisyphus.node.v1.SetBootstrapPeersRequest.peers:type_name -> sisyphus.node.v1.BootstrapPeer
+	15, // 2: sisyphus.node.v1.SetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
+	17, // 3: sisyphus.node.v1.ListPeersResponse.peers:type_name -> sisyphus.node.v1.Peer
 	0,  // 4: sisyphus.node.v1.Peer.connection_state:type_name -> sisyphus.node.v1.PeerConnectionState
 	1,  // 5: sisyphus.node.v1.NodeService.GetNodeInfo:input_type -> sisyphus.node.v1.GetNodeInfoRequest
 	3,  // 6: sisyphus.node.v1.NodeService.ListPeers:input_type -> sisyphus.node.v1.ListPeersRequest
@@ -890,15 +1041,17 @@ var file_sisyphus_node_v1_node_proto_depIdxs = []int32{
 	7,  // 9: sisyphus.node.v1.NodeService.SetBootstrapPeers:input_type -> sisyphus.node.v1.SetBootstrapPeersRequest
 	9,  // 10: sisyphus.node.v1.NodeService.ConnectPeer:input_type -> sisyphus.node.v1.ConnectPeerRequest
 	11, // 11: sisyphus.node.v1.NodeService.SetPeerComputeTrust:input_type -> sisyphus.node.v1.SetPeerComputeTrustRequest
-	2,  // 12: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
-	14, // 13: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	14, // 14: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	6,  // 15: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
-	8,  // 16: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
-	10, // 17: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
-	12, // 18: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
-	12, // [12:19] is the sub-list for method output_type
-	5,  // [5:12] is the sub-list for method input_type
+	13, // 12: sisyphus.node.v1.NodeService.SetPeerComputePermissions:input_type -> sisyphus.node.v1.SetPeerComputePermissionsRequest
+	2,  // 13: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
+	16, // 14: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	16, // 15: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	6,  // 16: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
+	8,  // 17: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
+	10, // 18: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
+	12, // 19: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
+	14, // 20: sisyphus.node.v1.NodeService.SetPeerComputePermissions:output_type -> sisyphus.node.v1.SetPeerComputePermissionsResponse
+	13, // [13:21] is the sub-list for method output_type
+	5,  // [5:13] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
 	5,  // [5:5] is the sub-list for extension extendee
 	0,  // [0:5] is the sub-list for field type_name
@@ -915,7 +1068,7 @@ func file_sisyphus_node_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_node_v1_node_proto_rawDesc), len(file_sisyphus_node_v1_node_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

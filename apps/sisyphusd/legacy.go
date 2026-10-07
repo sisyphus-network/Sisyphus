@@ -51,11 +51,15 @@ type rustTrust interface {
 	Admit(id string, role access.Role, now time.Time) error
 }
 
+type rustWilling interface {
+	Set(id string, willing bool) error
+}
+
 // importRustState carries the Rust daemon's address book and trusted nodes
 // over, and sets its database aside so that this is done once. It is done
 // by a node that runs a pool, since trusting a node is admitting it to one;
 // on any other the database is left where it is for the day the node does.
-func importRustState(dataDir string, book rustBook, trust rustTrust, log *slog.Logger) error {
+func importRustState(dataDir string, book rustBook, trust rustTrust, takes rustWilling, log *slog.Logger) error {
 	file := rustDatabase(dataDir)
 	if _, err := os.Stat(file); err != nil {
 		return nil
@@ -68,7 +72,8 @@ func importRustState(dataDir string, book rustBook, trust rustTrust, log *slog.L
 		err = errors.Join(err, book.AddBootstrapPeer(entry))
 	}
 	for _, id := range old.Trusted {
-		err = errors.Join(err, trust.Admit(id, access.Worker, time.Now()))
+		// That daemon's trust had one side. Here it is both.
+		err = errors.Join(err, trust.Admit(id, access.Worker, time.Now()), takes.Set(id, true))
 	}
 	if err != nil {
 		return fmt.Errorf("carry over the Rust daemon's state: %w", err)

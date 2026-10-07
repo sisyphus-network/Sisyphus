@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -26,6 +27,9 @@ type poolService struct {
 	// swarm is the pool's private IPFS network, or nil if this node does
 	// not run one.
 	swarm Swarm
+	// workFor is the list of nodes this one takes work from, or nil if it
+	// keeps none.
+	workFor WorkFor
 }
 
 // Swarm is a private IPFS network this node is on.
@@ -118,7 +122,23 @@ func (s *poolService) ListMembers(context.Context, *pb.ListMembersRequest) (*pb.
 	for _, m := range s.access.Members() {
 		res.Members = append(res.Members, &pb.Member{NodeId: m.ID, Role: fromRole[m.Role], JoinedAt: timestamppb.New(m.Joined)})
 	}
+	if s.workFor != nil {
+		res.WorksFor = s.workFor.List()
+	}
 	return &res, nil
+}
+
+func (s *poolService) SetWorkFor(_ context.Context, req *pb.SetWorkForRequest) (*pb.SetWorkForResponse, error) {
+	if s.workFor == nil {
+		return nil, status.Error(codes.FailedPrecondition, "this node runs no worker, so it takes no work")
+	}
+	if _, err := peer.Decode(req.GetNodeId()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%q is not a node ID", req.GetNodeId())
+	}
+	if err := s.workFor.Set(req.GetNodeId(), req.GetWilling()); err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	return &pb.SetWorkForResponse{}, nil
 }
 
 func (s *poolService) RemoveMember(ctx context.Context, req *pb.RemoveMemberRequest) (*pb.RemoveMemberResponse, error) {

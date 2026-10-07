@@ -182,7 +182,7 @@ func TestPoolCommandUsage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"pool"}, "expected pool invite, join, members, remove or rekey"},
+		{[]string{"pool"}, "expected pool invite, join, members, remove, work-for or rekey"},
 		{[]string{"pool", "invite", "extra"}, `unexpected argument "extra"`},
 		{[]string{"pool", "invite", "--role", "admin"}, `unknown role "admin"`},
 		{[]string{"pool", "invite", "--ttl", "10ms"}, "--ttl must be at least a second"},

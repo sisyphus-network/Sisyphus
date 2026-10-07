@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 // localNode is a node as its desktop client sees it.
@@ -171,9 +173,9 @@ func TestChangingTrustAdmitsAndRemovesWorkers(t *testing.T) {
 	if _, ok := n.list.Role(peer); ok {
 		t.Error("a peer no longer trusted is still a member")
 	}
-	// Ending trust that was never given is an error, not a silent success.
-	if _, err := n.client.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: peer, Trusted: false}); status.Code(err) != codes.NotFound {
-		t.Errorf("ending trust in a stranger: %v, want NotFound", err)
+	// Ending trust that is not there leaves things as they should be.
+	if _, err := n.client.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: peer, Trusted: false}); err != nil {
+		t.Errorf("ending trust in a stranger: %v", err)
 	}
 	if _, err := n.client.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: "not-a-node-id", Trusted: true}); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("trusting something that is not a node ID: %v, want InvalidArgument", err)
@@ -394,5 +396,170 @@ func TestWatchPeersEndsWhenTheWatcherCannotBeSentTo(t *testing.T) {
 	n.setPeers(peerEntry("12D3KooWa", true, true))
 	if err := <-done; status.Code(err) != codes.Unavailable {
 		t.Errorf("error %v, want the send failure", err)
+	}
+}
+
+// taking is a list of nodes to take work from, kept in memory, which can be
+// made to fail.
+type taking struct {
+	ids []string
+	err error
+}
+
+func (w *taking) List() []string { return w.ids }
+
+func (w *taking) Set(id string, willing bool) error {
+	if w.err != nil {
+		return w.err
+	}
+	w.ids = slices.DeleteFunc(w.ids, func(other string) bool { return other == id })
+	if willing {
+		w.ids = append(w.ids, id)
+	}
+	return nil
+}
+
+func TestTheTwoSidesOfTrustAreSetSeparately(t *testing.T) {
+	const peerID = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	list := newList(t)
+	takes := &taking{}
+	service := &localService{cfg: LocalConfig{
+		Token: "the-token", WorkFor: takes,
+		Pool: NewPoolAdmin(Config{Identity: newIdentity(t), Access: list, Coordinator: newCoordinator(t)}),
+	}}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	state := func() (gives, willing bool) {
+		role, _ := list.Role(peerID)
+		return role == access.Worker, slices.Contains(takes.ids, peerID)
+	}
+	set := func(gives, willing bool) {
+		t.Helper()
+		got, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID, GivesWork: gives, TakesWork: willing})
+		if err != nil || got.GetGivesWork() != gives || got.GetTakesWork() != willing {
+			t.Fatalf("SetPeerComputePermissions(%v, %v) = %v, %v", gives, willing, got, err)
+		}
+		if g, w := state(); g != gives || w != willing {
+			t.Fatalf("after asking for gives=%v takes=%v the node gives=%v takes=%v", gives, willing, g, w)
+		}
+	}
+	// Each side by itself, both, neither, and set again as it already is.
+	set(true, false)
+	set(false, true)
+	set(true, true)
+	set(true, true)
+	set(false, false)
+	set(false, false)
+
+	// The one switch for both sets both, and clears both.
+	if _, err := service.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: peerID, Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if g, w := state(); !g || !w {
+		t.Errorf("after trusting, gives=%v takes=%v", g, w)
+	}
+	if _, err := service.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: peerID, Trusted: false}); err != nil {
+		t.Fatal(err)
+	}
+	if g, w := state(); g || w {
+		t.Errorf("after ending trust, gives=%v takes=%v", g, w)
+	}
+
+	// A node admitted as a client is not thrown out for being given no work.
+	const client = "12D3KooWGMC9eNSqjbuxQN5gg7emLLsXsBxYAanwqcmCUALXtquU"
+	list.Admit(client, access.Client, time.Now())
+	if _, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: client}); err != nil {
+		t.Fatal(err)
+	}
+	if role, _ := list.Role(client); role != access.Client {
+		t.Errorf("a client given no work now has role %q", role)
+	}
+
+	for name, tt := range map[string]struct {
+		ctx  context.Context
+		req  *nodepb.SetPeerComputePermissionsRequest
+		want codes.Code
+	}{
+		"without the token":         {context.Background(), &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID, TakesWork: true}, codes.PermissionDenied},
+		"something that is no node": {ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: "nope", TakesWork: true}, codes.InvalidArgument},
+	} {
+		if _, err := service.SetPeerComputePermissions(tt.ctx, tt.req); status.Code(err) != tt.want {
+			t.Errorf("%s: %v, want %v", name, err, tt.want)
+		}
+	}
+	takes.err = errors.New("the disk is full")
+	if _, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID, TakesWork: true}); status.Code(err) != codes.Internal {
+		t.Errorf("a list that cannot be saved: %v", err)
+	}
+}
+
+func TestANodeSetsOnlyTheSidesOfTrustItHas(t *testing.T) {
+	const peerID = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+
+	// A node with a worker and no pool can take work and has none to give.
+	takes := &taking{}
+	workerOnly := &localService{cfg: LocalConfig{Token: "the-token", WorkFor: takes}}
+	if _, err := workerOnly.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID, GivesWork: true}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("giving work from a node with no pool: %v", err)
+	}
+	// The one switch does what the node can: here, take.
+	if _, err := workerOnly.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: peerID, Trusted: true}); err != nil || len(takes.ids) != 1 {
+		t.Errorf("trusting from a node with no pool: %v, taking from %v", err, takes.ids)
+	}
+
+	// A node with a pool and no worker can give work and takes none.
+	list := newList(t)
+	coordinatorOnly := &localService{cfg: LocalConfig{Token: "the-token", Pool: NewPoolAdmin(Config{Identity: newIdentity(t), Access: list, Coordinator: newCoordinator(t)})}}
+	if _, err := coordinatorOnly.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID, TakesWork: true}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("taking work on a node with no worker: %v", err)
+	}
+	if _, err := coordinatorOnly.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: peerID, Trusted: true}); err != nil {
+		t.Errorf("trusting from a node with no worker: %v", err)
+	}
+	if role, _ := list.Role(peerID); role != access.Worker {
+		t.Errorf("the trusted node's role is %q", role)
+	}
+}
+
+func TestPoolServiceSetsWhomTheNodeWorksFor(t *testing.T) {
+	const peerID = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	takes := &taking{}
+	service := &poolService{access: newList(t), workFor: takes}
+	ctx := context.Background()
+	if _, err := service.SetWorkFor(ctx, &pb.SetWorkForRequest{NodeId: peerID, Willing: true}); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := service.ListMembers(ctx, &pb.ListMembersRequest{})
+	if err != nil || !slices.Equal(listed.GetWorksFor(), []string{peerID}) {
+		t.Errorf("ListMembers = %v, %v", listed, err)
+	}
+	if _, err := service.SetWorkFor(ctx, &pb.SetWorkForRequest{NodeId: peerID}); err != nil || len(takes.ids) != 0 {
+		t.Errorf("giving it up: %v, still taking from %v", err, takes.ids)
+	}
+	if _, err := service.SetWorkFor(ctx, &pb.SetWorkForRequest{NodeId: "nope", Willing: true}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("something that is no node: %v", err)
+	}
+	takes.err = errors.New("the disk is full")
+	if _, err := service.SetWorkFor(ctx, &pb.SetWorkForRequest{NodeId: peerID, Willing: true}); status.Code(err) != codes.Internal {
+		t.Errorf("a list that cannot be saved: %v", err)
+	}
+	// A node that keeps no such list.
+	without := &poolService{access: newList(t)}
+	if _, err := without.SetWorkFor(ctx, &pb.SetWorkForRequest{NodeId: peerID, Willing: true}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("a node with no worker: %v", err)
+	}
+	if listed, err := without.ListMembers(ctx, &pb.ListMembersRequest{}); err != nil || len(listed.GetWorksFor()) != 0 {
+		t.Errorf("ListMembers on a node with no worker: %v, %v", listed, err)
+	}
+}
+
+func TestEndingTheGivingOfWorkReportsAListThatCannotBeSaved(t *testing.T) {
+	const peerID = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	list := newList(t)
+	list.Admit(peerID, access.Worker, time.Now())
+	service := &localService{cfg: LocalConfig{Token: "the-token", Pool: &PoolAdmin{service: &poolService{access: stuckList{list}}}}}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	if _, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID}); status.Code(err) != codes.Internal {
+		t.Errorf("error %v, want Internal", err)
 	}
 }

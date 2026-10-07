@@ -9,6 +9,9 @@ export type Peer = {
   // leaves them out.
   worksForThisNode?: boolean
   thisNodeWorksFor?: boolean
+  // The two sides of this node's trust in the peer.
+  givesWork?: boolean
+  takesWork?: boolean
 }
 
 export type NodeSnapshot = {
@@ -31,6 +34,7 @@ const api = {
   reconnect: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:reconnect'),
   connectPeer: (address: string): Promise<string> => ipcRenderer.invoke('node:connect-peer', address),
   setPeerComputeTrust: (peerId: string, trusted: boolean): Promise<void> => ipcRenderer.invoke('node:set-peer-compute-trust', { peerId, trusted }),
+  setPeerComputePermissions: (peerId: string, givesWork: boolean, takesWork: boolean): Promise<void> => ipcRenderer.invoke('node:set-peer-compute-permissions', { peerId, givesWork, takesWork }),
   onSnapshot: (callback: (snapshot: NodeSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: NodeSnapshot) => callback(snapshot)
     ipcRenderer.on('node:snapshot', listener)

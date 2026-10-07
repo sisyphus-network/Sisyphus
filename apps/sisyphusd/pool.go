@@ -119,9 +119,11 @@ func poolCommand(ctx context.Context, args []string) error {
 			return poolRemove(ctx, args[1:])
 		case "rekey":
 			return poolRekey(ctx, args[1:])
+		case "work-for":
+			return poolWorkFor(ctx, args[1:])
 		}
 	}
-	return errors.New("expected pool invite, join, members, remove or rekey")
+	return errors.New("expected pool invite, join, members, remove, work-for or rekey")
 }
 
 func poolInvite(ctx context.Context, args []string) error {
@@ -203,14 +205,50 @@ func poolMembers(ctx context.Context, args []string) error {
 	}
 	if len(listed.GetMembers()) == 0 {
 		fmt.Fprintln(stdout, "no nodes have been admitted")
-		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NODE\tROLE\tJOINED")
+	if len(listed.GetMembers()) > 0 {
+		fmt.Fprintln(tw, "NODE\tROLE\tJOINED")
+	}
 	for _, m := range listed.GetMembers() {
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", m.GetNodeId(), roleNames[m.GetRole()], m.GetJoinedAt().AsTime().UTC().Format(time.RFC3339))
 	}
-	return tw.Flush()
+	tw.Flush()
+	// The other side of trust: whom this node will take tasks from.
+	for i, id := range listed.GetWorksFor() {
+		if i == 0 {
+			fmt.Fprintln(stdout, "\nthis node will work for:")
+		}
+		fmt.Fprintln(stdout, id)
+	}
+	return nil
+}
+
+// poolWorkFor says whether this node will take tasks from another.
+func poolWorkFor(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sisyphusd pool work-for", flag.ContinueOnError)
+	node := targetFlags(fs)
+	stop := fs.Bool("stop", false, "stop working for the node, and take no more tasks from it")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("expected exactly one node ID")
+	}
+	conn, err := node.connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := pb.NewPoolServiceClient(conn).SetWorkFor(ctx, &pb.SetWorkForRequest{NodeId: fs.Arg(0), Willing: !*stop}); err != nil {
+		return err
+	}
+	if *stop {
+		fmt.Fprintf(stdout, "no longer working for node %s\n", fs.Arg(0))
+	} else {
+		fmt.Fprintf(stdout, "will work for node %s whenever it will have this one\n", fs.Arg(0))
+	}
+	return nil
 }
 
 func poolRemove(ctx context.Context, args []string) error {

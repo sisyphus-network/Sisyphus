@@ -69,7 +69,8 @@ func TestANodeThatRanTheRustDaemonCarriesOnAsItself(t *testing.T) {
 	if err != nil || len(book.GetPeers()) != 1 || book.GetPeers()[0].GetAddress() != rustBootstrap {
 		t.Errorf("address book %v, %v", book, err)
 	}
-	if trusted := peerSeenBy(t, client, rustTrusted); !trusted.GetTrustedForCompute() {
+	// That daemon's trust had one side, and here it is both.
+	if trusted := peerSeenBy(t, client, rustTrusted); !trusted.GetTrustedForCompute() || !trusted.GetGivesWork() || !trusted.GetTakesWork() {
 		t.Errorf("the node the Rust daemon trusted is listed as %v", trusted)
 	}
 	if members := mustCLI(t, "pool", "members", "--addr", addr); !strings.Contains(members, rustTrusted) {
@@ -143,10 +144,11 @@ var errRefused = errors.New("the database is locked")
 
 func (refusing) AddBootstrapPeer(nodedb.BootstrapPeer) error { return errRefused }
 func (refusing) Admit(string, access.Role, time.Time) error  { return errRefused }
+func (refusing) Set(string, bool) error                      { return errRefused }
 
 func TestStateThatCannotBeCarriedOverIsLeftForNextTime(t *testing.T) {
 	dataDir := afterRust(t)
-	if err := importRustState(dataDir, refusing{}, refusing{}, quiet); !errors.Is(err, errRefused) {
+	if err := importRustState(dataDir, refusing{}, refusing{}, refusing{}, quiet); !errors.Is(err, errRefused) {
 		t.Errorf("error %v, want the refusal", err)
 	}
 	if _, err := os.Stat(rustDatabase(dataDir)); err != nil {
