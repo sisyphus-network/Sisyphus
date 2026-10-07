@@ -169,6 +169,7 @@ bin/sisyphusd blob get --key-file job.key <output CID>          # unsealed after
 
 - **What is sealed.** The input you seal, everything the job's tasks store, and its stored result. Each is encrypted with the key, so stores, caches and the private network hold only ciphertext.
 - **Who gets the key.** The coordinator, when you submit the job, and from it each worker that is assigned one of the job's tasks. It is never reported back in the job, logged, or given to anyone else. Those nodes see the data in the clear, as they must to compute on it.
+- **Where the key is kept.** In the coordinator's database, readable by its owner only, and only until the job finishes: an unfinished job could not be taken up after a restart without it. When the job finishes the key is erased from the database's files. That is as much as software can promise; a disk may keep traces of what it once held.
 - **What still shows.** The size of each blob, and that the job happened. The job's parameters and the small result it reports (for `wordcount`, the counts of words and of distinct words) are not sealed; they travel over the pool's encrypted connections but are visible to clients of the coordinator.
 - **Same result every time.** Sealing with the same key always gives the same bytes, so a private job's result has the same CID however the job is split, like any other. The other side of that: someone who can see two sealed blobs can tell whether they, or same-sized pieces at the same position in them, are identical under one key. Use a new key for data where that matters.
 - **Lose the key and the data is gone.** `key new` will not overwrite a key file for that reason.
@@ -198,6 +199,19 @@ bin/sisyphusd blob gc               # delete what nothing is keeping, now
 A coordinator also collects every `--gc-interval` (default one hour), and with `--max-store-bytes` refuses uploads once its store reaches that size.
 
 A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
+
+## Restarting a coordinator
+
+A coordinator keeps its jobs in `node.db`, a SQLite database in its data directory, so stopping it loses nothing:
+
+- **Finished jobs** are still there to be asked after, with their results.
+- **Unfinished jobs** are taken up where they were. Tasks that had finished stay finished. Tasks that were running go back to wait for a worker, and that is not counted against them, however often it happens. If every task had finished and only combining their outputs was cut short, the combining is done again, with no worker needed.
+- **A job's data** stays pinned across the restart for as long as the job takes.
+- **Workers** reconnect by themselves once the coordinator is back.
+
+A job's arrival and its finish are written through to the disk before anyone is told of them. The steps in between are not, so a power cut can lose the last few; the tasks concerned run again. A coordinator started without a workload that an unfinished job needs fails that job, and says why.
+
+The database also records every attempt at every task: which node, and how it went. Nothing reads that yet. It is there for accounting later.
 
 ## The desktop app
 
@@ -248,14 +262,16 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 | `apps/sisyphusd/api` | gRPC server wiring and the client-facing services. |
 | `apps/sisyphusd/access` | Who has been admitted and in what role; invitations; checking every call. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
+| `packages/nodedb` | The node's SQLite database: jobs, tasks and attempts. |
 | `packages/storage` | Content-addressed blob store, pins, garbage collection. |
 
 `make proto` needs `protoc` on your path and the plugins from `make tools`.
 
 ## Known limits
 
-- State is in memory: restarting the coordinator loses every job. Pins those jobs held open are given the retention period to lapse.
-- A task is tried at most three times, and losing its worker counts as a try.
+- A task may fail three times, and losing its worker counts as a failure. Losing its coordinator does not.
+- Jobs are kept for good: nothing removes a finished job from the coordinator's database yet.
+- Invitations that have not been used do not survive a coordinator restart.
 - When a job fails, its other running tasks are left to finish and their results discarded; there is no cancellation.
 - Workers are chosen by free slots only, not by hardware.
 - A coordinator accepts whatever result a worker returns. Admit only workers you trust.

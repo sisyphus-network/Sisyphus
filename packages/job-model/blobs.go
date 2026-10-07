@@ -7,13 +7,17 @@ import "sort"
 // between its own steps.
 
 // NoteRead records blobs the job opened.
-func (j *Job) NoteRead(cids ...string) { add(j.read, cids) }
+func (j *Job) NoteRead(cids ...string) { j.unsaved.Read = add(j.read, j.unsaved.Read, cids) }
 
 // NoteTaskOutput records blobs a task stored.
-func (j *Job) NoteTaskOutput(cids ...string) { add(j.intermediate, cids) }
+func (j *Job) NoteTaskOutput(cids ...string) {
+	j.unsaved.TaskOutputs = add(j.intermediate, j.unsaved.TaskOutputs, cids)
+}
 
 // NoteResult records blobs the aggregation stored, which make up the result.
-func (j *Job) NoteResult(cids ...string) { add(j.outputs, cids) }
+func (j *Job) NoteResult(cids ...string) {
+	j.unsaved.Results = add(j.outputs, j.unsaved.Results, cids)
+}
 
 // InputBlobs returns the blobs the job consumed: those it opened but did not
 // itself produce.
@@ -49,10 +53,16 @@ func (j *Job) IntermediateBlobs() []string {
 	return mid
 }
 
-func add(set map[string]struct{}, cids []string) {
+// add puts cids in set and returns fresh with those that were not there
+// before appended.
+func add(set map[string]struct{}, fresh, cids []string) []string {
 	for _, c := range cids {
-		set[c] = struct{}{}
+		if _, known := set[c]; !known {
+			set[c] = struct{}{}
+			fresh = append(fresh, c)
+		}
 	}
+	return fresh
 }
 
 func sorted(set map[string]struct{}) []string {

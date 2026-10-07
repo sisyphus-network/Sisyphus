@@ -107,7 +107,7 @@ Each of these has a right answer. Note any that go otherwise.
 | Stop a worker, start it again, run `wordcount` on the same big file. | No slower than the cached run: the worker's cache survived. |
 | Unplug a worker's network, or suspend the machine, mid-job. | Within about fifteen seconds the coordinator logs it disconnected and its tasks move. |
 | On the coordinator: `sisyphusd pool remove <worker-id>`. | That worker's process exits saying it was removed. `sisyphusd nodes` no longer lists it. Restarting it is refused. |
-| Stop the coordinator mid-job and start it again. | The job is gone: jobs are not yet saved. Workers reconnect by themselves within half a minute. Stored files and pins are still there (`sisyphusd blob pins`). |
+| Stop the coordinator mid-job and start it again. | Workers reconnect by themselves within half a minute and the job carries on: tasks that had finished are not run again, and the ones that were running start over without it counting against them. `sisyphusd job get <job-id>` shows it, and finished jobs from before the restart too. Stored files and pins are still there (`sisyphusd blob pins`). |
 
 ### 6. Run a private job
 

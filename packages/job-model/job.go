@@ -44,8 +44,11 @@ type Task struct {
 	Index   int
 	Payload []byte
 	State   State
-	// Attempt counts how many times the task has been handed to a worker.
-	Attempt int
+	// Attempt counts how many times the task has been handed to a worker,
+	// and Failures how many of those attempts failed. They differ by the
+	// attempt in progress and by any that were lost; see Requeue.
+	Attempt  int
+	Failures int
 	// NodeID is the worker currently or most recently running the task, and
 	// NodeName the label that worker gave itself.
 	NodeID   string
@@ -76,18 +79,33 @@ type Job struct {
 	read         map[string]struct{} // opened by the split, a task or the aggregation
 	intermediate map[string]struct{} // stored by tasks
 	outputs      map[string]struct{} // stored by the aggregation
+
+	// What has changed since the job was last saved; see Unsaved.
+	unsaved Changes
+	touched map[int]struct{} // indexes of the tasks in unsaved
 }
 
 // New creates a pending job with one pending task per payload.
 func New(id, workload string, params []byte, mode Mode, maxTasks int, payloads [][]byte, now time.Time) *Job {
-	j := &Job{
-		ID: id, Workload: workload, Params: params, Mode: mode, MaxTasks: maxTasks, CreatedAt: now,
-		read: make(map[string]struct{}), intermediate: make(map[string]struct{}), outputs: make(map[string]struct{}),
-	}
+	j := &Job{ID: id, Workload: workload, Params: params, Mode: mode, MaxTasks: maxTasks, CreatedAt: now}
+	j.init()
+	j.unsaved.New = true
 	for i, payload := range payloads {
-		j.Tasks = append(j.Tasks, &Task{ID: fmt.Sprintf("%s/%d", id, i), Index: i, Payload: payload})
+		t := &Task{ID: TaskID(id, i), Index: i, Payload: payload}
+		j.Tasks = append(j.Tasks, t)
+		j.touch(t)
 	}
 	return j
+}
+
+// TaskID is the ID of the task at index in the job with the given ID.
+func TaskID(jobID string, index int) string {
+	return fmt.Sprintf("%s/%d", jobID, index)
+}
+
+func (j *Job) init() {
+	j.read, j.intermediate, j.outputs = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
+	j.touched = make(map[int]struct{})
 }
 
 // Terminal reports whether the job has finished, successfully or not.
@@ -115,6 +133,7 @@ func (j *Job) Start(t *Task, nodeID, nodeName string) {
 	t.Attempt++
 	t.NodeID = nodeID
 	t.NodeName = nodeName
+	j.touch(t)
 	if j.State == Pending {
 		j.State = Running
 	}
@@ -126,6 +145,7 @@ func (j *Job) Succeed(t *Task, output []byte) (allDone bool) {
 	t.State = Succeeded
 	t.Output = output
 	t.Err = ""
+	j.touch(t)
 	for _, other := range j.Tasks {
 		if other.State != Succeeded {
 			return false
@@ -134,16 +154,28 @@ func (j *Job) Succeed(t *Task, output []byte) (allDone bool) {
 	return true
 }
 
-// Fail records a failed attempt. The task goes back to pending unless it has
-// used up maxAttempts, in which case it fails and takes the job with it.
+// Fail records a failed attempt. The task goes back to pending unless
+// maxAttempts of its attempts have now failed, in which case it fails and
+// takes the job with it.
 func (j *Job) Fail(t *Task, reason string, maxAttempts int, now time.Time) {
 	t.Err = reason
-	if t.Attempt < maxAttempts {
+	t.Failures++
+	j.touch(t)
+	if t.Failures < maxAttempts {
 		t.State = Pending
 		return
 	}
 	t.State = Failed
-	j.Finish(nil, fmt.Errorf("task %d failed after %d attempts: %s", t.Index, t.Attempt, reason), now)
+	j.Finish(nil, fmt.Errorf("task %d failed after %d attempts: %s", t.Index, t.Failures, reason), now)
+}
+
+// Requeue puts a running task back to pending without counting the attempt
+// against it, for when the attempt was lost through no fault of the task or
+// its worker.
+func (j *Job) Requeue(t *Task, reason string) {
+	t.State = Pending
+	t.Err = reason
+	j.touch(t)
 }
 
 // Finish moves the job to a terminal state. A nil err means success.

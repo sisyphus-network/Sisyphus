@@ -8,10 +8,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,11 +47,29 @@ type Store interface {
 	Unpin(owner string, cids ...cid.Cid) error
 }
 
+// Journal keeps jobs somewhere that outlasts the coordinator. A nodedb.DB is
+// one.
+type Journal interface {
+	// SaveJob writes what has changed in a job since it was last saved.
+	SaveJob(job *jobmodel.Job) error
+	// LoadJobs returns every saved job, oldest first.
+	LoadJobs() ([]*jobmodel.Job, error)
+}
+
+// noJournal is the journal of a coordinator that keeps its jobs in memory
+// only.
+type noJournal struct{}
+
+func (noJournal) SaveJob(*jobmodel.Job) error        { return nil }
+func (noJournal) LoadJobs() ([]*jobmodel.Job, error) { return nil, nil }
+
 type Config struct {
 	// ID names this coordinator to its workers.
 	ID        string
 	Workloads *runtime.Registry
 	Store     Store
+	// Journal, if set, is where jobs are kept across restarts; see Recover.
+	Journal Journal
 	// Retain is how long a job's inputs and results stay pinned after it
 	// finishes.
 	Retain time.Duration
@@ -62,6 +82,7 @@ type Coordinator struct {
 	id        string
 	workloads *runtime.Registry
 	store     Store
+	journal   Journal
 	retain    time.Duration
 	log       *slog.Logger
 
@@ -156,10 +177,14 @@ type assignment struct {
 
 func New(cfg Config) *Coordinator {
 	ctx, cancel := context.WithCancel(context.Background())
+	if cfg.Journal == nil {
+		cfg.Journal = noJournal{}
+	}
 	return &Coordinator{
 		id:        cfg.ID,
 		workloads: cfg.Workloads,
 		store:     cfg.Store,
+		journal:   cfg.Journal,
 		retain:    cfg.Retain,
 		log:       cfg.Log,
 		ctx:       ctx,
@@ -170,8 +195,75 @@ func New(cfg Config) *Coordinator {
 	}
 }
 
+// Recover takes up the jobs in the journal where an earlier coordinator
+// left them, and returns how many of them were unfinished. Call it once,
+// before the coordinator is given anything else to do.
+//
+// A task that was running goes back to wait for a worker: whoever had it
+// has lost its connection, and anything it sends later is for an attempt
+// this coordinator did not hand out. That does not count against the task.
+func (c *Coordinator) Recover() (unfinished int, err error) {
+	jobs, err := c.journal.LoadJobs()
+	if err != nil {
+		return 0, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, job := range jobs {
+		c.jobs[job.ID] = job
+		c.changed[job.ID] = make(chan struct{})
+		if job.Terminal() {
+			continue
+		}
+		unfinished++
+		if _, err := c.workloads.Get(job.Workload); err != nil {
+			// Nobody is left who could split, run or combine it.
+			job.Finish(nil, fmt.Errorf("the coordinator was restarted without this job's workload: %w", err), time.Now())
+			c.settleLocked(job)
+			c.saveLocked(job)
+			continue
+		}
+		c.active = append(c.active, job)
+		waiting := false
+		for _, task := range job.Tasks {
+			if task.State == jobmodel.Running {
+				job.Requeue(task, "the coordinator was restarted")
+			}
+			waiting = waiting || task.State != jobmodel.Succeeded
+		}
+		c.saveLocked(job)
+		if !waiting {
+			// Every task had finished and only combining them was cut short.
+			c.aggregating.Add(1)
+			go c.aggregate(job)
+		}
+	}
+	return unfinished, nil
+}
+
+// Holds reports whether owner is the name an unfinished job holds its pins
+// under. Pins held open under any other job's name have nobody left to
+// release them.
+func (c *Coordinator) Holds(owner string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	job, ok := c.jobs[strings.TrimPrefix(owner, ownerPrefix)]
+	return ok && strings.HasPrefix(owner, ownerPrefix) && !job.Terminal()
+}
+
+// saveLocked records a job's changes in the journal. A job is not stopped
+// because it could not be recorded: it carries on in memory, and its unsaved
+// changes are written with the next one.
+func (c *Coordinator) saveLocked(job *jobmodel.Job) {
+	if err := c.journal.SaveJob(job); err != nil {
+		c.log.Warn("could not save a job; it will be lost if the coordinator stops now", "job", job.ID, "error", err)
+	}
+}
+
 // Close stops work the coordinator is doing on its own account and waits for
-// it to end. Call it before closing the blob store.
+// it to end. Call it before closing the blob store, and before cutting off
+// the workers: a worker lost to a coordinator that has been closed is not
+// held against the tasks it was running. Closing twice does no harm.
 func (c *Coordinator) Close() {
 	c.cancel()
 	c.aggregating.Wait()
@@ -222,11 +314,16 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 	defer c.mu.Unlock()
 	job := jobmodel.New(newID(), workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
 	job.Key = spec.GetKey()
+	job.NoteRead(touched.Read()...)
+	// A job is accepted only once it is on record: its submitter is about
+	// to be given an ID to ask after.
+	if err := c.journal.SaveJob(job); err != nil {
+		return nil, status.Errorf(codes.Internal, "could not record the job: %v", err)
+	}
 	c.jobs[job.ID] = job
 	c.active = append(c.active, job)
 	c.changed[job.ID] = make(chan struct{})
 	// Hold the job's inputs until it is over, however long that takes.
-	job.NoteRead(touched.Read()...)
 	c.pin(job, time.Time{}, touched.Read())
 	c.log.Info("job submitted", "job", job.ID, "workload", job.Workload, "tasks", len(job.Tasks))
 
@@ -438,7 +535,12 @@ func (c *Coordinator) disconnect(w *worker) {
 		if a.job.Terminal() {
 			continue
 		}
-		a.job.Fail(a.task, "worker "+w.id+" disconnected", maxAttempts, now)
+		if c.ctx.Err() != nil {
+			// It is the coordinator that is going away, not the worker.
+			a.job.Requeue(a.task, "the coordinator stopped")
+		} else {
+			a.job.Fail(a.task, "worker "+w.id+" disconnected", maxAttempts, now)
+		}
 		c.settleLocked(a.job)
 		c.notifyLocked(a.job)
 	}
@@ -458,6 +560,12 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	a, ok := w.running[result.GetTaskId()]
 	if !ok || uint32(a.task.Attempt) != result.GetAttempt() {
 		c.log.Warn("dropping result for a task this worker is not running", "node", w.id, "task", result.GetTaskId())
+		return
+	}
+	if c.ctx.Err() != nil {
+		// A stopping coordinator can no longer combine a job's outputs, so
+		// it takes in no more of them. The task runs again after a restart.
+		c.log.Warn("dropping a result that arrived while stopping", "node", w.id, "task", result.GetTaskId())
 		return
 	}
 	delete(w.running, a.task.ID)
@@ -513,6 +621,11 @@ func (c *Coordinator) aggregate(job *jobmodel.Job) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.ctx.Err() != nil {
+		// Cut short by the coordinator stopping, which is no fault of the
+		// job's. It stays as it was, to be combined after a restart.
+		return
+	}
 	now := time.Now()
 	job.NoteRead(touched.Read()...)
 	job.NoteResult(touched.Written()...)
@@ -556,9 +669,17 @@ func withKey(blobs runtime.Blobs, key []byte) runtime.Blobs {
 	return runtime.Sealed(blobs, sealed.Key(key))
 }
 
+// OwnsPin reports whether owner is a name some job, past or present, holds
+// pins under.
+func OwnsPin(owner string) bool {
+	return strings.HasPrefix(owner, ownerPrefix)
+}
+
+const ownerPrefix = "job:"
+
 // owner is the name a job's pins are held under.
 func owner(job *jobmodel.Job) string {
-	return "job:" + job.ID
+	return ownerPrefix + job.ID
 }
 
 // decode parses CIDs, dropping any that are malformed. They can come from
@@ -627,7 +748,10 @@ func (c *Coordinator) slotsLocked(workload string) int {
 	return total
 }
 
+// notifyLocked is called after every change to a job: it records the change
+// and wakes whoever is watching the job.
 func (c *Coordinator) notifyLocked(job *jobmodel.Job) {
+	c.saveLocked(job)
 	close(c.changed[job.ID])
 	c.changed[job.ID] = make(chan struct{})
 }

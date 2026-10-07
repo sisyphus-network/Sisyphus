@@ -64,6 +64,9 @@ type pool struct {
 	heartbeat time.Duration
 	// logs is everything the coordinator has logged.
 	logs *syncBuffer
+	// stop shuts the coordinator down as a node being stopped would, before
+	// the test ends.
+	stop func()
 	// ident is the coordinator's identity and access its list of admitted
 	// nodes; workerIdents are the identities of workers started by name.
 	ident        *identity.Identity
@@ -136,6 +139,13 @@ func startPool(t *testing.T, workloads *runtime.Registry) *pool {
 // wrapped, for tests that make the store misbehave.
 func startPoolOver(t *testing.T, workloads *runtime.Registry, wrap func(*storage.Store) coordinator.Store) *pool {
 	t.Helper()
+	return startPoolWith(t, workloads, wrap, nil)
+}
+
+// startPoolWith starts a pool whose coordinator keeps its jobs in journal,
+// if one is given, and takes up the jobs already there.
+func startPoolWith(t *testing.T, workloads *runtime.Registry, wrap func(*storage.Store) coordinator.Store, journal coordinator.Journal) *pool {
+	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -149,19 +159,23 @@ func startPoolOver(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 		t.Fatal(err)
 	}
 	coord := coordinator.New(coordinator.Config{
-		ID: ident.ID(), Workloads: workloads, Store: wrap(store), Retain: testRetain,
+		ID: ident.ID(), Workloads: workloads, Store: wrap(store), Journal: journal, Retain: testRetain,
 		Log: slog.New(slog.NewTextHandler(logs, nil)),
 	})
+	if _, err := coord.Recover(); err != nil {
+		t.Fatal(err)
+	}
 	gets := new(atomic.Int32)
 	srv := api.NewServer(
 		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store},
 		grpc.StreamInterceptor(countBlobGets(gets)),
 	)
 	go srv.Serve(lis)
-	t.Cleanup(func() {
-		srv.Stop()
+	stop := sync.OnceFunc(func() {
 		coord.Close()
+		srv.Stop()
 	})
+	t.Cleanup(stop)
 
 	// The helpers' own calls are made as the node's owner.
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(credentials.NewTLS(ident.ClientTLS(ident.ID()))))
@@ -176,7 +190,7 @@ func startPoolOver(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 		t: t, ctx: ctx, addr: lis.Addr().String(), workloads: workloads,
 		client: pb.NewNodeServiceClient(conn), blobs: pb.NewBlobServiceClient(conn),
 		store: store, blobGets: gets, workerStores: make(map[string]*storage.Store),
-		coord: coord, conn: conn, logs: logs,
+		coord: coord, conn: conn, logs: logs, stop: stop,
 		ident: ident, access: admitted, workerIdents: make(map[string]*identity.Identity),
 		rawIdents: make(map[*rawWorker]*identity.Identity),
 	}
