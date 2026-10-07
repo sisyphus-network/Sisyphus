@@ -353,3 +353,37 @@ func TestCoordinatorTracksWhenItLastHeardFromAWorker(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestWorkersAreToldWhichSwarmKeyIsCurrent(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	early := p.connectRaw(hello("early", 1, "primes"))
+	msg, err := early.stream.Recv()
+	if err != nil || msg.GetWelcome() == nil || msg.GetWelcome().GetSwarmFingerprint() != "" {
+		t.Fatalf("welcome from a pool with no private network: %v, %v", msg, err)
+	}
+
+	p.coord.AnnounceSwarm("first-key")
+	// A worker already connected is told at once.
+	msg, err = early.stream.Recv()
+	if err != nil || msg.GetSwarmUpdate().GetSwarmFingerprint() != "first-key" {
+		t.Errorf("a connected worker received %v, %v; want word of the key", msg, err)
+	}
+	// One that connects afterwards is told as it is welcomed.
+	late := p.connectRaw(hello("late", 1, "primes"))
+	msg, err = late.stream.Recv()
+	if err != nil || msg.GetWelcome().GetSwarmFingerprint() != "first-key" {
+		t.Errorf("a later worker's welcome: %v, %v", msg, err)
+	}
+
+	// Several changes in a row all arrive, in order, though nothing is
+	// reading in between.
+	for _, key := range []string{"second-key", "third-key", "fourth-key"} {
+		p.coord.AnnounceSwarm(key)
+	}
+	for _, want := range []string{"second-key", "third-key", "fourth-key"} {
+		msg, err = early.stream.Recv()
+		if err != nil || msg.GetSwarmUpdate().GetSwarmFingerprint() != want {
+			t.Errorf("received %v, %v; want word of %s", msg, err, want)
+		}
+	}
+}

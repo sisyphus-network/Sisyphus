@@ -117,6 +117,8 @@ func TestOpenFetchesFromTheCoordinatorOnceThenUsesTheLocalCopy(t *testing.T) {
 	}
 	addr, stopCoordinator := startCoordinator(t, remote)
 	blobs := dial(t, addr, local)
+	var fellBack []cid.Cid
+	blobs.OnFallback = func(c cid.Cid) { fellBack = append(fellBack, c) }
 
 	blob, err := blobs.Open(ctx, c)
 	if err != nil {
@@ -127,6 +129,11 @@ func TestOpenFetchesFromTheCoordinatorOnceThenUsesTheLocalCopy(t *testing.T) {
 	}
 	if has, _ := local.Has(ctx, c); !has {
 		t.Error("the fetched blob was not kept locally")
+	}
+
+	// The download from the coordinator was reported, once.
+	if len(fellBack) != 1 || !fellBack[0].Equals(c) {
+		t.Errorf("reported falling back for %v, want once for %s", fellBack, c)
 	}
 
 	// With the coordinator gone, the blob must still open.

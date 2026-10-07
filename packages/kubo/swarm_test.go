@@ -232,3 +232,100 @@ func TestConfigureForASwarm(t *testing.T) {
 		t.Error("configured a swarm whose key could not be stored")
 	}
 }
+
+func TestRekeyMovesADaemonToANewNetworkAndShutsTheOldOneOut(t *testing.T) {
+	oldKey, newKey := NewSwarmKey(), NewSwarmKey()
+	first := member(t, oldKey)
+	second := member(t, oldKey, addressesOf(t, first)...)
+	connected(t, second, first)
+	kept, err := first.BlockPut(ctx, "raw", []byte("stored before the key changed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := first.Rekey(ctx, &Swarm{Key: newKey, PeerTimeout: 3 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	// It is the same node with the same data.
+	if got, err := first.BlockGet(ctx, kept); err != nil || string(got) != "stored before the key changed" {
+		t.Errorf("a block from before the change: %q, %v", got, err)
+	}
+	// The member still on the old key can no longer reach it or fetch from it.
+	fresh, err := first.BlockPut(ctx, "raw", []byte("stored after the key changed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Connect(ctx, addressesOf(t, first)[0]); err == nil {
+		t.Error("a daemon on the old key connected to one on the new")
+	}
+	if _, err := second.BlockGet(ctx, fresh); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a daemon on the old key fetched a new block: %v", err)
+	}
+
+	// Given the new key and told where to look, it is a member again.
+	if err := second.Rekey(ctx, &Swarm{Key: newKey, Peers: addressesOf(t, first), PeerTimeout: 3 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	connected(t, second, first)
+	if got, err := second.BlockGet(ctx, fresh); err != nil || string(got) != "stored after the key changed" {
+		t.Errorf("after following to the new key: %q, %v", got, err)
+	}
+}
+
+// Whatever is using the daemon while it restarts should see a pause, not a
+// failure.
+func TestCallsMadeDuringARekeyWaitForIt(t *testing.T) {
+	d := member(t, NewSwarmKey())
+	id, err := d.BlockPut(ctx, "raw", []byte("there throughout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	failures := make(chan error, 1)
+	calls := make(chan int, 1)
+	go func() {
+		n := 0
+		for {
+			select {
+			case <-stop:
+				calls <- n
+				return
+			default:
+			}
+			if _, err := d.BlockSize(ctx, id); err != nil {
+				select {
+				case failures <- err:
+				default:
+				}
+			}
+			n++
+		}
+	}()
+
+	if err := d.Rekey(ctx, &Swarm{Key: NewSwarmKey()}); err != nil {
+		t.Fatal(err)
+	}
+	// Let a few calls land on the restarted daemon as well.
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+	if n := <-calls; n < 2 {
+		t.Errorf("only %d calls were made around the restart", n)
+	}
+	select {
+	case err := <-failures:
+		t.Errorf("a call made around the restart failed: %v", err)
+	default:
+	}
+}
+
+func TestAFailedRekeyLeavesTheDaemonStopped(t *testing.T) {
+	d := member(t, NewSwarmKey())
+	err := d.Rekey(ctx, &Swarm{Key: NewSwarmKey(), Peers: []string{"not-an-address"}})
+	if err == nil {
+		t.Fatal("Rekey accepted a malformed member address")
+	}
+	if _, err := d.ID(ctx); err == nil {
+		t.Error("the daemon still answers after a failed Rekey")
+	}
+}

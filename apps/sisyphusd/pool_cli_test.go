@@ -182,7 +182,7 @@ func TestPoolCommandUsage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"pool"}, "expected pool invite, join, members or remove"},
+		{[]string{"pool"}, "expected pool invite, join, members, remove or rekey"},
 		{[]string{"pool", "invite", "extra"}, `unexpected argument "extra"`},
 		{[]string{"pool", "invite", "--role", "admin"}, `unknown role "admin"`},
 		{[]string{"pool", "invite", "--ttl", "10ms"}, "--ttl must be at least a second"},
@@ -260,4 +260,21 @@ func TestRemovedWorkerIsDisconnectedAndItsTasksMove(t *testing.T) {
 	if task := done.GetTasks()[0]; done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || task.GetNodeName() != "heir" || task.GetAttempt() != 2 {
 		t.Errorf("job %v; its task finished on %q at attempt %d, want heir at attempt 2", done.GetState(), task.GetNodeName(), task.GetAttempt())
 	}
+}
+
+// A worker is usually restarted with the command it was first started with,
+// invitation and all, by a person or by a service manager.
+func TestAWorkerRestartsWithTheCommandThatFirstStartedIt(t *testing.T) {
+	addr := freeAddr(t)
+	startDaemon(t, "--role", "coordinator", "--listen", addr)
+	workerDir := t.TempDir()
+	command := []string{"--role", "worker", "--coordinator", addr, "--join", invite(t, addr, "worker"), "--data-dir", workerDir, "--name", "steady"}
+
+	stop := startDaemon(t, command...)
+	waitForOutput(t, "steady", "nodes", "--addr", addr)
+	stop()
+	waitForOutput(t, "no workers connected", "nodes", "--addr", addr)
+
+	startDaemon(t, command...)
+	waitForOutput(t, "steady", "nodes", "--addr", addr)
 }

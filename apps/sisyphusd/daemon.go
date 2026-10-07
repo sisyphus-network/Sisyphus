@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,8 +14,10 @@ import (
 	goruntime "runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -33,7 +37,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	roles := fs.String("role", "coordinator,worker", "comma-separated roles this node runs: coordinator, worker")
 	listen := fs.String("listen", defaultAddr, "coordinator role: address to serve workers and clients on")
 	join := fs.String("coordinator", "", "worker-only node: host:port of its coordinator")
-	invitation := fs.String("join", "", "worker-only node: an invitation from the coordinator, needed the first time this node connects to it")
+	invitation := fs.String("join", "", "worker-only node: an invitation from the coordinator, needed the first time this node connects to it and ignored after that")
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
@@ -102,14 +106,17 @@ func runDaemon(ctx context.Context, args []string) error {
 		// A worker only ever talks to the coordinator it joined. The first
 		// time, an invitation says which node that is and gets this one
 		// admitted; after that the coordinator's ID is remembered.
-		if *invitation != "" {
-			if _, err := joinPool(ctx, *dataDir, ident, *join, *invitation); err != nil {
-				return err
-			}
-		}
 		known, err := loadKnown(*dataDir)
 		if err != nil {
 			return err
+		}
+		// An invitation works once, so it is only presented by a node that
+		// has not joined yet. That lets a worker be restarted with the very
+		// command it was first started with.
+		if known[*join] == "" && *invitation != "" {
+			if _, known, err = joinPool(ctx, *dataDir, ident, *join, *invitation); err != nil {
+				return err
+			}
 		}
 		if coordinatorID = known[*join]; coordinatorID == "" {
 			return fmt.Errorf("this node has not joined a coordinator at %s: start it once with --join and an invitation from that coordinator", *join)
@@ -137,7 +144,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		defer sidecar.Stop()
-		swarm = &poolSwarm{key: network.Key, daemon: sidecar}
+		swarm = &poolSwarm{key: network.Key, daemon: sidecar, keyFile: filepath.Join(*dataDir, "swarm.key"), port: *swarmPort}
 		log.Info("kubo started", "repo", filepath.Join(*dataDir, "ipfs"))
 	}
 
@@ -187,6 +194,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore}
 		if swarm != nil {
 			config.Swarm = swarm
+			coord.AnnounceSwarm(swarm.Fingerprint())
 		}
 		srv := api.NewServer(config)
 		// Workers hold streams open indefinitely, so a graceful stop would
@@ -216,6 +224,9 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		defer remote.Close()
+		if swarm != nil {
+			remote.OnFallback = warnOfFallback(log)
+		}
 		blobs = remote
 	}
 
@@ -223,6 +234,20 @@ func runDaemon(ctx context.Context, args []string) error {
 		w := &worker.Worker{
 			Name: *name, Coordinator: *join, Credentials: creds,
 			Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log,
+		}
+		if swarm != nil && !isCoordinator {
+			// Changing key restarts Kubo, which takes seconds, so it is
+			// done beside the worker's own work and finished, or given up,
+			// before Kubo is stopped.
+			var following sync.WaitGroup
+			defer following.Wait()
+			w.OnSwarm = func(stated string) {
+				following.Add(1)
+				go func() {
+					defer following.Done()
+					swarm.adopt(ctx, *join, creds, stated, log)
+				}()
+			}
 		}
 		done := make(chan struct{})
 		// Tasks must finish before the store they use closes.
@@ -245,13 +270,35 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 }
 
-// poolSwarm is the private IPFS network of the pool this node belongs to.
+// poolSwarm is the private IPFS network of the pool this node belongs to,
+// and this node's Kubo daemon on it.
 type poolSwarm struct {
-	key    string
 	daemon *kubo.Daemon
+	// keyFile is where a coordinator keeps the key, and port where its Kubo
+	// accepts the other members.
+	keyFile string
+	port    int
+
+	// mu serialises changes of key.
+	mu  sync.Mutex
+	key string
 }
 
-func (s *poolSwarm) Key() string { return s.key }
+func (s *poolSwarm) Key() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.key
+}
+
+// Fingerprint identifies the current key without revealing it.
+func (s *poolSwarm) Fingerprint() string {
+	return fingerprint(s.Key())
+}
+
+func fingerprint(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:8])
+}
 
 // Addresses returns where this node's Kubo can be reached, followed by where
 // the members connected to it can be, so that a node joining the network
@@ -263,6 +310,66 @@ func (s *poolSwarm) Addresses(ctx context.Context) ([]string, error) {
 	}
 	others, err := s.daemon.PeerAddresses(ctx)
 	return append(own, others...), err
+}
+
+// Rekey gives the pool's network a new key, on a coordinator: it saves the
+// key and restarts this node's Kubo on it. Every other holder of the old key
+// is then outside the network until it is given the new one.
+func (s *poolSwarm) Rekey(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := kubo.NewSwarmKey()
+	if err := os.WriteFile(s.keyFile, []byte(key), 0o600); err != nil {
+		return fmt.Errorf("save swarm key: %w", err)
+	}
+	if err := s.daemon.Rekey(ctx, &kubo.Swarm{Key: key, Port: s.port}); err != nil {
+		return err
+	}
+	s.key = key
+	return nil
+}
+
+// adoptRetry is how long a worker waits before trying again to follow the
+// pool to a new key.
+var adoptRetry = 5 * time.Second
+
+// adopt moves a worker's Kubo onto the pool's current key if the fingerprint
+// its coordinator states shows that it is on another: it asks the
+// coordinator for the key and the members' addresses and restarts on them.
+// A failed attempt can leave Kubo stopped, and the worker with no store, so
+// it keeps trying until it succeeds or ctx ends.
+func (s *poolSwarm) adopt(ctx context.Context, coordinator string, creds credentials.TransportCredentials, stated string, log *slog.Logger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stated == fingerprint(s.key) {
+		return
+	}
+	for {
+		key, peers, err := fetchSwarm(ctx, coordinator, creds)
+		if err == nil {
+			err = s.daemon.Rekey(ctx, &kubo.Swarm{Key: key, Peers: peers})
+		}
+		if err == nil {
+			s.key = key
+			log.Info("moved to the new key of the pool's private IPFS network")
+			return
+		}
+		log.Warn("could not follow the pool's private IPFS network to its new key; trying again", "in", adoptRetry.String(), "error", err)
+		select {
+		case <-time.After(adoptRetry):
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// warnOfFallback returns what a worker on the pool's private network does
+// when the network fails to supply a blob and the coordinator has to: say
+// so, since otherwise the only sign of a broken network is slowness.
+func warnOfFallback(log *slog.Logger) func(cid.Cid) {
+	return func(c cid.Cid) {
+		log.Warn("the pool's private IPFS network did not supply a blob, which was downloaded from the coordinator instead; check that this node's Kubo can reach the others", "cid", c.String())
+	}
 }
 
 // swarmKey returns the secret of the private network a coordinator runs,

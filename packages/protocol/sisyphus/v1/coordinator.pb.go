@@ -339,6 +339,7 @@ type CoordinatorMessage struct {
 	//
 	//	*CoordinatorMessage_Welcome
 	//	*CoordinatorMessage_Assignment
+	//	*CoordinatorMessage_SwarmUpdate
 	Kind          isCoordinatorMessage_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -399,6 +400,15 @@ func (x *CoordinatorMessage) GetAssignment() *TaskAssignment {
 	return nil
 }
 
+func (x *CoordinatorMessage) GetSwarmUpdate() *SwarmUpdate {
+	if x != nil {
+		if x, ok := x.Kind.(*CoordinatorMessage_SwarmUpdate); ok {
+			return x.SwarmUpdate
+		}
+	}
+	return nil
+}
+
 type isCoordinatorMessage_Kind interface {
 	isCoordinatorMessage_Kind()
 }
@@ -411,15 +421,25 @@ type CoordinatorMessage_Assignment struct {
 	Assignment *TaskAssignment `protobuf:"bytes,2,opt,name=assignment,proto3,oneof"`
 }
 
+type CoordinatorMessage_SwarmUpdate struct {
+	SwarmUpdate *SwarmUpdate `protobuf:"bytes,3,opt,name=swarm_update,json=swarmUpdate,proto3,oneof"`
+}
+
 func (*CoordinatorMessage_Welcome) isCoordinatorMessage_Kind() {}
 
 func (*CoordinatorMessage_Assignment) isCoordinatorMessage_Kind() {}
 
+func (*CoordinatorMessage_SwarmUpdate) isCoordinatorMessage_Kind() {}
+
 type Welcome struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CoordinatorId string                 `protobuf:"bytes,1,opt,name=coordinator_id,json=coordinatorId,proto3" json:"coordinator_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Identifies the key of the pool's private IPFS network without giving it
+	// away; empty if the pool has no such network. A worker whose own Kubo is
+	// on a different key should ask PoolService.Swarm for the current one.
+	SwarmFingerprint string `protobuf:"bytes,2,opt,name=swarm_fingerprint,json=swarmFingerprint,proto3" json:"swarm_fingerprint,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Welcome) Reset() {
@@ -459,6 +479,59 @@ func (x *Welcome) GetCoordinatorId() string {
 	return ""
 }
 
+func (x *Welcome) GetSwarmFingerprint() string {
+	if x != nil {
+		return x.SwarmFingerprint
+	}
+	return ""
+}
+
+// SwarmUpdate tells a connected worker that the key of the pool's private
+// IPFS network has changed, as it does when a member is removed.
+type SwarmUpdate struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	SwarmFingerprint string                 `protobuf:"bytes,1,opt,name=swarm_fingerprint,json=swarmFingerprint,proto3" json:"swarm_fingerprint,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *SwarmUpdate) Reset() {
+	*x = SwarmUpdate{}
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SwarmUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SwarmUpdate) ProtoMessage() {}
+
+func (x *SwarmUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SwarmUpdate.ProtoReflect.Descriptor instead.
+func (*SwarmUpdate) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SwarmUpdate) GetSwarmFingerprint() string {
+	if x != nil {
+		return x.SwarmFingerprint
+	}
+	return ""
+}
+
 type TaskAssignment struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -472,7 +545,7 @@ type TaskAssignment struct {
 
 func (x *TaskAssignment) Reset() {
 	*x = TaskAssignment{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -484,7 +557,7 @@ func (x *TaskAssignment) String() string {
 func (*TaskAssignment) ProtoMessage() {}
 
 func (x *TaskAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -497,7 +570,7 @@ func (x *TaskAssignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskAssignment.ProtoReflect.Descriptor instead.
 func (*TaskAssignment) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{6}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *TaskAssignment) GetTaskId() string {
@@ -560,15 +633,19 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\n" +
 	"read_blobs\x18\x05 \x03(\tR\treadBlobs\x12#\n" +
 	"\rwritten_blobs\x18\x06 \x03(\tR\fwrittenBlobsB\t\n" +
-	"\aoutcome\"\x8d\x01\n" +
+	"\aoutcome\"\xcc\x01\n" +
 	"\x12CoordinatorMessage\x120\n" +
 	"\awelcome\x18\x01 \x01(\v2\x14.sisyphus.v1.WelcomeH\x00R\awelcome\x12=\n" +
 	"\n" +
 	"assignment\x18\x02 \x01(\v2\x1b.sisyphus.v1.TaskAssignmentH\x00R\n" +
-	"assignmentB\x06\n" +
-	"\x04kind\"0\n" +
+	"assignment\x12=\n" +
+	"\fswarm_update\x18\x03 \x01(\v2\x18.sisyphus.v1.SwarmUpdateH\x00R\vswarmUpdateB\x06\n" +
+	"\x04kind\"]\n" +
 	"\aWelcome\x12%\n" +
-	"\x0ecoordinator_id\x18\x01 \x01(\tR\rcoordinatorId\"\x90\x01\n" +
+	"\x0ecoordinator_id\x18\x01 \x01(\tR\rcoordinatorId\x12+\n" +
+	"\x11swarm_fingerprint\x18\x02 \x01(\tR\x10swarmFingerprint\":\n" +
+	"\vSwarmUpdate\x12+\n" +
+	"\x11swarm_fingerprint\x18\x01 \x01(\tR\x10swarmFingerprint\"\x90\x01\n" +
 	"\x0eTaskAssignment\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x15\n" +
 	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x12\x18\n" +
@@ -590,7 +667,7 @@ func file_sisyphus_v1_coordinator_proto_rawDescGZIP() []byte {
 	return file_sisyphus_v1_coordinator_proto_rawDescData
 }
 
-var file_sisyphus_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_sisyphus_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_sisyphus_v1_coordinator_proto_goTypes = []any{
 	(*WorkerMessage)(nil),      // 0: sisyphus.v1.WorkerMessage
 	(*Hello)(nil),              // 1: sisyphus.v1.Hello
@@ -598,23 +675,25 @@ var file_sisyphus_v1_coordinator_proto_goTypes = []any{
 	(*TaskResult)(nil),         // 3: sisyphus.v1.TaskResult
 	(*CoordinatorMessage)(nil), // 4: sisyphus.v1.CoordinatorMessage
 	(*Welcome)(nil),            // 5: sisyphus.v1.Welcome
-	(*TaskAssignment)(nil),     // 6: sisyphus.v1.TaskAssignment
-	(*NodeCapabilities)(nil),   // 7: sisyphus.v1.NodeCapabilities
+	(*SwarmUpdate)(nil),        // 6: sisyphus.v1.SwarmUpdate
+	(*TaskAssignment)(nil),     // 7: sisyphus.v1.TaskAssignment
+	(*NodeCapabilities)(nil),   // 8: sisyphus.v1.NodeCapabilities
 }
 var file_sisyphus_v1_coordinator_proto_depIdxs = []int32{
 	1, // 0: sisyphus.v1.WorkerMessage.hello:type_name -> sisyphus.v1.Hello
 	2, // 1: sisyphus.v1.WorkerMessage.heartbeat:type_name -> sisyphus.v1.Heartbeat
 	3, // 2: sisyphus.v1.WorkerMessage.task_result:type_name -> sisyphus.v1.TaskResult
-	7, // 3: sisyphus.v1.Hello.capabilities:type_name -> sisyphus.v1.NodeCapabilities
+	8, // 3: sisyphus.v1.Hello.capabilities:type_name -> sisyphus.v1.NodeCapabilities
 	5, // 4: sisyphus.v1.CoordinatorMessage.welcome:type_name -> sisyphus.v1.Welcome
-	6, // 5: sisyphus.v1.CoordinatorMessage.assignment:type_name -> sisyphus.v1.TaskAssignment
-	0, // 6: sisyphus.v1.CoordinatorService.Connect:input_type -> sisyphus.v1.WorkerMessage
-	4, // 7: sisyphus.v1.CoordinatorService.Connect:output_type -> sisyphus.v1.CoordinatorMessage
-	7, // [7:8] is the sub-list for method output_type
-	6, // [6:7] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	7, // 5: sisyphus.v1.CoordinatorMessage.assignment:type_name -> sisyphus.v1.TaskAssignment
+	6, // 6: sisyphus.v1.CoordinatorMessage.swarm_update:type_name -> sisyphus.v1.SwarmUpdate
+	0, // 7: sisyphus.v1.CoordinatorService.Connect:input_type -> sisyphus.v1.WorkerMessage
+	4, // 8: sisyphus.v1.CoordinatorService.Connect:output_type -> sisyphus.v1.CoordinatorMessage
+	8, // [8:9] is the sub-list for method output_type
+	7, // [7:8] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_coordinator_proto_init() }
@@ -635,6 +714,7 @@ func file_sisyphus_v1_coordinator_proto_init() {
 	file_sisyphus_v1_coordinator_proto_msgTypes[4].OneofWrappers = []any{
 		(*CoordinatorMessage_Welcome)(nil),
 		(*CoordinatorMessage_Assignment)(nil),
+		(*CoordinatorMessage_SwarmUpdate)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -642,7 +722,7 @@ func file_sisyphus_v1_coordinator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_coordinator_proto_rawDesc), len(file_sisyphus_v1_coordinator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

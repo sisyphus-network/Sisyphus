@@ -72,32 +72,33 @@ func (t *target) connect() (*grpc.ClientConn, error) {
 }
 
 // joinPool redeems an invitation from the node at addr and remembers that
-// node, so that later connections to addr are known to reach it.
-func joinPool(ctx context.Context, dataDir string, ident *identity.Identity, addr, invitation string) (pb.Role, error) {
+// node, so that later connections to addr are known to reach it. It returns
+// the role the node was admitted in and the nodes it now knows.
+func joinPool(ctx context.Context, dataDir string, ident *identity.Identity, addr, invitation string) (pb.Role, map[string]string, error) {
 	inviter, token, ok := strings.Cut(invitation, ":")
 	if !ok || inviter == "" || token == "" {
-		return 0, errors.New("an invitation looks like <node ID>:<token>")
+		return 0, nil, errors.New("an invitation looks like <node ID>:<token>")
 	}
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(credentials.NewTLS(ident.ClientTLS(inviter))))
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer conn.Close()
 	joined, err := pb.NewPoolServiceClient(conn).Join(ctx, &pb.JoinRequest{Token: token})
 	if err != nil {
-		return 0, fmt.Errorf("join %s: %w", addr, err)
+		return 0, nil, fmt.Errorf("join %s: %w", addr, err)
 	}
 
 	known, err := loadKnown(dataDir)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	known[addr] = inviter
 	data, _ := json.MarshalIndent(known, "", "\t") // a map of strings always encodes
 	if err := os.WriteFile(filepath.Join(dataDir, "known.json"), data, 0o600); err != nil {
-		return 0, fmt.Errorf("remember the node joined: %w", err)
+		return 0, nil, fmt.Errorf("remember the node joined: %w", err)
 	}
-	return joined.GetRole(), nil
+	return joined.GetRole(), known, nil
 }
 
 var roleNames = map[pb.Role]string{pb.Role_ROLE_WORKER: "worker", pb.Role_ROLE_CLIENT: "client"}
@@ -113,9 +114,11 @@ func poolCommand(ctx context.Context, args []string) error {
 			return poolMembers(ctx, args[1:])
 		case "remove":
 			return poolRemove(ctx, args[1:])
+		case "rekey":
+			return poolRekey(ctx, args[1:])
 		}
 	}
-	return errors.New("expected pool invite, join, members or remove")
+	return errors.New("expected pool invite, join, members, remove or rekey")
 }
 
 func poolInvite(ctx context.Context, args []string) error {
@@ -168,7 +171,7 @@ func poolJoin(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	role, err := joinPool(ctx, *node.dataDir, ident, *node.addr, fs.Arg(0))
+	role, _, err := joinPool(ctx, *node.dataDir, ident, *node.addr, fs.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -224,4 +227,27 @@ func poolRemove(ctx context.Context, args []string) error {
 	defer conn.Close()
 	_, err = pb.NewPoolServiceClient(conn).RemoveMember(ctx, &pb.RemoveMemberRequest{NodeId: fs.Arg(0)})
 	return err
+}
+
+func poolRekey(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sisyphusd pool rekey", flag.ContinueOnError)
+	node := targetFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+
+	conn, err := node.connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	rekeyed, err := pb.NewPoolServiceClient(conn).Rekey(ctx, &pb.RekeyRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "the pool's private IPFS network has a new key (%s)\n", rekeyed.GetSwarmFingerprint())
+	return nil
 }

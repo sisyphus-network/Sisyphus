@@ -31,7 +31,8 @@ func (c *scriptedCoordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerM
 		return err
 	}
 	c.hello <- first.GetHello()
-	stream.Send(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Welcome{Welcome: &pb.Welcome{CoordinatorId: "scripted"}}})
+	stream.Send(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Welcome{Welcome: &pb.Welcome{CoordinatorId: "scripted", SwarmFingerprint: "key-at-welcome"}}})
+	stream.Send(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_SwarmUpdate{SwarmUpdate: &pb.SwarmUpdate{SwarmFingerprint: "key-after-change"}}})
 	stream.Send(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: c.assignment}})
 	for {
 		msg, err := stream.Recv()
@@ -67,10 +68,17 @@ func TestWorkerAdvertisesItselfAndReportsAnUnknownWorkload(t *testing.T) {
 	srv := newServer()
 	pb.RegisterCoordinatorServiceServer(srv, coordinator)
 	addr, _ := serve(t, srv)
+	stated := make(chan string, 4)
 	runWorker(t, &worker.Worker{
 		Name: "w", Coordinator: addr, Credentials: workerCreds, Slots: 3,
 		Workloads: runtime.Builtin(), Blobs: storage.NewMemory(), Log: quiet(),
+		OnSwarm: func(fingerprint string) { stated <- fingerprint },
 	})
+	// The worker passes on what the coordinator says about the swarm key,
+	// on joining and when it changes.
+	if first, second := <-stated, <-stated; first != "key-at-welcome" || second != "key-after-change" {
+		t.Errorf("the worker was told of %q then %q", first, second)
+	}
 
 	hello := <-coordinator.hello
 	caps := hello.GetCapabilities()

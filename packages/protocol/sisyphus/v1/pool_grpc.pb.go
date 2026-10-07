@@ -24,6 +24,7 @@ const (
 	PoolService_Invite_FullMethodName       = "/sisyphus.v1.PoolService/Invite"
 	PoolService_ListMembers_FullMethodName  = "/sisyphus.v1.PoolService/ListMembers"
 	PoolService_RemoveMember_FullMethodName = "/sisyphus.v1.PoolService/RemoveMember"
+	PoolService_Rekey_FullMethodName        = "/sisyphus.v1.PoolService/Rekey"
 )
 
 // PoolServiceClient is the client API for PoolService service.
@@ -45,8 +46,13 @@ type PoolServiceClient interface {
 	Invite(ctx context.Context, in *InviteRequest, opts ...grpc.CallOption) (*InviteResponse, error)
 	ListMembers(ctx context.Context, in *ListMembersRequest, opts ...grpc.CallOption) (*ListMembersResponse, error)
 	// RemoveMember takes a node off the list and, if it is a connected worker,
-	// disconnects it.
+	// disconnects it. If the pool has a private IPFS network its key is
+	// changed, since the removed node still holds the old one.
 	RemoveMember(ctx context.Context, in *RemoveMemberRequest, opts ...grpc.CallOption) (*RemoveMemberResponse, error)
+	// Rekey changes the key of the pool's private IPFS network. Connected
+	// workers are told and fetch the new one; anything else holding the old
+	// key is shut out.
+	Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error)
 }
 
 type poolServiceClient struct {
@@ -107,6 +113,16 @@ func (c *poolServiceClient) RemoveMember(ctx context.Context, in *RemoveMemberRe
 	return out, nil
 }
 
+func (c *poolServiceClient) Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RekeyResponse)
+	err := c.cc.Invoke(ctx, PoolService_Rekey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PoolServiceServer is the server API for PoolService service.
 // All implementations must embed UnimplementedPoolServiceServer
 // for forward compatibility.
@@ -126,8 +142,13 @@ type PoolServiceServer interface {
 	Invite(context.Context, *InviteRequest) (*InviteResponse, error)
 	ListMembers(context.Context, *ListMembersRequest) (*ListMembersResponse, error)
 	// RemoveMember takes a node off the list and, if it is a connected worker,
-	// disconnects it.
+	// disconnects it. If the pool has a private IPFS network its key is
+	// changed, since the removed node still holds the old one.
 	RemoveMember(context.Context, *RemoveMemberRequest) (*RemoveMemberResponse, error)
+	// Rekey changes the key of the pool's private IPFS network. Connected
+	// workers are told and fetch the new one; anything else holding the old
+	// key is shut out.
+	Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error)
 	mustEmbedUnimplementedPoolServiceServer()
 }
 
@@ -152,6 +173,9 @@ func (UnimplementedPoolServiceServer) ListMembers(context.Context, *ListMembersR
 }
 func (UnimplementedPoolServiceServer) RemoveMember(context.Context, *RemoveMemberRequest) (*RemoveMemberResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveMember not implemented")
+}
+func (UnimplementedPoolServiceServer) Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Rekey not implemented")
 }
 func (UnimplementedPoolServiceServer) mustEmbedUnimplementedPoolServiceServer() {}
 func (UnimplementedPoolServiceServer) testEmbeddedByValue()                     {}
@@ -264,6 +288,24 @@ func _PoolService_RemoveMember_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PoolService_Rekey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RekeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PoolServiceServer).Rekey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PoolService_Rekey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PoolServiceServer).Rekey(ctx, req.(*RekeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PoolService_ServiceDesc is the grpc.ServiceDesc for PoolService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -290,6 +332,10 @@ var PoolService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveMember",
 			Handler:    _PoolService_RemoveMember_Handler,
+		},
+		{
+			MethodName: "Rekey",
+			Handler:    _PoolService_Rekey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

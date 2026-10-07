@@ -581,6 +581,86 @@ func (*RemoveMemberResponse) Descriptor() ([]byte, []int) {
 	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{10}
 }
 
+type RekeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RekeyRequest) Reset() {
+	*x = RekeyRequest{}
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RekeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RekeyRequest) ProtoMessage() {}
+
+func (x *RekeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RekeyRequest.ProtoReflect.Descriptor instead.
+func (*RekeyRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{11}
+}
+
+type RekeyResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	SwarmFingerprint string                 `protobuf:"bytes,1,opt,name=swarm_fingerprint,json=swarmFingerprint,proto3" json:"swarm_fingerprint,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *RekeyResponse) Reset() {
+	*x = RekeyResponse{}
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RekeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RekeyResponse) ProtoMessage() {}
+
+func (x *RekeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RekeyResponse.ProtoReflect.Descriptor instead.
+func (*RekeyResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *RekeyResponse) GetSwarmFingerprint() string {
+	if x != nil {
+		return x.SwarmFingerprint
+	}
+	return ""
+}
+
 var File_sisyphus_v1_pool_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_pool_proto_rawDesc = "" +
@@ -613,17 +693,21 @@ const file_sisyphus_v1_pool_proto_rawDesc = "" +
 	"\tjoined_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bjoinedAt\".\n" +
 	"\x13RemoveMemberRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"\x16\n" +
-	"\x14RemoveMemberResponse*>\n" +
+	"\x14RemoveMemberResponse\"\x0e\n" +
+	"\fRekeyRequest\"<\n" +
+	"\rRekeyResponse\x12+\n" +
+	"\x11swarm_fingerprint\x18\x01 \x01(\tR\x10swarmFingerprint*>\n" +
 	"\x04Role\x12\x14\n" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vROLE_WORKER\x10\x01\x12\x0f\n" +
-	"\vROLE_CLIENT\x10\x022\xf4\x02\n" +
+	"\vROLE_CLIENT\x10\x022\xb4\x03\n" +
 	"\vPoolService\x12;\n" +
 	"\x04Join\x12\x18.sisyphus.v1.JoinRequest\x1a\x19.sisyphus.v1.JoinResponse\x12>\n" +
 	"\x05Swarm\x12\x19.sisyphus.v1.SwarmRequest\x1a\x1a.sisyphus.v1.SwarmResponse\x12A\n" +
 	"\x06Invite\x12\x1a.sisyphus.v1.InviteRequest\x1a\x1b.sisyphus.v1.InviteResponse\x12P\n" +
 	"\vListMembers\x12\x1f.sisyphus.v1.ListMembersRequest\x1a .sisyphus.v1.ListMembersResponse\x12S\n" +
-	"\fRemoveMember\x12 .sisyphus.v1.RemoveMemberRequest\x1a!.sisyphus.v1.RemoveMemberResponseBEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
+	"\fRemoveMember\x12 .sisyphus.v1.RemoveMemberRequest\x1a!.sisyphus.v1.RemoveMemberResponse\x12>\n" +
+	"\x05Rekey\x12\x19.sisyphus.v1.RekeyRequest\x1a\x1a.sisyphus.v1.RekeyResponseBEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
 var (
 	file_sisyphus_v1_pool_proto_rawDescOnce sync.Once
@@ -638,7 +722,7 @@ func file_sisyphus_v1_pool_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_v1_pool_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sisyphus_v1_pool_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_sisyphus_v1_pool_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_sisyphus_v1_pool_proto_goTypes = []any{
 	(Role)(0),                     // 0: sisyphus.v1.Role
 	(*JoinRequest)(nil),           // 1: sisyphus.v1.JoinRequest
@@ -652,27 +736,31 @@ var file_sisyphus_v1_pool_proto_goTypes = []any{
 	(*Member)(nil),                // 9: sisyphus.v1.Member
 	(*RemoveMemberRequest)(nil),   // 10: sisyphus.v1.RemoveMemberRequest
 	(*RemoveMemberResponse)(nil),  // 11: sisyphus.v1.RemoveMemberResponse
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
+	(*RekeyRequest)(nil),          // 12: sisyphus.v1.RekeyRequest
+	(*RekeyResponse)(nil),         // 13: sisyphus.v1.RekeyResponse
+	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
 }
 var file_sisyphus_v1_pool_proto_depIdxs = []int32{
 	0,  // 0: sisyphus.v1.JoinResponse.role:type_name -> sisyphus.v1.Role
 	0,  // 1: sisyphus.v1.InviteRequest.role:type_name -> sisyphus.v1.Role
-	12, // 2: sisyphus.v1.InviteResponse.expires_at:type_name -> google.protobuf.Timestamp
+	14, // 2: sisyphus.v1.InviteResponse.expires_at:type_name -> google.protobuf.Timestamp
 	9,  // 3: sisyphus.v1.ListMembersResponse.members:type_name -> sisyphus.v1.Member
 	0,  // 4: sisyphus.v1.Member.role:type_name -> sisyphus.v1.Role
-	12, // 5: sisyphus.v1.Member.joined_at:type_name -> google.protobuf.Timestamp
+	14, // 5: sisyphus.v1.Member.joined_at:type_name -> google.protobuf.Timestamp
 	1,  // 6: sisyphus.v1.PoolService.Join:input_type -> sisyphus.v1.JoinRequest
 	3,  // 7: sisyphus.v1.PoolService.Swarm:input_type -> sisyphus.v1.SwarmRequest
 	5,  // 8: sisyphus.v1.PoolService.Invite:input_type -> sisyphus.v1.InviteRequest
 	7,  // 9: sisyphus.v1.PoolService.ListMembers:input_type -> sisyphus.v1.ListMembersRequest
 	10, // 10: sisyphus.v1.PoolService.RemoveMember:input_type -> sisyphus.v1.RemoveMemberRequest
-	2,  // 11: sisyphus.v1.PoolService.Join:output_type -> sisyphus.v1.JoinResponse
-	4,  // 12: sisyphus.v1.PoolService.Swarm:output_type -> sisyphus.v1.SwarmResponse
-	6,  // 13: sisyphus.v1.PoolService.Invite:output_type -> sisyphus.v1.InviteResponse
-	8,  // 14: sisyphus.v1.PoolService.ListMembers:output_type -> sisyphus.v1.ListMembersResponse
-	11, // 15: sisyphus.v1.PoolService.RemoveMember:output_type -> sisyphus.v1.RemoveMemberResponse
-	11, // [11:16] is the sub-list for method output_type
-	6,  // [6:11] is the sub-list for method input_type
+	12, // 11: sisyphus.v1.PoolService.Rekey:input_type -> sisyphus.v1.RekeyRequest
+	2,  // 12: sisyphus.v1.PoolService.Join:output_type -> sisyphus.v1.JoinResponse
+	4,  // 13: sisyphus.v1.PoolService.Swarm:output_type -> sisyphus.v1.SwarmResponse
+	6,  // 14: sisyphus.v1.PoolService.Invite:output_type -> sisyphus.v1.InviteResponse
+	8,  // 15: sisyphus.v1.PoolService.ListMembers:output_type -> sisyphus.v1.ListMembersResponse
+	11, // 16: sisyphus.v1.PoolService.RemoveMember:output_type -> sisyphus.v1.RemoveMemberResponse
+	13, // 17: sisyphus.v1.PoolService.Rekey:output_type -> sisyphus.v1.RekeyResponse
+	12, // [12:18] is the sub-list for method output_type
+	6,  // [6:12] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -689,7 +777,7 @@ func file_sisyphus_v1_pool_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_pool_proto_rawDesc), len(file_sisyphus_v1_pool_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

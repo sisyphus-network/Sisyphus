@@ -2,13 +2,18 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ipfs/go-cid"
+
+	"github.com/excho0/Sisyphus/packages/identity"
 	"github.com/excho0/Sisyphus/packages/kubo"
 )
 
@@ -194,5 +199,198 @@ func TestPoolSwarmReportsAKuboThatDoesNotAnswer(t *testing.T) {
 	}
 	if swarm.Key() != "secret" {
 		t.Errorf("Key = %q", swarm.Key())
+	}
+}
+
+// A removed node still holds the key it was given. The pool must move to a
+// new one that the node is not given, and the remaining workers must follow.
+func TestRemovingAMemberMovesThePoolToAKeyItDoesNotHave(t *testing.T) {
+	requireKubo(t)
+	addr := freeAddr(t)
+	coordinatorDir, stayerDir, leaverDir := t.TempDir(), t.TempDir(), t.TempDir()
+	startDaemon(t, "--role", "coordinator", "--kubo", "--swarm-port", "0", "--listen", addr, "--data-dir", coordinatorDir)
+	startDaemon(t, "--role", "worker", "--kubo", "--coordinator", addr, "--data-dir", stayerDir, "--name", "stayer", "--slots", "2")
+
+	// The node to be removed is run here, to see it stop.
+	invitation := invite(t, addr, "worker")
+	leaverStopped := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		leaverStopped <- run(ctx, []string{"run", "--role", "worker", "--kubo", "--coordinator", addr, "--join", invitation, "--data-dir", leaverDir, "--name", "leaver"})
+	}()
+	waitFor(t, func() bool {
+		out, _ := cli(t, "nodes", "--addr", addr)
+		return strings.Contains(out, "stayer") && strings.Contains(out, "leaver")
+	})
+
+	keyOf := func(dataDir string) string {
+		key, _ := os.ReadFile(filepath.Join(dataDir, "ipfs", "swarm.key"))
+		return string(key)
+	}
+	oldKey := keyOf(coordinatorDir)
+	if oldKey == "" || keyOf(leaverDir) != oldKey {
+		t.Fatalf("before removal the leaver does not hold the pool's key")
+	}
+
+	mustCLI(t, "pool", "remove", "--addr", addr, nodeID(t, leaverDir))
+	if err := <-leaverStopped; err == nil || !strings.Contains(err.Error(), "removed from the pool") {
+		t.Errorf("the removed node stopped with %v", err)
+	}
+
+	// The coordinator is on a new key, saved for its next start...
+	newKey := keyOf(coordinatorDir)
+	if newKey == oldKey {
+		t.Fatal("the pool's key did not change")
+	}
+	if saved, _ := os.ReadFile(filepath.Join(coordinatorDir, "swarm.key")); string(saved) != newKey {
+		t.Error("the new key was not saved for the coordinator's next start")
+	}
+	// ...the remaining worker follows it there and reconnects...
+	waitFor(t, func() bool { return keyOf(stayerDir) == newKey })
+	waitFor(t, func() bool {
+		// Not before its Kubo is back up: run against a repository whose
+		// daemon is down, the ipfs command takes the repository's lock
+		// itself, and the daemon then cannot start.
+		if _, err := os.Stat(filepath.Join(stayerDir, "ipfs", "api")); err != nil {
+			return false
+		}
+		cmd := exec.Command("ipfs", "swarm", "peers")
+		cmd.Env = append(os.Environ(), "IPFS_PATH="+filepath.Join(stayerDir, "ipfs"))
+		out, _ := cmd.Output()
+		return strings.Contains(string(out), nodeID(t, coordinatorDir))
+	})
+	// ...and the removed node was never given it.
+	if keyOf(leaverDir) != oldKey {
+		t.Error("the removed node's Kubo has the new key")
+	}
+
+	// Work still gets done, with data moving over the new network.
+	text := strings.Repeat("one must imagine Sisyphus happy.\n", 20_000)
+	input := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, text)))
+	out := mustCLI(t, "job", "submit", "--addr", addr, "--workload", "wordcount", "--tasks", "2", "--params", `{"input":"`+input+`"}`)
+	if !strings.Contains(out, `"words":100000`) || !strings.Contains(out, "on stayer") {
+		t.Errorf("job after the key change:\n%s", out)
+	}
+
+	// Anyone still holding the old key, as the removed node does, is shut out.
+	coordinatorAddrs := strings.Fields(ipfsIn(t, coordinatorDir, "id", "-f", "<addrs>"))
+	intruder, err := kubo.Start(context.Background(), kubo.Config{
+		Repo: filepath.Join(t.TempDir(), "ipfs"), Identity: mustIdentity(t, leaverDir),
+		Swarm: &kubo.Swarm{Key: oldKey, Peers: coordinatorAddrs, PeerTimeout: 3 * time.Second},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer intruder.Stop()
+	if err := intruder.Connect(context.Background(), coordinatorAddrs[0]); err == nil {
+		t.Error("a Kubo with the old key connected to the coordinator's")
+	}
+	if _, err := intruder.BlockGet(context.Background(), input); err == nil {
+		t.Error("a Kubo with the old key fetched the job's input")
+	}
+}
+
+func mustIdentity(t *testing.T, dataDir string) *identity.Identity {
+	t.Helper()
+	ident, err := loadIdentity(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ident
+}
+
+func TestPoolRekeyCommand(t *testing.T) {
+	requireKubo(t)
+	dataDir := t.TempDir()
+	addr, _ := startNode(t, "--kubo", "--swarm-port", "0", "--data-dir", dataDir)
+	before, _ := os.ReadFile(filepath.Join(dataDir, "swarm.key"))
+
+	out := mustCLI(t, "pool", "rekey", "--addr", addr)
+	after, _ := os.ReadFile(filepath.Join(dataDir, "swarm.key"))
+	if string(after) == string(before) || len(after) == 0 {
+		t.Error("pool rekey did not change the key")
+	}
+	if want := "the pool's private IPFS network has a new key (" + fingerprint(string(after)) + ")\n"; out != want {
+		t.Errorf("printed %q, want %q", out, want)
+	}
+	// The node still works, with its data, on the new key.
+	id := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, "stored after the change")))
+	if got := mustCLI(t, "blob", "get", "--addr", addr, id); got != "stored after the change" {
+		t.Errorf("blob get after a key change: %q", got)
+	}
+}
+
+func TestPoolRekeyFailures(t *testing.T) {
+	// A node with no private network to rekey.
+	addr, _ := startNode(t)
+	if _, err := cli(t, "pool", "rekey", "--addr", addr); err == nil || !strings.Contains(err.Error(), "does not run a private IPFS network") {
+		t.Errorf("rekeying a node without Kubo: %v", err)
+	}
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"pool", "rekey", "extra"}, `unexpected argument "extra"`},
+		{[]string{"pool", "rekey", "--no-such-flag"}, "flag provided but not defined"},
+		{[]string{"pool", "rekey", "--addr", badAddr}, "invalid control character"},
+	} {
+		if _, err := cli(t, tt.args...); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%v: error %v, want one containing %q", tt.args, err, tt.want)
+		}
+	}
+}
+
+func TestSwarmKeyChangesThatFail(t *testing.T) {
+	requireKubo(t)
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "ipfs")
+	daemon, err := kubo.Start(ctx, kubo.Config{Repo: repo, Identity: mustIdentity(t, t.TempDir()), Swarm: &kubo.Swarm{Key: kubo.NewSwarmKey()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer daemon.Stop()
+	logs := new(syncBuffer)
+	log := slog.New(slog.NewTextHandler(logs, nil))
+
+	// A worker told of a key that is already its own does nothing. Told of
+	// another when its coordinator cannot be asked, it says so and keeps
+	// trying for as long as it is running.
+	worker := &poolSwarm{daemon: daemon, key: "current"}
+	worker.adopt(ctx, badAddr, nil, fingerprint("current"), log)
+	if logs.String() != "" {
+		t.Errorf("being told of its own key made the worker log:\n%s", logs.String())
+	}
+	defer func(retry time.Duration) { adoptRetry = retry }(adoptRetry)
+	adoptRetry = 20 * time.Millisecond
+	running, stop := context.WithTimeout(ctx, 150*time.Millisecond)
+	defer stop()
+	worker.adopt(running, badAddr, nil, fingerprint("another"), log)
+	if attempts := strings.Count(logs.String(), "could not follow the pool's private IPFS network to its new key"); attempts < 2 || worker.Key() != "current" {
+		t.Errorf("a key change the worker could not follow: %d attempts, key %q, log:\n%s", attempts, worker.Key(), logs.String())
+	}
+
+	// A coordinator that cannot save the new key keeps the old one.
+	unsaved := &poolSwarm{daemon: daemon, key: "current", keyFile: filepath.Join(t.TempDir(), "missing", "swarm.key")}
+	if err := unsaved.Rekey(ctx); err == nil || !strings.Contains(err.Error(), "save swarm key") || unsaved.Key() != "current" {
+		t.Errorf("Rekey with nowhere to save: %v, key %q", err, unsaved.Key())
+	}
+	// One whose Kubo will not restart reports that.
+	if os.Getuid() != 0 {
+		os.Chmod(filepath.Join(repo, "config"), 0o400)
+		stuck := &poolSwarm{daemon: daemon, key: "current", keyFile: filepath.Join(t.TempDir(), "swarm.key")}
+		if err := stuck.Rekey(ctx); err == nil || stuck.Key() != "current" {
+			t.Errorf("Rekey when Kubo cannot be reconfigured: %v, key %q", err, stuck.Key())
+		}
+		os.Chmod(filepath.Join(repo, "config"), 0o600)
+	}
+}
+
+func TestWorkerSaysSoWhenThePrivateNetworkFailsIt(t *testing.T) {
+	logs := new(syncBuffer)
+	warn := warnOfFallback(slog.New(slog.NewTextHandler(logs, nil)))
+	warn(cid.MustParse(helloCID))
+	if !strings.Contains(logs.String(), "did not supply a blob") || !strings.Contains(logs.String(), helloCID) {
+		t.Errorf("logged:\n%s", logs.String())
 	}
 }

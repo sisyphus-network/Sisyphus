@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,9 @@ var ErrNotFound = errors.New("block not found")
 // Client calls a Kubo daemon's RPC API, the one the ipfs command itself
 // uses. Blocks and CIDs pass through it as plain bytes and strings.
 type Client struct {
+	// mu is held shared for the length of a call, and exclusively while the
+	// daemon behind the client is replaced.
+	mu   sync.RWMutex
 	base string
 	http *http.Client
 	// PeerTimeout is how long BlockGet lets Kubo look among its peers for a
@@ -41,14 +45,17 @@ func NewClient(addr string) *Client {
 // must close. Kubo reports failures as a JSON object with an HTTP error
 // status; those come back as errors.
 func (c *Client) call(ctx context.Context, command string, args url.Values, body io.Reader, contentType string) (io.ReadCloser, error) {
+	c.mu.RLock()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+command+"?"+args.Encode(), body)
 	if err != nil {
+		c.mu.RUnlock()
 		return nil, err
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
 	res, err := c.http.Do(req)
+	c.mu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("kubo %s: %w", command, err)
 	}
