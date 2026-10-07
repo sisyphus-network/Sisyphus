@@ -43,6 +43,8 @@
   "trustForCompute": "Autoriser pour le calcul",
   "trustedForCompute": "De confiance pour le calcul",
   "computeTrustRemoved": "La confiance de calcul a été révoquée",
+  "worksForYou": "Travaille pour vous",
+  "youWorkForIt": "Vous travaillez pour lui",
   "streaming": "En direct",
   "streamPaused": "Flux en pause",
   "noPeersYet": "Aucun nœud connecté pour l’instant",

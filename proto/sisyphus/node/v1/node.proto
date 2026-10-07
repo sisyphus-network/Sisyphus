@@ -64,6 +64,11 @@ message Peer {
   PeerConnectionState connection_state = 2;
   repeated string known_addresses = 3;
   bool trusted_for_compute = 4;
+  // Trust has two sides, and work flows only when both hold. These say
+  // which way it is flowing now: the peer is connected as a worker of this
+  // node, and this node is working for the peer.
+  bool works_for_this_node = 5;
+  bool this_node_works_for = 6;
 }
 
 enum PeerConnectionState {

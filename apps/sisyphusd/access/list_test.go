@@ -313,3 +313,22 @@ func TestImportsThatFail(t *testing.T) {
 		t.Errorf("importing into a store that takes no changes: %v", err)
 	}
 }
+
+func TestTheListSaysWhoWasAdmittedOrRemoved(t *testing.T) {
+	l := open(t, "")
+	var told []string
+	l.OnChange(func(id string) { told = append(told, id) })
+	l.Admit("a", Worker, now)
+	token, _ := l.Invite(Client, time.Hour, now)
+	l.Redeem(token, "b", now)
+	l.Remove("a")
+	// Nothing happened here, so nothing is said.
+	l.Remove("never-admitted")
+	l.Redeem("no-such-token", "c", now)
+	l.store = stuck{l.store}
+	l.Admit("d", Worker, now)
+	l.Remove("b")
+	if strings.Join(told, ",") != "a,b,a" {
+		t.Errorf("told of %v, want a admitted, b admitted, a removed", told)
+	}
+}

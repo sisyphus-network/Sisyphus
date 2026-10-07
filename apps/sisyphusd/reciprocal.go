@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
+	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -41,6 +44,72 @@ type reciprocity struct {
 	every time.Duration
 	most  int
 	log   *slog.Logger
+
+	mu sync.Mutex
+	// news is closed, and replaced, when something may have changed: this
+	// node's trust in another, or another's in this one. told counts how
+	// often, so that news arriving while nobody was waiting is not missed.
+	news chan struct{}
+	told int
+	// employed holds the nodes this one is working for right now.
+	employed map[string]bool
+}
+
+// nudge has the node look again at once, rather than when it next would
+// have. It is called when this node's own trust changes and when another
+// node sends word that its has.
+func (r *reciprocity) nudge() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.told++
+	close(r.news)
+	r.news = make(chan struct{})
+}
+
+// pause waits for the usual interval, for news, or for ctx to end, and
+// reports whether ctx has. heard is how much news the caller had heard of
+// when it last looked, and is brought up to date: if there has been more
+// since, there is no waiting to do.
+func (r *reciprocity) pause(ctx context.Context, heard *int) (ended bool) {
+	r.mu.Lock()
+	news, fresh := r.news, r.told != *heard
+	*heard = r.told
+	r.mu.Unlock()
+	if fresh {
+		return ctx.Err() != nil
+	}
+	select {
+	case <-time.After(r.every):
+	case <-news:
+	case <-ctx.Done():
+	}
+	return ctx.Err() != nil
+}
+
+// heardSoFar is how much news there has been, for a caller about to look.
+func (r *reciprocity) heardSoFar() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.told
+}
+
+// workingFor reports whether this node is working for the given one now.
+func (r *reciprocity) workingFor(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.employed[id]
+}
+
+func (r *reciprocity) setEmployed(id string, employed bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.employed[id] = employed
+}
+
+// newReciprocity fills in what a reciprocity keeps for itself.
+func newReciprocity(r *reciprocity) *reciprocity {
+	r.news, r.employed = make(chan struct{}), make(map[string]bool)
+	return r
 }
 
 // run works for whoever it should until ctx ends, and returns once all of
@@ -52,6 +121,7 @@ func (r *reciprocity) run(ctx context.Context) {
 	}
 	working := make(map[string]engagement)
 	for {
+		heard := r.heardSoFar()
 		trusted := r.trusted()
 		for id, e := range working {
 			if !slices.Contains(trusted, id) {
@@ -73,9 +143,7 @@ func (r *reciprocity) run(ctx context.Context) {
 				r.workFor(for_, id)
 			}()
 		}
-		select {
-		case <-time.After(r.every):
-		case <-ctx.Done():
+		if r.pause(ctx, &heard) {
 			for _, e := range working {
 				e.stop()
 				<-e.ended
@@ -89,21 +157,85 @@ func (r *reciprocity) run(ctx context.Context) {
 // ends.
 func (r *reciprocity) workFor(ctx context.Context, id string) {
 	for {
+		heard := r.heardSoFar()
 		for _, addr := range r.addresses(id) {
 			if !r.ask(ctx, id, addr) {
 				continue
 			}
 			r.log.Info("working for a node that trusts this one, as this one trusts it", "node", id, "addr", addr)
+			r.setEmployed(id, true)
 			err := r.work(ctx, id, addr)
+			r.setEmployed(id, false)
 			r.log.Info("stopped working for a node", "node", id, "reason", err)
 			break
 		}
-		select {
-		case <-time.After(r.every):
-		case <-ctx.Done():
+		if r.pause(ctx, &heard) {
 			return
 		}
 	}
+}
+
+// trustProtocol names the streams on which one node's libp2p host tells
+// another that its trust in it has changed. Nothing is said on them beyond
+// that; the node told asks in the ordinary way what the news is.
+const trustProtocol = "/sisyphus/trust/1"
+
+// wordTimeout is how long a node spends getting word to another.
+const wordTimeout = 5 * time.Second
+
+// sendWord tells the node with the given ID that this node's trust in it
+// has changed, if it can be reached. A node that cannot be finds out when
+// it next asks.
+func sendWord(ctx context.Context, host *p2p.Host, id string) {
+	ctx, cancel := context.WithTimeout(ctx, wordTimeout)
+	defer cancel()
+	conn, err := host.Dial(ctx, id, trustProtocol)
+	if err != nil {
+		return
+	}
+	// A stream is only opened in earnest when something is sent on it.
+	conn.SetDeadline(time.Now().Add(wordTimeout))
+	conn.Write([]byte{1})
+	conn.Read(make([]byte, 1))
+	conn.Close()
+}
+
+// hearWord calls heard each time another node sends word, until lis is
+// closed.
+func hearWord(lis net.Listener, heard func()) {
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			return
+		}
+		conn.SetDeadline(time.Now().Add(wordTimeout))
+		conn.Read(make([]byte, 1))
+		conn.Close()
+		heard()
+	}
+}
+
+// notices passes news of whom this node trusts on to whoever has asked to
+// be told, once anyone has. The list of members is opened before there is
+// anyone to tell.
+type notices struct {
+	mu sync.Mutex
+	to func(id string)
+}
+
+func (n *notices) tell(id string) {
+	n.mu.Lock()
+	to := n.to
+	n.mu.Unlock()
+	if to != nil {
+		to(id)
+	}
+}
+
+func (n *notices) listen(to func(id string)) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.to = to
 }
 
 // trustedWorkers lists the nodes admitted to a pool as workers.
@@ -158,31 +290,77 @@ type guestWork struct {
 	ident   *identity.Identity
 	dataDir string
 	// template is the worker this node runs for its own pool; one like it
-	// is run for each node worked for. Its Limit is shared, so that all of
+	// is run for each node worked for. They share its Limit, so that all of
 	// them together run no more tasks at once than the node has slots for.
-	template  *worker.Worker
+	template *worker.Worker
+	// kubo has the node join the other's private IPFS network, with a Kubo
+	// daemon of its own for the purpose, as it would as that node's worker
+	// and nothing else.
+	kubo      bool
 	syncCache bool
 	maxCache  uint64
 }
 
 // work runs as a worker of the node with the given ID, at addr, until ctx
-// ends or that node turns this one away. What its tasks fetch is cached
-// apart from this node's own data and from every other node's.
+// ends or that node turns this one away. What its tasks fetch is kept under
+// that node's name, apart from this node's own data and every other's.
 func (g *guestWork) work(ctx context.Context, id, addr string) error {
-	cache, err := storage.OpenCache(filepath.Join(g.dataDir, "guest", id), g.syncCache)
-	if err != nil {
-		return err
-	}
-	defer cache.Close()
+	dir := filepath.Join(g.dataDir, "guest", id)
+	// If this cannot be made, what goes in it below cannot be either, and
+	// says so.
+	os.MkdirAll(dir, 0o700)
+	log := g.template.Log
 	creds := credentials.NewTLS(g.ident.ClientTLS(id))
-	remote, err := worker.DialBlobs(addr, creds, cache, g.maxCache)
+	w := &worker.Worker{
+		Name: g.template.Name, Slots: g.template.Slots, Workloads: g.template.Workloads, Limit: g.template.Limit, Pool: id, Log: log,
+		Coordinator: addr, Credentials: creds,
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// A pool's private network has a key of its own, so a node needs one
+	// Kubo daemon for each pool it is in. Where the other node runs no such
+	// network, or it cannot be joined, the work is done without.
+	var store *storage.Store
+	onNetwork := false
+	if g.kubo {
+		swarm, leave, err := joinSwarm(ctx, g.ident, filepath.Join(dir, "ipfs"), addr, id, creds, log)
+		if err != nil {
+			log.Info("working for a node without its private IPFS network", "node", id, "reason", err)
+		} else {
+			// Following the network to a new key goes on beside the work, and
+			// is finished, or given up, before Kubo is stopped.
+			var following sync.WaitGroup
+			defer func() {
+				cancel()
+				following.Wait()
+				leave()
+			}()
+			w.OnSwarm = func(stated string) {
+				following.Add(1)
+				go func() {
+					defer following.Done()
+					swarm.adopt(ctx, addr, creds, stated, log)
+				}()
+			}
+			store, onNetwork = storage.OpenKuboCache(swarm.daemon), true
+		}
+	}
+	if store == nil {
+		var err error
+		if store, err = storage.OpenCache(filepath.Join(dir, "cache"), g.syncCache); err != nil {
+			return err
+		}
+	}
+	defer store.Close()
+	remote, err := worker.DialBlobs(addr, creds, store, g.maxCache)
 	if err != nil {
 		return err
 	}
 	defer remote.Close()
-	w := &worker.Worker{
-		Name: g.template.Name, Slots: g.template.Slots, Workloads: g.template.Workloads, Limit: g.template.Limit, Log: g.template.Log,
-		Coordinator: addr, Credentials: creds, Blobs: remote,
+	if onNetwork {
+		remote.OnFallback = warnOfFallback(log)
 	}
+	w.Blobs = remote
 	return w.Run(ctx)
 }

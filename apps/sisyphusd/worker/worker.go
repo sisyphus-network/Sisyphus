@@ -41,9 +41,11 @@ type Worker struct {
 	// Slots is how many tasks this node runs at once.
 	Slots int
 	// Limit, if set, is shared with the node's other workers: a task takes
-	// a place in it before it runs and gives it back after, so that between
-	// them they run no more at once than it has room for.
-	Limit     chan struct{}
+	// a slot from it before it runs and gives it back after, so that between
+	// them they run no more at once than the node has room for. Pool names
+	// whose tasks this worker's are, when slots are shared out.
+	Limit     *Slots
+	Pool      string
 	Workloads *runtime.Registry
 	// Blobs is the stored data this node's tasks can read and write.
 	Blobs runtime.Blobs
@@ -220,13 +222,11 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 		return result
 	}
 	if w.Limit != nil {
-		select {
-		case w.Limit <- struct{}{}:
-			defer func() { <-w.Limit }()
-		case <-ctx.Done():
+		if !w.Limit.Acquire(ctx, w.Pool) {
 			fail(ctx.Err())
 			return result
 		}
+		defer w.Limit.Release(w.Pool)
 	}
 	started := time.Now()
 	touched := runtime.Record(w.Blobs)

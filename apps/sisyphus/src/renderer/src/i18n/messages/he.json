@@ -43,6 +43,8 @@
   "trustForCompute": "תן אמון להרצת חישובים",
   "trustedForCompute": "מהימן להרצת חישובים",
   "computeTrustRemoved": "האמון להרצת חישובים הוסר",
+  "worksForYou": "עובד עבורך",
+  "youWorkForIt": "אתה עובד עבורו",
   "streaming": "משדר",
   "streamPaused": "הזרם מושהה",
   "noPeersYet": "עדיין אין עמיתים מחוברים",

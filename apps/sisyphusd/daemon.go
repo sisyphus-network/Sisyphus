@@ -171,39 +171,30 @@ func runDaemon(ctx context.Context, args []string) error {
 	// coordinator's starts the pool's private network; a worker's joins it.
 	var sidecar *kubo.Daemon
 	var swarm *poolSwarm
-	if *useKubo {
+	if *useKubo && isCoordinator {
 		// With no port of its own opened, a coordinator's Kubo listens on
 		// this machine only and members are brought to it through --listen.
-		network := &kubo.Swarm{Port: *swarmPort, Loopback: *swarmPort == 0}
 		swarm = &poolSwarm{keyFile: filepath.Join(*dataDir, "swarm.key"), port: *swarmPort}
-		if isCoordinator {
-			network.Key, err = swarmKey(swarm.keyFile)
-		} else {
-			// A worker's Kubo makes its connections outwards. Where it
-			// cannot reach the coordinator's directly, it connects to a port
-			// on this machine that leads there through the coordinator's own.
-			conn, dialErr := grpc.NewClient(*join, grpc.WithTransportCredentials(creds))
-			if dialErr != nil {
-				return dialErr
-			}
-			defer conn.Close()
-			lis, listenErr := listenLoopback()
-			if listenErr != nil {
-				return fmt.Errorf("listen for this node's Kubo: %w", listenErr)
-			}
-			go tunnel.Forward(ctx, lis, pb.NewTunnelServiceClient(conn), pb.TunnelTarget_TUNNEL_TARGET_SWARM, log)
-			swarm.route = &route{coordinator: coordinatorID, coordinatorAddr: *join, tunnel: lis.Addr().String(), log: log}
-			network.Port, network.Loopback = 0, false
-			network.Key, network.Peers, err = swarm.fetch(ctx, *join, creds)
-		}
+		key, err := swarmKey(swarm.keyFile)
 		if err != nil {
 			return err
 		}
+		network := &kubo.Swarm{Key: key, Port: *swarmPort, Loopback: *swarmPort == 0}
 		if sidecar, err = kubo.Start(ctx, kubo.Config{Repo: filepath.Join(*dataDir, "ipfs"), Identity: ident, Swarm: network}); err != nil {
 			return err
 		}
 		defer sidecar.Stop()
-		swarm.key, swarm.daemon = network.Key, sidecar
+		swarm.key, swarm.daemon = key, sidecar
+	}
+	if *useKubo && !isCoordinator {
+		var leave func()
+		if swarm, leave, err = joinSwarm(ctx, ident, filepath.Join(*dataDir, "ipfs"), *join, coordinatorID, creds, log); err != nil {
+			return err
+		}
+		defer leave()
+		sidecar = swarm.daemon
+	}
+	if *useKubo {
 		log.Info("kubo started", "repo", filepath.Join(*dataDir, "ipfs"))
 	}
 
@@ -241,14 +232,14 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 	defer db.Close()
-	book, err := db.BootstrapPeers()
-	if err != nil {
-		return err
-	}
 	// host is the node's libp2p host, started below according to its role,
 	// and trust the list of nodes a coordinator has admitted.
 	var host *p2p.Host
 	var trust *access.List
+	// trustChanged hears of each node the coordinator admits or removes, and
+	// worksFor says whether this node is working for another.
+	trustChanged := new(notices)
+	worksFor := func(string) bool { return false }
 
 	if isCoordinator {
 		admitted, err := access.Open(db, ident.ID())
@@ -260,6 +251,12 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		trust = admitted
+		admitted.OnChange(trustChanged.tell)
+		// And a node that ran the Rust daemon before this one keeps what
+		// that one knew.
+		if err := importRustState(*dataDir, db, admitted, log); err != nil {
+			return err
+		}
 		coord := coordinator.New(coordinator.Config{
 			ID: ident.ID(), Workloads: workloads, Store: store, Journal: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
@@ -397,18 +394,36 @@ func runDaemon(ctx context.Context, args []string) error {
 			// The nodes this one lets work for it, it works for in turn,
 			// whenever they will have it. All of that shares the node's
 			// slots with the work of its own pool.
-			w.Limit = make(chan struct{}, *slots)
-			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, syncCache: *syncCache, maxCache: *maxCache}
-			mutual := &reciprocity{
+			w.Limit, w.Pool = worker.NewSlots(*slots), ident.ID()
+			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, kubo: *useKubo, syncCache: *syncCache, maxCache: *maxCache}
+			mutual := newReciprocity(&reciprocity{
 				trusted:   func() []string { return trustedWorkers(trust.Members()) },
 				addresses: func(id string) []string { return whereToAsk(host.Peers(), id) },
 				ask:       func(ctx context.Context, id, addr string) bool { return trustsThisNode(ctx, ident, id, addr) },
 				work:      guests.work,
 				every:     reciprocityCheck, most: maxWorkedFor, log: log,
-			}
+			})
+			worksFor = mutual.workingFor
+			// A change of trust at either end is acted on at once: this node
+			// looks again when its own changes, and tells the node concerned,
+			// which looks again when it hears.
+			var words sync.WaitGroup
+			trustChanged.listen(func(id string) {
+				mutual.nudge()
+				words.Add(1)
+				go func() {
+					defer words.Done()
+					sendWord(ctx, host, id)
+				}()
+			})
+			hearing := host.Listen(trustProtocol)
+			go hearWord(hearing, mutual.nudge)
 			working := make(chan struct{})
 			defer func() {
 				cancel()
+				hearing.Close()
+				trustChanged.listen(nil)
+				words.Wait()
 				<-working
 			}()
 			go func() {
@@ -443,7 +458,7 @@ func runDaemon(ctx context.Context, args []string) error {
 				if w.Connected() {
 					state = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
 				}
-				return []*nodepb.Peer{{PeerId: coordinatorID, ConnectionState: state, KnownAddresses: multiaddrs(coordinatorAddr)}}
+				return []*nodepb.Peer{{PeerId: coordinatorID, ConnectionState: state, KnownAddresses: multiaddrs(coordinatorAddr), ThisNodeWorksFor: w.Connected()}}
 			}
 		}
 		done := make(chan struct{})
@@ -461,6 +476,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	// Whatever its role, the node is connected to the nodes in its address
 	// book and those named on the command line, and through them finds
 	// others. That goes on beside everything else and ends with the node.
+	book, err := db.BootstrapPeers()
+	if err != nil {
+		return err
+	}
 	looking, stopLooking := context.WithCancel(ctx)
 	var searches sync.WaitGroup
 	defer func() {
@@ -481,7 +500,13 @@ func runDaemon(ctx context.Context, args []string) error {
 	// The desktop client is shown the node's pool and, beside it, the nodes
 	// its host has found.
 	pool := local.Peers
-	local.Peers = func() []*nodepb.Peer { return withFound(pool(), host.Peers()) }
+	local.Peers = func() []*nodepb.Peer {
+		peers := withFound(pool(), host.Peers())
+		for _, peer := range peers {
+			peer.ThisNodeWorksFor = peer.ThisNodeWorksFor || worksFor(peer.PeerId)
+		}
+		return peers
+	}
 	if *locate {
 		var country atomic.Value
 		searches.Add(1)
@@ -520,9 +545,10 @@ func runDaemon(ctx context.Context, args []string) error {
 }
 
 // reciprocityCheck is how often a node looks over the nodes it trusts and
-// asks those it does not yet work for whether they trust it, and
+// asks those it does not yet work for whether they trust it, in case word
+// of a change did not reach it, and
 // maxWorkedFor how many it will work for at once.
-var reciprocityCheck = 15 * time.Second
+var reciprocityCheck = time.Minute
 
 const maxWorkedFor = 16
 
@@ -629,7 +655,11 @@ func poolPeers(self string, connected []*pb.NodeInfo, members []access.Member) [
 		if online[member.ID] {
 			state = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
 		}
-		peers = append(peers, &nodepb.Peer{PeerId: member.ID, ConnectionState: state, TrustedForCompute: member.Role == access.Worker})
+		peers = append(peers, &nodepb.Peer{
+			PeerId: member.ID, ConnectionState: state, TrustedForCompute: member.Role == access.Worker,
+			// A member whose worker is connected is working for this node.
+			WorksForThisNode: online[member.ID],
+		})
 	}
 	return peers
 }
@@ -852,6 +882,43 @@ func (s *poolSwarm) Rekey(ctx context.Context) error {
 	return nil
 }
 
+// joinSwarm starts a Kubo daemon, on the repository in repo, as a member of
+// the private IPFS network of the pool coordinated at addr by the node with
+// the given ID. The daemon runs until leave is called.
+//
+// A worker's Kubo makes its connections outwards. Where it cannot reach the
+// coordinator's directly, it connects to a port on this machine that leads
+// there through the coordinator's own.
+func joinSwarm(ctx context.Context, ident *identity.Identity, repo, addr, coordinatorID string, creds credentials.TransportCredentials, log *slog.Logger) (swarm *poolSwarm, leave func(), err error) {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		return nil, nil, err
+	}
+	lis, err := listenLoopback()
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("listen for this node's Kubo: %w", err)
+	}
+	forwarding, stop := context.WithCancel(ctx)
+	go tunnel.Forward(forwarding, lis, pb.NewTunnelServiceClient(conn), pb.TunnelTarget_TUNNEL_TARGET_SWARM, log)
+	swarm = &poolSwarm{route: &route{coordinator: coordinatorID, coordinatorAddr: addr, tunnel: lis.Addr().String(), log: log}}
+	key, peers, err := swarm.fetch(ctx, addr, creds)
+	if err == nil {
+		swarm.daemon, err = kubo.Start(ctx, kubo.Config{Repo: repo, Identity: ident, Swarm: &kubo.Swarm{Key: key, Peers: peers}})
+	}
+	if err != nil {
+		stop()
+		conn.Close()
+		return nil, nil, err
+	}
+	swarm.key = key
+	return swarm, func() {
+		swarm.daemon.Stop()
+		stop()
+		conn.Close()
+	}, nil
+}
+
 // adoptRetry is how long a worker waits before trying again to follow the
 // pool to a new key.
 var adoptRetry = 5 * time.Second
@@ -931,6 +998,9 @@ func fetchSwarm(ctx context.Context, addr string, creds credentials.TransportCre
 // the directory and the key if this is the node's first run.
 func loadIdentity(dataDir string) (*identity.Identity, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := adoptRustKey(dataDir); err != nil {
 		return nil, err
 	}
 	ident, _, err := identity.LoadOrCreate(filepath.Join(dataDir, "node.key"))

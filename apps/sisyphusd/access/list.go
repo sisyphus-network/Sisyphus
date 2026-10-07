@@ -60,6 +60,21 @@ type List struct {
 
 	mu      sync.Mutex
 	members map[string]Member
+	// changed, if set, is called with the ID of each node admitted or
+	// removed, after the change has taken effect.
+	changed func(id string)
+}
+
+// OnChange has fn called with the ID of each node admitted or removed from
+// now on, after the fact. It must be set before the list is shared.
+func (l *List) OnChange(fn func(id string)) {
+	l.changed = fn
+}
+
+func (l *List) tell(id string) {
+	if l.changed != nil {
+		l.changed(id)
+	}
 }
 
 // Open loads the list kept in store. ownerID is this node's own ID.
@@ -189,16 +204,27 @@ func (l *List) Redeem(token, id string, now time.Time) (Role, error) {
 // Admit admits a node directly, without an invitation.
 func (l *List) Admit(id string, role Role, now time.Time) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := l.store.SaveMember(nodedb.Member{ID: id, Role: string(role), Joined: now}); err != nil {
-		return err
+	err := l.store.SaveMember(nodedb.Member{ID: id, Role: string(role), Joined: now})
+	if err == nil {
+		l.members[id] = Member{ID: id, Role: role, Joined: now}
 	}
-	l.members[id] = Member{ID: id, Role: role, Joined: now}
-	return nil
+	l.mu.Unlock()
+	if err == nil {
+		l.tell(id)
+	}
+	return err
 }
 
 // Remove takes a node off the list. It reports whether the node was on it.
 func (l *List) Remove(id string) (bool, error) {
+	removed, err := l.remove(id)
+	if removed {
+		l.tell(id)
+	}
+	return removed, err
+}
+
+func (l *List) remove(id string) (bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if _, ok := l.members[id]; !ok {

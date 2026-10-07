@@ -43,6 +43,8 @@
   "trustForCompute": "Trust for compute",
   "trustedForCompute": "Trusted for compute",
   "computeTrustRemoved": "Compute trust removed",
+  "worksForYou": "Working for you",
+  "youWorkForIt": "You work for it",
   "streaming": "Streaming",
   "streamPaused": "Stream paused",
   "noPeersYet": "No peers connected yet",

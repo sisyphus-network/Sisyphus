@@ -47,6 +47,10 @@ type Peer = {
   connectionState: number | string
   knownAddresses: string[]
   trustedForCompute: boolean
+  // Which way work is flowing now. A daemon from before these existed
+  // leaves them out.
+  worksForThisNode?: boolean
+  thisNodeWorksFor?: boolean
 }
 
 type NodeInfo = {

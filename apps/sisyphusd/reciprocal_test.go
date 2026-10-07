@@ -30,12 +30,18 @@ type neighbourhood struct {
 	working   map[string]string // node ID to the address worked at
 	turnAway  map[string]chan struct{}
 	asked     map[string]int
+	// every is how often the node looks without being told to; nudge tells
+	// it to, and employed is its own account of whom it works for.
+	every    time.Duration
+	nudge    func()
+	employed func(id string) bool
 }
 
 func newNeighbourhood() *neighbourhood {
 	return &neighbourhood{
 		trusting: make(map[string]bool), addresses: make(map[string][]string),
 		working: make(map[string]string), turnAway: make(map[string]chan struct{}), asked: make(map[string]int),
+		every: 5 * time.Millisecond,
 	}
 }
 
@@ -61,7 +67,7 @@ func (n *neighbourhood) workingFor() []string {
 func (n *neighbourhood) start(t *testing.T, most int) (logs *syncBuffer, stop func()) {
 	t.Helper()
 	logs = new(syncBuffer)
-	r := &reciprocity{
+	r := newReciprocity(&reciprocity{
 		trusted: func() []string {
 			n.mu.Lock()
 			defer n.mu.Unlock()
@@ -93,8 +99,9 @@ func (n *neighbourhood) start(t *testing.T, most int) (logs *syncBuffer, stop fu
 				return errors.New("turned away")
 			}
 		},
-		every: 5 * time.Millisecond, most: most, log: slog.New(slog.NewTextHandler(logs, nil)),
-	}
+		every: n.every, most: most, log: slog.New(slog.NewTextHandler(logs, nil)),
+	})
+	n.nudge, n.employed = r.nudge, r.workingFor
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -161,6 +168,35 @@ func TestANodeWorksForThoseItTrustsThatTrustItBack(t *testing.T) {
 	if left := n.workingFor(); len(left) != 0 {
 		t.Errorf("still working for %v after stopping", left)
 	}
+}
+
+func TestWordOfAChangeIsActedOnAtOnce(t *testing.T) {
+	n := newNeighbourhood()
+	// Left to itself this node would not look again for an hour.
+	n.every = time.Hour
+	n.set(func() {
+		n.trusted = []string{"rig"}
+		n.addresses["rig"] = []string{"right:1"}
+	})
+	n.start(t, 16)
+	waitFor(t, func() bool {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		return n.asked["rig"] == 1
+	})
+	if n.employed("rig") {
+		t.Fatal("working for a node that does not trust this one")
+	}
+
+	// The rig comes to trust this node, and sends word.
+	n.set(func() { n.trusting["rig"] = true })
+	n.nudge()
+	waitFor(t, func() bool { return n.employed("rig") })
+
+	// This node ends its own trust, which is news too.
+	n.set(func() { n.trusted = nil })
+	n.nudge()
+	waitFor(t, func() bool { return !n.employed("rig") && len(n.workingFor()) == 0 })
 }
 
 func TestANodeWorksForOnlySoManyAtOnce(t *testing.T) {
@@ -238,7 +274,7 @@ func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {
 	// What its tasks fetch is kept apart, under the other node's name.
 	input := p.upload(sampleText())
 	p.wordcountOn(input, 2)
-	if blocks, _ := filepath.Glob(filepath.Join(dataDir, "guest", p.ident.ID(), "blocks", "*", "*.data")); len(blocks) == 0 {
+	if blocks, _ := filepath.Glob(filepath.Join(dataDir, "guest", p.ident.ID(), "cache", "blocks", "*", "*.data")); len(blocks) == 0 {
 		t.Error("nothing was cached for the node worked for")
 	}
 	stop()
@@ -272,7 +308,7 @@ func TestANodesWorkersShareItsSlots(t *testing.T) {
 	p := startPool(t, runtime.NewRegistry(g))
 	// Two workers, as one node working for two pools has, with room for
 	// one task between them.
-	shared := make(chan struct{}, 1)
+	shared := worker.NewSlots(1)
 	p.tune = func(w *worker.Worker) { w.Limit = shared }
 	p.startWorker("first", 1)
 	stopSecond := p.startWorker("second", 1)
@@ -296,8 +332,8 @@ func TestAWorkerWaitingForASlotCanBeStopped(t *testing.T) {
 	g := gated{started: make(chan struct{}, 16), release: make(chan struct{})}
 	p := startPool(t, runtime.NewRegistry(g))
 	// Every slot the node has is taken by work for someone else.
-	shared := make(chan struct{}, 1)
-	shared <- struct{}{}
+	shared := worker.NewSlots(1)
+	shared.Acquire(context.Background(), "someone else")
 	p.tune = func(w *worker.Worker) { w.Limit = shared }
 	stop := p.startWorker("busy", 1)
 	p.waitForWorkers(1)
@@ -313,7 +349,7 @@ func TestAWorkerWaitingForASlotCanBeStopped(t *testing.T) {
 	p.waitForWorkers(0)
 
 	// With a slot free again, another worker runs the task.
-	<-shared
+	shared.Release("someone else")
 	p.startWorker("free", 1)
 	<-g.started
 	close(g.release)
@@ -323,9 +359,8 @@ func TestAWorkerWaitingForASlotCanBeStopped(t *testing.T) {
 }
 
 func TestNodesThatTrustEachOtherWorkForEachOther(t *testing.T) {
-	old := reciprocityCheck
-	reciprocityCheck = 50 * time.Millisecond
-	defer func() { reciprocityCheck = old }()
+	// Left to themselves the nodes would look once a minute. Here they act
+	// on being told.
 	logs := captureLogs(t)
 
 	rigDir, laptopDir := t.TempDir(), t.TempDir()
@@ -357,11 +392,25 @@ func TestNodesThatTrustEachOtherWorkForEachOther(t *testing.T) {
 		t.Fatalf("the laptop is working for a rig it has not said it trusts:\n%s", out)
 	}
 
+	if seen := peerSeenBy(t, onRig, laptopID); seen.GetWorksForThisNode() || seen.GetThisNodeWorksFor() {
+		t.Errorf("with trust one way only, the rig lists the laptop as %v", seen)
+	}
+
 	// The laptop's owner trusts the rig in turn, and with nothing restarted
-	// each starts working for the other.
+	// each starts working for the other. Each got word of the other's
+	// trust: neither has waited the minute it would take to ask unprompted.
+	started := time.Now()
 	trust(onLaptop, laptopDir, rigID, true)
 	waitForOutput(t, "laptop", "nodes", "--addr", rig)
 	waitForOutput(t, "rig", "nodes", "--addr", laptop)
+	if took := time.Since(started); took > 20*time.Second {
+		t.Errorf("mutual trust took %v to take effect", took)
+	}
+	// And the desktop is told which way work is flowing: both ways.
+	waitFor(t, func() bool {
+		rigsView, laptopsView := peerSeenBy(t, onRig, laptopID), peerSeenBy(t, onLaptop, rigID)
+		return rigsView.GetWorksForThisNode() && rigsView.GetThisNodeWorksFor() && laptopsView.GetWorksForThisNode() && laptopsView.GetThisNodeWorksFor()
+	})
 	out := mustCLI(t, "job", "submit", "--addr", rig, "--tasks", "4", "--params", `{"from":0,"to":2000000}`)
 	if !strings.Contains(out, "on laptop") || !strings.Contains(out, "on rig") || !strings.Contains(out, primesBelowTwoMillion) {
 		t.Errorf("a job on the rig, with the laptop working for it:\n%s", out)
@@ -377,8 +426,114 @@ func TestNodesThatTrustEachOtherWorkForEachOther(t *testing.T) {
 		return strings.Contains(logs.String(), "no longer working for a node this one no longer trusts") &&
 			strings.Contains(logs.String(), `msg="stopped working for a node" node=`+laptopID)
 	})
+	waitFor(t, func() bool {
+		rigsView := peerSeenBy(t, onRig, laptopID)
+		return !rigsView.GetWorksForThisNode() && !rigsView.GetThisNodeWorksFor()
+	})
 	// Each still has its own worker, and its own pool works as before.
 	if out := mustCLI(t, "job", "submit", "--addr", laptop, "--params", `{"from":0,"to":100}`); !strings.Contains(out, `{"count":25}`) {
 		t.Errorf("a job on the laptop afterwards:\n%s", out)
+	}
+}
+
+func TestWorkForAnotherNodeGoesOverItsPrivateNetwork(t *testing.T) {
+	requireKubo(t)
+	logs := captureLogs(t)
+	rigDir, laptopDir, plainDir := t.TempDir(), t.TempDir(), t.TempDir()
+	rigListen, rig := onEveryInterface(t)
+	laptopListen, laptop := onEveryInterface(t)
+	plainListen, plain := onEveryInterface(t)
+	rigAPI, laptopAPI, plainAPI := freeAddr(t), freeAddr(t), freeAddr(t)
+	// Two nodes that each keep their pool's data in Kubo, on a private
+	// network of that pool's own, and one that uses no Kubo at all.
+	startDaemon(t, "--data-dir", rigDir, "--listen", rigListen, "--name", "rig", "--slots", "1", "--kubo", "--discovery", "on", "--api-listen", rigAPI)
+	startDaemon(t, "--data-dir", laptopDir, "--listen", laptopListen, "--name", "laptop", "--slots", "4", "--kubo", "--discovery", "on", "--api-listen", laptopAPI)
+	startDaemon(t, "--data-dir", plainDir, "--listen", plainListen, "--name", "plain", "--slots", "1", "--discovery", "on", "--api-listen", plainAPI)
+	for addr, dir := range map[string]string{rig: rigDir, laptop: laptopDir, plain: plainDir} {
+		dataDirs.Store(addr, dir)
+	}
+	onRig, onLaptop, onPlain := desktop(t, rigAPI), desktop(t, laptopAPI), desktop(t, plainAPI)
+	rigID, laptopID, plainID := nodeID(t, rigDir), nodeID(t, laptopDir), nodeID(t, plainDir)
+	waitFor(t, func() bool {
+		return peerSeenBy(t, onRig, laptopID).GetConnectionState() == connected && peerSeenBy(t, onLaptop, rigID).GetConnectionState() == connected &&
+			peerSeenBy(t, onPlain, laptopID).GetConnectionState() == connected && peerSeenBy(t, onLaptop, plainID).GetConnectionState() == connected
+	})
+	trust := func(client nodepb.NodeServiceClient, dir, peer string) {
+		t.Helper()
+		if _, err := client.SetPeerComputeTrust(tokenOf(t, dir), &nodepb.SetPeerComputeTrustRequest{PeerId: peer, Trusted: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	trust(onRig, rigDir, laptopID)
+	trust(onLaptop, laptopDir, rigID)
+	trust(onPlain, plainDir, laptopID)
+	trust(onLaptop, laptopDir, plainID)
+	waitForOutput(t, "laptop", "nodes", "--addr", rig)
+	waitForOutput(t, "laptop", "nodes", "--addr", plain)
+
+	// A job on the rig, most of it done by the laptop.
+	text := strings.Repeat(boulderText, 20_000)
+	input := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", rig, writeFile(t, text)))
+	out := mustCLI(t, "job", "submit", "--addr", rig, "--workload", "wordcount", "--tasks", "5", "--params", `{"input":"`+input+`"}`)
+	if !strings.Contains(out, "on laptop") || !strings.Contains(out, `"words":180000`) {
+		t.Fatalf("job output:\n%s", out)
+	}
+	// The laptop has a Kubo daemon for the rig's pool, beside its own, and
+	// that is where the rig's data came to it.
+	guest := filepath.Join(laptopDir, "guest", rigID)
+	if got := ipfsIn(t, guest, "cat", "--offline", input); got != text {
+		t.Errorf("the laptop's Kubo for the rig's pool holds %d bytes of the input, want all %d", len(got), len(text))
+	}
+	rigKey, _ := os.ReadFile(filepath.Join(rigDir, "ipfs", "swarm.key"))
+	guestKey, _ := os.ReadFile(filepath.Join(guest, "ipfs", "swarm.key"))
+	ownKey, _ := os.ReadFile(filepath.Join(laptopDir, "ipfs", "swarm.key"))
+	if len(rigKey) == 0 || string(guestKey) != string(rigKey) || string(ownKey) == string(rigKey) {
+		t.Error("the laptop's Kubo for the rig's pool is not on the rig's network, or its own Kubo is")
+	}
+	if strings.Contains(logs.String(), "did not supply a blob") {
+		t.Error("the rig's private network did not supply the input; the laptop fell back to asking the rig")
+	}
+
+	// For the node with no such network the laptop works without one.
+	out = mustCLI(t, "job", "submit", "--addr", plain, "--tasks", "4", "--params", `{"from":0,"to":2000000}`)
+	if !strings.Contains(out, "on laptop") || !strings.Contains(out, primesBelowTwoMillion) {
+		t.Errorf("a job on the node without Kubo:\n%s", out)
+	}
+	if !strings.Contains(logs.String(), `msg="working for a node without its private IPFS network" node=`+plainID) {
+		t.Error("nothing was said about working for a node without its private network")
+	}
+}
+
+func TestNewsThatArrivesWhileANodeIsLookingIsNotMissed(t *testing.T) {
+	r := newReciprocity(&reciprocity{every: time.Hour})
+	ctx := context.Background()
+	// The node looks, and while it is looking something changes.
+	heard := r.heardSoFar()
+	r.nudge()
+	done := make(chan bool, 1)
+	go func() { done <- r.pause(ctx, &heard) }()
+	select {
+	case ended := <-done:
+		if ended {
+			t.Error("the pause reported the node stopped")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("news that arrived before the node paused was slept through")
+	}
+	// Having caught up, it waits for the next.
+	go func() { done <- r.pause(ctx, &heard) }()
+	select {
+	case <-done:
+		t.Fatal("the node did not wait though there was nothing new")
+	case <-time.After(100 * time.Millisecond):
+	}
+	r.nudge()
+	<-done
+	// And a node that is stopping says so, news or no news.
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	r.nudge()
+	if !r.pause(stopped, &heard) || !r.pause(stopped, &heard) {
+		t.Error("a pause on a stopped node did not report it")
 	}
 }

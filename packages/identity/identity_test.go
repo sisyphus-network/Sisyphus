@@ -238,3 +238,43 @@ func TestLibp2pKeyEncodesTheSameIdentity(t *testing.T) {
 		t.Errorf("the libp2p key belongs to %s, the node is %s", derived, id.ID())
 	}
 }
+
+func TestAdoptingAKeyMadeElsewhere(t *testing.T) {
+	elsewhere, _, err := LoadOrCreate(filepath.Join(t.TempDir(), "node.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "node.key")
+	if err := Adopt(path, elsewhere.Libp2pKey()); err != nil {
+		t.Fatal(err)
+	}
+	adopted, created, err := LoadOrCreate(path)
+	if err != nil || created || adopted.ID() != elsewhere.ID() {
+		t.Fatalf("the adopted key gives node %v (new: %v, %v), want %s", adopted, created, err, elsewhere.ID())
+	}
+	// A node that has a key keeps it.
+	other, _, _ := LoadOrCreate(filepath.Join(t.TempDir(), "node.key"))
+	if err := Adopt(path, other.Libp2pKey()); err != nil {
+		t.Fatal(err)
+	}
+	if still, _, _ := LoadOrCreate(path); still.ID() != elsewhere.ID() {
+		t.Errorf("adopting over an existing key changed the node to %s", still.ID())
+	}
+
+	// Only a key of the kind a node has can be adopted.
+	rsaKey, _, err := crypto.GenerateKeyPair(crypto.RSA, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := crypto.MarshalPrivateKey(rsaKey)
+	fresh := filepath.Join(t.TempDir(), "node.key")
+	if err := Adopt(fresh, encoded); err == nil || !strings.Contains(err.Error(), "must be Ed25519") {
+		t.Errorf("adopting an RSA key: %v", err)
+	}
+	if err := Adopt(fresh, []byte("not a key")); err == nil {
+		t.Error("adopting what is no key succeeded")
+	}
+	if _, err := os.Stat(fresh); !os.IsNotExist(err) {
+		t.Error("a refused key left a file behind")
+	}
+}
