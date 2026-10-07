@@ -14,6 +14,8 @@ jobs:
     env:
       # Fail, rather than skip, any test that finds no ipfs program.
       SISYPHUS_REQUIRE_KUBO: "1"
+      # Likewise any that finds it cannot use Docker.
+      SISYPHUS_REQUIRE_DOCKER: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

@@ -124,6 +124,14 @@ func TestAQuestionIsPlannedComputedAndAnswered(t *testing.T) {
 	if !strings.Contains(out, `"result":{"count":168}`) || !strings.Contains(out, "And 168 below 1000.") || !strings.Contains(out, "(chat "+chatID+")") {
 		t.Errorf("the second question:\n%s", out)
 	}
+	// The model is told of the workloads the pool's workers run, and of no
+	// others: here nobody runs containers.
+	served.mu.Lock()
+	told := served.asked[0]["messages"].([]any)[0].(map[string]any)["content"].(string)
+	served.mu.Unlock()
+	if !strings.Contains(told, "- primes:") || !strings.Contains(told, "- wordcount:") || strings.Contains(told, "- container:") {
+		t.Errorf("the model was told:\n%s", told)
+	}
 	// System, question, call, result, answer, second question.
 	if n := served.messagesAsked(3); n != 6 {
 		t.Errorf("for the second question the model was sent %d messages, want the 6 so far", n)
@@ -420,7 +428,7 @@ func TestAnAssistantWhoseStateCannotBeKeptSaysSo(t *testing.T) {
 	db := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
 	store := &shelves{assistantStore: db}
 	p := startPool(t, runtime.Builtin())
-	a := &assistant{store: store, pool: p.coord, workloads: runtime.Builtin()}
+	a := &assistant{store: store, pool: p.coord, workloads: runtime.Builtin(), offered: func(string) bool { return true }}
 	if err := a.SetModelConfig(nodedb.ModelConfig{Provider: ai.Ollama, BaseURL: served.URL, Model: "test-model"}); err != nil {
 		t.Fatal(err)
 	}
