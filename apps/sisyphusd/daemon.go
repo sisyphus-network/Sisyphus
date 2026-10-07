@@ -232,14 +232,18 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 	defer db.Close()
-	// host is the node's libp2p host, started below according to its role,
-	// and trust the list of nodes a coordinator has admitted.
+	// host is the node's libp2p host, started below according to its role.
 	var host *p2p.Host
-	var trust *access.List
 	// trustChanged hears of each node the coordinator admits or removes, and
 	// worksFor says whether this node is working for another.
 	trustChanged := new(notices)
 	worksFor := func(string) bool { return false }
+	// takes is the other side of trust: the nodes this one will take tasks
+	// from, whatever else it does.
+	takes, err := openWilling(db)
+	if err != nil {
+		return err
+	}
 
 	if isCoordinator {
 		admitted, err := access.Open(db, ident.ID())
@@ -250,11 +254,10 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		trust = admitted
 		admitted.OnChange(trustChanged.tell)
 		// And a node that ran the Rust daemon before this one keeps what
 		// that one knew.
-		if err := importRustState(*dataDir, db, admitted, log); err != nil {
+		if err := importRustState(*dataDir, db, admitted, takes, log); err != nil {
 			return err
 		}
 		coord := coordinator.New(coordinator.Config{
@@ -292,7 +295,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		defer host.Close()
 		lis, _ := host.TLSListener() // fails only if asked for twice
-		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore}
+		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore, WorkFor: takes}
 		if swarm != nil {
 			config.Swarm = swarm
 			coord.AnnounceSwarm(swarm.Fingerprint())
@@ -375,7 +378,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			return host.Dial(ctx, nodeID, blobProtocol)
 		}
 		remote.OnPeerFetch = func(c cid.Cid, holder *pb.BlobHolder) {
-			log.Debug("fetched a blob from a fellow worker", "cid", c.String(), "node", holder.GetNodeId(), "at", holder.GetAddress())
+			log.Debug("fetched a blob from a fellow worker", "cid", c.String(), "node", holder.GetNodeId(), "at", holder.GetAddress(), "route", routeTo(host.Peers(), holder.GetNodeId()))
 		}
 		if *advertise == "" {
 			// With no address of its own to give, the node is asked for by
@@ -390,14 +393,19 @@ func runDaemon(ctx context.Context, args []string) error {
 			Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log,
 			ServeAddress: *advertise,
 		}
-		if isCoordinator && *reciprocate {
-			// The nodes this one lets work for it, it works for in turn,
-			// whenever they will have it. All of that shares the node's
-			// slots with the work of its own pool.
-			w.Limit, w.Pool = worker.NewSlots(*slots), ident.ID()
+		if *reciprocate {
+			// The node works for each node it has said it will take tasks
+			// from, whenever that node will have it. All of that shares the
+			// node's slots with the work it was started to do.
+			local.WorkFor = takes
+			w.Limit, w.Pool = worker.NewSlots(*slots), coordinatorID
 			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, kubo: *useKubo, syncCache: *syncCache, maxCache: *maxCache}
 			mutual := newReciprocity(&reciprocity{
-				trusted:   func() []string { return trustedWorkers(trust.Members()) },
+				// The node it already works for, being its coordinator, is
+				// not one to work for a second time.
+				trusted: func() []string {
+					return slices.DeleteFunc(takes.List(), func(id string) bool { return id == coordinatorID })
+				},
 				addresses: func(id string) []string { return whereToAsk(host.Peers(), id) },
 				ask:       func(ctx context.Context, id, addr string) bool { return trustsThisNode(ctx, ident, id, addr) },
 				work:      guests.work,
@@ -408,6 +416,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			// looks again when its own changes, and tells the node concerned,
 			// which looks again when it hears.
 			var words sync.WaitGroup
+			takes.onChange(mutual.nudge)
 			trustChanged.listen(func(id string) {
 				mutual.nudge()
 				words.Add(1)
@@ -422,6 +431,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			defer func() {
 				cancel()
 				hearing.Close()
+				takes.onChange(nil)
 				trustChanged.listen(nil)
 				words.Wait()
 				<-working
@@ -458,7 +468,7 @@ func runDaemon(ctx context.Context, args []string) error {
 				if w.Connected() {
 					state = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
 				}
-				return []*nodepb.Peer{{PeerId: coordinatorID, ConnectionState: state, KnownAddresses: multiaddrs(coordinatorAddr), ThisNodeWorksFor: w.Connected()}}
+				return []*nodepb.Peer{{PeerId: coordinatorID, ConnectionState: state, KnownAddresses: multiaddrs(coordinatorAddr), TakesWork: true, ThisNodeWorksFor: w.Connected()}}
 			}
 		}
 		done := make(chan struct{})
@@ -501,11 +511,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// its host has found.
 	pool := local.Peers
 	local.Peers = func() []*nodepb.Peer {
-		peers := withFound(pool(), host.Peers())
-		for _, peer := range peers {
-			peer.ThisNodeWorksFor = peer.ThisNodeWorksFor || worksFor(peer.PeerId)
-		}
-		return peers
+		return withTrust(withFound(pool(), host.Peers()), takes.List(), worksFor)
 	}
 	if *locate {
 		var country atomic.Value
@@ -552,6 +558,25 @@ var reciprocityCheck = time.Minute
 
 const maxWorkedFor = 16
 
+// routeTo says how this node's libp2p host is connected to another: directly,
+// through a relay, or not at all. A direct connection beside a relayed one
+// is what counts, since it is the one used.
+func routeTo(found []p2p.Peer, id string) string {
+	route := "none"
+	for _, peer := range found {
+		for _, conn := range peer.Conns {
+			switch {
+			case peer.ID != id:
+			case !strings.Contains(conn, "/p2p-circuit"):
+				route = "direct"
+			case route == "none":
+				route = "relayed"
+			}
+		}
+	}
+	return route
+}
+
 // startingPoints lists the addresses a node connects to at startup: its
 // address book, then those given on the command line.
 func startingPoints(book []nodedb.BootstrapPeer, flag string) []string {
@@ -594,6 +619,30 @@ func withFound(pool []*nodepb.Peer, found []p2p.Peer) []*nodepb.Peer {
 	}
 	sort.Slice(pool, func(a, b int) bool { return pool[a].GetPeerId() < pool[b].GetPeerId() })
 	return pool
+}
+
+// withTrust fills in, for each node the local API lists, the side of trust
+// that is this node's willingness to take its tasks, and whether it is
+// doing so now. A node this one will work for is listed even if nothing
+// else is known of it. A node is trusted for compute if either side holds.
+func withTrust(peers []*nodepb.Peer, takes []string, worksFor func(id string) bool) []*nodepb.Peer {
+	listed := make(map[string]*nodepb.Peer, len(peers))
+	for _, peer := range peers {
+		listed[peer.GetPeerId()] = peer
+	}
+	for _, id := range takes {
+		if listed[id] == nil {
+			listed[id] = &nodepb.Peer{PeerId: id, ConnectionState: nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED}
+			peers = append(peers, listed[id])
+		}
+		listed[id].TakesWork = true
+	}
+	for _, peer := range peers {
+		peer.ThisNodeWorksFor = peer.ThisNodeWorksFor || worksFor(peer.GetPeerId())
+		peer.TrustedForCompute = peer.GetGivesWork() || peer.GetTakesWork()
+	}
+	sort.Slice(peers, func(a, b int) bool { return peers[a].GetPeerId() < peers[b].GetPeerId() })
+	return peers
 }
 
 // countryURL is the service asked which country this node's address is in.
@@ -656,7 +705,7 @@ func poolPeers(self string, connected []*pb.NodeInfo, members []access.Member) [
 			state = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
 		}
 		peers = append(peers, &nodepb.Peer{
-			PeerId: member.ID, ConnectionState: state, TrustedForCompute: member.Role == access.Worker,
+			PeerId: member.ID, ConnectionState: state, GivesWork: member.Role == access.Worker,
 			// A member whose worker is connected is working for this node.
 			WorksForThisNode: online[member.ID],
 		})

@@ -279,6 +279,16 @@ impl proto::node_service_server::NodeService for NodeServiceImpl {
             trusted: request.trusted,
         }))
     }
+
+    async fn set_peer_compute_permissions(
+        &self,
+        _request: Request<proto::SetPeerComputePermissionsRequest>,
+    ) -> Result<Response<proto::SetPeerComputePermissionsResponse>, Status> {
+        // This daemon keeps one trust flag for each peer and runs no jobs.
+        Err(Status::unimplemented(
+            "this daemon keeps a single trust flag per peer; use SetPeerComputeTrust",
+        ))
+    }
 }
 
 fn parse_bootstrap_peers(peers: Vec<proto::BootstrapPeer>) -> Result<Vec<BootstrapPeer>, Status> {
@@ -339,6 +349,9 @@ fn into_proto_peers(peers: Vec<PeerSnapshot>) -> Vec<proto::Peer> {
             // This daemon runs no jobs, so no work flows either way.
             works_for_this_node: false,
             this_node_works_for: false,
+            // Its one flag stands for both sides.
+            gives_work: peer.trusted_for_compute,
+            takes_work: peer.trusted_for_compute,
         })
         .collect()
 }

@@ -26,6 +26,7 @@ const (
 	PoolService_Invite_FullMethodName       = "/sisyphus.v1.PoolService/Invite"
 	PoolService_ListMembers_FullMethodName  = "/sisyphus.v1.PoolService/ListMembers"
 	PoolService_RemoveMember_FullMethodName = "/sisyphus.v1.PoolService/RemoveMember"
+	PoolService_SetWorkFor_FullMethodName   = "/sisyphus.v1.PoolService/SetWorkFor"
 	PoolService_Rekey_FullMethodName        = "/sisyphus.v1.PoolService/Rekey"
 )
 
@@ -58,6 +59,10 @@ type PoolServiceClient interface {
 	// disconnects it. If the pool has a private IPFS network its key is
 	// changed, since the removed node still holds the old one.
 	RemoveMember(ctx context.Context, in *RemoveMemberRequest, opts ...grpc.CallOption) (*RemoveMemberResponse, error)
+	// SetWorkFor says whether this node is willing to take tasks from another.
+	// It works for that node only while that node, for its part, has admitted
+	// it as a worker.
+	SetWorkFor(ctx context.Context, in *SetWorkForRequest, opts ...grpc.CallOption) (*SetWorkForResponse, error)
 	// Rekey changes the key of the pool's private IPFS network. Connected
 	// workers are told and fetch the new one; anything else holding the old
 	// key is shut out.
@@ -142,6 +147,16 @@ func (c *poolServiceClient) RemoveMember(ctx context.Context, in *RemoveMemberRe
 	return out, nil
 }
 
+func (c *poolServiceClient) SetWorkFor(ctx context.Context, in *SetWorkForRequest, opts ...grpc.CallOption) (*SetWorkForResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetWorkForResponse)
+	err := c.cc.Invoke(ctx, PoolService_SetWorkFor_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *poolServiceClient) Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RekeyResponse)
@@ -181,6 +196,10 @@ type PoolServiceServer interface {
 	// disconnects it. If the pool has a private IPFS network its key is
 	// changed, since the removed node still holds the old one.
 	RemoveMember(context.Context, *RemoveMemberRequest) (*RemoveMemberResponse, error)
+	// SetWorkFor says whether this node is willing to take tasks from another.
+	// It works for that node only while that node, for its part, has admitted
+	// it as a worker.
+	SetWorkFor(context.Context, *SetWorkForRequest) (*SetWorkForResponse, error)
 	// Rekey changes the key of the pool's private IPFS network. Connected
 	// workers are told and fetch the new one; anything else holding the old
 	// key is shut out.
@@ -215,6 +234,9 @@ func (UnimplementedPoolServiceServer) ListMembers(context.Context, *ListMembersR
 }
 func (UnimplementedPoolServiceServer) RemoveMember(context.Context, *RemoveMemberRequest) (*RemoveMemberResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveMember not implemented")
+}
+func (UnimplementedPoolServiceServer) SetWorkFor(context.Context, *SetWorkForRequest) (*SetWorkForResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetWorkFor not implemented")
 }
 func (UnimplementedPoolServiceServer) Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Rekey not implemented")
@@ -366,6 +388,24 @@ func _PoolService_RemoveMember_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PoolService_SetWorkFor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetWorkForRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PoolServiceServer).SetWorkFor(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PoolService_SetWorkFor_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PoolServiceServer).SetWorkFor(ctx, req.(*SetWorkForRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PoolService_Rekey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RekeyRequest)
 	if err := dec(in); err != nil {
@@ -418,6 +458,10 @@ var PoolService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveMember",
 			Handler:    _PoolService_RemoveMember_Handler,
+		},
+		{
+			MethodName: "SetWorkFor",
+			Handler:    _PoolService_SetWorkFor_Handler,
 		},
 		{
 			MethodName: "Rekey",

@@ -37,6 +37,10 @@ service PoolService {
   // disconnects it. If the pool has a private IPFS network its key is
   // changed, since the removed node still holds the old one.
   rpc RemoveMember(RemoveMemberRequest) returns (RemoveMemberResponse);
+  // SetWorkFor says whether this node is willing to take tasks from another.
+  // It works for that node only while that node, for its part, has admitted
+  // it as a worker.
+  rpc SetWorkFor(SetWorkForRequest) returns (SetWorkForResponse);
   // Rekey changes the key of the pool's private IPFS network. Connected
   // workers are told and fetch the new one; anything else holding the old
   // key is shut out.
@@ -106,7 +110,16 @@ message ListMembersRequest {}
 
 message ListMembersResponse {
   repeated Member members = 1;
+  // The IDs of the nodes this one is willing to take tasks from.
+  repeated string works_for = 2;
 }
+
+message SetWorkForRequest {
+  string node_id = 1;
+  bool willing = 2;
+}
+
+message SetWorkForResponse {}
 
 message Member {
   string node_id = 1;

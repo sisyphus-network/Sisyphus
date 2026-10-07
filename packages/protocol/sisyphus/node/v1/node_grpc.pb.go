@@ -19,13 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	NodeService_GetNodeInfo_FullMethodName         = "/sisyphus.node.v1.NodeService/GetNodeInfo"
-	NodeService_ListPeers_FullMethodName           = "/sisyphus.node.v1.NodeService/ListPeers"
-	NodeService_WatchPeers_FullMethodName          = "/sisyphus.node.v1.NodeService/WatchPeers"
-	NodeService_GetBootstrapPeers_FullMethodName   = "/sisyphus.node.v1.NodeService/GetBootstrapPeers"
-	NodeService_SetBootstrapPeers_FullMethodName   = "/sisyphus.node.v1.NodeService/SetBootstrapPeers"
-	NodeService_ConnectPeer_FullMethodName         = "/sisyphus.node.v1.NodeService/ConnectPeer"
-	NodeService_SetPeerComputeTrust_FullMethodName = "/sisyphus.node.v1.NodeService/SetPeerComputeTrust"
+	NodeService_GetNodeInfo_FullMethodName               = "/sisyphus.node.v1.NodeService/GetNodeInfo"
+	NodeService_ListPeers_FullMethodName                 = "/sisyphus.node.v1.NodeService/ListPeers"
+	NodeService_WatchPeers_FullMethodName                = "/sisyphus.node.v1.NodeService/WatchPeers"
+	NodeService_GetBootstrapPeers_FullMethodName         = "/sisyphus.node.v1.NodeService/GetBootstrapPeers"
+	NodeService_SetBootstrapPeers_FullMethodName         = "/sisyphus.node.v1.NodeService/SetBootstrapPeers"
+	NodeService_ConnectPeer_FullMethodName               = "/sisyphus.node.v1.NodeService/ConnectPeer"
+	NodeService_SetPeerComputeTrust_FullMethodName       = "/sisyphus.node.v1.NodeService/SetPeerComputeTrust"
+	NodeService_SetPeerComputePermissions_FullMethodName = "/sisyphus.node.v1.NodeService/SetPeerComputePermissions"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -38,7 +39,11 @@ type NodeServiceClient interface {
 	GetBootstrapPeers(ctx context.Context, in *GetBootstrapPeersRequest, opts ...grpc.CallOption) (*GetBootstrapPeersResponse, error)
 	SetBootstrapPeers(ctx context.Context, in *SetBootstrapPeersRequest, opts ...grpc.CallOption) (*SetBootstrapPeersResponse, error)
 	ConnectPeer(ctx context.Context, in *ConnectPeerRequest, opts ...grpc.CallOption) (*ConnectPeerResponse, error)
+	// SetPeerComputeTrust sets both sides of trust in a peer at once: whether
+	// this node gives it work and whether this node takes work from it.
 	SetPeerComputeTrust(ctx context.Context, in *SetPeerComputeTrustRequest, opts ...grpc.CallOption) (*SetPeerComputeTrustResponse, error)
+	// SetPeerComputePermissions sets the two sides separately.
+	SetPeerComputePermissions(ctx context.Context, in *SetPeerComputePermissionsRequest, opts ...grpc.CallOption) (*SetPeerComputePermissionsResponse, error)
 }
 
 type nodeServiceClient struct {
@@ -128,6 +133,16 @@ func (c *nodeServiceClient) SetPeerComputeTrust(ctx context.Context, in *SetPeer
 	return out, nil
 }
 
+func (c *nodeServiceClient) SetPeerComputePermissions(ctx context.Context, in *SetPeerComputePermissionsRequest, opts ...grpc.CallOption) (*SetPeerComputePermissionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetPeerComputePermissionsResponse)
+	err := c.cc.Invoke(ctx, NodeService_SetPeerComputePermissions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -138,7 +153,11 @@ type NodeServiceServer interface {
 	GetBootstrapPeers(context.Context, *GetBootstrapPeersRequest) (*GetBootstrapPeersResponse, error)
 	SetBootstrapPeers(context.Context, *SetBootstrapPeersRequest) (*SetBootstrapPeersResponse, error)
 	ConnectPeer(context.Context, *ConnectPeerRequest) (*ConnectPeerResponse, error)
+	// SetPeerComputeTrust sets both sides of trust in a peer at once: whether
+	// this node gives it work and whether this node takes work from it.
 	SetPeerComputeTrust(context.Context, *SetPeerComputeTrustRequest) (*SetPeerComputeTrustResponse, error)
+	// SetPeerComputePermissions sets the two sides separately.
+	SetPeerComputePermissions(context.Context, *SetPeerComputePermissionsRequest) (*SetPeerComputePermissionsResponse, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -169,6 +188,9 @@ func (UnimplementedNodeServiceServer) ConnectPeer(context.Context, *ConnectPeerR
 }
 func (UnimplementedNodeServiceServer) SetPeerComputeTrust(context.Context, *SetPeerComputeTrustRequest) (*SetPeerComputeTrustResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetPeerComputeTrust not implemented")
+}
+func (UnimplementedNodeServiceServer) SetPeerComputePermissions(context.Context, *SetPeerComputePermissionsRequest) (*SetPeerComputePermissionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetPeerComputePermissions not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -310,6 +332,24 @@ func _NodeService_SetPeerComputeTrust_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_SetPeerComputePermissions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetPeerComputePermissionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).SetPeerComputePermissions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_SetPeerComputePermissions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).SetPeerComputePermissions(ctx, req.(*SetPeerComputePermissionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -340,6 +380,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetPeerComputeTrust",
 			Handler:    _NodeService_SetPeerComputeTrust_Handler,
+		},
+		{
+			MethodName: "SetPeerComputePermissions",
+			Handler:    _NodeService_SetPeerComputePermissions_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

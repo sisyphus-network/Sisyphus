@@ -219,11 +219,7 @@ func TestANodeWorksForOnlySoManyAtOnce(t *testing.T) {
 	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"b", "c"}) })
 }
 
-func TestWhomANodeTrustsAndWhereItAsksThem(t *testing.T) {
-	members := []access.Member{{ID: "w1", Role: access.Worker}, {ID: "c1", Role: access.Client}, {ID: "w2", Role: access.Worker}}
-	if got := trustedWorkers(members); !slices.Equal(got, []string{"w1", "w2"}) {
-		t.Errorf("trusted for compute: %v, want the workers and not the client", got)
-	}
+func TestWhereANodeAsksAnotherForWork(t *testing.T) {
 	found := []p2p.Peer{
 		{ID: "other", Addrs: []string{"/ip4/10.0.0.9/tcp/7700"}},
 		{ID: "rig", Addrs: []string{"/ip4/10.0.0.5/tcp/7700", "/ip4/10.0.0.5/udp/7700/quic-v1", "/ip6/2001:db8::5/tcp/7700", "/ip4/10.0.0.5/tcp/7700"}},
@@ -501,5 +497,196 @@ func TestWorkForAnotherNodeGoesOverItsPrivateNetwork(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), `msg="working for a node without its private IPFS network" node=`+plainID) {
 		t.Error("nothing was said about working for a node without its private network")
+	}
+}
+
+// shelf keeps a list of nodes worked for as a database would, and can be
+// made to fail.
+type shelf struct {
+	ids []string
+	err error
+}
+
+func (s *shelf) WorksFor() ([]string, error) { return s.ids, s.err }
+
+func (s *shelf) SetWorksFor(id string, willing bool, _ time.Time) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.ids = slices.DeleteFunc(s.ids, func(other string) bool { return other == id })
+	if willing {
+		s.ids = append(s.ids, id)
+	}
+	return nil
+}
+
+func TestTheListOfNodesWorkedFor(t *testing.T) {
+	store := &shelf{ids: []string{"from-before"}}
+	takes, err := openWilling(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := 0
+	takes.onChange(func() { changes++ })
+	for _, id := range []string{"b", "a", "b"} {
+		if err := takes.Set(id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := takes.Set("from-before", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := takes.List(); !slices.Equal(got, []string{"a", "b"}) {
+		t.Errorf("worked for: %v, want a and b, each once and in order", got)
+	}
+	if changes != 4 {
+		t.Errorf("told of %d changes, want 4", changes)
+	}
+	// What cannot be saved does not take effect, and nobody is told.
+	store.err = errors.New("the disk is full")
+	if err := takes.Set("c", true); err == nil {
+		t.Error("a change that could not be saved succeeded")
+	}
+	if got := takes.List(); slices.Contains(got, "c") || changes != 4 {
+		t.Errorf("after a failed change: %v, %d changes told", got, changes)
+	}
+	if _, err := openWilling(store); err == nil {
+		t.Error("a list that cannot be read was opened")
+	}
+	// With nobody to tell, a change is just a change.
+	store.err = nil
+	takes.onChange(nil)
+	if err := takes.Set("d", true); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestBothSidesOfTrustAreListedForEachNode(t *testing.T) {
+	peers := []*nodepb.Peer{
+		{PeerId: "gives-only", GivesWork: true, WorksForThisNode: true},
+		{PeerId: "both", GivesWork: true},
+		{PeerId: "found"},
+		{PeerId: "coordinator", TakesWork: true, ThisNodeWorksFor: true},
+	}
+	got := withTrust(peers, []string{"both", "takes-only"}, func(id string) bool { return id == "both" })
+	type row struct {
+		id                                      string
+		gives, takes, trusted, forUs, weWorkFor bool
+	}
+	var rows []row
+	for _, p := range got {
+		rows = append(rows, row{p.GetPeerId(), p.GetGivesWork(), p.GetTakesWork(), p.GetTrustedForCompute(), p.GetWorksForThisNode(), p.GetThisNodeWorksFor()})
+	}
+	want := []row{
+		{"both", true, true, true, false, true},
+		{"coordinator", false, true, true, false, true},
+		{"found", false, false, false, false, false},
+		{"gives-only", true, false, true, true, false},
+		// Known only as a node to work for.
+		{"takes-only", false, true, true, false, false},
+	}
+	if !slices.Equal(rows, want) {
+		t.Errorf("listed\n%v\nwant\n%v", rows, want)
+	}
+}
+
+func TestTrustInOneDirectionOnly(t *testing.T) {
+	logs := captureLogs(t)
+	rigDir, laptopDir := t.TempDir(), t.TempDir()
+	rigListen, rig := onEveryInterface(t)
+	laptopListen, laptop := onEveryInterface(t)
+	rigAPI, laptopAPI := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", rigDir, "--listen", rigListen, "--name", "rig", "--slots", "1", "--discovery", "on", "--api-listen", rigAPI)
+	startDaemon(t, "--data-dir", laptopDir, "--listen", laptopListen, "--name", "laptop", "--slots", "1", "--discovery", "on", "--api-listen", laptopAPI)
+	dataDirs.Store(rig, rigDir)
+	dataDirs.Store(laptop, laptopDir)
+	onRig, onLaptop := desktop(t, rigAPI), desktop(t, laptopAPI)
+	rigID, laptopID := nodeID(t, rigDir), nodeID(t, laptopDir)
+	waitFor(t, func() bool {
+		return peerSeenBy(t, onRig, laptopID).GetConnectionState() == connected && peerSeenBy(t, onLaptop, rigID).GetConnectionState() == connected
+	})
+
+	// The rig gives the laptop work, and will take none from it. The
+	// laptop takes the rig's work, and has none for the rig: set from the
+	// command line there, as on a machine with no desktop.
+	if _, err := onRig.SetPeerComputePermissions(tokenOf(t, rigDir), &nodepb.SetPeerComputePermissionsRequest{PeerId: laptopID, GivesWork: true}); err != nil {
+		t.Fatal(err)
+	}
+	if out := mustCLI(t, "pool", "work-for", "--addr", laptop, rigID); !strings.Contains(out, "will work for node "+rigID) {
+		t.Errorf("pool work-for printed %q", out)
+	}
+	waitForOutput(t, "laptop", "nodes", "--addr", rig)
+	waitFor(t, func() bool {
+		rigsView, laptopsView := peerSeenBy(t, onRig, laptopID), peerSeenBy(t, onLaptop, rigID)
+		return rigsView.GetGivesWork() && !rigsView.GetTakesWork() && rigsView.GetWorksForThisNode() && !rigsView.GetThisNodeWorksFor() &&
+			laptopsView.GetTakesWork() && !laptopsView.GetGivesWork() && laptopsView.GetThisNodeWorksFor() && !laptopsView.GetWorksForThisNode()
+	})
+	// Work flows one way. The rig is no worker of the laptop's, and is not
+	// even asking to be.
+	if out := mustCLI(t, "nodes", "--addr", laptop); strings.Contains(out, "rig") {
+		t.Errorf("the rig is working for the laptop:\n%s", out)
+	}
+	if members := mustCLI(t, "pool", "members", "--addr", laptop); !strings.Contains(members, "no nodes have been admitted") || !strings.Contains(members, "this node will work for:\n"+rigID) {
+		t.Errorf("the laptop's pool members:\n%s", members)
+	}
+	if members := mustCLI(t, "pool", "members", "--addr", rig); !strings.Contains(members, laptopID) || strings.Contains(members, "will work for") {
+		t.Errorf("the rig's pool members:\n%s", members)
+	}
+
+	// The laptop's owner stops it.
+	if out := mustCLI(t, "pool", "work-for", "--addr", laptop, "--stop", rigID); !strings.Contains(out, "no longer working for node") {
+		t.Errorf("pool work-for --stop printed %q", out)
+	}
+	waitFor(t, func() bool { return !strings.Contains(mustCLI(t, "nodes", "--addr", rig), "laptop") })
+	waitForLogged(t, logs, "no longer working for a node this one no longer trusts", 1)
+
+	for _, bad := range [][]string{
+		{"pool", "work-for", "--addr", laptop},
+		{"pool", "work-for", "--addr", laptop, "not-a-node-id"},
+		{"pool", "work-for", "--no-such-flag"},
+		{"pool", "work-for", "--data-dir", filepath.Join(laptopDir, "missing", "\x00"), rigID},
+	} {
+		if _, err := cli(t, bad...); err == nil {
+			t.Errorf("%v succeeded", bad)
+		}
+	}
+}
+
+func TestAWorkerOnlyNodeCanWorkForASecondNode(t *testing.T) {
+	// A worker started for one coordinator, with nothing of its own to
+	// give, takes work from another as well.
+	firstDir, secondDir, workerDir := t.TempDir(), t.TempDir(), t.TempDir()
+	firstListen, first := onEveryInterface(t)
+	secondListen, second := onEveryInterface(t)
+	apiAddr, secondAPI := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", firstDir, "--role", "coordinator", "--listen", firstListen, "--discovery", "on")
+	startDaemon(t, "--data-dir", secondDir, "--role", "coordinator", "--listen", secondListen, "--discovery", "on", "--api-listen", secondAPI)
+	dataDirs.Store(first, firstDir)
+	dataDirs.Store(second, secondDir)
+	startDaemon(t, "--data-dir", workerDir, "--role", "worker", "--coordinator", first, "--name", "hand", "--slots", "1", "--discovery", "on", "--api-listen", apiAddr)
+	waitForOutput(t, "hand", "nodes", "--addr", first)
+	onWorker, onSecond := desktop(t, apiAddr), desktop(t, secondAPI)
+	workerID, secondID := nodeID(t, workerDir), nodeID(t, secondDir)
+	waitFor(t, func() bool { return peerSeenBy(t, onWorker, secondID).GetConnectionState() == connected })
+
+	if _, err := onSecond.SetPeerComputePermissions(tokenOf(t, secondDir), &nodepb.SetPeerComputePermissionsRequest{PeerId: workerID, GivesWork: true}); err != nil {
+		t.Fatal(err)
+	}
+	// The one switch, on a node with no pool, is the taking side alone.
+	if _, err := onWorker.SetPeerComputeTrust(tokenOf(t, workerDir), &nodepb.SetPeerComputeTrustRequest{PeerId: secondID, Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	waitForOutput(t, "hand", "nodes", "--addr", second)
+	for _, addr := range []string{first, second} {
+		if out := mustCLI(t, "job", "submit", "--addr", addr, "--params", `{"from":0,"to":100}`); !strings.Contains(out, "on hand") {
+			t.Errorf("a job on %s:\n%s", addr, out)
+		}
+	}
+	// It lists both as nodes it works for, and neither as one it gives
+	// work to.
+	for _, id := range []string{nodeID(t, firstDir), secondID} {
+		if seen := peerSeenBy(t, onWorker, id); !seen.GetTakesWork() || !seen.GetThisNodeWorksFor() || seen.GetGivesWork() {
+			t.Errorf("the worker lists %s as %v", id, seen)
+		}
 	}
 }

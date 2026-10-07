@@ -162,6 +162,20 @@ func TestDiscoveryFlagsThatAreRefused(t *testing.T) {
 	if _, err := cli(t, "run", "--data-dir", damaged, "--listen", freeAddr(t)); err == nil || !strings.Contains(err.Error(), "load bootstrap peers") {
 		t.Errorf("error %v, want the address book not loaded", err)
 	}
+	// Or a list of nodes worked for that cannot be.
+	damaged = t.TempDir()
+	file = filepath.Join(damaged, "node.db")
+	journalIn(t, file).Close()
+	if raw, err = sql.Open("sqlite", file); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`DROP TABLE works_for`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	if _, err := cli(t, "run", "--data-dir", damaged, "--listen", freeAddr(t)); err == nil || !strings.Contains(err.Error(), "load the nodes worked for") {
+		t.Errorf("error %v, want the list not loaded", err)
+	}
 }
 
 // answering stands in for the service that says which country an address
@@ -274,5 +288,22 @@ func TestThePoolAndTheNodesFoundAreListedTogether(t *testing.T) {
 	}
 	if !slices.Equal(rows, want) {
 		t.Errorf("listed %v, want %v", rows, want)
+	}
+}
+
+func TestHowANodeIsConnectedToAnother(t *testing.T) {
+	relayed := "/ip4/203.0.113.9/tcp/7700/p2p/12D3KooWrelay/p2p-circuit"
+	found := []p2p.Peer{
+		{ID: "through-a-relay", Conns: []string{relayed}},
+		{ID: "left-the-relay", Conns: []string{relayed, "/ip4/198.51.100.4/tcp/40000"}},
+		{ID: "direct-first", Conns: []string{"/ip4/198.51.100.4/tcp/40000", relayed}},
+		{ID: "known-only", Addrs: []string{"/ip4/198.51.100.5/tcp/40000"}},
+	}
+	for id, want := range map[string]string{
+		"through-a-relay": "relayed", "left-the-relay": "direct", "direct-first": "direct", "known-only": "none", "never-heard-of": "none",
+	} {
+		if got := routeTo(found, id); got != want {
+			t.Errorf("route to %s: %s, want %s", id, got, want)
+		}
 	}
 }

@@ -241,7 +241,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - One open port per pool, on the coordinator. Workers connect outwards only, so they run behind home routers and firewalls as they are. Every node is a libp2p host under its own ID; the coordinator relays between workers that cannot reach each other, as does any worker that opens a port for it, and those that can connect directly do.
 - Private jobs, whose inputs, intermediate data and results are sealed with a key held only by the submitter and the nodes working on the job.
 - Encrypted connections between nodes, each identified by its own key; nodes join a pool by invitation, as a worker or a client, and can be removed.
-- Nodes that find each other: on one network by multicast DNS, beyond it through a distributed hash table, and from an address book. A node can be trusted for compute straight from the list of those found, or admitted by invitation, and two nodes that trust each other start working for each other without either being restarted.
+- Nodes that find each other: on one network by multicast DNS, beyond it through a distributed hash table, and from an address book. A node can be trusted for compute straight from the list of those found, or admitted by invitation, Trust has two sides, giving a node work and taking its work, and work starts between two nodes wherever one gives and the other takes, without either being restarted.
 - Jobs kept in a SQLite database, so a coordinator that is restarted takes up its unfinished jobs where they were.
 - A desktop client that shows a node and its pool, and admits or removes workers.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.

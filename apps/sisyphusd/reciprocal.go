@@ -13,7 +13,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/p2p"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
@@ -21,16 +20,16 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
-// Trusting a node for compute means two things: this node will give it
-// tasks, and will take tasks from it. The first is the node's place in this
+// Trust in a node for compute has two sides: this node gives it tasks, and
+// this node takes tasks from it. The first is the node's place in this
 // node's pool. The second is what this file does: for every node this one
-// trusts, it asks now and then whether that node trusts it back, and when
+// will take tasks from, it asks now and then whether that node trusts it back, and when
 // it does, works for it, beside whatever else this node is doing. Neither
 // node is restarted, and either ends it by ending its trust.
 
 // reciprocity keeps a node working for the nodes it trusts that trust it.
 type reciprocity struct {
-	// trusted returns the IDs of the nodes this one trusts for compute.
+	// trusted returns the IDs of the nodes this one will take tasks from.
 	trusted func() []string
 	// addresses returns where a node might be asked, as host:port, best
 	// guess first.
@@ -220,15 +219,64 @@ func (n *notices) listen(to func(id string)) {
 	n.to = to
 }
 
-// trustedWorkers lists the nodes admitted to a pool as workers.
-func trustedWorkers(members []access.Member) []string {
-	var ids []string
-	for _, m := range members {
-		if m.Role == access.Worker {
-			ids = append(ids, m.ID)
-		}
+// willing is the list of nodes this one will take tasks from: one side of
+// its trust, the other being whom it gives tasks to, which is its pool. It
+// is kept in the node's database and told to whoever wants to know of a
+// change.
+type willing struct {
+	store willingStore
+	mu    sync.Mutex
+	ids   []string
+	// changed, if set, is called after each change.
+	changed func()
+}
+
+type willingStore interface {
+	WorksFor() ([]string, error)
+	SetWorksFor(id string, willing bool, now time.Time) error
+}
+
+func openWilling(store willingStore) (*willing, error) {
+	ids, err := store.WorksFor()
+	if err != nil {
+		return nil, err
 	}
-	return ids
+	return &willing{store: store, ids: ids}, nil
+}
+
+// List returns the IDs of the nodes this one will take tasks from.
+func (w *willing) List() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.ids)
+}
+
+// Set makes the node with the given ID one this node will take tasks from,
+// or no longer one.
+func (w *willing) Set(id string, will bool) error {
+	w.mu.Lock()
+	if err := w.store.SetWorksFor(id, will, time.Now()); err != nil {
+		w.mu.Unlock()
+		return err
+	}
+	w.ids = slices.DeleteFunc(w.ids, func(other string) bool { return other == id })
+	if will {
+		w.ids = append(w.ids, id)
+		slices.Sort(w.ids)
+	}
+	changed := w.changed
+	w.mu.Unlock()
+	if changed != nil {
+		changed()
+	}
+	return nil
+}
+
+// onChange has fn called after each change from now on.
+func (w *willing) onChange(fn func()) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.changed = fn
 }
 
 // whereToAsk lists, as host:port, the addresses a node's libp2p host is

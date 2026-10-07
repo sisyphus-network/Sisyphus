@@ -11,7 +11,11 @@ service NodeService {
   rpc GetBootstrapPeers(GetBootstrapPeersRequest) returns (GetBootstrapPeersResponse);
   rpc SetBootstrapPeers(SetBootstrapPeersRequest) returns (SetBootstrapPeersResponse);
   rpc ConnectPeer(ConnectPeerRequest) returns (ConnectPeerResponse);
+  // SetPeerComputeTrust sets both sides of trust in a peer at once: whether
+  // this node gives it work and whether this node takes work from it.
   rpc SetPeerComputeTrust(SetPeerComputeTrustRequest) returns (SetPeerComputeTrustResponse);
+  // SetPeerComputePermissions sets the two sides separately.
+  rpc SetPeerComputePermissions(SetPeerComputePermissionsRequest) returns (SetPeerComputePermissionsResponse);
 }
 
 message GetNodeInfoRequest {}
@@ -49,6 +53,18 @@ message SetPeerComputeTrustRequest {
 }
 message SetPeerComputeTrustResponse { bool trusted = 1; }
 
+message SetPeerComputePermissionsRequest {
+  string peer_id = 1;
+  // This node gives the peer work: the peer may work for this node.
+  bool gives_work = 2;
+  // This node takes work from the peer: it will work for the peer.
+  bool takes_work = 3;
+}
+message SetPeerComputePermissionsResponse {
+  bool gives_work = 1;
+  bool takes_work = 2;
+}
+
 message BootstrapPeer {
   string peer_id = 1;
   string address = 2;
@@ -69,6 +85,11 @@ message Peer {
   // node, and this node is working for the peer.
   bool works_for_this_node = 5;
   bool this_node_works_for = 6;
+  // The two sides of this node's trust in the peer: that it gives the peer
+  // work, and that it takes work from the peer. trusted_for_compute is set
+  // if either is.
+  bool gives_work = 7;
+  bool takes_work = 8;
 }
 
 enum PeerConnectionState {

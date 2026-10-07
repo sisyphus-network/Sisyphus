@@ -271,7 +271,8 @@ What it shows, in this daemon's terms:
 | --- | --- |
 | peer | A node of this node's pool, or one its libp2p host has found: on the same network, through nodes it knows, or because it was given the address. |
 | connected | The node has a live connection to this one right now, as a worker or between the two hosts. |
-| trusted for compute | This node will give the peer tasks and take tasks from it. See [Trust](#trust) below. |
+| gives work, takes work | The two sides of this node's trust in the peer: that it gives the peer tasks, and that it takes the peer's. See [Trust](#trust) below. |
+| trusted for compute | Either of the two. The call that sets it sets both, for clients that know only the one switch. |
 | working for you, you work for it | Which way work is flowing now: the peer is connected as a worker of this node, and this node is working for the peer. Both need trust on both sides. |
 | connect to an address | Connects this node's host to the node at an address ending in `/p2p/<node ID>`, which is the form a node lists its own in, and notes it in the address book. |
 | bootstrap peers | The node's address book: the addresses it connects to each time it starts. |
@@ -293,33 +294,42 @@ The names it uses for both are Sisyphus's own, so nodes find each other and not 
 
 ## Trust
 
-A node works for another only if that other trusts it for compute. There are two ways to come to be trusted, and they end in the same place:
+Trust in another node for compute has two sides, set separately:
 
-- **By invitation.** `pool invite` on the coordinator, `pool join` or `--join` on the worker. Use this for a node you cannot see from here, or to admit a client rather than a worker.
-- **Directly.** The coordinator's owner trusts a node they can see, from the desktop's peer list. No token changes hands. The trusted node's owner then starts it as a worker with the coordinator's ID in place of an invitation:
+- **Giving it work.** The node may work for this one: it is a worker in this node's pool.
+- **Taking its work.** This node will work for it.
 
-  ```sh
-  sisyphusd run --role worker --coordinator <address> --join <coordinator's node ID>
-  ```
+Work flows from one node to another when the first gives and the second takes. Nobody is put to work by someone else's choice, and nobody is given tasks by a node they did not agree to work for.
 
-Either way the node is a worker in the pool, listed by `pool members`, and ending trust removes it as `pool remove` does.
+| To do this | From the desktop | From the command line |
+| --- | --- | --- |
+| Give a node work | "Give it work" beside the peer | `pool invite` here and `pool join` there, for a node not yet known; nothing for one already found, use the desktop |
+| Stop giving it work | the same button | `pool remove <node ID>` |
+| Take a node's work | "Take its work" beside the peer | `pool work-for <node ID>` |
+| Stop taking it | the same button | `pool work-for --stop <node ID>` |
 
-**Trust that goes both ways starts the work.** Trusting a node for compute means two things: this node will give it tasks, and will take tasks from it. So when two nodes that each run a pool trust each other, each starts working for the other, beside its own pool, with neither restarted. In the desktop that is one click on each machine: both find the other in their peer lists, both mark it trusted, and within a few seconds each appears among the other's workers.
+`pool members` lists both: the nodes admitted, and the nodes this one will work for.
 
-- **Either ends it.** A node that stops trusting another stops working for it and turns its work away, at once.
-- **One-sided trust does nothing by itself.** If the rig trusts the laptop and the laptop has not trusted the rig, the laptop is admitted to the rig's pool but does not come to work. Its owner can still send it, with `--join <the rig's node ID>` as above.
+**How two nodes come to work together**
+
+- **Two nodes that each run a pool, on one network.** Each finds the other in its peer list. Each owner chooses what they want of the other: give, take, or both. Wherever one gives and the other takes, work starts within a few seconds, with neither node restarted. Both choosing both means each works for the other.
+- **An invitation.** `pool invite` on a coordinator and `--join` on a worker-only node, as always. The coordinator gives; the worker, started for that coordinator, takes.
+- **A worker-only node and a second coordinator.** A node started as one coordinator's worker can take another's work as well: that coordinator gives it work, and it is told to take it, from its desktop or, on a node that also runs a pool, `pool work-for`.
+
+**What holds whichever way it was set up**
+
+- **Either side ends it.** A node that stops giving cuts the other's worker off; a node that stops taking stops working. Both are at once.
+- **It takes effect at once.** When a node's giving changes, it sends word to the node concerned over libp2p, which looks again on hearing. Should word not arrive, each asks again once a minute anyway.
 - **A node's slots are shared, fairly.** However many nodes it works for, it runs no more tasks at once than `--slots`. A coordinator may hand it more than that, and those wait their turn. When a slot comes free it goes to the pool with the fewest of its tasks running on this node, so one pool's long queue does not hold up another's single task.
 - **Each pool's data is kept apart.** What a node fetches while working for another is kept under `guest/<that node's ID>` in its data directory, away from its own pool's store and from every other node's.
 - **With `--kubo`, it joins the other pool's private IPFS network too.** A private network has a key of its own, so the node runs one more Kubo daemon for each pool it works for, on a repository under that same directory, and follows that pool's key when it changes. Each costs about as much memory as the node's own. If the other node runs no such network, the work is done without one.
-- **It takes effect at once.** When a node's trust in another changes, it sends word to that node over libp2p, and each looks again on hearing. Should word not arrive, each asks again once a minute anyway.
 - **The desktop shows which way work is flowing**: beside each peer, "Working for you" and "You work for it", whichever hold.
-- **`--work-for-trusted=false`** turns this off: the node lets the nodes it trusts work for it and works for nobody but itself.
+- **`--work-for-trusted=false`** has a node take nobody's work but that of the coordinator it was started for, whatever its list says.
 
 What this does not do yet:
 
-- **One flag, both directions.** There is no way to say "work for me, but I will not work for you" other than the option above, which is for the whole node.
-- **A worker-only node has no trust of its own.** It works for the coordinator it was started with.
 - **Word of a change can be sent by any node that can connect.** All it does is make this node ask sooner, so the worst a stranger can do with it is cause some needless asking.
+- **Nothing limits what a node gives.** A node that gives another work gives it any task; there is no "only these workloads" or "only this much".
 - A node works for at most sixteen others at once.
 
 ## Coming from the Rust daemon
@@ -327,7 +337,7 @@ What this does not do yet:
 Before this daemon there was one written in Rust, which kept a node's key, address book and trusted nodes in one database, `node.sqlite3`, in the same data directory. A node that ran it carries on here as itself:
 
 - **The same key, so the same ID.** The first command that needs the node's key takes it from that database rather than making a new one.
-- **The same address book and the same trusted nodes**, carried over the first time the node runs a pool. A node the Rust daemon trusted for compute becomes a worker in the pool.
+- **The same address book and the same trusted nodes**, carried over the first time the node runs a pool. That daemon's trust had one side; a node it trusted is here both given work and taken from.
 - The old database is then set aside as `node.sqlite3.imported`. Nothing is deleted.
 
 If that database is there and cannot be read, the node stops and says so. It does not quietly start as a different node.

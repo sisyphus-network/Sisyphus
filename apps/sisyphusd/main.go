@@ -33,6 +33,7 @@ const usage = `Usage:
   sisyphusd pool join <invitation> join another node, to use it from this machine
   sisyphusd pool members           list the nodes admitted to this one
   sisyphusd pool remove <node-id>  take a node off that list and disconnect it
+  sisyphusd pool work-for <node-id>  take tasks from a node whenever it will have this one (--stop to stop)
   sisyphusd pool rekey             change the key of the pool's private IPFS network
   sisyphusd id                     print this node's ID, creating its key if it has none
   sisyphusd data-dir               print where this node keeps its data unless told otherwise

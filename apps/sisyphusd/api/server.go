@@ -30,6 +30,9 @@ type Config struct {
 	// Swarm is the private IPFS network admitted nodes are told how to
 	// join, if this node runs one.
 	Swarm Swarm
+	// WorkFor is the list of nodes this one takes work from, if it keeps
+	// one.
+	WorkFor WorkFor
 }
 
 // NewServer returns a gRPC server for a node running the coordinator role:
@@ -49,7 +52,7 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: cfg.Coordinator})
 	pb.RegisterBlobServiceServer(srv, &blobService{store: cfg.Store, quota: cfg.MaxStoreBytes, holders: cfg.Coordinator.Holders})
 	pb.RegisterPoolServiceServer(srv, &poolService{
-		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm,
+		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, workFor: cfg.WorkFor,
 	})
 	tunnels := &tunnelService{}
 	if cfg.Swarm != nil {
