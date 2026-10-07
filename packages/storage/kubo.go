@@ -58,6 +58,18 @@ func OpenKubo(api KuboAPI, dir string) (*Store, error) {
 	return store, nil
 }
 
+// OpenKuboCache returns a store for blobs that can be fetched again, whose
+// blocks are kept by a Kubo daemon. If the daemon is a member of a swarm,
+// opening or verifying a blob it does not hold fetches the blob's blocks
+// from whichever members have them. Its pins last only as long as the
+// store.
+func OpenKuboCache(api KuboAPI) *Store {
+	store := newStoreOver(kuboBlocks{api}, false)
+	store.size = api.RepoSize
+	store.close = func() error { return nil } // the daemon is its starter's to stop
+	return store
+}
+
 // kuboBlocks keeps blocks in a Kubo daemon.
 type kuboBlocks struct {
 	api KuboAPI

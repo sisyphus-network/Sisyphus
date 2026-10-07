@@ -65,7 +65,9 @@ A workload implements `Split`, `Execute` and `Aggregate` in `packages/runtime`. 
 
 A store keeps its blocks in one of several places behind the same interface: files laid out as Kubo lays them out (`OpenLocal`, `OpenCache`), memory, or a running Kubo daemon (`OpenKubo`). Splitting files into blocks, pins, garbage collection and verification are the store's own and identical on all of them; only where a block is put and fetched differs. With Kubo the store talks to the daemon's HTTP API, one block per call.
 
-Nodes do not yet join an IPFS network: Kubo, when used, runs offline, and blobs move between Sisyphus nodes over Sisyphus's own protocol.
+Blobs move between nodes in one of two ways. Without Kubo, a worker downloads from its coordinator over Sisyphus's own protocol and uploads results the same way. With Kubo on both, the pool's daemons form a private IPFS network, closed to anyone without its swarm key, and a worker's store simply asks its Kubo for a block: Kubo fetches it from whichever member has it. Uploading results to the coordinator still uses Sisyphus's protocol in both cases. Nodes never join the public IPFS network.
+
+Tests that involve a swarm start several real Kubo daemons each and take a few seconds apiece; `packages/kubo` is the slowest package to test for that reason.
 
 ## Branches and pull requests
 

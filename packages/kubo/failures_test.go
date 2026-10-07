@@ -41,6 +41,10 @@ func everyCall(c *Client) map[string]error {
 	errs["LocalBlocks"] = c.LocalBlocks(ctx, func(string) bool { return true })
 	_, errs["RepoSize"] = c.RepoSize(ctx)
 	errs["Pinned"] = c.Pinned(ctx, func(string) {})
+	_, errs["Addresses"] = c.Addresses(ctx)
+	errs["Connect"] = c.Connect(ctx, "/ip4/10.0.0.1/tcp/4101/p2p/12D3KooWexample")
+	_, errs["Peers"] = c.Peers(ctx)
+	_, errs["PeerAddresses"] = c.PeerAddresses(ctx)
 	return errs
 }
 
@@ -64,6 +68,7 @@ func TestKubosNotFoundIsRecognised(t *testing.T) {
 		"block was not found locally (offline): ipld: could not find bafkexample",
 		"ipld: could not find bafkexample",
 		"blockservice: key not found",
+		"context deadline exceeded", // the time allowed for asking peers ran out
 	} {
 		c := misbehaving(t, http.StatusInternalServerError, `{"Message":"`+message+`"}`)
 		if _, err := c.BlockGet(ctx, "bafkexample"); !errors.Is(err, ErrNotFound) {
@@ -75,7 +80,7 @@ func TestKubosNotFoundIsRecognised(t *testing.T) {
 func TestRepliesThatMakeNoSenseAreErrors(t *testing.T) {
 	garbled := misbehaving(t, http.StatusOK, "this is not JSON")
 	errs := everyCall(garbled)
-	for _, call := range []string{"ID", "BlockPut", "BlockSize", "LocalBlocks", "RepoSize", "Pinned"} {
+	for _, call := range []string{"ID", "BlockPut", "BlockSize", "LocalBlocks", "RepoSize", "Pinned", "Addresses", "Peers", "PeerAddresses"} {
 		if errs[call] == nil {
 			t.Errorf("%s accepted a reply that is not JSON", call)
 		}
@@ -262,7 +267,7 @@ func TestConfigureKeepsSettingsItDoesNotChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	ident := newIdentity(t)
-	if err := configure(file, ident); err != nil {
+	if err := configure(file, ident, nil); err != nil {
 		t.Fatal(err)
 	}
 	edited, _ := os.ReadFile(file)
@@ -276,5 +281,41 @@ func TestConfigureKeepsSettingsItDoesNotChange(t *testing.T) {
 	}
 	if strings.Contains(string(edited), "bootstrap.libp2p.io") || strings.Contains(string(edited), "0.0.0.0") {
 		t.Errorf("config still reaches outside:\n%s", edited)
+	}
+}
+
+func TestPeerAddressesFailsIfKuboCannotListAddresses(t *testing.T) {
+	// The list of peers arrives; the addresses known for them do not.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "swarm/peers") {
+			fmt.Fprint(w, `{"Peers":[{"Peer":"12D3KooWexample"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"Message":"peerstore closed"}`)
+	}))
+	t.Cleanup(srv.Close)
+	if _, err := NewClient(srv.Listener.Addr().String()).PeerAddresses(ctx); err == nil || !strings.Contains(err.Error(), "peerstore closed") {
+		t.Errorf("error %v, want Kubo's", err)
+	}
+}
+
+func TestBlockGetTellsKuboHowLongToAskItsPeers(t *testing.T) {
+	var asked string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = r.URL.Query().Get("timeout")
+		fmt.Fprint(w, "data")
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.Listener.Addr().String())
+
+	c.BlockGet(ctx, "bafkexample")
+	if asked != "" {
+		t.Errorf("with no timeout set, Kubo was given %q", asked)
+	}
+	c.PeerTimeout = 45 * time.Second
+	c.BlockGet(ctx, "bafkexample")
+	if asked != "45s" {
+		t.Errorf("Kubo was given a timeout of %q, want 45s", asked)
 	}
 }

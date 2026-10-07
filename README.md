@@ -198,10 +198,10 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 
 - One binary that runs as coordinator, worker or both, with a command-line client.
 - Distributed and full-worker scheduling, with tasks retried when a worker fails or disconnects.
-- Content-addressed storage for job data. Files are named by the same CID that `ipfs add --cid-version=1` gives them and laid out on disk as Kubo lays them out, without yet joining the IPFS network.
+- Content-addressed storage for job data. Files are named by the same CID that `ipfs add --cid-version=1` gives them. Nodes never join the public IPFS network.
 - Jobs that pass large inputs and outputs by CID; workers fetch, verify and cache them.
 - Pins, retention periods, garbage collection and disk limits, so a node keeps data only as long as something needs it.
-- Optionally, a Kubo (IPFS) daemon run beside a coordinator to hold its data, as the same peer as the node. It is kept offline for now.
+- Optionally, a Kubo (IPFS) daemon run beside each node, as the same peer as the node. A pool's daemons form a private IPFS network that only its members can join, and workers fetch job data over it from whichever member has it.
 - Encrypted connections between nodes, each identified by its own key; nodes join a pool by invitation, as a worker or a client, and can be removed.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.

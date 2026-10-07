@@ -14,6 +14,11 @@ service PoolService {
   // may call it; a valid token is what gets it in. A token works once.
   rpc Join(JoinRequest) returns (JoinResponse);
 
+  // Swarm tells an admitted node how to reach the pool's private IPFS
+  // network: the key its members share and where to find this node on it.
+  // It fails if this node does not run one.
+  rpc Swarm(SwarmRequest) returns (SwarmResponse);
+
   // The rest may be called only by the node's owner: its own command line.
 
   // Invite issues a token for one node to join with.
@@ -38,6 +43,17 @@ message JoinRequest {
 
 message JoinResponse {
   Role role = 1;
+}
+
+message SwarmRequest {}
+
+message SwarmResponse {
+  // The contents of the swarm.key file that every member's Kubo daemon
+  // needs. Whoever holds it can join the network, so it is given only to
+  // admitted nodes and only over their encrypted connection.
+  string swarm_key = 1;
+  // Addresses of this node's Kubo daemon, each ending in /p2p/<peer ID>.
+  repeated string addresses = 2;
 }
 
 message InviteRequest {

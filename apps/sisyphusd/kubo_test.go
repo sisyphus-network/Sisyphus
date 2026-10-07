@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/excho0/Sisyphus/packages/kubo"
 )
 
 // requireKubo skips a test that needs the real ipfs program when it is not
@@ -37,7 +40,7 @@ func ipfsIn(t *testing.T, dataDir string, args ...string) string {
 func TestNodeWithKuboKeepsJobDataWhereTheIPFSCommandCanReadIt(t *testing.T) {
 	requireKubo(t)
 	dataDir := t.TempDir()
-	addr, _ := startNode(t, "--kubo", "--data-dir", dataDir, "--slots", "2")
+	addr, _ := startNode(t, "--kubo", "--swarm-port", "0", "--data-dir", dataDir, "--slots", "2")
 
 	// Kubo runs as the same peer as the node.
 	if got, want := strings.TrimSpace(ipfsIn(t, dataDir, "id", "-f", "<id>")), nodeID(t, dataDir); got != want {
@@ -73,9 +76,94 @@ func TestKuboFlagFailures(t *testing.T) {
 		t.Errorf("starting with no ipfs program: %v", err)
 	}
 
-	_, err = cli(t, "run", "--kubo", "--role", "worker", "--coordinator", "127.0.0.1:1", "--data-dir", t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "--kubo is, for now, only for nodes with the coordinator role") {
-		t.Errorf("--kubo on a worker-only node: %v", err)
+	// The pool's swarm key cannot be read, or cannot be created.
+	keyIsDir := t.TempDir()
+	os.Mkdir(filepath.Join(keyIsDir, "swarm.key"), 0o700)
+	if _, err := cli(t, "run", "--kubo", "--data-dir", keyIsDir, "--listen", freeAddr(t)); err == nil || !strings.Contains(err.Error(), "read swarm key") {
+		t.Errorf("a swarm key that cannot be read: %v", err)
+	}
+	if os.Getuid() != 0 {
+		readOnly := t.TempDir()
+		nodeID(t, readOnly)
+		os.Chmod(readOnly, 0o500)
+		defer os.Chmod(readOnly, 0o700)
+		if _, err := cli(t, "run", "--kubo", "--data-dir", readOnly, "--listen", freeAddr(t)); err == nil || !strings.Contains(err.Error(), "save swarm key") {
+			t.Errorf("a swarm key that cannot be saved: %v", err)
+		}
+	}
+
+	// A worker whose record of its coordinator holds an unusable address.
+	badKnown := t.TempDir()
+	os.WriteFile(filepath.Join(badKnown, "known.json"), []byte(`{"bad\u0000address":"12D3KooWexample"}`), 0o600)
+	if _, err := cli(t, "run", "--kubo", "--role", "worker", "--coordinator", badAddr, "--data-dir", badKnown); err == nil || !strings.Contains(err.Error(), "invalid control character") {
+		t.Errorf("a worker with an unusable coordinator address: %v", err)
+	}
+}
+
+func TestWorkerWithKuboNeedsACoordinatorThatRunsASwarm(t *testing.T) {
+	addr := freeAddr(t)
+	startDaemon(t, "--role", "coordinator", "--listen", addr) // no --kubo
+	invitation := invite(t, addr, "worker")
+
+	_, err := cli(t, "run", "--kubo", "--role", "worker", "--coordinator", addr, "--join", invitation, "--data-dir", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "does not run a private IPFS network") {
+		t.Errorf("error %v, want the coordinator's refusal", err)
+	}
+}
+
+// peersOf returns the IDs of the peers a node's Kubo is connected to.
+func peersOf(t *testing.T, dataDir string) string {
+	t.Helper()
+	return ipfsIn(t, dataDir, "swarm", "peers")
+}
+
+func TestAPoolWithKuboSharesDataOverItsOwnPrivateNetwork(t *testing.T) {
+	requireKubo(t)
+	addr := freeAddr(t)
+	coordinatorDir, workerDir := t.TempDir(), t.TempDir()
+	startDaemon(t, "--role", "coordinator", "--kubo", "--swarm-port", "0", "--listen", addr, "--data-dir", coordinatorDir)
+	startDaemon(t, "--role", "worker", "--kubo", "--coordinator", addr, "--data-dir", workerDir, "--name", "hand", "--slots", "2")
+	waitForOutput(t, "hand", "nodes", "--addr", addr)
+
+	// The two Kubo daemons found each other, as the nodes they belong to.
+	waitFor(t, func() bool { return strings.Contains(peersOf(t, workerDir), nodeID(t, coordinatorDir)) })
+	if !strings.Contains(peersOf(t, coordinatorDir), nodeID(t, workerDir)) {
+		t.Errorf("the coordinator's Kubo is not connected to the worker's:\n%s", peersOf(t, coordinatorDir))
+	}
+	// Both hold the same swarm key, which the worker was given on asking.
+	coordinatorKey, _ := os.ReadFile(filepath.Join(coordinatorDir, "ipfs", "swarm.key"))
+	workerKey, _ := os.ReadFile(filepath.Join(workerDir, "ipfs", "swarm.key"))
+	if len(coordinatorKey) == 0 || string(coordinatorKey) != string(workerKey) {
+		t.Errorf("swarm keys differ or are missing: %q and %q", coordinatorKey, workerKey)
+	}
+
+	text := strings.Repeat("the boulder rolls down, and Sisyphus walks after it.\n", 20_000)
+	input := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, text)))
+	out := mustCLI(t, "job", "submit", "--addr", addr, "--workload", "wordcount", "--tasks", "4", "--params", `{"input":"`+input+`"}`)
+	if !strings.Contains(out, `"words":180000`) || !strings.Contains(out, "on hand") {
+		t.Fatalf("job output:\n%s", out)
+	}
+	// The worker's Kubo now holds the input, which it was never sent by the
+	// node: it asked the swarm.
+	if got := ipfsIn(t, workerDir, "cat", "--offline", input); got != text {
+		t.Errorf("the worker's Kubo holds %d bytes of the input, want all %d", len(got), len(text))
+	}
+}
+
+func TestCoordinatorKeepsItsSwarmKeyAcrossRestarts(t *testing.T) {
+	requireKubo(t)
+	dataDir := t.TempDir()
+	_, stop := startNode(t, "--kubo", "--swarm-port", "0", "--data-dir", dataDir)
+	first, _ := os.ReadFile(filepath.Join(dataDir, "swarm.key"))
+	stop()
+
+	startNode(t, "--kubo", "--swarm-port", "0", "--data-dir", dataDir)
+	second, _ := os.ReadFile(filepath.Join(dataDir, "swarm.key"))
+	if len(first) == 0 || string(first) != string(second) {
+		t.Errorf("the swarm key changed across a restart: %q then %q", first, second)
+	}
+	if info, _ := os.Stat(filepath.Join(dataDir, "swarm.key")); info.Mode().Perm() != 0o600 {
+		t.Errorf("the swarm key is stored with mode %o", info.Mode().Perm())
 	}
 }
 
@@ -86,12 +174,25 @@ func TestNodeWithKuboWillNotStartIfItsPinsCannotBeKept(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, "kubo-pins"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := cli(t, "run", "--kubo", "--data-dir", dataDir, "--listen", freeAddr(t))
+	_, err := cli(t, "run", "--kubo", "--swarm-port", "0", "--data-dir", dataDir, "--listen", freeAddr(t))
 	if err == nil || !strings.Contains(err.Error(), "open blob store") {
 		t.Errorf("error %v, want the store refused", err)
 	}
 	// Kubo, which had started, was stopped again.
 	if out, _ := exec.Command("pgrep", "-f", filepath.Join(dataDir, "ipfs")).Output(); len(out) != 0 {
 		t.Errorf("a Kubo daemon is still running for a node that failed to start: %s", out)
+	}
+}
+
+func TestPoolSwarmReportsAKuboThatDoesNotAnswer(t *testing.T) {
+	// Nothing is listening where this Kubo is supposed to be.
+	addr := freeAddr(t)
+	swarm := &poolSwarm{key: "secret", daemon: &kubo.Daemon{Client: kubo.NewClient(addr)}}
+
+	if _, err := swarm.Addresses(context.Background()); err == nil {
+		t.Error("Addresses succeeded with no Kubo to ask")
+	}
+	if swarm.Key() != "secret" {
+		t.Errorf("Key = %q", swarm.Key())
 	}
 }

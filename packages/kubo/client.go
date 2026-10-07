@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // ErrNotFound reports that Kubo does not have a block.
@@ -24,6 +25,10 @@ var ErrNotFound = errors.New("block not found")
 type Client struct {
 	base string
 	http *http.Client
+	// PeerTimeout is how long BlockGet lets Kubo look among its peers for a
+	// block it does not hold before reporting it not found. Zero leaves it
+	// to the caller's context.
+	PeerTimeout time.Duration
 }
 
 // NewClient returns a client for the Kubo API listening at addr, a host and
@@ -56,7 +61,10 @@ func (c *Client) call(ctx context.Context, command string, args url.Values, body
 	if json.Unmarshal(text, &failure) != nil || failure.Message == "" {
 		failure.Message = strings.TrimSpace(string(text))
 	}
-	if strings.Contains(failure.Message, "not found") || strings.Contains(failure.Message, "could not find") {
+	// Kubo words "nobody has it" several ways, one of them being that the
+	// time it was given to look ran out.
+	if strings.Contains(failure.Message, "not found") || strings.Contains(failure.Message, "could not find") ||
+		strings.Contains(failure.Message, "context deadline exceeded") {
 		return nil, fmt.Errorf("kubo %s: %w", command, ErrNotFound)
 	}
 	return nil, fmt.Errorf("kubo %s: %s (HTTP %d)", command, failure.Message, res.StatusCode)
@@ -80,6 +88,58 @@ func (c *Client) ID(ctx context.Context) (string, error) {
 	var reply struct{ ID string }
 	err := c.callJSON(ctx, "id", nil, &reply)
 	return reply.ID, err
+}
+
+// Addresses returns the addresses other peers can reach the Kubo node at,
+// each ending in its peer ID. An offline node has none.
+func (c *Client) Addresses(ctx context.Context) ([]string, error) {
+	var reply struct{ Addresses []string }
+	err := c.callJSON(ctx, "id", nil, &reply)
+	return reply.Addresses, err
+}
+
+// Connect connects the Kubo node to the peer at the given address, which
+// must end in the peer's ID.
+func (c *Client) Connect(ctx context.Context, address string) error {
+	body, err := c.call(ctx, "swarm/connect", url.Values{"arg": {address}}, nil, "")
+	if err != nil {
+		return err
+	}
+	return body.Close()
+}
+
+// PeerAddresses returns, for every peer the Kubo node is connected to, the
+// addresses that peer listens on, each ending in the peer's ID. They are
+// what a third node needs to connect to those peers itself.
+func (c *Client) PeerAddresses(ctx context.Context) ([]string, error) {
+	connected, err := c.Peers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var reply struct{ Addrs map[string][]string }
+	if err := c.callJSON(ctx, "swarm/addrs", nil, &reply); err != nil {
+		return nil, err
+	}
+	var addresses []string
+	for _, id := range connected {
+		for _, address := range reply.Addrs[id] {
+			addresses = append(addresses, address+"/p2p/"+id)
+		}
+	}
+	return addresses, nil
+}
+
+// Peers returns the IDs of the peers the Kubo node is connected to.
+func (c *Client) Peers(ctx context.Context) ([]string, error) {
+	var reply struct{ Peers []struct{ Peer string } }
+	if err := c.callJSON(ctx, "swarm/peers", nil, &reply); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(reply.Peers))
+	for _, p := range reply.Peers {
+		ids = append(ids, p.Peer)
+	}
+	return ids, nil
 }
 
 // BlockPut stores one block and returns the CID Kubo gave it. codec is the
@@ -107,9 +167,13 @@ func (c *Client) BlockPut(ctx context.Context, codec string, data []byte) (strin
 
 // BlockGet returns a block's bytes, or ErrNotFound. Unless the daemon is
 // offline, a block it does not hold is looked for among its peers first,
-// for as long as ctx allows.
+// for PeerTimeout or as long as ctx allows.
 func (c *Client) BlockGet(ctx context.Context, id string) ([]byte, error) {
-	body, err := c.call(ctx, "block/get", url.Values{"arg": {id}}, nil, "")
+	args := url.Values{"arg": {id}}
+	if c.PeerTimeout > 0 {
+		args.Set("timeout", c.PeerTimeout.String())
+	}
+	body, err := c.call(ctx, "block/get", args, nil, "")
 	if err != nil {
 		return nil, err
 	}

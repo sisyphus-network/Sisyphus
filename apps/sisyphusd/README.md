@@ -120,19 +120,22 @@ bin/sisyphusd job submit --workload wordcount --params "{\"input\":\"$cid\"}"
 bin/sisyphusd blob get <output CID from the result> | head
 ```
 
-### Keeping data in Kubo
+### Kubo and the pool's private IPFS network
 
-By default a coordinator keeps blocks in files of its own. With `--kubo` it starts [Kubo](https://github.com/ipfs/kubo), the main IPFS implementation, beside itself and keeps them there instead. The `ipfs` program must be installed.
+By default a node keeps blocks in files of its own and sends them to other nodes itself. With `--kubo` it instead starts [Kubo](https://github.com/ipfs/kubo), the main IPFS implementation, beside itself, keeps its blocks there, and lets the pool's Kubo daemons exchange them directly. The `ipfs` program must be installed on every node that uses it.
 
 ```sh
-bin/sisyphusd run --kubo
-IPFS_PATH=~/.sisyphus/ipfs ipfs cat <cid>     # anything the node stores is an ordinary IPFS file
+bin/sisyphusd run --kubo                                   # the coordinator
+bin/sisyphusd run --kubo --role worker --coordinator <addr> --join <invitation>
+IPFS_PATH=~/.sisyphus/ipfs ipfs cat <cid>                  # anything stored is an ordinary IPFS file
 ```
 
-- Kubo runs as the same peer as the node: `ipfs id` and `sisyphusd id` print the same ID.
-- Its repository is `ipfs` in the node's data directory. It is started and stopped with the node.
-- It is kept off the public IPFS network: it runs offline, with no bootstrap peers and no gateway. Nodes do not yet exchange data through it; that comes next.
-- Files added with the `ipfs` command on that repository can be used as job inputs by CID.
+- **Each node's Kubo is that node.** `ipfs id` and `sisyphusd id` print the same ID. Its repository is `ipfs` in the node's data directory, and it is started and stopped with the node.
+- **The pool has a network of its own.** A coordinator started with `--kubo` creates a swarm key, kept in `swarm.key` in its data directory. Only Kubo daemons holding that key can connect to each other; they have no bootstrap peers, no gateway, and no way to reach or be reached from the public IPFS network.
+- **Workers are given the key when they start**, over their encrypted connection to the coordinator, along with where to find the coordinator's Kubo and the other members'. A worker using `--kubo` needs a coordinator that does.
+- **Data comes from whoever has it.** When a task opens a blob its worker does not hold, the worker's Kubo fetches the blocks from the members that do, the coordinator or other workers. If the network cannot supply it within thirty seconds, the worker falls back to asking the coordinator directly.
+- **The coordinator's Kubo must be reachable** by the workers' on `--swarm-port` (default 4101), over TCP.
+- Files added with the `ipfs` command on a node's repository can be used as job inputs by CID.
 - The node's own pins decide what it keeps, as described below. Anything pinned with `ipfs pin add` is also kept. Do not run `ipfs repo gc` on the repository: Kubo's collector does not know about the node's pins.
 - Moving an existing node to `--kubo`, or back, does not carry its stored data across.
 
@@ -195,6 +198,8 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - A node's key cannot be changed without becoming a different node, and there is no way to stop a copied key being used other than removing that node.
 - Encryption hides what nodes say to each other, not that they are talking, how much, or when.
 - If a node using `--kubo` is killed outright rather than stopped, its Kubo daemon keeps running and must be stopped by hand before the node will start again.
+- Removing a node from the pool does not take the swarm key away from it. Until the key is changed, which means every member joining again, a removed node's Kubo can still connect to the pool's private network and read what is on it.
+- Whatever is on the pool's private network can be read by every member of it. The network keeps outsiders out; it does not keep members apart.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - A worker downloads a whole input even when its tasks need only part of it.
 - Without `--max-cache-bytes` a worker's cache grows until the disk is full. The limit is not strict: blobs that tasks have open are kept even if they alone exceed it.

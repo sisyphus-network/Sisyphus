@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	PoolService_Join_FullMethodName         = "/sisyphus.v1.PoolService/Join"
+	PoolService_Swarm_FullMethodName        = "/sisyphus.v1.PoolService/Swarm"
 	PoolService_Invite_FullMethodName       = "/sisyphus.v1.PoolService/Invite"
 	PoolService_ListMembers_FullMethodName  = "/sisyphus.v1.PoolService/ListMembers"
 	PoolService_RemoveMember_FullMethodName = "/sisyphus.v1.PoolService/RemoveMember"
@@ -36,6 +37,10 @@ type PoolServiceClient interface {
 	// Join admits the caller, in the role its token was issued for. Any node
 	// may call it; a valid token is what gets it in. A token works once.
 	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
+	// Swarm tells an admitted node how to reach the pool's private IPFS
+	// network: the key its members share and where to find this node on it.
+	// It fails if this node does not run one.
+	Swarm(ctx context.Context, in *SwarmRequest, opts ...grpc.CallOption) (*SwarmResponse, error)
 	// Invite issues a token for one node to join with.
 	Invite(ctx context.Context, in *InviteRequest, opts ...grpc.CallOption) (*InviteResponse, error)
 	ListMembers(ctx context.Context, in *ListMembersRequest, opts ...grpc.CallOption) (*ListMembersResponse, error)
@@ -56,6 +61,16 @@ func (c *poolServiceClient) Join(ctx context.Context, in *JoinRequest, opts ...g
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JoinResponse)
 	err := c.cc.Invoke(ctx, PoolService_Join_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *poolServiceClient) Swarm(ctx context.Context, in *SwarmRequest, opts ...grpc.CallOption) (*SwarmResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SwarmResponse)
+	err := c.cc.Invoke(ctx, PoolService_Swarm_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +118,10 @@ type PoolServiceServer interface {
 	// Join admits the caller, in the role its token was issued for. Any node
 	// may call it; a valid token is what gets it in. A token works once.
 	Join(context.Context, *JoinRequest) (*JoinResponse, error)
+	// Swarm tells an admitted node how to reach the pool's private IPFS
+	// network: the key its members share and where to find this node on it.
+	// It fails if this node does not run one.
+	Swarm(context.Context, *SwarmRequest) (*SwarmResponse, error)
 	// Invite issues a token for one node to join with.
 	Invite(context.Context, *InviteRequest) (*InviteResponse, error)
 	ListMembers(context.Context, *ListMembersRequest) (*ListMembersResponse, error)
@@ -121,6 +140,9 @@ type UnimplementedPoolServiceServer struct{}
 
 func (UnimplementedPoolServiceServer) Join(context.Context, *JoinRequest) (*JoinResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Join not implemented")
+}
+func (UnimplementedPoolServiceServer) Swarm(context.Context, *SwarmRequest) (*SwarmResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Swarm not implemented")
 }
 func (UnimplementedPoolServiceServer) Invite(context.Context, *InviteRequest) (*InviteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Invite not implemented")
@@ -166,6 +188,24 @@ func _PoolService_Join_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PoolServiceServer).Join(ctx, req.(*JoinRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PoolService_Swarm_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SwarmRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PoolServiceServer).Swarm(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PoolService_Swarm_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PoolServiceServer).Swarm(ctx, req.(*SwarmRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -234,6 +274,10 @@ var PoolService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Join",
 			Handler:    _PoolService_Join_Handler,
+		},
+		{
+			MethodName: "Swarm",
+			Handler:    _PoolService_Swarm_Handler,
 		},
 		{
 			MethodName: "Invite",

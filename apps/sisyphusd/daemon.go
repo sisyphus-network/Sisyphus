@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
 	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
@@ -22,6 +23,7 @@ import (
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
 	"github.com/excho0/Sisyphus/packages/identity"
 	"github.com/excho0/Sisyphus/packages/kubo"
+	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
 	"github.com/excho0/Sisyphus/packages/storage"
 )
@@ -39,7 +41,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
 	maxCache := fs.Uint64("max-cache-bytes", 0, "worker-only node: evict the least recently used cached blobs once the cache uses this much disk; 0 means no limit")
-	useKubo := fs.Bool("kubo", false, "coordinator role: keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself; needs the ipfs program installed")
+	useKubo := fs.Bool("kubo", false, "keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself, on a private network with the rest of its pool; needs the ipfs program installed, and for a worker, a coordinator that uses it too")
+	swarmPort := fs.Int("swarm-port", 4101, "coordinator role with --kubo: TCP port the pool's private IPFS network reaches this node on; 0 picks one at each start")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
 	verbose := fs.Bool("v", false, "log per-task detail")
 	if err := fs.Parse(args); err != nil {
@@ -72,9 +75,6 @@ func runDaemon(ctx context.Context, args []string) error {
 	if isCoordinator && *invitation != "" {
 		return errors.New("--join is for worker-only nodes")
 	}
-	if !isCoordinator && *useKubo {
-		return errors.New("--kubo is, for now, only for nodes with the coordinator role")
-	}
 
 	level := slog.LevelInfo
 	if *verbose {
@@ -95,25 +95,67 @@ func runDaemon(ctx context.Context, args []string) error {
 	// Each role reports once when it stops; the first to stop ends the node.
 	stopped := make(chan error, 2)
 
-	// Every node keeps a blob store. A coordinator's is durable, because it
-	// is where a job's inputs and results live. A worker-only node's is a
-	// cache of what its coordinator holds, kept in a directory of its own so
-	// the two kinds never mix. Deferred calls run last-in first-out, so the
-	// store closes only after everything using it has stopped.
-	var store *storage.Store
+	// coordinatorID is the ID of the node this one's worker answers to: the
+	// node itself, or for a worker-only node the coordinator it joined.
+	coordinatorID := ident.ID()
+	if !isCoordinator {
+		// A worker only ever talks to the coordinator it joined. The first
+		// time, an invitation says which node that is and gets this one
+		// admitted; after that the coordinator's ID is remembered.
+		if *invitation != "" {
+			if _, err := joinPool(ctx, *dataDir, ident, *join, *invitation); err != nil {
+				return err
+			}
+		}
+		known, err := loadKnown(*dataDir)
+		if err != nil {
+			return err
+		}
+		if coordinatorID = known[*join]; coordinatorID == "" {
+			return fmt.Errorf("this node has not joined a coordinator at %s: start it once with --join and an invitation from that coordinator", *join)
+		}
+	}
+	creds := credentials.NewTLS(ident.ClientTLS(coordinatorID))
+
+	// With --kubo, Kubo runs as the same peer as this node, on a repository
+	// beside the node's other data, and is stopped when the node stops. A
+	// coordinator's starts the pool's private network; a worker's joins it.
+	var sidecar *kubo.Daemon
+	var swarm *poolSwarm
 	if *useKubo {
-		// Kubo runs as the same peer as this node, on a repository beside
-		// the node's other data, and is stopped when the node stops.
-		sidecar, startErr := kubo.Start(ctx, kubo.Config{Repo: filepath.Join(*dataDir, "ipfs"), Identity: ident})
-		if startErr != nil {
-			return startErr
+		network := &kubo.Swarm{Port: *swarmPort}
+		if isCoordinator {
+			network.Key, err = swarmKey(filepath.Join(*dataDir, "swarm.key"))
+		} else {
+			network.Port = 0
+			network.Key, network.Peers, err = fetchSwarm(ctx, *join, creds)
+		}
+		if err != nil {
+			return err
+		}
+		if sidecar, err = kubo.Start(ctx, kubo.Config{Repo: filepath.Join(*dataDir, "ipfs"), Identity: ident, Swarm: network}); err != nil {
+			return err
 		}
 		defer sidecar.Stop()
+		swarm = &poolSwarm{key: network.Key, daemon: sidecar}
 		log.Info("kubo started", "repo", filepath.Join(*dataDir, "ipfs"))
+	}
+
+	// Every node keeps a blob store. A coordinator's is durable, because it
+	// is where a job's inputs and results live. A worker-only node's is a
+	// cache of what the pool holds, kept apart from any durable store. With
+	// Kubo, either kind keeps its blocks there. Deferred calls run last-in
+	// first-out, so the store closes only after everything using it has
+	// stopped.
+	var store *storage.Store
+	switch {
+	case isCoordinator && *useKubo:
 		store, err = storage.OpenKubo(sidecar, filepath.Join(*dataDir, "kubo-pins"))
-	} else if isCoordinator {
+	case isCoordinator:
 		store, err = storage.OpenLocal(filepath.Join(*dataDir, "blobs"))
-	} else {
+	case *useKubo:
+		store = storage.OpenKuboCache(sidecar)
+	default:
 		store, err = storage.OpenCache(filepath.Join(*dataDir, "cache"), *syncCache)
 	}
 	if err != nil {
@@ -123,8 +165,6 @@ func runDaemon(ctx context.Context, args []string) error {
 	// A node that is its own coordinator reads and writes the one store
 	// directly; a worker-only node fetches into its cache.
 	var blobs runtime.Blobs = store
-	// coordinatorID is the ID of the node this one's worker answers to.
-	var coordinatorID string
 
 	if isCoordinator {
 		lis, err := net.Listen("tcp", *listen)
@@ -144,9 +184,11 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		coord := coordinator.New(coordinator.Config{ID: ident.ID(), Workloads: workloads, Store: store, Retain: *retain, Log: log})
 		defer coord.Close()
-		srv := api.NewServer(api.Config{
-			Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore,
-		})
+		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore}
+		if swarm != nil {
+			config.Swarm = swarm
+		}
+		srv := api.NewServer(config)
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish.
 		defer srv.Stop()
@@ -155,7 +197,6 @@ func runDaemon(ctx context.Context, args []string) error {
 		// The node's own worker connects to it as any other would, and
 		// expects to find the node itself at the other end.
 		*join = loopback(lis.Addr())
-		coordinatorID = ident.ID()
 
 		if *gcInterval > 0 {
 			collected := make(chan struct{})
@@ -170,22 +211,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			}()
 		}
 	} else {
-		// A worker only ever talks to the coordinator it joined. The first
-		// time, an invitation says which node that is and gets this one
-		// admitted; after that the coordinator's ID is remembered.
-		if *invitation != "" {
-			if _, err := joinPool(ctx, *dataDir, ident, *join, *invitation); err != nil {
-				return err
-			}
-		}
-		known, err := loadKnown(*dataDir)
-		if err != nil {
-			return err
-		}
-		if coordinatorID = known[*join]; coordinatorID == "" {
-			return fmt.Errorf("this node has not joined a coordinator at %s: start it once with --join and an invitation from that coordinator", *join)
-		}
-		remote, err := worker.DialBlobs(*join, credentials.NewTLS(ident.ClientTLS(coordinatorID)), store, *maxCache)
+		remote, err := worker.DialBlobs(*join, creds, store, *maxCache)
 		if err != nil {
 			return err
 		}
@@ -195,7 +221,7 @@ func runDaemon(ctx context.Context, args []string) error {
 
 	if isWorker {
 		w := &worker.Worker{
-			Name: *name, Coordinator: *join, Credentials: credentials.NewTLS(ident.ClientTLS(coordinatorID)),
+			Name: *name, Coordinator: *join, Credentials: creds,
 			Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log,
 		}
 		done := make(chan struct{})
@@ -217,6 +243,58 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("shutting down")
 		return nil
 	}
+}
+
+// poolSwarm is the private IPFS network of the pool this node belongs to.
+type poolSwarm struct {
+	key    string
+	daemon *kubo.Daemon
+}
+
+func (s *poolSwarm) Key() string { return s.key }
+
+// Addresses returns where this node's Kubo can be reached, followed by where
+// the members connected to it can be, so that a node joining the network
+// connects to all of them and can fetch from any.
+func (s *poolSwarm) Addresses(ctx context.Context) ([]string, error) {
+	own, err := s.daemon.Addresses(ctx)
+	if err != nil {
+		return nil, err
+	}
+	others, err := s.daemon.PeerAddresses(ctx)
+	return append(own, others...), err
+}
+
+// swarmKey returns the secret of the private network a coordinator runs,
+// kept in file, generating it the first time.
+func swarmKey(file string) (string, error) {
+	data, err := os.ReadFile(file)
+	if err == nil {
+		return string(data), nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read swarm key: %w", err)
+	}
+	key := kubo.NewSwarmKey()
+	if err := os.WriteFile(file, []byte(key), 0o600); err != nil {
+		return "", fmt.Errorf("save swarm key: %w", err)
+	}
+	return key, nil
+}
+
+// fetchSwarm asks the coordinator at addr how to join its pool's private
+// network: the key, and where its own Kubo daemon is.
+func fetchSwarm(ctx context.Context, addr string, creds credentials.TransportCredentials) (key string, peers []string, err error) {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		return "", nil, err
+	}
+	defer conn.Close()
+	swarm, err := pb.NewPoolServiceClient(conn).Swarm(ctx, &pb.SwarmRequest{})
+	if err != nil {
+		return "", nil, fmt.Errorf("ask the coordinator about its private IPFS network: %w", err)
+	}
+	return swarm.GetSwarmKey(), swarm.GetAddresses(), nil
 }
 
 // loadIdentity returns the key of the node whose data is in dataDir, making

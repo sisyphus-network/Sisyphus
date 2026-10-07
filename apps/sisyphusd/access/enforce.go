@@ -21,6 +21,10 @@ var allowed = map[string][]Role{
 	// Anyone who can prove who they are may try to join; the token decides.
 	pb.PoolService_Join_FullMethodName: {Worker, Client, anyone},
 
+	// The swarm key lets its holder read everything on the pool's private
+	// network, which is what members are admitted to do.
+	pb.PoolService_Swarm_FullMethodName: {Worker, Client},
+
 	pb.CoordinatorService_Connect_FullMethodName: {Worker},
 
 	pb.BlobService_Put_FullMethodName:  {Worker, Client},
