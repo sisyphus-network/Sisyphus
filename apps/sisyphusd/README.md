@@ -156,6 +156,26 @@ IPFS_PATH=~/.sisyphus/ipfs ipfs cat <cid>                  # anything stored is 
 - The node's own pins decide what it keeps, as described below. Anything pinned with `ipfs pin add` is also kept. Do not run `ipfs repo gc` on the repository: Kubo's collector does not know about the node's pins.
 - Moving an existing node to `--kubo`, or back, does not carry its stored data across.
 
+### Private jobs
+
+A pool's storage is shared: any member can fetch any blob it can name, and with Kubo, whatever is on the pool's private network. A private job keeps its data from everyone but you, the coordinator, and the workers that run it.
+
+```sh
+bin/sisyphusd key new job.key                                   # make a key; keep the file safe
+cid=$(bin/sisyphusd blob put --key-file job.key big.txt)        # sealed before it leaves this machine
+bin/sisyphusd job submit --workload wordcount --key-file job.key --params "{\"input\":\"$cid\"}"
+bin/sisyphusd blob get --key-file job.key <output CID>          # unsealed after it arrives
+```
+
+- **What is sealed.** The input you seal, everything the job's tasks store, and its stored result. Each is encrypted with the key, so stores, caches and the private network hold only ciphertext.
+- **Who gets the key.** The coordinator, when you submit the job, and from it each worker that is assigned one of the job's tasks. It is never reported back in the job, logged, or given to anyone else. Those nodes see the data in the clear, as they must to compute on it.
+- **What still shows.** The size of each blob, and that the job happened. The job's parameters and the small result it reports (for `wordcount`, the counts of words and of distinct words) are not sealed; they travel over the pool's encrypted connections but are visible to clients of the coordinator.
+- **Same result every time.** Sealing with the same key always gives the same bytes, so a private job's result has the same CID however the job is split, like any other. The other side of that: someone who can see two sealed blobs can tell whether they, or same-sized pieces at the same position in them, are identical under one key. Use a new key for data where that matters.
+- **Lose the key and the data is gone.** `key new` will not overwrite a key file for that reason.
+- **A job with a key can still read unsealed inputs**, so public data and private can be mixed.
+
+The encryption is put together from standard parts (AES-256-GCM, HMAC-SHA256, HKDF) but the arrangement is this project's own and has not been reviewed by a cryptographer. Treat it as keeping honest pool members out, not as proof against a determined attacker, until it has been.
+
 ### How long data is kept
 
 A node keeps a blob for as long as something pins it, and deletes what nothing pins.
@@ -221,7 +241,7 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - If a node using `--kubo` is killed outright rather than stopped, its Kubo daemon keeps running and must be stopped by hand before the node will start again.
 - A removed node keeps whatever it had already fetched from the pool's private network. Changing the key stops it fetching anything more.
 - Run `ipfs` commands against a node's repository only while the node is up. With its Kubo down, including for the few seconds of a key change, the `ipfs` command takes the repository's lock and the node cannot start Kubo until the command ends.
-- Whatever is on the pool's private network can be read by every member of it. The network keeps outsiders out; it does not keep members apart.
+- Whatever is on the pool's private network can be fetched by every member of it. The network keeps outsiders out; it is private jobs, which seal their data, that keep members from reading each other's.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - A worker downloads a whole input even when its tasks need only part of it.
 - Workers that serve each other need a port of their own open to the other workers.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/excho0/Sisyphus/apps/sisyphusd/blobclient"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/excho0/Sisyphus/packages/sealed"
 )
 
 func blobCommand(ctx context.Context, args []string) error {
@@ -44,6 +46,7 @@ func blobPut(ctx context.Context, args []string) error {
 	node := targetFlags(fs)
 	ttl := fs.Duration("ttl", 0, "how long the node keeps the blob; 0 keeps it until unpinned")
 	noPin := fs.Bool("no-pin", false, "do not pin the blob: the node may delete it after an hour")
+	keyFile := fs.String("key-file", "", "seal the file with this key before it leaves this machine, so that only holders of the key can read it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -58,6 +61,14 @@ func blobPut(ctx context.Context, args []string) error {
 		}
 		defer file.Close()
 		in = file
+	}
+
+	if *keyFile != "" {
+		key, err := readKey(*keyFile)
+		if err != nil {
+			return err
+		}
+		in = sealed.Encrypt(key, in)
 	}
 
 	conn, err := node.connect()
@@ -85,6 +96,7 @@ func blobGet(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob get", flag.ContinueOnError)
 	node := targetFlags(fs)
 	output := fs.String("o", "", "file to write the blob to (default: standard output)")
+	keyFile := fs.String("key-file", "", "the key the blob was sealed with, to unseal it after fetching")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -102,8 +114,20 @@ func blobGet(ctx context.Context, args []string) error {
 	}
 	defer conn.Close()
 
+	// fetch writes the blob, checked against its CID, to dst: as stored, or
+	// with a key, unsealed.
+	client := pb.NewBlobServiceClient(conn)
+	fetch := func(dst io.Writer) error { return blobclient.Download(ctx, client, want, dst) }
+	if *keyFile != "" {
+		key, err := readKey(*keyFile)
+		if err != nil {
+			return err
+		}
+		fetch = func(dst io.Writer) error { return fetchSealed(ctx, client, want, key, dst) }
+	}
+
 	if *output == "" {
-		return blobclient.Download(ctx, pb.NewBlobServiceClient(conn), want, stdout)
+		return fetch(stdout)
 	}
 	// Download beside the destination and rename into place, so a failed or
 	// corrupt download never leaves a file under the requested name.
@@ -112,7 +136,7 @@ func blobGet(ctx context.Context, args []string) error {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	err = blobclient.Download(ctx, pb.NewBlobServiceClient(conn), want, tmp)
+	err = fetch(tmp)
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
 	}
@@ -120,6 +144,71 @@ func blobGet(ctx context.Context, args []string) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), *output)
+}
+
+// fetchSealed downloads a sealed blob and writes what it opens to with key
+// to dst. A blob that does not match its CID is not opened at all; a wrong
+// key is found as the blob is opened.
+func fetchSealed(ctx context.Context, client pb.BlobServiceClient, want cid.Cid, key sealed.Key, dst io.Writer) error {
+	// Unsealing reads the blob out of order, so it is fetched to a file first.
+	tmp, err := os.CreateTemp("", "sisyphus-sealed-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+	counted := &countingWriter{w: tmp}
+	if err := blobclient.Download(ctx, client, want, counted); err != nil {
+		return err
+	}
+	opened, err := sealed.Open(key, tmp, counted.n)
+	if errors.Is(err, sealed.ErrNotSealed) {
+		return fmt.Errorf("blob %s is not sealed; fetch it without --key-file", want)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(dst, opened)
+	return err
+}
+
+// countingWriter counts the bytes written through it.
+type countingWriter struct {
+	w io.Writer
+	n uint64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += uint64(n)
+	return n, err
+}
+
+// readKey reads a sealing key from a file made by "sisyphusd key new".
+func readKey(file string) (sealed.Key, error) {
+	text, err := os.ReadFile(file)
+	if err != nil {
+		return sealed.Key{}, fmt.Errorf("read key: %w", err)
+	}
+	key, err := sealed.ParseKey(strings.TrimSpace(string(text)))
+	if err != nil {
+		return sealed.Key{}, fmt.Errorf("%s: %w", file, err)
+	}
+	return key, nil
+}
+
+// keyCommand makes sealing keys.
+func keyCommand(args []string) error {
+	if len(args) != 2 || args[0] != "new" {
+		return errors.New(`expected "key new <file>"`)
+	}
+	// Created, never overwritten: replacing a key loses whatever it sealed.
+	file, err := os.OpenFile(args[1], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create key file: %w", err)
+	}
+	fmt.Fprintln(file, sealed.NewKey().String())
+	return file.Close()
 }
 
 func blobStat(ctx context.Context, args []string) error {

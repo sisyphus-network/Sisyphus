@@ -38,6 +38,7 @@ func jobSubmit(ctx context.Context, args []string) error {
 	mode := fs.String("mode", "distributed", "distributed (split across workers) or full-worker (whole job on one worker)")
 	tasks := fs.Uint("tasks", 0, "distributed mode: number of tasks to split into (default: one per connected worker slot)")
 	detach := fs.Bool("detach", false, "print the job ID and return without waiting")
+	keyFile := fs.String("key-file", "", "make the job private: seal everything it stores with this key, and open sealed inputs with it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -53,6 +54,14 @@ func jobSubmit(ctx context.Context, args []string) error {
 		spec.Mode = pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER
 	default:
 		return fmt.Errorf("unknown mode %q", *mode)
+	}
+
+	if *keyFile != "" {
+		key, err := readKey(*keyFile)
+		if err != nil {
+			return err
+		}
+		spec.Key = key[:]
 	}
 
 	client, closeConn, err := dial(node)

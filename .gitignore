@@ -1,3 +1,4 @@
 /bin/
 /coverage.out
 /sisyphus-pool/
+*.key

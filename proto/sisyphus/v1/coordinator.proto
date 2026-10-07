@@ -80,4 +80,6 @@ message TaskAssignment {
   uint32 attempt = 3;
   string workload = 4;
   bytes payload = 5;
+  // The job's sealing key, if it is a private job.
+  bytes key = 6;
 }

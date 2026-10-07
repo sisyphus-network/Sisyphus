@@ -25,6 +25,7 @@ import (
 	jobmodel "github.com/excho0/Sisyphus/packages/job-model"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
+	"github.com/excho0/Sisyphus/packages/sealed"
 )
 
 const (
@@ -204,9 +205,12 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 			c.mu.Unlock()
 		}
 	}
+	if n := len(spec.GetKey()); n != 0 && n != sealed.KeySize {
+		return nil, status.Errorf(codes.InvalidArgument, "a job's key must be %d bytes, not %d", sealed.KeySize, n)
+	}
 	// Splitting may read stored data, so it runs without the lock.
 	touched := runtime.Record(c.store)
-	payloads, err := workload.Split(ctx, touched, spec.GetParams(), parts)
+	payloads, err := workload.Split(ctx, withKey(touched, spec.GetKey()), spec.GetParams(), parts)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -217,6 +221,7 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	job := jobmodel.New(newID(), workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
+	job.Key = spec.GetKey()
 	c.jobs[job.ID] = job
 	c.active = append(c.active, job)
 	c.changed[job.ID] = make(chan struct{})
@@ -496,14 +501,14 @@ func (c *Coordinator) aggregate(job *jobmodel.Job) {
 	defer c.aggregating.Done()
 
 	c.mu.Lock()
-	outputs := job.Outputs()
+	outputs, key := job.Outputs(), job.Key
 	c.mu.Unlock()
 
 	workload, err := c.workloads.Get(job.Workload)
 	var result []byte
 	touched := runtime.Record(c.store)
 	if err == nil {
-		result, err = workload.Aggregate(c.ctx, touched, outputs)
+		result, err = workload.Aggregate(c.ctx, withKey(touched, key), outputs)
 	}
 
 	c.mu.Lock()
@@ -541,6 +546,16 @@ func (c *Coordinator) pin(job *jobmodel.Job, expires time.Time, cids []string) {
 	}
 }
 
+// withKey returns blobs as a private job with the given key sees them:
+// sealing what it stores and unsealing what it opens. With no key it is
+// blobs itself.
+func withKey(blobs runtime.Blobs, key []byte) runtime.Blobs {
+	if len(key) == 0 {
+		return blobs
+	}
+	return runtime.Sealed(blobs, sealed.Key(key))
+}
+
 // owner is the name a job's pins are held under.
 func owner(job *jobmodel.Job) string {
 	return "job:" + job.ID
@@ -576,6 +591,7 @@ func (c *Coordinator) scheduleLocked() {
 				Attempt:  uint32(task.Attempt),
 				Workload: job.Workload,
 				Payload:  task.Payload,
+				Key:      job.Key,
 			}}})
 			c.notifyLocked(job)
 		}

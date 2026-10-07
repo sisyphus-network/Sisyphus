@@ -27,6 +27,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
 | `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
+| `packages/sealed` | Encrypting a private job's blobs: the format, sealing and seekable unsealing. |
 | `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. |
 | `apps/sisyphusd/worker` | Connecting to a coordinator, running tasks, the blob cache. |

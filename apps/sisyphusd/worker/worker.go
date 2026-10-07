@@ -21,6 +21,7 @@ import (
 
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
+	"github.com/excho0/Sisyphus/packages/sealed"
 )
 
 const (
@@ -197,7 +198,18 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 	}
 	started := time.Now()
 	touched := runtime.Record(w.Blobs)
-	output, err := workload.Execute(ctx, touched, a.GetPayload())
+	var blobs runtime.Blobs = touched
+	switch len(a.GetKey()) {
+	case 0:
+	case sealed.KeySize:
+		// A private job: what the task stores is sealed, and sealed inputs
+		// are opened, with the job's key.
+		blobs = runtime.Sealed(touched, sealed.Key(a.GetKey()))
+	default:
+		fail(fmt.Sprintf("the task came with a key of %d bytes, which is not a key", len(a.GetKey())))
+		return result
+	}
+	output, err := workload.Execute(ctx, blobs, a.GetPayload())
 	if err != nil {
 		fail(err)
 		return result
