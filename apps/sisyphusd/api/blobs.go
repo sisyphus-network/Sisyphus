@@ -34,55 +34,75 @@ type blobService struct {
 	holders func(blob, asker string) []*pb.BlobHolder
 }
 
-// blobStore is the part of a storage.Store that the service uses.
-type blobStore interface {
+// FileStore is the part of a storage.Store needed to put things in it,
+// read them back, and keep them there.
+type FileStore interface {
 	Open(ctx context.Context, c cid.Cid) (storage.Blob, error)
 	Put(ctx context.Context, r io.Reader) (cid.Cid, error)
 	Size(ctx context.Context) (uint64, error)
 	Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error
 	Unpin(owner string, cids ...cid.Cid) error
+}
+
+// blobStore is the part of a storage.Store that the service uses.
+type blobStore interface {
+	FileStore
 	Pins() []storage.Pin
 	GC(ctx context.Context, now time.Time) (storage.Collected, error)
 }
 
 func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]) error {
-	upload := &uploadReader{stream: stream}
-	if s.quota > 0 {
-		used, err := s.store.Size(stream.Context())
-		if err != nil {
-			return status.Errorf(codes.Internal, "measure store: %v", err)
-		}
-		if used >= s.quota {
-			return status.Errorf(codes.ResourceExhausted, "store is full: %d of %d bytes used", used, s.quota)
-		}
-		upload.limit = s.quota - used
+	c, size, err := storeUpload(stream.Context(), s.store, s.quota, func() ([]byte, error) {
+		msg, err := stream.Recv()
+		return msg.GetData(), err
+	})
+	if err != nil {
+		return err
 	}
-	c, err := s.store.Put(stream.Context(), upload)
+	return stream.SendAndClose(&pb.PutBlobResponse{Cid: c.String(), Size: size})
+}
+
+// storeUpload stores what recv returns, piece by piece until it returns io.EOF,
+// and says what CID it was stored under and how much there was. With a
+// quota, it refuses what would not fit.
+func storeUpload(ctx context.Context, store FileStore, quota uint64, recv func() ([]byte, error)) (cid.Cid, uint64, error) {
+	upload := &uploadReader{recv: recv}
+	if quota > 0 {
+		used, err := store.Size(ctx)
+		if err != nil {
+			return cid.Undef, 0, status.Errorf(codes.Internal, "measure store: %v", err)
+		}
+		if used >= quota {
+			return cid.Undef, 0, status.Errorf(codes.ResourceExhausted, "store is full: %d of %d bytes used", used, quota)
+		}
+		upload.limit = quota - used
+	}
+	c, err := store.Put(ctx, upload)
 	if err != nil {
 		if _, ok := status.FromError(err); ok {
-			return err
+			return cid.Undef, 0, err
 		}
-		return status.Errorf(codes.Internal, "store blob: %v", err)
+		return cid.Undef, 0, status.Errorf(codes.Internal, "store blob: %v", err)
 	}
-	return stream.SendAndClose(&pb.PutBlobResponse{Cid: c.String(), Size: upload.size})
+	return c, upload.size, nil
 }
 
 // uploadReader presents the data of an upload stream as one io.Reader.
 type uploadReader struct {
-	stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]
-	rest   []byte
-	size   uint64
+	recv func() ([]byte, error)
+	rest []byte
+	size uint64
 	// limit is the most bytes the upload may carry; zero means no limit.
 	limit uint64
 }
 
 func (r *uploadReader) Read(p []byte) (int, error) {
 	for len(r.rest) == 0 {
-		msg, err := r.stream.Recv()
+		data, err := r.recv()
 		if err != nil {
 			return 0, err // io.EOF once the client has sent everything
 		}
-		r.rest = msg.GetData()
+		r.rest = data
 	}
 	n := copy(p, r.rest)
 	r.rest = r.rest[n:]
@@ -96,7 +116,14 @@ func (r *uploadReader) Read(p []byte) (int, error) {
 }
 
 func (s *blobService) Get(req *pb.GetBlobRequest, stream grpc.ServerStreamingServer[pb.GetBlobResponse]) error {
-	blob, err := s.open(stream.Context(), req.GetCid())
+	return sendBlob(stream.Context(), s.store, req.GetCid(), func(data []byte) error {
+		return stream.Send(&pb.GetBlobResponse{Data: data})
+	})
+}
+
+// sendBlob sends what is stored under a CID, piece by piece.
+func sendBlob(ctx context.Context, store FileStore, id string, send func([]byte) error) error {
+	blob, err := openBlob(ctx, store, id)
 	if err != nil {
 		return err
 	}
@@ -106,7 +133,7 @@ func (s *blobService) Get(req *pb.GetBlobRequest, stream grpc.ServerStreamingSer
 	for {
 		n, err := io.ReadFull(blob, buf)
 		if n > 0 {
-			if err := stream.Send(&pb.GetBlobResponse{Data: buf[:n]}); err != nil {
+			if err := send(buf[:n]); err != nil {
 				return err
 			}
 		}
@@ -124,7 +151,7 @@ func (s *blobService) Locate(ctx context.Context, req *pb.LocateBlobRequest) (*p
 }
 
 func (s *blobService) Stat(ctx context.Context, req *pb.StatBlobRequest) (*pb.StatBlobResponse, error) {
-	blob, err := s.open(ctx, req.GetCid())
+	blob, err := openBlob(ctx, s.store, req.GetCid())
 	if err != nil {
 		return nil, err
 	}
@@ -132,12 +159,12 @@ func (s *blobService) Stat(ctx context.Context, req *pb.StatBlobRequest) (*pb.St
 	return &pb.StatBlobResponse{Size: blob.Size()}, nil
 }
 
-func (s *blobService) open(ctx context.Context, id string) (storage.Blob, error) {
+func openBlob(ctx context.Context, store FileStore, id string) (storage.Blob, error) {
 	c, err := cid.Decode(id)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", id, err)
 	}
-	blob, err := s.store.Open(ctx, c)
+	blob, err := store.Open(ctx, c)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, status.Errorf(codes.NotFound, "blob %s not found", c)
 	}

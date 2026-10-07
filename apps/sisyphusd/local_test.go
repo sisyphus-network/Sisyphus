@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -292,5 +293,110 @@ func TestTheDesktopSubmitsAJobAndWatchesItRun(t *testing.T) {
 	got, err := client.GetJob(ctx, &nodepb.GetJobRequest{JobId: id})
 	if err != nil || got.GetJob().GetFinishedAtMs() < got.GetJob().GetCreatedAtMs() {
 		t.Errorf("GetJob = %v, %v", got, err)
+	}
+}
+
+// The whole of a desktop client's first hour, with nothing done on the
+// command line: store a file, count its words on the pool, read the result
+// back, and invite a second machine.
+func TestTheDesktopStoresFilesRunsThemAndInvitesAWorker(t *testing.T) {
+	dataDir := t.TempDir()
+	addr, apiAddr := freeAddr(t), freeAddr(t)
+	stop := startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--api-listen", apiAddr)
+	client := desktop(t, apiAddr)
+	poolAsSeenBy(t, client)
+	ctx := tokenOf(t, dataDir)
+
+	upload, err := client.StoreFile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, piece := range []string{"the quick brown fox ", "jumps over the lazy dog"} {
+		msg := &nodepb.StoreFileRequest{Data: []byte(piece)}
+		if i == 0 {
+			msg.Name = "fox.txt"
+		}
+		if err := upload.Send(msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file, err := upload.CloseAndRecv()
+	if err != nil || file.GetName() != "fox.txt" || file.GetSizeBytes() != 43 {
+		t.Fatalf("the stored file: %v, %v", file, err)
+	}
+
+	submitted, err := client.SubmitJob(ctx, &nodepb.SubmitJobRequest{Workload: "wordcount", Params: []byte(`{"input":"` + file.GetCid() + `"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job *nodepb.Job
+	waitFor(t, func() bool {
+		got, err := client.GetJob(ctx, &nodepb.GetJobRequest{JobId: submitted.GetJob().GetJobId()})
+		job = got.GetJob()
+		return err == nil && job.GetState() == nodepb.JobState_JOB_STATE_SUCCEEDED
+	})
+	if len(job.GetOutputBlobs()) != 1 {
+		t.Fatalf("the finished job: %v", job)
+	}
+	// What the job produced is fetched the way a stored file is.
+	fetch := func() (string, error) {
+		stream, err := client.FetchFile(ctx, &nodepb.FetchFileRequest{Cid: job.GetOutputBlobs()[0]})
+		if err != nil {
+			return "", err
+		}
+		var got strings.Builder
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return got.String(), err
+			}
+			got.Write(msg.GetData())
+		}
+	}
+	if counts, err := fetch(); err != io.EOF || !strings.HasPrefix(counts, "2\tthe\n") || !strings.Contains(counts, "1\tfox\n") {
+		t.Errorf("the word counts: %q, %v", counts, err)
+	}
+
+	// A second machine, invited from the desktop.
+	invited, err := client.CreateInvitation(ctx, &nodepb.CreateInvitationRequest{Role: nodepb.PoolRole_POOL_ROLE_WORKER})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerDir := t.TempDir()
+	stopWorker := startDaemon(t, "--role", "worker", "--coordinator", addr, "--join", invited.GetInvitation(), "--data-dir", workerDir, "--name", "second")
+	waitFor(t, func() bool {
+		workers, err := client.ListWorkers(ctx, &nodepb.ListWorkersRequest{})
+		return err == nil && len(workers.GetWorkers()) == 2
+	})
+	members, err := client.ListMembers(ctx, &nodepb.ListMembersRequest{})
+	if err != nil || !slices.ContainsFunc(members.GetMembers(), func(m *nodepb.PoolMember) bool {
+		return m.GetPeerId() == nodeID(t, workerDir) && m.GetRole() == nodepb.PoolRole_POOL_ROLE_WORKER
+	}) {
+		t.Fatalf("the members: %v, %v", members, err)
+	}
+	// And taken out again, once it has gone home.
+	stopWorker()
+	if _, err := client.RemoveMember(ctx, &nodepb.RemoveMemberRequest{PeerId: nodeID(t, workerDir)}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := cli(t, "run", "--role", "worker", "--coordinator", addr, "--data-dir", workerDir, "--discovery", "off"); err == nil || !strings.Contains(err.Error(), "has not been admitted") {
+		t.Errorf("a removed worker coming back: %q, %v", out, err)
+	}
+
+	// The list of files is kept across a restart, and so is the file.
+	stop()
+	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--api-listen", apiAddr)
+	waitFor(t, func() bool {
+		listed, err := client.ListFiles(ctx, &nodepb.ListFilesRequest{})
+		return err == nil && len(listed.GetFiles()) == 1 && listed.GetFiles()[0].GetName() == "fox.txt" && listed.GetFiles()[0].GetCid() == file.GetCid()
+	})
+	if out := mustCLI(t, "blob", "get", "--addr", addr, file.GetCid()); out != "the quick brown fox jumps over the lazy dog" {
+		t.Errorf("the file after a restart: %q", out)
+	}
+	if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: file.GetCid()}); err != nil {
+		t.Fatal(err)
+	}
+	if listed, err := client.ListFiles(ctx, &nodepb.ListFilesRequest{}); err != nil || len(listed.GetFiles()) != 0 {
+		t.Errorf("the files after removing the only one: %v, %v", listed, err)
 	}
 }

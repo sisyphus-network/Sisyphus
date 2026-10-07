@@ -330,6 +330,8 @@ What it shows, in this daemon's terms:
 | working for you, you work for it | Which way work is flowing now: the peer is connected as a worker of this node, and this node is working for the peer. Both need trust on both sides. |
 | connect to an address | Connects this node's host to the node at an address ending in `/p2p/<node ID>`, which is the form a node lists its own in, and notes it in the address book. |
 | bootstrap peers | The node's address book: the addresses it connects to each time it starts. |
+| files | What was put in the pool's store through the app: kept until removed, listed by name, and given to jobs by CID. The same store `blob put` and `blob get` use. |
+| invitation, members | `pool invite`, `pool members` and `pool remove`, from the app. |
 | country | Empty unless the node was started with `--locate-country`. Finding it means asking ipapi.co, which thereby learns the node's address, so it is not done unasked. |
 
 Anything on the machine can read from the local API. Changing something needs the token in `api.token` in the data directory, which the daemon makes on first use and only its own user can read. The desktop app looks for it in the daemon's default data directory, or in the file named by `SISYPHUS_API_TOKEN_FILE`.

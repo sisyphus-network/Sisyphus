@@ -54,6 +54,31 @@ service NodeService {
   rpc ListChats(ListChatsRequest) returns (ListChatsResponse);
   rpc GetChat(GetChatRequest) returns (GetChatResponse);
   rpc DeleteChat(DeleteChatRequest) returns (DeleteChatResponse);
+
+  // The rest is the pool's files and who belongs to it, on a node that
+  // coordinates a pool.
+
+  // StoreFile puts a file in the pool's store and keeps it there until it
+  // is removed. The first message names it; every message may carry data.
+  // The answer has its CID, which is what a job is given as its input.
+  rpc StoreFile(stream StoreFileRequest) returns (File);
+  // FetchFile sends what is stored under a CID: a file stored here, or
+  // something a job produced.
+  rpc FetchFile(FetchFileRequest) returns (stream FetchFileResponse);
+  // ListFiles lists the files stored through StoreFile, newest first.
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  // RemoveFile stops keeping a file. Its content goes when the store is
+  // next cleared of what nothing holds.
+  rpc RemoveFile(RemoveFileRequest) returns (RemoveFileResponse);
+
+  // CreateInvitation makes an invitation for another machine to join the
+  // pool with: as a worker, or as a client that may only submit jobs. It
+  // works once.
+  rpc CreateInvitation(CreateInvitationRequest) returns (CreateInvitationResponse);
+  // ListMembers lists the nodes admitted to the pool.
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
+  // RemoveMember takes a node out of the pool and disconnects it.
+  rpc RemoveMember(RemoveMemberRequest) returns (RemoveMemberResponse);
 }
 
 message GetNodeInfoRequest {}
@@ -362,3 +387,62 @@ message ChatToolCall {
 message DeleteChatRequest { string chat_id = 1; }
 
 message DeleteChatResponse {}
+
+message StoreFileRequest {
+  // What to call the file, in the first message.
+  string name = 1;
+  bytes data = 2;
+}
+
+message File {
+  string cid = 1;
+  string name = 2;
+  uint64 size_bytes = 3;
+  int64 stored_at_ms = 4;
+}
+
+message FetchFileRequest { string cid = 1; }
+
+message FetchFileResponse { bytes data = 1; }
+
+message ListFilesRequest {}
+
+message ListFilesResponse { repeated File files = 1; }
+
+message RemoveFileRequest { string cid = 1; }
+
+message RemoveFileResponse {}
+
+enum PoolRole {
+  POOL_ROLE_UNSPECIFIED = 0;
+  // Runs tasks for the pool.
+  POOL_ROLE_WORKER = 1;
+  // Submits jobs to the pool and reads their results.
+  POOL_ROLE_CLIENT = 2;
+}
+
+message CreateInvitationRequest {
+  PoolRole role = 1;
+  // How long the invitation can be used for. Zero means one hour.
+  uint64 ttl_seconds = 2;
+}
+
+message CreateInvitationResponse {
+  // What the joining machine is started with, as its --invitation.
+  string invitation = 1;
+  int64 expires_at_ms = 2;
+}
+
+message ListMembersRequest {}
+
+message ListMembersResponse { repeated PoolMember members = 1; }
+
+message PoolMember {
+  string peer_id = 1;
+  PoolRole role = 2;
+  int64 joined_at_ms = 3;
+}
+
+message RemoveMemberRequest { string peer_id = 1; }
+
+message RemoveMemberResponse {}

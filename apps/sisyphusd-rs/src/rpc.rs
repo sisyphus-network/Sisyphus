@@ -399,8 +399,61 @@ impl proto::node_service_server::NodeService for NodeServiceImpl {
     ) -> Result<Response<Self::WatchJobsStream>, Status> {
         Err(Status::failed_precondition(NO_POOL))
     }
+
+    async fn store_file(
+        &self,
+        _request: Request<tonic::Streaming<proto::StoreFileRequest>>,
+    ) -> Result<Response<proto::File>, Status> {
+        Err(Status::failed_precondition(NO_STORE))
+    }
+
+    type FetchFileStream =
+        Pin<Box<dyn Stream<Item = Result<proto::FetchFileResponse, Status>> + Send + 'static>>;
+
+    async fn fetch_file(
+        &self,
+        _request: Request<proto::FetchFileRequest>,
+    ) -> Result<Response<Self::FetchFileStream>, Status> {
+        Err(Status::failed_precondition(NO_STORE))
+    }
+
+    async fn list_files(
+        &self,
+        _request: Request<proto::ListFilesRequest>,
+    ) -> Result<Response<proto::ListFilesResponse>, Status> {
+        Err(Status::failed_precondition(NO_STORE))
+    }
+
+    async fn remove_file(
+        &self,
+        _request: Request<proto::RemoveFileRequest>,
+    ) -> Result<Response<proto::RemoveFileResponse>, Status> {
+        Err(Status::failed_precondition(NO_STORE))
+    }
+
+    async fn create_invitation(
+        &self,
+        _request: Request<proto::CreateInvitationRequest>,
+    ) -> Result<Response<proto::CreateInvitationResponse>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
+
+    async fn list_members(
+        &self,
+        _request: Request<proto::ListMembersRequest>,
+    ) -> Result<Response<proto::ListMembersResponse>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
+
+    async fn remove_member(
+        &self,
+        _request: Request<proto::RemoveMemberRequest>,
+    ) -> Result<Response<proto::RemoveMemberResponse>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
 }
 
+const NO_STORE: &str = "this node coordinates no pool, so it has no store of files";
 const NO_PLANNER: &str = "this node has no planner";
 const NO_POOL: &str = "this node coordinates no pool, so it has no workers or jobs of its own";
 

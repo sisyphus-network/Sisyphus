@@ -324,6 +324,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		srv := api.NewServer(config)
 		local.Pool = api.NewPoolAdmin(config)
 		local.Jobs = coord
+		local.Store, local.Files, local.MaxStoreBytes = store, db, *maxStore
 		planningPool = coord
 		offered = func(workload string) bool {
 			return slices.ContainsFunc(coord.Nodes(), func(node *pb.NodeInfo) bool {
