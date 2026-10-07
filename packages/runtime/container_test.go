@@ -97,7 +97,7 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 		return 0, nil
 	}}
 	c := Container{Engine: engine.engine}
-	payloads, _ := c.Split(ctx, store, []byte(`{"image":"alpine:3.20","command":["sh","-c","work"],"input":"`+input.String()+`","env":{"B":"2","A":"1"},"memory_mb":256,"cpus":1.5}`), 2)
+	payloads, _ := c.Split(ctx, store, []byte(`{"image":"alpine:3.20","command":["sh","-c","work"],"input":"`+input.String()+`","env":{"B":"2","A":"1"},"memory_mb":256,"cpus":1.5,"gpus":2}`), 2)
 	raw, err := c.Execute(WithReporter(ctx, said), store, payloads[1])
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 	// environment the job gave, and the task's place in the job.
 	args := strings.Join(engine.asked[0], " ")
 	for _, want := range []string{"run --rm --name sisyphus-", ":/input:ro", ":/output", "--env SISYPHUS_TASK_INDEX=1", "--env SISYPHUS_TASK_COUNT=2",
-		"--network none", "--memory 256m", "--cpus 1.5", "--env A=1 --env B=2", "alpine:3.20 sh -c work"} {
+		"--network none", "--memory 256m", "--cpus 1.5", "--gpus 2", "--env A=1 --env B=2", "alpine:3.20 sh -c work"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("the engine was asked %q, without %q", args, want)
 		}
@@ -133,7 +133,7 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 	if _, err := c.Execute(ctx, store, open[0]); err != nil {
 		t.Fatal(err)
 	}
-	if args := strings.Join(engine.asked[1], " "); strings.Contains(args, "--network") || strings.Contains(args, "--memory") || strings.Contains(args, "--cpus") {
+	if args := strings.Join(engine.asked[1], " "); strings.Contains(args, "--network") || strings.Contains(args, "--memory") || strings.Contains(args, "--cpus") || strings.Contains(args, "--gpus") {
 		t.Errorf("a job with the network and no limits was run as %q", args)
 	}
 }

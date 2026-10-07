@@ -3,10 +3,11 @@
 # coordinator and two workers, each a separate process with its own key and
 # data. Stop it with Ctrl-C.
 #
-#   examples/local-pool.sh [--kubo]
+#   examples/local-pool.sh [--kubo] [--containers]
 #
 # With --kubo every node runs Kubo beside itself and the three form a
-# private IPFS network; the ipfs program must be installed.
+# private IPFS network; the ipfs program must be installed. With
+# --containers the workers run container jobs; Docker must be installed.
 #
 # The pool's files go in a directory of their own (POOL_DIR, default
 # ./sisyphus-pool) and are kept between runs, so stored data and joined
@@ -15,9 +16,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 kubo=()
-if [ "${1:-}" = "--kubo" ]; then
-	kubo=(--kubo)
-fi
+containers=()
+for option in "$@"; do
+	case $option in
+	--kubo) kubo=(--kubo) ;;
+	--containers) containers=(--containers) ;;
+	*)
+		echo "unknown option $option" >&2
+		exit 1
+		;;
+	esac
+done
 ADDR=${ADDR:-127.0.0.1:7700}
 POOL_DIR=${POOL_DIR:-$PWD/sisyphus-pool}
 mkdir -p "$POOL_DIR"
@@ -44,7 +53,7 @@ for worker in beta gamma; do
 		join=(--join "$(alpha pool invite)")
 	fi
 	"$BIN" run --role worker --coordinator "$ADDR" "${join[@]}" --data-dir "$POOL_DIR/$worker" \
-		--name "$worker" --slots 4 "${kubo[@]:0:1}" >"$POOL_DIR/$worker.log" 2>&1 &
+		--name "$worker" --slots 4 "${kubo[@]:0:1}" "${containers[@]}" >"$POOL_DIR/$worker.log" 2>&1 &
 	pids+=($!)
 done
 for _ in $(seq 300); do
