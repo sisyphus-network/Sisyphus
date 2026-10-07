@@ -20,6 +20,8 @@ const usage = `Usage:
   sisyphusd run [flags]            run a node (coordinator, worker or both)
   sisyphusd job submit [flags]     submit a job and follow it to completion
   sisyphusd job get <job-id>       show a job
+  sisyphusd job logs <job-id>      print what has happened to a job, and follow it until it is over
+  sisyphusd job cancel <job-id>    stop a job that has not finished
   sisyphusd nodes                  list the workers connected to a coordinator
   sisyphusd blob put <file>        store a file on a node and print its CID
   sisyphusd blob get <cid>         fetch a blob, checking it against its CID
@@ -78,9 +80,13 @@ func run(ctx context.Context, args []string) error {
 				return jobSubmit(ctx, args[2:])
 			case "get":
 				return jobGet(ctx, args[2:])
+			case "cancel":
+				return jobCancel(ctx, args[2:])
+			case "logs":
+				return jobLogs(ctx, args[2:])
 			}
 		}
-		return errors.New(`expected "job submit" or "job get"`)
+		return errors.New(`expected job submit, get, logs or cancel`)
 	case "nodes":
 		return listNodes(ctx, args[1:])
 	case "blob":

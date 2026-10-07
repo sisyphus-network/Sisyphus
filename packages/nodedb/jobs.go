@@ -27,12 +27,12 @@ func (db *DB) SaveJob(job *jobmodel.Job) error {
 		key = nil
 	}
 	err := db.write(func(b *batch) {
-		b.exec(`INSERT INTO jobs (job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		b.exec(`INSERT INTO jobs (job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (job_id) DO UPDATE SET state = excluded.state, result = excluded.result, error = excluded.error,
 				sealing_key = excluded.sealing_key, finished_at_ns = excluded.finished_at_ns`,
 			job.ID, job.Workload, blob(job.Params), int(job.Mode), job.MaxTasks, int(job.State), blob(job.Result), job.Err,
-			key, nanos(job.CreatedAt), nanos(job.FinishedAt))
+			key, nanos(job.CreatedAt), nanos(job.FinishedAt), int64(job.TaskTimeout))
 		for _, t := range changes.Tasks {
 			b.exec(`INSERT INTO tasks (job_id, task_index, payload, state, attempt, failures, node_id, node_name, output, error)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -72,14 +72,14 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 		job := new(jobmodel.Job)
 		var created, finished int64
 		err := rows.Scan(&job.ID, &job.Workload, &job.Params, &job.Mode, &job.MaxTasks, &job.State, &job.Result, &job.Err,
-			&job.Key, &created, &finished)
+			&job.Key, &created, &finished, &job.TaskTimeout)
 		if err != nil {
 			return err
 		}
 		job.CreatedAt, job.FinishedAt = moment(created), moment(finished)
 		saved, byID[job.ID] = append(saved, job), job
 		return nil
-	}, `SELECT job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns
+	}, `SELECT job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns
 		FROM jobs ORDER BY seq`)
 	if err != nil {
 		return nil, fmt.Errorf("load jobs: %w", err)
@@ -123,6 +123,38 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 		jobs = append(jobs, jobmodel.Restore(*job, touched[blobRead], touched[blobTaskOutput], touched[blobResult]))
 	}
 	return jobs, nil
+}
+
+// SaveEvent records one thing that happened to a job. Events are not synced
+// to disk one by one; they are safe once the job's next step is.
+func (db *DB) SaveEvent(jobID string, e jobmodel.Event) error {
+	err := db.write(func(b *batch) {
+		b.exec(`INSERT OR REPLACE INTO job_events (job_id, seq, at_ns, kind, task_index, node_name, text) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			jobID, int64(e.Seq), nanos(e.At), e.Kind, e.Task, e.Node, e.Text)
+	})
+	if err != nil {
+		return fmt.Errorf("save job event: %w", err)
+	}
+	return nil
+}
+
+// LoadEvents returns what has happened to a job, in order.
+func (db *DB) LoadEvents(jobID string) ([]jobmodel.Event, error) {
+	var events []jobmodel.Event
+	err := db.read(func(rows *sql.Rows) error {
+		var e jobmodel.Event
+		var at int64
+		if err := rows.Scan(&e.Seq, &at, &e.Kind, &e.Task, &e.Node, &e.Text); err != nil {
+			return err
+		}
+		e.At = moment(at)
+		events = append(events, e)
+		return nil
+	}, `SELECT seq, at_ns, kind, task_index, node_name, text FROM job_events WHERE job_id = ? ORDER BY seq`, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("load job events: %w", err)
+	}
+	return events, nil
 }
 
 // DeleteJobs forgets jobs, with their tasks, the attempts at them and the

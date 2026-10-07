@@ -19,7 +19,17 @@ message WorkerMessage {
     Hello hello = 1;
     Heartbeat heartbeat = 2;
     TaskResult task_result = 3;
+    TaskUpdate task_update = 4;
   }
+}
+
+// TaskUpdate is news of a task still running: how far along it is, and
+// what it has logged since the last one.
+message TaskUpdate {
+  string task_id = 1;
+  uint32 attempt = 2;
+  double progress = 3;
+  repeated string log = 4;
 }
 
 message Hello {
@@ -65,7 +75,15 @@ message CoordinatorMessage {
     Welcome welcome = 1;
     TaskAssignment assignment = 2;
     SwarmUpdate swarm_update = 3;
+    TaskCancel cancel = 4;
   }
+}
+
+// TaskCancel tells a worker to stop a task it was given. Nothing is expected
+// back: whatever the task goes on to report is ignored.
+message TaskCancel {
+  string task_id = 1;
+  uint32 attempt = 2;
 }
 
 message Welcome {

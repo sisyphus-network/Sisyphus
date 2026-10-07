@@ -138,6 +138,8 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	}}})
 
 	var running atomic.Int32
+	// stops holds, by task ID, how to stop each task now running.
+	var stops sync.Map
 	tasks.Add(1)
 	go func() {
 		defer tasks.Done()
@@ -175,16 +177,51 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 			defer w.connected.Store(false)
 			w.swarmChanged(kind.Welcome.GetSwarmFingerprint())
 			w.Log.Info("joined pool", "node", w.Name, "coordinator", kind.Welcome.GetCoordinatorId(), "slots", w.Slots)
+		case *pb.CoordinatorMessage_Cancel:
+			// A task that has already finished is no longer there to stop.
+			if stop, running := stops.Load(kind.Cancel.GetTaskId()); running {
+				stop.(context.CancelFunc)()
+			}
 		case *pb.CoordinatorMessage_Assignment:
+			assigned := kind.Assignment
 			running.Add(1)
 			tasks.Add(1)
+			// Each task can be stopped by itself, on the coordinator's word.
+			taskCtx, stop := context.WithCancel(ctx)
+			stops.Store(assigned.GetTaskId(), stop)
 			go func() {
 				defer tasks.Done()
 				defer running.Add(-1)
-				result := w.execute(ctx, kind.Assignment)
+				defer stops.Delete(assigned.GetTaskId())
+				// What the task reports of itself is passed on a few times a
+				// second while it runs, and once more when it ends.
+				said := new(reports)
+				pass := func() {
+					if update := said.take(assigned); update != nil {
+						send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskUpdate{TaskUpdate: update}})
+					}
+				}
+				passing := make(chan struct{})
+				go func() {
+					defer close(passing)
+					tick := time.NewTicker(updateInterval)
+					defer tick.Stop()
+					for {
+						select {
+						case <-tick.C:
+							pass()
+						case <-taskCtx.Done():
+							return
+						}
+					}
+				}()
+				result := w.execute(runtime.WithReporter(taskCtx, said), assigned)
+				stop()
+				<-passing
 				// A result from a cancelled session is of no use: the
 				// coordinator has already given the task to someone else.
 				if ctx.Err() == nil {
+					pass()
 					send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskResult{TaskResult: result}})
 				}
 			}()
@@ -262,4 +299,48 @@ func (w *Worker) capabilities() *pb.NodeCapabilities {
 		TaskSlots: uint32(w.Slots),
 		Workloads: w.Workloads.Names(),
 	}
+}
+
+// updateInterval is how often the coordinator is told how a running task
+// is getting on.
+const updateInterval = 250 * time.Millisecond
+
+// maxLogLine is the longest line of a task's log that is passed on whole.
+const maxLogLine = 4 << 10
+
+// reports collects what a running task says of itself until it is next
+// passed on to the coordinator.
+type reports struct {
+	mu       sync.Mutex
+	progress float64
+	lines    []string
+	fresh    bool
+}
+
+func (r *reports) Progress(done float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.progress, r.fresh = done, true
+}
+
+func (r *reports) Log(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(line) > maxLogLine {
+		line = line[:maxLogLine] + " [cut short]"
+	}
+	r.lines, r.fresh = append(r.lines, line), true
+}
+
+// take returns what has been said since it was last called, as an update for
+// the coordinator, or nil if nothing has.
+func (r *reports) take(a *pb.TaskAssignment) *pb.TaskUpdate {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.fresh {
+		return nil
+	}
+	update := &pb.TaskUpdate{TaskId: a.GetTaskId(), Attempt: a.GetAttempt(), Progress: r.progress, Log: r.lines}
+	r.lines, r.fresh = nil, false
+	return update
 }

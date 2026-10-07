@@ -193,6 +193,8 @@ func countWords(ctx context.Context, src io.ReadSeeker, offset, length uint64) (
 		skipping = isWordByte(before)
 	}
 
+	report := Report(ctx)
+	report.Log(fmt.Sprintf("counting words in %d bytes from byte %d", length, offset))
 	var word []byte
 	inWord := false
 	for pos := offset; pos < end || inWord; pos++ {
@@ -200,6 +202,8 @@ func countWords(ctx context.Context, src io.ReadSeeker, offset, length uint64) (
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
+			// Past the end only while finishing the last word.
+			report.Progress(min(float64(pos-offset)/float64(max(length, 1)), 1))
 		}
 		b, err := r.ReadByte()
 		if errors.Is(err, io.EOF) {

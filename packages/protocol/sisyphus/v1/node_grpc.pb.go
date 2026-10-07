@@ -19,10 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	NodeService_SubmitJob_FullMethodName = "/sisyphus.v1.NodeService/SubmitJob"
-	NodeService_GetJob_FullMethodName    = "/sisyphus.v1.NodeService/GetJob"
-	NodeService_WatchJob_FullMethodName  = "/sisyphus.v1.NodeService/WatchJob"
-	NodeService_ListNodes_FullMethodName = "/sisyphus.v1.NodeService/ListNodes"
+	NodeService_SubmitJob_FullMethodName      = "/sisyphus.v1.NodeService/SubmitJob"
+	NodeService_GetJob_FullMethodName         = "/sisyphus.v1.NodeService/GetJob"
+	NodeService_WatchJob_FullMethodName       = "/sisyphus.v1.NodeService/WatchJob"
+	NodeService_ListNodes_FullMethodName      = "/sisyphus.v1.NodeService/ListNodes"
+	NodeService_CancelJob_FullMethodName      = "/sisyphus.v1.NodeService/CancelJob"
+	NodeService_WatchJobEvents_FullMethodName = "/sisyphus.v1.NodeService/WatchJobEvents"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -38,6 +40,13 @@ type NodeServiceClient interface {
 	// every change, and closes once the job reaches a terminal state.
 	WatchJob(ctx context.Context, in *WatchJobRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchJobResponse], error)
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
+	// CancelJob stops a job that has not finished. Its running tasks are told
+	// to stop and nothing more of it is handed out.
+	CancelJob(ctx context.Context, in *CancelJobRequest, opts ...grpc.CallOption) (*CancelJobResponse, error)
+	// WatchJobEvents sends what has happened to a job, from the event after
+	// the one named, and goes on sending as more happens until the job has
+	// finished.
+	WatchJobEvents(ctx context.Context, in *WatchJobEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JobEvent], error)
 }
 
 type nodeServiceClient struct {
@@ -97,6 +106,35 @@ func (c *nodeServiceClient) ListNodes(ctx context.Context, in *ListNodesRequest,
 	return out, nil
 }
 
+func (c *nodeServiceClient) CancelJob(ctx context.Context, in *CancelJobRequest, opts ...grpc.CallOption) (*CancelJobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelJobResponse)
+	err := c.cc.Invoke(ctx, NodeService_CancelJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) WatchJobEvents(ctx context.Context, in *WatchJobEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JobEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[1], NodeService_WatchJobEvents_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchJobEventsRequest, JobEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchJobEventsClient = grpc.ServerStreamingClient[JobEvent]
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -110,6 +148,13 @@ type NodeServiceServer interface {
 	// every change, and closes once the job reaches a terminal state.
 	WatchJob(*WatchJobRequest, grpc.ServerStreamingServer[WatchJobResponse]) error
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
+	// CancelJob stops a job that has not finished. Its running tasks are told
+	// to stop and nothing more of it is handed out.
+	CancelJob(context.Context, *CancelJobRequest) (*CancelJobResponse, error)
+	// WatchJobEvents sends what has happened to a job, from the event after
+	// the one named, and goes on sending as more happens until the job has
+	// finished.
+	WatchJobEvents(*WatchJobEventsRequest, grpc.ServerStreamingServer[JobEvent]) error
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -131,6 +176,12 @@ func (UnimplementedNodeServiceServer) WatchJob(*WatchJobRequest, grpc.ServerStre
 }
 func (UnimplementedNodeServiceServer) ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodes not implemented")
+}
+func (UnimplementedNodeServiceServer) CancelJob(context.Context, *CancelJobRequest) (*CancelJobResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelJob not implemented")
+}
+func (UnimplementedNodeServiceServer) WatchJobEvents(*WatchJobEventsRequest, grpc.ServerStreamingServer[JobEvent]) error {
+	return status.Error(codes.Unimplemented, "method WatchJobEvents not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -218,6 +269,35 @@ func _NodeService_ListNodes_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_CancelJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelJobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).CancelJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_CancelJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).CancelJob(ctx, req.(*CancelJobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_WatchJobEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchJobEventsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).WatchJobEvents(m, &grpc.GenericServerStream[WatchJobEventsRequest, JobEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchJobEventsServer = grpc.ServerStreamingServer[JobEvent]
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -237,11 +317,20 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "ListNodes",
 			Handler:    _NodeService_ListNodes_Handler,
 		},
+		{
+			MethodName: "CancelJob",
+			Handler:    _NodeService_CancelJob_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "WatchJob",
 			Handler:       _NodeService_WatchJob_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "WatchJobEvents",
+			Handler:       _NodeService_WatchJobEvents_Handler,
 			ServerStreams: true,
 		},
 	},

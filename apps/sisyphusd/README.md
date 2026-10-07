@@ -236,6 +236,21 @@ A coordinator also collects every `--gc-interval` (default one hour), and with `
 
 A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
 
+## Following and stopping a job
+
+```sh
+bin/sisyphusd job logs <job-id>                 # what has happened to it, and what happens next, until it is over
+bin/sisyphusd job cancel <job-id>               # stop it
+bin/sisyphusd job submit --timeout 10m ...      # stop and retry any attempt at a task that runs longer
+```
+
+- **Events.** A coordinator records what happens to each job: submitted, each task started, succeeded, failed, lost with its worker or timed out, and how the job ended. `job logs` prints them and follows a running job to its end. They are kept in the database with the job.
+- **Logs.** A task can log lines as it runs, and those appear among the job's events with the task and worker they came from. The two built-in workloads log one line each.
+- **Progress.** A task can say how far along it is. `job get` and the desktop's API give it for each task, from 0 to 1, and for the job as the mean of its tasks. It is as true as the workload makes it, and is not kept across a restart.
+- **Cancelling** stops the job at once: its running tasks are told to stop, their slots are free again, and nothing more of it is handed out. A cancelled job is over, like one that succeeded or failed, and stays on record.
+- **Timeouts.** With `--timeout`, an attempt at a task that runs longer is stopped and counts as a failure, so it is tried again up to the usual three times.
+- **A job that fails stops its other tasks** the same way, rather than leaving them to finish for nothing.
+
 ## Restarting a coordinator
 
 A coordinator keeps its jobs in `node.db`, a SQLite database in its data directory, so stopping it loses nothing:
@@ -380,7 +395,6 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 ## Known limits
 
 - A task may fail three times, and losing its worker counts as a failure. Losing its coordinator does not.
-- When a job fails, its other running tasks are left to finish and their results discarded; there is no cancellation.
 - Workers are chosen by free slots only, not by hardware.
 - A coordinator accepts whatever result a worker returns. Admit only workers you trust.
 - A node is remembered by address. If a coordinator's address changes, its workers and clients must join again.

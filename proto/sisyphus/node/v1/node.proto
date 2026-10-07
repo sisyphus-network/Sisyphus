@@ -30,6 +30,12 @@ service NodeService {
   // WatchJobs sends that list at once and again, in full, whenever any job
   // changes, with a revision that counts up from one.
   rpc WatchJobs(WatchJobsRequest) returns (stream ListJobsResponse);
+  // CancelJob stops a job that has not finished.
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  // WatchJobEvents sends what has happened to a job, from the event after
+  // the one named, and goes on as more happens until the job has finished:
+  // the steps of its life and the lines its tasks log.
+  rpc WatchJobEvents(WatchJobEventsRequest) returns (stream JobEvent);
 }
 
 message GetNodeInfoRequest {}
@@ -145,6 +151,7 @@ enum JobState {
   JOB_STATE_RUNNING = 2;
   JOB_STATE_SUCCEEDED = 3;
   JOB_STATE_FAILED = 4;
+  JOB_STATE_CANCELLED = 5;
 }
 
 enum JobMode {
@@ -171,6 +178,10 @@ message Job {
   // CIDs of the stored data the job consumed and of what its result is.
   repeated string input_blobs = 11;
   repeated string output_blobs = 12;
+  // From 0 to 1: the mean of its tasks' progress.
+  double progress = 13;
+  // If not zero, how long any one attempt at a task may run.
+  uint32 task_timeout_seconds = 14;
 }
 
 message JobTask {
@@ -183,6 +194,8 @@ message JobTask {
   string worker_name = 5;
   // Why its last failed attempt failed, if one did.
   string error = 6;
+  // From 0 to 1, as far as the task itself says.
+  double progress = 7;
 }
 
 message SubmitJobRequest {
@@ -192,9 +205,35 @@ message SubmitJobRequest {
   // Distributed mode only: how many tasks to split into. Zero means one for
   // each worker slot connected now.
   uint32 max_tasks = 4;
+  // If not zero, stop and retry any attempt at a task that runs longer.
+  uint32 task_timeout_seconds = 5;
 }
 
 message SubmitJobResponse { Job job = 1; }
+
+message CancelJobRequest { string job_id = 1; }
+
+message CancelJobResponse { Job job = 1; }
+
+message WatchJobEventsRequest {
+  string job_id = 1;
+  // Send only events numbered after this one. Zero sends them all.
+  uint64 after_seq = 2;
+}
+
+message JobEvent {
+  // Events of a job are numbered from one, in the order they happened.
+  uint64 seq = 1;
+  // Milliseconds since the Unix epoch.
+  int64 at_ms = 2;
+  // What happened: submitted, task-started, task-succeeded, task-failed,
+  // task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
+  string kind = 3;
+  // The task concerned, or -1 if the event is about the job as a whole.
+  int32 task_index = 4;
+  string worker_name = 5;
+  string text = 6;
+}
 
 message GetJobRequest { string job_id = 1; }
 

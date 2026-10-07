@@ -79,6 +79,13 @@ try {
       stream.on('error', (error) => { if (error.code !== grpc.status.CANCELLED) reject(error) })
     })
     console.log('finished ', describe(done), 'on', [...new Set(done.tasks.map((task) => task.workerName))].join(', '))
+    // What happened to it along the way. The stream ends by itself because the job is over.
+    await new Promise((resolve, reject) => {
+      const stream = client.watchJobEvents({ jobId: job.jobId })
+      stream.on('data', (event) => console.log('   ', event.seq, event.kind, event.taskIndex >= 0 ? `task ${event.taskIndex}` : '', event.workerName, event.text))
+      stream.on('end', resolve)
+      stream.on('error', reject)
+    })
   }
 } catch (error) {
   console.error('the daemon did not answer as expected:', error.details ?? error.message)

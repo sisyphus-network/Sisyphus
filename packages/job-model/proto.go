@@ -17,6 +17,8 @@ func (j *Job) ToProto() *pb.Job {
 			Params:   append([]byte(nil), j.Params...),
 			Mode:     pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED,
 			MaxTasks: uint32(j.MaxTasks),
+
+			TaskTimeoutSeconds: uint32(j.TaskTimeout / time.Second),
 		},
 		State:       pb.JobState(j.State + 1),
 		Result:      append([]byte(nil), j.Result...),
@@ -38,9 +40,17 @@ func (j *Job) ToProto() *pb.Job {
 			NodeId:   t.NodeID,
 			NodeName: t.NodeName,
 			Error:    t.Err,
+			Progress: t.Progress,
 		})
+		// A job is as far along as its tasks are, taken together.
+		out.Progress += t.Progress / float64(len(j.Tasks))
 	}
 	return out
+}
+
+// ToProto returns the event in the pool's protocol.
+func (e Event) ToProto() *pb.JobEvent {
+	return &pb.JobEvent{Seq: e.Seq, At: timestamp(e.At), Kind: e.Kind, TaskIndex: int32(e.Task), NodeName: e.Node, Text: e.Text}
 }
 
 func timestamp(t time.Time) *timestamppb.Timestamp {

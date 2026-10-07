@@ -32,8 +32,8 @@ func TestAJobKnowsWhatHasChangedSinceItWasSaved(t *testing.T) {
 	}
 
 	// Only what was touched since, each once and in order.
-	j.Start(j.Tasks[2], "n", "node")
-	j.Start(j.Tasks[0], "n", "node")
+	j.Start(j.Tasks[2], "n", "node", time.Now())
+	j.Start(j.Tasks[0], "n", "node", time.Now())
 	j.Succeed(j.Tasks[2], []byte("out"))
 	j.NoteRead("in", "more")
 	j.NoteTaskOutput("mid", "mid")
@@ -53,7 +53,7 @@ func TestRequeueDoesNotCountAgainstATask(t *testing.T) {
 	task := j.Tasks[0]
 	// Lost more often than a task may fail.
 	for range 5 {
-		j.Start(task, "n", "node")
+		j.Start(task, "n", "node", time.Now())
 		j.Requeue(task, "the coordinator stopped")
 		if task.State != Pending || task.Err != "the coordinator stopped" {
 			t.Fatalf("a requeued task is %v with error %q", task.State, task.Err)
@@ -63,12 +63,12 @@ func TestRequeueDoesNotCountAgainstATask(t *testing.T) {
 		t.Fatalf("after five lost attempts: attempt %d, failures %d, job %v", task.Attempt, task.Failures, j.State)
 	}
 	// Real failures still add up to the limit.
-	j.Start(task, "n", "node")
+	j.Start(task, "n", "node", time.Now())
 	j.Fail(task, "boom", maxAttempts, time.Now())
 	if task.State != Pending || j.Terminal() {
 		t.Fatalf("after one failure of two allowed the task is %v", task.State)
 	}
-	j.Start(task, "n", "node")
+	j.Start(task, "n", "node", time.Now())
 	j.Fail(task, "boom", maxAttempts, time.Now())
 	if task.State != Failed || j.State != Failed || j.Err != "task 0 failed after 2 attempts: boom" {
 		t.Errorf("after two failures: task %v, job %v: %s", task.State, j.State, j.Err)

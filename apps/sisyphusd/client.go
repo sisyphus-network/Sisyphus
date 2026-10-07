@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
@@ -38,6 +39,7 @@ func jobSubmit(ctx context.Context, args []string) error {
 	mode := fs.String("mode", "distributed", "distributed (split across workers) or full-worker (whole job on one worker)")
 	tasks := fs.Uint("tasks", 0, "distributed mode: number of tasks to split into (default: one per connected worker slot)")
 	detach := fs.Bool("detach", false, "print the job ID and return without waiting")
+	timeout := fs.Duration("timeout", 0, "stop and retry any attempt at a task that runs longer than this; 0 means no limit")
 	keyFile := fs.String("key-file", "", "make the job private: seal everything it stores with this key, and open sealed inputs with it")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -46,7 +48,7 @@ func jobSubmit(ctx context.Context, args []string) error {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 
-	spec := &pb.JobSpec{Workload: *workload, Params: []byte(*params), MaxTasks: uint32(*tasks)}
+	spec := &pb.JobSpec{Workload: *workload, Params: []byte(*params), MaxTasks: uint32(*tasks), TaskTimeoutSeconds: uint32(*timeout / time.Second)}
 	switch *mode {
 	case "distributed":
 		spec.Mode = pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED
@@ -136,10 +138,80 @@ func jobGet(ctx context.Context, args []string) error {
 	for _, task := range job.GetTasks() {
 		fmt.Fprintln(stdout, "  "+describeTask(task))
 	}
-	if job.GetState() == pb.JobState_JOB_STATE_SUCCEEDED || job.GetState() == pb.JobState_JOB_STATE_FAILED {
+	if job.GetFinishedAt() != nil {
 		return reportOutcome(job)
 	}
 	return nil
+}
+
+// jobCancel stops a job that has not finished.
+func jobCancel(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sisyphusd job cancel", flag.ContinueOnError)
+	node := targetFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("expected exactly one job ID")
+	}
+	client, closeConn, err := dial(node)
+	if err != nil {
+		return err
+	}
+	defer closeConn()
+	if _, err := client.CancelJob(ctx, &pb.CancelJobRequest{JobId: fs.Arg(0)}); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "job %s cancelled\n", fs.Arg(0))
+	return nil
+}
+
+// jobLogs prints what has happened to a job and, while it is still going,
+// what happens next, until it is over.
+func jobLogs(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sisyphusd job logs", flag.ContinueOnError)
+	node := targetFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("expected exactly one job ID")
+	}
+	client, closeConn, err := dial(node)
+	if err != nil {
+		return err
+	}
+	defer closeConn()
+	stream, err := client.WatchJobEvents(ctx, &pb.WatchJobEventsRequest{JobId: fs.Arg(0)})
+	if err != nil {
+		return err
+	}
+	for {
+		event, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, describeEvent(event))
+	}
+}
+
+// describeEvent writes one thing that happened to a job as a line.
+func describeEvent(e *pb.JobEvent) string {
+	line := e.GetAt().AsTime().UTC().Format("15:04:05.000") + " "
+	if e.GetTaskIndex() >= 0 {
+		line += fmt.Sprintf("task %d ", e.GetTaskIndex())
+	}
+	if e.GetNodeName() != "" {
+		line += "on " + e.GetNodeName() + " "
+	}
+	line += e.GetKind()
+	if e.GetText() != "" {
+		line += ": " + e.GetText()
+	}
+	return line
 }
 
 func listNodes(ctx context.Context, args []string) error {
@@ -185,6 +257,9 @@ func listNodes(ctx context.Context, args []string) error {
 // reportOutcome prints a finished job's result, or returns its failure.
 func reportOutcome(job *pb.Job) error {
 	took := job.GetFinishedAt().AsTime().Sub(job.GetCreatedAt().AsTime())
+	if job.GetState() == pb.JobState_JOB_STATE_CANCELLED {
+		return fmt.Errorf("job %s was cancelled after %s", job.GetJobId(), took)
+	}
 	if job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
 		return fmt.Errorf("job %s failed after %s: %s", job.GetJobId(), took, job.GetError())
 	}

@@ -56,15 +56,23 @@ type Journal interface {
 	LoadJobs() ([]*jobmodel.Job, error)
 	// DeleteJobs forgets the jobs with the given IDs.
 	DeleteJobs(ids []string) error
+	// SaveEvent records one thing that happened to a job, and LoadEvents
+	// returns all that has, in order.
+	SaveEvent(jobID string, e jobmodel.Event) error
+	LoadEvents(jobID string) ([]jobmodel.Event, error)
 }
 
 // noJournal is the journal of a coordinator that keeps its jobs in memory
 // only.
 type noJournal struct{}
 
-func (noJournal) SaveJob(*jobmodel.Job) error        { return nil }
-func (noJournal) LoadJobs() ([]*jobmodel.Job, error) { return nil, nil }
-func (noJournal) DeleteJobs([]string) error          { return nil }
+func (noJournal) SaveJob(*jobmodel.Job) error            { return nil }
+func (noJournal) LoadJobs() ([]*jobmodel.Job, error)     { return nil, nil }
+func (noJournal) DeleteJobs([]string) error              { return nil }
+func (noJournal) SaveEvent(string, jobmodel.Event) error { return nil }
+func (noJournal) LoadEvents(string) ([]jobmodel.Event, error) {
+	return nil, nil
+}
 
 type Config struct {
 	// ID names this coordinator to its workers.
@@ -106,9 +114,17 @@ type Coordinator struct {
 	active           []*jobmodel.Job // unfinished jobs in submission order
 	workers          map[string]*worker
 	// changed holds, per job, a channel that is closed and replaced every
-	// time the job changes. Watchers wait on it.
+	// time the job changes or something happens to it. Watchers wait on it.
 	changed map[string]chan struct{}
+	// events holds, per job, what has happened to it, and seqs the number
+	// of the last event: more than the events held, if the oldest of a very
+	// long list have been let go.
+	events map[string][]jobmodel.Event
+	seqs   map[string]uint64
 }
+
+// maxEvents is how many of a job's events are kept to hand.
+const maxEvents = 5000
 
 type worker struct {
 	id string
@@ -191,7 +207,7 @@ func New(cfg Config) *Coordinator {
 	if cfg.Journal == nil {
 		cfg.Journal = noJournal{}
 	}
-	return &Coordinator{
+	c := &Coordinator{
 		id:        cfg.ID,
 		workloads: cfg.Workloads,
 		store:     cfg.Store,
@@ -204,7 +220,164 @@ func New(cfg Config) *Coordinator {
 		jobs:      make(map[string]*jobmodel.Job),
 		workers:   make(map[string]*worker),
 		changed:   make(map[string]chan struct{}),
+		events:    make(map[string][]jobmodel.Event),
+		seqs:      make(map[string]uint64),
 	}
+	// Attempts that have run past their time are looked for once a second.
+	c.aggregating.Add(1)
+	go func() {
+		defer c.aggregating.Done()
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case now := <-tick.C:
+				c.Expire(now)
+			case <-c.ctx.Done():
+				return
+			}
+		}
+	}()
+	return c
+}
+
+// recordLocked notes something that happened to a job, for whoever is
+// following it now and whoever asks later.
+func (c *Coordinator) recordLocked(job *jobmodel.Job, kind string, task int, node, text string) {
+	c.seqs[job.ID]++
+	e := jobmodel.Event{Seq: c.seqs[job.ID], At: time.Now(), Kind: kind, Task: task, Node: node, Text: text}
+	held := append(c.events[job.ID], e)
+	c.events[job.ID] = held[max(len(held)-maxEvents, 0):]
+	if err := c.journal.SaveEvent(job.ID, e); err != nil {
+		c.log.Warn("could not save a job's event", "job", job.ID, "error", err)
+	}
+	c.wakeLocked(job)
+}
+
+// The kinds of thing that happen to a job.
+const (
+	eventSubmitted     = "submitted"
+	eventResumed       = "resumed"
+	eventTaskStarted   = "task-started"
+	eventTaskSucceeded = "task-succeeded"
+	eventTaskFailed    = "task-failed"
+	eventTaskLost      = "task-lost"
+	eventTaskTimedOut  = "task-timed-out"
+	eventLog           = "log"
+	whole              = -1 // the task index of an event about the job itself
+)
+
+// WatchEvents calls fn with each thing that has happened to a job after the
+// event numbered after, in order, and goes on as more happens, returning nil
+// once the job is over and everything has been delivered.
+func (c *Coordinator) WatchEvents(ctx context.Context, jobID string, after uint64, fn func(*pb.JobEvent) error) error {
+	for {
+		c.mu.Lock()
+		job, ok := c.jobs[jobID]
+		if !ok {
+			c.mu.Unlock()
+			return status.Errorf(codes.NotFound, "job %q not found", jobID)
+		}
+		var fresh []jobmodel.Event
+		for _, e := range c.events[jobID] {
+			if e.Seq > after {
+				fresh = append(fresh, e)
+			}
+		}
+		over, changed := job.Terminal(), c.changed[jobID]
+		c.mu.Unlock()
+
+		for _, e := range fresh {
+			if err := fn(e.ToProto()); err != nil {
+				return err
+			}
+			after = e.Seq
+		}
+		if over {
+			return nil
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return status.FromContextError(ctx.Err()).Err()
+		}
+	}
+}
+
+// Cancel stops a job that is not over: its running tasks are told to stop
+// and nothing more of it is handed out.
+func (c *Coordinator) Cancel(jobID string) (*pb.Job, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	job, ok := c.jobs[jobID]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "job %q not found", jobID)
+	}
+	if !job.Cancel(time.Now()) {
+		return nil, status.Errorf(codes.FailedPrecondition, "job %q is already over: it %s", jobID, job.State)
+	}
+	c.settleLocked(job)
+	c.log.Info("job cancelled", "job", job.ID)
+	c.notifyLocked(job)
+	c.scheduleLocked()
+	return job.ToProto(), nil
+}
+
+// Expire fails the attempts that have, as of now, run longer than their
+// job allows, and tells the workers running them to stop.
+func (c *Coordinator) Expire(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, w := range c.workers {
+		for id, a := range w.running {
+			if a.job.TaskTimeout <= 0 || now.Sub(a.task.StartedAt) <= a.job.TaskTimeout {
+				continue
+			}
+			delete(w.running, id)
+			w.send.add(cancelOf(a.task))
+			reason := "timed out after " + a.job.TaskTimeout.String()
+			c.recordLocked(a.job, eventTaskTimedOut, a.task.Index, w.name, reason)
+			a.job.Fail(a.task, reason, maxAttempts, now)
+			c.settleLocked(a.job)
+			c.notifyLocked(a.job)
+		}
+	}
+	c.scheduleLocked()
+}
+
+// cancelOf is the message that tells a worker to stop a task.
+func cancelOf(task *jobmodel.Task) *pb.CoordinatorMessage {
+	return &pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Cancel{Cancel: &pb.TaskCancel{TaskId: task.ID, Attempt: uint32(task.Attempt)}}}
+}
+
+// stopTasksLocked tells every worker running a task of a job that is over to
+// stop it, and takes the task off the worker's hands, so that its slot is
+// free at once and whatever it still reports is ignored.
+func (c *Coordinator) stopTasksLocked(job *jobmodel.Job) {
+	for _, w := range c.workers {
+		for id, a := range w.running {
+			if a.job == job {
+				delete(w.running, id)
+				w.send.add(cancelOf(a.task))
+			}
+		}
+	}
+}
+
+// handleUpdate takes in news of a task still running: how far along it is
+// and what it has logged.
+func (c *Coordinator) handleUpdate(w *worker, update *pb.TaskUpdate) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	a, ok := w.running[update.GetTaskId()]
+	if !ok || uint32(a.task.Attempt) != update.GetAttempt() {
+		return
+	}
+	a.task.Progress = min(max(update.GetProgress(), 0), 1)
+	for _, line := range update.GetLog() {
+		c.recordLocked(a.job, eventLog, a.task.Index, w.name, line)
+	}
+	c.wakeLocked(a.job)
 }
 
 // Recover takes up the jobs in the journal where an earlier coordinator
@@ -222,12 +395,23 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, job := range jobs {
+		// What happened to it before comes back with it. A job whose events
+		// cannot be read is still a job.
+		events, err := c.journal.LoadEvents(job.ID)
+		if err != nil {
+			c.log.Warn("could not load a job's events", "job", job.ID, "error", err)
+		}
+		c.events[job.ID] = events[max(len(events)-maxEvents, 0):]
+		if len(events) > 0 {
+			c.seqs[job.ID] = events[len(events)-1].Seq
+		}
 		c.jobs[job.ID] = job
 		c.changed[job.ID] = make(chan struct{})
 		if job.Terminal() {
 			continue
 		}
 		unfinished++
+		c.recordLocked(job, eventResumed, whole, "", "the coordinator was restarted")
 		if _, err := c.workloads.Get(job.Workload); err != nil {
 			// Nobody is left who could split, run or combine it.
 			job.Finish(nil, fmt.Errorf("the coordinator was restarted without this job's workload: %w", err), time.Now())
@@ -271,6 +455,8 @@ func (c *Coordinator) Prune(now time.Time) (int, error) {
 	for _, id := range old {
 		delete(c.jobs, id)
 		delete(c.changed, id)
+		delete(c.events, id)
+		delete(c.seqs, id)
 	}
 	return len(old), nil
 }
@@ -348,6 +534,7 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 	defer c.mu.Unlock()
 	job := jobmodel.New(newID(), workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
 	job.Key = spec.GetKey()
+	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
 	job.NoteRead(touched.Read()...)
 	// A job is accepted only once it is on record: its submitter is about
 	// to be given an ID to ask after.
@@ -360,6 +547,7 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 	// Hold the job's inputs until it is over, however long that takes.
 	c.pin(job, time.Time{}, touched.Read())
 	c.log.Info("job submitted", "job", job.ID, "workload", job.Workload, "tasks", len(job.Tasks))
+	c.recordLocked(job, eventSubmitted, whole, "", fmt.Sprintf("%s, in %d tasks", job.Workload, len(job.Tasks)))
 
 	c.scheduleLocked()
 	return job.ToProto(), nil
@@ -533,6 +721,8 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 				c.mu.Unlock()
 			case *pb.WorkerMessage_TaskResult:
 				c.handleResult(w, kind.TaskResult)
+			case *pb.WorkerMessage_TaskUpdate:
+				c.handleUpdate(w, kind.TaskUpdate)
 			}
 		}
 	}()
@@ -597,13 +787,11 @@ func (c *Coordinator) disconnect(w *worker) {
 	delete(c.workers, w.id)
 	now := time.Now()
 	for _, a := range w.running {
-		if a.job.Terminal() {
-			continue
-		}
 		if c.ctx.Err() != nil {
 			// It is the coordinator that is going away, not the worker.
 			a.job.Requeue(a.task, "the coordinator stopped")
 		} else {
+			c.recordLocked(a.job, eventTaskLost, a.task.Index, w.name, "its worker disconnected")
 			a.job.Fail(a.task, "worker "+w.id+" disconnected", maxAttempts, now)
 		}
 		c.settleLocked(a.job)
@@ -636,10 +824,8 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	delete(w.running, a.task.ID)
 	defer c.scheduleLocked()
 
-	// The job may already have failed because of another task.
-	if a.job.Terminal() {
-		return
-	}
+	// A job that is over has had its tasks taken off every worker's hands,
+	// so a task found here belongs to one that is still going.
 	now := time.Now()
 	switch outcome := result.GetOutcome().(type) {
 	case *pb.TaskResult_Output:
@@ -651,6 +837,7 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 			w.holds[held] = struct{}{}
 		}
 		c.pin(a.job, time.Time{}, result.GetWrittenBlobs())
+		c.recordLocked(a.job, eventTaskSucceeded, a.task.Index, w.name, "")
 		if a.job.Succeed(a.task, outcome.Output) {
 			// Succeed reports the last task only once, so each job is
 			// aggregated once.
@@ -659,8 +846,10 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 		}
 	case *pb.TaskResult_Error:
 		c.log.Warn("task attempt failed", "task", a.task.ID, "node", w.id, "attempt", a.task.Attempt, "error", outcome.Error)
+		c.recordLocked(a.job, eventTaskFailed, a.task.Index, w.name, outcome.Error)
 		a.job.Fail(a.task, outcome.Error, maxAttempts, now)
 	default:
+		c.recordLocked(a.job, eventTaskFailed, a.task.Index, w.name, "worker reported no outcome")
 		a.job.Fail(a.task, "worker reported no outcome", maxAttempts, now)
 	}
 	c.settleLocked(a.job)
@@ -691,6 +880,10 @@ func (c *Coordinator) aggregate(job *jobmodel.Job) {
 		// job's. It stays as it was, to be combined after a restart.
 		return
 	}
+	if job.Terminal() {
+		// Cancelled while its outputs were being combined.
+		return
+	}
 	now := time.Now()
 	job.NoteRead(touched.Read()...)
 	job.NoteResult(touched.Written()...)
@@ -708,6 +901,9 @@ func (c *Coordinator) settleLocked(job *jobmodel.Job) {
 	if !job.Terminal() {
 		return
 	}
+	// Whatever of it is still running is of no use to anyone now.
+	c.stopTasksLocked(job)
+	c.recordLocked(job, job.State.String(), whole, "", job.Err)
 	keep := append(job.InputBlobs(), job.OutputBlobs()...)
 	c.pin(job, job.FinishedAt.Add(c.retain), keep)
 	if err := c.store.Unpin(owner(job), decode(job.IntermediateBlobs())...); err != nil {
@@ -769,7 +965,8 @@ func (c *Coordinator) scheduleLocked() {
 			if w == nil {
 				break
 			}
-			job.Start(task, w.id, w.name)
+			job.Start(task, w.id, w.name, time.Now())
+			c.recordLocked(job, eventTaskStarted, task.Index, w.name, fmt.Sprintf("attempt %d", task.Attempt))
 			w.running[task.ID] = assignment{job: job, task: task}
 			w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
 				TaskId:   task.ID,
@@ -817,6 +1014,11 @@ func (c *Coordinator) slotsLocked(workload string) int {
 // and wakes whoever is watching the job.
 func (c *Coordinator) notifyLocked(job *jobmodel.Job) {
 	c.saveLocked(job)
+	c.wakeLocked(job)
+}
+
+// wakeLocked wakes whoever is watching a job or following its events.
+func (c *Coordinator) wakeLocked(job *jobmodel.Job) {
 	close(c.changed[job.ID])
 	c.changed[job.ID] = make(chan struct{})
 }

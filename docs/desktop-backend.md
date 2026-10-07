@@ -43,7 +43,9 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `ListWorkers` | | The nodes connected as this node's workers: name, hardware, slots, running tasks. |
 | `SubmitJob` | yes | Give the pool a job. Returns it as it stands at once. |
 | `GetJob` | | One job, with its tasks. |
-| `ListJobs`, `WatchJobs` | | Every job on record, newest first. `WatchJobs` re-sends the whole list when any job changes. |
+| `ListJobs`, `WatchJobs` | | Every job on record, newest first. `WatchJobs` re-sends the whole list when any job changes, progress included. |
+| `CancelJob` | yes | Stop a job that has not finished. |
+| `WatchJobEvents` | | What has happened to one job, then what happens next, ending when the job does: the steps of its life and the lines its tasks log. Pass `after_seq` to pick up where you left off. |
 
 The two `Watch` calls are the ones to build live views on. Each message carries a `revision` that counts up from one.
 
@@ -65,7 +67,8 @@ Work flows one way when one side gives and the other takes, so the second pair c
 
 ## What a job tells you
 
-- `state`: pending, running, succeeded or failed. The same four apply to each task.
+- `state`: pending, running, succeeded, failed or cancelled. The same apply to each task.
+- `progress`: from 0 to 1, on the job and on each task. A task that does not report stays at 0 until it succeeds.
 - `tasks`: one entry for each piece of the job, with the worker that ran it, how many attempts it took, and why the last one failed if one did.
 - `params` and `result` are bytes. For the two built-in workloads they are JSON.
 - `created_at_ms` and `finished_at_ms` are milliseconds since the Unix epoch; the second is zero until the job ends.
@@ -77,7 +80,21 @@ To submit one of the built-in workloads:
 | `primes` | `{"from":0,"to":2000000}` | `{"count":148933}` |
 | `wordcount` | `{"input":"<CID of a stored file>"}` | Counts, and the CID of the full table in `output_blobs`. |
 
-`max_tasks` says how many pieces to split into; zero means one for each free worker slot.
+`max_tasks` says how many pieces to split into; zero means one for each free worker slot. `task_timeout_seconds`, if set, stops and retries any attempt that runs longer.
+
+## What a job event tells you
+
+Each has a `seq` (counting from one within the job), a time, a `kind`, the task it concerns (`-1` for the job as a whole), the worker concerned if one was, and some text.
+
+| `kind` | When |
+| --- | --- |
+| `submitted`, `resumed` | The job arrived; the coordinator restarted with it unfinished |
+| `task-started`, `task-succeeded` | A task was handed to a worker; it finished |
+| `task-failed`, `task-lost`, `task-timed-out` | An attempt failed, its worker dropped off, or it ran too long |
+| `log` | A line the task itself wrote |
+| `succeeded`, `failed`, `cancelled` | How the job ended. Always the last event |
+
+A job view can be built from `WatchJobs` for state and progress and `WatchJobEvents` for the timeline and log of the job that is open.
 
 ## What the API does not have yet
 
@@ -86,7 +103,6 @@ These exist in the daemon but not in the local API. Ask for them when the UI wan
 - **Storing and fetching files** (`wordcount` inputs, job outputs). For now: `sisyphusd blob put <file>` and `blob get <cid>`.
 - **Invitations and the member list**, other than as peers. For now: `sisyphusd pool invite`, `pool members`.
 - **Private jobs**, which take a key.
-- **Progress within a task, and logs.** A task is pending, running or done; there is nothing finer yet.
 - **Chat and the AI planner.** Not built in the daemon at all.
 
 ## Changing the API

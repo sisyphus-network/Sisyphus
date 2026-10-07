@@ -89,6 +89,18 @@ func (s *nodeService) WatchJob(req *pb.WatchJobRequest, stream grpc.ServerStream
 	})
 }
 
+func (s *nodeService) CancelJob(_ context.Context, req *pb.CancelJobRequest) (*pb.CancelJobResponse, error) {
+	job, err := s.coordinator.Cancel(req.GetJobId())
+	if err != nil {
+		return nil, err
+	}
+	return &pb.CancelJobResponse{Job: job}, nil
+}
+
+func (s *nodeService) WatchJobEvents(req *pb.WatchJobEventsRequest, stream grpc.ServerStreamingServer[pb.JobEvent]) error {
+	return s.coordinator.WatchEvents(stream.Context(), req.GetJobId(), req.GetAfterSeq(), stream.Send)
+}
+
 func (s *nodeService) ListNodes(context.Context, *pb.ListNodesRequest) (*pb.ListNodesResponse, error) {
 	return &pb.ListNodesResponse{Nodes: s.coordinator.Nodes()}, nil
 }

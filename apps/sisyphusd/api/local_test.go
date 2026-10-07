@@ -607,6 +607,37 @@ func (o *office) Jobs() []*pb.Job {
 
 func (o *office) Nodes() []*pb.NodeInfo { return o.nodes }
 
+func (o *office) Cancel(id string) (*pb.Job, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for i, job := range o.jobs {
+		if job.GetJobId() == id {
+			stopped := proto.Clone(job).(*pb.Job)
+			stopped.State = pb.JobState_JOB_STATE_CANCELLED
+			o.jobs[i] = stopped
+			return stopped, nil
+		}
+	}
+	return nil, status.Errorf(codes.NotFound, "job %q not found", id)
+}
+
+func (o *office) WatchEvents(_ context.Context, id string, after uint64, fn func(*pb.JobEvent) error) error {
+	if id != "job-1" {
+		return status.Errorf(codes.NotFound, "job %q not found", id)
+	}
+	for _, e := range []*pb.JobEvent{
+		{Seq: 1, At: timestamppb.New(time.UnixMilli(1_700_000_000_000)), Kind: "submitted", TaskIndex: -1, Text: "primes, in 1 tasks"},
+		{Seq: 2, At: timestamppb.New(time.UnixMilli(1_700_000_001_000)), Kind: "log", TaskIndex: 0, NodeName: "rig", Text: "counting"},
+	} {
+		if e.GetSeq() > after {
+			if err := fn(e); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // finish marks a job done, as the pool would.
 func (o *office) finish(id string, result []byte) {
 	o.mu.Lock()
@@ -759,5 +790,65 @@ func TestANodeWithNoPoolHasNoWorkersOrJobs(t *testing.T) {
 		if status.Code(err) != codes.FailedPrecondition {
 			t.Errorf("%s on a node with no pool: %v, want FailedPrecondition", call, err)
 		}
+	}
+}
+
+func TestTheLocalAPICancelsJobsAndFollowsTheirEvents(t *testing.T) {
+	pool := &office{}
+	client := startOffice(t, pool)
+	ctx := withToken("the-token")
+	if _, err := client.SubmitJob(ctx, &nodepb.SubmitJobRequest{Workload: "primes", TaskTimeoutSeconds: 30}); err != nil {
+		t.Fatal(err)
+	}
+	if spec := pool.submitted[0]; spec.GetTaskTimeoutSeconds() != 30 {
+		t.Errorf("the pool was given %v", spec)
+	}
+
+	events := func(after uint64) (got []*nodepb.JobEvent) {
+		t.Helper()
+		stream, err := client.WatchJobEvents(context.Background(), &nodepb.WatchJobEventsRequest{JobId: "job-1", AfterSeq: after})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			e, err := stream.Recv()
+			if err != nil {
+				return got
+			}
+			got = append(got, e)
+		}
+	}
+	all := events(0)
+	if len(all) != 2 || all[0].GetKind() != "submitted" || all[0].GetTaskIndex() != -1 || all[0].GetAtMs() != 1_700_000_000_000 ||
+		all[1].GetKind() != "log" || all[1].GetWorkerName() != "rig" || all[1].GetText() != "counting" || all[1].GetSeq() != 2 {
+		t.Errorf("events: %v", all)
+	}
+	if later := events(1); len(later) != 1 || later[0].GetSeq() != 2 {
+		t.Errorf("events after the first: %v", later)
+	}
+
+	// Cancelling spends nothing, but it changes what the pool does.
+	if _, err := client.CancelJob(context.Background(), &nodepb.CancelJobRequest{JobId: "job-1"}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("cancelling without the token: %v", err)
+	}
+	cancelled, err := client.CancelJob(ctx, &nodepb.CancelJobRequest{JobId: "job-1"})
+	if err != nil || cancelled.GetJob().GetState() != nodepb.JobState_JOB_STATE_CANCELLED {
+		t.Errorf("CancelJob = %v, %v", cancelled, err)
+	}
+	if _, err := client.CancelJob(ctx, &nodepb.CancelJobRequest{JobId: "no-such-job"}); status.Code(err) != codes.NotFound {
+		t.Errorf("cancelling a job that is not there: %v", err)
+	}
+
+	// A node with no pool has neither.
+	without := startOffice(t, nil)
+	if _, err := without.CancelJob(ctx, &nodepb.CancelJobRequest{JobId: "job-1"}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("cancelling on a node with no pool: %v", err)
+	}
+	stream, err := without.WatchJobEvents(ctx, &nodepb.WatchJobEventsRequest{JobId: "job-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("events on a node with no pool: %v", err)
 	}
 }

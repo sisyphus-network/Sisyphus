@@ -81,6 +81,8 @@ const (
 	JobState_JOB_STATE_RUNNING     JobState = 2
 	JobState_JOB_STATE_SUCCEEDED   JobState = 3
 	JobState_JOB_STATE_FAILED      JobState = 4
+	// Stopped on request before it finished.
+	JobState_JOB_STATE_CANCELLED JobState = 5
 )
 
 // Enum value maps for JobState.
@@ -91,6 +93,7 @@ var (
 		2: "JOB_STATE_RUNNING",
 		3: "JOB_STATE_SUCCEEDED",
 		4: "JOB_STATE_FAILED",
+		5: "JOB_STATE_CANCELLED",
 	}
 	JobState_value = map[string]int32{
 		"JOB_STATE_UNSPECIFIED": 0,
@@ -98,6 +101,7 @@ var (
 		"JOB_STATE_RUNNING":     2,
 		"JOB_STATE_SUCCEEDED":   3,
 		"JOB_STATE_FAILED":      4,
+		"JOB_STATE_CANCELLED":   5,
 	}
 )
 
@@ -136,6 +140,8 @@ const (
 	TaskState_TASK_STATE_RUNNING     TaskState = 2
 	TaskState_TASK_STATE_SUCCEEDED   TaskState = 3
 	TaskState_TASK_STATE_FAILED      TaskState = 4
+	// Given up because its job was cancelled or failed without it.
+	TaskState_TASK_STATE_CANCELLED TaskState = 5
 )
 
 // Enum value maps for TaskState.
@@ -146,6 +152,7 @@ var (
 		2: "TASK_STATE_RUNNING",
 		3: "TASK_STATE_SUCCEEDED",
 		4: "TASK_STATE_FAILED",
+		5: "TASK_STATE_CANCELLED",
 	}
 	TaskState_value = map[string]int32{
 		"TASK_STATE_UNSPECIFIED": 0,
@@ -153,6 +160,7 @@ var (
 		"TASK_STATE_RUNNING":     2,
 		"TASK_STATE_SUCCEEDED":   3,
 		"TASK_STATE_FAILED":      4,
+		"TASK_STATE_CANCELLED":   5,
 	}
 )
 
@@ -403,9 +411,12 @@ type JobSpec struct {
 	// is sealed with the key, and sealed inputs are opened with it. The key
 	// is given to the workers that run the job's tasks and to nobody else,
 	// and is never returned in a Job.
-	Key           []byte `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Key []byte `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
+	// If not zero, how long any one attempt at a task may run, in seconds. An
+	// attempt that runs longer is stopped and counts as failed.
+	TaskTimeoutSeconds uint32 `protobuf:"varint,6,opt,name=task_timeout_seconds,json=taskTimeoutSeconds,proto3" json:"task_timeout_seconds,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *JobSpec) Reset() {
@@ -473,6 +484,13 @@ func (x *JobSpec) GetKey() []byte {
 	return nil
 }
 
+func (x *JobSpec) GetTaskTimeoutSeconds() uint32 {
+	if x != nil {
+		return x.TaskTimeoutSeconds
+	}
+	return 0
+}
+
 type Task struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -485,7 +503,10 @@ type Task struct {
 	// Reason for the most recent failed attempt, if any.
 	Error string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
 	// The label of the node in node_id.
-	NodeName      string `protobuf:"bytes,7,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	NodeName string `protobuf:"bytes,7,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	// How far along the current attempt says it is, from 0 to 1. A workload
+	// that does not say leaves it at 0 until the task succeeds.
+	Progress      float64 `protobuf:"fixed64,8,opt,name=progress,proto3" json:"progress,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -569,6 +590,13 @@ func (x *Task) GetNodeName() string {
 	return ""
 }
 
+func (x *Task) GetProgress() float64 {
+	if x != nil {
+		return x.Progress
+	}
+	return 0
+}
+
 type Job struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	JobId string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
@@ -584,8 +612,10 @@ type Job struct {
 	// consists of. Both are kept for the node's retention period after the job
 	// ends. Blobs that only passed between tasks are not listed and are
 	// released when the job finishes.
-	InputBlobs    []string `protobuf:"bytes,9,rep,name=input_blobs,json=inputBlobs,proto3" json:"input_blobs,omitempty"`
-	OutputBlobs   []string `protobuf:"bytes,10,rep,name=output_blobs,json=outputBlobs,proto3" json:"output_blobs,omitempty"`
+	InputBlobs  []string `protobuf:"bytes,9,rep,name=input_blobs,json=inputBlobs,proto3" json:"input_blobs,omitempty"`
+	OutputBlobs []string `protobuf:"bytes,10,rep,name=output_blobs,json=outputBlobs,proto3" json:"output_blobs,omitempty"`
+	// The mean of its tasks' progress, from 0 to 1.
+	Progress      float64 `protobuf:"fixed64,11,opt,name=progress,proto3" json:"progress,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -690,6 +720,104 @@ func (x *Job) GetOutputBlobs() []string {
 	return nil
 }
 
+func (x *Job) GetProgress() float64 {
+	if x != nil {
+		return x.Progress
+	}
+	return 0
+}
+
+// JobEvent is one thing that happened to a job: a step in its life, or a
+// line a task logged.
+type JobEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Events of a job are numbered from one, in the order they happened.
+	Seq uint64                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
+	At  *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=at,proto3" json:"at,omitempty"`
+	// What happened: submitted, task-started, task-succeeded, task-failed,
+	// task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
+	Kind string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
+	// The task concerned, or -1 if the event is about the job as a whole.
+	TaskIndex int32 `protobuf:"varint,4,opt,name=task_index,json=taskIndex,proto3" json:"task_index,omitempty"`
+	// The label of the worker concerned, if one was.
+	NodeName      string `protobuf:"bytes,5,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	Text          string `protobuf:"bytes,6,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JobEvent) Reset() {
+	*x = JobEvent{}
+	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JobEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JobEvent) ProtoMessage() {}
+
+func (x *JobEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JobEvent.ProtoReflect.Descriptor instead.
+func (*JobEvent) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *JobEvent) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *JobEvent) GetAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.At
+	}
+	return nil
+}
+
+func (x *JobEvent) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *JobEvent) GetTaskIndex() int32 {
+	if x != nil {
+		return x.TaskIndex
+	}
+	return 0
+}
+
+func (x *JobEvent) GetNodeName() string {
+	if x != nil {
+		return x.NodeName
+	}
+	return ""
+}
+
+func (x *JobEvent) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
 var File_sisyphus_v1_types_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_types_proto_rawDesc = "" +
@@ -714,13 +842,14 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x04name\x18\x06 \x01(\tR\x04name\x12'\n" +
 	"\x0frelay_addresses\x18\a \x03(\tR\x0erelayAddresses\x12/\n" +
 	"\x13relayed_connections\x18\b \x01(\x04R\x12relayedConnections\x12#\n" +
-	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\x9b\x01\n" +
+	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\xcd\x01\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
 	"\x04mode\x18\x03 \x01(\x0e2\x19.sisyphus.v1.ScheduleModeR\x04mode\x12\x1b\n" +
 	"\tmax_tasks\x18\x04 \x01(\rR\bmaxTasks\x12\x10\n" +
-	"\x03key\x18\x05 \x01(\fR\x03key\"\xc9\x01\n" +
+	"\x03key\x18\x05 \x01(\fR\x03key\x120\n" +
+	"\x14task_timeout_seconds\x18\x06 \x01(\rR\x12taskTimeoutSeconds\"\xe5\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\rR\x05index\x12,\n" +
@@ -728,7 +857,8 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\aattempt\x18\x04 \x01(\rR\aattempt\x12\x17\n" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1b\n" +
-	"\tnode_name\x18\a \x01(\tR\bnodeName\"\x86\x03\n" +
+	"\tnode_name\x18\a \x01(\tR\bnodeName\x12\x1a\n" +
+	"\bprogress\x18\b \x01(\x01R\bprogress\"\xa2\x03\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12(\n" +
 	"\x04spec\x18\x02 \x01(\v2\x14.sisyphus.v1.JobSpecR\x04spec\x12+\n" +
@@ -743,23 +873,34 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\vinput_blobs\x18\t \x03(\tR\n" +
 	"inputBlobs\x12!\n" +
 	"\foutput_blobs\x18\n" +
-	" \x03(\tR\voutputBlobs*k\n" +
+	" \x03(\tR\voutputBlobs\x12\x1a\n" +
+	"\bprogress\x18\v \x01(\x01R\bprogress\"\xac\x01\n" +
+	"\bJobEvent\x12\x10\n" +
+	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12*\n" +
+	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x12\n" +
+	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x1d\n" +
+	"\n" +
+	"task_index\x18\x04 \x01(\x05R\ttaskIndex\x12\x1b\n" +
+	"\tnode_name\x18\x05 \x01(\tR\bnodeName\x12\x12\n" +
+	"\x04text\x18\x06 \x01(\tR\x04text*k\n" +
 	"\fScheduleMode\x12\x1d\n" +
 	"\x19SCHEDULE_MODE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19SCHEDULE_MODE_DISTRIBUTED\x10\x01\x12\x1d\n" +
-	"\x19SCHEDULE_MODE_FULL_WORKER\x10\x02*\x82\x01\n" +
+	"\x19SCHEDULE_MODE_FULL_WORKER\x10\x02*\x9b\x01\n" +
 	"\bJobState\x12\x19\n" +
 	"\x15JOB_STATE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11JOB_STATE_PENDING\x10\x01\x12\x15\n" +
 	"\x11JOB_STATE_RUNNING\x10\x02\x12\x17\n" +
 	"\x13JOB_STATE_SUCCEEDED\x10\x03\x12\x14\n" +
-	"\x10JOB_STATE_FAILED\x10\x04*\x88\x01\n" +
+	"\x10JOB_STATE_FAILED\x10\x04\x12\x17\n" +
+	"\x13JOB_STATE_CANCELLED\x10\x05*\xa2\x01\n" +
 	"\tTaskState\x12\x1a\n" +
 	"\x16TASK_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12TASK_STATE_PENDING\x10\x01\x12\x16\n" +
 	"\x12TASK_STATE_RUNNING\x10\x02\x12\x18\n" +
 	"\x14TASK_STATE_SUCCEEDED\x10\x03\x12\x15\n" +
-	"\x11TASK_STATE_FAILED\x10\x04BOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
+	"\x11TASK_STATE_FAILED\x10\x04\x12\x18\n" +
+	"\x14TASK_STATE_CANCELLED\x10\x05BOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
 var (
 	file_sisyphus_v1_types_proto_rawDescOnce sync.Once
@@ -774,7 +915,7 @@ func file_sisyphus_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_sisyphus_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_sisyphus_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_sisyphus_v1_types_proto_goTypes = []any{
 	(ScheduleMode)(0),             // 0: sisyphus.v1.ScheduleMode
 	(JobState)(0),                 // 1: sisyphus.v1.JobState
@@ -784,24 +925,26 @@ var file_sisyphus_v1_types_proto_goTypes = []any{
 	(*JobSpec)(nil),               // 5: sisyphus.v1.JobSpec
 	(*Task)(nil),                  // 6: sisyphus.v1.Task
 	(*Job)(nil),                   // 7: sisyphus.v1.Job
-	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(*JobEvent)(nil),              // 8: sisyphus.v1.JobEvent
+	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
 }
 var file_sisyphus_v1_types_proto_depIdxs = []int32{
 	3,  // 0: sisyphus.v1.NodeInfo.capabilities:type_name -> sisyphus.v1.NodeCapabilities
-	8,  // 1: sisyphus.v1.NodeInfo.connected_at:type_name -> google.protobuf.Timestamp
-	8,  // 2: sisyphus.v1.NodeInfo.last_seen_at:type_name -> google.protobuf.Timestamp
+	9,  // 1: sisyphus.v1.NodeInfo.connected_at:type_name -> google.protobuf.Timestamp
+	9,  // 2: sisyphus.v1.NodeInfo.last_seen_at:type_name -> google.protobuf.Timestamp
 	0,  // 3: sisyphus.v1.JobSpec.mode:type_name -> sisyphus.v1.ScheduleMode
 	2,  // 4: sisyphus.v1.Task.state:type_name -> sisyphus.v1.TaskState
 	5,  // 5: sisyphus.v1.Job.spec:type_name -> sisyphus.v1.JobSpec
 	1,  // 6: sisyphus.v1.Job.state:type_name -> sisyphus.v1.JobState
 	6,  // 7: sisyphus.v1.Job.tasks:type_name -> sisyphus.v1.Task
-	8,  // 8: sisyphus.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	8,  // 9: sisyphus.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	9,  // 8: sisyphus.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	9,  // 9: sisyphus.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
+	9,  // 10: sisyphus.v1.JobEvent.at:type_name -> google.protobuf.Timestamp
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_types_proto_init() }
@@ -815,7 +958,7 @@ func file_sisyphus_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_types_proto_rawDesc), len(file_sisyphus_v1_types_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
