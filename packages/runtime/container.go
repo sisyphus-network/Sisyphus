@@ -52,6 +52,9 @@ type ContainerParams struct {
 	// MemoryMB and CPUs, if not zero, are the most each task may use.
 	MemoryMB int     `json:"memory_mb,omitempty"`
 	CPUs     float64 `json:"cpus,omitempty"`
+	// GPUs, if not zero, is how many of the machine's graphics cards each
+	// task is given. The job should also ask for workers that have them.
+	GPUs int `json:"gpus,omitempty"`
 	// Network lets the task reach the network. Without it, it cannot.
 	Network bool `json:"network,omitempty"`
 }
@@ -81,7 +84,7 @@ type ContainerResult struct {
 func (Container) Name() string { return "container" }
 
 func (Container) Describe() string {
-	return `Runs a container image, once for each task, with no network unless asked. Parameters: {"image": "<image>", "command": ["<program>", "<argument>", ...], "tasks": <how many copies>, "input": "<optional CID of a stored file, given to each task at /input/data>", "network": <true to allow network access>}. Each task has SISYPHUS_TASK_INDEX (from 0) and SISYPHUS_TASK_COUNT in its environment. Result: {"tasks": [{"index": <n>, "stdout": "<CID of what it printed>", "files": {"<name>": "<CID of a file it wrote to /output>"}}]}.`
+	return `Runs a container image, once for each task, with no network unless asked. Parameters: {"image": "<image>", "command": ["<program>", "<argument>", ...], "tasks": <how many copies>, "input": "<optional CID of a stored file, given to each task at /input/data>", "network": <true to allow network access>, "gpus": <how many graphics cards each task needs, if any>}. Each task has SISYPHUS_TASK_INDEX (from 0) and SISYPHUS_TASK_COUNT in its environment. Result: {"tasks": [{"index": <n>, "stdout": "<CID of what it printed>", "files": {"<name>": "<CID of a file it wrote to /output>"}}]}.`
 }
 
 func (Container) Split(_ context.Context, _ Blobs, params []byte, parts int) ([][]byte, error) {
@@ -157,6 +160,9 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	}
 	if task.CPUs > 0 {
 		args = append(args, "--cpus", strconv.FormatFloat(task.CPUs, 'f', -1, 64))
+	}
+	if task.GPUs > 0 {
+		args = append(args, "--gpus", strconv.Itoa(task.GPUs))
 	}
 	for _, key := range sortedKeys(task.Env) {
 		args = append(args, "--env", key+"="+task.Env[key])

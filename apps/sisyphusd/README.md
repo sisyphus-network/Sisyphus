@@ -417,6 +417,7 @@ bin/sisyphusd run --role worker --coordinator <addr> --containers ...     # a wo
 bin/sisyphusd job submit --workload container --tasks 8 \
     --params '{"image":"alpine:3.20","command":["sh","-c","echo I am task $SISYPHUS_TASK_INDEX"]}'
 examples/container.sh                                                    # the same, and prints each task's output
+examples/render.sh                                                       # a picture rendered in strips across the pool
 ```
 
 - **A worker runs containers only if its owner says so**, with `--containers`, and needs Docker. **This is real authority over the machine:** whoever may submit jobs to the pool can run any image with any command there. Give it only on pools whose clients you would let log in.
@@ -427,7 +428,9 @@ examples/container.sh                                                    # the s
 - **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container.
 - **A job is taken in by any coordinator**, and waits until a worker that runs containers is connected.
 
-What it does not do yet: images are pulled by Docker when first used, from wherever the image name says, so a worker needs to reach that registry and trust it; nothing pins an image to a digest. Graphics cards are not passed through to the container.
+- **Graphics cards.** `"gpus": 1` gives each task that many of the machine's cards, which needs Docker set up for them (the NVIDIA Container Toolkit). Submit the job with `--min-gpus` as well, so that its tasks go only to machines that have them. This has not been tried on a machine with a card.
+
+What it does not do yet: images are pulled by Docker when first used, from wherever the image name says, so a worker needs to reach that registry and trust it. To be sure of what runs, name the image by digest (`alpine@sha256:...`), which Docker checks.
 
 ## Layout
 

@@ -4,11 +4,13 @@ Things to run against a pool, and a pool to run them against.
 
 | File | What it is |
 | --- | --- |
-| `local-pool.sh` | Starts a coordinator and two workers on this machine and leaves them running. `--kubo` gives each node Kubo and the pool a private IPFS network. |
+| `local-pool.sh` | Starts a coordinator and two workers on this machine and leaves them running. `--kubo` gives each node Kubo and the pool a private IPFS network; `--containers` lets the workers run container jobs. |
 | `tmux-pool.sh` | The same in one terminal: the pool in one tmux pane, a shell ready to use it in another. |
 | `wordcount.sh` | Stores a file on the pool, counts its words across the workers, and prints the most frequent. |
 | `private-wordcount.sh` | The same, sealed: the file and the result are encrypted with a key that only you and the job's workers hold. |
 | `primes.sh` | Counts primes below a number, split across the pool and then as one task, to compare. |
+| `container.sh` | Runs a container image on the pool, one copy for each task, and prints what each printed. |
+| `render.sh` | Renders a picture in strips, a container task for each, and puts it back together. |
 | `big-file.sh` | Makes a large text file to time jobs with. |
 | `boulder.txt` | A short sample text, the default input for `wordcount.sh`. |
 | `common.sh` | Shared by the scripts; not run directly. |
@@ -77,6 +79,18 @@ A job's result is the same whichever way it was split, down to the CID of a stor
 examples/container.sh                                   # three copies of a small image
 examples/container.sh 8 python:3-slim python -c 'import os; print(int(os.environ["SISYPHUS_TASK_INDEX"]) ** 2)'
 ```
+
+## Rendering a picture across the pool
+
+`examples/render.sh` is a whole job of the kind the pool is for: one program run over parts of something. It renders the Mandelbrot set in strips, a container task for each, and puts the strips back together into `mandelbrot.pgm`.
+
+```sh
+examples/local-pool.sh --containers      # in one terminal: a pool whose workers run containers
+examples/render.sh                       # in another: 8 strips of a 1200 by 800 picture
+examples/render.sh 16 2400 1600 big.pgm  # more strips, a bigger picture
+```
+
+Each task works out which strip is its own from `SISYPHUS_TASK_INDEX` and `SISYPHUS_TASK_COUNT`, writes its rows to `/output/rows`, and logs how far it has got, which `job logs` shows live. The job's result names each strip's rows by CID, and the script fetches them in order. Swap the program and the image and the same script shape runs frames of a video, files of a dataset, or seeds of a simulation.
 
 ## A backend for the desktop app
 
