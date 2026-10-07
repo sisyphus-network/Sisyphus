@@ -43,6 +43,8 @@
   "trustForCompute": "السماح للحوسبة",
   "trustedForCompute": "موثوق للحوسبة",
   "computeTrustRemoved": "تمت إزالة الثقة بالحوسبة",
+  "worksForYou": "يعمل لصالحك",
+  "youWorkForIt": "تعمل لصالحه",
   "streaming": "يبث",
   "streamPaused": "البث متوقف مؤقتاً",
   "noPeersYet": "لا يوجد أقران متصلون بعد",

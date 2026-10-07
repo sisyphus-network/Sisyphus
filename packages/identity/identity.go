@@ -39,7 +39,30 @@ func LoadOrCreate(path string) (id *Identity, created bool, err error) {
 	}
 
 	_, key, _ := ed25519.GenerateKey(rand.Reader) // never fails; see crypto/rand
-	der, _ := x509.MarshalPKCS8PrivateKey(key)    // always encodes an Ed25519 key
+	return store(path, key)
+}
+
+// Adopt stores at path a node key that was made elsewhere and is given in
+// libp2p's encoding, as Libp2pKey returns it, so that the node whose key it
+// is carries on as itself. It changes nothing if there is a key at path
+// already.
+func Adopt(path string, libp2pKey []byte) error {
+	private, err := crypto.UnmarshalPrivateKey(libp2pKey)
+	if err != nil {
+		return fmt.Errorf("the key to adopt is not one libp2p can read: %w", err)
+	}
+	if private.Type() != crypto.Ed25519 {
+		return fmt.Errorf("the key to adopt is %s, and a node's key must be Ed25519", private.Type())
+	}
+	raw, _ := private.Raw() // an Ed25519 key always has a raw form
+	_, _, err = store(path, ed25519.PrivateKey(raw))
+	return err
+}
+
+// store puts key at path unless a key is there already, and returns the key
+// that is there afterwards and whether it is this one.
+func store(path string, key ed25519.PrivateKey) (id *Identity, created bool, err error) {
+	der, _ := x509.MarshalPKCS8PrivateKey(key) // always encodes an Ed25519 key
 	var suffix [8]byte
 	rand.Read(suffix[:])
 	tmp := path + ".tmp-" + hex.EncodeToString(suffix[:])

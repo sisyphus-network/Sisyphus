@@ -43,6 +43,8 @@
   "trustForCompute": "Confiar para cómputo",
   "trustedForCompute": "De confianza para cómputo",
   "computeTrustRemoved": "Se revocó la confianza para cómputo",
+  "worksForYou": "Trabaja para ti",
+  "youWorkForIt": "Trabajas para él",
   "streaming": "En tiempo real",
   "streamPaused": "Flujo pausado",
   "noPeersYet": "Aún no hay nodos conectados",

@@ -43,6 +43,8 @@
   "trustForCompute": "Zaufaj obliczeniom",
   "trustedForCompute": "Zaufany do obliczeń",
   "computeTrustRemoved": "Cofnięto zaufanie do obliczeń",
+  "worksForYou": "Pracuje dla Ciebie",
+  "youWorkForIt": "Pracujesz dla niego",
   "streaming": "Strumieniowanie",
   "streamPaused": "Strumień wstrzymany",
   "noPeersYet": "Brak połączonych węzłów",

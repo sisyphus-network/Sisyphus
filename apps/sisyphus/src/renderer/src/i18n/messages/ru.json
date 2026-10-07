@@ -43,6 +43,8 @@
   "trustForCompute": "Доверить вычисления",
   "trustedForCompute": "Доверен для вычислений",
   "computeTrustRemoved": "Доверие для вычислений отозвано",
+  "worksForYou": "Работает на вас",
+  "youWorkForIt": "Вы работаете на него",
   "streaming": "Поток активен",
   "streamPaused": "Поток приостановлен",
   "noPeersYet": "Пока нет подключённых узлов",

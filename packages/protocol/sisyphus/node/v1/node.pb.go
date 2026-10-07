@@ -708,8 +708,13 @@ type Peer struct {
 	ConnectionState   PeerConnectionState    `protobuf:"varint,2,opt,name=connection_state,json=connectionState,proto3,enum=sisyphus.node.v1.PeerConnectionState" json:"connection_state,omitempty"`
 	KnownAddresses    []string               `protobuf:"bytes,3,rep,name=known_addresses,json=knownAddresses,proto3" json:"known_addresses,omitempty"`
 	TrustedForCompute bool                   `protobuf:"varint,4,opt,name=trusted_for_compute,json=trustedForCompute,proto3" json:"trusted_for_compute,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Trust has two sides, and work flows only when both hold. These say
+	// which way it is flowing now: the peer is connected as a worker of this
+	// node, and this node is working for the peer.
+	WorksForThisNode bool `protobuf:"varint,5,opt,name=works_for_this_node,json=worksForThisNode,proto3" json:"works_for_this_node,omitempty"`
+	ThisNodeWorksFor bool `protobuf:"varint,6,opt,name=this_node_works_for,json=thisNodeWorksFor,proto3" json:"this_node_works_for,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Peer) Reset() {
@@ -770,6 +775,20 @@ func (x *Peer) GetTrustedForCompute() bool {
 	return false
 }
 
+func (x *Peer) GetWorksForThisNode() bool {
+	if x != nil {
+		return x.WorksForThisNode
+	}
+	return false
+}
+
+func (x *Peer) GetThisNodeWorksFor() bool {
+	if x != nil {
+		return x.ThisNodeWorksFor
+	}
+	return false
+}
+
 var File_sisyphus_node_v1_node_proto protoreflect.FileDescriptor
 
 const file_sisyphus_node_v1_node_proto_rawDesc = "" +
@@ -804,12 +823,14 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\"]\n" +
 	"\x11ListPeersResponse\x12,\n" +
 	"\x05peers\x18\x01 \x03(\v2\x16.sisyphus.node.v1.PeerR\x05peers\x12\x1a\n" +
-	"\brevision\x18\x02 \x01(\x04R\brevision\"\xca\x01\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\"\xa8\x02\n" +
 	"\x04Peer\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12P\n" +
 	"\x10connection_state\x18\x02 \x01(\x0e2%.sisyphus.node.v1.PeerConnectionStateR\x0fconnectionState\x12'\n" +
 	"\x0fknown_addresses\x18\x03 \x03(\tR\x0eknownAddresses\x12.\n" +
-	"\x13trusted_for_compute\x18\x04 \x01(\bR\x11trustedForCompute*\x89\x01\n" +
+	"\x13trusted_for_compute\x18\x04 \x01(\bR\x11trustedForCompute\x12-\n" +
+	"\x13works_for_this_node\x18\x05 \x01(\bR\x10worksForThisNode\x12-\n" +
+	"\x13this_node_works_for\x18\x06 \x01(\bR\x10thisNodeWorksFor*\x89\x01\n" +
 	"\x13PeerConnectionState\x12%\n" +
 	"!PEER_CONNECTION_STATE_UNSPECIFIED\x10\x00\x12&\n" +
 	"\"PEER_CONNECTION_STATE_DISCONNECTED\x10\x01\x12#\n" +
