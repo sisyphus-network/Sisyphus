@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 // roster is a coordinator's answer to "is this node a member?", counting how

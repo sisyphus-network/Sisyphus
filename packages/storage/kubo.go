@@ -12,7 +12,7 @@ import (
 	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 
-	"github.com/excho0/Sisyphus/packages/kubo"
+	"github.com/sisyphus-network/Sisyphus/packages/kubo"
 )
 
 // KuboAPI is the part of a Kubo daemon that a store keeps its blocks in. A

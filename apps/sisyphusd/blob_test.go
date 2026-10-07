@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 // CIDs that Kubo gives these inputs; packages/storage tests the full set.

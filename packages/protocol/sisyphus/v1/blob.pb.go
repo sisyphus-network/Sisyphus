@@ -899,7 +899,7 @@ const file_sisyphus_v1_blob_proto_rawDesc = "" +
 	"\x03Pin\x12\x1b.sisyphus.v1.PinBlobRequest\x1a\x1c.sisyphus.v1.PinBlobResponse\x12F\n" +
 	"\x05Unpin\x12\x1d.sisyphus.v1.UnpinBlobRequest\x1a\x1e.sisyphus.v1.UnpinBlobResponse\x12G\n" +
 	"\bListPins\x12\x1c.sisyphus.v1.ListPinsRequest\x1a\x1d.sisyphus.v1.ListPinsResponse\x12Y\n" +
-	"\x0eCollectGarbage\x12\".sisyphus.v1.CollectGarbageRequest\x1a#.sisyphus.v1.CollectGarbageResponseBEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
+	"\x0eCollectGarbage\x12\".sisyphus.v1.CollectGarbageRequest\x1a#.sisyphus.v1.CollectGarbageResponseBOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
 var (
 	file_sisyphus_v1_blob_proto_rawDescOnce sync.Once

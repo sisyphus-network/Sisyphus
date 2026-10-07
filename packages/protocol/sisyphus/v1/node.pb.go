@@ -389,7 +389,7 @@ const file_sisyphus_v1_node_proto_rawDesc = "" +
 	"\tSubmitJob\x12\x1d.sisyphus.v1.SubmitJobRequest\x1a\x1e.sisyphus.v1.SubmitJobResponse\x12A\n" +
 	"\x06GetJob\x12\x1a.sisyphus.v1.GetJobRequest\x1a\x1b.sisyphus.v1.GetJobResponse\x12I\n" +
 	"\bWatchJob\x12\x1c.sisyphus.v1.WatchJobRequest\x1a\x1d.sisyphus.v1.WatchJobResponse0\x01\x12J\n" +
-	"\tListNodes\x12\x1d.sisyphus.v1.ListNodesRequest\x1a\x1e.sisyphus.v1.ListNodesResponseBEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
+	"\tListNodes\x12\x1d.sisyphus.v1.ListNodesRequest\x1a\x1e.sisyphus.v1.ListNodesResponseBOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
 var (
 	file_sisyphus_v1_node_proto_rawDescOnce sync.Once

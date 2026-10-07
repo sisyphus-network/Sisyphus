@@ -730,7 +730,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x12TASK_STATE_PENDING\x10\x01\x12\x16\n" +
 	"\x12TASK_STATE_RUNNING\x10\x02\x12\x18\n" +
 	"\x14TASK_STATE_SUCCEEDED\x10\x03\x12\x15\n" +
-	"\x11TASK_STATE_FAILED\x10\x04BEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
+	"\x11TASK_STATE_FAILED\x10\x04BOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
 var (
 	file_sisyphus_v1_types_proto_rawDescOnce sync.Once

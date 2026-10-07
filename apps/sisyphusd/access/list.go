@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/excho0/Sisyphus/packages/nodedb"
+	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 )
 
 // Role is what an admitted node is allowed to be.

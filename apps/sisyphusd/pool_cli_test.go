@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/runtime"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
 // nodeID returns the ID of the node whose key is in dataDir.

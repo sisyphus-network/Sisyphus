@@ -10,10 +10,10 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/runtime"
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // scriptedCoordinator welcomes a worker, hands it one assignment and reports

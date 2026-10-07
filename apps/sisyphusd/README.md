@@ -2,7 +2,7 @@
 
 The Sisyphus node daemon. One binary runs the coordinator role, the worker role, or both, and doubles as the command-line client.
 
-This is the walking skeleton: a coordinator splits a job into tasks, workers execute them, and the results are aggregated. There is no AI planner, persistence, authentication or container runtime yet; see the [roadmap](https://github.com/excho0/Sisyphus/issues/23).
+This is the walking skeleton: a coordinator splits a job into tasks, workers execute them, and the results are aggregated. There is no AI planner, persistence, authentication or container runtime yet; see the [roadmap](https://github.com/sisyphus-network/Sisyphus/issues/23).
 
 ## Build
 

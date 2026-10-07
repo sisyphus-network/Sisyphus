@@ -135,7 +135,7 @@ const file_sisyphus_v1_tunnel_proto_rawDesc = "" +
 	"\x19TUNNEL_TARGET_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13TUNNEL_TARGET_SWARM\x10\x012M\n" +
 	"\rTunnelService\x12<\n" +
-	"\x04Open\x12\x17.sisyphus.v1.TunnelData\x1a\x17.sisyphus.v1.TunnelData(\x010\x01BEZCgithub.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
+	"\x04Open\x12\x17.sisyphus.v1.TunnelData\x1a\x17.sisyphus.v1.TunnelData(\x010\x01BOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
 var (
 	file_sisyphus_v1_tunnel_proto_rawDescOnce sync.Once

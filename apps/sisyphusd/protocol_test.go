@@ -13,9 +13,9 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
 // These tests speak the worker protocol to a real coordinator by hand, to

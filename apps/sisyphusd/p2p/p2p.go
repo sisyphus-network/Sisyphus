@@ -35,7 +35,7 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 	"go.uber.org/fx"
 
-	"github.com/excho0/Sisyphus/packages/identity"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
 )
 
 // Config describes the host a node wants.

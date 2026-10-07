@@ -4,7 +4,7 @@ package sisyphus.v1;
 
 import "sisyphus/v1/types.proto";
 
-option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
 
 // NodeService is the client-facing API of a node running the coordinator
 // role. The CLI, desktop app and agents talk to it.

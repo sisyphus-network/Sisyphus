@@ -11,8 +11,8 @@ import (
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/storage"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 var errLocal = errors.New("local disk broke")

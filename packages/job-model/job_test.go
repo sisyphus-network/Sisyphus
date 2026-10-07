@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 var now = time.Unix(1_700_000_000, 0)

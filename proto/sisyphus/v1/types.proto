@@ -4,7 +4,7 @@ package sisyphus.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
 
 // Compatibility rule for this package: never renumber or reuse a field
 // number, only add new fields.

@@ -14,11 +14,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/blobclient"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/runtime"
-	"github.com/excho0/Sisyphus/packages/sealed"
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // stored returns the bytes a store holds under a CID, as any member of the

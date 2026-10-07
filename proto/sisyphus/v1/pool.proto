@@ -4,7 +4,7 @@ package sisyphus.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
 
 // PoolService manages which nodes a node will talk to. Every connection is
 // TLS, with each side identified by its node key; this service decides which

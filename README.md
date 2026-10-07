@@ -192,7 +192,7 @@ bin/sisyphusd nodes
 bin/sisyphusd job submit --params '{"from":0,"to":3000000000}'
 ```
 
-**On more than one machine.** [`docs/multi-machine-test.md`](docs/multi-machine-test.md) is a step-by-step test of a pool across two or three machines, including what to break and what should happen when you do. Nobody has run it yet; if you do, the results belong on [#18](https://github.com/excho0/Sisyphus/issues/18).
+**On more than one machine.** [`docs/multi-machine-test.md`](docs/multi-machine-test.md) is a step-by-step test of a pool across two or three machines, including what to break and what should happen when you do. Nobody has run it yet; if you do, the results belong on [#18](https://github.com/sisyphus-network/Sisyphus/issues/18).
 
 More in [`examples/`](examples/README.md).
 
@@ -224,7 +224,7 @@ sisyphus/
 
 This is one product and one repository: **Sisyphus** is the product and desktop app; **`sisyphusd`** is the headless node daemon. Clients use the daemon's protocol to observe and control nodes. Daemon guidance lives in [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md), and desktop development details in [`apps/sisyphus/README.md`](apps/sisyphus/README.md).
 
-**Two daemons, for now.** The work so far was done in two halves that have just met: a Rust daemon with node identity, libp2p peer discovery and a local API, with the desktop client on top; and a Go daemon with the job loop, storage, security and IPFS. `apps/sisyphusd` is the Go one and is what the examples, tests and releases use. It serves the same local API, so the desktop client runs against it. `apps/sisyphusd-rs` is the Rust one, kept as it was written. Which language the daemon ends up in, and what moves where, is being decided in [#1](https://github.com/excho0/Sisyphus/issues/1).
+**Two daemons, for now.** The work so far was done in two halves that have just met: a Rust daemon with node identity, libp2p peer discovery and a local API, with the desktop client on top; and a Go daemon with the job loop, storage, security and IPFS. `apps/sisyphusd` is the Go one and is what the examples, tests and releases use. It serves the same local API, so the desktop client runs against it. `apps/sisyphusd-rs` is the Rust one, kept as it was written. Which language the daemon ends up in, and what moves where, is being decided in [#1](https://github.com/sisyphus-network/Sisyphus/issues/1).
 
 ## Project status
 
@@ -248,6 +248,6 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 
 **Not built yet**: the AI planner and model providers, real workloads in containers, hardware discovery, and finding peers without a coordinator to ask (the Rust daemon in `apps/sisyphusd-rs` does this with mDNS and a DHT; the Go daemon does not yet). A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
 
-Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/excho0/Sisyphus/issues/23).
+Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/sisyphus-network/Sisyphus/issues/23).
 
-Two things in this section go beyond what the sections above describe and are still open for discussion: the choice of Go ([#1](https://github.com/excho0/Sisyphus/issues/1)), and building storage on IPFS formats while V0 lists IPFS as out of scope ([#25](https://github.com/excho0/Sisyphus/issues/25)).
+Two things in this section go beyond what the sections above describe and are still open for discussion: the choice of Go ([#1](https://github.com/sisyphus-network/Sisyphus/issues/1)), and building storage on IPFS formats while V0 lists IPFS as out of scope ([#25](https://github.com/sisyphus-network/Sisyphus/issues/25)).

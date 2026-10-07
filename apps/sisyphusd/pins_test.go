@@ -18,8 +18,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/storage"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 func writeFile(t *testing.T, content string) string {
@@ -247,10 +247,10 @@ func TestPeriodicCollection(t *testing.T) {
 	}
 
 	// A collection that fails is logged and the collector carries on.
+	// The collector may be using that very name at this instant, so take it
+	// when it is free.
 	blocker := filepath.Join(dir, "pins.json.tmp")
-	if err := os.Mkdir(blocker, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	waitFor(t, func() bool { return os.Mkdir(blocker, 0o700) == nil })
 	waitFor(t, func() bool { return strings.Contains(logs.String(), "garbage collection failed") })
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)

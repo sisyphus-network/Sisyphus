@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package sisyphus.node.v1;
 
-option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1";
+option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1";
 
 service NodeService {
   rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);

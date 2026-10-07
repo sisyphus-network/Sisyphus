@@ -15,8 +15,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
-	nodepb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/node/v1"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 )
 
 // localNode is a node as its desktop client sees it.

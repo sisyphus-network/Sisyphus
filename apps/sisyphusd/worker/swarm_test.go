@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
-	"github.com/excho0/Sisyphus/packages/identity"
-	"github.com/excho0/Sisyphus/packages/kubo"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
+	"github.com/sisyphus-network/Sisyphus/packages/kubo"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // swarmMember starts a real Kubo daemon on a private network, skipping the

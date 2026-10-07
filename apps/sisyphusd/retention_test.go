@@ -10,11 +10,11 @@ import (
 
 	"github.com/ipfs/go-cid"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/blobclient"
-	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/excho0/Sisyphus/packages/runtime"
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // These tests check how long a coordinator keeps a job's data.

@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
-	nodepb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/node/v1"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 )
 
 // The local API is how a desktop client on the same machine watches and

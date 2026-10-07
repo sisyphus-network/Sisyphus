@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/excho0/Sisyphus/packages/identity"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
 )
 
 var ctx = context.Background()

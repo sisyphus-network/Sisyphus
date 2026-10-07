@@ -1,4 +1,4 @@
-module github.com/excho0/Sisyphus
+module github.com/sisyphus-network/Sisyphus
 
 go 1.27.1
 

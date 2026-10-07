@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/excho0/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 func TestRecorderNotesWhatWasReadAndWritten(t *testing.T) {

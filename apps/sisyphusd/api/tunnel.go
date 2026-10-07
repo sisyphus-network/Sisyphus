@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/excho0/Sisyphus/apps/sisyphusd/tunnel"
-	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/tunnel"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 // tunnelService lets members reach this node's Kubo daemon through the
