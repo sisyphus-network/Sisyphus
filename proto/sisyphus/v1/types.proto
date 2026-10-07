@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package sisyphus.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+
+// Compatibility rule for this package: never renumber or reuse a field
+// number, only add new fields.
+
+// What a node offers to a pool.
+message NodeCapabilities {
+  string hostname = 1;
+  string os = 2;
+  string arch = 3;
+  uint32 cpu_cores = 4;
+  uint64 memory_bytes = 5;
+  // How many tasks the owner allows this node to run at once.
+  uint32 task_slots = 6;
+  // Names of the workloads this node can execute.
+  repeated string workloads = 7;
+}
+
+message NodeInfo {
+  string node_id = 1;
+  NodeCapabilities capabilities = 2;
+  uint32 running_tasks = 3;
+  google.protobuf.Timestamp connected_at = 4;
+  google.protobuf.Timestamp last_seen_at = 5;
+}
+
+enum ScheduleMode {
+  SCHEDULE_MODE_UNSPECIFIED = 0;
+  // Split the workload into tasks and spread them across workers.
+  SCHEDULE_MODE_DISTRIBUTED = 1;
+  // Send the whole workload to one worker as a single task.
+  SCHEDULE_MODE_FULL_WORKER = 2;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_PENDING = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_SUCCEEDED = 3;
+  JOB_STATE_FAILED = 4;
+}
+
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_PENDING = 1;
+  TASK_STATE_RUNNING = 2;
+  TASK_STATE_SUCCEEDED = 3;
+  TASK_STATE_FAILED = 4;
+}
+
+message JobSpec {
+  // Name of a workload known to the coordinator and its workers.
+  string workload = 1;
+  // Workload-defined parameters. Built-in workloads use JSON.
+  bytes params = 2;
+  ScheduleMode mode = 3;
+  // Distributed mode only: how many tasks to split into. Zero means one
+  // task per worker slot connected at submission time.
+  uint32 max_tasks = 4;
+}
+
+message Task {
+  string task_id = 1;
+  uint32 index = 2;
+  TaskState state = 3;
+  // Number of times this task has been handed to a worker.
+  uint32 attempt = 4;
+  // Node currently or most recently running the task.
+  string node_id = 5;
+  // Reason for the most recent failed attempt, if any.
+  string error = 6;
+}
+
+message Job {
+  string job_id = 1;
+  JobSpec spec = 2;
+  JobState state = 3;
+  repeated Task tasks = 4;
+  // Aggregated result, set once the job has succeeded.
+  bytes result = 5;
+  string error = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp finished_at = 8;
+}
