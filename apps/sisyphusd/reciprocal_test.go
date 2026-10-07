@@ -1,0 +1,384 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/p2p"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
+	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+)
+
+// neighbourhood is the world as a node's reciprocity sees it: whom the node
+// trusts, who trusts it, and whom it is working for.
+type neighbourhood struct {
+	mu        sync.Mutex
+	trusted   []string
+	trusting  map[string]bool
+	addresses map[string][]string
+	working   map[string]string // node ID to the address worked at
+	turnAway  map[string]chan struct{}
+	asked     map[string]int
+}
+
+func newNeighbourhood() *neighbourhood {
+	return &neighbourhood{
+		trusting: make(map[string]bool), addresses: make(map[string][]string),
+		working: make(map[string]string), turnAway: make(map[string]chan struct{}), asked: make(map[string]int),
+	}
+}
+
+func (n *neighbourhood) set(change func()) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	change()
+}
+
+func (n *neighbourhood) workingFor() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var ids []string
+	for id := range n.working {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// start runs a node's reciprocity in the neighbourhood until the test ends
+// or stop is called, and returns what it logs.
+func (n *neighbourhood) start(t *testing.T, most int) (logs *syncBuffer, stop func()) {
+	t.Helper()
+	logs = new(syncBuffer)
+	r := &reciprocity{
+		trusted: func() []string {
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			return slices.Clone(n.trusted)
+		},
+		addresses: func(id string) []string {
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			return n.addresses[id]
+		},
+		ask: func(_ context.Context, id, addr string) bool {
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			n.asked[id]++
+			// Only at its right address does a node answer at all.
+			return n.trusting[id] && strings.HasPrefix(addr, "right")
+		},
+		work: func(ctx context.Context, id, addr string) error {
+			n.mu.Lock()
+			n.working[id] = addr
+			away := make(chan struct{})
+			n.turnAway[id] = away
+			n.mu.Unlock()
+			defer n.set(func() { delete(n.working, id) })
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-away:
+				return errors.New("turned away")
+			}
+		},
+		every: 5 * time.Millisecond, most: most, log: slog.New(slog.NewTextHandler(logs, nil)),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.run(ctx)
+	}()
+	stop = sync.OnceFunc(func() {
+		cancel()
+		<-done
+	})
+	t.Cleanup(stop)
+	return logs, stop
+}
+
+func TestANodeWorksForThoseItTrustsThatTrustItBack(t *testing.T) {
+	n := newNeighbourhood()
+	n.set(func() {
+		n.trusted = []string{"mutual", "one-sided", "unreachable"}
+		n.trusting["mutual"], n.trusting["unreachable"] = true, true
+		n.addresses["mutual"] = []string{"wrong:1", "right:2", "right:3"}
+		n.addresses["one-sided"] = []string{"right:4"}
+		// "unreachable" trusts this node too, but is known at no address.
+	})
+	logs, stop := n.start(t, 16)
+
+	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"mutual"}) })
+	n.set(func() {
+		if n.working["mutual"] != "right:2" {
+			t.Errorf("working for the node at %q, want the first address at which it answered", n.working["mutual"])
+		}
+	})
+	// The one that does not trust this node is asked again and again, in
+	// case it comes to.
+	waitFor(t, func() bool {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		return n.asked["one-sided"] >= 3
+	})
+	n.set(func() { n.trusting["one-sided"] = true })
+	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"mutual", "one-sided"}) })
+
+	// Turned away, by the other node ending its trust, it stops, and asks
+	// again later like anyone else.
+	n.set(func() {
+		n.trusting["mutual"] = false
+		close(n.turnAway["mutual"])
+	})
+	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"one-sided"}) })
+	waitFor(t, func() bool {
+		return strings.Contains(logs.String(), `msg="stopped working for a node" node=mutual reason="turned away"`)
+	})
+
+	// Ending its own trust in a node, it stops working for it.
+	n.set(func() { n.trusted = []string{"mutual", "unreachable"} })
+	waitFor(t, func() bool { return len(n.workingFor()) == 0 })
+	waitFor(t, func() bool {
+		return strings.Contains(logs.String(), "no longer working for a node this one no longer trusts")
+	})
+
+	// And stopping the node stops whatever is left.
+	n.set(func() { n.trusting["mutual"] = true })
+	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"mutual"}) })
+	stop()
+	if left := n.workingFor(); len(left) != 0 {
+		t.Errorf("still working for %v after stopping", left)
+	}
+}
+
+func TestANodeWorksForOnlySoManyAtOnce(t *testing.T) {
+	n := newNeighbourhood()
+	n.set(func() {
+		for _, id := range []string{"a", "b", "c"} {
+			n.trusted = append(n.trusted, id)
+			n.trusting[id] = true
+			n.addresses[id] = []string{"right:1"}
+		}
+	})
+	n.start(t, 2)
+	waitFor(t, func() bool { return len(n.workingFor()) == 2 })
+	time.Sleep(50 * time.Millisecond)
+	if got := n.workingFor(); !slices.Equal(got, []string{"a", "b"}) {
+		t.Errorf("working for %v, want the first two and no more", got)
+	}
+	// When one goes, the next has its turn.
+	n.set(func() { n.trusted = []string{"b", "c"} })
+	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"b", "c"}) })
+}
+
+func TestWhomANodeTrustsAndWhereItAsksThem(t *testing.T) {
+	members := []access.Member{{ID: "w1", Role: access.Worker}, {ID: "c1", Role: access.Client}, {ID: "w2", Role: access.Worker}}
+	if got := trustedWorkers(members); !slices.Equal(got, []string{"w1", "w2"}) {
+		t.Errorf("trusted for compute: %v, want the workers and not the client", got)
+	}
+	found := []p2p.Peer{
+		{ID: "other", Addrs: []string{"/ip4/10.0.0.9/tcp/7700"}},
+		{ID: "rig", Addrs: []string{"/ip4/10.0.0.5/tcp/7700", "/ip4/10.0.0.5/udp/7700/quic-v1", "/ip6/2001:db8::5/tcp/7700", "/ip4/10.0.0.5/tcp/7700"}},
+	}
+	if got := whereToAsk(found, "rig"); !slices.Equal(got, []string{"10.0.0.5:7700", "[2001:db8::5]:7700"}) {
+		t.Errorf("where to ask the rig: %v", got)
+	}
+	if got := whereToAsk(found, "nobody"); len(got) != 0 {
+		t.Errorf("where to ask a node never heard of: %v", got)
+	}
+}
+
+func TestAskingANodeWhetherItTrustsThisOne(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	worker, _ := p.admit(access.Worker)
+	client, _ := p.admit(access.Client)
+	stranger := newIdentity(t)
+
+	if !trustsThisNode(p.ctx, worker, p.ident.ID(), p.addr) {
+		t.Error("a node admitted as a worker is not told it is trusted")
+	}
+	// Being let use the pool is not being trusted to work for it.
+	if trustsThisNode(p.ctx, client, p.ident.ID(), p.addr) {
+		t.Error("a client was told it is trusted for compute")
+	}
+	if trustsThisNode(p.ctx, stranger, p.ident.ID(), p.addr) {
+		t.Error("a stranger was told it is trusted")
+	}
+	// Somebody else answering there, or nothing that is an address.
+	if trustsThisNode(p.ctx, worker, stranger.ID(), p.addr) {
+		t.Error("the wrong node at the address was taken for the right one")
+	}
+	if trustsThisNode(p.ctx, worker, p.ident.ID(), "bad\x00address") {
+		t.Error("something that is no address answered")
+	}
+}
+
+func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	ident, _ := p.admit(access.Worker)
+	dataDir := t.TempDir()
+	guests := &guestWork{ident: ident, dataDir: dataDir, template: &worker.Worker{Name: "guest", Slots: 2, Workloads: p.workloads, Log: quiet}}
+
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- guests.work(ctx, p.ident.ID(), p.addr) }()
+	p.waitForWorkers(1)
+	// What its tasks fetch is kept apart, under the other node's name.
+	input := p.upload(sampleText())
+	p.wordcountOn(input, 2)
+	if blocks, _ := filepath.Glob(filepath.Join(dataDir, "guest", p.ident.ID(), "blocks", "*", "*.data")); len(blocks) == 0 {
+		t.Error("nothing was cached for the node worked for")
+	}
+	stop()
+	if err := <-done; err != nil {
+		t.Errorf("stopping work for another node: %v", err)
+	}
+
+	// Turned away, it says why.
+	if _, err := p.access.Remove(ident.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := guests.work(context.Background(), p.ident.ID(), p.addr); err == nil || !strings.Contains(err.Error(), "rejected") {
+		t.Errorf("working for a node that does not trust this one: %v", err)
+	}
+	if err := guests.work(context.Background(), p.ident.ID(), "bad\x00address"); err == nil {
+		t.Error("working for a node at no address succeeded")
+	}
+	// Nowhere to keep what is fetched.
+	blocked := t.TempDir()
+	if err := os.WriteFile(filepath.Join(blocked, "guest"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	guests.dataDir = blocked
+	if err := guests.work(context.Background(), p.ident.ID(), p.addr); err == nil {
+		t.Error("working with nowhere to cache succeeded")
+	}
+}
+
+func TestANodesWorkersShareItsSlots(t *testing.T) {
+	g := gated{started: make(chan struct{}, 16), release: make(chan struct{})}
+	p := startPool(t, runtime.NewRegistry(g))
+	// Two workers, as one node working for two pools has, with room for
+	// one task between them.
+	shared := make(chan struct{}, 1)
+	p.tune = func(w *worker.Worker) { w.Limit = shared }
+	p.startWorker("first", 1)
+	stopSecond := p.startWorker("second", 1)
+	p.waitForWorkers(2)
+	job := p.submit(&pb.JobSpec{Workload: "gated", MaxTasks: 2})
+
+	<-g.started
+	select {
+	case <-g.started:
+		t.Fatal("two tasks ran at once on a node with room for one")
+	case <-time.After(200 * time.Millisecond):
+	}
+	stopSecond()
+	close(g.release)
+	if done := p.wait(job.GetJobId()); done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Errorf("job %v: %s", done.GetState(), done.GetError())
+	}
+}
+
+func TestAWorkerWaitingForASlotCanBeStopped(t *testing.T) {
+	g := gated{started: make(chan struct{}, 16), release: make(chan struct{})}
+	p := startPool(t, runtime.NewRegistry(g))
+	// Every slot the node has is taken by work for someone else.
+	shared := make(chan struct{}, 1)
+	shared <- struct{}{}
+	p.tune = func(w *worker.Worker) { w.Limit = shared }
+	stop := p.startWorker("busy", 1)
+	p.waitForWorkers(1)
+	job := p.submit(&pb.JobSpec{Workload: "gated", MaxTasks: 1})
+	waitFor(t, func() bool { return p.job(job.GetJobId()).GetTasks()[0].GetState() == pb.TaskState_TASK_STATE_RUNNING })
+	select {
+	case <-g.started:
+		t.Fatal("a task ran on a node with no slot free")
+	case <-time.After(100 * time.Millisecond):
+	}
+	// Stopped while its task still waits, the worker goes without a fuss.
+	stop()
+	p.waitForWorkers(0)
+
+	// With a slot free again, another worker runs the task.
+	<-shared
+	p.startWorker("free", 1)
+	<-g.started
+	close(g.release)
+	if done := p.wait(job.GetJobId()); done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Errorf("job %v: %s", done.GetState(), done.GetError())
+	}
+}
+
+func TestNodesThatTrustEachOtherWorkForEachOther(t *testing.T) {
+	old := reciprocityCheck
+	reciprocityCheck = 50 * time.Millisecond
+	defer func() { reciprocityCheck = old }()
+	logs := captureLogs(t)
+
+	rigDir, laptopDir := t.TempDir(), t.TempDir()
+	rigListen, rig := onEveryInterface(t)
+	laptopListen, laptop := onEveryInterface(t)
+	rigAPI, laptopAPI := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", rigDir, "--listen", rigListen, "--name", "rig", "--slots", "2", "--discovery", "on", "--api-listen", rigAPI)
+	startDaemon(t, "--data-dir", laptopDir, "--listen", laptopListen, "--name", "laptop", "--slots", "2", "--discovery", "on", "--api-listen", laptopAPI)
+	dataDirs.Store(rig, rigDir)
+	dataDirs.Store(laptop, laptopDir)
+	onRig, onLaptop := desktop(t, rigAPI), desktop(t, laptopAPI)
+	rigID, laptopID := nodeID(t, rigDir), nodeID(t, laptopDir)
+	waitFor(t, func() bool {
+		return peerSeenBy(t, onRig, laptopID).GetConnectionState() == connected && peerSeenBy(t, onLaptop, rigID).GetConnectionState() == connected
+	})
+	workers := func(addr string) string { return mustCLI(t, "nodes", "--addr", addr) }
+
+	// One trusting the other changes nothing by itself: the laptop has not
+	// said it will work for the rig.
+	trust := func(client nodepb.NodeServiceClient, dir, peer string, trusted bool) {
+		t.Helper()
+		if _, err := client.SetPeerComputeTrust(tokenOf(t, dir), &nodepb.SetPeerComputeTrustRequest{PeerId: peer, Trusted: trusted}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	trust(onRig, rigDir, laptopID, true)
+	time.Sleep(300 * time.Millisecond)
+	if out := workers(rig); strings.Contains(out, "laptop") {
+		t.Fatalf("the laptop is working for a rig it has not said it trusts:\n%s", out)
+	}
+
+	// The laptop's owner trusts the rig in turn, and with nothing restarted
+	// each starts working for the other.
+	trust(onLaptop, laptopDir, rigID, true)
+	waitForOutput(t, "laptop", "nodes", "--addr", rig)
+	waitForOutput(t, "rig", "nodes", "--addr", laptop)
+	out := mustCLI(t, "job", "submit", "--addr", rig, "--tasks", "4", "--params", `{"from":0,"to":2000000}`)
+	if !strings.Contains(out, "on laptop") || !strings.Contains(out, "on rig") || !strings.Contains(out, primesBelowTwoMillion) {
+		t.Errorf("a job on the rig, with the laptop working for it:\n%s", out)
+	}
+
+	// The laptop's owner thinks better of it. The laptop stops working for
+	// the rig, and the rig is turned away from the laptop.
+	trust(onLaptop, laptopDir, rigID, false)
+	waitFor(t, func() bool {
+		return !strings.Contains(workers(rig), "laptop") && !strings.Contains(workers(laptop), "rig")
+	})
+	waitFor(t, func() bool {
+		return strings.Contains(logs.String(), "no longer working for a node this one no longer trusts") &&
+			strings.Contains(logs.String(), `msg="stopped working for a node" node=`+laptopID)
+	})
+	// Each still has its own worker, and its own pool works as before.
+	if out := mustCLI(t, "job", "submit", "--addr", laptop, "--params", `{"from":0,"to":100}`); !strings.Contains(out, `{"count":25}`) {
+		t.Errorf("a job on the laptop afterwards:\n%s", out)
+	}
+}

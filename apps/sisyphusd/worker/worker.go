@@ -39,7 +39,11 @@ type Worker struct {
 	Coordinator string
 	Credentials credentials.TransportCredentials
 	// Slots is how many tasks this node runs at once.
-	Slots     int
+	Slots int
+	// Limit, if set, is shared with the node's other workers: a task takes
+	// a place in it before it runs and gives it back after, so that between
+	// them they run no more at once than it has room for.
+	Limit     chan struct{}
 	Workloads *runtime.Registry
 	// Blobs is the stored data this node's tasks can read and write.
 	Blobs runtime.Blobs
@@ -214,6 +218,15 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 	if err != nil {
 		fail(err)
 		return result
+	}
+	if w.Limit != nil {
+		select {
+		case w.Limit <- struct{}{}:
+			defer func() { <-w.Limit }()
+		case <-ctx.Done():
+			fail(ctx.Err())
+			return result
+		}
 	}
 	started := time.Now()
 	touched := runtime.Record(w.Blobs)

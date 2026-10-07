@@ -301,9 +301,23 @@ A node works for another only if that other trusts it for compute. There are two
   sisyphusd run --role worker --coordinator <address> --join <coordinator's node ID>
   ```
 
-Either way the node is a worker in the pool, listed by `pool members`, and ending trust removes it as `pool remove` does. Trust is granted by the node whose jobs will run; it is the trusted node's owner who decides whether to take them, by starting it as that node's worker. A node cannot be made to work by being trusted.
+Either way the node is a worker in the pool, listed by `pool members`, and ending trust removes it as `pool remove` does.
 
-What this does not do yet: a node works for one coordinator at a time, chosen when it starts. Two nodes that trust each other do not begin working for each other by themselves.
+**Trust that goes both ways starts the work.** Trusting a node for compute means two things: this node will give it tasks, and will take tasks from it. So when two nodes that each run a pool trust each other, each starts working for the other, beside its own pool, with neither restarted. In the desktop that is one click on each machine: both find the other in their peer lists, both mark it trusted, and within a quarter of a minute each appears among the other's workers.
+
+- **Either ends it.** A node that stops trusting another stops working for it and turns its work away, at once.
+- **One-sided trust does nothing by itself.** If the rig trusts the laptop and the laptop has not trusted the rig, the laptop is admitted to the rig's pool but does not come to work. Its owner can still send it, with `--join <the rig's node ID>` as above.
+- **A node's slots are shared.** However many nodes it works for, it runs no more tasks at once than `--slots`. A coordinator may hand it more than that, and those wait their turn.
+- **Each pool's data is kept apart.** What a node fetches while working for another is cached under `guest/<that node's ID>` in its data directory, away from its own pool's store and from every other node's.
+- **`--work-for-trusted=false`** turns this off: the node lets the nodes it trusts work for it and works for nobody but itself.
+
+What this does not do yet:
+
+- **One flag, both directions.** There is no way to say "work for me, but I will not work for you" other than the option above, which is for the whole node.
+- **A worker-only node has no trust of its own.** It works for the coordinator it was started with.
+- **Work for another node does not use Kubo**, even on a node started with `--kubo`. Its data comes from that node and its workers directly.
+- **It asks, rather than being told.** A node asks each node it trusts every fifteen seconds whether it is trusted back, so trust takes up to that long to take effect, and a node is asked at the addresses its libp2p host was found at.
+- A node works for at most sixteen others at once.
 
 ## Examples
 
