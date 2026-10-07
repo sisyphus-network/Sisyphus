@@ -61,7 +61,7 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 	// The agent is told what there is: the tools, and how to begin. Those
 	// that change the node itself are not among them unless asked for.
 	tools, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 19 {
+	if err != nil || len(tools.Tools) != 23 {
 		t.Fatalf("tools = %v, %v", tools, err)
 	}
 	if !strings.Contains(session.InitializeResult().Instructions, "pool_status") {
@@ -265,5 +265,46 @@ func TestAnAgentIsKeptToWhatItsOwnerAllows(t *testing.T) {
 	// With no model set, the planner says what to do about it.
 	if _, text, failed := use(t, kept, "ask_planner", map[string]any{"question": "How many primes below 100?"}); !failed || !strings.Contains(text, "has not been told which language model") {
 		t.Errorf("ask_planner with no model: %s", text)
+	}
+}
+
+func TestTheSkillIsHandedOut(t *testing.T) {
+	if out := mustCLI(t, "skill", "show"); !strings.HasPrefix(out, "---\nname: sisyphus\n") {
+		t.Errorf("skill show printed:\n%.200s", out)
+	}
+	dir := t.TempDir()
+	out := mustCLI(t, "skill", "install", "--dir", dir)
+	into := filepath.Join(dir, "sisyphus")
+	if !strings.Contains(out, into) {
+		t.Errorf("skill install said %q", out)
+	}
+	for _, name := range []string{"SKILL.md", "recipes.md"} {
+		if text, err := os.ReadFile(filepath.Join(into, name)); err != nil || len(text) < 500 {
+			t.Errorf("%s as installed: %d bytes, %v", name, len(text), err)
+		}
+	}
+	// Told nowhere, it goes where Claude Code looks, under the user's home.
+	if out := mustCLI(t, "skill", "install"); !strings.Contains(out, filepath.Join(".claude", "skills", "sisyphus")) {
+		t.Errorf("skill install with no directory said %q", out)
+	}
+
+	blocked := filepath.Join(t.TempDir(), "a-file")
+	os.WriteFile(blocked, nil, 0o600)
+	fixed := filepath.Join(t.TempDir(), "fixed")
+	os.MkdirAll(filepath.Join(fixed, "sisyphus", "SKILL.md"), 0o700) // a directory where a file must go
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"skill"}, "expected skill show or install"},
+		{[]string{"skill", "remove"}, "expected skill show or install"},
+		{[]string{"skill", "show", "--no-such-flag"}, "flag provided but not defined"},
+		{[]string{"skill", "show", "extra"}, `unexpected argument "extra"`},
+		{[]string{"skill", "install", "--dir", blocked}, "not a directory"},
+		{[]string{"skill", "install", "--dir", fixed}, "is a directory"},
+	} {
+		if _, err := cli(t, tt.args...); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%v: %v, want %q", tt.args, err, tt.want)
+		}
 	}
 }

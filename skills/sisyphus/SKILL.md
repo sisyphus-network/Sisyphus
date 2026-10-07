@@ -9,7 +9,7 @@ Sisyphus is a network of computers that people pool to run computations. One nod
 
 ## Two ways in
 
-**The tools, if you have them.** If tools named `pool_status`, `list_workloads`, `run_job`, `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `store_file`, `fetch_file`, `list_files` and `remove_file` are available, the node is connected as an MCP server: use them. Beside them are `ask_model` (a model on one of the pool's workers answers a prompt), `ask_planner`, `list_chats` and `get_chat` (the node's own planner), `list_peers` and `list_members` (who the node knows and who is in its pool), and `get_model` and `list_models` (what the planner plans with).
+**The tools, if you have them.** If tools named `pool_status`, `list_workloads`, `run_job`, `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `store_file`, `fetch_file`, `list_files` and `remove_file` are available, the node is connected as an MCP server: use them. `wait_for_job` follows a job you did not wait for, and `fetch_outputs` brings back every file a job stored. Beside them are `ask_model` (a model on one of the pool's workers answers a prompt), `ask_planner`, `list_chats` and `get_chat` (the node's own planner), `list_peers` and `list_members` (who the node knows and who is in its pool), and `get_model` and `list_models` (what the planner plans with).
 
 **Which tools you have is the user's choice.** The server may have been started read-only, in which case nothing can be run or stored. It keeps `store_file` and `fetch_file` to one directory, usually the one you are working in, and refuses paths outside it: copy a file in rather than ask for the limit to be lifted. It may run only certain container images. The tools that change the node itself (`create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model`) are there only if the user started it with `--admin`. If a tool you need is missing, say which flag would add it and let the user decide. If they are not and the user wants them, the server is `sisyphusd mcp` (for Claude Code: `claude mcp add sisyphus -- sisyphusd mcp`), and it needs the node running with `--api-listen 127.0.0.1:50051`.
 
@@ -28,10 +28,12 @@ Sisyphus is a network of computers that people pool to run computations. One nod
 
 ## How to work
 
+[`recipes.md`](recipes.md), beside this file, has worked shapes for the common jobs: one program over many inputs, a parameter sweep, transcoding, many prompts to the pool's models, private data, a long job. Read it before building any of those from scratch.
+
 1. **Look first.** `pool_status` says which workers are connected and how many tasks each runs at once. `list_workloads` says what can be run and gives each workload's parameters; it is the authority, and what follows here is a summary. A workload that no connected worker runs will wait for one, so say so rather than submit it.
 2. **Files go in by content ID.** A workload that reads a file takes the ID `store_file` returned, not a path. Storing the same content twice gives the same ID.
-3. **Run the job.** `run_job` waits for the result. For something long, pass `detach` and follow it with `get_job` and `job_logs`. Leave `tasks` out to get one task for each free worker slot, which is usually right.
-4. **Results come back as JSON**, and anything large as content IDs inside it or under `stored_outputs`. Fetch those with `fetch_file`, giving a `path` unless the file is short text.
+3. **Run the job.** `run_job` waits for the result. For something long, pass `detach` and follow it with `wait_for_job` and `job_logs`. Leave `tasks` out to get one task for each free worker slot, which is usually right.
+4. **Results come back as JSON**, and anything large as content IDs inside it or under `stored_outputs`. Fetch one with `fetch_file`, giving a `path` unless the file is short text, or all of them into a directory with `fetch_outputs`.
 5. **Report what ran**: the job's ID, how long it took and on how many tasks. Do not present a result you did not get from a job as though the pool computed it.
 
 ## The workloads

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -86,6 +87,7 @@ func New(cfg Config) *mcp.Server {
 	add(s, out, reads, &mcp.Tool{Name: "list_files", Annotations: seen,
 		Description: "Lists the files kept in the pool's store, with their content IDs."}, s.listFiles)
 	s.more(out)
+	s.extras(out)
 	return out
 }
 
@@ -197,8 +199,8 @@ type runJobArgs struct {
 // usualWait is how long run_job waits if not told.
 const usualWait = 300 * time.Second
 
-func (s *server) runJob(ctx context.Context, _ *mcp.CallToolRequest, args runJobArgs) (*mcp.CallToolResult, any, error) {
-	return shown(s.run(s.as(ctx), args))
+func (s *server) runJob(ctx context.Context, req *mcp.CallToolRequest, args runJobArgs) (*mcp.CallToolResult, any, error) {
+	return shown(s.run(telling(s.as(ctx), req), args))
 }
 
 func (s *server) run(ctx context.Context, args runJobArgs) (any, error) {
@@ -220,26 +222,7 @@ func (s *server) run(ctx context.Context, args runJobArgs) (any, error) {
 	if args.Detach {
 		return jobView(submitted.GetJob(), true), nil
 	}
-	wait := usualWait
-	if args.WaitSeconds > 0 {
-		wait = time.Duration(args.WaitSeconds) * time.Second
-	}
-	// The job's events end when the job does, so reading them to their end
-	// is waiting for it. If the wait runs out first the job runs on.
-	waiting, done := context.WithTimeout(ctx, wait)
-	defer done()
-	if events, err := s.Node.WatchJobEvents(waiting, &nodepb.WatchJobEventsRequest{JobId: id}); err == nil {
-		for {
-			if _, err := events.Recv(); err != nil {
-				break
-			}
-		}
-	}
-	got, err := s.Node.GetJob(ctx, &nodepb.GetJobRequest{JobId: id})
-	if err != nil {
-		return nil, fmt.Errorf("job %s was started and could not be followed to its end: %s", id, status.Convert(err).Message())
-	}
-	return jobView(got.GetJob(), true), nil
+	return s.follow(ctx, id, waited(args.WaitSeconds), len(submitted.GetJob().GetTasks()))
 }
 
 // maxResult is how much of a job's result an agent is shown.
@@ -452,6 +435,11 @@ func (s *server) fetch(ctx context.Context, args fetchArgs) (any, error) {
 	} else {
 		path, err := s.allowed(args.Path)
 		if err != nil {
+			return nil, err
+		}
+		// The directory it goes in is made if it is not there: it is
+		// inside what the server may write to, or allowed would have said.
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, err
 		}
 		// A file already there is left alone unless told otherwise.
