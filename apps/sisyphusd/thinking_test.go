@@ -28,6 +28,7 @@ func TestThePoolThinksOnAWorkersModelAndThePlannerPlansWithIt(t *testing.T) {
 	served := newModel(t,
 		asksFor("run_job", `"{\"workload\":\"primes\",\"params\":{\"from\":0,\"to\":100}}"`),
 		replies("There are 25 primes below 100."),
+		replies("Fetched and ready."),
 	)
 	dataDir := t.TempDir()
 	addr, apiAddr, thinkAddr := freeAddr(t), freeAddr(t), freeAddr(t)
@@ -84,6 +85,19 @@ func TestThePoolThinksOnAWorkersModelAndThePlannerPlansWithIt(t *testing.T) {
 	held := mustCLI(t, "job", "get", "--addr", addr, "--data-dir", dataDir, strings.TrimSpace(waiting))
 	if !strings.Contains(held, strings.ToLower(strings.TrimPrefix(pb.JobState_JOB_STATE_PENDING.String(), "JOB_STATE_"))) {
 		t.Errorf("a conversation with a model nobody serves:\n%s", held)
+	}
+	// The worker's owner fetches the model. The worker says so the next
+	// time it reports in, and the conversation that was waiting is had.
+	served.mu.Lock()
+	served.fetched = "unserved-model"
+	served.mu.Unlock()
+	waitFor(t, func() bool {
+		job, err := client.GetJob(context.Background(), &nodepb.GetJobRequest{JobId: strings.TrimSpace(waiting)})
+		return err == nil && job.GetJob().GetState() == nodepb.JobState_JOB_STATE_SUCCEEDED && strings.Contains(string(job.GetJob().GetResult()), "Fetched and ready.")
+	})
+	workers, err = client.ListWorkers(context.Background(), &nodepb.ListWorkersRequest{})
+	if err != nil || strings.Join(workers.GetWorkers()[0].GetModels(), ",") != "test-model,another-model,unserved-model" {
+		t.Errorf("the worker's models after fetching one: %v, %v", workers, err)
 	}
 }
 

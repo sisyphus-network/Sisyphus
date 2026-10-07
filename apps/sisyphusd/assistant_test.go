@@ -36,6 +36,8 @@ type model struct {
 	// keys are the keys it was shown when asked for its models, pulled the
 	// models it was told to fetch, and removed those it was told to delete.
 	keys, pulled, removed []string
+	// fetched is a model it has that it did not have at first.
+	fetched string
 }
 
 // says is a reply that is only text; wants is one that asks for a tool.
@@ -61,6 +63,10 @@ func newModel(t *testing.T, replies ...string) *model {
 		switch r.URL.Path {
 		case "/api/tags":
 			m.keys = append(m.keys, r.Header.Get("Authorization"))
+			if m.fetched != "" {
+				io.WriteString(w, `{"models":[{"name":"test-model","size":4900000000},{"name":"another-model"},{"name":"`+m.fetched+`"}]}`)
+				return
+			}
 			io.WriteString(w, `{"models":[{"name":"test-model","size":4900000000},{"name":"another-model"}]}`)
 			return
 		case "/api/show":
