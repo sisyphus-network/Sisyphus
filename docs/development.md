@@ -2,7 +2,7 @@
 
 ## Setup
 
-You need Go 1.27 or newer. To change the protocol you also need `protoc` and the plugins that `make tools` installs.
+You need Go 1.27 or newer. To change the protocol you also need `protoc` (the generated code was last made with 36.2; get it from the protobuf releases on GitHub, since distributions carry old ones) and the plugins that `make tools` installs.
 
 Some tests run a real IPFS daemon and need the `ipfs` program ([Kubo](https://github.com/ipfs/kubo/releases)) on the PATH; CI uses the version pinned in `.github/workflows/ci.yml`. Without it those tests are skipped and `make cover` fails, since the code they exercise goes unrun. Each test daemon gets a repository of its own in a temporary directory and never touches `~/.ipfs` or a daemon already running on the machine.
 
