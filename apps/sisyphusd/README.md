@@ -256,12 +256,14 @@ A node that coordinates a pool can be asked questions in plain words. A language
 
 ```sh
 bin/sisyphusd model set --model qwen3:8b                         # a model served by Ollama on this machine
+bin/sisyphusd model set --provider anthropic --model claude-opus-5-5 --api-key-file key.txt   # or Claude
 bin/sisyphusd run --api-listen 127.0.0.1:50051                   # the node, with its local API on
 bin/sisyphusd ask "How many primes are there below ten million?"
 bin/sisyphusd ask --chat <id> "And below a hundred million?"     # carry the conversation on
 ```
 
-- **Which model.** `model set` takes `--provider ollama` (the default) or `--provider openai`, which is for OpenAI and for anything that speaks as it does: most hosted services and local servers. `--url` says where the service is if not in its usual place, and `--api-key-file` gives a key if it wants one. `model list` asks the service what it offers; `model show` prints what is set, without the key. A running node picks up a change at the next question.
+- **Which model.** `model set` takes `--provider ollama` (the default), `--provider anthropic` for Claude, or `--provider openai`, which is for OpenAI and for anything that speaks as it does: most hosted services and local servers. `--url` says where the service is if not in its usual place, and `--api-key-file` gives a key if it wants one. `model list` asks the service what it offers; `model show` prints what is set, without the key. A running node picks up a change at the next question.
+- **Claude.** With `--provider anthropic` and no key file, the node uses the key Anthropic's own tools are set up with: `ANTHROPIC_API_KEY`, or a profile from `ant auth login`. Claude's replies are kept whole, with its reasoning, and handed back to it on the next question, as Anthropic asks; if the pool's workloads have changed since, so that Anthropic no longer accepts the reasoning, the question is asked again without it.
 - **What the model can do.** Two things: run a job on the pool and read the result, and look up a job run earlier. It is told which workloads the pool has and what parameters each takes. It has no other reach: it cannot run commands, read files or touch the node's settings.
 - **What you see.** `ask` prints the model's words as they come, each job it starts, and what each returned. The jobs are ordinary jobs: `job get` and `job logs` work on them.
 - **Conversations are kept** in the node's database, with every request the model made and what came back, and are there for the desktop to list and read.
@@ -477,7 +479,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream. |
 | `apps/sisyphusd/p2p` | The node's libp2p host: one port shared with gRPC, the relay, discovery, reaching a node by its ID. |
 | `apps/sisyphusd/planner` | The loop in which a model reasons, has the pool compute, and reads the result. |
-| `packages/ai` | Talking to language models: Ollama and OpenAI-style services. |
+| `packages/ai` | Talking to language models: Ollama, OpenAI-style services and Anthropic. |
 | `packages/hardware` | Finding out what a machine has: processor, memory, graphics cards. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
 | `packages/nodedb` | The node's SQLite database: jobs, tasks, attempts, members and invitations. |

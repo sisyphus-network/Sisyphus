@@ -1,6 +1,7 @@
 // Package ai talks to language models, wherever they run: a model server on
-// this machine or a service elsewhere. It knows two dialects, Ollama's and
-// the one OpenAI defined, which most other servers and services speak too.
+// this machine or a service elsewhere. It knows Ollama's dialect, the one
+// OpenAI defined, which most other servers and services speak too, and
+// Anthropic's.
 package ai
 
 import (
@@ -32,6 +33,11 @@ type Message struct {
 	// CallID and Name say, on a tool's message, which call it answers.
 	CallID string `json:"call_id,omitempty"`
 	Name   string `json:"name,omitempty"`
+	// Raw is an assistant's message as the service that wrote it gave it,
+	// for a service that wants its replies handed back unchanged, and From
+	// is that service's provider. Anthropic is the one that does.
+	Raw  json.RawMessage `json:"raw,omitempty"`
+	From string          `json:"from,omitempty"`
 }
 
 // Call is a model's request that a tool be run.
@@ -59,14 +65,15 @@ type Request struct {
 
 // Config says which model service to use and how to reach it.
 type Config struct {
-	// Provider is "ollama" or "openai". The second is for OpenAI itself
-	// and for anything that speaks its dialect.
+	// Provider is "ollama", "openai" or "anthropic". The second is for
+	// OpenAI itself and for anything that speaks its dialect.
 	Provider string
 	// BaseURL is where the service is, such as http://127.0.0.1:11434 for
 	// Ollama or https://api.openai.com/v1 for OpenAI. Empty means that
 	// provider's usual place.
 	BaseURL string
-	// APIKey is sent as a bearer token if set. Ollama needs none.
+	// APIKey is the service's key. Ollama needs none, and for Anthropic an
+	// empty one means the key Anthropic's own tools are set up with.
 	APIKey string
 }
 
@@ -82,17 +89,21 @@ type Provider interface {
 
 // The providers there are, and where each is found if not told.
 const (
-	Ollama = "ollama"
-	OpenAI = "openai"
+	Ollama    = "ollama"
+	OpenAI    = "openai"
+	Anthropic = "anthropic"
 )
 
-var usualPlace = map[string]string{Ollama: "http://127.0.0.1:11434", OpenAI: "https://api.openai.com/v1"}
+var usualPlace = map[string]string{Ollama: "http://127.0.0.1:11434", OpenAI: "https://api.openai.com/v1", Anthropic: "https://api.anthropic.com"}
 
 // New returns the provider cfg describes.
 func New(cfg Config) (Provider, error) {
 	base, known := usualPlace[cfg.Provider]
 	if !known {
-		return nil, fmt.Errorf("unknown model provider %q: the providers are %q and %q", cfg.Provider, Ollama, OpenAI)
+		return nil, fmt.Errorf("unknown model provider %q: the providers are %q, %q and %q", cfg.Provider, Ollama, OpenAI, Anthropic)
+	}
+	if cfg.Provider == Anthropic {
+		return newClaude(cfg), nil
 	}
 	if cfg.BaseURL != "" {
 		base = cfg.BaseURL

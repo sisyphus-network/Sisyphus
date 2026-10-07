@@ -28,7 +28,7 @@ func modelCommand(ctx context.Context, args []string) error {
 	}
 	fs := flag.NewFlagSet("sisyphusd model "+args[0], flag.ContinueOnError)
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory holding the node's data")
-	provider := fs.String("provider", "ollama", "set: the kind of model service, ollama or openai (which is also for anything that speaks as OpenAI does)")
+	provider := fs.String("provider", "ollama", "set: the kind of model service: ollama, openai (which is also for anything that speaks as OpenAI does) or anthropic")
 	url := fs.String("url", "", "set: where the service is, if not in that provider's usual place")
 	model := fs.String("model", "", "set: the model to plan with")
 	keyFile := fs.String("api-key-file", "", "set: a file holding the service's key, if it wants one")
