@@ -19,6 +19,10 @@ service PoolService {
   // It fails if this node does not run one.
   rpc Swarm(SwarmRequest) returns (SwarmResponse);
 
+  // IsMember says whether a node has been admitted to the pool. Workers use
+  // it to decide whether to serve another node that asks them for a blob.
+  rpc IsMember(IsMemberRequest) returns (IsMemberResponse);
+
   // The rest may be called only by the node's owner: its own command line.
 
   // Invite issues a token for one node to join with.
@@ -48,6 +52,14 @@ message JoinRequest {
 
 message JoinResponse {
   Role role = 1;
+}
+
+message IsMemberRequest {
+  string node_id = 1;
+}
+
+message IsMemberResponse {
+  bool member = 1;
 }
 
 message SwarmRequest {}

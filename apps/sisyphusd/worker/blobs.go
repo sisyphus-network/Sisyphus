@@ -42,6 +42,9 @@ type RemoteBlobs struct {
 	// which with a store on the pool's private network means the network
 	// did not supply it, was downloaded from the coordinator instead.
 	OnFallback func(c cid.Cid)
+	// PeerCredentials, if set, lets blobs be fetched from other workers of
+	// the pool before the coordinator is asked for them.
+	PeerCredentials PeerCredentialsFunc
 
 	mu sync.Mutex
 	// ready holds the blobs known to be sound in the local store: checked,
@@ -101,6 +104,11 @@ func newRemoteBlobs(local localStore, remote pb.BlobServiceClient, maxBytes uint
 		preparing:  make(map[cid.Cid]*preparation),
 		held:       make(map[cid.Cid]int),
 	}
+}
+
+// Conn returns the connection to the coordinator, for other calls to it.
+func (b *RemoteBlobs) Conn() grpc.ClientConnInterface {
+	return b.conn
 }
 
 func (b *RemoteBlobs) Close() error {
@@ -196,7 +204,7 @@ func (b *RemoteBlobs) obtain(ctx context.Context, c cid.Cid) error {
 	defer b.trimming.RUnlock()
 	// A copy that checks out is used as it is; anything else, from "not
 	// there" to "damaged", is put right by downloading it.
-	if b.local.Verify(ctx, c) != nil {
+	if b.local.Verify(ctx, c) != nil && !b.fetchFromPeers(ctx, c) {
 		if err := blobclient.Fetch(ctx, b.remote, c, b.local); err != nil {
 			return fmt.Errorf("fetch from coordinator: %w", err)
 		}

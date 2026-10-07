@@ -47,6 +47,7 @@ type accessList interface {
 	Redeem(token, id string, now time.Time) (access.Role, error)
 	Remove(id string) (bool, error)
 	Members() []access.Member
+	Role(id string) (access.Role, bool)
 }
 
 var (
@@ -63,6 +64,11 @@ func (s *poolService) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRe
 		return nil, status.Errorf(codes.Internal, "admit node: %v", err)
 	}
 	return &pb.JoinResponse{Role: fromRole[role]}, nil
+}
+
+func (s *poolService) IsMember(_ context.Context, req *pb.IsMemberRequest) (*pb.IsMemberResponse, error) {
+	_, member := s.access.Role(req.GetNodeId())
+	return &pb.IsMemberResponse{Member: member}, nil
 }
 
 func (s *poolService) Swarm(ctx context.Context, _ *pb.SwarmRequest) (*pb.SwarmResponse, error) {

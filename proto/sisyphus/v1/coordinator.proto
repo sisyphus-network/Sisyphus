@@ -29,6 +29,9 @@ message Hello {
   NodeCapabilities capabilities = 2;
   // A label for people to recognise the node by. It need not be unique.
   string name = 3;
+  // Where other workers of the pool can fetch blobs from this one, as
+  // host:port, or empty if it does not serve them.
+  string serve_address = 4;
 }
 
 message Heartbeat {

@@ -16,6 +16,11 @@ service BlobService {
   // they received hashes to the CID they asked for.
   rpc Get(GetBlobRequest) returns (stream GetBlobResponse);
   rpc Stat(StatBlobRequest) returns (StatBlobResponse);
+  // Locate names other workers of the pool believed to hold a blob and
+  // willing to serve it, so that a worker can fetch it from one of them
+  // rather than from the coordinator. The answer is a hint: a worker listed
+  // may have dropped the blob since.
+  rpc Locate(LocateBlobRequest) returns (LocateBlobResponse);
 
   // A node keeps a blob for as long as something pins it. Pin and Unpin act
   // on the pin held on behalf of the node's user; jobs hold their own.
@@ -50,6 +55,20 @@ message StatBlobRequest {
 
 message StatBlobResponse {
   uint64 size = 1;
+}
+
+message LocateBlobRequest {
+  string cid = 1;
+}
+
+message LocateBlobResponse {
+  repeated BlobHolder holders = 1;
+}
+
+message BlobHolder {
+  string node_id = 1;
+  // host:port of the holder's blob service.
+  string address = 2;
 }
 
 message PinBlobRequest {

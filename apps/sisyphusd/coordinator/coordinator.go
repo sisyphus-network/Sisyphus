@@ -85,6 +85,11 @@ type worker struct {
 	id string
 	// name is the label the worker gave itself.
 	name string
+	// serveAddress is where other workers can fetch blobs from this one, if
+	// it serves them, and holds the CIDs of the blobs its tasks have opened
+	// or stored, which it is therefore likely to have.
+	serveAddress string
+	holds        map[string]struct{}
 	// removed is closed, once, to make the worker's connection end.
 	removed chan struct{}
 	remove  sync.Once
@@ -308,6 +313,8 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	w := &worker{
 		id:           id,
 		name:         hello.GetName(),
+		serveAddress: hello.GetServeAddress(),
+		holds:        make(map[string]struct{}),
 		capabilities: capabilities,
 		connectedAt:  now,
 		lastSeen:     now,
@@ -379,6 +386,22 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	}
 }
 
+// Holders returns the connected workers, other than asker, that serve blobs
+// and are likely to hold the one named, ordered by node ID. It is a hint: a
+// worker may have dropped a blob since its tasks used it.
+func (c *Coordinator) Holders(blob, asker string) []*pb.BlobHolder {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var holders []*pb.BlobHolder
+	for _, w := range c.workers {
+		if _, has := w.holds[blob]; has && w.id != asker && w.serveAddress != "" {
+			holders = append(holders, &pb.BlobHolder{NodeId: w.id, Address: w.serveAddress})
+		}
+	}
+	sort.Slice(holders, func(i, j int) bool { return holders[i].NodeId < holders[j].NodeId })
+	return holders
+}
+
 // AnnounceSwarm records the fingerprint of the key of the pool's private
 // IPFS network and tells every connected worker. Workers that connect later
 // are told as they are welcomed.
@@ -446,6 +469,9 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 		// for, since the job may run longer than that.
 		a.job.NoteRead(result.GetReadBlobs()...)
 		a.job.NoteTaskOutput(result.GetWrittenBlobs()...)
+		for _, held := range append(result.GetReadBlobs(), result.GetWrittenBlobs()...) {
+			w.holds[held] = struct{}{}
+		}
 		c.pin(a.job, time.Time{}, result.GetWrittenBlobs())
 		if a.job.Succeed(a.task, outcome.Output) {
 			// Succeed reports the last task only once, so each job is

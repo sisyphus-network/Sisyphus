@@ -38,6 +38,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	listen := fs.String("listen", defaultAddr, "coordinator role: address to serve workers and clients on")
 	join := fs.String("coordinator", "", "worker-only node: host:port of its coordinator")
 	invitation := fs.String("join", "", "worker-only node: an invitation from the coordinator, needed the first time this node connects to it and ignored after that")
+	serve := fs.String("serve", "", "worker-only node: address to serve its cached data on to the other workers of its pool, so that they need not all fetch it from the coordinator")
+	advertise := fs.String("advertise", "", "worker-only node: the address other workers should use to reach --serve, if not the same")
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
@@ -78,6 +80,15 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if isCoordinator && *invitation != "" {
 		return errors.New("--join is for worker-only nodes")
+	}
+	if isCoordinator && *serve != "" {
+		return errors.New("--serve is for worker-only nodes; a coordinator serves its data already")
+	}
+	if *advertise == "" {
+		*advertise = *serve
+	}
+	if host, _, err := net.SplitHostPort(*advertise); *serve != "" && (err != nil || net.ParseIP(host).IsUnspecified()) {
+		return errors.New("--serve needs an address other workers can connect to; if it listens on every interface, give that address with --advertise")
 	}
 
 	level := slog.LevelInfo
@@ -227,13 +238,29 @@ func runDaemon(ctx context.Context, args []string) error {
 		if swarm != nil {
 			remote.OnFallback = warnOfFallback(log)
 		}
+		// Blobs are fetched from fellow workers that have them, where the
+		// coordinator knows of any, and served to fellow workers if asked.
+		remote.PeerCredentials = func(nodeID string) credentials.TransportCredentials {
+			return credentials.NewTLS(ident.ClientTLS(nodeID))
+		}
 		blobs = remote
+		if *serve != "" {
+			lis, err := net.Listen("tcp", *serve)
+			if err != nil {
+				return err
+			}
+			peers := api.NewPeerServer(ident, store, worker.NewMembers(remote.Conn()).IsMember)
+			defer peers.Stop()
+			log.Info("serving cached data to fellow workers", "addr", lis.Addr().String(), "advertised", *advertise)
+			go peers.Serve(lis)
+		}
 	}
 
 	if isWorker {
 		w := &worker.Worker{
 			Name: *name, Coordinator: *join, Credentials: creds,
 			Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log,
+			ServeAddress: *advertise,
 		}
 		if swarm != nil && !isCoordinator {
 			// Changing key restarts Kubo, which takes seconds, so it is

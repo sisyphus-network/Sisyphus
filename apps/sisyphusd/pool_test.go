@@ -69,6 +69,8 @@ type pool struct {
 	ident        *identity.Identity
 	access       *access.List
 	workerIdents map[string]*identity.Identity
+	// rawIdents are the identities of hand-driven workers.
+	rawIdents map[*rawWorker]*identity.Identity
 }
 
 // newIdentity makes a node identity that lasts for the test.
@@ -176,6 +178,7 @@ func startPoolOver(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 		store: store, blobGets: gets, workerStores: make(map[string]*storage.Store),
 		coord: coord, conn: conn, logs: logs,
 		ident: ident, access: admitted, workerIdents: make(map[string]*identity.Identity),
+		rawIdents: make(map[*rawWorker]*identity.Identity),
 	}
 }
 
@@ -195,9 +198,21 @@ func (p *pool) startWorker(id string, slots int) (stop func()) {
 		p.t.Fatal(err)
 	}
 	p.t.Cleanup(func() { blobs.Close() })
+	// Like a worker started with --serve, it lets its fellows fetch from it
+	// and fetches from them.
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	peers := api.NewPeerServer(ident, local, worker.NewMembers(blobs.Conn()).IsMember)
+	go peers.Serve(lis)
+	p.t.Cleanup(peers.Stop)
+	blobs.PeerCredentials = func(nodeID string) credentials.TransportCredentials {
+		return credentials.NewTLS(ident.ClientTLS(nodeID))
+	}
 	w := &worker.Worker{
 		Name: id, Coordinator: p.addr, Credentials: creds, Slots: slots, Workloads: p.workloads, Blobs: blobs, Log: quiet,
-		HeartbeatInterval: p.heartbeat,
+		HeartbeatInterval: p.heartbeat, ServeAddress: lis.Addr().String(),
 	}
 	go func() {
 		defer close(done)

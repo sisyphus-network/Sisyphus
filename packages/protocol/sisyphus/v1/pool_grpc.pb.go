@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	PoolService_Join_FullMethodName         = "/sisyphus.v1.PoolService/Join"
 	PoolService_Swarm_FullMethodName        = "/sisyphus.v1.PoolService/Swarm"
+	PoolService_IsMember_FullMethodName     = "/sisyphus.v1.PoolService/IsMember"
 	PoolService_Invite_FullMethodName       = "/sisyphus.v1.PoolService/Invite"
 	PoolService_ListMembers_FullMethodName  = "/sisyphus.v1.PoolService/ListMembers"
 	PoolService_RemoveMember_FullMethodName = "/sisyphus.v1.PoolService/RemoveMember"
@@ -42,6 +43,9 @@ type PoolServiceClient interface {
 	// network: the key its members share and where to find this node on it.
 	// It fails if this node does not run one.
 	Swarm(ctx context.Context, in *SwarmRequest, opts ...grpc.CallOption) (*SwarmResponse, error)
+	// IsMember says whether a node has been admitted to the pool. Workers use
+	// it to decide whether to serve another node that asks them for a blob.
+	IsMember(ctx context.Context, in *IsMemberRequest, opts ...grpc.CallOption) (*IsMemberResponse, error)
 	// Invite issues a token for one node to join with.
 	Invite(ctx context.Context, in *InviteRequest, opts ...grpc.CallOption) (*InviteResponse, error)
 	ListMembers(ctx context.Context, in *ListMembersRequest, opts ...grpc.CallOption) (*ListMembersResponse, error)
@@ -77,6 +81,16 @@ func (c *poolServiceClient) Swarm(ctx context.Context, in *SwarmRequest, opts ..
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SwarmResponse)
 	err := c.cc.Invoke(ctx, PoolService_Swarm_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *poolServiceClient) IsMember(ctx context.Context, in *IsMemberRequest, opts ...grpc.CallOption) (*IsMemberResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IsMemberResponse)
+	err := c.cc.Invoke(ctx, PoolService_IsMember_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +152,9 @@ type PoolServiceServer interface {
 	// network: the key its members share and where to find this node on it.
 	// It fails if this node does not run one.
 	Swarm(context.Context, *SwarmRequest) (*SwarmResponse, error)
+	// IsMember says whether a node has been admitted to the pool. Workers use
+	// it to decide whether to serve another node that asks them for a blob.
+	IsMember(context.Context, *IsMemberRequest) (*IsMemberResponse, error)
 	// Invite issues a token for one node to join with.
 	Invite(context.Context, *InviteRequest) (*InviteResponse, error)
 	ListMembers(context.Context, *ListMembersRequest) (*ListMembersResponse, error)
@@ -164,6 +181,9 @@ func (UnimplementedPoolServiceServer) Join(context.Context, *JoinRequest) (*Join
 }
 func (UnimplementedPoolServiceServer) Swarm(context.Context, *SwarmRequest) (*SwarmResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Swarm not implemented")
+}
+func (UnimplementedPoolServiceServer) IsMember(context.Context, *IsMemberRequest) (*IsMemberResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method IsMember not implemented")
 }
 func (UnimplementedPoolServiceServer) Invite(context.Context, *InviteRequest) (*InviteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Invite not implemented")
@@ -230,6 +250,24 @@ func _PoolService_Swarm_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PoolServiceServer).Swarm(ctx, req.(*SwarmRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PoolService_IsMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IsMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PoolServiceServer).IsMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PoolService_IsMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PoolServiceServer).IsMember(ctx, req.(*IsMemberRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -320,6 +358,10 @@ var PoolService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Swarm",
 			Handler:    _PoolService_Swarm_Handler,
+		},
+		{
+			MethodName: "IsMember",
+			Handler:    _PoolService_IsMember_Handler,
 		},
 		{
 			MethodName: "Invite",
