@@ -14,6 +14,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
+	"github.com/sisyphus-network/Sisyphus/packages/ai"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -57,6 +59,9 @@ type LocalConfig struct {
 	// its workers and jobs. Workloads are the workloads the node knows.
 	Jobs      JobControl
 	Workloads []string
+	// Assistant, if set, is the node's planner: its model, its
+	// conversations, and the asking of questions.
+	Assistant Assistant
 	// WorkFor, if set, is the list of nodes this one takes work from. A
 	// node that runs no worker has none.
 	WorkFor WorkFor
@@ -84,6 +89,17 @@ type JobControl interface {
 	Get(jobID string) (*pb.Job, error)
 	Jobs() []*pb.Job
 	Nodes() []*pb.NodeInfo
+}
+
+// Assistant is what the local API needs of a node's planner.
+type Assistant interface {
+	ModelConfig() (nodedb.ModelConfig, bool, error)
+	SetModelConfig(nodedb.ModelConfig) error
+	Models(ctx context.Context) ([]string, error)
+	Chats() ([]nodedb.Chat, error)
+	Chat(id string) ([]ai.Message, error)
+	DeleteChat(id string) error
+	Ask(ctx context.Context, chatID, text string, report func(chatID string, e planner.Event)) (string, error)
 }
 
 // WorkFor is the list of nodes a node is willing to take tasks from. It
@@ -447,6 +463,140 @@ func (s *localService) permit(ctx context.Context, id string, gives, takes bool)
 		}
 	}
 	return nil
+}
+
+// errNoPlanner is the answer to a call about the planner on a node that
+// has none.
+var errNoPlanner = status.Error(codes.FailedPrecondition, "this node has no planner")
+
+// asError gives an error from the planner as a gRPC status, keeping the one
+// it has if it has one.
+func asError(err error) error {
+	if _, is := status.FromError(err); is {
+		return err
+	}
+	return status.Errorf(codes.Internal, "%v", err)
+}
+
+// GetModelConfig says which model the node plans with, and whether a key
+// is set for its service, but not the key.
+func (s *localService) GetModelConfig(context.Context, *nodepb.GetModelConfigRequest) (*nodepb.ModelConfig, error) {
+	if s.cfg.Assistant == nil {
+		return nil, errNoPlanner
+	}
+	cfg, _, err := s.cfg.Assistant.ModelConfig()
+	if err != nil {
+		return nil, asError(err)
+	}
+	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: cfg.BaseURL, Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
+}
+
+func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelConfigRequest) (*nodepb.ModelConfig, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.Assistant == nil {
+		return nil, errNoPlanner
+	}
+	cfg := nodedb.ModelConfig{Provider: req.GetProvider(), BaseURL: req.GetBaseUrl(), Model: req.GetModel(), APIKey: req.GetApiKey()}
+	if req.GetKeepApiKey() {
+		current, _, err := s.cfg.Assistant.ModelConfig()
+		if err != nil {
+			return nil, asError(err)
+		}
+		cfg.APIKey = current.APIKey
+	}
+	if err := s.cfg.Assistant.SetModelConfig(cfg); err != nil {
+		return nil, asError(err)
+	}
+	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: cfg.BaseURL, Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
+}
+
+// ListModels asks the configured service which models it offers.
+func (s *localService) ListModels(ctx context.Context, _ *nodepb.ListModelsRequest) (*nodepb.ListModelsResponse, error) {
+	if s.cfg.Assistant == nil {
+		return nil, errNoPlanner
+	}
+	models, err := s.cfg.Assistant.Models(ctx)
+	if err != nil {
+		return nil, asError(err)
+	}
+	return &nodepb.ListModelsResponse{Models: models}, nil
+}
+
+// Ask puts a question to the planner and sends what it does as it does it.
+// It spends the pool's time and perhaps a service's credit, and what is
+// said is the owner's business, so it needs the token, as do the calls that
+// read conversations back.
+func (s *localService) Ask(req *nodepb.AskRequest, stream grpc.ServerStreamingServer[nodepb.AskEvent]) error {
+	if err := s.authorize(stream.Context()); err != nil {
+		return err
+	}
+	if s.cfg.Assistant == nil {
+		return errNoPlanner
+	}
+	chatID, err := s.cfg.Assistant.Ask(stream.Context(), req.GetChatId(), req.GetText(), func(chatID string, e planner.Event) {
+		// A caller that has gone is found out when the planner next looks
+		// at its context.
+		stream.Send(&nodepb.AskEvent{ChatId: chatID, Kind: e.Kind, Text: e.Text, JobId: e.JobID, Tool: e.Tool})
+	})
+	if err != nil {
+		return asError(err)
+	}
+	return stream.Send(&nodepb.AskEvent{ChatId: chatID, Kind: "done"})
+}
+
+func (s *localService) ListChats(ctx context.Context, _ *nodepb.ListChatsRequest) (*nodepb.ListChatsResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.Assistant == nil {
+		return nil, errNoPlanner
+	}
+	chats, err := s.cfg.Assistant.Chats()
+	if err != nil {
+		return nil, asError(err)
+	}
+	res := new(nodepb.ListChatsResponse)
+	for _, c := range chats {
+		res.Chats = append(res.Chats, &nodepb.ChatSummary{ChatId: c.ID, Title: c.Title, CreatedAtMs: c.Created.UnixMilli()})
+	}
+	return res, nil
+}
+
+func (s *localService) GetChat(ctx context.Context, req *nodepb.GetChatRequest) (*nodepb.GetChatResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.Assistant == nil {
+		return nil, errNoPlanner
+	}
+	messages, err := s.cfg.Assistant.Chat(req.GetChatId())
+	if err != nil {
+		return nil, asError(err)
+	}
+	res := new(nodepb.GetChatResponse)
+	for _, m := range messages {
+		out := &nodepb.ChatMessage{Role: m.Role, Content: m.Content, Tool: m.Name}
+		for _, call := range m.Calls {
+			out.Calls = append(out.Calls, &nodepb.ChatToolCall{Name: call.Name, Arguments: string(call.Arguments)})
+		}
+		res.Messages = append(res.Messages, out)
+	}
+	return res, nil
+}
+
+func (s *localService) DeleteChat(ctx context.Context, req *nodepb.DeleteChatRequest) (*nodepb.DeleteChatResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.Assistant == nil {
+		return nil, errNoPlanner
+	}
+	if err := s.cfg.Assistant.DeleteChat(req.GetChatId()); err != nil {
+		return nil, asError(err)
+	}
+	return &nodepb.DeleteChatResponse{}, nil
 }
 
 // authorize checks that the caller has presented the node's token, as

@@ -46,6 +46,11 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `ListJobs`, `WatchJobs` | | Every job on record, newest first. `WatchJobs` re-sends the whole list when any job changes, progress included. |
 | `CancelJob` | yes | Stop a job that has not finished. |
 | `WatchJobEvents` | | What has happened to one job, then what happens next, ending when the job does: the steps of its life and the lines its tasks log. Pass `after_seq` to pick up where you left off. |
+| `GetModelConfig` | | Which model the node plans with, and whether a key is set. Never the key. |
+| `SetModelConfig` | yes | Set it. `keep_api_key` changes the rest without sending the key again. |
+| `ListModels` | | What the configured service offers, for a picker. |
+| `Ask` | yes | Put a question to the planner. A stream of what it does; see below. |
+| `ListChats`, `GetChat`, `DeleteChat` | yes | Conversations on record, newest first; one in full; forget one. |
 
 The two `Watch` calls are the ones to build live views on. Each message carries a `revision` that counts up from one.
 
@@ -96,6 +101,22 @@ Each has a `seq` (counting from one within the job), a time, a `kind`, the task 
 
 A job view can be built from `WatchJobs` for state and progress and `WatchJobEvents` for the timeline and log of the job that is open.
 
+## A chat view
+
+`Ask(chat_id, text)` streams `AskEvent`s. Leave `chat_id` empty to start a conversation; every event carries the ID, so the first one tells you what it is called.
+
+| `kind` | Show it as |
+| --- | --- |
+| `text` | The next piece of the assistant's reply. Append `text` to the bubble. |
+| `call` | The model asked for a tool: `tool` is its name, `text` its arguments as JSON. |
+| `job` | A job was started: `job_id`. Link it to the jobs view; `WatchJobEvents` gives its progress and log. |
+| `result` | What the tool returned, as JSON in `text`. |
+| `done` | The answer is complete. Always last. |
+
+If the planner fails, the stream ends with an error instead of `done`, and what was said up to then is still saved. `GetChat` returns a conversation as messages with a `role` of `user`, `assistant` or `tool`; an assistant message may carry `calls` instead of text.
+
+Before any model is set, `Ask` fails with `FAILED_PRECONDITION` and a message saying so, which is the cue to show a model picker (`ListModels` needs a provider set first, so offer Ollama at its default address as the starting point).
+
 ## What the API does not have yet
 
 These exist in the daemon but not in the local API. Ask for them when the UI wants them.
@@ -103,7 +124,6 @@ These exist in the daemon but not in the local API. Ask for them when the UI wan
 - **Storing and fetching files** (`wordcount` inputs, job outputs). For now: `sisyphusd blob put <file>` and `blob get <cid>`.
 - **Invitations and the member list**, other than as peers. For now: `sisyphusd pool invite`, `pool members`.
 - **Private jobs**, which take a key.
-- **Chat and the AI planner.** Not built in the daemon at all.
 
 ## Changing the API
 

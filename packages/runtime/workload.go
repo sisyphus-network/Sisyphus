@@ -42,6 +42,21 @@ type Workload interface {
 	Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error)
 }
 
+// Described is a workload that can say, for someone deciding whether and
+// how to use it, what it does and what parameters it takes.
+type Described interface {
+	Describe() string
+}
+
+// Describe returns what the workload with the given name says of itself, or
+// nothing if it says nothing or is not there.
+func (r *Registry) Describe(name string) string {
+	if d, ok := r.workloads[name].(Described); ok {
+		return d.Describe()
+	}
+	return ""
+}
+
 // mustJSON encodes a value of a type that always encodes: the plain structs
 // and string-keyed maps workloads pass around. It panics on anything else,
 // which would be a programming error.

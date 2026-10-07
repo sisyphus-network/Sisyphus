@@ -33,6 +33,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/api"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/p2p"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/tunnel"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
@@ -237,6 +238,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	// trustChanged hears of each node the coordinator admits or removes, and
 	// worksFor says whether this node is working for another.
 	trustChanged := new(notices)
+	// planningPool is the pool the node's planner computes on, if it
+	// coordinates one.
+	var planningPool planner.Pool
 	worksFor := func(string) bool { return false }
 	// takes is the other side of trust: the nodes this one will take tasks
 	// from, whatever else it does.
@@ -303,6 +307,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		srv := api.NewServer(config)
 		local.Pool = api.NewPoolAdmin(config)
 		local.Jobs = coord
+		planningPool = coord
 		local.Peers = func() []*nodepb.Peer { return poolPeers(ident.ID(), coord.Nodes(), admitted.Members()) }
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish. The coordinator is closed first, so that it knows
@@ -483,6 +488,11 @@ func runDaemon(ctx context.Context, args []string) error {
 			stopped <- w.Run(ctx)
 		}()
 	}
+
+	// The node's planner is there whatever its role, so that its model can
+	// be set and its conversations read; it has something to compute on
+	// only where the node coordinates a pool.
+	local.Assistant = &assistant{store: db, pool: planningPool, workloads: workloads}
 
 	// Whatever its role, the node is connected to the nodes in its address
 	// book and those named on the command line, and through them finds

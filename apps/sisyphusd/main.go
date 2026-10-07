@@ -37,6 +37,8 @@ const usage = `Usage:
   sisyphusd pool remove <node-id>  take a node off that list and disconnect it
   sisyphusd pool work-for <node-id>  take tasks from a node whenever it will have this one (--stop to stop)
   sisyphusd pool rekey             change the key of the pool's private IPFS network
+  sisyphusd model set|show|list    which language model this node plans with (set --provider --model [--url] [--api-key-file])
+  sisyphusd ask <question>         put a question to a running node's planner (--chat <id> to carry on a conversation)
   sisyphusd id                     print this node's ID, creating its key if it has none
   sisyphusd data-dir               print where this node keeps its data unless told otherwise
   sisyphusd version                print the version
@@ -95,6 +97,10 @@ func run(ctx context.Context, args []string) error {
 		return keyCommand(args[1:])
 	case "pool":
 		return poolCommand(ctx, args[1:])
+	case "model":
+		return modelCommand(ctx, args[1:])
+	case "ask":
+		return ask(ctx, args[1:])
 	case "id":
 		return showIdentity(args[1:])
 	case "data-dir":
