@@ -28,6 +28,7 @@ type WorkerMessage struct {
 	//	*WorkerMessage_Hello
 	//	*WorkerMessage_Heartbeat
 	//	*WorkerMessage_TaskResult
+	//	*WorkerMessage_TaskUpdate
 	Kind          isWorkerMessage_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -97,6 +98,15 @@ func (x *WorkerMessage) GetTaskResult() *TaskResult {
 	return nil
 }
 
+func (x *WorkerMessage) GetTaskUpdate() *TaskUpdate {
+	if x != nil {
+		if x, ok := x.Kind.(*WorkerMessage_TaskUpdate); ok {
+			return x.TaskUpdate
+		}
+	}
+	return nil
+}
+
 type isWorkerMessage_Kind interface {
 	isWorkerMessage_Kind()
 }
@@ -113,11 +123,87 @@ type WorkerMessage_TaskResult struct {
 	TaskResult *TaskResult `protobuf:"bytes,3,opt,name=task_result,json=taskResult,proto3,oneof"`
 }
 
+type WorkerMessage_TaskUpdate struct {
+	TaskUpdate *TaskUpdate `protobuf:"bytes,4,opt,name=task_update,json=taskUpdate,proto3,oneof"`
+}
+
 func (*WorkerMessage_Hello) isWorkerMessage_Kind() {}
 
 func (*WorkerMessage_Heartbeat) isWorkerMessage_Kind() {}
 
 func (*WorkerMessage_TaskResult) isWorkerMessage_Kind() {}
+
+func (*WorkerMessage_TaskUpdate) isWorkerMessage_Kind() {}
+
+// TaskUpdate is news of a task still running: how far along it is, and
+// what it has logged since the last one.
+type TaskUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Attempt       uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Progress      float64                `protobuf:"fixed64,3,opt,name=progress,proto3" json:"progress,omitempty"`
+	Log           []string               `protobuf:"bytes,4,rep,name=log,proto3" json:"log,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskUpdate) Reset() {
+	*x = TaskUpdate{}
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskUpdate) ProtoMessage() {}
+
+func (x *TaskUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskUpdate.ProtoReflect.Descriptor instead.
+func (*TaskUpdate) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TaskUpdate) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskUpdate) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *TaskUpdate) GetProgress() float64 {
+	if x != nil {
+		return x.Progress
+	}
+	return 0
+}
+
+func (x *TaskUpdate) GetLog() []string {
+	if x != nil {
+		return x.Log
+	}
+	return nil
+}
 
 type Hello struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
@@ -137,7 +223,7 @@ type Hello struct {
 
 func (x *Hello) Reset() {
 	*x = Hello{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[1]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -149,7 +235,7 @@ func (x *Hello) String() string {
 func (*Hello) ProtoMessage() {}
 
 func (x *Hello) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[1]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -162,7 +248,7 @@ func (x *Hello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Hello.ProtoReflect.Descriptor instead.
 func (*Hello) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{1}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Hello) GetCapabilities() *NodeCapabilities {
@@ -206,7 +292,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[2]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -218,7 +304,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[2]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -231,7 +317,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{2}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Heartbeat) GetRunningTasks() uint32 {
@@ -275,7 +361,7 @@ type TaskResult struct {
 
 func (x *TaskResult) Reset() {
 	*x = TaskResult{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[3]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -287,7 +373,7 @@ func (x *TaskResult) String() string {
 func (*TaskResult) ProtoMessage() {}
 
 func (x *TaskResult) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[3]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -300,7 +386,7 @@ func (x *TaskResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskResult.ProtoReflect.Descriptor instead.
 func (*TaskResult) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{3}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *TaskResult) GetTaskId() string {
@@ -379,6 +465,7 @@ type CoordinatorMessage struct {
 	//	*CoordinatorMessage_Welcome
 	//	*CoordinatorMessage_Assignment
 	//	*CoordinatorMessage_SwarmUpdate
+	//	*CoordinatorMessage_Cancel
 	Kind          isCoordinatorMessage_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -386,7 +473,7 @@ type CoordinatorMessage struct {
 
 func (x *CoordinatorMessage) Reset() {
 	*x = CoordinatorMessage{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[4]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -398,7 +485,7 @@ func (x *CoordinatorMessage) String() string {
 func (*CoordinatorMessage) ProtoMessage() {}
 
 func (x *CoordinatorMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[4]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -411,7 +498,7 @@ func (x *CoordinatorMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CoordinatorMessage.ProtoReflect.Descriptor instead.
 func (*CoordinatorMessage) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{4}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CoordinatorMessage) GetKind() isCoordinatorMessage_Kind {
@@ -448,6 +535,15 @@ func (x *CoordinatorMessage) GetSwarmUpdate() *SwarmUpdate {
 	return nil
 }
 
+func (x *CoordinatorMessage) GetCancel() *TaskCancel {
+	if x != nil {
+		if x, ok := x.Kind.(*CoordinatorMessage_Cancel); ok {
+			return x.Cancel
+		}
+	}
+	return nil
+}
+
 type isCoordinatorMessage_Kind interface {
 	isCoordinatorMessage_Kind()
 }
@@ -464,11 +560,71 @@ type CoordinatorMessage_SwarmUpdate struct {
 	SwarmUpdate *SwarmUpdate `protobuf:"bytes,3,opt,name=swarm_update,json=swarmUpdate,proto3,oneof"`
 }
 
+type CoordinatorMessage_Cancel struct {
+	Cancel *TaskCancel `protobuf:"bytes,4,opt,name=cancel,proto3,oneof"`
+}
+
 func (*CoordinatorMessage_Welcome) isCoordinatorMessage_Kind() {}
 
 func (*CoordinatorMessage_Assignment) isCoordinatorMessage_Kind() {}
 
 func (*CoordinatorMessage_SwarmUpdate) isCoordinatorMessage_Kind() {}
+
+func (*CoordinatorMessage_Cancel) isCoordinatorMessage_Kind() {}
+
+// TaskCancel tells a worker to stop a task it was given. Nothing is expected
+// back: whatever the task goes on to report is ignored.
+type TaskCancel struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Attempt       uint32                 `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskCancel) Reset() {
+	*x = TaskCancel{}
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskCancel) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskCancel) ProtoMessage() {}
+
+func (x *TaskCancel) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskCancel.ProtoReflect.Descriptor instead.
+func (*TaskCancel) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *TaskCancel) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskCancel) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
 
 type Welcome struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -483,7 +639,7 @@ type Welcome struct {
 
 func (x *Welcome) Reset() {
 	*x = Welcome{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -495,7 +651,7 @@ func (x *Welcome) String() string {
 func (*Welcome) ProtoMessage() {}
 
 func (x *Welcome) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -508,7 +664,7 @@ func (x *Welcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Welcome.ProtoReflect.Descriptor instead.
 func (*Welcome) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{5}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Welcome) GetCoordinatorId() string {
@@ -536,7 +692,7 @@ type SwarmUpdate struct {
 
 func (x *SwarmUpdate) Reset() {
 	*x = SwarmUpdate{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -548,7 +704,7 @@ func (x *SwarmUpdate) String() string {
 func (*SwarmUpdate) ProtoMessage() {}
 
 func (x *SwarmUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -561,7 +717,7 @@ func (x *SwarmUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SwarmUpdate.ProtoReflect.Descriptor instead.
 func (*SwarmUpdate) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{6}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SwarmUpdate) GetSwarmFingerprint() string {
@@ -586,7 +742,7 @@ type TaskAssignment struct {
 
 func (x *TaskAssignment) Reset() {
 	*x = TaskAssignment{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -598,7 +754,7 @@ func (x *TaskAssignment) String() string {
 func (*TaskAssignment) ProtoMessage() {}
 
 func (x *TaskAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -611,7 +767,7 @@ func (x *TaskAssignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskAssignment.ProtoReflect.Descriptor instead.
 func (*TaskAssignment) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{7}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *TaskAssignment) GetTaskId() string {
@@ -660,13 +816,21 @@ var File_sisyphus_v1_coordinator_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\n" +
-	"\x1dsisyphus/v1/coordinator.proto\x12\vsisyphus.v1\x1a\x17sisyphus/v1/types.proto\"\xb7\x01\n" +
+	"\x1dsisyphus/v1/coordinator.proto\x12\vsisyphus.v1\x1a\x17sisyphus/v1/types.proto\"\xf3\x01\n" +
 	"\rWorkerMessage\x12*\n" +
 	"\x05hello\x18\x01 \x01(\v2\x12.sisyphus.v1.HelloH\x00R\x05hello\x126\n" +
 	"\theartbeat\x18\x02 \x01(\v2\x16.sisyphus.v1.HeartbeatH\x00R\theartbeat\x12:\n" +
 	"\vtask_result\x18\x03 \x01(\v2\x17.sisyphus.v1.TaskResultH\x00R\n" +
-	"taskResultB\x06\n" +
-	"\x04kind\"\xb2\x01\n" +
+	"taskResult\x12:\n" +
+	"\vtask_update\x18\x04 \x01(\v2\x17.sisyphus.v1.TaskUpdateH\x00R\n" +
+	"taskUpdateB\x06\n" +
+	"\x04kind\"m\n" +
+	"\n" +
+	"TaskUpdate\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
+	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x1a\n" +
+	"\bprogress\x18\x03 \x01(\x01R\bprogress\x12\x10\n" +
+	"\x03log\x18\x04 \x03(\tR\x03log\"\xb2\x01\n" +
 	"\x05Hello\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12#\n" +
@@ -685,14 +849,19 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\n" +
 	"read_blobs\x18\x05 \x03(\tR\treadBlobs\x12#\n" +
 	"\rwritten_blobs\x18\x06 \x03(\tR\fwrittenBlobsB\t\n" +
-	"\aoutcome\"\xcc\x01\n" +
+	"\aoutcome\"\xff\x01\n" +
 	"\x12CoordinatorMessage\x120\n" +
 	"\awelcome\x18\x01 \x01(\v2\x14.sisyphus.v1.WelcomeH\x00R\awelcome\x12=\n" +
 	"\n" +
 	"assignment\x18\x02 \x01(\v2\x1b.sisyphus.v1.TaskAssignmentH\x00R\n" +
 	"assignment\x12=\n" +
-	"\fswarm_update\x18\x03 \x01(\v2\x18.sisyphus.v1.SwarmUpdateH\x00R\vswarmUpdateB\x06\n" +
-	"\x04kind\"]\n" +
+	"\fswarm_update\x18\x03 \x01(\v2\x18.sisyphus.v1.SwarmUpdateH\x00R\vswarmUpdate\x121\n" +
+	"\x06cancel\x18\x04 \x01(\v2\x17.sisyphus.v1.TaskCancelH\x00R\x06cancelB\x06\n" +
+	"\x04kind\"?\n" +
+	"\n" +
+	"TaskCancel\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
+	"\aattempt\x18\x02 \x01(\rR\aattempt\"]\n" +
 	"\aWelcome\x12%\n" +
 	"\x0ecoordinator_id\x18\x01 \x01(\tR\rcoordinatorId\x12+\n" +
 	"\x11swarm_fingerprint\x18\x02 \x01(\tR\x10swarmFingerprint\":\n" +
@@ -720,33 +889,37 @@ func file_sisyphus_v1_coordinator_proto_rawDescGZIP() []byte {
 	return file_sisyphus_v1_coordinator_proto_rawDescData
 }
 
-var file_sisyphus_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_sisyphus_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_sisyphus_v1_coordinator_proto_goTypes = []any{
 	(*WorkerMessage)(nil),      // 0: sisyphus.v1.WorkerMessage
-	(*Hello)(nil),              // 1: sisyphus.v1.Hello
-	(*Heartbeat)(nil),          // 2: sisyphus.v1.Heartbeat
-	(*TaskResult)(nil),         // 3: sisyphus.v1.TaskResult
-	(*CoordinatorMessage)(nil), // 4: sisyphus.v1.CoordinatorMessage
-	(*Welcome)(nil),            // 5: sisyphus.v1.Welcome
-	(*SwarmUpdate)(nil),        // 6: sisyphus.v1.SwarmUpdate
-	(*TaskAssignment)(nil),     // 7: sisyphus.v1.TaskAssignment
-	(*NodeCapabilities)(nil),   // 8: sisyphus.v1.NodeCapabilities
+	(*TaskUpdate)(nil),         // 1: sisyphus.v1.TaskUpdate
+	(*Hello)(nil),              // 2: sisyphus.v1.Hello
+	(*Heartbeat)(nil),          // 3: sisyphus.v1.Heartbeat
+	(*TaskResult)(nil),         // 4: sisyphus.v1.TaskResult
+	(*CoordinatorMessage)(nil), // 5: sisyphus.v1.CoordinatorMessage
+	(*TaskCancel)(nil),         // 6: sisyphus.v1.TaskCancel
+	(*Welcome)(nil),            // 7: sisyphus.v1.Welcome
+	(*SwarmUpdate)(nil),        // 8: sisyphus.v1.SwarmUpdate
+	(*TaskAssignment)(nil),     // 9: sisyphus.v1.TaskAssignment
+	(*NodeCapabilities)(nil),   // 10: sisyphus.v1.NodeCapabilities
 }
 var file_sisyphus_v1_coordinator_proto_depIdxs = []int32{
-	1, // 0: sisyphus.v1.WorkerMessage.hello:type_name -> sisyphus.v1.Hello
-	2, // 1: sisyphus.v1.WorkerMessage.heartbeat:type_name -> sisyphus.v1.Heartbeat
-	3, // 2: sisyphus.v1.WorkerMessage.task_result:type_name -> sisyphus.v1.TaskResult
-	8, // 3: sisyphus.v1.Hello.capabilities:type_name -> sisyphus.v1.NodeCapabilities
-	5, // 4: sisyphus.v1.CoordinatorMessage.welcome:type_name -> sisyphus.v1.Welcome
-	7, // 5: sisyphus.v1.CoordinatorMessage.assignment:type_name -> sisyphus.v1.TaskAssignment
-	6, // 6: sisyphus.v1.CoordinatorMessage.swarm_update:type_name -> sisyphus.v1.SwarmUpdate
-	0, // 7: sisyphus.v1.CoordinatorService.Connect:input_type -> sisyphus.v1.WorkerMessage
-	4, // 8: sisyphus.v1.CoordinatorService.Connect:output_type -> sisyphus.v1.CoordinatorMessage
-	8, // [8:9] is the sub-list for method output_type
-	7, // [7:8] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	2,  // 0: sisyphus.v1.WorkerMessage.hello:type_name -> sisyphus.v1.Hello
+	3,  // 1: sisyphus.v1.WorkerMessage.heartbeat:type_name -> sisyphus.v1.Heartbeat
+	4,  // 2: sisyphus.v1.WorkerMessage.task_result:type_name -> sisyphus.v1.TaskResult
+	1,  // 3: sisyphus.v1.WorkerMessage.task_update:type_name -> sisyphus.v1.TaskUpdate
+	10, // 4: sisyphus.v1.Hello.capabilities:type_name -> sisyphus.v1.NodeCapabilities
+	7,  // 5: sisyphus.v1.CoordinatorMessage.welcome:type_name -> sisyphus.v1.Welcome
+	9,  // 6: sisyphus.v1.CoordinatorMessage.assignment:type_name -> sisyphus.v1.TaskAssignment
+	8,  // 7: sisyphus.v1.CoordinatorMessage.swarm_update:type_name -> sisyphus.v1.SwarmUpdate
+	6,  // 8: sisyphus.v1.CoordinatorMessage.cancel:type_name -> sisyphus.v1.TaskCancel
+	0,  // 9: sisyphus.v1.CoordinatorService.Connect:input_type -> sisyphus.v1.WorkerMessage
+	5,  // 10: sisyphus.v1.CoordinatorService.Connect:output_type -> sisyphus.v1.CoordinatorMessage
+	10, // [10:11] is the sub-list for method output_type
+	9,  // [9:10] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_coordinator_proto_init() }
@@ -759,15 +932,17 @@ func file_sisyphus_v1_coordinator_proto_init() {
 		(*WorkerMessage_Hello)(nil),
 		(*WorkerMessage_Heartbeat)(nil),
 		(*WorkerMessage_TaskResult)(nil),
+		(*WorkerMessage_TaskUpdate)(nil),
 	}
-	file_sisyphus_v1_coordinator_proto_msgTypes[3].OneofWrappers = []any{
+	file_sisyphus_v1_coordinator_proto_msgTypes[4].OneofWrappers = []any{
 		(*TaskResult_Output)(nil),
 		(*TaskResult_Error)(nil),
 	}
-	file_sisyphus_v1_coordinator_proto_msgTypes[4].OneofWrappers = []any{
+	file_sisyphus_v1_coordinator_proto_msgTypes[5].OneofWrappers = []any{
 		(*CoordinatorMessage_Welcome)(nil),
 		(*CoordinatorMessage_Assignment)(nil),
 		(*CoordinatorMessage_SwarmUpdate)(nil),
+		(*CoordinatorMessage_Cancel)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -775,7 +950,7 @@ func file_sisyphus_v1_coordinator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_coordinator_proto_rawDesc), len(file_sisyphus_v1_coordinator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

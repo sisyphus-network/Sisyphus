@@ -46,10 +46,12 @@ var allowed = map[string][]Role{
 	pb.BlobService_ListPins_FullMethodName:       {Client},
 	pb.BlobService_CollectGarbage_FullMethodName: {Client},
 
-	pb.NodeService_SubmitJob_FullMethodName: {Client},
-	pb.NodeService_GetJob_FullMethodName:    {Client},
-	pb.NodeService_WatchJob_FullMethodName:  {Client},
-	pb.NodeService_ListNodes_FullMethodName: {Client},
+	pb.NodeService_SubmitJob_FullMethodName:      {Client},
+	pb.NodeService_GetJob_FullMethodName:         {Client},
+	pb.NodeService_WatchJob_FullMethodName:       {Client},
+	pb.NodeService_CancelJob_FullMethodName:      {Client},
+	pb.NodeService_WatchJobEvents_FullMethodName: {Client},
+	pb.NodeService_ListNodes_FullMethodName:      {Client},
 }
 
 // anyone stands for a node that has no role yet.

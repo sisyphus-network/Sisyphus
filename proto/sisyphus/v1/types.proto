@@ -51,6 +51,8 @@ enum JobState {
   JOB_STATE_RUNNING = 2;
   JOB_STATE_SUCCEEDED = 3;
   JOB_STATE_FAILED = 4;
+  // Stopped on request before it finished.
+  JOB_STATE_CANCELLED = 5;
 }
 
 enum TaskState {
@@ -59,6 +61,8 @@ enum TaskState {
   TASK_STATE_RUNNING = 2;
   TASK_STATE_SUCCEEDED = 3;
   TASK_STATE_FAILED = 4;
+  // Given up because its job was cancelled or failed without it.
+  TASK_STATE_CANCELLED = 5;
 }
 
 message JobSpec {
@@ -75,6 +79,9 @@ message JobSpec {
   // is given to the workers that run the job's tasks and to nobody else,
   // and is never returned in a Job.
   bytes key = 5;
+  // If not zero, how long any one attempt at a task may run, in seconds. An
+  // attempt that runs longer is stopped and counts as failed.
+  uint32 task_timeout_seconds = 6;
 }
 
 message Task {
@@ -89,6 +96,9 @@ message Task {
   string error = 6;
   // The label of the node in node_id.
   string node_name = 7;
+  // How far along the current attempt says it is, from 0 to 1. A workload
+  // that does not say leaves it at 0 until the task succeeds.
+  double progress = 8;
 }
 
 message Job {
@@ -107,4 +117,22 @@ message Job {
   // released when the job finishes.
   repeated string input_blobs = 9;
   repeated string output_blobs = 10;
+  // The mean of its tasks' progress, from 0 to 1.
+  double progress = 11;
+}
+
+// JobEvent is one thing that happened to a job: a step in its life, or a
+// line a task logged.
+message JobEvent {
+  // Events of a job are numbered from one, in the order they happened.
+  uint64 seq = 1;
+  google.protobuf.Timestamp at = 2;
+  // What happened: submitted, task-started, task-succeeded, task-failed,
+  // task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
+  string kind = 3;
+  // The task concerned, or -1 if the event is about the job as a whole.
+  int32 task_index = 4;
+  // The label of the worker concerned, if one was.
+  string node_name = 5;
+  string text = 6;
 }

@@ -95,12 +95,12 @@ func TestAJobIsLoadedAsItWasSavedAtEveryStep(t *testing.T) {
 	}
 	check("submitted")
 
-	job.Start(job.Tasks[0], "node-a", "alpha")
+	job.Start(job.Tasks[0], "node-a", "alpha", time.Now())
 	check("first task started")
-	job.Start(job.Tasks[1], "node-b", "beta")
+	job.Start(job.Tasks[1], "node-b", "beta", time.Now())
 	job.Fail(job.Tasks[1], "out of memory", 3, submitted)
 	check("second task failed once")
-	job.Start(job.Tasks[1], "node-a", "alpha")
+	job.Start(job.Tasks[1], "node-a", "alpha", time.Now())
 	job.NoteRead("input-cid", "shard-cid")
 	job.NoteTaskOutput("counts-0")
 	job.Succeed(job.Tasks[0], []byte("counts-0"))
@@ -131,7 +131,7 @@ func TestJobsLoadInTheOrderTheyWereSubmitted(t *testing.T) {
 		jobs = append(jobs, job)
 		save(t, db, job)
 	}
-	jobs[2].Start(jobs[2].Tasks[0], "node-a", "alpha")
+	jobs[2].Start(jobs[2].Tasks[0], "node-a", "alpha", time.Now())
 	save(t, db, jobs[2])
 	jobs[0].Finish(nil, os.ErrDeadlineExceeded, submitted)
 	save(t, db, jobs[0])
@@ -160,7 +160,7 @@ func TestAPrivateJobsKeyIsKeptOnlyUntilItFinishes(t *testing.T) {
 	job := jobmodel.New("private", "wordcount", nil, jobmodel.Distributed, 1, [][]byte{[]byte("p")}, submitted)
 	job.Key = key
 	save(t, db, job)
-	job.Start(job.Tasks[0], "node-a", "alpha")
+	job.Start(job.Tasks[0], "node-a", "alpha", time.Now())
 	save(t, db, job)
 	db = reopen(t, db, file)
 	if loaded := load(t, db)[0]; string(loaded.Key) != string(key) {
@@ -187,13 +187,13 @@ func TestEveryAttemptAtATaskIsRecorded(t *testing.T) {
 	job := jobmodel.New("j1", "primes", nil, jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
 	steps := []func(){
 		func() {},
-		func() { job.Start(job.Tasks[0], "node-a", "alpha") },
+		func() { job.Start(job.Tasks[0], "node-a", "alpha", time.Now()) },
 		func() { job.Fail(job.Tasks[0], "disk full", 3, submitted) },
-		func() { job.Start(job.Tasks[0], "node-b", "beta") },
+		func() { job.Start(job.Tasks[0], "node-b", "beta", time.Now()) },
 		func() { job.Requeue(job.Tasks[0], "coordinator restarted") },
-		func() { job.Start(job.Tasks[0], "node-b", "beta") },
+		func() { job.Start(job.Tasks[0], "node-b", "beta", time.Now()) },
 		func() { job.Succeed(job.Tasks[0], []byte("done")) },
-		func() { job.Start(job.Tasks[1], "node-a", "alpha") },
+		func() { job.Start(job.Tasks[1], "node-a", "alpha", time.Now()) },
 	}
 	for _, step := range steps {
 		step()
@@ -227,7 +227,7 @@ func TestOnlyWhatChangedIsWritten(t *testing.T) {
 	if _, err := db.sql.Exec(`UPDATE tasks SET node_name = 'untouched' WHERE job_id = 'big' AND task_index = 7`); err != nil {
 		t.Fatal(err)
 	}
-	job.Start(job.Tasks[3], "node-a", "alpha")
+	job.Start(job.Tasks[3], "node-a", "alpha", time.Now())
 	save(t, db, job)
 	loaded := load(t, db)[0]
 	if loaded.Tasks[7].NodeName != "untouched" {
@@ -391,7 +391,7 @@ func loosen(t *testing.T, db *DB, table, columns string) {
 
 func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	const (
-		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns"
+		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns"
 		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error"
 	)
 	for _, tt := range []struct {
@@ -426,5 +426,46 @@ func TestWriteReportsACommitThatFails(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Errorf("error %v, want the commit refused", err)
+	}
+}
+
+func TestAJobsEventsAndItsLimitAreKept(t *testing.T) {
+	db, file := newDB(t)
+	job := jobmodel.New("j1", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted)
+	job.TaskTimeout = 90 * time.Second
+	save(t, db, job)
+	events := []jobmodel.Event{
+		{Seq: 1, At: submitted, Kind: "submitted", Task: -1, Text: "primes, in 1 tasks"},
+		{Seq: 2, At: submitted.Add(time.Second), Kind: "log", Task: 0, Node: "rig", Text: "counting"},
+	}
+	for _, e := range events {
+		if err := db.SaveEvent("j1", e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db = reopen(t, db, file)
+	got, err := db.LoadEvents("j1")
+	if err != nil || len(got) != 2 || got[0].Kind != "submitted" || got[0].Task != -1 || !got[1].At.Equal(events[1].At) || got[1].Node != "rig" || got[1].Text != "counting" {
+		t.Errorf("events after reopening: %+v, %v", got, err)
+	}
+	if loaded := load(t, db)[0]; loaded.TaskTimeout != 90*time.Second {
+		t.Errorf("the job's limit after reopening: %v", loaded.TaskTimeout)
+	}
+	if none, err := db.LoadEvents("no-such-job"); err != nil || len(none) != 0 {
+		t.Errorf("the events of a job that is not there: %v, %v", none, err)
+	}
+	// They go when the job does, and an event of no job is not kept.
+	if err := db.DeleteJobs([]string{"j1"}); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := db.LoadEvents("j1"); len(left) != 0 {
+		t.Errorf("events left after their job was deleted: %+v", left)
+	}
+	if err := db.SaveEvent("j1", events[0]); err == nil || !strings.Contains(err.Error(), "save job event") {
+		t.Errorf("saving an event of a job that is gone: %v", err)
+	}
+	loosen(t, db, "job_events", "job_id DEFAULT 'j1', seq, at_ns, kind, task_index, node_name, text")
+	if _, err := db.LoadEvents("j1"); err == nil || !strings.Contains(err.Error(), "load job events") {
+		t.Errorf("with a damaged events table: %v", err)
 	}
 }

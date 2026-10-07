@@ -46,6 +46,12 @@ func (j *Job) touch(t *Task) {
 func Restore(saved Job, read, taskOutputs, results []string) *Job {
 	j := &saved
 	j.init()
+	// Progress is not saved, but a task that succeeded is known to be done.
+	for _, t := range j.Tasks {
+		if t.State == Succeeded {
+			t.Progress = 1
+		}
+	}
 	j.NoteRead(read...)
 	j.NoteTaskOutput(taskOutputs...)
 	j.NoteResult(results...)

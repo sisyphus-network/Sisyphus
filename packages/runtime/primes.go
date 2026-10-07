@@ -99,10 +99,13 @@ func countPrimes(ctx context.Context, from, to uint64) (uint64, error) {
 	const block = 1 << 18
 	composite := make([]bool, block)
 	var count uint64
+	report := Report(ctx)
+	report.Log(fmt.Sprintf("counting primes from %d to %d", from, to))
 	for lo := from; lo < to; lo += block {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
+		report.Progress(float64(lo-from) / float64(to-from))
 		hi := min(lo+block, to)
 		seg := composite[:hi-lo]
 		clear(seg)

@@ -32,6 +32,8 @@ const (
 	NodeService_GetJob_FullMethodName                    = "/sisyphus.node.v1.NodeService/GetJob"
 	NodeService_ListJobs_FullMethodName                  = "/sisyphus.node.v1.NodeService/ListJobs"
 	NodeService_WatchJobs_FullMethodName                 = "/sisyphus.node.v1.NodeService/WatchJobs"
+	NodeService_CancelJob_FullMethodName                 = "/sisyphus.node.v1.NodeService/CancelJob"
+	NodeService_WatchJobEvents_FullMethodName            = "/sisyphus.node.v1.NodeService/WatchJobEvents"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -59,6 +61,12 @@ type NodeServiceClient interface {
 	// WatchJobs sends that list at once and again, in full, whenever any job
 	// changes, with a revision that counts up from one.
 	WatchJobs(ctx context.Context, in *WatchJobsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListJobsResponse], error)
+	// CancelJob stops a job that has not finished.
+	CancelJob(ctx context.Context, in *CancelJobRequest, opts ...grpc.CallOption) (*CancelJobResponse, error)
+	// WatchJobEvents sends what has happened to a job, from the event after
+	// the one named, and goes on as more happens until the job has finished:
+	// the steps of its life and the lines its tasks log.
+	WatchJobEvents(ctx context.Context, in *WatchJobEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JobEvent], error)
 }
 
 type nodeServiceClient struct {
@@ -217,6 +225,35 @@ func (c *nodeServiceClient) WatchJobs(ctx context.Context, in *WatchJobsRequest,
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchJobsClient = grpc.ServerStreamingClient[ListJobsResponse]
 
+func (c *nodeServiceClient) CancelJob(ctx context.Context, in *CancelJobRequest, opts ...grpc.CallOption) (*CancelJobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelJobResponse)
+	err := c.cc.Invoke(ctx, NodeService_CancelJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) WatchJobEvents(ctx context.Context, in *WatchJobEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JobEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[2], NodeService_WatchJobEvents_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchJobEventsRequest, JobEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchJobEventsClient = grpc.ServerStreamingClient[JobEvent]
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -242,6 +279,12 @@ type NodeServiceServer interface {
 	// WatchJobs sends that list at once and again, in full, whenever any job
 	// changes, with a revision that counts up from one.
 	WatchJobs(*WatchJobsRequest, grpc.ServerStreamingServer[ListJobsResponse]) error
+	// CancelJob stops a job that has not finished.
+	CancelJob(context.Context, *CancelJobRequest) (*CancelJobResponse, error)
+	// WatchJobEvents sends what has happened to a job, from the event after
+	// the one named, and goes on as more happens until the job has finished:
+	// the steps of its life and the lines its tasks log.
+	WatchJobEvents(*WatchJobEventsRequest, grpc.ServerStreamingServer[JobEvent]) error
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -290,6 +333,12 @@ func (UnimplementedNodeServiceServer) ListJobs(context.Context, *ListJobsRequest
 }
 func (UnimplementedNodeServiceServer) WatchJobs(*WatchJobsRequest, grpc.ServerStreamingServer[ListJobsResponse]) error {
 	return status.Error(codes.Unimplemented, "method WatchJobs not implemented")
+}
+func (UnimplementedNodeServiceServer) CancelJob(context.Context, *CancelJobRequest) (*CancelJobResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelJob not implemented")
+}
+func (UnimplementedNodeServiceServer) WatchJobEvents(*WatchJobEventsRequest, grpc.ServerStreamingServer[JobEvent]) error {
+	return status.Error(codes.Unimplemented, "method WatchJobEvents not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -532,6 +581,35 @@ func _NodeService_WatchJobs_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchJobsServer = grpc.ServerStreamingServer[ListJobsResponse]
 
+func _NodeService_CancelJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelJobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).CancelJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_CancelJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).CancelJob(ctx, req.(*CancelJobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_WatchJobEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchJobEventsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).WatchJobEvents(m, &grpc.GenericServerStream[WatchJobEventsRequest, JobEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchJobEventsServer = grpc.ServerStreamingServer[JobEvent]
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -583,6 +661,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "ListJobs",
 			Handler:    _NodeService_ListJobs_Handler,
 		},
+		{
+			MethodName: "CancelJob",
+			Handler:    _NodeService_CancelJob_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -593,6 +675,11 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "WatchJobs",
 			Handler:       _NodeService_WatchJobs_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "WatchJobEvents",
+			Handler:       _NodeService_WatchJobEvents_Handler,
 			ServerStreams: true,
 		},
 	},

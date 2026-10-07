@@ -15,6 +15,27 @@ service NodeService {
   // every change, and closes once the job reaches a terminal state.
   rpc WatchJob(WatchJobRequest) returns (stream WatchJobResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  // CancelJob stops a job that has not finished. Its running tasks are told
+  // to stop and nothing more of it is handed out.
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  // WatchJobEvents sends what has happened to a job, from the event after
+  // the one named, and goes on sending as more happens until the job has
+  // finished.
+  rpc WatchJobEvents(WatchJobEventsRequest) returns (stream JobEvent);
+}
+
+message CancelJobRequest {
+  string job_id = 1;
+}
+
+message CancelJobResponse {
+  Job job = 1;
+}
+
+message WatchJobEventsRequest {
+  string job_id = 1;
+  // Send only events numbered after this one. Zero sends them all.
+  uint64 after_seq = 2;
 }
 
 message SubmitJobRequest {

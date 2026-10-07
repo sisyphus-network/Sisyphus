@@ -324,6 +324,23 @@ impl proto::node_service_server::NodeService for NodeServiceImpl {
         Err(Status::failed_precondition(NO_POOL))
     }
 
+    type WatchJobEventsStream =
+        Pin<Box<dyn Stream<Item = Result<proto::JobEvent, Status>> + Send + 'static>>;
+
+    async fn cancel_job(
+        &self,
+        _request: Request<proto::CancelJobRequest>,
+    ) -> Result<Response<proto::CancelJobResponse>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
+
+    async fn watch_job_events(
+        &self,
+        _request: Request<proto::WatchJobEventsRequest>,
+    ) -> Result<Response<Self::WatchJobEventsStream>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
+
     async fn watch_jobs(
         &self,
         _request: Request<proto::WatchJobsRequest>,

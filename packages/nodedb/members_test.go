@@ -96,7 +96,7 @@ func TestDeletingJobsTakesEverythingOfTheirsAndNothingElse(t *testing.T) {
 	for _, id := range []string{"old-1", "old-2", "kept"} {
 		job := jobmodel.New(id, "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted)
 		job.NoteRead("input-of-" + id)
-		job.Start(job.Tasks[0], "node-a", "alpha")
+		job.Start(job.Tasks[0], "node-a", "alpha", time.Now())
 		save(t, db, job)
 	}
 	if err := db.DeleteJobs([]string{"old-1", "old-2", "never-existed"}); err != nil {

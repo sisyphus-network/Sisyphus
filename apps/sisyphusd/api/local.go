@@ -79,6 +79,8 @@ type AddressBook interface {
 // coordinator.Coordinator is one.
 type JobControl interface {
 	Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, error)
+	Cancel(jobID string) (*pb.Job, error)
+	WatchEvents(ctx context.Context, jobID string, after uint64, fn func(*pb.JobEvent) error) error
 	Get(jobID string) (*pb.Job, error)
 	Jobs() []*pb.Job
 	Nodes() []*pb.NodeInfo
@@ -200,11 +202,41 @@ func (s *localService) SubmitJob(ctx context.Context, req *nodepb.SubmitJobReque
 	}
 	job, err := s.cfg.Jobs.Submit(ctx, &pb.JobSpec{
 		Workload: req.GetWorkload(), Params: req.GetParams(), Mode: pb.ScheduleMode(req.GetMode()), MaxTasks: req.GetMaxTasks(),
+		TaskTimeoutSeconds: req.GetTaskTimeoutSeconds(),
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &nodepb.SubmitJobResponse{Job: localJob(job)}, nil
+}
+
+// CancelJob stops a job that has not finished. Like submitting one, it
+// needs the node's token.
+func (s *localService) CancelJob(ctx context.Context, req *nodepb.CancelJobRequest) (*nodepb.CancelJobResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.Jobs == nil {
+		return nil, errNoPool
+	}
+	job, err := s.cfg.Jobs.Cancel(req.GetJobId())
+	if err != nil {
+		return nil, err
+	}
+	return &nodepb.CancelJobResponse{Job: localJob(job)}, nil
+}
+
+// WatchJobEvents sends what has happened to a job, and goes on as more
+// does until the job is over.
+func (s *localService) WatchJobEvents(req *nodepb.WatchJobEventsRequest, stream grpc.ServerStreamingServer[nodepb.JobEvent]) error {
+	if s.cfg.Jobs == nil {
+		return errNoPool
+	}
+	return s.cfg.Jobs.WatchEvents(stream.Context(), req.GetJobId(), req.GetAfterSeq(), func(e *pb.JobEvent) error {
+		return stream.Send(&nodepb.JobEvent{
+			Seq: e.GetSeq(), AtMs: millis(e.GetAt()), Kind: e.GetKind(), TaskIndex: e.GetTaskIndex(), WorkerName: e.GetNodeName(), Text: e.GetText(),
+		})
+	})
 }
 
 func (s *localService) GetJob(_ context.Context, req *nodepb.GetJobRequest) (*nodepb.GetJobResponse, error) {
@@ -258,11 +290,12 @@ func localJob(job *pb.Job) *nodepb.Job {
 		Result: job.GetResult(), Error: job.GetError(),
 		CreatedAtMs: millis(job.GetCreatedAt()), FinishedAtMs: millis(job.GetFinishedAt()),
 		InputBlobs: job.GetInputBlobs(), OutputBlobs: job.GetOutputBlobs(),
+		Progress: job.GetProgress(), TaskTimeoutSeconds: job.GetSpec().GetTaskTimeoutSeconds(),
 	}
 	for _, task := range job.GetTasks() {
 		out.Tasks = append(out.Tasks, &nodepb.JobTask{
 			Index: task.GetIndex(), State: nodepb.JobState(task.GetState()), Attempt: task.GetAttempt(),
-			PeerId: task.GetNodeId(), WorkerName: task.GetNodeName(), Error: task.GetError(),
+			PeerId: task.GetNodeId(), WorkerName: task.GetNodeName(), Error: task.GetError(), Progress: task.GetProgress(),
 		})
 	}
 	return out

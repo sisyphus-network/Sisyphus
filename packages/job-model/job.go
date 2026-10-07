@@ -14,6 +14,9 @@ const (
 	Running
 	Succeeded
 	Failed
+	// Cancelled is a job stopped on request, or a task given up because its
+	// job ended without it.
+	Cancelled
 )
 
 func (s State) String() string {
@@ -26,6 +29,8 @@ func (s State) String() string {
 		return "succeeded"
 	case Failed:
 		return "failed"
+	case Cancelled:
+		return "cancelled"
 	}
 	return fmt.Sprintf("State(%d)", int(s))
 }
@@ -56,6 +61,11 @@ type Task struct {
 	Output   []byte
 	// Err is the reason for the most recent failed attempt.
 	Err string
+	// Progress is how far along the current attempt says it is, from 0 to
+	// 1, and StartedAt when that attempt was handed out. Neither is kept
+	// across a restart: an attempt in progress then is lost anyway.
+	Progress  float64
+	StartedAt time.Time
 }
 
 type Job struct {
@@ -67,13 +77,15 @@ type Job struct {
 	// secret and is not part of the job's public state.
 	Key []byte
 	// MaxTasks is the split the submitter asked for; zero means unspecified.
-	MaxTasks   int
-	State      State
-	Tasks      []*Task
-	Result     []byte
-	Err        string
-	CreatedAt  time.Time
-	FinishedAt time.Time
+	MaxTasks int
+	// TaskTimeout, if not zero, is how long one attempt at a task may run.
+	TaskTimeout time.Duration
+	State       State
+	Tasks       []*Task
+	Result      []byte
+	Err         string
+	CreatedAt   time.Time
+	FinishedAt  time.Time
 
 	// The stored blobs the job has touched so far, by CID.
 	read         map[string]struct{} // opened by the split, a task or the aggregation
@@ -108,9 +120,9 @@ func (j *Job) init() {
 	j.touched = make(map[int]struct{})
 }
 
-// Terminal reports whether the job has finished, successfully or not.
+// Terminal reports whether the job is over: succeeded, failed or cancelled.
 func (j *Job) Terminal() bool {
-	return j.State == Succeeded || j.State == Failed
+	return j.State == Succeeded || j.State == Failed || j.State == Cancelled
 }
 
 // Assignable returns the tasks waiting for a worker. A finished job has none.
@@ -128,8 +140,9 @@ func (j *Job) Assignable() []*Task {
 }
 
 // Start records that a pending task was handed to a worker.
-func (j *Job) Start(t *Task, nodeID, nodeName string) {
+func (j *Job) Start(t *Task, nodeID, nodeName string, now time.Time) {
 	t.State = Running
+	t.Progress, t.StartedAt = 0, now
 	t.Attempt++
 	t.NodeID = nodeID
 	t.NodeName = nodeName
@@ -143,6 +156,7 @@ func (j *Job) Start(t *Task, nodeID, nodeName string) {
 // meaning the job is ready to be aggregated and finished.
 func (j *Job) Succeed(t *Task, output []byte) (allDone bool) {
 	t.State = Succeeded
+	t.Progress = 1
 	t.Output = output
 	t.Err = ""
 	j.touch(t)
@@ -178,12 +192,33 @@ func (j *Job) Requeue(t *Task, reason string) {
 	j.touch(t)
 }
 
+// Cancel stops a job that is not over, and reports whether it did.
+func (j *Job) Cancel(now time.Time) bool {
+	if j.Terminal() {
+		return false
+	}
+	j.State, j.FinishedAt, j.Err = Cancelled, now, "cancelled"
+	j.abandon()
+	return true
+}
+
+// abandon gives up the tasks of a job that has ended without them.
+func (j *Job) abandon() {
+	for _, t := range j.Tasks {
+		if t.State == Pending || t.State == Running {
+			t.State = Cancelled
+			j.touch(t)
+		}
+	}
+}
+
 // Finish moves the job to a terminal state. A nil err means success.
 func (j *Job) Finish(result []byte, err error, now time.Time) {
 	j.FinishedAt = now
 	if err != nil {
 		j.State = Failed
 		j.Err = err.Error()
+		j.abandon()
 		return
 	}
 	j.State = Succeeded
@@ -197,4 +232,18 @@ func (j *Job) Outputs() [][]byte {
 		outputs[i] = t.Output
 	}
 	return outputs
+}
+
+// Event is one thing that happened to a job: a step in its life, or a line
+// one of its tasks logged.
+type Event struct {
+	// Seq numbers a job's events from one.
+	Seq  uint64
+	At   time.Time
+	Kind string
+	// Task is the index of the task concerned, or -1 for the job itself.
+	Task int
+	// Node is the label of the worker concerned, if one was.
+	Node string
+	Text string
 }
