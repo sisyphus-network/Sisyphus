@@ -76,6 +76,12 @@ func TestUsage(t *testing.T) {
 	}
 }
 
+func TestVersion(t *testing.T) {
+	if out, err := cli(t, "version"); err != nil || out != "sisyphusd dev\n" {
+		t.Errorf("printed %q, error %v", out, err)
+	}
+}
+
 func TestExitCode(t *testing.T) {
 	errOut := captureStderr(t)
 	if got := exitCode(nil); got != 0 || errOut.Len() != 0 {

@@ -1,0 +1,37 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds sisyphusd for every supported platform
+# and publishes the binaries as a GitHub release. A pull request that changes
+# the release machinery runs the same build without publishing.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/build-release.sh
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: ./scripts/build-release.sh "${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sisyphusd
+          path: dist/
+      - name: Publish
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --title "${{ github.ref_name }}" --generate-notes

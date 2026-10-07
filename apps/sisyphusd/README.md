@@ -14,6 +14,10 @@ make test    # go vet and the test suite with the race detector
 make cover   # fails unless the tests execute every statement of hand-written code
 ```
 
+## Releases
+
+Pushing a tag such as `v0.1.0` makes GitHub build `sisyphusd` for Linux, macOS and Windows and publish the binaries, with checksums, as a release. `scripts/build-release.sh <version> <dir>` does the same build locally.
+
 ## Try it on one machine
 
 The quick way, in one terminal, is `make demo`: it starts three nodes, runs a job across them, and shuts them down.
