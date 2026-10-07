@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -122,9 +123,11 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 			t.Errorf("the engine was asked %q, without %q", args, want)
 		}
 	}
-	// And the task's directory is gone.
-	if _, err := os.Stat(volume(engine.asked[0], "/output")); !os.IsNotExist(err) {
-		t.Errorf("the task's directory was left behind: %v", err)
+	// And the task's directory is gone, and its input with it.
+	for _, inside := range []string{"/output", "/input"} {
+		if _, err := os.Stat(volume(engine.asked[0], inside)); !os.IsNotExist(err) {
+			t.Errorf("what the task had at %s was left behind: %v", inside, err)
+		}
 	}
 
 	// A job that asks for the network gets it, and one with no limits has none.
@@ -336,5 +339,100 @@ func TestFindingOutWhetherContainersCanBeRun(t *testing.T) {
 	}
 	if got := WithContainers().Names(); !slices.Contains(got, "container") || slices.Contains(Builtin().Names(), "container") {
 		t.Errorf("the registries: %v with containers, %v without", got, Builtin().Names())
+	}
+}
+
+// counting is a store that counts how often it is opened.
+type counting struct {
+	Blobs
+	mu    sync.Mutex
+	opens int
+}
+
+func (c *counting) Open(ctx context.Context, id cid.Cid) (storage.Blob, error) {
+	c.mu.Lock()
+	c.opens++
+	c.mu.Unlock()
+	return c.Blobs.Open(ctx, id)
+}
+
+func TestTasksOfAJobOnOneMachineShareOneCopyOfItsInput(t *testing.T) {
+	store := &counting{Blobs: storage.NewMemory()}
+	ctx := context.Background()
+	input, _ := store.Put(ctx, strings.NewReader("a large input"))
+	params := []byte(`{"image":"alpine:3.20","input":"` + input.String() + `"}`)
+
+	// Two tasks of one job run at once: neither finishes until both have
+	// started, and each says where its input was.
+	var mu sync.Mutex
+	var seen []string
+	both := make(chan struct{})
+	engine := &pretend{do: func(args []string, _, _ io.Writer) (int, error) {
+		dir := volume(args, "/input")
+		given, _ := os.ReadFile(filepath.Join(dir, "data"))
+		mu.Lock()
+		seen = append(seen, dir+": "+string(given))
+		if len(seen) == 2 {
+			close(both)
+		}
+		mu.Unlock()
+		<-both
+		return 0, nil
+	}}
+	// The engine is asked by two tasks at once, so what it was asked is
+	// not kept.
+	c := Container{Engine: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+		return engine.do(args, stdout, stderr)
+	}}
+	payloads, _ := c.Split(ctx, store, params, 2)
+	var tasks sync.WaitGroup
+	for _, payload := range payloads {
+		tasks.Add(1)
+		go func() {
+			defer tasks.Done()
+			if _, err := c.Execute(ctx, store, payload); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	tasks.Wait()
+	if len(seen) != 2 || seen[0] != seen[1] || !strings.HasSuffix(seen[0], ": a large input") || store.opens != 1 {
+		t.Errorf("two tasks of one job saw %q, the input having been fetched %d times", seen, store.opens)
+	}
+	shared, _, _ := strings.Cut(seen[0], ": ")
+	if _, err := os.Stat(shared); !os.IsNotExist(err) {
+		t.Errorf("the input was left behind when its last task ended: %v", err)
+	}
+
+	// A task of another job is not given that copy, though it names the
+	// same input: it fetches its own.
+	seen, both = nil, make(chan struct{})
+	close(both)
+	first, _ := c.Split(ctx, store, params, 1)
+	second, _ := c.Split(ctx, store, params, 1)
+	engine.do = func(args []string, _, _ io.Writer) (int, error) {
+		seen = append(seen, volume(args, "/input"))
+		if len(seen) == 1 {
+			// While the first job's task runs, the second job's does.
+			if _, err := c.Execute(ctx, store, second[0]); err != nil {
+				t.Error(err)
+			}
+		}
+		return 0, nil
+	}
+	if _, err := c.Execute(ctx, store, first[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || seen[0] == seen[1] || store.opens != 3 {
+		t.Errorf("tasks of two jobs saw %q, the input having been fetched %d times", seen, store.opens)
+	}
+	if len(inputs.held) != 0 {
+		t.Errorf("inputs still held with no task running: %v", inputs.held)
+	}
+
+	// With nowhere to put it, the input is not had.
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-such-directory"))
+	if _, _, err := inputs.take(ctx, store, "job", input.String()); err == nil || len(inputs.held) != 0 {
+		t.Errorf("with no temporary directory: %v, holding %v", err, inputs.held)
 	}
 }
