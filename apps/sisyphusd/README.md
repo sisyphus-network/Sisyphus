@@ -272,10 +272,38 @@ bin/sisyphusd ask --chat <id> "And below a hundred million?"     # carry the con
 What to know before relying on it:
 
 - **It is as good as the model.** A small model may ask for the wrong parameters, or answer without computing. The model must support tool calling; many small ones do not.
-- **It has been tested against a stand-in model, not a real one making real decisions.** The streaming was checked against a real Ollama, but this machine has no tool-calling model to plan with. Expect the instructions it is given to need tuning once real models are tried.
+- **It has been tried with one real model**, `llama3.1:8b` from Ollama, which ran the right jobs and answered correctly over two turns. The tests use a stand-in. Anthropic's and OpenAI's services have not been tried for want of keys. Expect the instructions the model is given to need tuning as more models are tried.
 - **The key is kept in the node's database**, which only its owner can read, not in the operating system's keychain.
 - **One question at a time per conversation.** Two asked at once in the same conversation are recorded in whichever order they finish.
 - **It gives up after eight rounds** of asking for more without answering.
+
+## Agents
+
+The planner is the node's own agent. Any other agent that speaks the Model Context Protocol, such as Claude Code, Claude Desktop or Cursor, can use the pool too, through `sisyphusd mcp`:
+
+```sh
+bin/sisyphusd run --api-listen 127.0.0.1:50051        # the node, with its local API on
+claude mcp add sisyphus -- /path/to/sisyphusd mcp     # Claude Code; other agents take the same command in their own settings
+```
+
+```json
+{ "mcpServers": { "sisyphus": { "command": "/path/to/sisyphusd", "args": ["mcp"] } } }
+```
+
+The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir` and `--api` if the node's are not the usual ones.
+
+| Tool | What it does |
+| --- | --- |
+| `pool_status` | The workers connected, with their cores, memory, graphics cards and how busy they are. |
+| `list_workloads` | What the pool can run, the parameters each workload takes, and how many connected workers run it. |
+| `run_job` | Runs a job and waits for its result, or returns at once with `detach`. |
+| `get_job`, `list_jobs`, `cancel_job` | Look at a job, list them, stop one. |
+| `job_logs` | The steps of a job's life and what its tasks have logged. |
+| `store_file`, `fetch_file`, `list_files` | Put a file from this machine in the pool's store, bring one back, list them. |
+
+- **It is a client of the local API** and holds the node's token, which it reads from the data directory. An agent using it can do what these tools do and nothing else: it cannot change the node's settings, its members or its model.
+- **That is still a good deal.** It can spend the pool's time, run any container image on workers that allow containers, and read and write files on this machine wherever the user running it can, through `store_file` and `fetch_file`. Connect it to agents you would trust with a shell.
+- **A skill comes with it.** [`skills/sisyphus`](../../skills/sisyphus/SKILL.md) tells an agent how to use a pool well: look before submitting, how to split work with a container, what goes wrong. Copy the directory into `~/.claude/skills` for Claude Code, or wherever your agent keeps skills. It works with the tools or, without them, with the command line.
 
 ## Following and stopping a job
 
@@ -479,6 +507,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream. |
 | `apps/sisyphusd/p2p` | The node's libp2p host: one port shared with gRPC, the relay, discovery, reaching a node by its ID. |
 | `apps/sisyphusd/planner` | The loop in which a model reasons, has the pool compute, and reads the result. |
+| `apps/sisyphusd/mcpserver` | The node offered to AI agents as a Model Context Protocol server. |
 | `packages/ai` | Talking to language models: Ollama, OpenAI-style services and Anthropic. |
 | `packages/hardware` | Finding out what a machine has: processor, memory, graphics cards. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |

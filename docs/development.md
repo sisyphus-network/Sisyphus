@@ -39,6 +39,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `apps/sisyphusd/access` | Which nodes have been admitted and in what role, invitations, and the check made on every call. |
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream, which is how a worker's Kubo reaches its coordinator's without a port being opened for it. |
 | `apps/sisyphusd/p2p` | The node's libp2p host. It shares the node's one port with gRPC, relays between members on a coordinator, and reaches a member by its ID. The Go counterpart of the Rust daemon's `networking` module. |
+| `apps/sisyphusd/mcpserver` | The node as a Model Context Protocol server: ten tools over the local API, for agents other than the node's own. Tested against a real node and against one that fails. |
 | `apps/sisyphusd/planner` | The planner's loop: the model is asked, the tools it asks for are run, and it is asked again with what they returned. Tested against a scripted model. |
 | `apps/sisyphusd/blobclient` | Uploading and downloading blobs, checked against their CIDs. |
 | `apps/sisyphusd` | The `sisyphusd` command: flags, startup, the command-line client. |
