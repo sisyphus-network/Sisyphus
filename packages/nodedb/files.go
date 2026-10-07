@@ -13,6 +13,8 @@ type File struct {
 	Name   string
 	Size   uint64
 	Stored time.Time
+	// Private is whether it was sealed with the node's key.
+	Private bool
 }
 
 // Files lists the stored files, newest first.
@@ -21,13 +23,13 @@ func (db *DB) Files() ([]File, error) {
 	err := db.read(func(rows *sql.Rows) error {
 		var f File
 		var size, stored int64
-		if err := rows.Scan(&f.CID, &f.Name, &size, &stored); err != nil {
+		if err := rows.Scan(&f.CID, &f.Name, &size, &stored, &f.Private); err != nil {
 			return err
 		}
 		f.Size, f.Stored = uint64(size), moment(stored)
 		files = append(files, f)
 		return nil
-	}, `SELECT cid, name, size_bytes, stored_at_ns FROM files ORDER BY stored_at_ns DESC, cid`)
+	}, `SELECT cid, name, size_bytes, stored_at_ns, private FROM files ORDER BY stored_at_ns DESC, cid`)
 	if err != nil {
 		return nil, fmt.Errorf("load files: %w", err)
 	}
@@ -38,8 +40,8 @@ func (db *DB) Files() ([]File, error) {
 // file, under the name and time it was last stored with.
 func (db *DB) AddFile(f File) error {
 	return db.durably("save file", func(b *batch) {
-		b.exec(`INSERT OR REPLACE INTO files (cid, name, size_bytes, stored_at_ns) VALUES (?, ?, ?, ?)`,
-			f.CID, f.Name, int64(f.Size), nanos(f.Stored))
+		b.exec(`INSERT OR REPLACE INTO files (cid, name, size_bytes, stored_at_ns, private) VALUES (?, ?, ?, ?, ?)`,
+			f.CID, f.Name, int64(f.Size), nanos(f.Stored), f.Private)
 	})
 }
 

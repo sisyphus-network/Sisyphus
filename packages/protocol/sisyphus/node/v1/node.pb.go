@@ -1408,6 +1408,7 @@ type Job struct {
 	TaskTimeoutSeconds uint32 `protobuf:"varint,14,opt,name=task_timeout_seconds,json=taskTimeoutSeconds,proto3" json:"task_timeout_seconds,omitempty"`
 	MinMemoryBytes     uint64 `protobuf:"varint,15,opt,name=min_memory_bytes,json=minMemoryBytes,proto3" json:"min_memory_bytes,omitempty"`
 	MinGpus            uint32 `protobuf:"varint,16,opt,name=min_gpus,json=minGpus,proto3" json:"min_gpus,omitempty"`
+	Private            bool   `protobuf:"varint,17,opt,name=private,proto3" json:"private,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1554,6 +1555,13 @@ func (x *Job) GetMinGpus() uint32 {
 	return 0
 }
 
+func (x *Job) GetPrivate() bool {
+	if x != nil {
+		return x.Private
+	}
+	return false
+}
+
 type JobTask struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Index uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
@@ -1664,8 +1672,13 @@ type SubmitJobRequest struct {
 	// many graphics cards. Zero asks nothing.
 	MinMemoryBytes uint64 `protobuf:"varint,6,opt,name=min_memory_bytes,json=minMemoryBytes,proto3" json:"min_memory_bytes,omitempty"`
 	MinGpus        uint32 `protobuf:"varint,7,opt,name=min_gpus,json=minGpus,proto3" json:"min_gpus,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Make the job private: everything it stores is sealed with this node's
+	// key, and inputs stored as private files are opened with it. The pool's
+	// other members hold only what they cannot read; the workers that run
+	// the job's tasks are given the key.
+	Private       bool `protobuf:"varint,8,opt,name=private,proto3" json:"private,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SubmitJobRequest) Reset() {
@@ -1745,6 +1758,13 @@ func (x *SubmitJobRequest) GetMinGpus() uint32 {
 		return x.MinGpus
 	}
 	return 0
+}
+
+func (x *SubmitJobRequest) GetPrivate() bool {
+	if x != nil {
+		return x.Private
+	}
+	return false
 }
 
 type SubmitJobResponse struct {
@@ -3069,8 +3089,12 @@ func (*DeleteChatResponse) Descriptor() ([]byte, []int) {
 type StoreFileRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// What to call the file, in the first message.
-	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Data          []byte `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Data []byte `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	// In the first message: seal the file with this node's key before it is
+	// stored, so that the rest of the pool holds only what it cannot read.
+	// Give it to jobs submitted as private.
+	Private       bool `protobuf:"varint,3,opt,name=private,proto3" json:"private,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3119,12 +3143,20 @@ func (x *StoreFileRequest) GetData() []byte {
 	return nil
 }
 
+func (x *StoreFileRequest) GetPrivate() bool {
+	if x != nil {
+		return x.Private
+	}
+	return false
+}
+
 type File struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Cid           string                 `protobuf:"bytes,1,opt,name=cid,proto3" json:"cid,omitempty"`
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	SizeBytes     uint64                 `protobuf:"varint,3,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
 	StoredAtMs    int64                  `protobuf:"varint,4,opt,name=stored_at_ms,json=storedAtMs,proto3" json:"stored_at_ms,omitempty"`
+	Private       bool                   `protobuf:"varint,5,opt,name=private,proto3" json:"private,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3185,6 +3217,13 @@ func (x *File) GetStoredAtMs() int64 {
 		return x.StoredAtMs
 	}
 	return 0
+}
+
+func (x *File) GetPrivate() bool {
+	if x != nil {
+		return x.Private
+	}
+	return false
 }
 
 type FetchFileRequest struct {
@@ -3761,6 +3800,113 @@ func (*RemoveMemberResponse) Descriptor() ([]byte, []int) {
 	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{64}
 }
 
+type JoinPoolRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Where the other node listens, as host:port.
+	Address string `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	// What its owner made with CreateInvitation or `pool invite`.
+	Invitation    string `protobuf:"bytes,2,opt,name=invitation,proto3" json:"invitation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JoinPoolRequest) Reset() {
+	*x = JoinPoolRequest{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinPoolRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinPoolRequest) ProtoMessage() {}
+
+func (x *JoinPoolRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinPoolRequest.ProtoReflect.Descriptor instead.
+func (*JoinPoolRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *JoinPoolRequest) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *JoinPoolRequest) GetInvitation() string {
+	if x != nil {
+		return x.Invitation
+	}
+	return ""
+}
+
+type JoinPoolResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The node whose pool was joined.
+	PeerId        string   `protobuf:"bytes,1,opt,name=peer_id,json=peerId,proto3" json:"peer_id,omitempty"`
+	Role          PoolRole `protobuf:"varint,2,opt,name=role,proto3,enum=sisyphus.node.v1.PoolRole" json:"role,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JoinPoolResponse) Reset() {
+	*x = JoinPoolResponse{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinPoolResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinPoolResponse) ProtoMessage() {}
+
+func (x *JoinPoolResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinPoolResponse.ProtoReflect.Descriptor instead.
+func (*JoinPoolResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{66}
+}
+
+func (x *JoinPoolResponse) GetPeerId() string {
+	if x != nil {
+		return x.PeerId
+	}
+	return ""
+}
+
+func (x *JoinPoolResponse) GetRole() PoolRole {
+	if x != nil {
+		return x.Role
+	}
+	return PoolRole_POOL_ROLE_UNSPECIFIED
+}
+
 var File_sisyphus_node_v1_node_proto protoreflect.FileDescriptor
 
 const file_sisyphus_node_v1_node_proto_rawDesc = "" +
@@ -3842,7 +3988,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x04gpus\x18\x0f \x03(\v2\x1b.sisyphus.node.v1.WorkerGpuR\x04gpus\"B\n" +
 	"\tWorkerGpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xb1\x04\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xcb\x04\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1a\n" +
 	"\bworkload\x18\x02 \x01(\tR\bworkload\x12\x16\n" +
@@ -3861,7 +4007,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\bprogress\x18\r \x01(\x01R\bprogress\x120\n" +
 	"\x14task_timeout_seconds\x18\x0e \x01(\rR\x12taskTimeoutSeconds\x12(\n" +
 	"\x10min_memory_bytes\x18\x0f \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
-	"\bmin_gpus\x18\x10 \x01(\rR\aminGpus\"\xd7\x01\n" +
+	"\bmin_gpus\x18\x10 \x01(\rR\aminGpus\x12\x18\n" +
+	"\aprivate\x18\x11 \x01(\bR\aprivate\"\xd7\x01\n" +
 	"\aJobTask\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x120\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1a.sisyphus.node.v1.JobStateR\x05state\x12\x18\n" +
@@ -3870,7 +4017,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\vworker_name\x18\x05 \x01(\tR\n" +
 	"workerName\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1a\n" +
-	"\bprogress\x18\a \x01(\x01R\bprogress\"\x89\x02\n" +
+	"\bprogress\x18\a \x01(\x01R\bprogress\"\xa3\x02\n" +
 	"\x10SubmitJobRequest\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
@@ -3878,7 +4025,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\tmax_tasks\x18\x04 \x01(\rR\bmaxTasks\x120\n" +
 	"\x14task_timeout_seconds\x18\x05 \x01(\rR\x12taskTimeoutSeconds\x12(\n" +
 	"\x10min_memory_bytes\x18\x06 \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
-	"\bmin_gpus\x18\a \x01(\rR\aminGpus\"<\n" +
+	"\bmin_gpus\x18\a \x01(\rR\aminGpus\x12\x18\n" +
+	"\aprivate\x18\b \x01(\bR\aprivate\"<\n" +
 	"\x11SubmitJobResponse\x12'\n" +
 	"\x03job\x18\x01 \x01(\v2\x15.sisyphus.node.v1.JobR\x03job\")\n" +
 	"\x10CancelJobRequest\x12\x15\n" +
@@ -3953,17 +4101,19 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\targuments\x18\x02 \x01(\tR\targuments\",\n" +
 	"\x11DeleteChatRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\"\x14\n" +
-	"\x12DeleteChatResponse\":\n" +
+	"\x12DeleteChatResponse\"T\n" +
 	"\x10StoreFileRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"m\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\x12\x18\n" +
+	"\aprivate\x18\x03 \x01(\bR\aprivate\"\x87\x01\n" +
 	"\x04File\x12\x10\n" +
 	"\x03cid\x18\x01 \x01(\tR\x03cid\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x03 \x01(\x04R\tsizeBytes\x12 \n" +
 	"\fstored_at_ms\x18\x04 \x01(\x03R\n" +
-	"storedAtMs\"$\n" +
+	"storedAtMs\x12\x18\n" +
+	"\aprivate\x18\x05 \x01(\bR\aprivate\"$\n" +
 	"\x10FetchFileRequest\x12\x10\n" +
 	"\x03cid\x18\x01 \x01(\tR\x03cid\"'\n" +
 	"\x11FetchFileResponse\x12\x12\n" +
@@ -3994,7 +4144,15 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"joinedAtMs\".\n" +
 	"\x13RemoveMemberRequest\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\"\x16\n" +
-	"\x14RemoveMemberResponse*\x89\x01\n" +
+	"\x14RemoveMemberResponse\"K\n" +
+	"\x0fJoinPoolRequest\x12\x18\n" +
+	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x1e\n" +
+	"\n" +
+	"invitation\x18\x02 \x01(\tR\n" +
+	"invitation\"[\n" +
+	"\x10JoinPoolResponse\x12\x17\n" +
+	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12.\n" +
+	"\x04role\x18\x02 \x01(\x0e2\x1a.sisyphus.node.v1.PoolRoleR\x04role*\x89\x01\n" +
 	"\x13PeerConnectionState\x12%\n" +
 	"!PEER_CONNECTION_STATE_UNSPECIFIED\x10\x00\x12&\n" +
 	"\"PEER_CONNECTION_STATE_DISCONNECTED\x10\x01\x12#\n" +
@@ -4013,7 +4171,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\bPoolRole\x12\x19\n" +
 	"\x15POOL_ROLE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10POOL_ROLE_WORKER\x10\x01\x12\x14\n" +
-	"\x10POOL_ROLE_CLIENT\x10\x022\xeb\x14\n" +
+	"\x10POOL_ROLE_CLIENT\x10\x022\xbe\x15\n" +
 	"\vNodeService\x12Z\n" +
 	"\vGetNodeInfo\x12$.sisyphus.node.v1.GetNodeInfoRequest\x1a%.sisyphus.node.v1.GetNodeInfoResponse\x12T\n" +
 	"\tListPeers\x12\".sisyphus.node.v1.ListPeersRequest\x1a#.sisyphus.node.v1.ListPeersResponse\x12X\n" +
@@ -4047,7 +4205,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"RemoveFile\x12#.sisyphus.node.v1.RemoveFileRequest\x1a$.sisyphus.node.v1.RemoveFileResponse\x12i\n" +
 	"\x10CreateInvitation\x12).sisyphus.node.v1.CreateInvitationRequest\x1a*.sisyphus.node.v1.CreateInvitationResponse\x12Z\n" +
 	"\vListMembers\x12$.sisyphus.node.v1.ListMembersRequest\x1a%.sisyphus.node.v1.ListMembersResponse\x12]\n" +
-	"\fRemoveMember\x12%.sisyphus.node.v1.RemoveMemberRequest\x1a&.sisyphus.node.v1.RemoveMemberResponseBPZNgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1b\x06proto3"
+	"\fRemoveMember\x12%.sisyphus.node.v1.RemoveMemberRequest\x1a&.sisyphus.node.v1.RemoveMemberResponse\x12Q\n" +
+	"\bJoinPool\x12!.sisyphus.node.v1.JoinPoolRequest\x1a\".sisyphus.node.v1.JoinPoolResponseBPZNgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1b\x06proto3"
 
 var (
 	file_sisyphus_node_v1_node_proto_rawDescOnce sync.Once
@@ -4062,7 +4221,7 @@ func file_sisyphus_node_v1_node_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_node_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_sisyphus_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 65)
+var file_sisyphus_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 67)
 var file_sisyphus_node_v1_node_proto_goTypes = []any{
 	(PeerConnectionState)(0),                  // 0: sisyphus.node.v1.PeerConnectionState
 	(JobState)(0),                             // 1: sisyphus.node.v1.JobState
@@ -4133,6 +4292,8 @@ var file_sisyphus_node_v1_node_proto_goTypes = []any{
 	(*PoolMember)(nil),                        // 66: sisyphus.node.v1.PoolMember
 	(*RemoveMemberRequest)(nil),               // 67: sisyphus.node.v1.RemoveMemberRequest
 	(*RemoveMemberResponse)(nil),              // 68: sisyphus.node.v1.RemoveMemberResponse
+	(*JoinPoolRequest)(nil),                   // 69: sisyphus.node.v1.JoinPoolRequest
+	(*JoinPoolResponse)(nil),                  // 70: sisyphus.node.v1.JoinPoolResponse
 }
 var file_sisyphus_node_v1_node_proto_depIdxs = []int32{
 	18, // 0: sisyphus.node.v1.GetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
@@ -4158,69 +4319,72 @@ var file_sisyphus_node_v1_node_proto_depIdxs = []int32{
 	3,  // 20: sisyphus.node.v1.CreateInvitationRequest.role:type_name -> sisyphus.node.v1.PoolRole
 	66, // 21: sisyphus.node.v1.ListMembersResponse.members:type_name -> sisyphus.node.v1.PoolMember
 	3,  // 22: sisyphus.node.v1.PoolMember.role:type_name -> sisyphus.node.v1.PoolRole
-	4,  // 23: sisyphus.node.v1.NodeService.GetNodeInfo:input_type -> sisyphus.node.v1.GetNodeInfoRequest
-	6,  // 24: sisyphus.node.v1.NodeService.ListPeers:input_type -> sisyphus.node.v1.ListPeersRequest
-	7,  // 25: sisyphus.node.v1.NodeService.WatchPeers:input_type -> sisyphus.node.v1.WatchPeersRequest
-	8,  // 26: sisyphus.node.v1.NodeService.GetBootstrapPeers:input_type -> sisyphus.node.v1.GetBootstrapPeersRequest
-	10, // 27: sisyphus.node.v1.NodeService.SetBootstrapPeers:input_type -> sisyphus.node.v1.SetBootstrapPeersRequest
-	12, // 28: sisyphus.node.v1.NodeService.ConnectPeer:input_type -> sisyphus.node.v1.ConnectPeerRequest
-	14, // 29: sisyphus.node.v1.NodeService.SetPeerComputeTrust:input_type -> sisyphus.node.v1.SetPeerComputeTrustRequest
-	16, // 30: sisyphus.node.v1.NodeService.SetPeerComputePermissions:input_type -> sisyphus.node.v1.SetPeerComputePermissionsRequest
-	21, // 31: sisyphus.node.v1.NodeService.ListWorkers:input_type -> sisyphus.node.v1.ListWorkersRequest
-	27, // 32: sisyphus.node.v1.NodeService.SubmitJob:input_type -> sisyphus.node.v1.SubmitJobRequest
-	33, // 33: sisyphus.node.v1.NodeService.GetJob:input_type -> sisyphus.node.v1.GetJobRequest
-	35, // 34: sisyphus.node.v1.NodeService.ListJobs:input_type -> sisyphus.node.v1.ListJobsRequest
-	36, // 35: sisyphus.node.v1.NodeService.WatchJobs:input_type -> sisyphus.node.v1.WatchJobsRequest
-	29, // 36: sisyphus.node.v1.NodeService.CancelJob:input_type -> sisyphus.node.v1.CancelJobRequest
-	31, // 37: sisyphus.node.v1.NodeService.WatchJobEvents:input_type -> sisyphus.node.v1.WatchJobEventsRequest
-	38, // 38: sisyphus.node.v1.NodeService.GetModelConfig:input_type -> sisyphus.node.v1.GetModelConfigRequest
-	40, // 39: sisyphus.node.v1.NodeService.SetModelConfig:input_type -> sisyphus.node.v1.SetModelConfigRequest
-	41, // 40: sisyphus.node.v1.NodeService.ListModels:input_type -> sisyphus.node.v1.ListModelsRequest
-	43, // 41: sisyphus.node.v1.NodeService.Ask:input_type -> sisyphus.node.v1.AskRequest
-	45, // 42: sisyphus.node.v1.NodeService.ListChats:input_type -> sisyphus.node.v1.ListChatsRequest
-	48, // 43: sisyphus.node.v1.NodeService.GetChat:input_type -> sisyphus.node.v1.GetChatRequest
-	52, // 44: sisyphus.node.v1.NodeService.DeleteChat:input_type -> sisyphus.node.v1.DeleteChatRequest
-	54, // 45: sisyphus.node.v1.NodeService.StoreFile:input_type -> sisyphus.node.v1.StoreFileRequest
-	56, // 46: sisyphus.node.v1.NodeService.FetchFile:input_type -> sisyphus.node.v1.FetchFileRequest
-	58, // 47: sisyphus.node.v1.NodeService.ListFiles:input_type -> sisyphus.node.v1.ListFilesRequest
-	60, // 48: sisyphus.node.v1.NodeService.RemoveFile:input_type -> sisyphus.node.v1.RemoveFileRequest
-	62, // 49: sisyphus.node.v1.NodeService.CreateInvitation:input_type -> sisyphus.node.v1.CreateInvitationRequest
-	64, // 50: sisyphus.node.v1.NodeService.ListMembers:input_type -> sisyphus.node.v1.ListMembersRequest
-	67, // 51: sisyphus.node.v1.NodeService.RemoveMember:input_type -> sisyphus.node.v1.RemoveMemberRequest
-	5,  // 52: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
-	19, // 53: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	19, // 54: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	9,  // 55: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
-	11, // 56: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
-	13, // 57: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
-	15, // 58: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
-	17, // 59: sisyphus.node.v1.NodeService.SetPeerComputePermissions:output_type -> sisyphus.node.v1.SetPeerComputePermissionsResponse
-	22, // 60: sisyphus.node.v1.NodeService.ListWorkers:output_type -> sisyphus.node.v1.ListWorkersResponse
-	28, // 61: sisyphus.node.v1.NodeService.SubmitJob:output_type -> sisyphus.node.v1.SubmitJobResponse
-	34, // 62: sisyphus.node.v1.NodeService.GetJob:output_type -> sisyphus.node.v1.GetJobResponse
-	37, // 63: sisyphus.node.v1.NodeService.ListJobs:output_type -> sisyphus.node.v1.ListJobsResponse
-	37, // 64: sisyphus.node.v1.NodeService.WatchJobs:output_type -> sisyphus.node.v1.ListJobsResponse
-	30, // 65: sisyphus.node.v1.NodeService.CancelJob:output_type -> sisyphus.node.v1.CancelJobResponse
-	32, // 66: sisyphus.node.v1.NodeService.WatchJobEvents:output_type -> sisyphus.node.v1.JobEvent
-	39, // 67: sisyphus.node.v1.NodeService.GetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
-	39, // 68: sisyphus.node.v1.NodeService.SetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
-	42, // 69: sisyphus.node.v1.NodeService.ListModels:output_type -> sisyphus.node.v1.ListModelsResponse
-	44, // 70: sisyphus.node.v1.NodeService.Ask:output_type -> sisyphus.node.v1.AskEvent
-	46, // 71: sisyphus.node.v1.NodeService.ListChats:output_type -> sisyphus.node.v1.ListChatsResponse
-	49, // 72: sisyphus.node.v1.NodeService.GetChat:output_type -> sisyphus.node.v1.GetChatResponse
-	53, // 73: sisyphus.node.v1.NodeService.DeleteChat:output_type -> sisyphus.node.v1.DeleteChatResponse
-	55, // 74: sisyphus.node.v1.NodeService.StoreFile:output_type -> sisyphus.node.v1.File
-	57, // 75: sisyphus.node.v1.NodeService.FetchFile:output_type -> sisyphus.node.v1.FetchFileResponse
-	59, // 76: sisyphus.node.v1.NodeService.ListFiles:output_type -> sisyphus.node.v1.ListFilesResponse
-	61, // 77: sisyphus.node.v1.NodeService.RemoveFile:output_type -> sisyphus.node.v1.RemoveFileResponse
-	63, // 78: sisyphus.node.v1.NodeService.CreateInvitation:output_type -> sisyphus.node.v1.CreateInvitationResponse
-	65, // 79: sisyphus.node.v1.NodeService.ListMembers:output_type -> sisyphus.node.v1.ListMembersResponse
-	68, // 80: sisyphus.node.v1.NodeService.RemoveMember:output_type -> sisyphus.node.v1.RemoveMemberResponse
-	52, // [52:81] is the sub-list for method output_type
-	23, // [23:52] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	3,  // 23: sisyphus.node.v1.JoinPoolResponse.role:type_name -> sisyphus.node.v1.PoolRole
+	4,  // 24: sisyphus.node.v1.NodeService.GetNodeInfo:input_type -> sisyphus.node.v1.GetNodeInfoRequest
+	6,  // 25: sisyphus.node.v1.NodeService.ListPeers:input_type -> sisyphus.node.v1.ListPeersRequest
+	7,  // 26: sisyphus.node.v1.NodeService.WatchPeers:input_type -> sisyphus.node.v1.WatchPeersRequest
+	8,  // 27: sisyphus.node.v1.NodeService.GetBootstrapPeers:input_type -> sisyphus.node.v1.GetBootstrapPeersRequest
+	10, // 28: sisyphus.node.v1.NodeService.SetBootstrapPeers:input_type -> sisyphus.node.v1.SetBootstrapPeersRequest
+	12, // 29: sisyphus.node.v1.NodeService.ConnectPeer:input_type -> sisyphus.node.v1.ConnectPeerRequest
+	14, // 30: sisyphus.node.v1.NodeService.SetPeerComputeTrust:input_type -> sisyphus.node.v1.SetPeerComputeTrustRequest
+	16, // 31: sisyphus.node.v1.NodeService.SetPeerComputePermissions:input_type -> sisyphus.node.v1.SetPeerComputePermissionsRequest
+	21, // 32: sisyphus.node.v1.NodeService.ListWorkers:input_type -> sisyphus.node.v1.ListWorkersRequest
+	27, // 33: sisyphus.node.v1.NodeService.SubmitJob:input_type -> sisyphus.node.v1.SubmitJobRequest
+	33, // 34: sisyphus.node.v1.NodeService.GetJob:input_type -> sisyphus.node.v1.GetJobRequest
+	35, // 35: sisyphus.node.v1.NodeService.ListJobs:input_type -> sisyphus.node.v1.ListJobsRequest
+	36, // 36: sisyphus.node.v1.NodeService.WatchJobs:input_type -> sisyphus.node.v1.WatchJobsRequest
+	29, // 37: sisyphus.node.v1.NodeService.CancelJob:input_type -> sisyphus.node.v1.CancelJobRequest
+	31, // 38: sisyphus.node.v1.NodeService.WatchJobEvents:input_type -> sisyphus.node.v1.WatchJobEventsRequest
+	38, // 39: sisyphus.node.v1.NodeService.GetModelConfig:input_type -> sisyphus.node.v1.GetModelConfigRequest
+	40, // 40: sisyphus.node.v1.NodeService.SetModelConfig:input_type -> sisyphus.node.v1.SetModelConfigRequest
+	41, // 41: sisyphus.node.v1.NodeService.ListModels:input_type -> sisyphus.node.v1.ListModelsRequest
+	43, // 42: sisyphus.node.v1.NodeService.Ask:input_type -> sisyphus.node.v1.AskRequest
+	45, // 43: sisyphus.node.v1.NodeService.ListChats:input_type -> sisyphus.node.v1.ListChatsRequest
+	48, // 44: sisyphus.node.v1.NodeService.GetChat:input_type -> sisyphus.node.v1.GetChatRequest
+	52, // 45: sisyphus.node.v1.NodeService.DeleteChat:input_type -> sisyphus.node.v1.DeleteChatRequest
+	54, // 46: sisyphus.node.v1.NodeService.StoreFile:input_type -> sisyphus.node.v1.StoreFileRequest
+	56, // 47: sisyphus.node.v1.NodeService.FetchFile:input_type -> sisyphus.node.v1.FetchFileRequest
+	58, // 48: sisyphus.node.v1.NodeService.ListFiles:input_type -> sisyphus.node.v1.ListFilesRequest
+	60, // 49: sisyphus.node.v1.NodeService.RemoveFile:input_type -> sisyphus.node.v1.RemoveFileRequest
+	62, // 50: sisyphus.node.v1.NodeService.CreateInvitation:input_type -> sisyphus.node.v1.CreateInvitationRequest
+	64, // 51: sisyphus.node.v1.NodeService.ListMembers:input_type -> sisyphus.node.v1.ListMembersRequest
+	67, // 52: sisyphus.node.v1.NodeService.RemoveMember:input_type -> sisyphus.node.v1.RemoveMemberRequest
+	69, // 53: sisyphus.node.v1.NodeService.JoinPool:input_type -> sisyphus.node.v1.JoinPoolRequest
+	5,  // 54: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
+	19, // 55: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	19, // 56: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	9,  // 57: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
+	11, // 58: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
+	13, // 59: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
+	15, // 60: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
+	17, // 61: sisyphus.node.v1.NodeService.SetPeerComputePermissions:output_type -> sisyphus.node.v1.SetPeerComputePermissionsResponse
+	22, // 62: sisyphus.node.v1.NodeService.ListWorkers:output_type -> sisyphus.node.v1.ListWorkersResponse
+	28, // 63: sisyphus.node.v1.NodeService.SubmitJob:output_type -> sisyphus.node.v1.SubmitJobResponse
+	34, // 64: sisyphus.node.v1.NodeService.GetJob:output_type -> sisyphus.node.v1.GetJobResponse
+	37, // 65: sisyphus.node.v1.NodeService.ListJobs:output_type -> sisyphus.node.v1.ListJobsResponse
+	37, // 66: sisyphus.node.v1.NodeService.WatchJobs:output_type -> sisyphus.node.v1.ListJobsResponse
+	30, // 67: sisyphus.node.v1.NodeService.CancelJob:output_type -> sisyphus.node.v1.CancelJobResponse
+	32, // 68: sisyphus.node.v1.NodeService.WatchJobEvents:output_type -> sisyphus.node.v1.JobEvent
+	39, // 69: sisyphus.node.v1.NodeService.GetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
+	39, // 70: sisyphus.node.v1.NodeService.SetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
+	42, // 71: sisyphus.node.v1.NodeService.ListModels:output_type -> sisyphus.node.v1.ListModelsResponse
+	44, // 72: sisyphus.node.v1.NodeService.Ask:output_type -> sisyphus.node.v1.AskEvent
+	46, // 73: sisyphus.node.v1.NodeService.ListChats:output_type -> sisyphus.node.v1.ListChatsResponse
+	49, // 74: sisyphus.node.v1.NodeService.GetChat:output_type -> sisyphus.node.v1.GetChatResponse
+	53, // 75: sisyphus.node.v1.NodeService.DeleteChat:output_type -> sisyphus.node.v1.DeleteChatResponse
+	55, // 76: sisyphus.node.v1.NodeService.StoreFile:output_type -> sisyphus.node.v1.File
+	57, // 77: sisyphus.node.v1.NodeService.FetchFile:output_type -> sisyphus.node.v1.FetchFileResponse
+	59, // 78: sisyphus.node.v1.NodeService.ListFiles:output_type -> sisyphus.node.v1.ListFilesResponse
+	61, // 79: sisyphus.node.v1.NodeService.RemoveFile:output_type -> sisyphus.node.v1.RemoveFileResponse
+	63, // 80: sisyphus.node.v1.NodeService.CreateInvitation:output_type -> sisyphus.node.v1.CreateInvitationResponse
+	65, // 81: sisyphus.node.v1.NodeService.ListMembers:output_type -> sisyphus.node.v1.ListMembersResponse
+	68, // 82: sisyphus.node.v1.NodeService.RemoveMember:output_type -> sisyphus.node.v1.RemoveMemberResponse
+	70, // 83: sisyphus.node.v1.NodeService.JoinPool:output_type -> sisyphus.node.v1.JoinPoolResponse
+	54, // [54:84] is the sub-list for method output_type
+	24, // [24:54] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_node_v1_node_proto_init() }
@@ -4234,7 +4398,7 @@ func file_sisyphus_node_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_node_v1_node_proto_rawDesc), len(file_sisyphus_node_v1_node_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   65,
+			NumMessages:   67,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -58,6 +58,7 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `CreateInvitation` | yes | An invitation for another machine to join with, as a worker or as a client that only submits jobs. Works once; lasts an hour unless `ttl_seconds` says otherwise. |
 | `ListMembers` | | The nodes admitted to the pool, with role and when they joined. |
 | `RemoveMember` | yes | Take a node out of the pool and disconnect it. |
+| `JoinPool` | yes | Join another node's pool with its address and an invitation from it, and start working for it. No restart. |
 
 The two `Watch` calls are the ones to build live views on. Each message carries a `revision` that counts up from one.
 
@@ -141,10 +142,24 @@ Show the invitation with a copy button and its expiry. Once used, the machine ap
 
 These calls exist only on a node that coordinates a pool. On a worker-only node they fail with `FAILED_PRECONDITION`.
 
+## Private files and jobs
+
+Set `private` in the first `StoreFile` message and the file is sealed before the pool holds it. Set `private` on `SubmitJob` and everything the job stores is sealed too, and it can read private files. `FetchFile` unseals what this node sealed, so the UI treats private and ordinary files alike; `File.private` and `Job.private` are there to show a lock.
+
+What this protects: the pool's other members, and anyone who gets at the store, hold only what they cannot read. What it does not: the workers that run a private job's tasks are given the key for the length of the job, as they must be to do the work. Run private jobs on workers you trust with the data.
+
+The key is one the node makes the first time it is needed and keeps in `private.key` in its data directory. It is an ordinary key: `sisyphusd blob get --key-file <data dir>/private.key <cid>` reads the same files. **If that file is lost, so is everything sealed with it.** A private job cannot read a file that was not stored as private by this node, and a job that is not private cannot read one that was.
+
+## Joining someone else's pool
+
+`JoinPool` takes the other node's address as `host:port` and an invitation its owner made (`CreateInvitation` on their side, or `pool invite`). On success this node is a worker of that pool and starts taking its tasks within a moment, beside its own work; the peer appears in `ListPeers` with `takes_work` and then `this_node_works_for` set. To leave, set `takes_work` to false with `SetPeerComputePermissions`.
+
+It needs a node that runs a worker, which is every node unless it was started with `--role coordinator`. An invitation for a client is accepted too, and then no work is taken.
+
 ## What the API does not have yet
 
-- **Private jobs**, which take a key and store everything sealed. For now: `sisyphusd job submit --key-file`.
-- **Joining someone else's pool from the desktop.** A node joins when it is started with `--join`.
+- **Submitting jobs to a pool this node has joined as a client.** `SubmitJob` gives work to this node's own pool.
+- **Choosing the key** private files are sealed with, or having more than one.
 
 ## Changing the API
 

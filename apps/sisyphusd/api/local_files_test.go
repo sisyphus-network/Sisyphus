@@ -11,14 +11,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
@@ -298,5 +301,149 @@ func TestMembershipNeedsTheTokenAndAPool(t *testing.T) {
 	}
 	if _, err := without.ListMembers(context.Background(), &nodepb.ListMembersRequest{}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("ListMembers on a node with no pool: %v, want FailedPrecondition", err)
+	}
+}
+
+// fromDesktop is the context of a call that arrived with the node's token.
+func fromDesktop() context.Context {
+	return metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+}
+
+// brokenUpload is an upload that fails before anything arrives.
+type brokenUpload struct{ grpc.ServerStream }
+
+func (brokenUpload) Context() context.Context                { return fromDesktop() }
+func (brokenUpload) Recv() (*nodepb.StoreFileRequest, error) { return nil, errDisk }
+func (brokenUpload) SendAndClose(*nodepb.File) error         { return nil }
+
+// fetched is where a FetchFile sends, for a call made directly.
+type fetched struct{ grpc.ServerStream }
+
+func (fetched) Context() context.Context             { return fromDesktop() }
+func (fetched) Send(*nodepb.FetchFileResponse) error { return nil }
+
+// unseekable is a store whose blobs cannot be read from the start again.
+type unseekable struct{ *storage.Store }
+
+func (u unseekable) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) {
+	blob, err := u.Store.Open(ctx, c)
+	return stuckBlob{blob}, err
+}
+
+type stuckBlob struct{ storage.Blob }
+
+func (stuckBlob) Seek(int64, int) (int64, error) { return 0, errDisk }
+
+func TestPrivateFilesNeedAKeyThatCanBeHad(t *testing.T) {
+	ctx := withToken("the-token")
+	store := storage.NewMemory()
+
+	// A node with no key to seal with stores what is not private, and
+	// refuses what is.
+	keyless := serveLocal(t, LocalConfig{Store: store, Files: newFileList(t), Jobs: &office{}})
+	private := func(client nodepb.NodeServiceClient) error {
+		stream, err := client.StoreFile(ctx)
+		if err != nil {
+			return err
+		}
+		stream.Send(&nodepb.StoreFileRequest{Name: "a", Private: true, Data: []byte("data")})
+		_, err = stream.CloseAndRecv()
+		return err
+	}
+	if err := private(keyless); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "keeps no key") {
+		t.Errorf("a private file on a node with no key: %v", err)
+	}
+	if _, err := keyless.SubmitJob(ctx, &nodepb.SubmitJobRequest{Workload: "primes", Private: true}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("a private job on a node with no key: %v, want FailedPrecondition", err)
+	}
+
+	// One whose key cannot be read says so.
+	lost := serveLocal(t, LocalConfig{Store: store, Files: newFileList(t), SealingKey: func() (sealed.Key, error) { return sealed.Key{}, errDisk }})
+	if err := private(lost); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "sealing key") {
+		t.Errorf("a private file when the key cannot be read: %v", err)
+	}
+
+	// Something sealed is not opened without a key either, and something
+	// that only begins like a sealed blob is not opened at all.
+	key := sealed.NewKey()
+	c, err := store.Put(context.Background(), sealed.Encrypt(key, strings.NewReader("a secret")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fetchFile(ctx, keyless, c.String()); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "keeps no key") {
+		t.Errorf("fetching a sealed blob on a node with no key: %v", err)
+	}
+	keyed := serveLocal(t, LocalConfig{Store: store, Files: newFileList(t), SealingKey: func() (sealed.Key, error) { return key, nil }})
+	if got, err := fetchFile(ctx, keyed, c.String()); err != nil || string(got) != "a secret" {
+		t.Errorf("fetching a sealed blob with its key: %q, %v", got, err)
+	}
+	if err := private(keyed); err != nil {
+		t.Errorf("a private file on a node with a key: %v", err)
+	}
+	listed, err := keyed.ListFiles(ctx, &nodepb.ListFilesRequest{})
+	if err != nil || len(listed.GetFiles()) != 1 || !listed.GetFiles()[0].GetPrivate() || listed.GetFiles()[0].GetSizeBytes() != 4 {
+		t.Fatalf("the private file listed: %v, %v", listed, err)
+	}
+	if got, err := fetchFile(ctx, keyed, listed.GetFiles()[0].GetCid()); err != nil || string(got) != "data" {
+		t.Errorf("the private file fetched: %q, %v", got, err)
+	}
+	stub, err := store.Put(context.Background(), strings.NewReader("SISYENC1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fetchFile(ctx, keyed, stub.String()); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "not that of any sealed blob") {
+		t.Errorf("fetching the mere beginning of a sealed blob: %v", err)
+	}
+}
+
+func TestFileStreamsThatBreakAreReported(t *testing.T) {
+	store, id := storeWithBlob(t)
+	service := &localService{cfg: LocalConfig{Token: "the-token", Store: store, Files: newFileList(t)}}
+	if err := service.StoreFile(brokenUpload{}); !errors.Is(err, errDisk) {
+		t.Errorf("an upload that fails at once: %v", err)
+	}
+	service.cfg.Store = unseekable{store}
+	if err := service.FetchFile(&nodepb.FetchFileRequest{Cid: id}, fetched{}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "disk on fire") {
+		t.Errorf("fetching a blob that cannot be read from its start: %v", err)
+	}
+}
+
+func TestJoiningAPoolThroughTheLocalAPI(t *testing.T) {
+	ctx := withToken("the-token")
+	req := &nodepb.JoinPoolRequest{Address: "rig.example.net:7700", Invitation: "12D3KooWinviter:token"}
+
+	if _, err := serveLocal(t, LocalConfig{}).JoinPool(ctx, req); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "runs no worker") {
+		t.Errorf("joining from a node that runs no worker: %v", err)
+	}
+
+	var asked []string
+	joins := serveLocal(t, LocalConfig{Join: func(_ context.Context, address, invitation string) (string, access.Role, error) {
+		asked = append(asked, address, invitation)
+		if invitation == "spent" {
+			return "", "", status.Error(codes.PermissionDenied, "that invitation has been used")
+		}
+		if invitation == "unlucky" {
+			return "", "", errDisk
+		}
+		return "12D3KooWinviter", access.Client, nil
+	}})
+	joined, err := joins.JoinPool(ctx, req)
+	if err != nil || joined.GetPeerId() != "12D3KooWinviter" || joined.GetRole() != nodepb.PoolRole_POOL_ROLE_CLIENT || len(asked) != 2 || asked[0] != req.GetAddress() || asked[1] != req.GetInvitation() {
+		t.Errorf("joining: %v, %v, having asked %v", joined, err, asked)
+	}
+	// What the other node said is passed on as it said it.
+	if _, err := joins.JoinPool(ctx, &nodepb.JoinPoolRequest{Address: "a:1", Invitation: "spent"}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("joining with a used invitation: %v, want PermissionDenied", err)
+	}
+	if _, err := joins.JoinPool(ctx, &nodepb.JoinPoolRequest{Address: "a:1", Invitation: "unlucky"}); status.Code(err) != codes.Internal {
+		t.Errorf("joining when it fails here: %v, want Internal", err)
+	}
+	for _, incomplete := range []*nodepb.JoinPoolRequest{{Address: "a:1"}, {Invitation: "x"}} {
+		if _, err := joins.JoinPool(ctx, incomplete); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("joining with %v: %v, want InvalidArgument", incomplete, err)
+		}
+	}
+	if _, err := joins.JoinPool(context.Background(), req); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("joining without the token: %v, want PermissionDenied", err)
 	}
 }

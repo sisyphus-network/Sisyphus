@@ -451,8 +451,16 @@ impl proto::node_service_server::NodeService for NodeServiceImpl {
     ) -> Result<Response<proto::RemoveMemberResponse>, Status> {
         Err(Status::failed_precondition(NO_POOL))
     }
+
+    async fn join_pool(
+        &self,
+        _request: Request<proto::JoinPoolRequest>,
+    ) -> Result<Response<proto::JoinPoolResponse>, Status> {
+        Err(Status::failed_precondition(NO_WORKER))
+    }
 }
 
+const NO_WORKER: &str = "this node runs no worker, so it cannot join a pool";
 const NO_STORE: &str = "this node coordinates no pool, so it has no store of files";
 const NO_PLANNER: &str = "this node has no planner";
 const NO_POOL: &str = "this node coordinates no pool, so it has no workers or jobs of its own";

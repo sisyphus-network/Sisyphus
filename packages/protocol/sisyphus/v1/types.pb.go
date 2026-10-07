@@ -703,7 +703,9 @@ type Job struct {
 	InputBlobs  []string `protobuf:"bytes,9,rep,name=input_blobs,json=inputBlobs,proto3" json:"input_blobs,omitempty"`
 	OutputBlobs []string `protobuf:"bytes,10,rep,name=output_blobs,json=outputBlobs,proto3" json:"output_blobs,omitempty"`
 	// The mean of its tasks' progress, from 0 to 1.
-	Progress      float64 `protobuf:"fixed64,11,opt,name=progress,proto3" json:"progress,omitempty"`
+	Progress float64 `protobuf:"fixed64,11,opt,name=progress,proto3" json:"progress,omitempty"`
+	// Whether the job is private: submitted with a key, which is not here.
+	Private       bool `protobuf:"varint,12,opt,name=private,proto3" json:"private,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -813,6 +815,13 @@ func (x *Job) GetProgress() float64 {
 		return x.Progress
 	}
 	return 0
+}
+
+func (x *Job) GetPrivate() bool {
+	if x != nil {
+		return x.Private
+	}
+	return false
 }
 
 // JobEvent is one thing that happened to a job: a step in its life, or a
@@ -953,7 +962,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1b\n" +
 	"\tnode_name\x18\a \x01(\tR\bnodeName\x12\x1a\n" +
-	"\bprogress\x18\b \x01(\x01R\bprogress\"\xa2\x03\n" +
+	"\bprogress\x18\b \x01(\x01R\bprogress\"\xbc\x03\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12(\n" +
 	"\x04spec\x18\x02 \x01(\v2\x14.sisyphus.v1.JobSpecR\x04spec\x12+\n" +
@@ -969,7 +978,8 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"inputBlobs\x12!\n" +
 	"\foutput_blobs\x18\n" +
 	" \x03(\tR\voutputBlobs\x12\x1a\n" +
-	"\bprogress\x18\v \x01(\x01R\bprogress\"\xac\x01\n" +
+	"\bprogress\x18\v \x01(\x01R\bprogress\x12\x18\n" +
+	"\aprivate\x18\f \x01(\bR\aprivate\"\xac\x01\n" +
 	"\bJobEvent\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x12\n" +

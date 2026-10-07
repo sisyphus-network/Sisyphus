@@ -48,6 +48,7 @@ const (
 	NodeService_CreateInvitation_FullMethodName          = "/sisyphus.node.v1.NodeService/CreateInvitation"
 	NodeService_ListMembers_FullMethodName               = "/sisyphus.node.v1.NodeService/ListMembers"
 	NodeService_RemoveMember_FullMethodName              = "/sisyphus.node.v1.NodeService/RemoveMember"
+	NodeService_JoinPool_FullMethodName                  = "/sisyphus.node.v1.NodeService/JoinPool"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -115,6 +116,10 @@ type NodeServiceClient interface {
 	ListMembers(ctx context.Context, in *ListMembersRequest, opts ...grpc.CallOption) (*ListMembersResponse, error)
 	// RemoveMember takes a node out of the pool and disconnects it.
 	RemoveMember(ctx context.Context, in *RemoveMemberRequest, opts ...grpc.CallOption) (*RemoveMemberResponse, error)
+	// JoinPool has this node join another node's pool with an invitation
+	// from it, and start working for it, beside whatever else it is doing.
+	// It is what a node started with --join does, without the restart.
+	JoinPool(ctx context.Context, in *JoinPoolRequest, opts ...grpc.CallOption) (*JoinPoolResponse, error)
 }
 
 type nodeServiceClient struct {
@@ -463,6 +468,16 @@ func (c *nodeServiceClient) RemoveMember(ctx context.Context, in *RemoveMemberRe
 	return out, nil
 }
 
+func (c *nodeServiceClient) JoinPool(ctx context.Context, in *JoinPoolRequest, opts ...grpc.CallOption) (*JoinPoolResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JoinPoolResponse)
+	err := c.cc.Invoke(ctx, NodeService_JoinPool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -528,6 +543,10 @@ type NodeServiceServer interface {
 	ListMembers(context.Context, *ListMembersRequest) (*ListMembersResponse, error)
 	// RemoveMember takes a node out of the pool and disconnects it.
 	RemoveMember(context.Context, *RemoveMemberRequest) (*RemoveMemberResponse, error)
+	// JoinPool has this node join another node's pool with an invitation
+	// from it, and start working for it, beside whatever else it is doing.
+	// It is what a node started with --join does, without the restart.
+	JoinPool(context.Context, *JoinPoolRequest) (*JoinPoolResponse, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -624,6 +643,9 @@ func (UnimplementedNodeServiceServer) ListMembers(context.Context, *ListMembersR
 }
 func (UnimplementedNodeServiceServer) RemoveMember(context.Context, *RemoveMemberRequest) (*RemoveMemberResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveMember not implemented")
+}
+func (UnimplementedNodeServiceServer) JoinPool(context.Context, *JoinPoolRequest) (*JoinPoolResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method JoinPool not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -1122,6 +1144,24 @@ func _NodeService_RemoveMember_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_JoinPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JoinPoolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).JoinPool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_JoinPool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).JoinPool(ctx, req.(*JoinPoolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1220,6 +1260,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveMember",
 			Handler:    _NodeService_RemoveMember_Handler,
+		},
+		{
+			MethodName: "JoinPool",
+			Handler:    _NodeService_JoinPool_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

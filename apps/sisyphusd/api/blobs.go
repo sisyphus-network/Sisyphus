@@ -14,6 +14,7 @@ import (
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
@@ -52,7 +53,7 @@ type blobStore interface {
 }
 
 func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]) error {
-	c, size, err := storeUpload(stream.Context(), s.store, s.quota, func() ([]byte, error) {
+	c, size, err := storeUpload(stream.Context(), s.store, s.quota, plain, func() ([]byte, error) {
 		msg, err := stream.Recv()
 		return msg.GetData(), err
 	})
@@ -64,8 +65,9 @@ func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, p
 
 // storeUpload stores what recv returns, piece by piece until it returns io.EOF,
 // and says what CID it was stored under and how much there was. With a
-// quota, it refuses what would not fit.
-func storeUpload(ctx context.Context, store FileStore, quota uint64, recv func() ([]byte, error)) (cid.Cid, uint64, error) {
+// quota, it refuses what would not fit. What is stored is what as makes of
+// what was sent.
+func storeUpload(ctx context.Context, store FileStore, quota uint64, as func(io.Reader) io.Reader, recv func() ([]byte, error)) (cid.Cid, uint64, error) {
 	upload := &uploadReader{recv: recv}
 	if quota > 0 {
 		used, err := store.Size(ctx)
@@ -77,7 +79,7 @@ func storeUpload(ctx context.Context, store FileStore, quota uint64, recv func()
 		}
 		upload.limit = quota - used
 	}
-	c, err := store.Put(ctx, upload)
+	c, err := store.Put(ctx, as(upload))
 	if err != nil {
 		if _, ok := status.FromError(err); ok {
 			return cid.Undef, 0, err
@@ -86,6 +88,9 @@ func storeUpload(ctx context.Context, store FileStore, quota uint64, recv func()
 	}
 	return c, upload.size, nil
 }
+
+// plain stores an upload as it was sent.
+func plain(sent io.Reader) io.Reader { return sent }
 
 // uploadReader presents the data of an upload stream as one io.Reader.
 type uploadReader struct {
@@ -128,7 +133,11 @@ func sendBlob(ctx context.Context, store FileStore, id string, send func([]byte)
 		return err
 	}
 	defer blob.Close()
+	return sendAll(blob, send)
+}
 
+// sendAll sends everything that can be read from r, piece by piece.
+func sendAll(blob io.Reader, send func([]byte) error) error {
 	buf := make([]byte, blobChunkSize)
 	for {
 		n, err := io.ReadFull(blob, buf)
@@ -139,6 +148,9 @@ func sendBlob(ctx context.Context, store FileStore, id string, send func([]byte)
 		}
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return nil
+		}
+		if errors.Is(err, sealed.ErrCorrupt) {
+			return status.Errorf(codes.FailedPrecondition, "%v", err)
 		}
 		if err != nil {
 			return status.Errorf(codes.Internal, "read blob: %v", err)
