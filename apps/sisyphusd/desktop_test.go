@@ -266,36 +266,41 @@ func TestJoiningFromTheDesktopWhenPartOfItFails(t *testing.T) {
 		return dir, ident
 	}
 	connects := func(context.Context, string) error { return nil }
+	looks := 0
+	looked := func() { looks++ }
 
 	// An invitation that is not one.
 	dir, ident := newcomer()
-	if _, _, err := joinFromDesktop(dir, ident, connects, &unkept{}, closedList{})(ctx, addr, "not an invitation"); err == nil || !strings.Contains(err.Error(), "an invitation looks like") {
+	if _, _, err := joinFromDesktop(dir, ident, connects, &unkept{}, closedList{}, looked)(ctx, addr, "not an invitation"); err == nil || !strings.Contains(err.Error(), "an invitation looks like") {
 		t.Errorf("a bad invitation: %v", err)
 	}
 
 	// Joined, but the other node's host cannot be reached.
 	unreachable := func(context.Context, string) error { return errors.New("no route") }
-	if _, _, err := joinFromDesktop(dir, ident, unreachable, &unkept{}, &taking{})(ctx, addr, invite(t, addr, "worker")); err == nil || !strings.Contains(err.Error(), "could not connect to it") {
+	if _, _, err := joinFromDesktop(dir, ident, unreachable, &unkept{}, &taking{}, looked)(ctx, addr, invite(t, addr, "worker")); err == nil || !strings.Contains(err.Error(), "could not connect to it") {
 		t.Errorf("joining a node that cannot be connected to: %v", err)
 	}
 
 	// Joined and connected: the node takes its work, and knows where it is.
 	dir, ident = newcomer()
 	book, list := &unkept{}, &taking{}
-	id, role, err := joinFromDesktop(dir, ident, connects, book, list)(ctx, addr, invite(t, addr, "worker"))
-	if err != nil || role != access.Worker || len(list.ids) != 1 || list.ids[0] != id || len(book.added) != 1 || book.added[0].PeerID != id || !strings.HasSuffix(book.added[0].Address, "/p2p/"+id) {
+	if looks != 0 {
+		t.Errorf("the node looked for work %d times before it had joined anything", looks)
+	}
+	id, role, err := joinFromDesktop(dir, ident, connects, book, list, looked)(ctx, addr, invite(t, addr, "worker"))
+	if err != nil || looks != 1 || role != access.Worker || len(list.ids) != 1 || list.ids[0] != id || len(book.added) != 1 || book.added[0].PeerID != id || !strings.HasSuffix(book.added[0].Address, "/p2p/"+id) {
 		t.Errorf("joining as a worker: %q, %q, %v; takes work from %v, noted %v", id, role, err, list.ids, book.added)
 	}
 
 	// Joined and connected, but the node cannot record whom it works for.
 	dir, ident = newcomer()
-	if _, _, err := joinFromDesktop(dir, ident, connects, &unkept{}, closedList{})(ctx, addr, invite(t, addr, "worker")); err == nil || !strings.Contains(err.Error(), "the list is closed") {
+	if _, _, err := joinFromDesktop(dir, ident, connects, &unkept{}, closedList{}, looked)(ctx, addr, invite(t, addr, "worker")); err == nil || !strings.Contains(err.Error(), "the list is closed") {
 		t.Errorf("joining when the list cannot be written: %v", err)
 	}
 
 	// Invited as a client, the node joins and takes no work.
 	dir, ident = newcomer()
-	if id, role, err := joinFromDesktop(dir, ident, connects, &unkept{}, closedList{})(ctx, addr, invite(t, addr, "client")); err != nil || role != access.Client || id == "" {
+	if id, role, err := joinFromDesktop(dir, ident, connects, &unkept{}, closedList{}, looked)(ctx, addr, invite(t, addr, "client")); err != nil || role != access.Client || id == "" {
 		t.Errorf("joining as a client: %q, %q, %v", id, role, err)
 	}
 }

@@ -432,7 +432,6 @@ func runDaemon(ctx context.Context, args []string) error {
 			// from, whenever that node will have it. All of that shares the
 			// node's slots with the work it was started to do.
 			local.WorkFor = takes
-			local.Join = joinFromDesktop(*dataDir, ident, host.Connect, db, takes)
 			w.Limit, w.Pool = worker.NewSlots(*slots), coordinatorID
 			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, kubo: *useKubo, syncCache: *syncCache, maxCache: *maxCache}
 			mutual := newReciprocity(&reciprocity{
@@ -447,6 +446,7 @@ func runDaemon(ctx context.Context, args []string) error {
 				every:     reciprocityCheck, most: maxWorkedFor, log: log,
 			})
 			worksFor = mutual.workingFor
+			local.Join = joinFromDesktop(*dataDir, ident, host.Connect, db, takes, mutual.nudge)
 			// A change of trust at either end is acted on at once: this node
 			// looks again when its own changes, and tells the node concerned,
 			// which looks again when it hears.
