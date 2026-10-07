@@ -40,7 +40,7 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `SetBootstrapPeers` | yes | Replace the address book. |
 | `SetPeerComputePermissions` | yes | Set the two sides of trust in a peer, separately. |
 | `SetPeerComputeTrust` | yes | Set both sides at once. Kept for clients with one switch. |
-| `ListWorkers` | | The nodes connected as this node's workers: name, slots, running tasks, and what each machine has (processor, memory, graphics cards; zero and empty where unknown). |
+| `ListWorkers` | | The nodes connected as this node's workers: name, slots, running tasks, and what each machine has (processor, memory, graphics cards; zero and empty where unknown), and `models`, the language models it serves to the pool. |
 | `SubmitJob` | yes | Give the pool a job. Returns it as it stands at once. |
 | `GetJob` | | One job, with its tasks. |
 | `ListJobs`, `WatchJobs` | | Every job on record, newest first. `WatchJobs` re-sends the whole list when any job changes, progress included. |

@@ -303,6 +303,7 @@ func (w *Worker) capabilities() *pb.NodeCapabilities {
 		Workloads: w.Workloads.Names(),
 
 		CpuModel: w.Hardware.CPUModel, MemoryBytes: w.Hardware.MemoryBytes,
+		Labels: w.Workloads.Offers(context.Background()),
 	}
 	for _, gpu := range w.Hardware.GPUs {
 		capabilities.Gpus = append(capabilities.Gpus, &pb.Gpu{Name: gpu.Name, MemoryBytes: gpu.MemoryBytes})

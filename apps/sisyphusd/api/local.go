@@ -19,6 +19,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
 
@@ -219,6 +220,7 @@ func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) 
 			CpuCores: c.GetCpuCores(), TaskSlots: c.GetTaskSlots(), RunningTasks: node.GetRunningTasks(), Workloads: c.GetWorkloads(),
 			Relays: len(node.GetRelayAddresses()) > 0, RelayedConnections: node.GetRelayedConnections(), RelayedBytes: node.GetRelayedBytes(),
 			CpuModel: c.GetCpuModel(), MemoryBytes: c.GetMemoryBytes(), Gpus: localGPUs(c.GetGpus()),
+			Models: runtime.Models(c.GetLabels()),
 		})
 	}
 	return res, nil

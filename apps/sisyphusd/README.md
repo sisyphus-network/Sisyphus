@@ -277,6 +277,27 @@ What to know before relying on it:
 - **One question at a time per conversation.** Two asked at once in the same conversation are recorded in whichever order they finish.
 - **It gives up after eight rounds** of asking for more without answering.
 
+## Thinking on the pool
+
+A pool can serve language models as well as run jobs. A worker whose owner runs Ollama offers its models; the coordinator offers all of them at one address, speaking OpenAI's dialect, so that whatever can talk to such a service can think on the pool.
+
+```sh
+bin/sisyphusd run --role worker --coordinator <addr> --join <invitation> --models-from http://127.0.0.1:11434   # a worker with models
+bin/sisyphusd run --inference-listen 127.0.0.1:11435                                                            # the coordinator
+
+curl -H "Authorization: Bearer $(cat "$(bin/sisyphusd data-dir)/api.token")" http://127.0.0.1:11435/v1/models
+bin/sisyphusd model set --provider openai --url http://127.0.0.1:11435/v1 --model llama3.1:8b \
+    --api-key-file "$(bin/sisyphusd data-dir)/api.token"      # the node's own planner, thinking on its pool
+```
+
+- **Each reply is a job** of the `chat` workload, given to a worker that serves the model asked for, and shows among the pool's jobs like any other. The local API's `ListWorkers`, and an agent's `pool_status`, show which models each worker serves.
+- **The service** answers `GET /v1/models` and `POST /v1/chat/completions`, with tool calls. Its key is the node's API token, and it listens on this machine only.
+- **`--models-from` is a decision about your machine.** Whoever may submit jobs to the pool can then use your models and the power they draw, and your machine sees every conversation it is given: there is no sealing of a conversation from the worker that has to read it.
+- **A reply comes whole.** A client that asks for a stream gets one, of a single piece when the reply is finished. Words do not yet arrive as they are made.
+- **Models are matched by exact name**, as Ollama lists them: `llama3.1:8b`, not `llama3.1`. A worker tells the coordinator its models when it connects, so one fetched later is offered after the worker next reconnects or restarts.
+- **Conversations are kept** with the pool's other jobs, parameters and result, for as long as jobs are kept (`--keep-jobs`).
+- It has been tried on one machine with `llama3.1:8b` on a processor: the planner, set as above, ran the right job and answered correctly. It has not been tried on a graphics card, or with workers on other machines.
+
 ## Agents
 
 The planner is the node's own agent. Any other agent that speaks the Model Context Protocol, such as Claude Code, Claude Desktop or Cursor, can use the pool too, through `sisyphusd mcp`:
@@ -507,6 +528,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream. |
 | `apps/sisyphusd/p2p` | The node's libp2p host: one port shared with gRPC, the relay, discovery, reaching a node by its ID. |
 | `apps/sisyphusd/planner` | The loop in which a model reasons, has the pool compute, and reads the result. |
+| `apps/sisyphusd/inference` | The pool's language models offered as an OpenAI-style service. |
 | `apps/sisyphusd/mcpserver` | The node offered to AI agents as a Model Context Protocol server. |
 | `packages/ai` | Talking to language models: Ollama, OpenAI-style services and Anthropic. |
 | `packages/hardware` | Finding out what a machine has: processor, memory, graphics cards. |

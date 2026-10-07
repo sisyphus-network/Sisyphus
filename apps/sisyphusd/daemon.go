@@ -32,6 +32,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/api"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/inference"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/p2p"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/tunnel"
@@ -55,6 +56,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	invitation := fs.String("join", "", "worker-only node: an invitation from the coordinator, needed the first time this node connects to it and ignored after that")
 	serve := fs.String("serve", "", "worker-only node: address to serve its cached data on to the other workers of its pool, so that they need not all fetch it from the coordinator")
 	advertise := fs.String("advertise", "", "worker-only node: the address other workers should use to reach --serve, if not the same")
+	modelsFrom := fs.String("models-from", "", "worker role: offer the language models of the Ollama at this address, such as http://127.0.0.1:11434, to the pool's jobs. Whoever may submit jobs can then use them, and this machine sees what they ask")
+	inferenceListen := fs.String("inference-listen", "", "coordinator: loopback address to offer the pool's language models on, as a service speaking OpenAI's dialect whose key is the node's API token; off if empty")
 	apiListen := fs.String("api-listen", "", "loopback address to serve the local API on, for the desktop client on this machine (it expects 127.0.0.1:50051); off if empty")
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
@@ -112,6 +115,12 @@ func runDaemon(ctx context.Context, args []string) error {
 	if host, _, err := net.SplitHostPort(*apiListen); *apiListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
 		return errors.New("--api-listen must be a loopback address such as 127.0.0.1:50051: the local API is for programs on this machine only")
 	}
+	if host, _, err := net.SplitHostPort(*inferenceListen); *inferenceListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
+		return errors.New("--inference-listen must be a loopback address such as 127.0.0.1:11435: the service is for programs on this machine only")
+	}
+	if *inferenceListen != "" && !isCoordinator {
+		return errors.New("--inference-listen is for a node that coordinates a pool: it is that pool's models it offers")
+	}
 	if isCoordinator && *invitation != "" {
 		return errors.New("--join is for worker-only nodes")
 	}
@@ -139,6 +148,9 @@ func runDaemon(ctx context.Context, args []string) error {
 			return fmt.Errorf("--containers: %w", err)
 		}
 		runs = workloads
+	}
+	if *modelsFrom != "" {
+		runs = runs.With(runtime.Chat{URL: *modelsFrom})
 	}
 
 	// The node's key lives beside its data and is created on first run.
@@ -255,6 +267,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	// planningPool is the pool the node's planner computes on, if it
 	// coordinates one.
 	var planningPool planner.Pool
+	// thinkingPool is the same pool as its models are asked of.
+	var thinkingPool inference.Pool
 	// offered says whether any worker now connected runs a workload. The
 	// planner is told only of those, so that it asks for nothing the pool
 	// would leave waiting. It is set where there is a pool to plan for.
@@ -328,7 +342,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		local.Jobs = coord
 		local.Store, local.Files, local.MaxStoreBytes = store, db, *maxStore
 		local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
-		planningPool = coord
+		planningPool, thinkingPool = coord, coord
 		offered = func(workload string) bool {
 			return slices.ContainsFunc(coord.Nodes(), func(node *pb.NodeInfo) bool {
 				return slices.Contains(node.GetCapabilities().GetWorkloads(), workload)
@@ -564,6 +578,22 @@ func runDaemon(ctx context.Context, args []string) error {
 			code, _ := country.Load().(string)
 			return code
 		}
+	}
+
+	if *inferenceListen != "" {
+		lis, err := net.Listen("tcp", *inferenceListen)
+		if err != nil {
+			return err
+		}
+		token, err := apiToken(filepath.Join(*dataDir, "api.token"))
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		models := &http.Server{Handler: inference.Handler(thinkingPool, token)}
+		defer models.Close()
+		log.Info("the pool's models are offered", "addr", lis.Addr().String())
+		go models.Serve(lis)
 	}
 
 	if *apiListen != "" {

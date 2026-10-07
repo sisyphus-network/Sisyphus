@@ -77,9 +77,10 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 	for _, w := range said.([]any) {
 		w := w.(map[string]any)
 		described[w["name"].(string)] = w["description"].(string)
-		// The one worker runs no containers, and the agent is told so.
+		// The one worker runs no containers and serves no models, and
+		// the agent is told so.
 		want := float64(1)
-		if w["name"] == "container" || w["name"] == "transcode" {
+		if w["name"] == "container" || w["name"] == "transcode" || w["name"] == "chat" {
 			want = 0
 		}
 		if w["workers_running_it"] != want {

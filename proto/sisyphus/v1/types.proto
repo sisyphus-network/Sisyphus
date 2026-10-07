@@ -24,6 +24,9 @@ message NodeCapabilities {
   string cpu_model = 8;
   // The graphics cards the owner offers for computing on.
   repeated Gpu gpus = 9;
+  // What else the node has that a job's tasks may need, as plain labels. A
+  // node serving language models has "model:<name>" for each.
+  repeated string labels = 10;
 }
 
 message Gpu {
