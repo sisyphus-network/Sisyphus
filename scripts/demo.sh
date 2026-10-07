@@ -21,7 +21,7 @@ trap cleanup EXIT
 "$BIN" run --listen "$ADDR" --data-dir "$LOGS/data" --node-id alpha --slots 4 >"$LOGS/alpha.log" 2>&1 &
 pids+=($!)
 for node in beta gamma; do
-	"$BIN" run --role worker --coordinator "$ADDR" --node-id "$node" --slots 4 >"$LOGS/$node.log" 2>&1 &
+	"$BIN" run --role worker --coordinator "$ADDR" --data-dir "$LOGS/data-$node" --node-id "$node" --slots 4 >"$LOGS/$node.log" 2>&1 &
 	pids+=($!)
 done
 
@@ -41,3 +41,15 @@ echo "== counting primes below 3 billion, split across the pool"
 echo
 echo "== the same job as a single task on one worker"
 "$BIN" job submit --addr "$ADDR" --mode full-worker --params '{"from":0,"to":3000000000}'
+
+echo
+echo "== counting words in a stored file"
+# About 40 MB of text built from the repository's own README.
+for _ in $(seq 4000); do cat README.md; done >"$LOGS/corpus.txt"
+input=$("$BIN" blob put --addr "$ADDR" "$LOGS/corpus.txt")
+echo "input stored as $input"
+"$BIN" job submit --addr "$ADDR" --workload wordcount --params "{\"input\":\"$input\"}" | tee "$LOGS/wordcount.out"
+output=$(tail -n 1 "$LOGS/wordcount.out" | sed 's/.*"output":"\([^"]*\)".*/\1/')
+echo
+echo "== the ten most frequent words, fetched from the result blob $output"
+"$BIN" blob get --addr "$ADDR" "$output" | head -n 10

@@ -18,12 +18,12 @@ import (
 // the job and worker services for c, and blob transfer for store. It has no
 // transport security or authentication yet, so only expose it to machines
 // you trust.
-func NewServer(c *coordinator.Coordinator, store *storage.Store) *grpc.Server {
-	srv := grpc.NewServer(
+func NewServer(c *coordinator.Coordinator, store *storage.Store, opts ...grpc.ServerOption) *grpc.Server {
+	srv := grpc.NewServer(append(opts,
 		// Pings notice workers that vanish without closing their connection.
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 10 * time.Second, Timeout: 5 * time.Second}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}),
-	)
+	)...)
 	pb.RegisterCoordinatorServiceServer(srv, c)
 	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: c})
 	pb.RegisterBlobServiceServer(srv, &blobService{store: store})
@@ -35,8 +35,8 @@ type nodeService struct {
 	coordinator *coordinator.Coordinator
 }
 
-func (s *nodeService) SubmitJob(_ context.Context, req *pb.SubmitJobRequest) (*pb.SubmitJobResponse, error) {
-	job, err := s.coordinator.Submit(req.GetSpec())
+func (s *nodeService) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.SubmitJobResponse, error) {
+	job, err := s.coordinator.Submit(ctx, req.GetSpec())
 	if err != nil {
 		return nil, err
 	}

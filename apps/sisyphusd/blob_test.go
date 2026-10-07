@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -198,5 +199,51 @@ func TestTwoNodesCannotShareADataDirectory(t *testing.T) {
 	_, err := cli(t, "run", "--listen", freeAddr(t), "--data-dir", dataDir)
 	if err == nil || !strings.Contains(err.Error(), "open blob store") {
 		t.Errorf("second node on the same data directory: error %v, want a refusal", err)
+	}
+}
+
+func TestCLIRunsAJobOverAStoredFileAcrossTwoNodes(t *testing.T) {
+	addr, _ := startNode(t)
+	// A second, worker-only node with a data directory of its own.
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--node-id", "helper", "--slots", "3")
+	waitForOutput(t, "helper", "nodes", "--addr", addr)
+
+	source := filepath.Join(t.TempDir(), "essay.txt")
+	text := strings.Repeat("The struggle itself toward the heights is enough to fill a man's heart.\n", 20_000)
+	if err := os.WriteFile(source, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cli(t, "blob", "put", "--addr", addr, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := strings.TrimSpace(out)
+
+	out, err = cli(t, "job", "submit", "--addr", addr, "--workload", "wordcount", "--tasks", "8", "--params", `{"input":"`+input+`"}`)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "on helper") {
+		t.Errorf("no task ran on the worker-only node:\n%s", out)
+	}
+	var result struct {
+		Output          string
+		Words, Distinct int
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &result); err != nil {
+		t.Fatalf("last line of output is not the result: %v\n%s", err, out)
+	}
+	// Fourteen words a line ("man's" is two), thirteen of them distinct.
+	if result.Words != 14*20_000 || result.Distinct != 13 {
+		t.Errorf("counted %d words, %d distinct; want 280000 and 13", result.Words, result.Distinct)
+	}
+
+	table, err := cli(t, "blob", "get", "--addr", addr, result.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(table, "40000\tthe\n20000\ta\n20000\tenough\n") {
+		t.Errorf("result table starts:\n%.80s", table)
 	}
 }

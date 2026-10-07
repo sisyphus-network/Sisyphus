@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+var ctx = context.Background()
+
 func TestCountPrimes(t *testing.T) {
 	tests := []struct {
 		from, to, want uint64
@@ -54,7 +56,7 @@ func TestPrimesSplitCoversRangeExactly(t *testing.T) {
 		{0, 1000, 1, 1},
 	} {
 		params, _ := json.Marshal(PrimesRange{From: tt.from, To: tt.to})
-		payloads, err := Primes{}.Split(params, tt.parts)
+		payloads, err := Primes{}.Split(ctx, nil, params, tt.parts)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -81,19 +83,19 @@ func TestPrimesSplitCoversRangeExactly(t *testing.T) {
 func TestPrimesSplitExecuteAggregate(t *testing.T) {
 	w := Primes{}
 	params, _ := json.Marshal(PrimesRange{From: 0, To: 1_000_000})
-	payloads, err := w.Split(params, 9)
+	payloads, err := w.Split(ctx, nil, params, 9)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var outputs [][]byte
 	for _, payload := range payloads {
-		output, err := w.Execute(context.Background(), payload)
+		output, err := w.Execute(ctx, nil, payload)
 		if err != nil {
 			t.Fatal(err)
 		}
 		outputs = append(outputs, output)
 	}
-	result, err := w.Aggregate(outputs)
+	result, err := w.Aggregate(ctx, nil, outputs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +110,61 @@ func TestPrimesSplitExecuteAggregate(t *testing.T) {
 
 func TestPrimesRejectsBadRanges(t *testing.T) {
 	for _, params := range []string{`{"from":10,"to":5}`, `{"from":0,"to":2199023255552}`, `not json`} {
-		if _, err := (Primes{}).Split([]byte(params), 2); err == nil {
+		if _, err := (Primes{}).Split(ctx, nil, []byte(params), 2); err == nil {
 			t.Errorf("Split(%s) succeeded, want an error", params)
 		}
 	}
+}
+
+func contextWithCancel() (context.Context, context.CancelFunc) {
+	return context.WithCancel(ctx)
+}
+
+func TestPrimesReportsBadTaskData(t *testing.T) {
+	if _, err := (Primes{}).Execute(ctx, nil, []byte("not json")); err == nil {
+		t.Error("Execute accepted a payload that is not JSON")
+	}
+	if _, err := (Primes{}).Aggregate(ctx, nil, [][]byte{[]byte(`{"count":1}`), []byte("not json")}); err == nil {
+		t.Error("Aggregate accepted an output that is not JSON")
+	}
+	cancelled, cancel := contextWithCancel()
+	cancel()
+	if _, err := (Primes{}).Execute(cancelled, nil, []byte(`{"from":0,"to":1000}`)); err == nil {
+		t.Error("Execute ignored a cancelled context")
+	}
+}
+
+func TestIsqrtIsExactAcrossThePrimesRange(t *testing.T) {
+	for k := uint64(1); k*k <= maxPrimesTo; k += 997 {
+		for _, tt := range []struct{ n, want uint64 }{{k*k - 1, k - 1}, {k * k, k}, {k*k + 1, k}} {
+			if got := isqrt(tt.n); got != tt.want {
+				t.Fatalf("isqrt(%d) = %d, want %d", tt.n, got, tt.want)
+			}
+		}
+	}
+	if got := isqrt(maxPrimesTo); got != 1<<20 {
+		t.Errorf("isqrt(maxPrimesTo) = %d, want %d", got, 1<<20)
+	}
+}
+
+func TestRegistry(t *testing.T) {
+	r := Builtin()
+	if got := r.Names(); len(got) != 2 || got[0] != "primes" || got[1] != "wordcount" {
+		t.Errorf("built-in workloads: %v", got)
+	}
+	if _, err := r.Get("nope"); err == nil {
+		t.Error("Get of an unknown workload succeeded")
+	}
+	if w, err := r.Get("primes"); err != nil || w.Name() != "primes" {
+		t.Errorf("Get(primes) = %v, %v", w, err)
+	}
+}
+
+func TestMustJSONPanicsOnAValueThatCannotBeEncoded(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("mustJSON returned for a channel")
+		}
+	}()
+	mustJSON(make(chan int))
 }

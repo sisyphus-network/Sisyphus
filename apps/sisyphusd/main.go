@@ -25,20 +25,30 @@ const usage = `Usage:
 Run "sisyphusd <command> -h" for a command's flags.
 `
 
+// exit is os.Exit; tests replace it.
+var exit = os.Exit
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Args[1:]); err != nil {
-		if !errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(os.Stderr, "sisyphusd:", err)
-		}
-		os.Exit(1)
+	exit(exitCode(run(ctx, os.Args[1:])))
+}
+
+// exitCode reports err to the user and returns the process's exit status.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
 	}
+	// The flag package has already printed its own message for ErrHelp.
+	if !errors.Is(err, flag.ErrHelp) {
+		fmt.Fprintln(stderr, "sisyphusd:", err)
+	}
+	return 1
 }
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(stderr, usage)
 		return flag.ErrHelp
 	}
 	switch args[0] {
@@ -59,7 +69,7 @@ func run(ctx context.Context, args []string) error {
 	case "blob":
 		return blobCommand(ctx, args[1:])
 	case "help", "-h", "--help":
-		fmt.Print(usage)
+		fmt.Fprint(stdout, usage)
 		return nil
 	}
 	return fmt.Errorf("unknown command %q", args[0])

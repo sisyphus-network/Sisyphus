@@ -11,6 +11,7 @@ Needs Go 1.27 or newer.
 ```sh
 make build   # produces bin/sisyphusd
 make test    # go vet and the test suite with the race detector
+make cover   # fails unless the tests execute every statement of hand-written code
 ```
 
 ## Try it on one machine
@@ -24,7 +25,7 @@ To run the nodes yourself, use one terminal per node (or one `tmux` pane each):
 bin/sisyphusd run --node-id alpha --slots 4
 
 # Terminal 2: a second worker joining it
-bin/sisyphusd run --role worker --coordinator 127.0.0.1:7700 --node-id beta --slots 4
+bin/sisyphusd run --role worker --coordinator 127.0.0.1:7700 --node-id beta --slots 4 --data-dir ~/.sisyphus-beta
 
 # Terminal 3
 bin/sisyphusd nodes
@@ -32,7 +33,7 @@ bin/sisyphusd job submit --params '{"from":0,"to":3000000000}'
 bin/sisyphusd job submit --mode full-worker --params '{"from":0,"to":3000000000}'
 ```
 
-The first job is split across both workers; the second runs whole on one. Stop a worker with Ctrl-C while a job is running and its tasks move to the other.
+Every node keeps its data under `--data-dir` (default `~/.sisyphus`), so nodes sharing a machine each need their own. The first job is split across both workers; the second runs whole on one. Stop a worker with Ctrl-C while a job is running and its tasks move to the other.
 
 ## Try it across machines
 
@@ -52,7 +53,7 @@ bin/sisyphusd run --role worker --coordinator <coordinator-ip>:7700
 
 ## Storing data
 
-Every node running the coordinator role keeps a content-addressed store under `--data-dir` (default `~/.sisyphus`).
+Every node keeps a content-addressed store under `--data-dir`. A coordinator's store is durable: a blob it has accepted survives a crash or power loss. A worker-only node's store is a cache of what its coordinator holds; it skips waiting for the disk on each write, which makes fetching several times faster, and is emptied whenever the node starts. The `blob` commands talk to a node running the coordinator role.
 
 ```sh
 bin/sisyphusd blob put results.tar     # prints the blob's CID
@@ -62,11 +63,20 @@ bin/sisyphusd blob get -o copy.tar <cid>
 
 A blob's CID is the one `ipfs add --cid-version=1` gives the same file, and blocks are laid out on disk the way Kubo lays them out, so data can move to IPFS later without being renamed. Both `put` and `get` check the bytes against the CID, so a node cannot substitute different data unnoticed.
 
-Jobs do not use the store yet; that is the next step.
+Jobs pass large data by CID instead of inline. A worker downloads an input from its coordinator the first time a task needs it, checks it against the CID, and keeps it; whatever a task stores is uploaded to the coordinator before the task reports success.
 
-## The `primes` workload
+```sh
+cid=$(bin/sisyphusd blob put big.txt)
+bin/sisyphusd job submit --workload wordcount --params "{\"input\":\"$cid\"}"
+bin/sisyphusd blob get <output CID from the result> | head
+```
 
-The one built-in workload counts the primes in `[from, to)`. It is here to exercise the network, not because the answer matters: it splits cleanly by sub-range, always gives the same answer, and any task can be checked by running it again. Real workloads will be added behind the same `Workload` interface in `packages/runtime`.
+## Workloads
+
+Both built-in workloads are stand-ins that exercise the network rather than compute anything valuable. Real workloads will sit behind the same `Workload` interface in `packages/runtime`.
+
+- **`primes`** counts the primes in `[from, to)`. Parameters and results are a few bytes and travel inline.
+- **`wordcount`** counts word frequencies in a stored file. It exercises the storage path: the input is fetched by CID, each task reads only its byte range, task outputs are stored as blobs, and the result is a blob too. The result's CID is the same however the job is split, so two runs can be compared by CID alone.
 
 ## Layout
 
@@ -90,4 +100,5 @@ The one built-in workload counts the primes in `[from, to)`. It is here to exerc
 - When a job fails, its other running tasks are left to finish and their results discarded; there is no cancellation.
 - Workers are chosen by free slots only, not by hardware.
 - Stored blobs are never deleted and there is no size limit or quota, so anyone who can reach the port can fill the disk.
-- Two coordinators on one machine need different `--data-dir` values.
+- A worker downloads a whole input even when its tasks need only part of it, and downloads it again after a restart.
+- The coordinator does not record which blobs belong to which job.

@@ -1,6 +1,7 @@
 PROTO_FILES := $(wildcard proto/sisyphus/v1/*.proto)
+COVERED := ./apps/...,./packages/job-model/...,./packages/runtime/...,./packages/storage/...
 
-.PHONY: build test demo proto tools fmt
+.PHONY: build test cover demo proto tools fmt
 
 build:
 	go build -o bin/sisyphusd ./apps/sisyphusd
@@ -8,6 +9,12 @@ build:
 test:
 	go vet ./...
 	go test -race ./...
+
+# Fails unless the tests execute every statement of hand-written code.
+# Generated protocol code is not counted.
+cover:
+	go test -count=1 -coverpkg=$(COVERED) -coverprofile=coverage.out ./...
+	./scripts/check-coverage.sh coverage.out
 
 # Runs a three-node pool and a job on this machine, in one terminal.
 demo:

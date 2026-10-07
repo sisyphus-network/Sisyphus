@@ -95,3 +95,13 @@ func TestToProtoMapsStatesAndMode(t *testing.T) {
 		t.Errorf("finished job: state %v, finished at %v", p.State, p.FinishedAt)
 	}
 }
+
+func TestStateNames(t *testing.T) {
+	for state, want := range map[State]string{
+		Pending: "pending", Running: "running", Succeeded: "succeeded", Failed: "failed", State(99): "State(99)",
+	} {
+		if got := state.String(); got != want {
+			t.Errorf("State(%d).String() = %q, want %q", int(state), got, want)
+		}
+	}
+}

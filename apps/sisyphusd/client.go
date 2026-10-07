@@ -22,6 +22,9 @@ var stdout io.Writer = os.Stdout
 // stdin is what "blob put -" reads; tests replace it.
 var stdin io.Reader = os.Stdin
 
+// stderr is where usage and errors are printed; tests replace it.
+var stderr io.Writer = os.Stderr
+
 func connect(addr string) (*grpc.ClientConn, error) {
 	return grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
@@ -75,7 +78,11 @@ func jobSubmit(ctx context.Context, args []string) error {
 		return nil
 	}
 	fmt.Fprintf(stdout, "job %s: %d task(s)\n", job.GetJobId(), len(job.GetTasks()))
+	return followJob(ctx, client, job)
+}
 
+// followJob prints a job's progress until it finishes, then its outcome.
+func followJob(ctx context.Context, client pb.NodeServiceClient, job *pb.Job) error {
 	stream, err := client.WatchJob(ctx, &pb.WatchJobRequest{JobId: job.GetJobId()})
 	if err != nil {
 		return err

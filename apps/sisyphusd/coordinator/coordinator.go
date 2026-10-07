@@ -38,7 +38,14 @@ type Coordinator struct {
 
 	id        string
 	workloads *runtime.Registry
-	log       *slog.Logger
+	// blobs is the store workloads split from and aggregate into.
+	blobs runtime.Blobs
+	log   *slog.Logger
+
+	// ctx bounds the aggregations still running when the coordinator closes.
+	ctx         context.Context
+	cancel      context.CancelFunc
+	aggregating sync.WaitGroup
 
 	mu      sync.Mutex
 	jobs    map[string]*jobmodel.Job
@@ -66,19 +73,30 @@ type assignment struct {
 	task *jobmodel.Task
 }
 
-func New(id string, workloads *runtime.Registry, log *slog.Logger) *Coordinator {
+func New(id string, workloads *runtime.Registry, blobs runtime.Blobs, log *slog.Logger) *Coordinator {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Coordinator{
 		id:        id,
 		workloads: workloads,
+		blobs:     blobs,
 		log:       log,
+		ctx:       ctx,
+		cancel:    cancel,
 		jobs:      make(map[string]*jobmodel.Job),
 		workers:   make(map[string]*worker),
 		changed:   make(map[string]chan struct{}),
 	}
 }
 
+// Close stops work the coordinator is doing on its own account and waits for
+// it to end. Call it before closing the blob store.
+func (c *Coordinator) Close() {
+	c.cancel()
+	c.aggregating.Wait()
+}
+
 // Submit validates and splits a job, queues it and returns its initial state.
-func (c *Coordinator) Submit(spec *pb.JobSpec) (*pb.Job, error) {
+func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, error) {
 	workload, err := c.workloads.Get(spec.GetWorkload())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -96,17 +114,17 @@ func (c *Coordinator) Submit(spec *pb.JobSpec) (*pb.Job, error) {
 		return nil, status.Errorf(codes.InvalidArgument, "unknown schedule mode %d", spec.GetMode())
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	parts := 1
 	if mode == jobmodel.Distributed {
 		parts = int(spec.GetMaxTasks())
 		if parts == 0 {
+			c.mu.Lock()
 			parts = max(c.slotsLocked(workload.Name()), 1)
+			c.mu.Unlock()
 		}
 	}
-	payloads, err := workload.Split(spec.GetParams(), parts)
+	// Splitting may read stored data, so it runs without the lock.
+	payloads, err := workload.Split(ctx, c.blobs, spec.GetParams(), parts)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -114,6 +132,8 @@ func (c *Coordinator) Submit(spec *pb.JobSpec) (*pb.Job, error) {
 		return nil, status.Error(codes.Internal, "workload split the job into no tasks")
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	job := jobmodel.New(newID(), workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
 	c.jobs[job.ID] = job
 	c.active = append(c.active, job)
@@ -226,9 +246,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 		for {
 			select {
 			case msg := <-w.send:
-				if stream.Send(msg) != nil {
-					return
-				}
+				stream.Send(msg)
 			case <-stop:
 				return
 			}
@@ -243,10 +261,10 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 
 	for {
 		msg, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil // the worker closed its side cleanly
+		}
 		if err != nil {
-			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled {
-				return nil
-			}
 			return err
 		}
 		switch kind := msg.GetKind().(type) {
@@ -297,7 +315,10 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	switch outcome := result.GetOutcome().(type) {
 	case *pb.TaskResult_Output:
 		if a.job.Succeed(a.task, outcome.Output) {
-			c.finishLocked(a.job, now)
+			// Succeed reports the last task only once, so each job is
+			// aggregated once.
+			c.aggregating.Add(1)
+			go c.aggregate(a.job)
 		}
 	case *pb.TaskResult_Error:
 		c.log.Warn("task attempt failed", "task", a.task.ID, "node", w.id, "attempt", a.task.Attempt, "error", outcome.Error)
@@ -308,14 +329,29 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	c.notifyLocked(a.job)
 }
 
-func (c *Coordinator) finishLocked(job *jobmodel.Job, now time.Time) {
+// aggregate combines a job's task outputs into its result and finishes it.
+// Aggregating may read and write stored data, so it runs without the lock;
+// until it is done the job stays running with every task succeeded.
+func (c *Coordinator) aggregate(job *jobmodel.Job) {
+	defer c.aggregating.Done()
+
+	c.mu.Lock()
+	outputs := job.Outputs()
+	c.mu.Unlock()
+
 	workload, err := c.workloads.Get(job.Workload)
 	var result []byte
 	if err == nil {
-		result, err = workload.Aggregate(job.Outputs())
+		result, err = workload.Aggregate(c.ctx, c.blobs, outputs)
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
 	job.Finish(result, err, now)
 	c.log.Info("job finished", "job", job.ID, "state", job.State.String(), "took", now.Sub(job.CreatedAt).String())
+	c.notifyLocked(job)
+	c.scheduleLocked()
 }
 
 // scheduleLocked hands pending tasks to workers with free slots, oldest job
@@ -378,8 +414,6 @@ func (c *Coordinator) notifyLocked(job *jobmodel.Job) {
 
 func newID() string {
 	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(err)
-	}
+	rand.Read(b[:]) // never fails; see crypto/rand
 	return hex.EncodeToString(b[:])
 }
