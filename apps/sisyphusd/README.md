@@ -66,6 +66,17 @@ bin/sisyphusd run --role worker --coordinator <coordinator-ip>:7700
 
 **The daemon has no encryption or authentication yet.** Anyone who can reach the port can submit jobs and join as a worker. Only do this on a network you trust.
 
+## Node identity
+
+Every node has a key pair, created the first time it runs and kept in `node.key` in its `--data-dir`, readable only by its owner. The node's ID is derived from the public key and starts `12D3KooW`.
+
+```sh
+bin/sisyphusd id                      # the ID of the node whose data is in ~/.sisyphus
+bin/sisyphusd id --data-dir /srv/node
+```
+
+Losing `node.key` loses the identity; copying it to another machine gives that machine the same one. **The key is not used for anything yet.** Nodes still connect without encryption and are known to each other by the name given with `--node-id`. Securing connections with these keys is the next step.
+
 ## Storing data
 
 Every node keeps a content-addressed store under `--data-dir`. A coordinator's store is durable: a blob it has accepted survives a crash or power loss. A worker-only node's store is a cache of what its coordinator holds. It skips waiting for the disk on each write, which makes fetching several times faster on a slow disk, and it is kept across restarts. Because a power cut can then leave a cached block incomplete, a worker checks a cached blob in full the first time it is used in each run and downloads it again if it does not hold up. On a fast disk, `--sync-cache` makes the cache wait for the disk after all, so that it survives a power cut without downloading again. With `--max-cache-bytes`, a worker evicts cached blobs once the cache passes that size: first those it has not used since it started, then the least recently used, and never one a task has open. The `blob` commands talk to a node running the coordinator role.

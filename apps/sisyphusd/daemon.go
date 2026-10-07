@@ -19,6 +19,7 @@ import (
 	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
+	"github.com/excho0/Sisyphus/packages/identity"
 	"github.com/excho0/Sisyphus/packages/runtime"
 	"github.com/excho0/Sisyphus/packages/storage"
 )
@@ -75,6 +76,13 @@ func runDaemon(ctx context.Context, args []string) error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	workloads := runtime.Builtin()
 
+	// The node's key lives beside its data and is created on first run.
+	ident, err := loadIdentity(*dataDir)
+	if err != nil {
+		return err
+	}
+	log.Info("node identity", "id", ident.ID())
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	// Each role reports once when it stops; the first to stop ends the node.
@@ -86,7 +94,6 @@ func runDaemon(ctx context.Context, args []string) error {
 	// the two kinds never mix. Deferred calls run last-in first-out, so the
 	// store closes only after everything using it has stopped.
 	var store *storage.Store
-	var err error
 	if isCoordinator {
 		store, err = storage.OpenLocal(filepath.Join(*dataDir, "blobs"))
 	} else {
@@ -163,6 +170,34 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("shutting down")
 		return nil
 	}
+}
+
+// loadIdentity returns the key of the node whose data is in dataDir, making
+// the directory and the key if this is the node's first run.
+func loadIdentity(dataDir string) (*identity.Identity, error) {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, err
+	}
+	ident, _, err := identity.LoadOrCreate(filepath.Join(dataDir, "node.key"))
+	return ident, err
+}
+
+// showIdentity prints a node's ID.
+func showIdentity(args []string) error {
+	fs := flag.NewFlagSet("sisyphusd id", flag.ContinueOnError)
+	dataDir := fs.String("data-dir", defaultDataDir(), "directory holding the node's key and data")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	ident, err := loadIdentity(*dataDir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, ident.ID())
+	return nil
 }
 
 // collectPeriodically garbage-collects store every interval until ctx ends.

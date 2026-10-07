@@ -21,6 +21,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | --- | --- |
 | `proto/sisyphus/v1` | Message and service definitions. The source of truth for the protocol. |
 | `packages/protocol` | Go generated from `proto/`. Never edited by hand; committed so a fresh clone builds without `protoc`. |
+| `packages/identity` | A node's key pair and the ID derived from it; signing and verifying. |
 | `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
 | `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. |
