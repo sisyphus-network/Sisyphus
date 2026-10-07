@@ -292,11 +292,14 @@ bin/sisyphusd model set --provider openai --url http://127.0.0.1:11435/v1 --mode
 
 - **Each reply is a job** of the `chat` workload, given to a worker that serves the model asked for, and shows among the pool's jobs like any other. The local API's `ListWorkers`, and an agent's `pool_status`, show which models each worker serves.
 - **The service** answers `GET /v1/models` and `POST /v1/chat/completions`, with tool calls. Its key is the node's API token, and it listens on this machine only.
-- **`--models-from` is a decision about your machine.** Whoever may submit jobs to the pool can then use your models and the power they draw, and your machine sees every conversation it is given: there is no sealing of a conversation from the worker that has to read it.
-- **A reply comes whole.** A client that asks for a stream gets one, of a single piece when the reply is finished. Words do not yet arrive as they are made.
-- **Models are matched by exact name**, as Ollama lists them: `llama3.1:8b`, not `llama3.1`. A worker tells the coordinator its models when it connects, so one fetched later is offered after the worker next reconnects or restarts.
+- **`--models-from` is a decision about your machine.** Whoever may submit jobs to the pool can then use your models and the power they draw, and your machine sees every conversation it is given: there is no sealing of a conversation from the machine that has to read it.
+- **Keep a conversation on a machine you trust** by asking for the model on a worker by name: `"model": "llama3.1:8b@rig"`. It goes to the worker named `rig` or, if that worker is not there, is refused; it never goes elsewhere. Asking for a model on your own machine's worker keeps the conversation at home while still going through the pool.
+- **A reply arrives as it is written.** A client that asks for a stream gets the words a few times a second, and at the end the tools the model asks for and what it used. The worker logs the reply in pieces as it comes, so `job logs` shows it too.
+- **A model may be named loosely** at the service: in another case, without its tag when the pool has a `latest`, or by its family alone (`llama3.1`) when the pool serves one model of that family. A name that could mean two models is refused, with the list of those served. A `chat` job submitted directly names its model exactly.
+- **A model fetched later is offered within seconds.** A worker tells the coordinator when its models change, and a conversation that was waiting for one is then had.
 - **Conversations are kept** with the pool's other jobs, parameters and result, for as long as jobs are kept (`--keep-jobs`).
-- It has been tried on one machine with `llama3.1:8b` on a processor: the planner, set as above, ran the right job and answered correctly. It has not been tried on a graphics card, or with workers on other machines.
+- **A reply begun twice.** If the worker writing a reply is lost part way, another starts it again, and a client reading the stream sees the beginning a second time.
+- It has been tried on one machine with `llama3.1:8b` on a processor: the planner, set as above, ran the right job and answered correctly, and a streamed reply arrived a word or two at a time. It has not been tried on a graphics card, or with workers on other machines.
 
 ## Agents
 
