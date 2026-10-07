@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -216,13 +218,29 @@ func TestPeriodicCollection(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The record of old jobs is cleared out on the same round: here, three
+	// jobs the first time, a failure the second, and nothing after that.
+	var rounds atomic.Int32
+	prune := func(time.Time) (int, error) {
+		switch rounds.Add(1) {
+		case 1:
+			return 3, nil
+		case 2:
+			return 0, errors.New("the database is locked")
+		}
+		return 0, nil
+	}
 	logs := new(syncBuffer)
 	collecting, stop := context.WithCancel(ctx)
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		collectPeriodically(collecting, store, 5*time.Millisecond, slog.New(slog.NewTextHandler(logs, nil)))
+		collectPeriodically(collecting, store, prune, 5*time.Millisecond, slog.New(slog.NewTextHandler(logs, nil)))
 	}()
+	waitFor(t, func() bool {
+		return strings.Contains(logs.String(), `msg="forgot jobs that finished long ago" jobs=3`) &&
+			strings.Contains(logs.String(), `msg="could not clear out old jobs" error="the database is locked"`)
+	})
 	waitFor(t, func() bool { return strings.Contains(logs.String(), `msg="collected garbage" expired_pins=1 blocks=1`) })
 	if held, _ := store.Has(ctx, lapsed); held {
 		t.Error("the collector logged a collection but the blob is still there")
@@ -243,6 +261,9 @@ func TestPeriodicCollection(t *testing.T) {
 	// Collections that found nothing said nothing.
 	if n := strings.Count(logs.String(), "collected garbage"); n != 1 {
 		t.Errorf("logged %d collections, want only the one that removed something", n)
+	}
+	if n := strings.Count(logs.String(), "forgot jobs"); n != 1 {
+		t.Errorf("logged %d rounds of forgetting jobs, want only the one that forgot some", n)
 	}
 }
 

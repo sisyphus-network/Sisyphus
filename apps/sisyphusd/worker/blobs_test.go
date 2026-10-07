@@ -76,7 +76,7 @@ func serve(t *testing.T, srv *grpc.Server) (addr string, stop func()) {
 // the test worker admitted.
 func startCoordinator(t *testing.T, store *storage.Store) (addr string, stop func()) {
 	t.Helper()
-	admitted, err := access.Open("", coordinatorIdent.ID())
+	admitted, err := access.Open(access.InMemory(), coordinatorIdent.ID())
 	if err != nil {
 		t.Fatal(err)
 	}

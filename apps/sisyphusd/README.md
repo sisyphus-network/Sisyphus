@@ -229,7 +229,13 @@ A coordinator keeps its jobs in `node.db`, a SQLite database in its data directo
 
 A job's arrival and its finish are written through to the disk before anyone is told of them. The steps in between are not, so a power cut can lose the last few; the tasks concerned run again. A coordinator started without a workload that an unfinished job needs fails that job, and says why.
 
-The database also records every attempt at every task: which node, and how it went. Nothing reads that yet. It is there for accounting later.
+The database holds the rest of what a coordinator must not forget as well: which nodes have been admitted, and the invitations issued and not yet used, so an invitation is still good after a restart. Invitations are recorded by a hash of their token, so reading the database admits nobody. A coordinator from before this was so finds its old `access.json`, takes its members in, and sets the file aside as `access.json.imported`.
+
+A finished job can be asked after for 30 days, or whatever `--keep-jobs` says; `--keep-jobs 0` keeps them for good. That is about the record of the job. How long its data is kept is `--retain`, described under [How long data is kept](#how-long-data-is-kept).
+
+A node's own record of the coordinators it has joined, `known.json`, stays a file. Every command reads it, on machines that run no coordinator and have no database, and it is small enough to mend by hand when a coordinator's address changes.
+
+The database also records every attempt at every task: which node, and how it went. Nothing reads that yet. It is there for accounting later, and goes when the job does.
 
 ## The desktop app
 
@@ -281,7 +287,7 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 | `apps/sisyphusd/access` | Who has been admitted and in what role; invitations; checking every call. |
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
-| `packages/nodedb` | The node's SQLite database: jobs, tasks and attempts. |
+| `packages/nodedb` | The node's SQLite database: jobs, tasks, attempts, members and invitations. |
 | `packages/storage` | Content-addressed blob store, pins, garbage collection. |
 
 `make proto` needs `protoc` on your path and the plugins from `make tools`.
@@ -289,8 +295,6 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 ## Known limits
 
 - A task may fail three times, and losing its worker counts as a failure. Losing its coordinator does not.
-- Jobs are kept for good: nothing removes a finished job from the coordinator's database yet.
-- Invitations that have not been used do not survive a coordinator restart.
 - When a job fails, its other running tasks are left to finish and their results discarded; there is no cancellation.
 - Workers are chosen by free slots only, not by hardware.
 - A coordinator accepts whatever result a worker returns. Admit only workers you trust.

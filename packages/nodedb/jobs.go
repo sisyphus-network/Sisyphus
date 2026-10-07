@@ -125,6 +125,20 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 	return jobs, nil
 }
 
+// DeleteJobs forgets jobs, with their tasks, the attempts at them and the
+// record of the blobs they touched.
+func (db *DB) DeleteJobs(ids []string) error {
+	err := db.write(func(b *batch) {
+		for _, id := range ids {
+			b.exec(`DELETE FROM jobs WHERE job_id = ?`, id)
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("delete jobs: %w", err)
+	}
+	return nil
+}
+
 // Attempt is one time a task was handed to a worker.
 type Attempt struct {
 	TaskIndex int
