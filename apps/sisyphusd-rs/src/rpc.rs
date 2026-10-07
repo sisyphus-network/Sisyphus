@@ -336,6 +336,9 @@ fn into_proto_peers(peers: Vec<PeerSnapshot>) -> Vec<proto::Peer> {
             },
             known_addresses: peer.known_addresses,
             trusted_for_compute: peer.trusted_for_compute,
+            // This daemon runs no jobs, so no work flows either way.
+            works_for_this_node: false,
+            this_node_works_for: false,
         })
         .collect()
 }
