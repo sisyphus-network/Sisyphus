@@ -6,7 +6,7 @@ Everything in the test suite runs on one machine. This is the guide for the test
 
 - **Two or three machines** that can reach each other over a network. One will be the coordinator; call the others workers. Mixed hardware is good; at least one with many cores makes the timings clearer.
 - **`sisyphusd` on each.** Build it with `make build` on a machine with Go and copy `bin/sisyphusd` across, or cross-build with `scripts/build-release.sh v0.0.0-test dist` and take the binary for each machine's system from `dist/`. Check with `sisyphusd version`.
-- **One port open on the coordinator**: TCP 7700, from the workers. For the Kubo part, TCP 4101 as well.
+- **One port open on the coordinator**: TCP 7700, from the workers. Nothing needs opening on the workers, and nothing more for the Kubo part.
 - For the Kubo part, **`ipfs` (Kubo) installed on every machine**, the same version if possible.
 - This repository's `examples/` directory on the machine you will submit jobs from.
 
@@ -191,7 +191,7 @@ It prints the file's size if the worker's Kubo holds it. And look in each worker
 the pool's private IPFS network did not supply a blob
 ```
 
-✎ That warning must not appear. If it does, the worker's Kubo could not get the data from the others and fell back to the coordinator; the job still succeeds, but the private network is not working between those machines. The usual cause is the coordinator's port 4101 being closed.
+✎ That warning must not appear. If it does, the worker's Kubo could not get the data from the others and fell back to the coordinator; the job still succeeds, but the private network is not working between those machines. Each worker's log says near the top how its Kubo reaches the coordinator's: "through the coordinator's own port", or "directly" if the coordinator was started with `--swarm-port`.
 
 ### 4. Remove a member
 
@@ -230,4 +230,4 @@ Logs go to each node's standard error. Start a node with `-v` to log each task. 
 | `kubo: ... executable file not found` | `ipfs` is not installed or not on the PATH of the user running `sisyphusd`. |
 | `kubo: the daemon stopped while starting: ... someone else has the lock` | Another Kubo, or an `ipfs` command, has that repository open. A node that was killed outright leaves its Kubo running: find it with `pgrep -af 'ipfs daemon'` and stop it. |
 | `does not run a private IPFS network` | A worker was started with `--kubo` but its coordinator was not. |
-| Jobs work but every first run is slow, and workers log the "did not supply a blob" warning | The workers' Kubo daemons cannot reach the coordinator's on port 4101. |
+| Jobs work but every first run is slow, and workers log the "did not supply a blob" warning | The workers' Kubo daemons are not connected to the coordinator's. On a worker, `IPFS_PATH=<data-dir>/ipfs ipfs swarm peers` should list the coordinator's ID; if it does not, look for "a tunnel failed" in the worker's log. |

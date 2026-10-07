@@ -25,6 +25,7 @@ import (
 	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
+	"github.com/excho0/Sisyphus/apps/sisyphusd/tunnel"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
 	"github.com/excho0/Sisyphus/packages/identity"
 	"github.com/excho0/Sisyphus/packages/kubo"
@@ -52,7 +53,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
 	maxCache := fs.Uint64("max-cache-bytes", 0, "worker-only node: evict the least recently used cached blobs once the cache uses this much disk; 0 means no limit")
 	useKubo := fs.Bool("kubo", false, "keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself, on a private network with the rest of its pool; needs the ipfs program installed, and for a worker, a coordinator that uses it too")
-	swarmPort := fs.Int("swarm-port", 4101, "coordinator role with --kubo: TCP port the pool's private IPFS network reaches this node on; 0 picks one at each start")
+	swarmPort := fs.Int("swarm-port", 0, "coordinator role with --kubo: TCP port to open so that members' Kubo daemons can connect to this node's directly, which is faster; 0 opens none, and they reach it through --listen")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
 	verbose := fs.Bool("v", false, "log per-task detail")
 	if err := fs.Parse(args); err != nil {
@@ -102,7 +103,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
 	workloads := runtime.Builtin()
 
 	// The node's key lives beside its data and is created on first run.
@@ -151,12 +152,29 @@ func runDaemon(ctx context.Context, args []string) error {
 	var sidecar *kubo.Daemon
 	var swarm *poolSwarm
 	if *useKubo {
-		network := &kubo.Swarm{Port: *swarmPort}
+		// With no port of its own opened, a coordinator's Kubo listens on
+		// this machine only and members are brought to it through --listen.
+		network := &kubo.Swarm{Port: *swarmPort, Loopback: *swarmPort == 0}
+		swarm = &poolSwarm{keyFile: filepath.Join(*dataDir, "swarm.key"), port: *swarmPort}
 		if isCoordinator {
-			network.Key, err = swarmKey(filepath.Join(*dataDir, "swarm.key"))
+			network.Key, err = swarmKey(swarm.keyFile)
 		} else {
-			network.Port = 0
-			network.Key, network.Peers, err = fetchSwarm(ctx, *join, creds)
+			// A worker's Kubo makes its connections outwards. Where it
+			// cannot reach the coordinator's directly, it connects to a port
+			// on this machine that leads there through the coordinator's own.
+			conn, dialErr := grpc.NewClient(*join, grpc.WithTransportCredentials(creds))
+			if dialErr != nil {
+				return dialErr
+			}
+			defer conn.Close()
+			lis, listenErr := listenLoopback()
+			if listenErr != nil {
+				return fmt.Errorf("listen for this node's Kubo: %w", listenErr)
+			}
+			go tunnel.Forward(ctx, lis, pb.NewTunnelServiceClient(conn), pb.TunnelTarget_TUNNEL_TARGET_SWARM, log)
+			swarm.route = &route{coordinator: coordinatorID, coordinatorAddr: *join, tunnel: lis.Addr().String(), log: log}
+			network.Port, network.Loopback = 0, false
+			network.Key, network.Peers, err = swarm.fetch(ctx, *join, creds)
 		}
 		if err != nil {
 			return err
@@ -165,7 +183,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		defer sidecar.Stop()
-		swarm = &poolSwarm{key: network.Key, daemon: sidecar, keyFile: filepath.Join(*dataDir, "swarm.key"), port: *swarmPort}
+		swarm.key, swarm.daemon = network.Key, sidecar
 		log.Info("kubo started", "repo", filepath.Join(*dataDir, "ipfs"))
 	}
 
@@ -418,10 +436,13 @@ func apiToken(file string) (string, error) {
 // and this node's Kubo daemon on it.
 type poolSwarm struct {
 	daemon *kubo.Daemon
-	// keyFile is where a coordinator keeps the key, and port where its Kubo
-	// accepts the other members.
+	// keyFile is where a coordinator keeps the key, and port the port it has
+	// opened for the other members' Kubo daemons to connect to its own, or
+	// zero if it has opened none.
 	keyFile string
 	port    int
+	// route is how a worker's Kubo reaches its coordinator's.
+	route *route
 
 	// mu serialises changes of key.
 	mu  sync.Mutex
@@ -447,13 +468,133 @@ func fingerprint(key string) string {
 // Addresses returns where this node's Kubo can be reached, followed by where
 // the members connected to it can be, so that a node joining the network
 // connects to all of them and can fetch from any.
+//
+// A node that has opened no port for its Kubo leaves its own addresses out:
+// they lead nowhere from another machine, and it is reached by tunnel.
 func (s *poolSwarm) Addresses(ctx context.Context) ([]string, error) {
 	own, err := s.daemon.Addresses(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if s.port == 0 {
+		own = nil
+	}
 	others, err := s.daemon.PeerAddresses(ctx)
 	return append(own, others...), err
+}
+
+// Local returns where on this machine the node's Kubo accepts members.
+func (s *poolSwarm) Local(ctx context.Context) (string, error) {
+	own, err := s.daemon.Addresses(ctx)
+	if err != nil {
+		return "", err
+	}
+	return loopbackOf(own)
+}
+
+// loopbackOf picks, from a Kubo daemon's addresses, the one that reaches it
+// from its own machine, as a host and port.
+func loopbackOf(addresses []string) (string, error) {
+	for _, address := range addresses {
+		if hostport, ok := tcpAddress(address); ok && strings.HasPrefix(hostport, "127.0.0.1:") {
+			return hostport, nil
+		}
+	}
+	return "", fmt.Errorf("Kubo is not listening on this machine's loopback address (it listens on %v)", addresses)
+}
+
+// tcpAddress gives the host and port of a multiaddress that names a TCP
+// port at an IP address, such as /ip4/10.0.0.5/tcp/4101/p2p/12D3Koo.
+func tcpAddress(multiaddr string) (hostport string, ok bool) {
+	parts := strings.Split(multiaddr, "/")
+	if len(parts) < 5 || (parts[1] != "ip4" && parts[1] != "ip6") || parts[3] != "tcp" {
+		return "", false
+	}
+	return net.JoinHostPort(parts[2], parts[4]), true
+}
+
+// route is how a worker's Kubo gets to its coordinator's: straight to it
+// where that works, and otherwise by a tunnel through the coordinator's own
+// port.
+type route struct {
+	// coordinator is the coordinator's node ID, which is its Kubo's peer ID
+	// too, and coordinatorAddr the address this node reaches it at.
+	coordinator     string
+	coordinatorAddr string
+	// tunnel is the address on this machine that leads to the coordinator's
+	// Kubo.
+	tunnel string
+	log    *slog.Logger
+}
+
+// probeTimeout is how long a worker gives the coordinator's Kubo to accept a
+// direct connection before it settles for the tunnel.
+var probeTimeout = 2 * time.Second
+
+// choose takes the addresses a coordinator gave for the pool's Kubo daemons
+// and returns the ones this worker's Kubo should use. The other members' are
+// kept as they are. The coordinator's are kept if one of them accepts a
+// connection, and are otherwise replaced with the tunnel.
+func (r *route) choose(addresses []string) []string {
+	var others, candidates []string
+	host, _, _ := net.SplitHostPort(r.coordinatorAddr)
+	sameMachine := net.ParseIP(host).IsLoopback() || host == "localhost"
+	for _, address := range addresses {
+		if !strings.HasSuffix(address, "/p2p/"+r.coordinator) {
+			others = append(others, address)
+			continue
+		}
+		// The coordinator's loopback address means this machine, here,
+		// unless the two are the same machine.
+		hostport, ok := tcpAddress(address)
+		if ip, _, _ := net.SplitHostPort(hostport); ok && (sameMachine || !net.ParseIP(ip).IsLoopback()) {
+			candidates = append(candidates, address)
+		}
+	}
+
+	answers := make([]bool, len(candidates))
+	var probes sync.WaitGroup
+	for i, address := range candidates {
+		probes.Add(1)
+		go func() {
+			defer probes.Done()
+			hostport, _ := tcpAddress(address)
+			conn, err := net.DialTimeout("tcp", hostport, probeTimeout)
+			if err == nil {
+				conn.Close()
+				answers[i] = true
+			}
+		}()
+	}
+	probes.Wait()
+	var direct []string
+	for i, address := range candidates {
+		if answers[i] {
+			direct = append(direct, address)
+		}
+	}
+	if len(direct) > 0 {
+		r.log.Info("this node's Kubo connects to the coordinator's directly", "addresses", direct)
+		return append(direct, others...)
+	}
+	r.log.Info("this node's Kubo reaches the coordinator's through the coordinator's own port")
+	host, port, _ := net.SplitHostPort(r.tunnel)
+	return append([]string{"/ip4/" + host + "/tcp/" + port + "/p2p/" + r.coordinator}, others...)
+}
+
+// fetch asks the coordinator how to join the pool's network and works out
+// how this worker's Kubo will reach it.
+func (s *poolSwarm) fetch(ctx context.Context, coordinator string, creds credentials.TransportCredentials) (key string, peers []string, err error) {
+	key, addresses, err := fetchSwarm(ctx, coordinator, creds)
+	if err != nil {
+		return "", nil, err
+	}
+	return key, s.route.choose(addresses), nil
+}
+
+// listenLoopback opens a port on this machine only, for the system to pick.
+var listenLoopback = func() (*net.TCPListener, error) {
+	return net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 }
 
 // Rekey gives the pool's network a new key, on a coordinator: it saves the
@@ -466,7 +607,7 @@ func (s *poolSwarm) Rekey(ctx context.Context) error {
 	if err := os.WriteFile(s.keyFile, []byte(key), 0o600); err != nil {
 		return fmt.Errorf("save swarm key: %w", err)
 	}
-	if err := s.daemon.Rekey(ctx, &kubo.Swarm{Key: key, Port: s.port}); err != nil {
+	if err := s.daemon.Rekey(ctx, &kubo.Swarm{Key: key, Port: s.port, Loopback: s.port == 0}); err != nil {
 		return err
 	}
 	s.key = key
@@ -489,7 +630,7 @@ func (s *poolSwarm) adopt(ctx context.Context, coordinator string, creds credent
 		return
 	}
 	for {
-		key, peers, err := fetchSwarm(ctx, coordinator, creds)
+		key, peers, err := s.fetch(ctx, coordinator, creds)
 		if err == nil {
 			err = s.daemon.Rekey(ctx, &kubo.Swarm{Key: key, Peers: peers})
 		}

@@ -25,6 +25,10 @@ var allowed = map[string][]Role{
 	// network, which is what members are admitted to do.
 	pb.PoolService_Swarm_FullMethodName: {Worker, Client},
 
+	// A tunnel reaches this node's Kubo, where the swarm key is still
+	// needed to say anything.
+	pb.TunnelService_Open_FullMethodName: {Worker, Client},
+
 	pb.CoordinatorService_Connect_FullMethodName: {Worker},
 
 	pb.BlobService_Put_FullMethodName:  {Worker, Client},

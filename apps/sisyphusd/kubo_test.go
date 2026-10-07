@@ -45,7 +45,7 @@ func ipfsIn(t *testing.T, dataDir string, args ...string) string {
 func TestNodeWithKuboKeepsJobDataWhereTheIPFSCommandCanReadIt(t *testing.T) {
 	requireKubo(t)
 	dataDir := t.TempDir()
-	addr, _ := startNode(t, "--kubo", "--swarm-port", "0", "--data-dir", dataDir, "--slots", "2")
+	addr, _ := startNode(t, "--kubo", "--data-dir", dataDir, "--slots", "2")
 
 	// Kubo runs as the same peer as the node.
 	if got, want := strings.TrimSpace(ipfsIn(t, dataDir, "id", "-f", "<id>")), nodeID(t, dataDir); got != want {
@@ -126,7 +126,7 @@ func TestAPoolWithKuboSharesDataOverItsOwnPrivateNetwork(t *testing.T) {
 	requireKubo(t)
 	addr := freeAddr(t)
 	coordinatorDir, workerDir := t.TempDir(), t.TempDir()
-	startDaemon(t, "--role", "coordinator", "--kubo", "--swarm-port", "0", "--listen", addr, "--data-dir", coordinatorDir)
+	startDaemon(t, "--role", "coordinator", "--kubo", "--listen", addr, "--data-dir", coordinatorDir)
 	startDaemon(t, "--role", "worker", "--kubo", "--coordinator", addr, "--data-dir", workerDir, "--name", "hand", "--slots", "2")
 	waitForOutput(t, "hand", "nodes", "--addr", addr)
 
@@ -158,11 +158,11 @@ func TestAPoolWithKuboSharesDataOverItsOwnPrivateNetwork(t *testing.T) {
 func TestCoordinatorKeepsItsSwarmKeyAcrossRestarts(t *testing.T) {
 	requireKubo(t)
 	dataDir := t.TempDir()
-	_, stop := startNode(t, "--kubo", "--swarm-port", "0", "--data-dir", dataDir)
+	_, stop := startNode(t, "--kubo", "--data-dir", dataDir)
 	first, _ := os.ReadFile(filepath.Join(dataDir, "swarm.key"))
 	stop()
 
-	startNode(t, "--kubo", "--swarm-port", "0", "--data-dir", dataDir)
+	startNode(t, "--kubo", "--data-dir", dataDir)
 	second, _ := os.ReadFile(filepath.Join(dataDir, "swarm.key"))
 	if len(first) == 0 || string(first) != string(second) {
 		t.Errorf("the swarm key changed across a restart: %q then %q", first, second)
@@ -179,7 +179,7 @@ func TestNodeWithKuboWillNotStartIfItsPinsCannotBeKept(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, "kubo-pins"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := cli(t, "run", "--kubo", "--swarm-port", "0", "--data-dir", dataDir, "--listen", freeAddr(t))
+	_, err := cli(t, "run", "--kubo", "--data-dir", dataDir, "--listen", freeAddr(t))
 	if err == nil || !strings.Contains(err.Error(), "open blob store") {
 		t.Errorf("error %v, want the store refused", err)
 	}
@@ -208,7 +208,7 @@ func TestRemovingAMemberMovesThePoolToAKeyItDoesNotHave(t *testing.T) {
 	requireKubo(t)
 	addr := freeAddr(t)
 	coordinatorDir, stayerDir, leaverDir := t.TempDir(), t.TempDir(), t.TempDir()
-	startDaemon(t, "--role", "coordinator", "--kubo", "--swarm-port", "0", "--listen", addr, "--data-dir", coordinatorDir)
+	startDaemon(t, "--role", "coordinator", "--kubo", "--listen", addr, "--data-dir", coordinatorDir)
 	startDaemon(t, "--role", "worker", "--kubo", "--coordinator", addr, "--data-dir", stayerDir, "--name", "stayer", "--slots", "2")
 
 	// The node to be removed is run here, to see it stop.
@@ -303,7 +303,7 @@ func mustIdentity(t *testing.T, dataDir string) *identity.Identity {
 func TestPoolRekeyCommand(t *testing.T) {
 	requireKubo(t)
 	dataDir := t.TempDir()
-	addr, _ := startNode(t, "--kubo", "--swarm-port", "0", "--data-dir", dataDir)
+	addr, _ := startNode(t, "--kubo", "--data-dir", dataDir)
 	before, _ := os.ReadFile(filepath.Join(dataDir, "swarm.key"))
 
 	out := mustCLI(t, "pool", "rekey", "--addr", addr)

@@ -151,10 +151,28 @@ IPFS_PATH=~/.sisyphus/ipfs ipfs cat <cid>                  # anything stored is 
 - **Workers are given the key when they start**, over their encrypted connection to the coordinator, along with where to find the coordinator's Kubo and the other members'. A worker using `--kubo` needs a coordinator that does.
 - **Data comes from whoever has it.** When a task opens a blob its worker does not hold, the worker's Kubo fetches the blocks from the members that do, the coordinator or other workers. If the network cannot supply it within thirty seconds, the worker falls back to asking the coordinator directly, and logs a warning saying so: the job still succeeds, but that warning means the private network is not working for that worker.
 - **Removing a member changes the key.** A removed node still holds the key it was given, so `pool remove` gives the network a new one. The coordinator's Kubo restarts on it, which takes a few seconds, and tells the remaining workers, who fetch the new key and restart theirs. The removed node cannot ask for it. `pool rekey` does the same without removing anyone, for when a key may have leaked.
-- **The coordinator's Kubo must be reachable** by the workers' on `--swarm-port` (default 4101), over TCP.
+- **It needs no port of its own.** The coordinator's Kubo listens to its own machine only. A worker's Kubo reaches it through the connection the worker already has with the coordinator on `--listen`, so a pool needs one open port in all, and a worker needs none. See [One port](#one-port) below.
 - Files added with the `ipfs` command on a node's repository can be used as job inputs by CID.
 - The node's own pins decide what it keeps, as described below. Anything pinned with `ipfs pin add` is also kept. Do not run `ipfs repo gc` on the repository: Kubo's collector does not know about the node's pins.
 - Moving an existing node to `--kubo`, or back, does not carry its stored data across.
+
+### One port
+
+To take part in a pool a node needs to make one outgoing connection, to its coordinator. It opens no port, so it works from behind a home router or a firewall as it is. The coordinator is the one node that has to be reachable, on `--listen`.
+
+Opening more is optional, and buys speed:
+
+| What a node opens | What it gets |
+| --- | --- |
+| Nothing (any worker) | Takes tasks. Fetches data from the coordinator, and with `--kubo` from the coordinator's Kubo through a tunnel inside its connection. |
+| `--serve <addr>` on a worker | Other workers fetch what this one has cached from it, instead of all from the coordinator. |
+| `--swarm-port <port>` on a coordinator with `--kubo` | Workers' Kubo daemons connect to the coordinator's directly rather than through the tunnel. |
+
+A worker's Kubo tries the coordinator's open port first, if it has one, and settles for the tunnel if nothing answers within two seconds, so opening the port and then forgetting the firewall rule costs speed, not the pool. The worker logs which it chose.
+
+What the tunnel costs: every byte between a worker's Kubo and the coordinator's passes through both `sisyphusd` processes and is encrypted a second time. On one machine it moves about 300 MB/s against 2 GB/s for a direct connection, so it matters on a fast network with fast disks and not otherwise. Run `go test -run xxx -bench . ./apps/sisyphusd/tunnel` to measure it on yours.
+
+Two workers that have opened nothing cannot reach each other, in Kubo or outside it. Each gets what it needs from the coordinator, which holds every job's data anyway.
 
 ### Private jobs
 
@@ -261,6 +279,7 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 | `apps/sisyphusd/worker` | Connects to a coordinator and executes tasks. |
 | `apps/sisyphusd/api` | gRPC server wiring and the client-facing services. |
 | `apps/sisyphusd/access` | Who has been admitted and in what role; invitations; checking every call. |
+| `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
 | `packages/nodedb` | The node's SQLite database: jobs, tasks and attempts. |
 | `packages/storage` | Content-addressed blob store, pins, garbage collection. |
@@ -284,5 +303,5 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - Whatever is on the pool's private network can be fetched by every member of it. The network keeps outsiders out; it is private jobs, which seal their data, that keep members from reading each other's.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - A worker downloads a whole input even when its tasks need only part of it.
-- Workers that serve each other need a port of their own open to the other workers.
+- Workers exchange data directly only if at least one of the two has a port open to the other. Nothing relays between two workers that have opened none; both fetch from the coordinator.
 - Without `--max-cache-bytes` a worker's cache grows until the disk is full. The limit is not strict: blobs that tasks have open are kept even if they alone exceed it.

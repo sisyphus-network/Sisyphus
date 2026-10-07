@@ -291,7 +291,10 @@ type SwarmResponse struct {
 	// needs. Whoever holds it can join the network, so it is given only to
 	// admitted nodes and only over their encrypted connection.
 	SwarmKey string `protobuf:"bytes,1,opt,name=swarm_key,json=swarmKey,proto3" json:"swarm_key,omitempty"`
-	// Addresses of this node's Kubo daemon, each ending in /p2p/<peer ID>.
+	// Addresses of the Kubo daemons on the network, each ending in
+	// /p2p/<peer ID>. Those of this node's own daemon are absent if it accepts
+	// no connections from outside; it is then reached through
+	// TunnelService.Open.
 	Addresses     []string `protobuf:"bytes,2,rep,name=addresses,proto3" json:"addresses,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

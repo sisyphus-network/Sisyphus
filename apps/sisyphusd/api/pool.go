@@ -32,8 +32,12 @@ type poolService struct {
 type Swarm interface {
 	// Key returns the secret its members share.
 	Key() string
-	// Addresses returns where this node's own daemon can be reached on it.
+	// Addresses returns where the network's daemons can be reached by a
+	// node joining it.
 	Addresses(ctx context.Context) ([]string, error)
+	// Local returns where this node's own daemon accepts members, as a host
+	// and port that only this node need be able to reach.
+	Local(ctx context.Context) (string, error)
 	// Fingerprint identifies the current key without revealing it.
 	Fingerprint() string
 	// Rekey replaces the key with a new one and moves this node's daemon
