@@ -34,6 +34,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
+	maxCache := fs.Uint64("max-cache-bytes", 0, "worker-only node: evict the least recently used cached blobs once the cache uses this much disk; 0 means no limit")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
 	verbose := fs.Bool("v", false, "log per-task detail")
 	if err := fs.Parse(args); err != nil {
@@ -133,7 +134,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			}()
 		}
 	} else {
-		remote, err := worker.DialBlobs(*join, store)
+		remote, err := worker.DialBlobs(*join, store, *maxCache)
 		if err != nil {
 			return err
 		}

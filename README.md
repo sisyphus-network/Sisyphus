@@ -172,14 +172,17 @@ V0 deliberately excludes:
 ```text
 sisyphus/
 ├── apps/
-│   ├── sisyphusd/        # daemon: API, coordinator, planner, worker
-│   └── desktop/          # Electron + React client
+│   ├── sisyphusd/        # daemon and command-line client: coordinator, worker, API
+│   └── desktop/          # Electron + React client (not started)
 ├── packages/
-│   ├── protocol/         # generated/shared protocol code
-│   ├── job-model/        # jobs, task graphs, results, state types
-│   ├── planner/          # planning interfaces and schemas
-│   └── runtime/          # workload execution abstractions
+│   ├── protocol/         # Go code generated from proto/
+│   ├── job-model/        # job and task state machines
+│   ├── runtime/          # the Workload interface and built-in workloads
+│   ├── storage/          # content-addressed blob store, pins, garbage collection
+│   └── planner/          # planning interfaces and schemas (not started)
 ├── proto/                # Protocol Buffer service and message definitions
+├── scripts/              # demo, release build, coverage check
+├── docs/                 # developer guide
 └── README.md
 ```
 
@@ -187,4 +190,20 @@ This is one product and one repository. The daemon owns execution and state; cli
 
 ## Project status
 
-Sisyphus is in the concept and early architecture stage. The immediate goal is to demonstrate the AI orchestration loop across a small pool of trusted machines. That prototype is the foundation for the larger decentralized compute network and its eventual Proof of Useful Work economy.
+Sisyphus is an early prototype. The network loop works without AI: a coordinator splits a job, workers on other nodes run the tasks, and the results are combined. Everything so far has run on one machine as separate processes; it has not yet been tried across physically separate machines.
+
+**Working today**, in `sisyphusd`, written in Go:
+
+- One binary that runs as coordinator, worker or both, with a command-line client.
+- Distributed and full-worker scheduling, with tasks retried when a worker fails or disconnects.
+- Content-addressed storage for job data. Files are named by the same CID that `ipfs add --cid-version=1` gives them and laid out on disk as Kubo lays them out, without yet joining the IPFS network.
+- Jobs that pass large inputs and outputs by CID; workers fetch, verify and cache them.
+- Pins, retention periods, garbage collection and disk limits, so a node keeps data only as long as something needs it.
+- Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
+- Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.
+
+**Not built yet**: the AI planner and model providers, the desktop client, real workloads in containers, hardware discovery, persistence of jobs across a coordinator restart, and any encryption or authentication between nodes. Until the last of these exists, run it only on a network you trust. There is no blockchain, token or public network.
+
+Try it with `make demo`; see [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) for usage and [`docs/development.md`](docs/development.md) for building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/excho0/Sisyphus/issues/23).
+
+Two things in this section go beyond what the sections above describe and are still open for discussion: the choice of Go ([#1](https://github.com/excho0/Sisyphus/issues/1)), and building storage on IPFS formats while V0 lists IPFS as out of scope ([#25](https://github.com/excho0/Sisyphus/issues/25)).
