@@ -321,13 +321,15 @@ The agent starts `sisyphusd mcp` itself and talks to it over standard input and 
 | `pool_status` | The workers connected, with their cores, memory, graphics cards, the models they serve and how busy they are. |
 | `list_workloads` | What the pool can run, the parameters each workload takes, and how many connected workers run it. |
 | `run_job` | Runs a job and waits for its result, or returns at once with `detach`. |
-| `get_job`, `list_jobs`, `cancel_job`, `job_logs` | Look at a job, list them, stop one, read what it logged. |
-| `store_file`, `fetch_file`, `list_files`, `remove_file` | Put a file from this machine in the pool's store, bring one back, list them, stop keeping one. |
+| `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `wait_for_job` | Look at a job, list them, stop one, read what it logged, wait for one to finish. |
+| `store_file`, `fetch_file`, `list_files`, `remove_file`, `fetch_outputs` | Put a file from this machine in the pool's store, bring one back, list them, stop keeping one, bring back everything a job stored. |
 | `ask_model` | Has a model served by one of the pool's workers answer a prompt. |
-| `ask_planner`, `list_chats`, `get_chat` | Hand a whole question to the node's own planner, and read its conversations. |
+| `ask_planner`, `list_chats`, `get_chat`, `delete_chat` | Hand a whole question to the node's own planner, and read or forget its conversations. |
 | `list_peers`, `list_members` | The nodes this node knows of, with their countries and which way work flows; who is in its pool. |
-| `get_model`, `list_models` | What the planner plans with, and what its service offers. |
-| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model` | Change the node itself: who is in its pool, which nodes it trusts, what it plans with. |
+| `get_model`, `list_models`, `list_model_providers` | What the planner plans with, what its service offers, and the kinds of service there are. |
+| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model`, `remove_model` | Change the node itself: who is in its pool, which nodes it trusts, what it plans with. |
+
+Besides tools, the server gives an agent things to read (`sisyphus://pool`, `sisyphus://workloads`, and the skill itself as `sisyphus://skill/SKILL.md` and `sisyphus://skill/recipes.md`), two prompts (`run-on-pool`, `pool-report`), and, while `run_job` or `wait_for_job` waits, word of each task as it finishes.
 
 What the agent may do is yours to set, when you give its settings the command:
 
@@ -341,7 +343,8 @@ What the agent may do is yours to set, when you give its settings the command:
 - **It is a client of the local API** and holds the node's token, which it reads from the data directory.
 - **With no flags it can use the pool and not reconfigure it.** It can spend the pool's time, run container images on workers that allow containers, and read and write files in the directory it was started in. It will not write over a file that is there unless told to in so many words.
 - **`--admin` is the node's keys.** An agent with it can invite anyone into the pool and join the node to others. It is never given a model service's key: `set_model` keeps the one already set.
-- **A skill comes with it.** [`skills/sisyphus`](../../skills/sisyphus/SKILL.md) tells an agent how to use a pool well: look before submitting, how to split work with a container, how to have the pool's models think, what goes wrong. Copy the directory into `~/.claude/skills` for Claude Code, or wherever your agent keeps skills. It works with the tools or, without them, with the command line.
+- **A skill comes with it**, carried in the daemon. `sisyphusd skill install` puts it where Claude Code keeps skills (`~/.claude/skills`), `--dir` puts it elsewhere, and `sisyphusd skill show` prints it. It tells an agent how to use a pool well: look before submitting, how to split work with a container, how to have the pool's models think, what goes wrong; `recipes.md` beside it has worked shapes for common jobs. It works with the tools or, without them, with the command line. Its source is [`skills/sisyphus`](../../skills/sisyphus/SKILL.md).
+- **It has been tried from Claude Code**, with the skill installed and the server kept to one directory: asked to describe the pool, upper-case a file across three tasks and have one of the pool's models answer a question, it read the skill, ran a `container` job and `ask_model`, and wrote the right file. Other agents have not been tried.
 
 ## Following and stopping a job
 

@@ -285,7 +285,7 @@ func TestFetchingWhatCannotBeReturnedOrWritten(t *testing.T) {
 		"too long to return":   {&node{content: []string{strings.Repeat("a", maxInline), "b"}}, "", "give a path"},
 		"not text":             {&node{content: []string{"\xff\xfe"}}, "", "not text"},
 		"a stream that breaks": {&node{content: []string{"some"}, broken: true}, "", "the node is down"},
-		"nowhere to write it":  {&node{content: []string{"some"}}, filepath.Join(t.TempDir(), "no", "such", "dir"), "no such file"},
+		"nowhere to write it":  {&node{content: []string{"some"}}, t.TempDir(), "is a directory"},
 		"a full disk":          {&node{content: []string{"some"}}, "/dev/full", "write /dev/full"},
 	} {
 		if _, err := serving(tt.node).fetch(ctx, fetchArgs{CID: "cid-1", Path: tt.path, Overwrite: true}); err == nil || !strings.Contains(err.Error(), tt.want) {
