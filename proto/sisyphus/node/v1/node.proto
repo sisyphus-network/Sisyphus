@@ -44,8 +44,19 @@ service NodeService {
   // the service's key, only whether one is set.
   rpc GetModelConfig(GetModelConfigRequest) returns (ModelConfig);
   rpc SetModelConfig(SetModelConfigRequest) returns (ModelConfig);
-  // ListModels asks the configured service which models it offers.
+  // ListProviders lists the kinds of model service there are to choose
+  // from, the one that needs no account first.
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  // ListModels asks a service which models it offers: the configured one,
+  // or one the request describes, so that a service's models can be shown
+  // before it is chosen. Describing one needs the node's token.
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+  // PullModel fetches a model to the machine its service runs on, for a
+  // provider whose models are fetched before use, and says how far it has
+  // got as it goes. It ends when the model is there. Needs the token.
+  rpc PullModel(PullModelRequest) returns (stream PullModelProgress);
+  // RemoveModel deletes a fetched model from that machine. Needs the token.
+  rpc RemoveModel(RemoveModelRequest) returns (RemoveModelResponse);
   // Ask puts a question to the planner, in a new conversation or an
   // existing one, and sends what it does as it does it: what the model
   // says, each job it runs, and at the end the event "done".
@@ -321,7 +332,7 @@ message ListJobsResponse {
 message GetModelConfigRequest {}
 
 message ModelConfig {
-  // "ollama", or "openai" for OpenAI and anything that speaks as it does.
+  // One of the providers ListProviders lists.
   string provider = 1;
   // Where the service is, if not in that provider's usual place.
   string base_url = 2;
@@ -339,9 +350,83 @@ message SetModelConfigRequest {
   bool keep_api_key = 5;
 }
 
-message ListModelsRequest {}
+message ListProvidersRequest {}
 
-message ListModelsResponse { repeated string models = 1; }
+message ListProvidersResponse { repeated Provider providers = 1; }
+
+// Provider is a kind of model service.
+message Provider {
+  // What a ModelConfig names it by.
+  string id = 1;
+  // What people call it, and a line on what it is for.
+  string name = 2;
+  string about = 3;
+  // Where the service is if base_url is left empty.
+  string default_url = 4;
+  // Whether it wants a key: no, yes, or unknown for a provider that is
+  // many services, some of which do.
+  Support needs_key = 5;
+  // Whether its models are fetched before use, with PullModel.
+  bool fetches_models = 6;
+}
+
+// Support is whether something is so, as far as is known.
+enum Support {
+  SUPPORT_UNKNOWN = 0;
+  SUPPORT_YES = 1;
+  SUPPORT_NO = 2;
+}
+
+// ModelService says which service a request about models is for. Empty, it
+// is the configured one.
+message ModelService {
+  string provider = 1;
+  string base_url = 2;
+  // The service's key, if it wants one. keep_api_key uses the saved key
+  // instead, and only for the provider and address it was saved with: the
+  // saved key is never sent anywhere else.
+  string api_key = 3;
+  bool keep_api_key = 4;
+}
+
+message ListModelsRequest { ModelService service = 1; }
+
+message ListModelsResponse {
+  // The models' names, and the same models with what is known of each.
+  repeated string models = 1;
+  repeated Model details = 2;
+}
+
+message Model {
+  string name = 1;
+  // What the service calls it for people to read, if anything.
+  string label = 2;
+  // How much room it takes on the machine serving it, if the service says.
+  uint64 size_bytes = 3;
+  // Whether it can ask for tools to be run. A planner's model must: one
+  // that cannot will answer without computing anything.
+  Support tools = 4;
+}
+
+message PullModelRequest {
+  ModelService service = 1;
+  string model = 2;
+}
+
+message PullModelProgress {
+  // What is being done, in the service's words.
+  string status = 1;
+  // Bytes of the part being fetched; both zero for a step not measured.
+  uint64 completed_bytes = 2;
+  uint64 total_bytes = 3;
+}
+
+message RemoveModelRequest {
+  ModelService service = 1;
+  string model = 2;
+}
+
+message RemoveModelResponse {}
 
 message AskRequest {
   // The conversation to continue, or empty to start one.

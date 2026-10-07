@@ -42,7 +42,7 @@ func newAnthropicFake(t *testing.T, replies ...reply) *anthropicFake {
 		}
 		switch {
 		case r.URL.Path == "/v1/models":
-			io.WriteString(w, `{"data":[{"id":"claude-opus-5-5","type":"model"},{"id":"claude-haiku-4-5","type":"model"}],"has_more":false}`)
+			io.WriteString(w, `{"data":[{"id":"claude-opus-5-5","display_name":"Claude Opus 5.5","type":"model"},{"id":"claude-haiku-4-5","type":"model"}],"has_more":false}`)
 		case strings.HasPrefix(r.URL.Path, "/v1/models/"):
 			if f.room == 0 {
 				w.WriteHeader(http.StatusNotFound)
@@ -255,7 +255,7 @@ func TestClaudeSaysWhenItHasNoKey(t *testing.T) {
 func TestClaudeListsItsModelsAndSaysWhenItCannotBeReached(t *testing.T) {
 	f := newAnthropicFake(t)
 	models, err := f.provider(t, "sk-key").Models(context.Background())
-	if err != nil || strings.Join(models, ",") != "claude-opus-5-5,claude-haiku-4-5" {
+	if err != nil || len(models) != 2 || models[0] != (Model{Name: "claude-opus-5-5", Label: "Claude Opus 5.5", Tools: Yes}) || models[1].Name != "claude-haiku-4-5" {
 		t.Fatalf("models = %v, %v", models, err)
 	}
 	// A context that has ended is how a service that cannot be reached is

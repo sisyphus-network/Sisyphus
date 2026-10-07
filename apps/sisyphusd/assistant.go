@@ -73,13 +73,64 @@ func (a *assistant) provider() (ai.Provider, nodedb.ModelConfig, error) {
 	return p, cfg, nil
 }
 
-// Models asks the configured service which models it offers.
-func (a *assistant) Models(ctx context.Context) ([]string, error) {
-	p, _, err := a.provider()
+// service returns the model service at, or the configured one if at is nil.
+func (a *assistant) service(at *nodedb.ModelConfig) (ai.Provider, error) {
+	if at == nil {
+		p, _, err := a.provider()
+		return p, err
+	}
+	p, err := ai.New(ai.Config{Provider: at.Provider, BaseURL: at.BaseURL, APIKey: at.APIKey})
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return p, nil
+}
+
+// Models asks a service which models it offers: the one at, or the
+// configured one if at is nil.
+func (a *assistant) Models(ctx context.Context, at *nodedb.ModelConfig) ([]ai.Model, error) {
+	p, err := a.service(at)
 	if err != nil {
 		return nil, err
 	}
 	return p.Models(ctx)
+}
+
+// library returns a service as one whose models are fetched.
+func (a *assistant) library(at *nodedb.ModelConfig) (ai.Library, error) {
+	p, err := a.service(at)
+	if err != nil {
+		return nil, err
+	}
+	library, is := p.(ai.Library)
+	if !is {
+		return nil, status.Error(codes.FailedPrecondition, "this service's models are not fetched or removed: it offers what it offers")
+	}
+	return library, nil
+}
+
+// PullModel fetches a model to the machine a service runs on.
+func (a *assistant) PullModel(ctx context.Context, at *nodedb.ModelConfig, model string, progress func(ai.Progress)) error {
+	library, err := a.library(at)
+	if err != nil {
+		return err
+	}
+	if model == "" {
+		return status.Error(codes.InvalidArgument, "a model must be named")
+	}
+	return library.Pull(ctx, model, progress)
+}
+
+// RemoveModel deletes a fetched model from the machine a service runs on.
+func (a *assistant) RemoveModel(ctx context.Context, at *nodedb.ModelConfig, model string) error {
+	library, err := a.library(at)
+	if err != nil {
+		return err
+	}
+	if model == "" {
+		return status.Error(codes.InvalidArgument, "a model must be named")
+	}
+	return library.Remove(ctx, model)
 }
 
 func (a *assistant) Chats() ([]nodedb.Chat, error) { return a.store.Chats() }

@@ -39,7 +39,7 @@ func (s *scripted) Chat(_ context.Context, req ai.Request, said func(string)) (a
 	return reply, nil
 }
 
-func (*scripted) Models(context.Context) ([]string, error) { return nil, nil }
+func (*scripted) Models(context.Context) ([]ai.Model, error) { return nil, nil }
 
 // calling is a reply that asks for one tool to be run.
 func calling(id, tool, arguments string) ai.Message {

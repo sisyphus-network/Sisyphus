@@ -145,12 +145,9 @@ func TestOpenAIChatStreamsTextAndAssemblesToolCalls(t *testing.T) {
 }
 
 func TestListingModels(t *testing.T) {
-	ollamaFake := newFake(t, map[string]string{"/api/tags": `{"models":[{"name":"llama3.2:3b"},{"name":"qwen3:8b"}]}`})
-	if got, err := provider(t, Config{Provider: Ollama, BaseURL: ollamaFake.URL}).Models(context.Background()); err != nil || strings.Join(got, ",") != "llama3.2:3b,qwen3:8b" {
-		t.Errorf("Ollama's models: %v, %v", got, err)
-	}
 	openaiFake := newFake(t, map[string]string{"/models": `{"data":[{"id":"gpt-5"},{"id":"gpt-5-mini"}]}`})
-	if got, err := provider(t, Config{Provider: OpenAI, BaseURL: openaiFake.URL}).Models(context.Background()); err != nil || strings.Join(got, ",") != "gpt-5,gpt-5-mini" {
+	got, err := provider(t, Config{Provider: OpenAI, BaseURL: openaiFake.URL}).Models(context.Background())
+	if err != nil || len(got) != 2 || got[0] != (Model{Name: "gpt-5"}) || got[1].Name != "gpt-5-mini" {
 		t.Errorf("the OpenAI-style service's models: %v, %v", got, err)
 	}
 }

@@ -48,7 +48,10 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `WatchJobEvents` | | What has happened to one job, then what happens next, ending when the job does: the steps of its life and the lines its tasks log. Pass `after_seq` to pick up where you left off. |
 | `GetModelConfig` | | Which model the node plans with, and whether a key is set. Never the key. |
 | `SetModelConfig` | yes | Set it. `keep_api_key` changes the rest without sending the key again. |
-| `ListModels` | | What the configured service offers, for a picker. |
+| `ListProviders` | | The kinds of model service there are: Ollama, Anthropic, and OpenAI and whatever speaks as it does. Each with its usual address, whether it wants a key, and whether its models are fetched before use. |
+| `ListModels` | for a named service | What a service offers, each model with its size and whether it can call tools. With no `service`, the configured one; with one, the service described, before anything is saved. |
+| `PullModel` | yes | Fetch a model to the machine its service runs on (Ollama). A stream of progress, ending when the model is there. |
+| `RemoveModel` | yes | Delete a fetched model. |
 | `Ask` | yes | Put a question to the planner. A stream of what it does; see below. |
 | `ListChats`, `GetChat`, `DeleteChat` | yes | Conversations on record, newest first; one in full; forget one. |
 | `StoreFile` | yes | Put a file in the pool's store and keep it. A stream from you: the first message carries `name`, every message may carry `data`. Returns its `cid`, which is what a job takes as input. |
@@ -125,7 +128,18 @@ A job view can be built from `WatchJobs` for state and progress and `WatchJobEve
 
 If the planner fails, the stream ends with an error instead of `done`, and what was said up to then is still saved. `GetChat` returns a conversation as messages with a `role` of `user`, `assistant` or `tool`; an assistant message may carry `calls` instead of text.
 
-Before any model is set, `Ask` fails with `FAILED_PRECONDITION` and a message saying so, which is the cue to show a model picker (`ListModels` needs a provider set first, so offer Ollama at its default address as the starting point).
+Before any model is set, `Ask` fails with `FAILED_PRECONDITION` and a message saying so, which is the cue to show the model picker.
+
+### The model picker
+
+Everything a picker needs comes from the node, so the app holds no list of providers or models of its own.
+
+1. **Pick the provider.** `ListProviders` gives the cards: `name` and `about` to show, `default_url` to prefill the address, `needs_key` to say whether to ask for a key (`SUPPORT_YES`: always; `SUPPORT_UNKNOWN`: offer the field, do not require it; `SUPPORT_NO`: hide it), and `fetches_models` to say whether to offer downloads. Ollama is first because it needs no account.
+2. **Pick the model.** `ListModels` with `service` set to what the user has entered so far lists that service's models without saving anything. Show `label` if there is one, else `name`, with `size_bytes` where given. A model whose `tools` is `SUPPORT_NO` cannot plan: it would answer without computing anything, so grey it out and say why. `SUPPORT_UNKNOWN` means the service does not say; allow it. An error here is the service's own, for instance a refused key or nothing listening at that address, and is worth showing as it is.
+3. **Or download one.** Where `fetches_models` is set, offer a field for a model's name (for Ollama, anything from its library, such as `llama3.1:8b`) and call `PullModel`. Each message carries `status`, and for the parts that are measured `completed_bytes` of `total_bytes`, which restart for each part: show the status and a bar for the current part. The stream ending without an error means the model is there; list the models again. Cancelling the call stops the download. `RemoveModel` deletes one.
+4. **Use it.** `SetModelConfig` saves the choice. When the user later changes only the model, send `keep_api_key`; the same flag in `service` lets `ListModels` use the saved key, which the node sends only to the provider and address it was saved for.
+
+Anthropic may show as having no key set and still work: with none saved, the node uses the key Anthropic's own tools are set up with on that machine.
 
 ## Files and invitations
 

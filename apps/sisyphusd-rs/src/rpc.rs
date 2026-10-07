@@ -341,6 +341,30 @@ impl proto::node_service_server::NodeService for NodeServiceImpl {
         Err(Status::failed_precondition(NO_POOL))
     }
 
+    type PullModelStream =
+        Pin<Box<dyn Stream<Item = Result<proto::PullModelProgress, Status>> + Send + 'static>>;
+
+    async fn list_providers(
+        &self,
+        _request: Request<proto::ListProvidersRequest>,
+    ) -> Result<Response<proto::ListProvidersResponse>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
+    async fn pull_model(
+        &self,
+        _request: Request<proto::PullModelRequest>,
+    ) -> Result<Response<Self::PullModelStream>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
+    async fn remove_model(
+        &self,
+        _request: Request<proto::RemoveModelRequest>,
+    ) -> Result<Response<proto::RemoveModelResponse>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
     type AskStream =
         Pin<Box<dyn Stream<Item = Result<proto::AskEvent, Status>> + Send + 'static>>;
 
