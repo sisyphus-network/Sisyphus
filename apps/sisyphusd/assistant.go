@@ -26,6 +26,8 @@ type assistant struct {
 	// coordinates none.
 	pool      planner.Pool
 	workloads *runtime.Registry
+	// offered says whether the pool has a worker that runs a workload now.
+	offered func(workload string) bool
 }
 
 // assistantStore is where the configuration and conversations are kept. A
@@ -171,7 +173,9 @@ func (a *assistant) Ask(ctx context.Context, chatID, text string, report func(ch
 func (a *assistant) described() []planner.Workload {
 	var out []planner.Workload
 	for _, name := range a.workloads.Names() {
-		out = append(out, planner.Workload{Name: name, Description: a.workloads.Describe(name)})
+		if a.offered(name) {
+			out = append(out, planner.Workload{Name: name, Description: a.workloads.Describe(name)})
+		}
 	}
 	return out
 }

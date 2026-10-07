@@ -404,10 +404,28 @@ This was checked against a database made by the Rust daemon itself, which is kep
 
 ## Workloads
 
-Both built-in workloads are stand-ins that exercise the network rather than compute anything valuable. Real workloads will sit behind the same `Workload` interface in `packages/runtime`.
-
-- **`primes`** counts the primes in `[from, to)`. Parameters and results are a few bytes and travel inline.
+- **`container`** runs a container image, once for each task of the job. This is how real programs run on a pool: anything that can be put in an image. See [Running containers](#running-containers) below.
+- **`primes`** counts the primes in `[from, to)`. Parameters and results are a few bytes and travel inline. It is a stand-in that exercises the pool.
 - **`wordcount`** counts word frequencies in a stored file. It exercises the storage path: the input is fetched by CID, each task reads only its byte range, task outputs are stored as blobs, and the result is a blob too. The result's CID is the same however the job is split, so two runs can be compared by CID alone.
+
+### Running containers
+
+```sh
+bin/sisyphusd run --role worker --coordinator <addr> --containers ...     # a worker that will run them
+bin/sisyphusd job submit --workload container --tasks 8 \
+    --params '{"image":"alpine:3.20","command":["sh","-c","echo I am task $SISYPHUS_TASK_INDEX"]}'
+examples/container.sh                                                    # the same, and prints each task's output
+```
+
+- **A worker runs containers only if its owner says so**, with `--containers`, and needs Docker. **This is real authority over the machine:** whoever may submit jobs to the pool can run any image with any command there. Give it only on pools whose clients you would let log in.
+- **One copy for each task.** Every task runs the same image and command and is told which copy it is, in `SISYPHUS_TASK_INDEX` (from 0) and `SISYPHUS_TASK_COUNT`. A program that does a share of some larger work takes its share from those.
+- **Input.** `"input": "<CID>"` gives every task that stored file at `/input/data`, read-only.
+- **Output.** What the command prints is stored and its CID returned for each task, and so is every file it leaves in `/output`. `blob get <CID>` fetches them. What it prints is also the task's log, live, in `job logs`.
+- **Limits.** `"memory_mb"` and `"cpus"` cap what each task may use, and unlike a node's offer these are enforced, by Docker. A task has no network unless the job says `"network": true`. It runs as the user the node runs as, not as root.
+- **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container.
+- **A job is taken in by any coordinator**, and waits until a worker that runs containers is connected.
+
+What it does not do yet: images are pulled by Docker when first used, from wherever the image name says, so a worker needs to reach that registry and trust it; nothing pins an image to a digest. Graphics cards are not passed through to the container.
 
 ## Layout
 

@@ -69,6 +69,15 @@ Both are stand-ins that exercise the network; neither computes anything of value
 
 A job's result is the same whichever way it was split, down to the CID of a stored result. If two runs of the same job print different results, something is wrong.
 
+## Running a container
+
+`examples/container.sh` runs a container image on the pool, one copy for each task, and prints what each copy printed. At least one worker must have been started with `--containers`, which needs Docker.
+
+```sh
+examples/container.sh                                   # three copies of a small image
+examples/container.sh 8 python:3-slim python -c 'import os; print(int(os.environ["SISYPHUS_TASK_INDEX"]) ** 2)'
+```
+
 ## A backend for the desktop app
 
 `examples/desktop-backend.sh` starts three nodes for the desktop app to be built against: the one it talks to, a worker of its pool, and a node it finds by itself. See [`docs/desktop-backend.md`](../docs/desktop-backend.md).

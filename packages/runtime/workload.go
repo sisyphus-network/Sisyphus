@@ -81,9 +81,16 @@ func NewRegistry(workloads ...Workload) *Registry {
 	return r
 }
 
-// Builtin returns the workloads shipped with the daemon.
+// Builtin returns the workloads shipped with the daemon that any node can
+// run, having nothing to run them with but itself.
 func Builtin() *Registry {
 	return NewRegistry(Primes{}, WordCount{})
+}
+
+// WithContainers returns the built-in workloads and the one that runs
+// container images.
+func WithContainers() *Registry {
+	return NewRegistry(Primes{}, WordCount{}, Container{})
 }
 
 func (r *Registry) Get(name string) (Workload, error) {

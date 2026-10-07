@@ -58,6 +58,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
+	containers := fs.Bool("containers", false, "worker role: run container images for the pool's jobs, with Docker. This lets whoever may submit jobs to the pool run what they like on this machine")
 	maxMemory := fs.Uint64("offer-memory-mb", 0, "worker role: tell the pool this node has no more than this much memory, in mebibytes; 0 offers all it has")
 	maxGPUs := fs.Int("offer-gpus", -1, "worker role: tell the pool this node has no more than this many graphics cards; -1 offers all it has")
 	reciprocate := fs.Bool("work-for-trusted", true, "a node with both roles: also work for the nodes it trusts for compute, whenever they trust it back")
@@ -128,7 +129,16 @@ func runDaemon(ctx context.Context, args []string) error {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
-	workloads := runtime.Builtin()
+	// A node can take in, split and combine any workload, since that needs
+	// nothing but itself. What it will run as a worker is another matter:
+	// container images only if its owner has said so.
+	workloads, runs := runtime.WithContainers(), runtime.Builtin()
+	if *containers {
+		if err := checkContainers(ctx); err != nil {
+			return fmt.Errorf("--containers: %w", err)
+		}
+		runs = workloads
+	}
 
 	// The node's key lives beside its data and is created on first run.
 	ident, err := loadIdentity(*dataDir)
@@ -244,6 +254,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	// planningPool is the pool the node's planner computes on, if it
 	// coordinates one.
 	var planningPool planner.Pool
+	// offered says whether any worker now connected runs a workload. The
+	// planner is told only of those, so that it asks for nothing the pool
+	// would leave waiting. It is set where there is a pool to plan for.
+	var offered func(workload string) bool
 	worksFor := func(string) bool { return false }
 	// takes is the other side of trust: the nodes this one will take tasks
 	// from, whatever else it does.
@@ -311,6 +325,11 @@ func runDaemon(ctx context.Context, args []string) error {
 		local.Pool = api.NewPoolAdmin(config)
 		local.Jobs = coord
 		planningPool = coord
+		offered = func(workload string) bool {
+			return slices.ContainsFunc(coord.Nodes(), func(node *pb.NodeInfo) bool {
+				return slices.Contains(node.GetCapabilities().GetWorkloads(), workload)
+			})
+		}
 		local.Peers = func() []*nodepb.Peer { return poolPeers(ident.ID(), coord.Nodes(), admitted.Members()) }
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish. The coordinator is closed first, so that it knows
@@ -399,7 +418,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	if isWorker {
 		w := &worker.Worker{
 			Name: *name, Coordinator: *join, Credentials: creds,
-			Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log,
+			Slots: *slots, Workloads: runs, Blobs: blobs, Log: log,
 			ServeAddress: *advertise,
 			// What the machine has, as far as its owner offers it.
 			Hardware: hardware.Detect(ctx).Offer(*maxMemory<<20, *maxGPUs),
@@ -497,7 +516,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// The node's planner is there whatever its role, so that its model can
 	// be set and its conversations read; it has something to compute on
 	// only where the node coordinates a pool.
-	local.Assistant = &assistant{store: db, pool: planningPool, workloads: workloads}
+	local.Assistant = &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered}
 
 	// Whatever its role, the node is connected to the nodes in its address
 	// book and those named on the command line, and through them finds
@@ -592,6 +611,9 @@ func routeTo(found []p2p.Peer, id string) string {
 	}
 	return route
 }
+
+// checkContainers is how a node finds out whether it can run containers.
+var checkContainers = runtime.CheckContainers
 
 // startingPoints lists the addresses a node connects to at startup: its
 // address book, then those given on the command line.

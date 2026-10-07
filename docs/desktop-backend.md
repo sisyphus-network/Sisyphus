@@ -84,6 +84,7 @@ To submit one of the built-in workloads:
 | --- | --- | --- |
 | `primes` | `{"from":0,"to":2000000}` | `{"count":148933}` |
 | `wordcount` | `{"input":"<CID of a stored file>"}` | Counts, and the CID of the full table in `output_blobs`. |
+| `container` | `{"image":"alpine:3.20","command":["echo","hi"]}` | For each task, the CID of what it printed and of each file it wrote. Needs a worker started with `--containers`; without one the job waits. |
 
 `min_memory_bytes` and `min_gpus` send its tasks only to workers that have that much. `max_tasks` says how many pieces to split into; zero means one for each free worker slot. `task_timeout_seconds`, if set, stops and retries any attempt that runs longer.
 
