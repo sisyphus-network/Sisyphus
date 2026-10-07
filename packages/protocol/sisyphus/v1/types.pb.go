@@ -279,12 +279,14 @@ func (x *NodeCapabilities) GetWorkloads() []string {
 }
 
 type NodeInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Capabilities  *NodeCapabilities      `protobuf:"bytes,2,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
-	RunningTasks  uint32                 `protobuf:"varint,3,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
-	ConnectedAt   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=connected_at,json=connectedAt,proto3" json:"connected_at,omitempty"`
-	LastSeenAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	NodeId       string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Capabilities *NodeCapabilities      `protobuf:"bytes,2,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
+	RunningTasks uint32                 `protobuf:"varint,3,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
+	ConnectedAt  *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=connected_at,json=connectedAt,proto3" json:"connected_at,omitempty"`
+	LastSeenAt   *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"`
+	// The label the node gave itself.
+	Name          string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -352,6 +354,13 @@ func (x *NodeInfo) GetLastSeenAt() *timestamppb.Timestamp {
 		return x.LastSeenAt
 	}
 	return nil
+}
+
+func (x *NodeInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 type JobSpec struct {
@@ -436,7 +445,9 @@ type Task struct {
 	// Node currently or most recently running the task.
 	NodeId string `protobuf:"bytes,5,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// Reason for the most recent failed attempt, if any.
-	Error         string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	Error string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	// The label of the node in node_id.
+	NodeName      string `protobuf:"bytes,7,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -509,6 +520,13 @@ func (x *Task) GetNodeId() string {
 func (x *Task) GetError() string {
 	if x != nil {
 		return x.Error
+	}
+	return ""
+}
+
+func (x *Task) GetNodeName() string {
+	if x != nil {
+		return x.NodeName
 	}
 	return ""
 }
@@ -647,26 +665,28 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\fmemory_bytes\x18\x05 \x01(\x04R\vmemoryBytes\x12\x1d\n" +
 	"\n" +
 	"task_slots\x18\x06 \x01(\rR\ttaskSlots\x12\x1c\n" +
-	"\tworkloads\x18\a \x03(\tR\tworkloads\"\x88\x02\n" +
+	"\tworkloads\x18\a \x03(\tR\tworkloads\"\x9c\x02\n" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12#\n" +
 	"\rrunning_tasks\x18\x03 \x01(\rR\frunningTasks\x12=\n" +
 	"\fconnected_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\vconnectedAt\x12<\n" +
 	"\flast_seen_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"lastSeenAt\"\x89\x01\n" +
+	"lastSeenAt\x12\x12\n" +
+	"\x04name\x18\x06 \x01(\tR\x04name\"\x89\x01\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
 	"\x04mode\x18\x03 \x01(\x0e2\x19.sisyphus.v1.ScheduleModeR\x04mode\x12\x1b\n" +
-	"\tmax_tasks\x18\x04 \x01(\rR\bmaxTasks\"\xac\x01\n" +
+	"\tmax_tasks\x18\x04 \x01(\rR\bmaxTasks\"\xc9\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\rR\x05index\x12,\n" +
 	"\x05state\x18\x03 \x01(\x0e2\x16.sisyphus.v1.TaskStateR\x05state\x12\x18\n" +
 	"\aattempt\x18\x04 \x01(\rR\aattempt\x12\x17\n" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12\x14\n" +
-	"\x05error\x18\x06 \x01(\tR\x05error\"\x86\x03\n" +
+	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1b\n" +
+	"\tnode_name\x18\a \x01(\tR\bnodeName\"\x86\x03\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12(\n" +
 	"\x04spec\x18\x02 \x01(\v2\x14.sisyphus.v1.JobSpecR\x04spec\x12+\n" +

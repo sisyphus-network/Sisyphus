@@ -21,13 +21,14 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | --- | --- |
 | `proto/sisyphus/v1` | Message and service definitions. The source of truth for the protocol. |
 | `packages/protocol` | Go generated from `proto/`. Never edited by hand; committed so a fresh clone builds without `protoc`. |
-| `packages/identity` | A node's key pair and the ID derived from it; signing and verifying. |
+| `packages/identity` | A node's key pair and the ID derived from it; signing and verifying; the TLS settings nodes connect with. |
 | `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
 | `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. |
 | `apps/sisyphusd/worker` | Connecting to a coordinator, running tasks, the blob cache. |
 | `apps/sisyphusd/api` | The gRPC server and the client-facing services. |
+| `apps/sisyphusd/access` | Which nodes have been admitted and in what role, invitations, and the check made on every call. |
 | `apps/sisyphusd/blobclient` | Uploading and downloading blobs, checked against their CIDs. |
 | `apps/sisyphusd` | The `sisyphusd` command: flags, startup, the command-line client. |
 
@@ -40,7 +41,9 @@ Every statement of hand-written code must be executed by some test; `make cover`
 - **Time is passed in, not waited for.** Garbage collection takes the current time as an argument so tests can ask what happens an hour or a week from now.
 - **Timing-dependent tests are a bug.** Coverage and results must be the same on every run.
 
-Tests that need a node start a real one in-process on a loopback port (`startPool`, `startDaemon`). Give every test daemon its own `--data-dir`.
+Tests that need a node start a real one in-process on a loopback port (`startPool`, `startDaemon`). Every node in a test has its own key and connects over TLS like a real one; `cli` runs a command as the owner of the test node it is addressed to, and `as` runs one from another node's point of view.
+
+A new call is open to the node's owner only until it is added to the table in `apps/sisyphusd/access/enforce.go`. Add a row to `TestEachRoleMayMakeOnlyItsOwnCalls` with it.
 
 ## The protocol
 

@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/credentials"
+
+	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
@@ -27,9 +28,10 @@ import (
 func runDaemon(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd run", flag.ContinueOnError)
 	roles := fs.String("role", "coordinator,worker", "comma-separated roles this node runs: coordinator, worker")
-	listen := fs.String("listen", defaultAddr, "coordinator role: address to serve workers and clients on (no authentication yet; only expose it to a trusted network)")
-	join := fs.String("coordinator", "", "worker-only node: host:port of the coordinator to join")
-	nodeID := fs.String("node-id", "", "name of this node in the pool (default: hostname plus a random suffix)")
+	listen := fs.String("listen", defaultAddr, "coordinator role: address to serve workers and clients on")
+	join := fs.String("coordinator", "", "worker-only node: host:port of its coordinator")
+	invitation := fs.String("join", "", "worker-only node: an invitation from the coordinator, needed the first time this node connects to it")
+	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
@@ -65,8 +67,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	if *slots < 1 {
 		return errors.New("--slots must be at least 1")
 	}
-	if *nodeID == "" {
-		*nodeID = defaultNodeID()
+	if isCoordinator && *invitation != "" {
+		return errors.New("--join is for worker-only nodes")
 	}
 
 	level := slog.LevelInfo
@@ -106,6 +108,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	// A node that is its own coordinator reads and writes the one store
 	// directly; a worker-only node fetches into its cache.
 	var blobs runtime.Blobs = store
+	// coordinatorID is the ID of the node this one's worker answers to.
+	var coordinatorID string
 
 	if isCoordinator {
 		lis, err := net.Listen("tcp", *listen)
@@ -118,15 +122,25 @@ func runDaemon(ctx context.Context, args []string) error {
 			lis.Close()
 			return err
 		}
-		coord := coordinator.New(coordinator.Config{ID: *nodeID, Workloads: workloads, Store: store, Retain: *retain, Log: log})
+		admitted, err := access.Open(filepath.Join(*dataDir, "access.json"), ident.ID())
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		coord := coordinator.New(coordinator.Config{ID: ident.ID(), Workloads: workloads, Store: store, Retain: *retain, Log: log})
 		defer coord.Close()
-		srv := api.NewServer(api.Config{Coordinator: coord, Store: store, MaxStoreBytes: *maxStore})
+		srv := api.NewServer(api.Config{
+			Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore,
+		})
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish.
 		defer srv.Stop()
-		log.Info("coordinator listening", "addr", lis.Addr().String(), "node", *nodeID)
+		log.Info("coordinator listening", "addr", lis.Addr().String(), "name", *name)
 		go func() { stopped <- srv.Serve(lis) }()
+		// The node's own worker connects to it as any other would, and
+		// expects to find the node itself at the other end.
 		*join = loopback(lis.Addr())
+		coordinatorID = ident.ID()
 
 		if *gcInterval > 0 {
 			collected := make(chan struct{})
@@ -141,7 +155,22 @@ func runDaemon(ctx context.Context, args []string) error {
 			}()
 		}
 	} else {
-		remote, err := worker.DialBlobs(*join, store, *maxCache)
+		// A worker only ever talks to the coordinator it joined. The first
+		// time, an invitation says which node that is and gets this one
+		// admitted; after that the coordinator's ID is remembered.
+		if *invitation != "" {
+			if _, err := joinPool(ctx, *dataDir, ident, *join, *invitation); err != nil {
+				return err
+			}
+		}
+		known, err := loadKnown(*dataDir)
+		if err != nil {
+			return err
+		}
+		if coordinatorID = known[*join]; coordinatorID == "" {
+			return fmt.Errorf("this node has not joined a coordinator at %s: start it once with --join and an invitation from that coordinator", *join)
+		}
+		remote, err := worker.DialBlobs(*join, credentials.NewTLS(ident.ClientTLS(coordinatorID)), store, *maxCache)
 		if err != nil {
 			return err
 		}
@@ -150,7 +179,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 
 	if isWorker {
-		w := &worker.Worker{NodeID: *nodeID, Coordinator: *join, Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log}
+		w := &worker.Worker{
+			Name: *name, Coordinator: *join, Credentials: credentials.NewTLS(ident.ClientTLS(coordinatorID)),
+			Slots: *slots, Workloads: workloads, Blobs: blobs, Log: log,
+		}
 		done := make(chan struct{})
 		// Tasks must finish before the store they use closes.
 		defer func() {
@@ -234,14 +266,13 @@ func loopback(addr net.Addr) string {
 // hostname is os.Hostname; tests replace it.
 var hostname = os.Hostname
 
-func defaultNodeID() string {
+// defaultName is the machine's host name.
+func defaultName() string {
 	name, err := hostname()
 	if err != nil {
-		name = "node"
+		return "node"
 	}
-	var suffix [3]byte
-	rand.Read(suffix[:]) // never fails; see crypto/rand
-	return name + "-" + hex.EncodeToString(suffix[:])
+	return name
 }
 
 // defaultDataDir is ~/.sisyphus, falling back to the working directory when

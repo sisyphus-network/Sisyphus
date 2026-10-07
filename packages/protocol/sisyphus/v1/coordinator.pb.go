@@ -120,9 +120,10 @@ func (*WorkerMessage_Heartbeat) isWorkerMessage_Kind() {}
 func (*WorkerMessage_TaskResult) isWorkerMessage_Kind() {}
 
 type Hello struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Capabilities  *NodeCapabilities      `protobuf:"bytes,2,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Capabilities *NodeCapabilities      `protobuf:"bytes,2,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
+	// A label for people to recognise the node by. It need not be unique.
+	Name          string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -157,18 +158,18 @@ func (*Hello) Descriptor() ([]byte, []int) {
 	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *Hello) GetNodeId() string {
-	if x != nil {
-		return x.NodeId
-	}
-	return ""
-}
-
 func (x *Hello) GetCapabilities() *NodeCapabilities {
 	if x != nil {
 		return x.Capabilities
 	}
 	return nil
+}
+
+func (x *Hello) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 type Heartbeat struct {
@@ -544,10 +545,10 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\theartbeat\x18\x02 \x01(\v2\x16.sisyphus.v1.HeartbeatH\x00R\theartbeat\x12:\n" +
 	"\vtask_result\x18\x03 \x01(\v2\x17.sisyphus.v1.TaskResultH\x00R\n" +
 	"taskResultB\x06\n" +
-	"\x04kind\"c\n" +
-	"\x05Hello\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12A\n" +
-	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\"0\n" +
+	"\x04kind\"d\n" +
+	"\x05Hello\x12A\n" +
+	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04nameJ\x04\b\x01\x10\x02\"0\n" +
 	"\tHeartbeat\x12#\n" +
 	"\rrunning_tasks\x18\x01 \x01(\rR\frunningTasks\"\xc0\x01\n" +
 	"\n" +

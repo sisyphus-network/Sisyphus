@@ -6,9 +6,11 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -136,5 +138,85 @@ func TestLoadingAKeyFails(t *testing.T) {
 	}
 	if _, _, err := LoadOrCreate(filepath.Join(dir, "missing", "node.key")); err == nil {
 		t.Error("created a key in a directory that does not exist")
+	}
+}
+
+// Starting a node and asking for its ID at the same moment must not leave
+// the two with different keys.
+func TestCreatingAKeyFromSeveralProcessesAtOnceGivesOneKey(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		path := filepath.Join(t.TempDir(), "node.key")
+		const racers = 16
+		ids := make([]string, racers)
+		created := make([]bool, racers)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := range racers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				id, isNew, err := LoadOrCreate(path)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				ids[i], created[i] = id.ID(), isNew
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		winners := 0
+		for i := range racers {
+			if ids[i] != ids[0] {
+				t.Fatalf("racers ended up with different keys: %s and %s", ids[0], ids[i])
+			}
+			if created[i] {
+				winners++
+			}
+		}
+		// Racers that arrived after the key was in place just loaded it, so
+		// there may be fewer than one "creator" per racer, but never two.
+		if winners > 1 {
+			t.Fatalf("%d racers each believe they created the key", winners)
+		}
+		if leftovers, _ := filepath.Glob(path + ".tmp-*"); len(leftovers) != 0 {
+			t.Errorf("temporary key files left behind: %v", leftovers)
+		}
+		stored, _, err := LoadOrCreate(path)
+		if err != nil || stored.ID() != ids[0] {
+			t.Fatalf("the key on disk is %v (%v), the racers got %s", stored, err, ids[0])
+		}
+	}
+}
+
+func TestKeyIsCreatedOnAFilesystemWithoutHardLinks(t *testing.T) {
+	defer func() { link = os.Link }()
+	link = func(string, string) error { return errors.New("operation not supported") }
+
+	path := filepath.Join(t.TempDir(), "node.key")
+	first, created, err := LoadOrCreate(path)
+	if err != nil || !created {
+		t.Fatalf("LoadOrCreate = %v, %v, %v; want a new key", first, created, err)
+	}
+	again, created, err := LoadOrCreate(path)
+	if err != nil || created || again.ID() != first.ID() {
+		t.Errorf("reloading gave %v, %v, %v; want the same key, not new", again, created, err)
+	}
+	if leftovers, _ := filepath.Glob(path + ".tmp-*"); len(leftovers) != 0 {
+		t.Errorf("temporary key files left behind: %v", leftovers)
+	}
+}
+
+func TestFailingToPutTheKeyInPlaceIsReported(t *testing.T) {
+	defer func() { link = os.Link }()
+	// A filesystem that loses the file instead of linking it.
+	link = func(tmp, _ string) error {
+		os.Remove(tmp)
+		return errors.New("input/output error")
+	}
+	if _, _, err := LoadOrCreate(filepath.Join(t.TempDir(), "node.key")); err == nil {
+		t.Error("LoadOrCreate reported success with no key on disk")
 	}
 }

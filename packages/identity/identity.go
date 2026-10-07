@@ -12,6 +12,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -29,35 +30,65 @@ type Identity struct {
 
 // LoadOrCreate reads the node key stored at path, or, if there is none,
 // generates one and stores it there readable only by its owner. It reports
-// whether the key is new.
+// whether the key is new. If several processes do this at once for the same
+// path, they all end up with the same key and one of them reports it as new.
 func LoadOrCreate(path string) (id *Identity, created bool, err error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		_, key, _ := ed25519.GenerateKey(rand.Reader) // never fails; see crypto/rand
-		der, _ := x509.MarshalPKCS8PrivateKey(key)    // always encodes an Ed25519 key
-		encoded := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-		if err := os.WriteFile(path, encoded, 0o600); err != nil {
-			return nil, false, fmt.Errorf("save node key: %w", err)
-		}
-		return fromKey(key), true, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("read node key: %w", err)
+	id, err = load(path)
+	if !errors.Is(err, os.ErrNotExist) {
+		return id, false, err
 	}
 
+	_, key, _ := ed25519.GenerateKey(rand.Reader) // never fails; see crypto/rand
+	der, _ := x509.MarshalPKCS8PrivateKey(key)    // always encodes an Ed25519 key
+	var suffix [8]byte
+	rand.Read(suffix[:])
+	tmp := path + ".tmp-" + hex.EncodeToString(suffix[:])
+	if err := os.WriteFile(tmp, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		return nil, false, fmt.Errorf("save node key: %w", err)
+	}
+	// Linking puts the finished file in place only if nothing is there, so
+	// of several processes creating a key at once exactly one succeeds, and
+	// nobody ever reads a half-written key. Whoever won, what is at path
+	// afterwards is the node's key.
+	if link(tmp, path) != nil {
+		// Either another process got there first, or this filesystem has no
+		// hard links. In the second case nothing is at path yet, and moving
+		// the file there is the best that can be done.
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			os.Rename(tmp, path)
+		}
+	}
+	os.Remove(tmp)
+	id, err = load(path)
+	if err != nil {
+		return nil, false, err
+	}
+	return id, id.key.Equal(key), nil
+}
+
+// link is os.Link; tests replace it to stand in for filesystems without
+// hard links.
+var link = os.Link
+
+// load reads the node key stored at path.
+func load(path string) (*Identity, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read node key: %w", err)
+	}
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, false, fmt.Errorf("node key %s is not PEM", path)
+		return nil, fmt.Errorf("node key %s is not PEM", path)
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return nil, false, fmt.Errorf("node key %s: %w", path, err)
+		return nil, fmt.Errorf("node key %s: %w", path, err)
 	}
 	key, ok := parsed.(ed25519.PrivateKey)
 	if !ok {
-		return nil, false, fmt.Errorf("node key %s is %T, not an Ed25519 key", path, parsed)
+		return nil, fmt.Errorf("node key %s is %T, not an Ed25519 key", path, parsed)
 	}
-	return fromKey(key), false, nil
+	return fromKey(key), nil
 }
 
 func fromKey(key ed25519.PrivateKey) *Identity {

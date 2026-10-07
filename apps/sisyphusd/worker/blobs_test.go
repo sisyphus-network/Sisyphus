@@ -15,10 +15,13 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
+	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/api"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
+	"github.com/excho0/Sisyphus/packages/identity"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
 	"github.com/excho0/Sisyphus/packages/storage"
@@ -28,6 +31,32 @@ var ctx = context.Background()
 
 func quiet() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// The stand-in coordinators in these tests all answer with one key, and the
+// workers all connect with another that expects it.
+var (
+	coordinatorIdent = mustIdentity()
+	workerIdent      = mustIdentity()
+	workerCreds      = credentials.NewTLS(workerIdent.ClientTLS(coordinatorIdent.ID()))
+)
+
+func mustIdentity() *identity.Identity {
+	dir, err := os.MkdirTemp("", "sisyphus-worker-test")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	ident, _, err := identity.LoadOrCreate(filepath.Join(dir, "node.key"))
+	if err != nil {
+		panic(err)
+	}
+	return ident
+}
+
+// newServer returns a gRPC server that answers as the coordinator.
+func newServer(opts ...grpc.ServerOption) *grpc.Server {
+	return grpc.NewServer(append(opts, grpc.Creds(credentials.NewTLS(coordinatorIdent.ServerTLS())))...)
 }
 
 // serve runs srv on a loopback port and returns its address and a function
@@ -43,17 +72,25 @@ func serve(t *testing.T, srv *grpc.Server) (addr string, stop func()) {
 	return lis.Addr().String(), srv.Stop
 }
 
-// startCoordinator serves a real coordinator's blob service over store.
+// startCoordinator serves a real coordinator's blob service over store, with
+// the test worker admitted.
 func startCoordinator(t *testing.T, store *storage.Store) (addr string, stop func()) {
 	t.Helper()
-	coord := coordinator.New(coordinator.Config{ID: "coordinator", Workloads: runtime.Builtin(), Store: store, Log: quiet()})
+	admitted, err := access.Open("", coordinatorIdent.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := admitted.Admit(workerIdent.ID(), access.Worker, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	coord := coordinator.New(coordinator.Config{ID: coordinatorIdent.ID(), Workloads: runtime.Builtin(), Store: store, Log: quiet()})
 	t.Cleanup(coord.Close)
-	return serve(t, api.NewServer(api.Config{Coordinator: coord, Store: store}))
+	return serve(t, api.NewServer(api.Config{Identity: coordinatorIdent, Access: admitted, Coordinator: coord, Store: store}))
 }
 
 func dial(t *testing.T, addr string, local *storage.Store) *worker.RemoteBlobs {
 	t.Helper()
-	blobs, err := worker.DialBlobs(addr, local, 0)
+	blobs, err := worker.DialBlobs(addr, workerCreds, local, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +192,7 @@ func (impostor) Get(_ *pb.GetBlobRequest, stream grpc.ServerStreamingServer[pb.G
 }
 
 func TestOpenRejectsBytesThatDoNotMatchTheCID(t *testing.T) {
-	srv := grpc.NewServer()
+	srv := newServer()
 	pb.RegisterBlobServiceServer(srv, impostor{})
 	addr, _ := serve(t, srv)
 	local := storage.NewMemory()
@@ -174,7 +211,7 @@ func TestOpenRejectsBytesThatDoNotMatchTheCID(t *testing.T) {
 }
 
 func TestDialBlobsRejectsAMalformedAddress(t *testing.T) {
-	if _, err := worker.DialBlobs("bad\x00address", storage.NewMemory(), 0); err == nil {
+	if _, err := worker.DialBlobs("bad\x00address", workerCreds, storage.NewMemory(), 0); err == nil {
 		t.Error("dialled an address containing a control character")
 	}
 }
@@ -200,7 +237,7 @@ func (s stalledNode) Get(_ *pb.GetBlobRequest, stream grpc.ServerStreamingServer
 // when it is cancelled, and must not start a second download.
 func TestOpenWaitingOnAnotherDownloadStopsWhenCancelled(t *testing.T) {
 	node := stalledNode{started: make(chan struct{}, 4), release: make(chan struct{})}
-	srv := grpc.NewServer()
+	srv := newServer()
 	pb.RegisterBlobServiceServer(srv, node)
 	addr, _ := serve(t, srv)
 	blobs := dial(t, addr, storage.NewMemory())
@@ -263,7 +300,7 @@ func limitedRun(t *testing.T, dir, addr string, maxBytes uint64) (blobs *worker.
 	if err != nil {
 		t.Fatal(err)
 	}
-	blobs, err = worker.DialBlobs(addr, cache, maxBytes)
+	blobs, err = worker.DialBlobs(addr, workerCreds, cache, maxBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

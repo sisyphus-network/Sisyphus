@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
 	jobmodel "github.com/excho0/Sisyphus/packages/job-model"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
@@ -78,7 +79,13 @@ type Coordinator struct {
 }
 
 type worker struct {
-	id           string
+	id string
+	// name is the label the worker gave itself.
+	name string
+	// removed is closed, once, to make the worker's connection end.
+	removed chan struct{}
+	remove  sync.Once
+
 	capabilities *pb.NodeCapabilities
 	connectedAt  time.Time
 	lastSeen     time.Time
@@ -215,6 +222,7 @@ func (c *Coordinator) Nodes() []*pb.NodeInfo {
 	for _, w := range c.workers {
 		nodes = append(nodes, &pb.NodeInfo{
 			NodeId:       w.id,
+			Name:         w.name,
 			Capabilities: w.capabilities,
 			RunningTasks: uint32(len(w.running)),
 			ConnectedAt:  timestamppb.New(w.connectedAt),
@@ -225,15 +233,21 @@ func (c *Coordinator) Nodes() []*pb.NodeInfo {
 	return nodes
 }
 
-// Connect serves one worker for as long as its stream stays open.
+// Connect serves one worker for as long as its stream stays open. The
+// worker's ID is that of the key it connected with, as established by the
+// access package; nothing the worker sends can change it.
 func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, pb.CoordinatorMessage]) error {
+	id := access.Caller(stream.Context())
+	if id == "" {
+		return status.Error(codes.Unauthenticated, "the caller has not been identified")
+	}
 	first, err := stream.Recv()
 	if err != nil {
 		return err
 	}
 	hello := first.GetHello()
-	if hello.GetNodeId() == "" {
-		return status.Error(codes.InvalidArgument, "first message must be a Hello with a node_id")
+	if hello == nil {
+		return status.Error(codes.InvalidArgument, "first message must be a Hello")
 	}
 	capabilities := hello.GetCapabilities()
 	if capabilities == nil {
@@ -245,27 +259,31 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 
 	now := time.Now()
 	w := &worker{
-		id:           hello.GetNodeId(),
+		id:           id,
+		name:         hello.GetName(),
 		capabilities: capabilities,
 		connectedAt:  now,
 		lastSeen:     now,
 		send:         make(chan *pb.CoordinatorMessage, capabilities.GetTaskSlots()+1),
 		running:      make(map[string]assignment),
+		removed:      make(chan struct{}),
 	}
 
 	c.mu.Lock()
 	if _, taken := c.workers[w.id]; taken {
 		c.mu.Unlock()
-		return status.Errorf(codes.AlreadyExists, "node %q is already connected", w.id)
+		return status.Errorf(codes.AlreadyExists, "node %s is already connected", w.id)
 	}
 	c.workers[w.id] = w
 	w.send <- &pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Welcome{Welcome: &pb.Welcome{CoordinatorId: c.id}}}
 	c.scheduleLocked()
 	c.mu.Unlock()
-	c.log.Info("worker connected", "node", w.id, "slots", capabilities.GetTaskSlots())
+	c.log.Info("worker connected", "node", w.id, "name", w.name, "slots", capabilities.GetTaskSlots())
 
-	// A failed Send means the stream is broken, which Recv below also sees,
-	// so the sender needs no way to report its error.
+	// One goroutine writes to the stream and one reads from it, so that this
+	// one can also act on the worker being removed. A failed Send means the
+	// stream is broken, which the reader also sees, so the writer needs no
+	// way to report its error.
 	stop, stopped := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(stopped)
@@ -278,29 +296,48 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 			}
 		}
 	}()
-	// The stream must not be used once this handler returns.
+	broken := make(chan error, 1)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				broken <- err
+				return
+			}
+			switch kind := msg.GetKind().(type) {
+			case *pb.WorkerMessage_Heartbeat:
+				c.mu.Lock()
+				w.lastSeen = time.Now()
+				c.mu.Unlock()
+			case *pb.WorkerMessage_TaskResult:
+				c.handleResult(w, kind.TaskResult)
+			}
+		}
+	}()
 	defer func() {
 		c.disconnect(w)
 		close(stop)
 		<-stopped
 	}()
 
-	for {
-		msg, err := stream.Recv()
+	select {
+	case err := <-broken:
 		if errors.Is(err, io.EOF) {
 			return nil // the worker closed its side cleanly
 		}
-		if err != nil {
-			return err
-		}
-		switch kind := msg.GetKind().(type) {
-		case *pb.WorkerMessage_Heartbeat:
-			c.mu.Lock()
-			w.lastSeen = time.Now()
-			c.mu.Unlock()
-		case *pb.WorkerMessage_TaskResult:
-			c.handleResult(w, kind.TaskResult)
-		}
+		return err
+	case <-w.removed:
+		return status.Errorf(codes.PermissionDenied, "node %s has been removed from the pool", w.id)
+	}
+}
+
+// Remove disconnects the worker with the given ID, if it is connected. Its
+// running tasks are handed to other workers.
+func (c *Coordinator) Remove(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if w, ok := c.workers[id]; ok {
+		w.remove.Do(func() { close(w.removed) })
 	}
 }
 
@@ -318,6 +355,10 @@ func (c *Coordinator) disconnect(w *worker) {
 		c.notifyLocked(a.job)
 	}
 	c.log.Info("worker disconnected", "node", w.id, "lost_tasks", len(w.running))
+	// The reader may still deliver a result that was already on its way.
+	// With nothing recorded as running, it is dropped like any other result
+	// for a task the worker does not hold.
+	w.running = make(map[string]assignment)
 	c.scheduleLocked()
 }
 
@@ -441,7 +482,7 @@ func (c *Coordinator) scheduleLocked() {
 			if w == nil {
 				break
 			}
-			job.Start(task, w.id)
+			job.Start(task, w.id, w.name)
 			w.running[task.ID] = assignment{job: job, task: task}
 			w.send <- &pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
 				TaskId:   task.ID,

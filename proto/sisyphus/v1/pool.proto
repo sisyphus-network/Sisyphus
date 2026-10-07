@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package sisyphus.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+
+// PoolService manages which nodes a node will talk to. Every connection is
+// TLS, with each side identified by its node key; this service decides which
+// of those identities are admitted, and as what.
+service PoolService {
+  // Join admits the caller, in the role its token was issued for. Any node
+  // may call it; a valid token is what gets it in. A token works once.
+  rpc Join(JoinRequest) returns (JoinResponse);
+
+  // The rest may be called only by the node's owner: its own command line.
+
+  // Invite issues a token for one node to join with.
+  rpc Invite(InviteRequest) returns (InviteResponse);
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
+  // RemoveMember takes a node off the list and, if it is a connected worker,
+  // disconnects it.
+  rpc RemoveMember(RemoveMemberRequest) returns (RemoveMemberResponse);
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  // May take tasks and move the blobs they need.
+  ROLE_WORKER = 1;
+  // May submit and inspect jobs and manage stored data.
+  ROLE_CLIENT = 2;
+}
+
+message JoinRequest {
+  string token = 1;
+}
+
+message JoinResponse {
+  Role role = 1;
+}
+
+message InviteRequest {
+  Role role = 1;
+  // How long the invitation can be used for. Zero means one hour.
+  uint64 ttl_seconds = 2;
+}
+
+message InviteResponse {
+  // The invitation to hand to the joining node: this node's ID and the
+  // token, as "<node ID>:<token>". The ID lets the joiner be sure it is
+  // talking to the node that invited it.
+  string invitation = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message ListMembersRequest {}
+
+message ListMembersResponse {
+  repeated Member members = 1;
+}
+
+message Member {
+  string node_id = 1;
+  Role role = 2;
+  google.protobuf.Timestamp joined_at = 3;
+}
+
+message RemoveMemberRequest {
+  string node_id = 1;
+}
+
+message RemoveMemberResponse {}

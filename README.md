@@ -200,11 +200,11 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Content-addressed storage for job data. Files are named by the same CID that `ipfs add --cid-version=1` gives them and laid out on disk as Kubo lays them out, without yet joining the IPFS network.
 - Jobs that pass large inputs and outputs by CID; workers fetch, verify and cache them.
 - Pins, retention periods, garbage collection and disk limits, so a node keeps data only as long as something needs it.
-- A key pair and ID for every node, not yet used to secure anything.
+- Encrypted connections between nodes, each identified by its own key; nodes join a pool by invitation, as a worker or a client, and can be removed.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.
 
-**Not built yet**: the AI planner and model providers, the desktop client, real workloads in containers, hardware discovery, persistence of jobs across a coordinator restart, and any encryption or authentication between nodes. Until the last of these exists, run it only on a network you trust. There is no blockchain, token or public network.
+**Not built yet**: the AI planner and model providers, the desktop client, real workloads in containers, hardware discovery, and persistence of jobs across a coordinator restart. A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
 
 Try it with `make demo`; see [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) for usage and [`docs/development.md`](docs/development.md) for building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/excho0/Sisyphus/issues/23).
 

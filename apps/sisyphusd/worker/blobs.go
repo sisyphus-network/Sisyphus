@@ -9,7 +9,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/excho0/Sisyphus/apps/sisyphusd/blobclient"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
@@ -73,11 +73,11 @@ type preparation struct {
 }
 
 // DialBlobs returns blob access backed by local and the coordinator at the
-// given address. It does not connect until first used. If maxBytes is not
-// zero, the least recently used blobs are evicted from local whenever it
-// grows past that size.
-func DialBlobs(coordinator string, local *storage.Store, maxBytes uint64) (*RemoteBlobs, error) {
-	conn, err := grpc.NewClient(coordinator, grpc.WithTransportCredentials(insecure.NewCredentials()))
+// given address, reached with the given credentials. It does not connect
+// until first used. If maxBytes is not zero, the least recently used blobs
+// are evicted from local whenever it grows past that size.
+func DialBlobs(coordinator string, creds credentials.TransportCredentials, local *storage.Store, maxBytes uint64) (*RemoteBlobs, error) {
+	conn, err := grpc.NewClient(coordinator, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, err
 	}

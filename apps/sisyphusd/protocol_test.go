@@ -10,8 +10,10 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
+	"github.com/excho0/Sisyphus/apps/sisyphusd/access"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
 )
@@ -20,17 +22,35 @@ import (
 // see how it treats workers that are broken, buggy or dishonest.
 
 type rawWorker struct {
-	t      *testing.T
+	t *testing.T
+	// id is the node ID the worker's key gives it.
+	id     string
 	stream grpc.BidiStreamingClient[pb.WorkerMessage, pb.CoordinatorMessage]
 	cancel context.CancelFunc
 }
 
-// connectRaw opens a worker stream and sends first, if it is not nil.
+// connectRaw opens a worker stream as a newly admitted worker and sends
+// first, if it is not nil.
 func (p *pool) connectRaw(first *pb.WorkerMessage) *rawWorker {
 	p.t.Helper()
+	ident, creds := p.admit(access.Worker)
+	w := p.connectRawAs(creds, first)
+	w.id = ident.ID()
+	return w
+}
+
+// connectRawAs opens a worker stream with the given credentials, whoever
+// they belong to, and sends first, if it is not nil.
+func (p *pool) connectRawAs(creds credentials.TransportCredentials, first *pb.WorkerMessage) *rawWorker {
+	p.t.Helper()
+	conn, err := grpc.NewClient(p.addr, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	p.t.Cleanup(func() { conn.Close() })
 	ctx, cancel := context.WithCancel(p.ctx)
 	p.t.Cleanup(cancel)
-	stream, err := pb.NewCoordinatorServiceClient(p.conn).Connect(ctx)
+	stream, err := pb.NewCoordinatorServiceClient(conn).Connect(ctx)
 	if err != nil {
 		p.t.Fatal(err)
 	}
@@ -41,9 +61,9 @@ func (p *pool) connectRaw(first *pb.WorkerMessage) *rawWorker {
 	return w
 }
 
-func hello(id string, slots uint32, workloads ...string) *pb.WorkerMessage {
+func hello(name string, slots uint32, workloads ...string) *pb.WorkerMessage {
 	return &pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
-		NodeId:       id,
+		Name:         name,
 		Capabilities: &pb.NodeCapabilities{TaskSlots: slots, Workloads: workloads},
 	}}}
 }
@@ -88,7 +108,6 @@ func TestCoordinatorRejectsWorkersThatDoNotIntroduceThemselves(t *testing.T) {
 	}{
 		{"says nothing and hangs up", nil, codes.Unknown},
 		{"starts with a heartbeat", &pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: &pb.Heartbeat{}}}, codes.InvalidArgument},
-		{"gives no node ID", hello("", 1, "primes"), codes.InvalidArgument},
 		{"claims a million task slots", hello("greedy", 1_000_000, "primes"), codes.InvalidArgument},
 	}
 	for _, tt := range tests {
@@ -103,14 +122,14 @@ func TestCoordinatorRejectsWorkersThatDoNotIntroduceThemselves(t *testing.T) {
 
 func TestWorkerThatStatesNoCapabilitiesIsListedButGivenNoWork(t *testing.T) {
 	p := startPool(t, runtime.Builtin())
-	w := p.connectRaw(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{NodeId: "bare"}}})
+	w := p.connectRaw(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{Name: "bare"}}})
 	w.welcome()
 
 	listed, err := p.client.ListNodes(p.ctx, &pb.ListNodesRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nodes := listed.GetNodes(); len(nodes) != 1 || nodes[0].GetNodeId() != "bare" || nodes[0].GetCapabilities().GetTaskSlots() != 0 {
+	if nodes := listed.GetNodes(); len(nodes) != 1 || nodes[0].GetName() != "bare" || nodes[0].GetNodeId() != w.id || nodes[0].GetCapabilities().GetTaskSlots() != 0 {
 		t.Errorf("nodes: %v", nodes)
 	}
 	job := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED, 1))
@@ -190,8 +209,8 @@ func TestWorkIsNotGivenToAWorkerThatCannotRunIt(t *testing.T) {
 		t.Errorf("job split into %d tasks, want 2", len(job.GetTasks()))
 	}
 	for _, task := range job.GetTasks() {
-		if task.GetNodeId() != "able" {
-			t.Errorf("task %d ran on %q", task.GetIndex(), task.GetNodeId())
+		if task.GetNodeName() != "able" {
+			t.Errorf("task %d ran on %q", task.GetIndex(), task.GetNodeName())
 		}
 	}
 	if string(job.GetResult()) != primesBelowTwoMillion {

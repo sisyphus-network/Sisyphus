@@ -31,16 +31,18 @@ Only Linux on x86-64 is run by the test suite. The others are compiled and have 
 
 ## Try it on one machine
 
-The quick way, in one terminal, is `make demo`: it starts three nodes, runs a job across them, and shuts them down.
+The quick way, in one terminal, is `make demo`: it starts three nodes, runs a few jobs across them, and shuts them down.
 
-To run the nodes yourself, use one terminal per node (or one `tmux` pane each):
+To run the nodes yourself, use one terminal per node (or one `tmux` pane each). Every node keeps its key and data under `--data-dir` (default `~/.sisyphus`), so nodes sharing a machine each need their own.
 
 ```sh
-# Terminal 1: a coordinator that is also a worker
-bin/sisyphusd run --node-id alpha --slots 4
+# Terminal 1: a coordinator that is also a worker, using ~/.sisyphus
+bin/sisyphusd run --name alpha --slots 4
 
-# Terminal 2: a second worker joining it
-bin/sisyphusd run --role worker --coordinator 127.0.0.1:7700 --node-id beta --slots 4 --data-dir ~/.sisyphus-beta
+# Terminal 2: ask alpha for an invitation, then start a second worker with it
+bin/sisyphusd pool invite
+bin/sisyphusd run --role worker --coordinator 127.0.0.1:7700 --join <invitation> \
+    --name beta --slots 4 --data-dir ~/.sisyphus-beta
 
 # Terminal 3
 bin/sisyphusd nodes
@@ -48,34 +50,55 @@ bin/sisyphusd job submit --params '{"from":0,"to":3000000000}'
 bin/sisyphusd job submit --mode full-worker --params '{"from":0,"to":3000000000}'
 ```
 
-Every node keeps its data under `--data-dir` (default `~/.sisyphus`), so nodes sharing a machine each need their own. The first job is split across both workers; the second runs whole on one. Stop a worker with Ctrl-C while a job is running and its tasks move to the other.
+The first job is split across both workers; the second runs whole on one. Stop a worker with Ctrl-C while a job is running and its tasks move to the other. A worker needs `--join` only the first time; after that it remembers its coordinator.
 
 ## Try it across machines
 
-On the coordinator machine, listen on an address the others can reach:
+On the coordinator machine, listen on an address the others can reach, and issue an invitation for each worker:
 
 ```sh
 bin/sisyphusd run --listen 0.0.0.0:7700
+bin/sisyphusd pool invite        # once per worker; each invitation works once
 ```
 
 On each other machine:
 
 ```sh
-bin/sisyphusd run --role worker --coordinator <coordinator-ip>:7700
+bin/sisyphusd run --role worker --coordinator <coordinator-ip>:7700 --join <invitation>
 ```
 
-**The daemon has no encryption or authentication yet.** Anyone who can reach the port can submit jobs and join as a worker. Only do this on a network you trust.
-
-## Node identity
-
-Every node has a key pair, created the first time it runs and kept in `node.key` in its `--data-dir`, readable only by its owner. The node's ID is derived from the public key and starts `12D3KooW`.
+To submit jobs from another machine, invite it as a client instead and join from there:
 
 ```sh
-bin/sisyphusd id                      # the ID of the node whose data is in ~/.sisyphus
-bin/sisyphusd id --data-dir /srv/node
+bin/sisyphusd pool invite --role client                       # on the coordinator
+bin/sisyphusd pool join --addr <coordinator-ip>:7700 <invitation>   # on the other machine
+bin/sisyphusd nodes --addr <coordinator-ip>:7700
 ```
 
-Losing `node.key` loses the identity; copying it to another machine gives that machine the same one. **The key is not used for anything yet.** Nodes still connect without encryption and are known to each other by the name given with `--node-id`. Securing connections with these keys is the next step.
+## Who can connect
+
+Every connection between nodes is encrypted, and each end proves who it is.
+
+**Identity.** A node has a key pair, created the first time it runs and kept in `node.key` in its data directory, readable only by its owner. Its ID is derived from the public key and starts `12D3KooW`; `sisyphusd id` prints it. The name given with `--name` is only a label. Losing `node.key` loses the identity, and copying it to another machine gives that machine the same one.
+
+**Encryption.** Connections use TLS 1.3. Each node presents a certificate signed with its own key, with no certificate authority involved: a node is recognised by its ID, not by a host name.
+
+**Roles.** A node answers a caller according to what the caller has been admitted as:
+
+| Role | Who | May |
+| --- | --- | --- |
+| owner | Whoever holds the node's own key: its own worker, and commands run from its data directory | Everything, including inviting and removing others |
+| worker | A node invited with `pool invite` | Take tasks, and fetch and store the blobs they need |
+| client | A node invited with `pool invite --role client` | Submit and watch jobs, list nodes, and manage stored data |
+
+Anyone else can complete the handshake and is then refused.
+
+**Joining.** An invitation is the inviting node's ID and a one-time token. The ID is what makes joining safe: the joiner will only talk to the node named in it, so nobody in between can pose as that node. It lasts an hour unless `--ttl` says otherwise, and is void if the inviting node restarts before it is used. Once joined, a node remembers which node it expects at that address in `known.json` and refuses any other.
+
+```sh
+bin/sisyphusd pool members            # who has been admitted, and as what
+bin/sisyphusd pool remove <node-id>   # take a node off the list and disconnect it
+```
 
 ## Storing data
 
@@ -138,17 +161,23 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 | `packages/storage` | Content-addressed blob store with IPFS-compatible CIDs. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections. |
 | `apps/sisyphusd/worker` | Connects to a coordinator and executes tasks. |
-| `apps/sisyphusd/api` | gRPC server wiring and the client-facing `NodeService`. |
+| `apps/sisyphusd/api` | gRPC server wiring and the client-facing services. |
+| `apps/sisyphusd/access` | Who has been admitted and in what role; invitations; checking every call. |
+| `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
+| `packages/storage` | Content-addressed blob store, pins, garbage collection. |
 
 `make proto` needs `protoc` on your path and the plugins from `make tools`.
 
 ## Known limits
 
-- State is in memory: restarting the coordinator loses every job.
+- State is in memory: restarting the coordinator loses every job. Pins those jobs held open are given the retention period to lapse.
 - A task is tried at most three times, and losing its worker counts as a try.
 - When a job fails, its other running tasks are left to finish and their results discarded; there is no cancellation.
 - Workers are chosen by free slots only, not by hardware.
-- Without `--max-store-bytes` there is no limit on what can be uploaded, and anyone who can reach the port can pin, unpin and collect.
-- Jobs are forgotten when a coordinator restarts. Pins they held open are given the retention period to lapse.
-- Without `--max-cache-bytes` a worker's cache grows until the disk is full. The limit is not strict: blobs that tasks have open are kept even if they alone exceed it.
+- A coordinator accepts whatever result a worker returns. Admit only workers you trust.
+- A node is remembered by address. If a coordinator's address changes, its workers and clients must join again.
+- A node's key cannot be changed without becoming a different node, and there is no way to stop a copied key being used other than removing that node.
+- Encryption hides what nodes say to each other, not that they are talking, how much, or when.
+- Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - A worker downloads a whole input even when its tasks need only part of it.
+- Without `--max-cache-bytes` a worker's cache grows until the disk is full. The limit is not strict: blobs that tasks have open are kept even if they alone exceed it.

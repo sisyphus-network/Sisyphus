@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,15 +153,7 @@ func (lyingNode) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.Put
 
 func startLyingNode(t *testing.T) string {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := grpc.NewServer()
-	pb.RegisterBlobServiceServer(srv, lyingNode{})
-	go srv.Serve(lis)
-	t.Cleanup(srv.Stop)
-	return lis.Addr().String()
+	return serveFake(t, func(srv *grpc.Server) { pb.RegisterBlobServiceServer(srv, lyingNode{}) })
 }
 
 func TestBlobGetRejectsDataThatDoesNotMatchItsCID(t *testing.T) {
@@ -205,7 +196,7 @@ func TestTwoNodesCannotShareADataDirectory(t *testing.T) {
 func TestCLIRunsAJobOverAStoredFileAcrossTwoNodes(t *testing.T) {
 	addr, _ := startNode(t)
 	// A second, worker-only node with a data directory of its own.
-	startDaemon(t, "--role", "worker", "--coordinator", addr, "--node-id", "helper", "--slots", "3", "--sync-cache", "--max-cache-bytes", "50000000")
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "helper", "--slots", "3", "--sync-cache", "--max-cache-bytes", "50000000")
 	waitForOutput(t, "helper", "nodes", "--addr", addr)
 
 	source := filepath.Join(t.TempDir(), "essay.txt")

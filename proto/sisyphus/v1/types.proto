@@ -28,6 +28,8 @@ message NodeInfo {
   uint32 running_tasks = 3;
   google.protobuf.Timestamp connected_at = 4;
   google.protobuf.Timestamp last_seen_at = 5;
+  // The label the node gave itself.
+  string name = 6;
 }
 
 enum ScheduleMode {
@@ -75,6 +77,8 @@ message Task {
   string node_id = 5;
   // Reason for the most recent failed attempt, if any.
   string error = 6;
+  // The label of the node in node_id.
+  string node_name = 7;
 }
 
 message Job {

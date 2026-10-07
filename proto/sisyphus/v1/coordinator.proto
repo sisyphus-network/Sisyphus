@@ -23,8 +23,12 @@ message WorkerMessage {
 }
 
 message Hello {
-  string node_id = 1;
+  // Field 1 was a self-declared node ID. A node's ID now comes from the key
+  // it connects with, and nothing it says can change it.
+  reserved 1;
   NodeCapabilities capabilities = 2;
+  // A label for people to recognise the node by. It need not be unique.
+  string name = 3;
 }
 
 message Heartbeat {
