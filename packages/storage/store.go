@@ -71,18 +71,20 @@ type Store struct {
 // machine: a blob that Put has returned survives a crash or power loss.
 // Only one process may have a directory open at a time.
 func OpenLocal(dir string) (*Store, error) {
-	return openDisk(dir, true)
+	return openDisk(dir, true, true)
 }
 
 // OpenCache opens a store in dir for blobs that can be fetched again from
-// somewhere else. It does not wait for the disk on every write, which makes
-// storing several times faster, and in exchange nothing in it is trusted
-// after a restart: whatever dir held before is discarded on opening.
-func OpenCache(dir string) (*Store, error) {
-	return openDisk(dir, false)
+// somewhere else. Unless syncWrites is set it does not wait for the disk on
+// every write, which makes storing several times faster on a slow disk. In
+// exchange, a block being written when the machine loses power may be left
+// incomplete, so before relying on a blob from an earlier run, check it with
+// Verify. Storing a blob again repairs it.
+func OpenCache(dir string, syncWrites bool) (*Store, error) {
+	return openDisk(dir, false, syncWrites)
 }
 
-func openDisk(dir string, durable bool) (*Store, error) {
+func openDisk(dir string, durable, syncWrites bool) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("open blob store %s: %w", dir, err)
 	}
@@ -94,43 +96,38 @@ func openDisk(dir string, durable bool) (*Store, error) {
 	if !locked {
 		return nil, fmt.Errorf("open blob store %s: in use by another process", dir)
 	}
-	blocks := filepath.Join(dir, "blocks")
-	if !durable {
-		// Blocks written without syncing may be incomplete after a crash,
-		// and nothing records whether the last run ended cleanly.
-		if err := os.RemoveAll(blocks); err != nil {
-			lock.Unlock()
-			return nil, fmt.Errorf("open blob store %s: %w", dir, err)
-		}
-	}
-	// The same on-disk layout Kubo uses for its block store. A durable store
-	// syncs every block file as it is written.
-	ds, err := flatfs.CreateOrOpen(blocks, flatfs.NextToLast(2), durable)
+	// The same on-disk layout Kubo uses for its block store.
+	ds, err := flatfs.CreateOrOpen(filepath.Join(dir, "blocks"), flatfs.NextToLast(2), syncWrites)
 	if err != nil {
 		lock.Unlock()
 		return nil, fmt.Errorf("open blob store %s: %w", dir, err)
 	}
-	store := newStore(ds, lock)
-	if durable {
-		store.pinFile = filepath.Join(dir, "pins.json")
-		if store.pins, err = loadPins(store.pinFile); err != nil {
-			store.Close()
-			return nil, fmt.Errorf("open blob store %s: %w", dir, err)
-		}
+	if !durable {
+		// A cache overwrites a block it already has, so that storing a blob
+		// again replaces any block left incomplete.
+		return newStore(ds, lock, true), nil
+	}
+	store := newStore(ds, lock, false)
+	store.pinFile = filepath.Join(dir, "pins.json")
+	if store.pins, err = loadPins(store.pinFile); err != nil {
+		store.Close()
+		return nil, fmt.Errorf("open blob store %s: %w", dir, err)
 	}
 	return store, nil
 }
 
 // NewMemory returns a store that keeps blobs in memory.
 func NewMemory() *Store {
-	return newStore(dssync.MutexWrap(datastore.NewMapDatastore()), nil)
+	return newStore(dssync.MutexWrap(datastore.NewMapDatastore()), nil, false)
 }
 
-func newStore(ds datastore.Batching, lock *flock.Flock) *Store {
-	blocks := blockstore.NewBlockstoreNoPrefix(ds)
+// newStore builds a store over ds. With overwrite set, storing a block the
+// store already has writes it again instead of leaving the old copy.
+func newStore(ds datastore.Batching, lock *flock.Flock, overwrite bool) *Store {
+	blocks := blockstore.NewBlockstore(ds, blockstore.NoPrefix(), blockstore.WriteThrough(overwrite))
 	return &Store{
 		blocks: blocks,
-		dag:    merkledag.NewDAGService(blockservice.New(blocks, offline.Exchange(blocks))),
+		dag:    merkledag.NewDAGService(blockservice.New(blocks, offline.Exchange(blocks), blockservice.WriteThrough(overwrite))),
 		ds:     ds,
 		lock:   lock,
 		pins:   make(map[pinKey]time.Time),
@@ -199,10 +196,46 @@ func (s *Store) Has(ctx context.Context, c cid.Cid) (bool, error) {
 	return s.blocks.Has(ctx, c)
 }
 
+// Verify checks that the store holds every block of blob c and that each
+// block's bytes hash to its CID. It reads the whole blob, hashing blocks in
+// parallel.
+func (s *Store) Verify(ctx context.Context, c cid.Cid) error {
+	var mu sync.Mutex
+	seen := make(map[cid.Cid]struct{})
+	visit := func(k cid.Cid) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		_, dup := seen[k]
+		seen[k] = struct{}{}
+		return !dup
+	}
+	return merkledag.Walk(ctx, s.verifiedLinks, c, visit, merkledag.Concurrent())
+}
+
+// verifiedLinks checks one block against its CID and returns the blocks it
+// refers to.
+func (s *Store) verifiedLinks(ctx context.Context, c cid.Cid) ([]*ipld.Link, error) {
+	block, err := s.blocks.Get(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	if sum, _ := c.Prefix().Sum(block.RawData()); !sum.Equals(c) {
+		return nil, fmt.Errorf("block %s is corrupt", c)
+	}
+	if c.Type() == cid.Raw {
+		return nil, nil
+	}
+	node, err := merkledag.DecodeProtobufBlock(block)
+	if err != nil {
+		return nil, fmt.Errorf("block %s: %w", c, err)
+	}
+	return node.Links(), nil
+}
+
 // CID returns the CID that Put would give the bytes read from r, without
 // storing them.
 func CID(ctx context.Context, r io.Reader) (cid.Cid, error) {
-	return newStore(dssync.MutexWrap(datastore.NewNullDatastore()), nil).Put(ctx, r)
+	return newStore(dssync.MutexWrap(datastore.NewNullDatastore()), nil, false).Put(ctx, r)
 }
 
 // contextDAG makes the importer, which writes blocks with a background

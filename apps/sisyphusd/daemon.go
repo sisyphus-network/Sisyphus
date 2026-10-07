@@ -34,6 +34,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
+	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
 	verbose := fs.Bool("v", false, "log per-task detail")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -83,11 +84,13 @@ func runDaemon(ctx context.Context, args []string) error {
 	// cache of what its coordinator holds, kept in a directory of its own so
 	// the two kinds never mix. Deferred calls run last-in first-out, so the
 	// store closes only after everything using it has stopped.
-	openStore, storeDir := storage.OpenLocal, "blobs"
-	if !isCoordinator {
-		openStore, storeDir = storage.OpenCache, "cache"
+	var store *storage.Store
+	var err error
+	if isCoordinator {
+		store, err = storage.OpenLocal(filepath.Join(*dataDir, "blobs"))
+	} else {
+		store, err = storage.OpenCache(filepath.Join(*dataDir, "cache"), *syncCache)
 	}
-	store, err := openStore(filepath.Join(*dataDir, storeDir))
 	if err != nil {
 		return fmt.Errorf("%w (nodes sharing a machine each need their own --data-dir)", err)
 	}

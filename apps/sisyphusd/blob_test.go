@@ -205,7 +205,7 @@ func TestTwoNodesCannotShareADataDirectory(t *testing.T) {
 func TestCLIRunsAJobOverAStoredFileAcrossTwoNodes(t *testing.T) {
 	addr, _ := startNode(t)
 	// A second, worker-only node with a data directory of its own.
-	startDaemon(t, "--role", "worker", "--coordinator", addr, "--node-id", "helper", "--slots", "3")
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--node-id", "helper", "--slots", "3", "--sync-cache")
 	waitForOutput(t, "helper", "nodes", "--addr", addr)
 
 	source := filepath.Join(t.TempDir(), "essay.txt")

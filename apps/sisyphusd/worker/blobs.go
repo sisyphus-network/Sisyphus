@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -21,24 +20,34 @@ import (
 // coordinator's. A blob is downloaded the first time a task opens it and
 // kept, and every blob a task stores is also uploaded, so the coordinator
 // holds a job's outputs before it hears the task has finished.
+//
+// The cache outlives the process, but a copy left by an earlier run may be
+// incomplete if that run ended badly. So the first time a blob is opened in
+// a run, the cached copy is checked in full and downloaded again if it does
+// not hold up.
 type RemoteBlobs struct {
 	local  localStore
 	conn   *grpc.ClientConn
 	remote pb.BlobServiceClient
 
-	mu       sync.Mutex
-	fetching map[cid.Cid]*fetch
+	mu sync.Mutex
+	// ready holds the blobs known to be sound in the local store: checked,
+	// downloaded or stored during this run.
+	ready map[cid.Cid]struct{}
+	// preparing holds the blobs being checked or downloaded right now.
+	preparing map[cid.Cid]*preparation
 }
 
 // localStore is the part of a storage.Store that RemoteBlobs uses.
 type localStore interface {
 	Open(ctx context.Context, c cid.Cid) (storage.Blob, error)
 	Put(ctx context.Context, r io.Reader) (cid.Cid, error)
+	Verify(ctx context.Context, c cid.Cid) error
 }
 
-// fetch is a download in progress that other tasks wanting the same blob
-// wait for instead of starting their own.
-type fetch struct {
+// preparation is a blob being made ready, which other tasks wanting the same
+// blob wait for instead of starting their own.
+type preparation struct {
 	done chan struct{}
 	err  error
 }
@@ -51,10 +60,11 @@ func DialBlobs(coordinator string, local *storage.Store) (*RemoteBlobs, error) {
 		return nil, err
 	}
 	return &RemoteBlobs{
-		local:    local,
-		conn:     conn,
-		remote:   pb.NewBlobServiceClient(conn),
-		fetching: make(map[cid.Cid]*fetch),
+		local:     local,
+		conn:      conn,
+		remote:    pb.NewBlobServiceClient(conn),
+		ready:     make(map[cid.Cid]struct{}),
+		preparing: make(map[cid.Cid]*preparation),
 	}, nil
 }
 
@@ -63,39 +73,50 @@ func (b *RemoteBlobs) Close() error {
 }
 
 func (b *RemoteBlobs) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) {
-	blob, err := b.local.Open(ctx, c)
-	if !errors.Is(err, storage.ErrNotFound) {
-		return blob, err
-	}
-	if err := b.fetch(ctx, c); err != nil {
-		return nil, fmt.Errorf("fetch from coordinator: %w", err)
+	if err := b.prepare(ctx, c); err != nil {
+		return nil, err
 	}
 	return b.local.Open(ctx, c)
 }
 
-func (b *RemoteBlobs) fetch(ctx context.Context, c cid.Cid) error {
+// prepare makes sure the local store holds a sound copy of c, once per run.
+func (b *RemoteBlobs) prepare(ctx context.Context, c cid.Cid) error {
 	b.mu.Lock()
-	f, running := b.fetching[c]
+	if _, ok := b.ready[c]; ok {
+		b.mu.Unlock()
+		return nil
+	}
+	p, running := b.preparing[c]
 	if !running {
-		f = &fetch{done: make(chan struct{})}
-		b.fetching[c] = f
+		p = &preparation{done: make(chan struct{})}
+		b.preparing[c] = p
 	}
 	b.mu.Unlock()
 
 	if running {
 		select {
-		case <-f.done:
-			return f.err
+		case <-p.done:
+			return p.err
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	f.err = blobclient.Fetch(ctx, b.remote, c, b.local)
+
+	// A copy that checks out is used as it is; anything else, from "not
+	// there" to "damaged", is put right by downloading it.
+	if b.local.Verify(ctx, c) != nil {
+		if err := blobclient.Fetch(ctx, b.remote, c, b.local); err != nil {
+			p.err = fmt.Errorf("fetch from coordinator: %w", err)
+		}
+	}
 	b.mu.Lock()
-	delete(b.fetching, c)
+	delete(b.preparing, c)
+	if p.err == nil {
+		b.ready[c] = struct{}{}
+	}
 	b.mu.Unlock()
-	close(f.done)
-	return f.err
+	close(p.done)
+	return p.err
 }
 
 func (b *RemoteBlobs) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
@@ -115,5 +136,8 @@ func (b *RemoteBlobs) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	if !uploaded.Equals(c) {
 		return cid.Undef, fmt.Errorf("blob %s read back from the local store as %s", c, uploaded)
 	}
+	b.mu.Lock()
+	b.ready[c] = struct{}{}
+	b.mu.Unlock()
 	return c, nil
 }
