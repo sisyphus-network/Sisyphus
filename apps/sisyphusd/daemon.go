@@ -5,17 +5,24 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -49,6 +56,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
+	discovery := fs.String("discovery", "on", "whether to look for other nodes, on this network and through the nodes already known, and let them find this one: on or off")
+	bootstrap := fs.String("bootstrap", "", "addresses of nodes to connect to at startup, besides those in the address book: comma-separated, each ending in /p2p/<node ID>")
+	locate := fs.Bool("locate-country", false, "ask ipapi.co which country this node's address is in, to show in the desktop client; this tells that service the address")
 	keepJobs := fs.Duration("keep-jobs", 30*24*time.Hour, "coordinator role: how long a finished job can still be asked after; 0 keeps them for good")
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
@@ -84,6 +94,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if *slots < 1 {
 		return errors.New("--slots must be at least 1")
+	}
+	if *discovery != "on" && *discovery != "off" {
+		return fmt.Errorf("--discovery is on or off, not %q", *discovery)
 	}
 	if host, _, err := net.SplitHostPort(*apiListen); *apiListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
 		return errors.New("--api-listen must be a loopback address such as 127.0.0.1:50051: the local API is for programs on this machine only")
@@ -214,15 +227,23 @@ func runDaemon(ctx context.Context, args []string) error {
 	// directly; a worker-only node fetches into its cache.
 	var blobs runtime.Blobs = store
 
+	// What a node must not forget is kept in its database: the addresses
+	// it starts from and, on a coordinator, who has been admitted, the
+	// invitations still out, and its jobs, so that a restart picks up the
+	// unfinished ones where they were.
+	db, err := nodedb.Open(filepath.Join(*dataDir, "node.db"))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	book, err := db.BootstrapPeers()
+	if err != nil {
+		return err
+	}
+	// host is the node's libp2p host, started below according to its role.
+	var host *p2p.Host
+
 	if isCoordinator {
-		// What a coordinator must not forget is kept in the node's database:
-		// who has been admitted, the invitations still out, and its jobs, so
-		// that a restart picks up the unfinished ones where they were.
-		db, err := nodedb.Open(filepath.Join(*dataDir, "node.db"))
-		if err != nil {
-			return err
-		}
-		defer db.Close()
 		admitted, err := access.Open(db, ident.ID())
 		if err == nil {
 			// Earlier versions kept the list in a file of its own.
@@ -257,7 +278,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// clients and workers, and the libp2p hosts of its pool's members,
 		// for which it relays so that two of them with no port open can
 		// still reach each other.
-		host, err := p2p.New(p2p.Config{Identity: ident, Listen: *listen, Relay: true, Allow: func(id string) bool {
+		host, err = p2p.New(p2p.Config{Identity: ident, Listen: *listen, Relay: true, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
 			_, admitted := admitted.Role(id)
 			return admitted
 		}})
@@ -266,7 +287,6 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		defer host.Close()
 		lis, _ := host.TLSListener() // fails only if asked for twice
-		local.Connect = host.Connect
 		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore}
 		if swarm != nil {
 			config.Swarm = swarm
@@ -274,7 +294,6 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		srv := api.NewServer(config)
 		local.Pool = api.NewPoolAdmin(config)
-		local.Listen = host.Addrs
 		local.Peers = func() []*nodepb.Peer { return poolPeers(ident.ID(), coord.Nodes(), admitted.Members()) }
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish. The coordinator is closed first, so that it knows
@@ -331,7 +350,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// fellow workers through the coordinator, which relays for the pool,
 		// and reaches them the same way. Two that can connect directly then
 		// do. Only the coordinator and the pool's members are let in.
-		host, err := p2p.New(p2p.Config{Identity: ident, Via: relayAddrs(*join, coordinatorID), Allow: func(id string) bool {
+		host, err = p2p.New(p2p.Config{Identity: ident, Via: relayAddrs(*join, coordinatorID), Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
 			if id == coordinatorID {
 				return true
 			}
@@ -351,8 +370,6 @@ func runDaemon(ctx context.Context, args []string) error {
 		remote.OnPeerFetch = func(c cid.Cid, holder *pb.BlobHolder) {
 			log.Debug("fetched a blob from a fellow worker", "cid", c.String(), "node", holder.GetNodeId(), "at", holder.GetAddress())
 		}
-		local.Connect = host.Connect
-		local.Listen = host.Addrs
 		if *advertise == "" {
 			// With no address of its own to give, the node is asked for by
 			// name.
@@ -403,6 +420,43 @@ func runDaemon(ctx context.Context, args []string) error {
 		}()
 	}
 
+	// Whatever its role, the node is connected to the nodes in its address
+	// book and those named on the command line, and through them finds
+	// others. That goes on beside everything else and ends with the node.
+	looking, stopLooking := context.WithCancel(ctx)
+	var searches sync.WaitGroup
+	defer func() {
+		stopLooking()
+		searches.Wait()
+	}()
+	local.Connect, local.Listen, local.Book = host.Connect, host.Addrs, db
+	local.Bootstrap = func(ctx context.Context, addresses []string) {
+		if answered := host.Bootstrap(ctx, addresses); len(addresses) > 0 {
+			log.Info("connected to the nodes this one starts from", "answered", answered, "of", len(addresses))
+		}
+	}
+	searches.Add(1)
+	go func() {
+		defer searches.Done()
+		local.Bootstrap(looking, startingPoints(book, *bootstrap))
+	}()
+	// The desktop client is shown the node's pool and, beside it, the nodes
+	// its host has found.
+	pool := local.Peers
+	local.Peers = func() []*nodepb.Peer { return withFound(pool(), host.Peers()) }
+	if *locate {
+		var country atomic.Value
+		searches.Add(1)
+		go func() {
+			defer searches.Done()
+			country.Store(lookUpCountry(looking))
+		}()
+		local.Country = func() string {
+			code, _ := country.Load().(string)
+			return code
+		}
+	}
+
 	if *apiListen != "" {
 		lis, err := net.Listen("tcp", *apiListen)
 		if err != nil {
@@ -425,6 +479,77 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("shutting down")
 		return nil
 	}
+}
+
+// startingPoints lists the addresses a node connects to at startup: its
+// address book, then those given on the command line.
+func startingPoints(book []nodedb.BootstrapPeer, flag string) []string {
+	var addresses []string
+	for _, entry := range book {
+		addresses = append(addresses, entry.Address)
+	}
+	for _, address := range strings.Split(flag, ",") {
+		if address = strings.TrimSpace(address); address != "" {
+			addresses = append(addresses, address)
+		}
+	}
+	return addresses
+}
+
+// withFound adds to a node's pool, as the local API lists it, the nodes its
+// libp2p host knows of. A node in both is listed once, with the addresses
+// the host knows for it, and as connected if either says so. One the host
+// alone knows is no part of the pool and so is not trusted for compute.
+func withFound(pool []*nodepb.Peer, found []p2p.Peer) []*nodepb.Peer {
+	listed := make(map[string]*nodepb.Peer, len(pool))
+	for _, member := range pool {
+		listed[member.GetPeerId()] = member
+	}
+	for _, f := range found {
+		entry := listed[f.ID]
+		if entry == nil {
+			entry = &nodepb.Peer{PeerId: f.ID, ConnectionState: nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED}
+			listed[f.ID] = entry
+			pool = append(pool, entry)
+		}
+		for _, address := range f.Addrs {
+			if !slices.Contains(entry.KnownAddresses, address) {
+				entry.KnownAddresses = append(entry.KnownAddresses, address)
+			}
+		}
+		if f.Connected() {
+			entry.ConnectionState = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
+		}
+	}
+	sort.Slice(pool, func(a, b int) bool { return pool[a].GetPeerId() < pool[b].GetPeerId() })
+	return pool
+}
+
+// countryURL is the service asked which country this node's address is in.
+var countryURL = "https://ipapi.co/json/"
+
+var countryCode = regexp.MustCompile(`^[A-Za-z]{2}$`)
+
+// lookUpCountry asks an outside service which country the address this node
+// reaches it from is in, and returns its two-letter code, or nothing if the
+// service does not give one. The service learns the address by being asked.
+func lookUpCountry(ctx context.Context) string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, countryURL, nil) // the address is ours and well formed
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer res.Body.Close()
+	var answer struct {
+		CountryCode string `json:"country_code"`
+	}
+	json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&answer)
+	if !countryCode.MatchString(answer.CountryCode) {
+		return ""
+	}
+	return strings.ToUpper(answer.CountryCode)
 }
 
 // blobProtocol names the streams on which one worker's libp2p host asks
@@ -841,5 +966,31 @@ func defaultDataDir() string {
 	if err != nil {
 		return ".sisyphus"
 	}
-	return filepath.Join(home, ".sisyphus")
+	return dataDirFor(home, goruntime.GOOS, os.Getenv, func(dir string) bool {
+		_, err := os.Stat(dir)
+		return err == nil
+	})
+}
+
+// dataDirFor returns where a node keeps its data when not told where: the
+// place its operating system sets aside for a program's own data, as the
+// Rust daemon chose. A node that already has a ~/.sisyphus, which is where
+// earlier versions kept everything, carries on using it.
+func dataDirFor(home, goos string, env func(string) string, exists func(string) bool) string {
+	if old := filepath.Join(home, ".sisyphus"); exists(old) {
+		return old
+	}
+	switch goos {
+	case "windows":
+		if local := env("LOCALAPPDATA"); local != "" {
+			return filepath.Join(local, "sisyphus")
+		}
+		return filepath.Join(home, "AppData", "Local", "sisyphus")
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "sisyphus")
+	}
+	if data := env("XDG_DATA_HOME"); data != "" {
+		return filepath.Join(data, "sisyphus")
+	}
+	return filepath.Join(home, ".local", "share", "sisyphus")
 }

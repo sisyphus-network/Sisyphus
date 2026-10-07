@@ -33,10 +33,10 @@ Only Linux on x86-64 is run by the test suite. The others are compiled and have 
 
 The quick way, in one terminal, is `make demo`: it starts three nodes, runs a few jobs across them, and shuts them down.
 
-To run the nodes yourself, use one terminal per node (or one `tmux` pane each). Every node keeps its key and data under `--data-dir` (default `~/.sisyphus`), so nodes sharing a machine each need their own.
+To run the nodes yourself, use one terminal per node (or one `tmux` pane each). Every node keeps its key and data under `--data-dir`, so nodes sharing a machine each need their own. Left to itself a node uses the place its operating system sets aside for a program's data (`~/.local/share/sisyphus` on Linux, `~/Library/Application Support/sisyphus` on macOS, `%LOCALAPPDATA%\sisyphus` on Windows), or `~/.sisyphus` if that is already there from an earlier version. `sisyphusd data-dir` prints which.
 
 ```sh
-# Terminal 1: a coordinator that is also a worker, using ~/.sisyphus
+# Terminal 1: a coordinator that is also a worker, using the default data directory
 bin/sisyphusd run --name alpha --slots 4
 
 # Terminal 2: ask alpha for an invitation, then start a second worker with it
@@ -143,7 +143,7 @@ By default a node keeps blocks in files of its own and sends them to other nodes
 ```sh
 bin/sisyphusd run --kubo                                   # the coordinator
 bin/sisyphusd run --kubo --role worker --coordinator <addr> --join <invitation>
-IPFS_PATH=~/.sisyphus/ipfs ipfs cat <cid>                  # anything stored is an ordinary IPFS file
+IPFS_PATH=$(bin/sisyphusd data-dir)/ipfs ipfs cat <cid>                  # anything stored is an ordinary IPFS file
 ```
 
 - **Each node's Kubo is that node.** `ipfs id` and `sisyphusd id` print the same ID. Its repository is `ipfs` in the node's data directory, and it is started and stopped with the node.
@@ -264,15 +264,41 @@ What it shows, in this daemon's terms:
 
 | The desktop's word | What it is here |
 | --- | --- |
-| peer | On a coordinator, a node admitted to its pool. On a worker-only node, its coordinator. |
-| connected | The node has a live connection to this one right now. |
-| trusted for compute | The node is a worker in the pool. Trusting a peer admits it as a worker; ending trust is `pool remove`, re-keying included. |
-| connect to an address | Connects this node's libp2p host to another member's, at an address ending in `/p2p/<node ID>`, which is the form a node lists its own in. It admits nobody: a node that is not a member is not dialled. |
-| bootstrap peers | Not offered. A pool is joined by invitation (`pool invite`, `pool join`), and a node finds the other members through its coordinator. |
+| peer | A node of this node's pool, or one its libp2p host has found: on the same network, through nodes it knows, or because it was given the address. |
+| connected | The node has a live connection to this one right now, as a worker or between the two hosts. |
+| trusted for compute | The node may work for this one. See [Trust](#trust) below. |
+| connect to an address | Connects this node's host to the node at an address ending in `/p2p/<node ID>`, which is the form a node lists its own in, and notes it in the address book. |
+| bootstrap peers | The node's address book: the addresses it connects to each time it starts. |
+| country | Empty unless the node was started with `--locate-country`. Finding it means asking ipapi.co, which thereby learns the node's address, so it is not done unasked. |
 
-Anything on the machine can read from the local API. Changing something needs the token in `api.token` in the data directory, which the daemon makes on first use and only its own user can read. The desktop app reads it from `~/.sisyphus/api.token`, or the file named by `SISYPHUS_API_TOKEN_FILE`.
+Anything on the machine can read from the local API. Changing something needs the token in `api.token` in the data directory, which the daemon makes on first use and only its own user can read. The desktop app looks for it in the daemon's default data directory, or in the file named by `SISYPHUS_API_TOKEN_FILE`.
 
-The node's country, which the desktop can show, is left empty: finding it would mean telling an outside service this node's address.
+## Finding other nodes
+
+A node looks for others and lets them find it, unless started with `--discovery off`:
+
+- **On its own network**, by multicast DNS. Two nodes on one LAN find each other within a second or two with nothing configured.
+- **Through the nodes it knows**, by a distributed hash table (Kademlia) that every node both uses and serves. A node that knows one other can find the rest, and can reach a node knowing only its ID.
+- **From its address book**, the addresses it connects to each time it starts. `--bootstrap <address>,<address>` adds some for one run; the desktop's "connect to peer" and bootstrap list add them for good.
+
+The names it uses for both are Sisyphus's own, so nodes find each other and not every other libp2p program in reach.
+
+**Being found is not being let in.** With discovery on, any libp2p node may connect to a node's host. It can then see the node's ID and addresses and take part in the hash table, and that is all. Everything else checks who is asking: jobs, stored data, the relay and the private IPFS network are for the pool's members. With `--discovery off` a node's host accepts connections from its pool's members only, and finds nobody.
+
+## Trust
+
+A node works for another only if that other trusts it for compute. There are two ways to come to be trusted, and they end in the same place:
+
+- **By invitation.** `pool invite` on the coordinator, `pool join` or `--join` on the worker. Use this for a node you cannot see from here, or to admit a client rather than a worker.
+- **Directly.** The coordinator's owner trusts a node they can see, from the desktop's peer list. No token changes hands. The trusted node's owner then starts it as a worker with the coordinator's ID in place of an invitation:
+
+  ```sh
+  sisyphusd run --role worker --coordinator <address> --join <coordinator's node ID>
+  ```
+
+Either way the node is a worker in the pool, listed by `pool members`, and ending trust removes it as `pool remove` does. Trust is granted by the node whose jobs will run; it is the trusted node's owner who decides whether to take them, by starting it as that node's worker. A node cannot be made to work by being trusted.
+
+What this does not do yet: a node works for one coordinator at a time, chosen when it starts. Two nodes that trust each other do not begin working for each other by themselves.
 
 ## Examples
 
@@ -300,7 +326,7 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 | `apps/sisyphusd/api` | gRPC server wiring and the client-facing services. |
 | `apps/sisyphusd/access` | Who has been admitted and in what role; invitations; checking every call. |
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream. |
-| `apps/sisyphusd/p2p` | The node's libp2p host: one port shared with gRPC, the relay, reaching a node by its ID. |
+| `apps/sisyphusd/p2p` | The node's libp2p host: one port shared with gRPC, the relay, discovery, reaching a node by its ID. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
 | `packages/nodedb` | The node's SQLite database: jobs, tasks, attempts, members and invitations. |
 | `packages/storage` | Content-addressed blob store, pins, garbage collection. |

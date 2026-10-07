@@ -241,12 +241,13 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - One open port per pool, on the coordinator. Workers connect outwards only, so they run behind home routers and firewalls as they are. Every node is a libp2p host under its own ID; the coordinator relays between workers that cannot reach each other, and those that can connect directly.
 - Private jobs, whose inputs, intermediate data and results are sealed with a key held only by the submitter and the nodes working on the job.
 - Encrypted connections between nodes, each identified by its own key; nodes join a pool by invitation, as a worker or a client, and can be removed.
+- Nodes that find each other: on one network by multicast DNS, beyond it through a distributed hash table, and from an address book. A node can be trusted for compute straight from the list of those found, or admitted by invitation.
 - Jobs kept in a SQLite database, so a coordinator that is restarted takes up its unfinished jobs where they were.
 - A desktop client that shows a node and its pool, and admits or removes workers.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.
 
-**Not built yet**: the AI planner and model providers, real workloads in containers, hardware discovery, and finding peers without a coordinator to ask (the Rust daemon in `apps/sisyphusd-rs` does this with mDNS and a DHT; the Go daemon does not yet). A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
+**Not built yet**: the AI planner and model providers, real workloads in containers, and hardware discovery. A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
 
 Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/sisyphus-network/Sisyphus/issues/23).
 

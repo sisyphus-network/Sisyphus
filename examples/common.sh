@@ -2,7 +2,7 @@
 #
 # The examples talk to a node you are allowed to use:
 #   ADDR      its address                  (default 127.0.0.1:7700)
-#   DATA_DIR  where your key for it lives  (default ~/.sisyphus)
+#   DATA_DIR  where your key for it lives  (default: the node's own, as `sisyphusd data-dir` prints it)
 #
 # On the machine a node runs on, the defaults make you its owner. From
 # another machine, join the node first; see the README in this directory.
@@ -10,7 +10,6 @@
 set -euo pipefail
 
 ADDR=${ADDR:-127.0.0.1:7700}
-DATA_DIR=${DATA_DIR:-$HOME/.sisyphus}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # Use a sisyphusd on the PATH, or the one built in this repository.
@@ -22,6 +21,7 @@ else
 	echo "sisyphusd not found: run 'make build' in the repository, or put sisyphusd on your PATH" >&2
 	exit 1
 fi
+DATA_DIR=${DATA_DIR:-$("$SISYPHUSD" data-dir)}
 
 # node <command...> runs a sisyphusd command against the node.
 node() {

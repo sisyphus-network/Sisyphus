@@ -47,7 +47,7 @@ The scripts talk to whatever node `ADDR` names, as the key in `DATA_DIR`:
 
 ```sh
 export ADDR=192.168.1.10:7700     # the coordinator
-export DATA_DIR=~/.sisyphus       # your key, and the record of having joined
+export DATA_DIR=$(sisyphusd data-dir)   # your key, and the record of having joined
 examples/wordcount.sh
 ```
 

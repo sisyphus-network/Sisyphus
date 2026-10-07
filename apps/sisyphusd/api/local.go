@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 )
 
@@ -43,11 +44,26 @@ type LocalConfig struct {
 	// Connect, if set, connects this node's libp2p host to the node at a
 	// multiaddress ending in /p2p/ and its ID.
 	Connect func(ctx context.Context, address string) error
+	// Book, if set, is the node's address book, and Bootstrap connects the
+	// node to the addresses in it.
+	Book      AddressBook
+	Bootstrap func(ctx context.Context, addresses []string)
+	// Country returns the two-letter code of the country the node is in,
+	// if it has been allowed to find out, and otherwise nothing.
+	Country func() string
 	// Token is what a caller must present to change anything.
 	Token string
 	// Poll is how often a peer watcher is checked for news. Zero means once
 	// a second.
 	Poll time.Duration
+}
+
+// AddressBook is where a node keeps the addresses it starts from. A
+// nodedb.DB is one.
+type AddressBook interface {
+	BootstrapPeers() ([]nodedb.BootstrapPeer, error)
+	SetBootstrapPeers([]nodedb.BootstrapPeer) error
+	AddBootstrapPeer(nodedb.BootstrapPeer) error
 }
 
 // PoolAdmin admits nodes to a coordinator's pool and removes them, exactly
@@ -68,6 +84,9 @@ func NewLocalServer(cfg LocalConfig) *grpc.Server {
 	if cfg.Poll == 0 {
 		cfg.Poll = time.Second
 	}
+	if cfg.Country == nil {
+		cfg.Country = func() string { return "" }
+	}
 	srv := grpc.NewServer()
 	nodepb.RegisterNodeServiceServer(srv, &localService{cfg: cfg})
 	return srv
@@ -79,9 +98,9 @@ type localService struct {
 }
 
 func (s *localService) GetNodeInfo(context.Context, *nodepb.GetNodeInfoRequest) (*nodepb.GetNodeInfoResponse, error) {
-	// The country is left empty. Finding it means telling an outside service
-	// this node's address, which a node should not do unasked.
-	return &nodepb.GetNodeInfoResponse{PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, ListenAddresses: s.cfg.Listen()}, nil
+	return &nodepb.GetNodeInfoResponse{
+		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, ListenAddresses: s.cfg.Listen(), CountryCode: s.cfg.Country(),
+	}, nil
 }
 
 func (s *localService) ListPeers(context.Context, *nodepb.ListPeersRequest) (*nodepb.ListPeersResponse, error) {
@@ -115,22 +134,64 @@ func (s *localService) WatchPeers(_ *nodepb.WatchPeersRequest, stream grpc.Serve
 	}
 }
 
-// A pool is joined by invitation, not by dialling an address, and a node
-// finds its pool's members through its coordinator, so there is no address
-// book to keep.
-const noAddressBook = "this node joins a pool by invitation and has no address book: use `sisyphusd pool invite` and `sisyphusd pool join`"
+const noAddressBook = "this node keeps no address book"
 
+// GetBootstrapPeers returns the node's address book: the nodes it connects
+// to when it starts, to find the rest from.
 func (s *localService) GetBootstrapPeers(context.Context, *nodepb.GetBootstrapPeersRequest) (*nodepb.GetBootstrapPeersResponse, error) {
-	return &nodepb.GetBootstrapPeersResponse{}, nil
+	if s.cfg.Book == nil {
+		return &nodepb.GetBootstrapPeersResponse{}, nil
+	}
+	saved, err := s.cfg.Book.BootstrapPeers()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	return &nodepb.GetBootstrapPeersResponse{Peers: bookEntries(saved)}, nil
 }
 
-func (s *localService) SetBootstrapPeers(context.Context, *nodepb.SetBootstrapPeersRequest) (*nodepb.SetBootstrapPeersResponse, error) {
-	return nil, status.Error(codes.Unimplemented, noAddressBook)
+// SetBootstrapPeers replaces the address book and connects to what is now
+// in it. Each entry is a node's ID and an address ending in /p2p/ and that
+// same ID.
+func (s *localService) SetBootstrapPeers(ctx context.Context, req *nodepb.SetBootstrapPeersRequest) (*nodepb.SetBootstrapPeersResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.Book == nil {
+		return nil, status.Error(codes.FailedPrecondition, noAddressBook)
+	}
+	var entries []nodedb.BootstrapPeer
+	var addresses []string
+	for _, entry := range req.GetPeers() {
+		info, err := peer.AddrInfoFromString(entry.GetAddress())
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "%q is not an address ending in /p2p/ and a node ID", entry.GetAddress())
+		}
+		if info.ID.String() != entry.GetPeerId() {
+			return nil, status.Errorf(codes.InvalidArgument, "the address %s is not one of node %q", entry.GetAddress(), entry.GetPeerId())
+		}
+		entries = append(entries, nodedb.BootstrapPeer{PeerID: entry.GetPeerId(), Address: entry.GetAddress()})
+		addresses = append(addresses, entry.GetAddress())
+	}
+	if err := s.cfg.Book.SetBootstrapPeers(entries); err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	// Whoever answers, answers in its own time; the book is saved already.
+	go s.cfg.Bootstrap(context.WithoutCancel(ctx), addresses)
+	saved, _ := s.cfg.Book.BootstrapPeers() // just written, so readable
+	return &nodepb.SetBootstrapPeersResponse{Peers: bookEntries(saved)}, nil
 }
 
-// ConnectPeer connects this node directly to another member of its pool at
-// an address. It admits nobody: a node that is not a member is turned away
-// as it would be had it called by itself.
+func bookEntries(saved []nodedb.BootstrapPeer) []*nodepb.BootstrapPeer {
+	entries := make([]*nodepb.BootstrapPeer, 0, len(saved))
+	for _, p := range saved {
+		entries = append(entries, &nodepb.BootstrapPeer{PeerId: p.PeerID, Address: p.Address})
+	}
+	return entries
+}
+
+// ConnectPeer connects this node's libp2p host to the node at an address,
+// and on success notes the address in the node's address book. Connecting
+// to a node gives it no part in this node's pool; that is what trust is for.
 func (s *localService) ConnectPeer(ctx context.Context, req *nodepb.ConnectPeerRequest) (*nodepb.ConnectPeerResponse, error) {
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
@@ -144,6 +205,10 @@ func (s *localService) ConnectPeer(ctx context.Context, req *nodepb.ConnectPeerR
 	}
 	if err := s.cfg.Connect(ctx, req.GetAddress()); err != nil {
 		return nil, status.Errorf(codes.Unavailable, "connect: %v", err)
+	}
+	if s.cfg.Book != nil {
+		// The node is connected whether or not that can be written down.
+		s.cfg.Book.AddBootstrapPeer(nodedb.BootstrapPeer{PeerID: info.ID.String(), Address: req.GetAddress()})
 	}
 	return &nodepb.ConnectPeerResponse{PeerId: info.ID.String()}, nil
 }

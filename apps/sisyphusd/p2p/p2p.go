@@ -14,19 +14,27 @@ package p2p
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
+	"math/rand/v2"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/control"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/core/transport"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
@@ -53,10 +61,18 @@ type Config struct {
 	// multiaddress ending in /p2p/ and the relay's ID. A host with any
 	// takes itself to be unreachable otherwise.
 	Via []string
-	// Allow says whether the node with the given ID may connect to this one
-	// and be connected to. Everyone else is turned away once the handshake
-	// has shown who they are.
+	// Allow says whether the node with the given ID is one of this node's
+	// own: a member of its pool. Only those are relayed for. Unless Discover
+	// is set, only those may connect at all, and everyone else is turned
+	// away once the handshake has shown who they are.
 	Allow func(id string) bool
+	// Discover has the host look for other nodes and let them find it: on
+	// its own network by multicast DNS, and beyond it through a distributed
+	// hash table that it both uses and serves. Any node may then connect,
+	// which is what lets strangers find each other. What a stranger can do
+	// once connected is for the services on the host to decide.
+	Discover bool
+	Log      *slog.Logger
 }
 
 // Host is a node's libp2p host.
@@ -70,14 +86,19 @@ type Host struct {
 	// direct connection for, fixed when the host starts.
 	placeCheck, directDial time.Duration
 
-	// stop ends the keeping of places on relays, and kept is closed when
-	// it has ended.
+	// table is the distributed hash table, on a host that discovers.
+	table *dht.IpfsDHT
+	// ctx ends, through stop, when the host closes; kept counts what it has
+	// running until then.
+	ctx  context.Context
 	stop context.CancelFunc
 	kept sync.WaitGroup
 	mu   sync.Mutex
 	// renew is when the host's place on each relay is next due for
 	// renewal. A relay it has no place on is absent.
 	renew map[peer.ID]time.Time
+	// lan is the host's announcing of itself on its own network.
+	lan io.Closer
 }
 
 // New starts a host.
@@ -109,7 +130,6 @@ func New(cfg Config) (*Host, error) {
 		libp2p.Muxer(yamux.ID, yamux.DefaultTransport),
 		libp2p.ShareTCPListener(),
 		libp2p.WithFxOption(fx.Invoke(func(shared *tcpreuse.ConnMgr) { h.shared = shared })),
-		libp2p.ConnectionGater(gate(cfg.Allow)),
 		libp2p.EnableHolePunching(),
 		libp2p.DisableMetrics(),
 		libp2p.UserAgent("sisyphusd"),
@@ -136,11 +156,41 @@ func New(cfg Config) (*Host, error) {
 	if len(h.relays) > 0 {
 		options = append(options, libp2p.ForceReachabilityPrivate())
 	}
+	h.ctx, h.stop = context.WithCancel(context.Background())
+	if cfg.Discover {
+		// With a table to ask, a node can be found by its ID alone.
+		options = append(options, libp2p.Routing(func(inner host.Host) (routing.PeerRouting, error) {
+			var err error
+			h.table, err = dht.New(inner,
+				// Every node answers as well as asks, so the table needs no
+				// servers of its own. It is Sisyphus's, not IPFS's.
+				dht.Mode(dht.ModeServer),
+				dht.ProtocolPrefix(tablePrefix),
+				// The stock table keeps only nodes with public addresses.
+				// A pool on one private network has none.
+				dht.RoutingTableFilter(func(any, peer.ID) bool { return true }),
+				dht.QueryFilter(func(any, peer.AddrInfo) bool { return true }),
+				dht.AddressFilter(nil),
+			)
+			return h.table, err
+		}))
+	} else {
+		options = append(options, libp2p.ConnectionGater(gate(cfg.Allow)))
+	}
 	started, err := libp2p.New(options...)
 	if err != nil {
+		h.stop()
 		return nil, fmt.Errorf("p2p: %w", err)
 	}
 	h.host = started
+	if cfg.Discover {
+		// Nodes on the same network announce themselves to each other.
+		// Where multicast is not to be had this finds nobody, which is no
+		// reason not to start.
+		if h.lan, err = announce(started, found{h}); err != nil {
+			cfg.Log.Warn("cannot look for nodes on this network; others must be given this node's address", "error", err)
+		}
+	}
 	// A place on a relay is lost with the connection to it, whatever its
 	// time had left to run.
 	started.Network().Notify(&network.NotifyBundle{DisconnectedF: func(_ network.Network, conn network.Conn) {
@@ -148,13 +198,60 @@ func New(cfg Config) (*Host, error) {
 		defer h.mu.Unlock()
 		delete(h.renew, conn.RemotePeer())
 	}})
-	ctx, stop := context.WithCancel(context.Background())
-	h.stop = stop
 	for _, r := range h.relays {
 		h.kept.Add(1)
-		go h.keepPlace(ctx, r)
+		go h.keepPlace(h.ctx, r)
 	}
 	return h, nil
+}
+
+// tablePrefix names the hash table's protocol, and lanService the service
+// that nodes announce on their own network. Both are Sisyphus's own, so
+// that nodes find each other and not every other libp2p program in reach.
+const (
+	tablePrefix = "/sisyphus"
+	lanService  = "_sisyphus._udp"
+)
+
+// meet is how long a host gives a node it has just heard of to answer.
+const meet = 10 * time.Second
+
+// found is told of each node announcing itself on this network.
+type found struct{ host *Host }
+
+func (f found) HandlePeerFound(info peer.AddrInfo) {
+	h := f.host
+	h.kept.Add(1)
+	go func() {
+		defer h.kept.Done()
+		ctx, cancel := context.WithTimeout(h.ctx, meet)
+		defer cancel()
+		// Connecting is what puts the node in the table and in Peers. One
+		// that does not answer is forgotten.
+		h.call(ctx, info)
+	}()
+}
+
+// announce starts announcing a host on its own network and listening for
+// others doing the same.
+var announce = func(h host.Host, each mdns.Notifee) (io.Closer, error) {
+	service := mdns.NewMdnsService(h, lanService, each)
+	return service, service.Start()
+}
+
+// Bootstrap connects the host to the nodes at the given addresses, each a
+// multiaddress ending in /p2p/ and the node's ID, and has it ask them who
+// else there is. It returns how many of them answered.
+func (h *Host) Bootstrap(ctx context.Context, addresses []string) (answered int) {
+	for _, address := range addresses {
+		if h.Connect(ctx, address) == nil {
+			answered++
+		}
+	}
+	if h.table != nil {
+		h.table.Bootstrap(ctx)
+	}
+	return answered
 }
 
 // placeCheck is how often a host looks to see that it still has its place
@@ -232,6 +329,10 @@ func multiaddrOf(hostport string) (string, error) {
 func (h *Host) Close() error {
 	h.stop()
 	h.kept.Wait()
+	if h.table != nil {
+		h.lan.Close()
+		h.table.Close()
+	}
 	return h.host.Close()
 }
 
@@ -264,24 +365,37 @@ func (h *Host) listening() []ma.Multiaddr {
 	return addrs
 }
 
-// Peer is a node this host is connected to.
+// Peer is a node this host knows of.
 type Peer struct {
 	ID string
-	// Addrs are the addresses of the connections to it. One through a relay
-	// has /p2p-circuit in it.
+	// Addrs are the addresses the node is known to have.
 	Addrs []string
+	// Conns are the addresses of the host's connections to it now, if it
+	// has any. One through a relay has /p2p-circuit in it.
+	Conns []string
 }
 
-// Peers returns the nodes the host is connected to.
+// Connected reports whether the host has a connection to the node.
+func (p Peer) Connected() bool { return len(p.Conns) > 0 }
+
+// Peers returns the nodes the host knows of, connected or not, ordered by
+// ID. A node it has heard nothing of for a while drops out.
 func (h *Host) Peers() []Peer {
 	var peers []Peer
-	for _, id := range h.host.Network().Peers() {
+	for _, id := range h.host.Peerstore().PeersWithAddrs() {
+		if id == h.host.ID() {
+			continue
+		}
 		p := Peer{ID: id.String()}
+		for _, addr := range h.host.Peerstore().Addrs(id) {
+			p.Addrs = append(p.Addrs, addr.String())
+		}
 		for _, conn := range h.host.Network().ConnsToPeer(id) {
-			p.Addrs = append(p.Addrs, conn.RemoteMultiaddr().String())
+			p.Conns = append(p.Conns, conn.RemoteMultiaddr().String())
 		}
 		peers = append(peers, p)
 	}
+	sort.Slice(peers, func(a, b int) bool { return peers[a].ID < peers[b].ID })
 	return peers
 }
 
@@ -291,7 +405,38 @@ func (h *Host) Connect(ctx context.Context, address string) error {
 	if err != nil {
 		return fmt.Errorf("p2p: address %q: %w", address, err)
 	}
-	return h.host.Connect(ctx, *info)
+	return h.call(ctx, *info)
+}
+
+// callAgain is how many more times a call that fails is made, and
+// callPause the longest wait before each.
+const (
+	callAgain = 3
+	callPause = 300 * time.Millisecond
+)
+
+// call connects to a node, trying again if it fails.
+//
+// Two nodes that have just found each other may each call the other at the
+// same instant, from and to the same two ports. The two calls then become
+// one connection on which both sides think they are the caller, and it
+// fails for both. Waiting a different time each and calling again is what
+// lets one of them get there first.
+func (h *Host) call(ctx context.Context, info peer.AddrInfo) error {
+	for attempt := 0; ; attempt++ {
+		err := h.host.Connect(ctx, info)
+		if err == nil || attempt == callAgain {
+			return err
+		}
+		select {
+		case <-time.After(rand.N(callPause)):
+		case <-ctx.Done():
+			return err
+		}
+		// A node that has just failed to answer is otherwise not called
+		// again for some seconds.
+		h.host.Network().(*swarm.Swarm).Backoff().Clear(info.ID)
+	}
 }
 
 // TLSListener returns a listener for the connections arriving on the host's

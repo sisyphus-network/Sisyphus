@@ -161,12 +161,12 @@ sisyphusd run --kubo --role worker --coordinator COORD:7700 --join <invitation> 
 
 ### 2. Check the private network
 
-On any node, with `IPFS_PATH` set to `ipfs` inside that node's data directory (by default `~/.sisyphus/ipfs`):
+On any node, with `IPFS_PATH` set to `ipfs` inside that node's data directory (`$(sisyphusd data-dir)/ipfs` unless you gave `--data-dir`):
 
 ```sh
-IPFS_PATH=~/.sisyphus/ipfs ipfs id -f '<id>\n'      # equals: sisyphusd id
-IPFS_PATH=~/.sisyphus/ipfs ipfs swarm peers        # the other nodes of the pool, and nothing else
-IPFS_PATH=~/.sisyphus/ipfs ipfs bootstrap list     # the pool's own nodes only
+IPFS_PATH=$(sisyphusd data-dir)/ipfs ipfs id -f '<id>\n'      # equals: sisyphusd id
+IPFS_PATH=$(sisyphusd data-dir)/ipfs ipfs swarm peers        # the other nodes of the pool, and nothing else
+IPFS_PATH=$(sisyphusd data-dir)/ipfs ipfs bootstrap list     # the pool's own nodes only
 ```
 
 ✎ Does every node list every other? A worker that lists only the coordinator can reach it but not its fellow workers; note which.
@@ -185,7 +185,7 @@ examples/wordcount.sh "$(examples/big-file.sh 200)"
 Then confirm the data moved over the private network. On a worker:
 
 ```sh
-IPFS_PATH=~/.sisyphus/ipfs ipfs cat --offline <the input CID that wordcount.sh printed> | wc -c
+IPFS_PATH=$(sisyphusd data-dir)/ipfs ipfs cat --offline <the input CID that wordcount.sh printed> | wc -c
 ```
 
 It prints the file's size if the worker's Kubo holds it. And look in each worker's log for
@@ -206,7 +206,7 @@ The removed worker exits. Within a few seconds each remaining worker logs `moved
 
 ✎ On a remaining worker, does `ipfs swarm peers` show the coordinator again after a few seconds? Does a job still run?
 
-✎ On the removed machine, start Kubo by hand on its old repository (`IPFS_PATH=~/.sisyphus/ipfs LIBP2P_FORCE_PNET=1 ipfs daemon`) and try `ipfs swarm connect` to the coordinator's address from `ipfs id` there. It must fail: that machine holds the old key.
+✎ On the removed machine, start Kubo by hand on its old repository (`IPFS_PATH=$(sisyphusd data-dir)/ipfs LIBP2P_FORCE_PNET=1 ipfs daemon`) and try `ipfs swarm connect` to the coordinator's address from `ipfs id` there. It must fail: that machine holds the old key.
 
 ## What to report
 

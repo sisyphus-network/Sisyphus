@@ -35,6 +35,7 @@ const usage = `Usage:
   sisyphusd pool remove <node-id>  take a node off that list and disconnect it
   sisyphusd pool rekey             change the key of the pool's private IPFS network
   sisyphusd id                     print this node's ID, creating its key if it has none
+  sisyphusd data-dir               print where this node keeps its data unless told otherwise
   sisyphusd version                print the version
 
 Run "sisyphusd <command> -h" for a command's flags.
@@ -89,6 +90,9 @@ func run(ctx context.Context, args []string) error {
 		return poolCommand(ctx, args[1:])
 	case "id":
 		return showIdentity(args[1:])
+	case "data-dir":
+		fmt.Fprintln(stdout, defaultDataDir())
+		return nil
 	case "version":
 		fmt.Fprintln(stdout, "sisyphusd", version)
 		return nil

@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"math/rand/v2"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +26,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("HOME", home)
+	// Nothing a test does may land in the real user's data directory.
+	os.Unsetenv("XDG_DATA_HOME")
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)
@@ -57,12 +61,19 @@ func cli(t *testing.T, args ...string) (string, error) {
 
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// Not a port of the system's choosing: between this function returning
+	// and the caller listening, the system may give that same port to
+	// something else, and nodes and their Kubo daemons take such ports all
+	// the time. Ports below the range it chooses from are left alone.
+	for {
+		addr := "127.0.0.1:" + strconv.Itoa(20000+rand.IntN(12000))
+		lis, err := net.Listen("tcp", addr)
+		if err != nil {
+			continue
+		}
+		lis.Close()
+		return addr
 	}
-	defer lis.Close()
-	return lis.Addr().String()
 }
 
 // startDaemon runs "sisyphusd run" with the given flags until the test ends
@@ -79,6 +90,11 @@ func startDaemon(t *testing.T, args ...string) (stop func()) {
 	}
 	if i := slices.Index(args, "--listen"); i >= 0 {
 		dataDirs.Store(args[i+1], dataDir)
+	}
+	// Test nodes keep to themselves unless a test is about their finding
+	// each other: there may be many on this machine at once.
+	if !slices.Contains(args, "--discovery") {
+		args = append(args, "--discovery", "off")
 	}
 	if i := slices.Index(args, "--coordinator"); i >= 0 && !slices.Contains(args, "--join") && !joined(dataDir) {
 		args = append(args, "--join", invite(t, args[i+1], "worker"))

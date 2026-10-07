@@ -61,6 +61,15 @@ var (
 )
 
 func (s *poolService) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {
+	if req.GetToken() == "" {
+		// A node can be admitted without an invitation, by this node's
+		// owner trusting it directly. It joins by asking whether it has been.
+		role, admitted := s.access.Role(access.Caller(ctx))
+		if !admitted || role == access.Owner {
+			return nil, status.Error(codes.PermissionDenied, "this node has not been trusted by the node it is joining; ask its owner to trust it, or for an invitation")
+		}
+		return &pb.JoinResponse{Role: fromRole[role]}, nil
+	}
 	role, err := s.access.Redeem(req.GetToken(), access.Caller(ctx), time.Now())
 	if errors.Is(err, access.ErrBadInvite) {
 		return nil, status.Error(codes.PermissionDenied, "invitation is unknown, already used or expired")
