@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	goruntime "runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -134,9 +135,11 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	// A send on a broken stream fails without saying why; the reason comes
 	// from Recv below, so send errors are not checked here or in the
 	// heartbeat.
+	hello := w.capabilities()
+	offered := hello.GetLabels()
 	send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
 		Name:         w.Name,
-		Capabilities: w.capabilities(),
+		Capabilities: hello,
 		ServeAddress: w.ServeAddress, RelayAddresses: w.RelayAddresses,
 	}}})
 
@@ -156,6 +159,12 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 			select {
 			case <-ticker.C:
 				heartbeat := &pb.Heartbeat{RunningTasks: uint32(running.Load())}
+				// What the worker offers can change while it runs: its
+				// owner fetches a model, or removes one.
+				if now := w.labels(); !slices.Equal(now, offered) {
+					offered = now
+					heartbeat.Labels = &pb.Labels{Labels: now}
+				}
 				if w.Relayed != nil {
 					heartbeat.RelayedConnections, heartbeat.RelayedBytes = w.Relayed()
 				}
@@ -303,12 +312,18 @@ func (w *Worker) capabilities() *pb.NodeCapabilities {
 		Workloads: w.Workloads.Names(),
 
 		CpuModel: w.Hardware.CPUModel, MemoryBytes: w.Hardware.MemoryBytes,
-		Labels: w.Workloads.Offers(context.Background()),
+		Labels: w.labels(),
 	}
 	for _, gpu := range w.Hardware.GPUs {
 		capabilities.Gpus = append(capabilities.Gpus, &pb.Gpu{Name: gpu.Name, MemoryBytes: gpu.MemoryBytes})
 	}
 	return capabilities
+}
+
+// labels is what the worker has that a job may ask for by name: itself,
+// and whatever its workloads offer.
+func (w *Worker) labels() []string {
+	return append([]string{runtime.WorkerLabel + w.Name}, w.Workloads.Offers(context.Background())...)
 }
 
 // updateInterval is how often the coordinator is told how a running task

@@ -26,6 +26,8 @@ import (
 type Pool interface {
 	Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, error)
 	Watch(ctx context.Context, jobID string, fn func(*pb.Job) error) error
+	WatchEvents(ctx context.Context, jobID string, after uint64, fn func(*pb.JobEvent) error) error
+	Get(jobID string) (*pb.Job, error)
 	Cancel(jobID string) (*pb.Job, error)
 	Nodes() []*pb.NodeInfo
 }
@@ -44,7 +46,7 @@ func Handler(pool Pool, token string) http.Handler {
 			OwnedBy string `json:"owned_by"`
 		}
 		listed := []model{}
-		for _, name := range served(pool) {
+		for _, name := range served(pool, "") {
 			listed = append(listed, model{ID: name, Object: "model", OwnedBy: "sisyphus"})
 		}
 		answer(w, http.StatusOK, map[string]any{"object": "list", "data": listed})
@@ -60,11 +62,14 @@ func Handler(pool Pool, token string) http.Handler {
 	})
 }
 
-// served lists the models the pool's connected workers serve.
-func served(pool Pool) []string {
+// served lists the models the pool's connected workers serve: all of them,
+// or those of the worker with the given name.
+func served(pool Pool, worker string) []string {
 	var names []string
 	for _, node := range pool.Nodes() {
-		names = append(names, runtime.Models(node.GetCapabilities().GetLabels())...)
+		if worker == "" || node.GetName() == worker {
+			names = append(names, runtime.Models(node.GetCapabilities().GetLabels())...)
+		}
 	}
 	slices.Sort(names)
 	return slices.Compact(names)
@@ -76,23 +81,39 @@ func chat(pool Pool, w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "the request could not be read, or is longer than this service takes")
 		return
 	}
-	var request struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
-	}
+	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
 		refuse(w, http.StatusBadRequest, "invalid_request_error", "the request is not JSON")
 		return
 	}
+	var asked string
+	var stream bool
+	json.Unmarshal(request["model"], &asked)   // one that is no string names no model
+	json.Unmarshal(request["stream"], &stream) // and one that is no yes or no is a no
 	// Asked of a pool with no worker serving the model, the job would wait
-	// for one to come. Whoever is asking is told now instead.
-	if models := served(pool); !slices.Contains(models, request.Model) {
-		refuse(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("no worker connected to the pool serves the model %q; those served are: %s", request.Model, strings.Join(models, ", ")))
+	// for one to come. Whoever is asking is told now instead. A model named
+	// loosely is taken to be the one the pool serves that it can only mean.
+	_, worker, _ := strings.Cut(asked, "@")
+	models := served(pool, worker)
+	model, found := runtime.ResolveModel(asked, models)
+	if !found {
+		where := "no worker connected to the pool serves a model"
+		if worker != "" {
+			where = fmt.Sprintf("the worker %q is not connected to the pool, or serves no model", worker)
+		}
+		refuse(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("%s that %q can only mean; those served are: %s", where, strings.TrimSuffix(asked, "@"+worker), strings.Join(models, ", ")))
 		return
 	}
+	request["model"], _ = json.Marshal(model) // a string always encodes
+	body, _ = json.Marshal(request)           // decoded from JSON a moment ago
 	job, err := pool.Submit(r.Context(), &pb.JobSpec{Workload: "chat", Params: body, Mode: pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER})
 	if err != nil {
 		refuse(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	w.Header().Set("X-Sisyphus-Job", job.GetJobId())
+	if stream {
+		streamed(pool, w, r, job.GetJobId(), model)
 		return
 	}
 	if err := pool.Watch(r.Context(), job.GetJobId(), func(finished *pb.Job) error { job = finished; return nil }); err != nil {
@@ -106,41 +127,87 @@ func chat(pool Pool, w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadGateway, "server_error", fmt.Sprintf("job %s did not produce a reply: %s", job.GetJobId(), job.GetError()))
 		return
 	}
-	w.Header().Set("X-Sisyphus-Job", job.GetJobId())
-	if !request.Stream {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(job.GetResult())
-		return
-	}
-	// The reply is whole by now, and one that was asked for as a stream is
-	// sent as a stream of one piece.
-	w.Header().Set("Content-Type", "text/event-stream")
-	fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", piece(job.GetResult()))
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(job.GetResult())
 }
 
-// piece turns a whole reply into the one piece of a streamed reply: what
-// was each choice's message is its delta, and each tool call says which
-// call it is.
-func piece(whole []byte) []byte {
-	var reply map[string]any
-	json.Unmarshal(whole, &reply) // the workload returns nothing that is not JSON
-	reply["object"] = "chat.completion.chunk"
-	choices, _ := reply["choices"].([]any)
-	for _, c := range choices {
-		choice, _ := c.(map[string]any)
-		message, _ := choice["message"].(map[string]any)
-		calls, _ := message["tool_calls"].([]any)
+// streamed sends a reply as it is written. The worker logs what the model
+// has said in pieces; each is sent on as it arrives, and when the job is
+// over what remains of the reply is sent: the tools it asks for, why it
+// ended and what it used.
+func streamed(pool Pool, w http.ResponseWriter, r *http.Request, jobID, model string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	flush := func() { http.NewResponseController(w).Flush() } // a writer that cannot is one that does not hold things back
+	send := func(piece map[string]any) {
+		piece["id"], piece["object"], piece["model"] = "chatcmpl-"+jobID, "chat.completion.chunk", model
+		encoded, _ := json.Marshal(piece) // maps of strings always encode
+		fmt.Fprintf(w, "data: %s\n\n", encoded)
+		flush()
+	}
+	delta := func(d map[string]any, finish any) map[string]any {
+		return map[string]any{"choices": []any{map[string]any{"index": 0, "delta": d, "finish_reason": finish}}}
+	}
+	send(delta(map[string]any{"role": "assistant", "content": ""}, nil))
+	sent := false
+	err := pool.WatchEvents(r.Context(), jobID, 0, func(e *pb.JobEvent) error {
+		var text string
+		if e.GetKind() == "log" && json.Unmarshal([]byte(e.GetText()), &text) == nil && text != "" {
+			send(delta(map[string]any{"content": text}, nil))
+			sent = true
+		}
+		return nil
+	})
+	if err != nil {
+		pool.Cancel(jobID)
+		return
+	}
+	job, err := pool.Get(jobID)
+	if err != nil || job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		// The reply has begun, so its failure is said in the stream.
+		failure := fmt.Sprintf("job %s did not produce a reply: %s", jobID, job.GetError())
+		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", mustJSON(map[string]any{"error": map[string]string{"message": failure, "type": "server_error", "code": "server_error"}}))
+		flush()
+		return
+	}
+	var whole struct {
+		Choices []struct {
+			Message      map[string]any `json:"message"`
+			FinishReason any            `json:"finish_reason"`
+		} `json:"choices"`
+		Usage any `json:"usage"`
+	}
+	json.Unmarshal(job.GetResult(), &whole) // the workload returns nothing that is not JSON
+	last, finish := map[string]any{}, any("stop")
+	if len(whole.Choices) > 0 {
+		finish = whole.Choices[0].FinishReason
+		for key, value := range whole.Choices[0].Message {
+			// What the model said has gone already, unless the worker
+			// sent no pieces; the rest goes now.
+			if key != "role" && (key != "content" || !sent) {
+				last[key] = value
+			}
+		}
+		// In a stream, each tool call says which it is.
+		calls, _ := last["tool_calls"].([]any)
 		for i, call := range calls {
 			if call, is := call.(map[string]any); is {
 				call["index"] = i
 			}
 		}
-		if choice != nil {
-			choice["delta"] = message
-			delete(choice, "message")
-		}
 	}
-	encoded, _ := json.Marshal(reply) // decoded from JSON a moment ago
+	end := delta(last, finish)
+	if whole.Usage != nil {
+		end["usage"] = whole.Usage
+	}
+	send(end)
+	fmt.Fprint(w, "data: [DONE]\n\n")
+	flush()
+}
+
+// mustJSON encodes what always encodes.
+func mustJSON(v any) []byte {
+	encoded, _ := json.Marshal(v)
 	return encoded
 }
 

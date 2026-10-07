@@ -721,6 +721,11 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 				c.mu.Lock()
 				w.lastSeen = time.Now()
 				w.relayedConnections, w.relayedBytes = kind.Heartbeat.GetRelayedConnections(), kind.Heartbeat.GetRelayedBytes()
+				if changed := kind.Heartbeat.GetLabels(); changed != nil {
+					// What it has now may be what a waiting job needs.
+					w.capabilities.Labels = changed.GetLabels()
+					c.scheduleLocked()
+				}
 				c.mu.Unlock()
 			case *pb.WorkerMessage_TaskResult:
 				c.handleResult(w, kind.TaskResult)
