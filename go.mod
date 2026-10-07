@@ -11,7 +11,7 @@ require (
 	github.com/ipfs/go-datastore v0.9.2
 	github.com/ipfs/go-ds-flatfs v0.6.1
 	github.com/ipfs/go-ipld-format v0.6.4
-	github.com/libp2p/go-libp2p v0.49.0
+	github.com/libp2p/go-libp2p v0.50.0
 	github.com/libp2p/go-libp2p-kad-dht v0.42.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/multiformats/go-multiaddr v0.16.1
@@ -34,7 +34,7 @@ require (
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf // indirect
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
-	github.com/dunglas/httpsfv v1.1.0 // indirect
+	github.com/dunglas/httpsfv v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/filecoin-project/go-clock v0.1.0 // indirect
 	github.com/flynn/noise v1.1.0 // indirect
@@ -117,8 +117,8 @@ require (
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.60.0 // indirect
-	github.com/quic-go/webtransport-go v0.11.1 // indirect
+	github.com/quic-go/quic-go v0.62.0 // indirect
+	github.com/quic-go/webtransport-go v0.13.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
