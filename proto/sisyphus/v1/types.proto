@@ -30,6 +30,11 @@ message NodeInfo {
   google.protobuf.Timestamp last_seen_at = 5;
   // The label the node gave itself.
   string name = 6;
+  // Where the node relays at, if it does, and what it says it has relayed
+  // since it started.
+  repeated string relay_addresses = 7;
+  uint64 relayed_connections = 8;
+  uint64 relayed_bytes = 9;
 }
 
 enum ScheduleMode {

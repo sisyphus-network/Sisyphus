@@ -46,6 +46,11 @@ type Worker struct {
 	// ServeAddress, if not empty, is where other workers of the pool can
 	// fetch blobs from this one.
 	ServeAddress string
+	// RelayAddresses are where this node's libp2p host relays between the
+	// pool's members, if it does, and Relayed, if set, returns how many
+	// times it has joined two of them and how many bytes passed.
+	RelayAddresses []string
+	Relayed        func() (connections, bytes uint64)
 	// OnSwarm, if set, is called with the fingerprint of the key of the
 	// pool's private IPFS network whenever the coordinator states it: on
 	// joining, and when the key changes. It must not block for long.
@@ -123,7 +128,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
 		Name:         w.Name,
 		Capabilities: w.capabilities(),
-		ServeAddress: w.ServeAddress,
+		ServeAddress: w.ServeAddress, RelayAddresses: w.RelayAddresses,
 	}}})
 
 	var running atomic.Int32
@@ -140,6 +145,9 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 			select {
 			case <-ticker.C:
 				heartbeat := &pb.Heartbeat{RunningTasks: uint32(running.Load())}
+				if w.Relayed != nil {
+					heartbeat.RelayedConnections, heartbeat.RelayedBytes = w.Relayed()
+				}
 				send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: heartbeat}})
 			case <-ctx.Done():
 				return

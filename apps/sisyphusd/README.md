@@ -174,18 +174,23 @@ Opening more is optional, and buys speed:
 | --- | --- |
 | Nothing (any worker) | Takes tasks. Fetches from the coordinator, and from other workers through it or directly where the network allows. With `--kubo`, reaches the coordinator's Kubo through the tunnel. |
 | `--serve <addr>` on a worker | Other workers fetch from it at that address without the coordinator's help. |
+| `--relay <addr>` on a worker | It becomes a full node: other members connect to its libp2p host there, and it relays between them as the coordinator does. |
 | `--swarm-port <port>` on a coordinator with `--kubo` | Workers' Kubo daemons connect to the coordinator's directly rather than through the tunnel. |
 
 A worker's Kubo tries the coordinator's open port first, if it has one, and settles for the tunnel if nothing answers within two seconds, so opening the port and then forgetting the firewall rule costs speed, not the pool. The worker logs which it chose.
 
 What the tunnel costs: every byte between a worker's Kubo and the coordinator's passes through both `sisyphusd` processes and is encrypted a second time. On one machine it moves about 300 MB/s against 2 GB/s for a direct connection, so it matters on a fast network with fast disks and not otherwise. Run `go test -run xxx -bench . ./apps/sisyphusd/tunnel` to measure it on yours.
 
+**Full nodes.** A worker started with `--relay <host:port>`, on a port the other members can reach, relays between them. It tells the coordinator where it is; every worker asks the coordinator from time to time which members relay and keeps a place on each, so any two can be joined through the coordinator or through any full node. Each full node counts what it carries and reports it to the coordinator, and `sisyphusd nodes` shows it in the `RELAYED` column. That count is what a reward for relaying would be worked out from; nothing pays one yet.
+
+**Both kinds of address.** A coordinator started with `--listen :7700` listens on every IPv4 and IPv6 address the machine has. One that names an address listens on that one.
+
 What is not there yet:
 
-- **Two workers on different private networks stay on the relay.** libp2p can sometimes connect such a pair directly ("hole punching"), and it is switched on, but it has not been tried across real home routers, so do not count on it.
-- **Only the coordinator relays.** A worker with a port open is connected to directly, but does not yet carry traffic for others.
+- **Two workers on different private networks may stay on a relay.** libp2p can sometimes connect such a pair directly ("hole punching"), and it is switched on. On one machine, relayed pairs do go direct by themselves. Whether they do across two real home routers has not been tried, so do not count on it. Step 4 of [`docs/multi-machine-test.md`](../../docs/multi-machine-test.md) says how to tell.
+- **Which relay carries a connection is not chosen.** A node asks through all of them at once and uses whichever answers first, so a full node takes load off the coordinator without being preferred to it.
+- **A full node's count is its own word.** Nothing checks it against what the nodes at either end saw.
 - **Kubo daemons do not use the relay.** Two workers' Kubo daemons with no route between them exchange blocks through the coordinator's.
-- **IPv6**: a coordinator started with `--listen :7700` listens on IPv4 only. Give it an IPv6 address to listen on one.
 
 ### Private jobs
 

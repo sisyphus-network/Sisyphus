@@ -286,9 +286,14 @@ type NodeInfo struct {
 	ConnectedAt  *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=connected_at,json=connectedAt,proto3" json:"connected_at,omitempty"`
 	LastSeenAt   *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"`
 	// The label the node gave itself.
-	Name          string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Name string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
+	// Where the node relays at, if it does, and what it says it has relayed
+	// since it started.
+	RelayAddresses     []string `protobuf:"bytes,7,rep,name=relay_addresses,json=relayAddresses,proto3" json:"relay_addresses,omitempty"`
+	RelayedConnections uint64   `protobuf:"varint,8,opt,name=relayed_connections,json=relayedConnections,proto3" json:"relayed_connections,omitempty"`
+	RelayedBytes       uint64   `protobuf:"varint,9,opt,name=relayed_bytes,json=relayedBytes,proto3" json:"relayed_bytes,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *NodeInfo) Reset() {
@@ -361,6 +366,27 @@ func (x *NodeInfo) GetName() string {
 		return x.Name
 	}
 	return ""
+}
+
+func (x *NodeInfo) GetRelayAddresses() []string {
+	if x != nil {
+		return x.RelayAddresses
+	}
+	return nil
+}
+
+func (x *NodeInfo) GetRelayedConnections() uint64 {
+	if x != nil {
+		return x.RelayedConnections
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetRelayedBytes() uint64 {
+	if x != nil {
+		return x.RelayedBytes
+	}
+	return 0
 }
 
 type JobSpec struct {
@@ -677,7 +703,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\fmemory_bytes\x18\x05 \x01(\x04R\vmemoryBytes\x12\x1d\n" +
 	"\n" +
 	"task_slots\x18\x06 \x01(\rR\ttaskSlots\x12\x1c\n" +
-	"\tworkloads\x18\a \x03(\tR\tworkloads\"\x9c\x02\n" +
+	"\tworkloads\x18\a \x03(\tR\tworkloads\"\x9b\x03\n" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12#\n" +
@@ -685,7 +711,10 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\fconnected_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\vconnectedAt\x12<\n" +
 	"\flast_seen_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"lastSeenAt\x12\x12\n" +
-	"\x04name\x18\x06 \x01(\tR\x04name\"\x9b\x01\n" +
+	"\x04name\x18\x06 \x01(\tR\x04name\x12'\n" +
+	"\x0frelay_addresses\x18\a \x03(\tR\x0erelayAddresses\x12/\n" +
+	"\x13relayed_connections\x18\b \x01(\x04R\x12relayedConnections\x12#\n" +
+	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\x9b\x01\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +

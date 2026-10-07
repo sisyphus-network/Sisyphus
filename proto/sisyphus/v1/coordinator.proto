@@ -32,10 +32,18 @@ message Hello {
   // Where other workers of the pool can fetch blobs from this one, as
   // host:port, or empty if it does not serve them.
   string serve_address = 4;
+  // Where this node's libp2p host can be reached, if it relays between the
+  // pool's members: multiaddresses ending in /p2p/ and its ID. Empty for a
+  // node that does not relay.
+  repeated string relay_addresses = 5;
 }
 
 message Heartbeat {
   uint32 running_tasks = 1;
+  // What the node has relayed between other members since it started: how
+  // many times it joined two of them, and how many bytes passed.
+  uint64 relayed_connections = 2;
+  uint64 relayed_bytes = 3;
 }
 
 message TaskResult {

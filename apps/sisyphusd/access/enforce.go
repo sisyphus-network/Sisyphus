@@ -38,6 +38,8 @@ var allowed = map[string][]Role{
 	// serving one that asks.
 	pb.BlobService_Locate_FullMethodName:   {Worker},
 	pb.PoolService_IsMember_FullMethodName: {Worker},
+	// And keep a place on the members that relay.
+	pb.PoolService_Relays_FullMethodName: {Worker},
 
 	pb.BlobService_Pin_FullMethodName:            {Client},
 	pb.BlobService_Unpin_FullMethodName:          {Client},

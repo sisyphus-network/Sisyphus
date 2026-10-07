@@ -167,12 +167,17 @@ func listNodes(ctx context.Context, args []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tNODE\tHOST\tPLATFORM\tCORES\tTASKS\tWORKLOADS")
+	fmt.Fprintln(tw, "NAME\tNODE\tHOST\tPLATFORM\tCORES\tTASKS\tWORKLOADS\tRELAYED")
 	for _, node := range listed.GetNodes() {
 		c := node.GetCapabilities()
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s/%s\t%d\t%d/%d\t%s\n",
+		// What a node that relays has carried between other members.
+		relayed := "-"
+		if len(node.GetRelayAddresses()) > 0 {
+			relayed = fmt.Sprintf("%s in %d connections", byteCount(node.GetRelayedBytes()), node.GetRelayedConnections())
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s/%s\t%d\t%d/%d\t%s\t%s\n",
 			node.GetName(), node.GetNodeId(), c.GetHostname(), c.GetOs(), c.GetArch(), c.GetCpuCores(),
-			node.GetRunningTasks(), c.GetTaskSlots(), strings.Join(c.GetWorkloads(), ","))
+			node.GetRunningTasks(), c.GetTaskSlots(), strings.Join(c.GetWorkloads(), ","), relayed)
 	}
 	return tw.Flush()
 }
@@ -201,4 +206,18 @@ func describeTask(task *pb.Task) string {
 // stateName turns an enum name such as TASK_STATE_RUNNING into "running".
 func stateName(enum string) string {
 	return strings.ToLower(enum[strings.LastIndex(enum, "_")+1:])
+}
+
+// byteCount writes a number of bytes the way people read them.
+func byteCount(n uint64) string {
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB"}
+	size, unit := float64(n), 0
+	for size >= 1024 && unit < len(units)-1 {
+		size /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return fmt.Sprintf("%d B", n)
+	}
+	return fmt.Sprintf("%.1f %s", size, units[unit])
 }

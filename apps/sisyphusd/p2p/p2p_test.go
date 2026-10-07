@@ -380,16 +380,168 @@ func TestHostsThatCannotStart(t *testing.T) {
 }
 
 func TestListenAddressesAsMultiaddresses(t *testing.T) {
-	for hostport, want := range map[string]string{
-		"127.0.0.1:7700":     "/ip4/127.0.0.1/tcp/7700",
-		":7700":              "/ip4/0.0.0.0/tcp/7700",
-		"0.0.0.0:7700":       "/ip4/0.0.0.0/tcp/7700",
-		"[::1]:7700":         "/ip6/::1/tcp/7700",
-		"[2001:db8::1]:7700": "/ip6/2001:db8::1/tcp/7700",
+	for hostport, want := range map[string][]string{
+		"127.0.0.1:7700":     {"/ip4/127.0.0.1/tcp/7700"},
+		"0.0.0.0:7700":       {"/ip4/0.0.0.0/tcp/7700"},
+		"[::1]:7700":         {"/ip6/::1/tcp/7700"},
+		"[::]:7700":          {"/ip6/::/tcp/7700"},
+		"[2001:db8::1]:7700": {"/ip6/2001:db8::1/tcp/7700"},
+		// No host named: every address the machine has, of both kinds.
+		":7700": {"/ip4/0.0.0.0/tcp/7700", "/ip6/::/tcp/7700"},
 	} {
-		if got, err := multiaddrOf(hostport); err != nil || got != want {
-			t.Errorf("multiaddrOf(%q) = %q, %v; want %q", hostport, got, err, want)
+		if got, err := multiaddrsOf(hostport); err != nil || !slices.Equal(got, want) {
+			t.Errorf("multiaddrsOf(%q) = %q, %v; want %q", hostport, got, err, want)
 		}
+	}
+}
+
+// freePort returns a port nothing is listening on.
+func freePort(t *testing.T) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lis.Close()
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	return port
+}
+
+func TestANodeToldNoHostListensOnEveryAddressItHas(t *testing.T) {
+	p := newPool(t)
+	port := freePort(t)
+	node := p.start(Config{Listen: ":" + port, Relay: true})
+	ident := newIdentity(t)
+	lis, err := node.TLSListener()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lis.Close()
+	server := tls.NewListener(lis, ident.ServerTLS())
+	go func() {
+		for {
+			conn, err := server.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				io.Copy(conn, conn)
+			}()
+		}
+	}()
+
+	// Over IPv4 always, and over IPv6 on a machine that has it. A machine
+	// that does not listens on the one kind and is none the worse.
+	loopbacks := []string{"127.0.0.1"}
+	if probe, err := net.Listen("tcp", "[::1]:0"); err == nil {
+		probe.Close()
+		loopbacks = append(loopbacks, "::1")
+	}
+	for _, host := range loopbacks {
+		client, err := tls.Dial("tcp", net.JoinHostPort(host, port), newIdentity(t).ClientTLS(ident.ID()))
+		if err != nil {
+			t.Fatalf("TLS to %s: %v", host, err)
+		}
+		roundTrip(t, client, 1<<16)
+		client.Close()
+
+		kind := "ip4"
+		if strings.Contains(host, ":") {
+			kind = "ip6"
+		}
+		other := p.start(Config{})
+		if err := other.Connect(context.Background(), "/"+kind+"/"+host+"/tcp/"+port+"/p2p/"+node.ID()); err != nil {
+			t.Fatalf("libp2p to %s: %v", host, err)
+		}
+	}
+}
+
+func TestAConnectionNobodyHadTakenIsClosedWithTheListener(t *testing.T) {
+	p := newPool(t)
+	node := p.start(Config{Listen: "127.0.0.1:0", Relay: true})
+	lis, err := node.TLSListener()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Something that begins as TLS does, with nobody accepting.
+	conn, err := net.Dial("tcp", lis.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.Write([]byte{0x16, 0x03, 0x01, 0x00})
+	time.Sleep(200 * time.Millisecond)
+	lis.Close()
+	lis.Close() // closing twice does no harm
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Error("a connection nobody took was answered")
+	}
+}
+
+func TestANodeKeepsAPlaceOnTheRelaysItIsToldOf(t *testing.T) {
+	old := placeCheck
+	placeCheck = 20 * time.Millisecond
+	defer func() { placeCheck = old }()
+	oldDial := directDial
+	directDial = 0
+	defer func() { directDial = oldDial }()
+
+	p := newPool(t)
+	coordinator := p.relay()
+	// A member with a port open, which relays as the coordinator does.
+	fullNode := p.start(Config{Listen: "127.0.0.1:0", Relay: true, Via: coordinator.Addrs()})
+
+	var mu sync.Mutex
+	var told []string
+	more := func(context.Context) []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return told
+	}
+	tell := func(addresses ...string) {
+		mu.Lock()
+		defer mu.Unlock()
+		told = addresses
+	}
+	a := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more})
+	b := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more})
+	waitFor(t, func() bool { return a.Relayed() && b.Relayed() })
+	echo(t, b)
+	placedOn := func(h, relay *Host) bool {
+		return h.placed(relay.host.ID(), time.Now())
+	}
+	if placedOn(a, fullNode) {
+		t.Fatal("a has a place on a relay it was never told of")
+	}
+
+	// Told of the full node, among things that are no use, both take a
+	// place on it.
+	bystander := p.start(Config{Listen: "127.0.0.1:0"})
+	tell(append(fullNode.Addrs(), "not an address", bystander.Addrs()[0])...)
+	waitFor(t, func() bool { return placedOn(a, fullNode) && placedOn(b, fullNode) })
+	if placedOn(a, bystander) {
+		t.Error("a took a place on a node that does not relay")
+	}
+
+	// With the coordinator gone, the full node carries them.
+	coordinator.Close()
+	conn, err := a.Dial(context.Background(), b.ID(), echoProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip(t, conn, 1<<20)
+	conn.Close()
+	// It counts what it carried, which is tallied as each joining ends. How
+	// much that was depends on how soon the two found a way round it.
+	a.host.Network().ClosePeer(b.host.ID())
+	waitFor(t, func() bool {
+		connections, bytes := fullNode.Carried()
+		return connections == 1 && bytes > 0
+	})
+	if connections, bytes := a.Carried(); connections != 0 || bytes != 0 {
+		t.Errorf("a node that relays nothing counts %d connections and %d bytes carried", connections, bytes)
 	}
 }
 
@@ -570,16 +722,4 @@ func TestACallThatFailsIsMadeAgain(t *testing.T) {
 	if err := a.Connect(stopped, nobody); err == nil {
 		t.Error("a call nobody was waiting for succeeded")
 	}
-}
-
-// freePort returns a port nothing is listening on.
-func freePort(t *testing.T) string {
-	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lis.Close()
-	_, port, _ := net.SplitHostPort(lis.Addr().String())
-	return port
 }

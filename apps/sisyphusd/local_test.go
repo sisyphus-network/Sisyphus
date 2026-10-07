@@ -157,7 +157,8 @@ func TestAWorkersLocalAPIShowsItsCoordinator(t *testing.T) {
 		t.Fatalf("node info %v, %v", info, err)
 	}
 	for _, address := range info.GetListenAddresses() {
-		if !strings.HasPrefix(address, "/ip4/") || !strings.HasSuffix(address, "/p2p/"+nodeID(t, workerDir)) {
+		// Of either kind, on a machine that has both.
+		if !strings.HasPrefix(address, "/ip4/") && !strings.HasPrefix(address, "/ip6/") || !strings.HasSuffix(address, "/p2p/"+nodeID(t, workerDir)) {
 			t.Errorf("the worker gives %q as an address of its own", address)
 		}
 	}

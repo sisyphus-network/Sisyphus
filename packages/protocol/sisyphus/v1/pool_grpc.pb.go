@@ -22,6 +22,7 @@ const (
 	PoolService_Join_FullMethodName         = "/sisyphus.v1.PoolService/Join"
 	PoolService_Swarm_FullMethodName        = "/sisyphus.v1.PoolService/Swarm"
 	PoolService_IsMember_FullMethodName     = "/sisyphus.v1.PoolService/IsMember"
+	PoolService_Relays_FullMethodName       = "/sisyphus.v1.PoolService/Relays"
 	PoolService_Invite_FullMethodName       = "/sisyphus.v1.PoolService/Invite"
 	PoolService_ListMembers_FullMethodName  = "/sisyphus.v1.PoolService/ListMembers"
 	PoolService_RemoveMember_FullMethodName = "/sisyphus.v1.PoolService/RemoveMember"
@@ -46,6 +47,10 @@ type PoolServiceClient interface {
 	// IsMember says whether a node has been admitted to the pool. Workers use
 	// it to decide whether to serve another node that asks them for a blob.
 	IsMember(ctx context.Context, in *IsMemberRequest, opts ...grpc.CallOption) (*IsMemberResponse, error)
+	// Relays lists the members that relay between the others, besides this
+	// node itself. A worker keeps a place on each, so that it can be reached
+	// through any of them.
+	Relays(ctx context.Context, in *RelaysRequest, opts ...grpc.CallOption) (*RelaysResponse, error)
 	// Invite issues a token for one node to join with.
 	Invite(ctx context.Context, in *InviteRequest, opts ...grpc.CallOption) (*InviteResponse, error)
 	ListMembers(ctx context.Context, in *ListMembersRequest, opts ...grpc.CallOption) (*ListMembersResponse, error)
@@ -91,6 +96,16 @@ func (c *poolServiceClient) IsMember(ctx context.Context, in *IsMemberRequest, o
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(IsMemberResponse)
 	err := c.cc.Invoke(ctx, PoolService_IsMember_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *poolServiceClient) Relays(ctx context.Context, in *RelaysRequest, opts ...grpc.CallOption) (*RelaysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RelaysResponse)
+	err := c.cc.Invoke(ctx, PoolService_Relays_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +170,10 @@ type PoolServiceServer interface {
 	// IsMember says whether a node has been admitted to the pool. Workers use
 	// it to decide whether to serve another node that asks them for a blob.
 	IsMember(context.Context, *IsMemberRequest) (*IsMemberResponse, error)
+	// Relays lists the members that relay between the others, besides this
+	// node itself. A worker keeps a place on each, so that it can be reached
+	// through any of them.
+	Relays(context.Context, *RelaysRequest) (*RelaysResponse, error)
 	// Invite issues a token for one node to join with.
 	Invite(context.Context, *InviteRequest) (*InviteResponse, error)
 	ListMembers(context.Context, *ListMembersRequest) (*ListMembersResponse, error)
@@ -184,6 +203,9 @@ func (UnimplementedPoolServiceServer) Swarm(context.Context, *SwarmRequest) (*Sw
 }
 func (UnimplementedPoolServiceServer) IsMember(context.Context, *IsMemberRequest) (*IsMemberResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method IsMember not implemented")
+}
+func (UnimplementedPoolServiceServer) Relays(context.Context, *RelaysRequest) (*RelaysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Relays not implemented")
 }
 func (UnimplementedPoolServiceServer) Invite(context.Context, *InviteRequest) (*InviteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Invite not implemented")
@@ -268,6 +290,24 @@ func _PoolService_IsMember_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PoolServiceServer).IsMember(ctx, req.(*IsMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PoolService_Relays_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RelaysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PoolServiceServer).Relays(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PoolService_Relays_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PoolServiceServer).Relays(ctx, req.(*RelaysRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -362,6 +402,10 @@ var PoolService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "IsMember",
 			Handler:    _PoolService_IsMember_Handler,
+		},
+		{
+			MethodName: "Relays",
+			Handler:    _PoolService_Relays_Handler,
 		},
 		{
 			MethodName: "Invite",
