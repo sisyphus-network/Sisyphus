@@ -15,23 +15,25 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
+	"github.com/sisyphus-network/Sisyphus/packages/ai"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 )
 
-// modelCommand sets and shows which language model a node plans with. It
+// modelCommand sets and shows which language model a node plans with, and
+// fetches and removes models where a service keeps them on its machine. It
 // works on the node's database directly, so the node need not be running;
 // one that is picks up a change the next time it is asked something.
 func modelCommand(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected model set, show or list")
+		return errModelCommand
 	}
 	fs := flag.NewFlagSet("sisyphusd model "+args[0], flag.ContinueOnError)
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory holding the node's data")
-	provider := fs.String("provider", "ollama", "set: the kind of model service: ollama, openai (which is also for anything that speaks as OpenAI does) or anthropic")
-	url := fs.String("url", "", "set: where the service is, if not in that provider's usual place")
-	model := fs.String("model", "", "set: the model to plan with")
-	keyFile := fs.String("api-key-file", "", "set: a file holding the service's key, if it wants one")
+	provider := fs.String("provider", "ollama", "set, pull, remove: the kind of model service: ollama, openai (which is also for anything that speaks as OpenAI does) or anthropic")
+	url := fs.String("url", "", "set, pull, remove: where the service is, if not in that provider's usual place")
+	model := fs.String("model", "", "the model to plan with, to pull or to remove")
+	keyFile := fs.String("api-key-file", "", "set, pull, remove: a file holding the service's key, if it wants one")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -48,16 +50,17 @@ func modelCommand(ctx context.Context, args []string) error {
 	defer db.Close()
 	a := &assistant{store: db}
 
+	cfg := nodedb.ModelConfig{Provider: *provider, BaseURL: *url, Model: *model}
+	if *keyFile != "" {
+		key, err := os.ReadFile(*keyFile)
+		if err != nil {
+			return fmt.Errorf("read the service's key: %w", err)
+		}
+		cfg.APIKey = strings.TrimSpace(string(key))
+	}
+
 	switch args[0] {
 	case "set":
-		cfg := nodedb.ModelConfig{Provider: *provider, BaseURL: *url, Model: *model}
-		if *keyFile != "" {
-			key, err := os.ReadFile(*keyFile)
-			if err != nil {
-				return fmt.Errorf("read the service's key: %w", err)
-			}
-			cfg.APIKey = strings.TrimSpace(string(key))
-		}
 		if err := a.SetModelConfig(cfg); err != nil {
 			return err
 		}
@@ -79,16 +82,64 @@ func modelCommand(ctx context.Context, args []string) error {
 		fmt.Fprintf(stdout, "provider: %s\nmodel:    %s\nurl:      %s\nkey:      %s\n", cfg.Provider, cfg.Model, cfg.BaseURL, key)
 		return nil
 	case "list":
-		models, err := a.Models(ctx)
+		models, err := a.Models(ctx, nil)
 		if err != nil {
 			return err
 		}
-		for _, name := range models {
-			fmt.Fprintln(stdout, name)
+		for _, m := range models {
+			fmt.Fprintln(stdout, describeModel(m))
 		}
 		return nil
+	case "providers":
+		for _, k := range ai.Kinds() {
+			fmt.Fprintf(stdout, "%-10s %s\n", k.ID, k.About)
+		}
+		return nil
+	case "pull":
+		// The same step is reported many times as it advances, and is
+		// printed when what there is to say of it changes.
+		last := ""
+		err := a.PullModel(ctx, &cfg, *model, func(p ai.Progress) {
+			line := p.Status
+			if p.Total > 0 {
+				line = fmt.Sprintf("%s %d%%", p.Status, 100*p.Done/p.Total)
+			}
+			if line != last {
+				fmt.Fprintln(stdout, line)
+				last = line
+			}
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "%s is there to plan with: sisyphusd model set --model %s\n", *model, *model)
+		return nil
+	case "remove":
+		if err := a.RemoveModel(ctx, &cfg, *model); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "removed %s\n", *model)
+		return nil
 	}
-	return errors.New("expected model set, show or list")
+	return errModelCommand
+}
+
+var errModelCommand = errors.New("expected model set, show, list, providers, pull or remove")
+
+// describeModel writes a model as `model list` prints it: its name, and
+// after it whatever else is known.
+func describeModel(m ai.Model) string {
+	line := m.Name
+	if m.Label != "" {
+		line += "  " + m.Label
+	}
+	if m.Size > 0 {
+		line += fmt.Sprintf("  %.1f GB", float64(m.Size)/1e9)
+	}
+	if m.Tools == ai.No {
+		line += "  (cannot call tools, so cannot plan)"
+	}
+	return line
 }
 
 // ask puts a question to a running node's planner, through its local API,

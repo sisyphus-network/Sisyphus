@@ -109,7 +109,9 @@ type JobControl interface {
 type Assistant interface {
 	ModelConfig() (nodedb.ModelConfig, bool, error)
 	SetModelConfig(nodedb.ModelConfig) error
-	Models(ctx context.Context) ([]string, error)
+	Models(ctx context.Context, at *nodedb.ModelConfig) ([]ai.Model, error)
+	PullModel(ctx context.Context, at *nodedb.ModelConfig, model string, progress func(ai.Progress)) error
+	RemoveModel(ctx context.Context, at *nodedb.ModelConfig, model string) error
 	Chats() ([]nodedb.Chat, error)
 	Chat(id string) ([]ai.Message, error)
 	DeleteChat(id string) error
@@ -543,18 +545,6 @@ func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelC
 		return nil, asError(err)
 	}
 	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: cfg.BaseURL, Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
-}
-
-// ListModels asks the configured service which models it offers.
-func (s *localService) ListModels(ctx context.Context, _ *nodepb.ListModelsRequest) (*nodepb.ListModelsResponse, error) {
-	if s.cfg.Assistant == nil {
-		return nil, errNoPlanner
-	}
-	models, err := s.cfg.Assistant.Models(ctx)
-	if err != nil {
-		return nil, asError(err)
-	}
-	return &nodepb.ListModelsResponse{Models: models}, nil
 }
 
 // Ask puts a question to the planner and sends what it does as it does it.

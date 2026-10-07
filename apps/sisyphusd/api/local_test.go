@@ -867,11 +867,17 @@ var errAbsent = errors.New("the database is locked")
 func (absent) ModelConfig() (nodedb.ModelConfig, bool, error) {
 	return nodedb.ModelConfig{}, false, errAbsent
 }
-func (absent) SetModelConfig(nodedb.ModelConfig) error  { return errAbsent }
-func (absent) Models(context.Context) ([]string, error) { return nil, errAbsent }
-func (absent) Chats() ([]nodedb.Chat, error)            { return nil, errAbsent }
-func (absent) Chat(string) ([]ai.Message, error)        { return nil, errAbsent }
-func (absent) DeleteChat(string) error                  { return errAbsent }
+func (absent) SetModelConfig(nodedb.ModelConfig) error { return errAbsent }
+func (absent) Models(context.Context, *nodedb.ModelConfig) ([]ai.Model, error) {
+	return nil, errAbsent
+}
+func (absent) PullModel(context.Context, *nodedb.ModelConfig, string, func(ai.Progress)) error {
+	return errAbsent
+}
+func (absent) RemoveModel(context.Context, *nodedb.ModelConfig, string) error { return errAbsent }
+func (absent) Chats() ([]nodedb.Chat, error)                                  { return nil, errAbsent }
+func (absent) Chat(string) ([]ai.Message, error)                              { return nil, errAbsent }
+func (absent) DeleteChat(string) error                                        { return errAbsent }
 func (absent) Ask(context.Context, string, string, func(string, planner.Event)) (string, error) {
 	return "", errAbsent
 }
@@ -895,7 +901,12 @@ func TestThePlannersCallsOnANodeWithoutOneAndOnOneThatFails(t *testing.T) {
 		_, chat := s.GetChat(ctx, &nodepb.GetChatRequest{ChatId: "c"})
 		_, del := s.DeleteChat(ctx, &nodepb.DeleteChatRequest{ChatId: "c"})
 		ask := s.Ask(&nodepb.AskRequest{Text: "Anything."}, &askStream{ctx: ctx})
+		elsewhere := &nodepb.ModelService{Provider: "ollama", KeepApiKey: true}
+		_, savedKey := s.ListModels(ctx, &nodepb.ListModelsRequest{Service: elsewhere})
+		pull := s.PullModel(&nodepb.PullModelRequest{Model: "m"}, &pullStream{ctx: ctx})
+		_, remove := s.RemoveModel(ctx, &nodepb.RemoveModelRequest{Model: "m"})
 		return map[string]error{"GetModelConfig": get, "SetModelConfig": set, "SetModelConfig keeping the key": keep, "ListModels": models,
+			"ListModels with the saved key": savedKey, "PullModel": pull, "RemoveModel": remove,
 			"ListChats": chats, "GetChat": chat, "DeleteChat": del, "Ask": ask}
 	}
 	for call, err := range calls(&localService{cfg: LocalConfig{Token: "the-token"}}) {
@@ -913,6 +924,30 @@ func TestThePlannersCallsOnANodeWithoutOneAndOnOneThatFails(t *testing.T) {
 	s := &localService{cfg: LocalConfig{Token: "the-token", Assistant: settable{}}}
 	if _, err := s.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", Model: "m", KeepApiKey: true}); status.Code(err) != codes.Internal {
 		t.Errorf("keeping the key and failing to save: %v", err)
+	}
+}
+
+// pullStream is where a PullModel sends its progress, for a call made
+// directly.
+type pullStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (p *pullStream) Context() context.Context           { return p.ctx }
+func (*pullStream) Send(*nodepb.PullModelProgress) error { return nil }
+
+func TestTheProvidersThereAreAreListedOnAnyNode(t *testing.T) {
+	listed, err := (&localService{}).ListProviders(context.Background(), &nodepb.ListProvidersRequest{})
+	if err != nil || len(listed.GetProviders()) != len(ai.Kinds()) {
+		t.Fatalf("ListProviders = %v, %v", listed, err)
+	}
+	first := listed.GetProviders()[0]
+	if first.GetId() != ai.Ollama || first.GetNeedsKey() != nodepb.Support_SUPPORT_NO || !first.GetFetchesModels() || first.GetDefaultUrl() == "" || first.GetName() == "" || first.GetAbout() == "" {
+		t.Errorf("the first provider: %v", first)
+	}
+	if claude := listed.GetProviders()[1]; claude.GetId() != ai.Anthropic || claude.GetNeedsKey() != nodepb.Support_SUPPORT_YES || claude.GetFetchesModels() {
+		t.Errorf("the second provider: %v", claude)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -84,7 +85,73 @@ type Provider interface {
 	// its text, and any tools it asks to have run.
 	Chat(ctx context.Context, req Request, said func(text string)) (Message, error)
 	// Models lists the models the service offers.
-	Models(ctx context.Context) ([]string, error)
+	Models(ctx context.Context) ([]Model, error)
+}
+
+// Model is a model a service offers.
+type Model struct {
+	// Name is what the model is asked for by.
+	Name string
+	// Label is what the service calls it for people to read, if anything.
+	Label string
+	// Size is how much room the model takes on the machine serving it, in
+	// bytes, if the service says.
+	Size int64
+	// Tools says whether the model can ask for tools to be run, which a
+	// planner's model must.
+	Tools Support
+}
+
+// Support is whether a model can do something, as far as is known.
+type Support int
+
+const (
+	Unknown Support = iota
+	Yes
+	No
+)
+
+// Library is a service whose models are fetched to the machine it runs on
+// before they can be used, and can be removed from it. Ollama is one.
+type Library interface {
+	// Pull fetches a model, reporting how far it has got as it goes.
+	Pull(ctx context.Context, model string, progress func(Progress)) error
+	// Remove deletes a model from the machine.
+	Remove(ctx context.Context, model string) error
+}
+
+// Progress is how far the fetching of a model has got.
+type Progress struct {
+	// Status is what is being done, in the service's words.
+	Status string
+	// Done and Total are bytes of the part being fetched; both are zero
+	// when the step is not one that is measured.
+	Done, Total int64
+}
+
+// Kind describes one of the providers there are, for whoever is choosing.
+type Kind struct {
+	// ID is the provider as a Config names it.
+	ID string
+	// Name is what people call it, and About a line on what it is for.
+	Name, About string
+	// Place is where the service is if not told.
+	Place string
+	// Key says whether the service wants a key: No for none, Yes for
+	// always, Unknown for some of those that speak the dialect.
+	Key Support
+	// Fetches says whether its models are fetched before use: whether a
+	// provider of this kind is a Library.
+	Fetches bool
+}
+
+// Kinds lists the providers there are, the one that needs no account first.
+func Kinds() []Kind {
+	return []Kind{
+		{ID: Ollama, Name: "Ollama", About: "Models that run on this machine, or one you name, served by Ollama. Nothing leaves it.", Place: usualPlace[Ollama], Key: No, Fetches: true},
+		{ID: Anthropic, Name: "Anthropic", About: "Claude, from Anthropic's service.", Place: usualPlace[Anthropic], Key: Yes},
+		{ID: OpenAI, Name: "OpenAI and compatible", About: "OpenAI's service, or anything that speaks as it does: most hosted services, and local servers such as vLLM, llama.cpp and LM Studio.", Place: usualPlace[OpenAI], Key: Unknown},
+	}
 }
 
 // The providers there are, and where each is found if not told.
@@ -247,20 +314,73 @@ func (o ollama) Chat(ctx context.Context, req Request, said func(string)) (Messa
 	return reply, err
 }
 
-func (o ollama) Models(ctx context.Context) ([]string, error) {
+func (o ollama) Models(ctx context.Context) ([]Model, error) {
 	var listed struct {
 		Models []struct {
 			Name string `json:"name"`
+			Size int64  `json:"size"`
 		} `json:"models"`
 	}
 	if err := o.fetch(ctx, "/api/tags", &listed); err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(listed.Models))
+	models := make([]Model, 0, len(listed.Models))
 	for _, m := range listed.Models {
-		names = append(names, m.Name)
+		models = append(models, Model{Name: m.Name, Size: m.Size, Tools: o.tools(ctx, m.Name)})
 	}
-	return names, nil
+	return models, nil
+}
+
+// tools asks whether a model can call tools. A server too old to say
+// leaves it unknown.
+func (o ollama) tools(ctx context.Context, model string) Support {
+	body, err := o.send(ctx, http.MethodPost, "/api/show", map[string]any{"model": model})
+	if err != nil {
+		return Unknown
+	}
+	defer body.Close()
+	var shown struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if json.NewDecoder(body).Decode(&shown) != nil || len(shown.Capabilities) == 0 {
+		return Unknown
+	}
+	if slices.Contains(shown.Capabilities, "tools") {
+		return Yes
+	}
+	return No
+}
+
+func (o ollama) Pull(ctx context.Context, model string, progress func(Progress)) error {
+	body, err := o.send(ctx, http.MethodPost, "/api/pull", map[string]any{"model": model, "stream": true})
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	return lines(body, func(line []byte) error {
+		var step struct {
+			Status    string `json:"status"`
+			Completed int64  `json:"completed"`
+			Total     int64  `json:"total"`
+			Error     string `json:"error"`
+		}
+		if err := json.Unmarshal(line, &step); err != nil {
+			return fmt.Errorf("what came back is not what Ollama sends: %w", err)
+		}
+		if step.Error != "" {
+			return fmt.Errorf("the model could not be fetched: %s", step.Error)
+		}
+		progress(Progress{Status: step.Status, Done: step.Completed, Total: step.Total})
+		return nil
+	})
+}
+
+func (o ollama) Remove(ctx context.Context, model string) error {
+	body, err := o.send(ctx, http.MethodDelete, "/api/delete", map[string]any{"model": model})
+	if err != nil {
+		return err
+	}
+	return body.Close()
 }
 
 // fetch gets a JSON document from the service.
@@ -368,7 +488,7 @@ func (o openai) Chat(ctx context.Context, req Request, said func(string)) (Messa
 	return reply, err
 }
 
-func (o openai) Models(ctx context.Context) ([]string, error) {
+func (o openai) Models(ctx context.Context) ([]Model, error) {
 	var listed struct {
 		Data []struct {
 			ID string `json:"id"`
@@ -377,9 +497,10 @@ func (o openai) Models(ctx context.Context) ([]string, error) {
 	if err := o.fetch(ctx, "/models", &listed); err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(listed.Data))
+	// Nothing in the dialect says what a model can do.
+	models := make([]Model, 0, len(listed.Data))
 	for _, m := range listed.Data {
-		names = append(names, m.ID)
+		models = append(models, Model{Name: m.ID})
 	}
-	return names, nil
+	return models, nil
 }

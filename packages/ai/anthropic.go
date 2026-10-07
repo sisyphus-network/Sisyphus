@@ -176,11 +176,12 @@ func explain(err error) error {
 	return fmt.Errorf("the model service answered: %w", err)
 }
 
-func (c claude) Models(ctx context.Context) ([]string, error) {
-	var names []string
+func (c claude) Models(ctx context.Context) ([]Model, error) {
+	var models []Model
 	pages := c.client.Models.ListAutoPaging(ctx, anthropic.ModelListParams{})
 	for pages.Next() {
-		names = append(names, pages.Current().ID)
+		// Every model Anthropic offers can call tools.
+		models = append(models, Model{Name: pages.Current().ID, Label: pages.Current().DisplayName, Tools: Yes})
 	}
-	return names, explain(pages.Err())
+	return models, explain(pages.Err())
 }

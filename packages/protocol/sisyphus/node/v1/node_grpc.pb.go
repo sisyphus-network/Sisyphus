@@ -36,7 +36,10 @@ const (
 	NodeService_WatchJobEvents_FullMethodName            = "/sisyphus.node.v1.NodeService/WatchJobEvents"
 	NodeService_GetModelConfig_FullMethodName            = "/sisyphus.node.v1.NodeService/GetModelConfig"
 	NodeService_SetModelConfig_FullMethodName            = "/sisyphus.node.v1.NodeService/SetModelConfig"
+	NodeService_ListProviders_FullMethodName             = "/sisyphus.node.v1.NodeService/ListProviders"
 	NodeService_ListModels_FullMethodName                = "/sisyphus.node.v1.NodeService/ListModels"
+	NodeService_PullModel_FullMethodName                 = "/sisyphus.node.v1.NodeService/PullModel"
+	NodeService_RemoveModel_FullMethodName               = "/sisyphus.node.v1.NodeService/RemoveModel"
 	NodeService_Ask_FullMethodName                       = "/sisyphus.node.v1.NodeService/Ask"
 	NodeService_ListChats_FullMethodName                 = "/sisyphus.node.v1.NodeService/ListChats"
 	NodeService_GetChat_FullMethodName                   = "/sisyphus.node.v1.NodeService/GetChat"
@@ -86,8 +89,19 @@ type NodeServiceClient interface {
 	// the service's key, only whether one is set.
 	GetModelConfig(ctx context.Context, in *GetModelConfigRequest, opts ...grpc.CallOption) (*ModelConfig, error)
 	SetModelConfig(ctx context.Context, in *SetModelConfigRequest, opts ...grpc.CallOption) (*ModelConfig, error)
-	// ListModels asks the configured service which models it offers.
+	// ListProviders lists the kinds of model service there are to choose
+	// from, the one that needs no account first.
+	ListProviders(ctx context.Context, in *ListProvidersRequest, opts ...grpc.CallOption) (*ListProvidersResponse, error)
+	// ListModels asks a service which models it offers: the configured one,
+	// or one the request describes, so that a service's models can be shown
+	// before it is chosen. Describing one needs the node's token.
 	ListModels(ctx context.Context, in *ListModelsRequest, opts ...grpc.CallOption) (*ListModelsResponse, error)
+	// PullModel fetches a model to the machine its service runs on, for a
+	// provider whose models are fetched before use, and says how far it has
+	// got as it goes. It ends when the model is there. Needs the token.
+	PullModel(ctx context.Context, in *PullModelRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PullModelProgress], error)
+	// RemoveModel deletes a fetched model from that machine. Needs the token.
+	RemoveModel(ctx context.Context, in *RemoveModelRequest, opts ...grpc.CallOption) (*RemoveModelResponse, error)
 	// Ask puts a question to the planner, in a new conversation or an
 	// existing one, and sends what it does as it does it: what the model
 	// says, each job it runs, and at the end the event "done".
@@ -327,6 +341,16 @@ func (c *nodeServiceClient) SetModelConfig(ctx context.Context, in *SetModelConf
 	return out, nil
 }
 
+func (c *nodeServiceClient) ListProviders(ctx context.Context, in *ListProvidersRequest, opts ...grpc.CallOption) (*ListProvidersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListProvidersResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListProviders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *nodeServiceClient) ListModels(ctx context.Context, in *ListModelsRequest, opts ...grpc.CallOption) (*ListModelsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListModelsResponse)
@@ -337,9 +361,38 @@ func (c *nodeServiceClient) ListModels(ctx context.Context, in *ListModelsReques
 	return out, nil
 }
 
+func (c *nodeServiceClient) PullModel(ctx context.Context, in *PullModelRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PullModelProgress], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[3], NodeService_PullModel_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[PullModelRequest, PullModelProgress]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_PullModelClient = grpc.ServerStreamingClient[PullModelProgress]
+
+func (c *nodeServiceClient) RemoveModel(ctx context.Context, in *RemoveModelRequest, opts ...grpc.CallOption) (*RemoveModelResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveModelResponse)
+	err := c.cc.Invoke(ctx, NodeService_RemoveModel_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *nodeServiceClient) Ask(ctx context.Context, in *AskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[3], NodeService_Ask_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[4], NodeService_Ask_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +441,7 @@ func (c *nodeServiceClient) DeleteChat(ctx context.Context, in *DeleteChatReques
 
 func (c *nodeServiceClient) StoreFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[StoreFileRequest, File], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[4], NodeService_StoreFile_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[5], NodeService_StoreFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +454,7 @@ type NodeService_StoreFileClient = grpc.ClientStreamingClient[StoreFileRequest, 
 
 func (c *nodeServiceClient) FetchFile(ctx context.Context, in *FetchFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FetchFileResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[5], NodeService_FetchFile_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[6], NodeService_FetchFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -513,8 +566,19 @@ type NodeServiceServer interface {
 	// the service's key, only whether one is set.
 	GetModelConfig(context.Context, *GetModelConfigRequest) (*ModelConfig, error)
 	SetModelConfig(context.Context, *SetModelConfigRequest) (*ModelConfig, error)
-	// ListModels asks the configured service which models it offers.
+	// ListProviders lists the kinds of model service there are to choose
+	// from, the one that needs no account first.
+	ListProviders(context.Context, *ListProvidersRequest) (*ListProvidersResponse, error)
+	// ListModels asks a service which models it offers: the configured one,
+	// or one the request describes, so that a service's models can be shown
+	// before it is chosen. Describing one needs the node's token.
 	ListModels(context.Context, *ListModelsRequest) (*ListModelsResponse, error)
+	// PullModel fetches a model to the machine its service runs on, for a
+	// provider whose models are fetched before use, and says how far it has
+	// got as it goes. It ends when the model is there. Needs the token.
+	PullModel(*PullModelRequest, grpc.ServerStreamingServer[PullModelProgress]) error
+	// RemoveModel deletes a fetched model from that machine. Needs the token.
+	RemoveModel(context.Context, *RemoveModelRequest) (*RemoveModelResponse, error)
 	// Ask puts a question to the planner, in a new conversation or an
 	// existing one, and sends what it does as it does it: what the model
 	// says, each job it runs, and at the end the event "done".
@@ -608,8 +672,17 @@ func (UnimplementedNodeServiceServer) GetModelConfig(context.Context, *GetModelC
 func (UnimplementedNodeServiceServer) SetModelConfig(context.Context, *SetModelConfigRequest) (*ModelConfig, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetModelConfig not implemented")
 }
+func (UnimplementedNodeServiceServer) ListProviders(context.Context, *ListProvidersRequest) (*ListProvidersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListProviders not implemented")
+}
 func (UnimplementedNodeServiceServer) ListModels(context.Context, *ListModelsRequest) (*ListModelsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListModels not implemented")
+}
+func (UnimplementedNodeServiceServer) PullModel(*PullModelRequest, grpc.ServerStreamingServer[PullModelProgress]) error {
+	return status.Error(codes.Unimplemented, "method PullModel not implemented")
+}
+func (UnimplementedNodeServiceServer) RemoveModel(context.Context, *RemoveModelRequest) (*RemoveModelResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveModel not implemented")
 }
 func (UnimplementedNodeServiceServer) Ask(*AskRequest, grpc.ServerStreamingServer[AskEvent]) error {
 	return status.Error(codes.Unimplemented, "method Ask not implemented")
@@ -953,6 +1026,24 @@ func _NodeService_SetModelConfig_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_ListProviders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListProvidersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListProviders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListProviders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListProviders(ctx, req.(*ListProvidersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _NodeService_ListModels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListModelsRequest)
 	if err := dec(in); err != nil {
@@ -967,6 +1058,35 @@ func _NodeService_ListModels_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeServiceServer).ListModels(ctx, req.(*ListModelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_PullModel_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(PullModelRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).PullModel(m, &grpc.GenericServerStream[PullModelRequest, PullModelProgress]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_PullModelServer = grpc.ServerStreamingServer[PullModelProgress]
+
+func _NodeService_RemoveModel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveModelRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RemoveModel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RemoveModel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RemoveModel(ctx, req.(*RemoveModelRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1226,8 +1346,16 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _NodeService_SetModelConfig_Handler,
 		},
 		{
+			MethodName: "ListProviders",
+			Handler:    _NodeService_ListProviders_Handler,
+		},
+		{
 			MethodName: "ListModels",
 			Handler:    _NodeService_ListModels_Handler,
+		},
+		{
+			MethodName: "RemoveModel",
+			Handler:    _NodeService_RemoveModel_Handler,
 		},
 		{
 			MethodName: "ListChats",
@@ -1280,6 +1408,11 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "WatchJobEvents",
 			Handler:       _NodeService_WatchJobEvents_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "PullModel",
+			Handler:       _NodeService_PullModel_Handler,
 			ServerStreams: true,
 		},
 		{

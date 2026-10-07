@@ -33,6 +33,9 @@ type model struct {
 	mu      sync.Mutex
 	replies []string
 	asked   []map[string]any
+	// keys are the keys it was shown when asked for its models, pulled the
+	// models it was told to fetch, and removed those it was told to delete.
+	keys, pulled, removed []string
 }
 
 // says is a reply that is only text; wants is one that asks for a tool.
@@ -49,15 +52,37 @@ func newModel(t *testing.T, replies ...string) *model {
 	t.Helper()
 	m := &model{replies: replies}
 	m.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/tags" {
-			io.WriteString(w, `{"models":[{"name":"test-model"},{"name":"another-model"}]}`)
-			return
-		}
 		body, _ := io.ReadAll(r.Body)
 		var asked map[string]any
 		json.Unmarshal(body, &asked)
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		named, _ := asked["model"].(string)
+		switch r.URL.Path {
+		case "/api/tags":
+			m.keys = append(m.keys, r.Header.Get("Authorization"))
+			io.WriteString(w, `{"models":[{"name":"test-model","size":4900000000},{"name":"another-model"}]}`)
+			return
+		case "/api/show":
+			if named == "test-model" {
+				io.WriteString(w, `{"capabilities":["completion","tools"]}`)
+			} else {
+				io.WriteString(w, `{"capabilities":["completion"]}`)
+			}
+			return
+		case "/api/pull":
+			if named == "no-such-model" {
+				io.WriteString(w, `{"error":"file does not exist"}`)
+				return
+			}
+			m.pulled = append(m.pulled, named)
+			io.WriteString(w, `{"status":"pulling manifest"}`+"\n"+`{"status":"pulling layer","total":200,"completed":50}`+"\n"+
+				`{"status":"pulling layer","total":200,"completed":51}`+"\n"+`{"status":"pulling layer","total":200,"completed":200}`+"\n"+`{"status":"success"}`+"\n")
+			return
+		case "/api/delete":
+			m.removed = append(m.removed, named)
+			return
+		}
 		m.asked = append(m.asked, asked)
 		if len(m.asked) > len(m.replies) {
 			http.Error(w, "the model has run out of things to say", http.StatusInternalServerError)
@@ -101,7 +126,7 @@ func TestAQuestionIsPlannedComputedAndAnswered(t *testing.T) {
 	if out := mustCLI(t, "model", "show", "--data-dir", dataDir); !strings.Contains(out, "provider: ollama") || !strings.Contains(out, "model:    test-model") || !strings.Contains(out, served.URL) || !strings.Contains(out, "key:      none") {
 		t.Errorf("model show:\n%s", out)
 	}
-	if out := mustCLI(t, "model", "list", "--data-dir", dataDir); out != "test-model\nanother-model\n" {
+	if out := mustCLI(t, "model", "list", "--data-dir", dataDir); out != "test-model  4.9 GB\nanother-model  (cannot call tools, so cannot plan)\n" {
 		t.Errorf("model list:\n%s", out)
 	}
 
@@ -210,8 +235,14 @@ func TestTheDesktopSetsTheModelAndTheKeyStaysPut(t *testing.T) {
 	if err != nil || dropped.GetHasApiKey() {
 		t.Errorf("setting a configuration with no key: %v, %v", dropped, err)
 	}
-	if models, err := client.ListModels(ctx, &nodepb.ListModelsRequest{}); err != nil || len(models.GetModels()) != 2 {
-		t.Errorf("ListModels = %v, %v", models, err)
+	// The configured service's models may be listed by anyone on the machine.
+	models, err := client.ListModels(context.Background(), &nodepb.ListModelsRequest{})
+	if err != nil || strings.Join(models.GetModels(), ",") != "test-model,another-model" || len(models.GetDetails()) != 2 {
+		t.Fatalf("ListModels = %v, %v", models, err)
+	}
+	if able, unable := models.GetDetails()[0], models.GetDetails()[1]; able.GetTools() != nodepb.Support_SUPPORT_YES || able.GetSizeBytes() != 4900000000 ||
+		unable.GetName() != "another-model" || unable.GetTools() != nodepb.Support_SUPPORT_NO {
+		t.Errorf("what is known of the models: %v", models.GetDetails())
 	}
 
 	for name, bad := range map[string]*nodepb.SetModelConfigRequest{
@@ -305,8 +336,12 @@ func TestModelAndAskCommandsThatAreRefused(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"model"}, "expected model set, show or list"},
-		{[]string{"model", "forget", "--data-dir", dataDir}, "expected model set, show or list"},
+		{[]string{"model"}, "expected model set, show, list, providers, pull or remove"},
+		{[]string{"model", "forget", "--data-dir", dataDir}, "expected model set, show, list, providers, pull or remove"},
+		{[]string{"model", "pull", "--data-dir", dataDir}, "a model must be named"},
+		{[]string{"model", "remove", "--data-dir", dataDir}, "a model must be named"},
+		{[]string{"model", "pull", "--data-dir", dataDir, "--provider", "openai", "--model", "m"}, "are not fetched or removed"},
+		{[]string{"model", "remove", "--data-dir", dataDir, "--provider", "pigeon", "--model", "m"}, "unknown model provider"},
 		{[]string{"model", "show", "--no-such-flag"}, "flag provided but not defined"},
 		{[]string{"model", "show", "--data-dir", dataDir, "extra"}, `unexpected argument "extra"`},
 		{[]string{"model", "show", "--data-dir", filepath.Join(blocked, "sub")}, "not a directory"},
@@ -456,7 +491,129 @@ func TestAnAssistantWhoseStateCannotBeKeptSaysSo(t *testing.T) {
 		}
 	}
 	store.failing = "ModelConfig"
-	if _, err := a.Models(ctx); !errors.Is(err, errShelf) {
+	if _, err := a.Models(ctx, nil); !errors.Is(err, errShelf) {
 		t.Errorf("Models with the configuration unreadable: %v", err)
+	}
+}
+
+func TestTheDesktopChoosesAServiceAndFetchesAModelForIt(t *testing.T) {
+	saved, other := newModel(t), newModel(t)
+	dataDir := t.TempDir()
+	apiAddr := freeAddr(t)
+	startDaemon(t, "--data-dir", dataDir, "--listen", freeAddr(t), "--api-listen", apiAddr)
+	client := desktop(t, apiAddr)
+	poolAsSeenBy(t, client)
+	ctx := tokenOf(t, dataDir)
+
+	// A picker starts from the providers there are, and can look at what
+	// one offers before anything is saved.
+	providers, err := client.ListProviders(context.Background(), &nodepb.ListProvidersRequest{})
+	if err != nil || len(providers.GetProviders()) != 3 {
+		t.Fatalf("ListProviders = %v, %v", providers, err)
+	}
+	at := func(m *model) *nodepb.ModelService { return &nodepb.ModelService{Provider: "ollama", BaseUrl: m.URL} }
+	offered, err := client.ListModels(ctx, &nodepb.ListModelsRequest{Service: at(other)})
+	if err != nil || len(offered.GetDetails()) != 2 {
+		t.Fatalf("the models of a service not yet chosen: %v, %v", offered, err)
+	}
+
+	// The saved key goes to the service it was saved for and to no other.
+	if _, err := client.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", BaseUrl: saved.URL, Model: "test-model", ApiKey: "sk-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []*model{saved, other} {
+		service := at(m)
+		service.KeepApiKey = true
+		if _, err := client.ListModels(ctx, &nodepb.ListModelsRequest{Service: service}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := saved.keys[len(saved.keys)-1]; got != "Bearer sk-secret" {
+		t.Errorf("the saved service was shown %q", got)
+	}
+	if got := other.keys[len(other.keys)-1]; got != "" {
+		t.Errorf("another service was shown the saved key: %q", got)
+	}
+
+	// Fetching a model reports how far it has got and ends when it is there.
+	pulling, err := client.PullModel(ctx, &nodepb.PullModelRequest{Service: at(other), Model: "llama3.1:8b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steps []*nodepb.PullModelProgress
+	for {
+		step, err := pulling.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		steps = append(steps, step)
+	}
+	if len(steps) != 5 || steps[1].GetStatus() != "pulling layer" || steps[1].GetCompletedBytes() != 50 || steps[1].GetTotalBytes() != 200 || steps[4].GetStatus() != "success" || other.pulled[0] != "llama3.1:8b" {
+		t.Errorf("steps = %v, pulled %v", steps, other.pulled)
+	}
+	// With no service named, it is the configured one that is told.
+	if _, err := client.RemoveModel(ctx, &nodepb.RemoveModelRequest{Model: "another-model"}); err != nil || len(saved.removed) != 1 || saved.removed[0] != "another-model" {
+		t.Errorf("removed %v, %v", saved.removed, err)
+	}
+
+	failed := func(req *nodepb.PullModelRequest) error {
+		stream, _ := client.PullModel(ctx, req)
+		_, err := stream.Recv()
+		return err
+	}
+	_, unnamed := client.RemoveModel(ctx, &nodepb.RemoveModelRequest{})
+	_, pigeon := client.ListModels(ctx, &nodepb.ListModelsRequest{Service: &nodepb.ModelService{Provider: "carrier-pigeon"}})
+	_, hosted := client.RemoveModel(ctx, &nodepb.RemoveModelRequest{Service: &nodepb.ModelService{Provider: "openai"}, Model: "gpt-5"})
+	for name, tt := range map[string]struct {
+		err  error
+		want codes.Code
+	}{
+		"pulling a model there is none of":          {failed(&nodepb.PullModelRequest{Service: at(other), Model: "no-such-model"}), codes.Internal},
+		"pulling no model":                          {failed(&nodepb.PullModelRequest{Service: at(other)}), codes.InvalidArgument},
+		"pulling from a service that fetches none":  {failed(&nodepb.PullModelRequest{Service: &nodepb.ModelService{Provider: "anthropic"}, Model: "m"}), codes.FailedPrecondition},
+		"removing no model":                         {unnamed, codes.InvalidArgument},
+		"removing from a service that fetches none": {hosted, codes.FailedPrecondition},
+		"the models of a provider there is none of": {pigeon, codes.InvalidArgument},
+	} {
+		if status.Code(tt.err) != tt.want {
+			t.Errorf("%s: %v, want %v", name, tt.err, tt.want)
+		}
+	}
+
+	// Having the node call a service it is told of, or fetch or delete
+	// anything, needs the token.
+	open := context.Background()
+	_, look := client.ListModels(open, &nodepb.ListModelsRequest{Service: at(other)})
+	_, remove := client.RemoveModel(open, &nodepb.RemoveModelRequest{Model: "test-model"})
+	stream, _ := client.PullModel(open, &nodepb.PullModelRequest{Model: "test-model"})
+	_, pull := stream.Recv()
+	for call, err := range map[string]error{"ListModels of a named service": look, "RemoveModel": remove, "PullModel": pull} {
+		if status.Code(err) != codes.PermissionDenied {
+			t.Errorf("%s without the token: %v", call, err)
+		}
+	}
+
+	// And the same from the command line, which needs no running node.
+	if out := mustCLI(t, "model", "providers"); !strings.Contains(out, "ollama") || !strings.Contains(out, "anthropic") || !strings.Contains(out, "openai") {
+		t.Errorf("model providers:\n%s", out)
+	}
+	out := mustCLI(t, "model", "pull", "--data-dir", t.TempDir(), "--url", other.URL, "--model", "qwen3:8b")
+	if out != "pulling manifest\npulling layer 25%\npulling layer 100%\nsuccess\nqwen3:8b is there to plan with: sisyphusd model set --model qwen3:8b\n" {
+		t.Errorf("model pull printed:\n%s", out)
+	}
+	if out := mustCLI(t, "model", "remove", "--data-dir", t.TempDir(), "--url", other.URL, "--model", "qwen3:8b"); out != "removed qwen3:8b\n" || other.removed[0] != "qwen3:8b" {
+		t.Errorf("model remove printed %q, removed %v", out, other.removed)
+	}
+	if _, err := cli(t, "model", "pull", "--data-dir", t.TempDir(), "--url", other.URL, "--model", "no-such-model"); err == nil || !strings.Contains(err.Error(), "could not be fetched") {
+		t.Errorf("pulling a model there is none of: %v", err)
+	}
+}
+
+func TestAModelIsListedWithWhatIsKnownOfIt(t *testing.T) {
+	if got := describeModel(ai.Model{Name: "claude-opus-5-5", Label: "Claude Opus 5.5", Tools: ai.Yes}); got != "claude-opus-5-5  Claude Opus 5.5" {
+		t.Errorf("a model with a name for people: %q", got)
 	}
 }
