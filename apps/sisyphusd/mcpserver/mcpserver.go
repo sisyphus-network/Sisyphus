@@ -81,8 +81,13 @@ func shown(v any, err error) (*mcp.CallToolResult, any, error) {
 		// What the node said, without the wrapping of how it was said.
 		return nil, nil, errors.New(status.Convert(err).Message())
 	}
-	encoded, _ := json.Marshal(v) // maps of strings and numbers always encode
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}}}, nil, nil
+	// Written as it is to be read: a description's <angle brackets> are
+	// not escaped as they would be for a web page.
+	var encoded strings.Builder
+	writer := json.NewEncoder(&encoded)
+	writer.SetEscapeHTML(false)
+	writer.Encode(v) // maps of strings and numbers always encode
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.TrimSpace(encoded.String())}}}, nil, nil
 }
 
 // as returns ctx carrying the node's token.

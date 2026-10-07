@@ -15,7 +15,7 @@ import (
 // agentTransport is how an agent is spoken to: over standard input and
 // output, which is how an agent starts a server of its own. Tests put
 // something else here.
-var agentTransport = func() mcp.Transport { return &mcp.StdioTransport{} }
+var agentTransport mcp.Transport = &mcp.StdioTransport{}
 
 // serveAgent offers a running node to an AI agent, as a Model Context
 // Protocol server, until the agent hangs up. It holds the node's token, so
@@ -41,5 +41,5 @@ func serveAgent(ctx context.Context, args []string) error {
 		// Every workload there is, so that whichever the node has can be described.
 		Workloads: runtime.WithContainers(), Version: version,
 	})
-	return server.Run(ctx, agentTransport())
+	return server.Run(ctx, agentTransport)
 }

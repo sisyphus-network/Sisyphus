@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -289,5 +290,12 @@ func TestFetchingWhatCannotBeReturnedOrWritten(t *testing.T) {
 		if _, err := serving(tt.node).fetch(ctx, fetchArgs{CID: "cid-1", Path: tt.path}); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: %v, want %q", name, err, tt.want)
 		}
+	}
+}
+
+func TestWhatAToolReturnsIsWrittenToBeRead(t *testing.T) {
+	result, _, err := shown(map[string]string{"description": `{"image": "<image>"}`}, nil)
+	if err != nil || result.Content[0].(*mcp.TextContent).Text != `{"description":"{\"image\": \"<image>\"}"}` {
+		t.Fatalf("shown = %v, %v", result.Content[0], err)
 	}
 }

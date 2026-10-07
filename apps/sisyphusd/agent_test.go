@@ -16,8 +16,9 @@ import (
 func agent(t *testing.T, dataDir, apiAddr string) *mcp.ClientSession {
 	t.Helper()
 	ours, theirs := mcp.NewInMemoryTransports()
-	agentTransport = func() mcp.Transport { return theirs }
-	t.Cleanup(func() { agentTransport = func() mcp.Transport { return &mcp.StdioTransport{} } })
+	stdio := agentTransport
+	agentTransport = theirs
+	t.Cleanup(func() { agentTransport = stdio })
 	ctx, hangUp := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- run(ctx, []string{"mcp", "--data-dir", dataDir, "--api", apiAddr}) }()
