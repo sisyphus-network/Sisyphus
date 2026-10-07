@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ipfs/go-cid"
 )
@@ -63,8 +64,11 @@ type ContainerParams struct {
 // how many tasks this is.
 type containerTask struct {
 	ContainerParams
-	Index int `json:"index"`
-	Count int `json:"count"`
+	// Job is the same in every task of a job and in no other job's. Tasks
+	// of a job that run on one machine share one copy of its input.
+	Job   string `json:"job"`
+	Index int    `json:"index"`
+	Count int    `json:"count"`
 }
 
 // ContainerOutput is what one task of a container job produced.
@@ -104,9 +108,11 @@ func (Container) Split(_ context.Context, _ Blobs, params []byte, parts int) ([]
 	if p.Tasks > 0 {
 		count = p.Tasks
 	}
+	var job [12]byte
+	rand.Read(job[:]) // never fails; see crypto/rand
 	payloads := make([][]byte, count)
 	for i := range payloads {
-		payloads[i] = mustJSON(containerTask{ContainerParams: p, Index: i, Count: count})
+		payloads[i] = mustJSON(containerTask{ContainerParams: p, Job: hex.EncodeToString(job[:]), Index: i, Count: count})
 	}
 	return payloads, nil
 }
@@ -134,9 +140,12 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	os.Mkdir(output, 0o777) // the command may run as anyone
 	os.Chmod(output, 0o777)
 	if task.Input != "" {
-		if err := fetchTo(ctx, blobs, task.Input, filepath.Join(input, "data")); err != nil {
+		shared, release, err := inputs.take(ctx, blobs, task.Job, task.Input)
+		if err != nil {
 			return nil, err
 		}
+		defer release()
+		input = shared
 	}
 
 	var suffix [6]byte
@@ -172,7 +181,7 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	// What the command prints is the task's log as it goes, and stdout is
 	// also kept as its output.
 	report := Report(ctx)
-	report.Log("running " + task.Image + " " + strings.Join(task.Command, " "))
+	report.Log("running " + task.Image + " " + firstLine(strings.Join(task.Command, " ")))
 	var printed capped
 	stdout := &lineWriter{each: report.Log, also: &printed}
 	stderr := &lineWriter{each: report.Log}
@@ -254,6 +263,78 @@ func docker(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		return exited.ExitCode(), nil
 	}
 	return 0, err
+}
+
+// firstLine returns text up to its first line break, with a mark that
+// there was more if there was.
+func firstLine(text string) string {
+	line, _, more := strings.Cut(text, "\n")
+	if more {
+		line += " ..."
+	}
+	return line
+}
+
+// inputs holds the inputs of the container tasks running on this machine.
+var inputs = sharedInputs{held: make(map[string]*sharedInput)}
+
+// sharedInputs keeps one copy of a job's input for all of the job's tasks
+// that are running here, for as long as any is. A large input is then
+// fetched and written once however many tasks read it. Tasks of different
+// jobs share nothing, though they name the same input: a private job's
+// input is unsealed, and is not another job's to read.
+type sharedInputs struct {
+	mu   sync.Mutex
+	held map[string]*sharedInput
+}
+
+type sharedInput struct {
+	users int
+	// fetching is held by the task that is fetching the input; dir is
+	// where it is, once it has been.
+	fetching sync.Mutex
+	dir      string
+}
+
+// take returns a directory holding the input with the given CID as the
+// file "data", and what to call when the task is done with it.
+func (s *sharedInputs) take(ctx context.Context, blobs Blobs, job, id string) (dir string, release func(), err error) {
+	key := job + "/" + id
+	s.mu.Lock()
+	in := s.held[key]
+	if in == nil {
+		in = new(sharedInput)
+		s.held[key] = in
+	}
+	in.users++
+	s.mu.Unlock()
+	release = func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if in.users--; in.users == 0 {
+			delete(s.held, key)
+			os.RemoveAll(in.dir)
+		}
+	}
+
+	// The first task to come fetches it. If that fails, the failure is that
+	// task's, and the next to come tries for itself.
+	in.fetching.Lock()
+	defer in.fetching.Unlock()
+	if in.dir == "" {
+		made, err := os.MkdirTemp("", "sisyphus-input-")
+		if err == nil {
+			if err = fetchTo(ctx, blobs, id, filepath.Join(made, "data")); err != nil {
+				os.RemoveAll(made)
+			}
+		}
+		if err != nil {
+			release()
+			return "", nil, err
+		}
+		in.dir = made
+	}
+	return in.dir, release, nil
 }
 
 // fetchTo writes the stored blob with the given CID to a file.

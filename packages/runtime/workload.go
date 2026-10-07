@@ -87,10 +87,10 @@ func Builtin() *Registry {
 	return NewRegistry(Primes{}, WordCount{})
 }
 
-// WithContainers returns the built-in workloads and the one that runs
-// container images.
+// WithContainers returns the built-in workloads and those that run in
+// containers: any image a job names, and the ones made of a fixed image.
 func WithContainers() *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Container{})
+	return NewRegistry(Primes{}, WordCount{}, Container{}, Transcode{})
 }
 
 func (r *Registry) Get(name string) (Workload, error) {

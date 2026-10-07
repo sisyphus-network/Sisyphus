@@ -246,11 +246,12 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - A planner: ask a node a question in plain words, and a language model (from Ollama, OpenAI or anything that speaks as OpenAI does) decides what to compute, has the pool compute it, and answers from the result.
 - Jobs that can be followed as they run, with progress, logs and a record of what happened to them, and cancelled or given a time limit.
 - A desktop client that shows a node and its pool, and admits or removes workers.
+- A first real workload, `transcode`: a video is cut into stretches, encoded by ffmpeg on different workers, and joined.
 - Container images as jobs: a worker whose owner allows it runs any image, one copy for each task, with its output stored and its log followed live.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.
 
-**Not built yet**: a first workload chosen and packaged for a real problem (`examples/render.sh` shows the shape of one). A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
+**Not built yet**: more real workloads than the first (`transcode`). A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
 
 Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/sisyphus-network/Sisyphus/issues/23).
 

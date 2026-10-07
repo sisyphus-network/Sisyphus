@@ -409,6 +409,7 @@ This was checked against a database made by the Rust daemon itself, which is kep
 ## Workloads
 
 - **`container`** runs a container image, once for each task of the job. This is how real programs run on a pool: anything that can be put in an image. See [Running containers](#running-containers) below.
+- **`transcode`** re-encodes a video. It is the first workload that does a job people have: see [Transcoding video](#transcoding-video) below.
 - **`primes`** counts the primes in `[from, to)`. Parameters and results are a few bytes and travel inline. It is a stand-in that exercises the pool.
 - **`wordcount`** counts word frequencies in a stored file. It exercises the storage path: the input is fetched by CID, each task reads only its byte range, task outputs are stored as blobs, and the result is a blob too. The result's CID is the same however the job is split, so two runs can be compared by CID alone.
 
@@ -429,10 +430,35 @@ examples/render.sh                                                       # a pic
 - **Limits.** `"memory_mb"` and `"cpus"` cap what each task may use, and unlike a node's offer these are enforced, by Docker. A task has no network unless the job says `"network": true`. It runs as the user the node runs as, not as root.
 - **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container.
 - **A job is taken in by any coordinator**, and waits until a worker that runs containers is connected.
+- **Tasks of a job that run on one machine share one copy of its input**, fetched once. Tasks of different jobs share nothing.
 
 - **Graphics cards.** `"gpus": 1` gives each task that many of the machine's cards, which needs Docker set up for them (the NVIDIA Container Toolkit). Submit the job with `--min-gpus` as well, so that its tasks go only to machines that have them. This has not been tried on a machine with a card.
 
 What it does not do yet: images are pulled by Docker when first used, from wherever the image name says, so a worker needs to reach that registry and trust it. To be sure of what runs, name the image by digest (`alpine@sha256:...`), which Docker checks.
+
+### Transcoding video
+
+```sh
+cid=$(bin/sisyphusd blob put holiday.mov)
+bin/sisyphusd job submit --workload transcode --params "{\"input\":\"$cid\",\"height\":720}"
+examples/transcode.sh holiday.mov 720       # the same, and fetches the result
+```
+
+The video is cut into as many stretches as the job has tasks. Each task encodes one with ffmpeg, in a container, and the stretches are joined into one video: H.264 with AAC sound, in an MPEG transport stream (`.ts`), which players open and `ffmpeg -i out.ts -c copy out.mp4` puts in an MP4 without encoding again.
+
+| Parameter | Meaning |
+| --- | --- |
+| `input` | The CID of the stored video. Anything ffmpeg reads. |
+| `height` | Scale the picture to this many pixels high, keeping its shape. An even number. Left out, the size is kept. |
+| `crf` | Quality, from 1 (best, largest) to 51. Default 23. |
+| `preset` | Time against size, from `ultrafast` to `veryslow`. Default `medium`. |
+| `segments` | How many stretches. Default: one for each free slot. |
+
+- **It runs on workers started with `--containers`**, like any container job, but the image and the command are fixed: this workload cannot be made to run anything else.
+- **Nothing to install but Docker.** A worker builds the image the first time it is needed, from two lines (Alpine and its ffmpeg package). That takes about a minute and the network, once.
+- **When it helps.** ffmpeg already uses every core of one machine, so cutting a video up gains little there: on one 32-core machine, a one-minute 1080p clip at the `slow` preset took 43 s as one task and 31 s as eight, and a light encode was no faster cut up. The gain is across machines, where each encodes its stretch at the same time. Every worker fetches the whole video to encode its part, so a pool on a slow link is better served by fewer, longer stretches.
+- **Where stretches meet**, the sound can overlap by a few hundredths of a second, and players step over it. Every frame of the picture is there, once.
+- **Private jobs**: the workload reads and stores through the same sealed store the others do, so a sealed video and a job with its key should work; this has not been tried.
 
 ## Layout
 

@@ -10,6 +10,7 @@ Things to run against a pool, and a pool to run them against.
 | `private-wordcount.sh` | The same, sealed: the file and the result are encrypted with a key that only you and the job's workers hold. |
 | `primes.sh` | Counts primes below a number, split across the pool and then as one task, to compare. |
 | `container.sh` | Runs a container image on the pool, one copy for each task, and prints what each printed. |
+| `transcode.sh` | Re-encodes a video on the pool: stored, encoded in stretches by the workers, fetched. |
 | `render.sh` | Renders a picture in strips, a container task for each, and puts it back together. |
 | `big-file.sh` | Makes a large text file to time jobs with. |
 | `boulder.txt` | A short sample text, the default input for `wordcount.sh`. |
@@ -79,6 +80,18 @@ A job's result is the same whichever way it was split, down to the CID of a stor
 examples/container.sh                                   # three copies of a small image
 examples/container.sh 8 python:3-slim python -c 'import os; print(int(os.environ["SISYPHUS_TASK_INDEX"]) ** 2)'
 ```
+
+## Transcoding a video
+
+`examples/transcode.sh` is the first example that does a job people have. It stores a video, has the pool encode it in stretches, and fetches the result.
+
+```sh
+examples/local-pool.sh --containers          # in one terminal
+examples/transcode.sh holiday.mov 720        # in another: to 720 pixels high
+PRESET=slow QUALITY=20 SEGMENTS=4 examples/transcode.sh holiday.mov
+```
+
+The first run on a machine builds the image ffmpeg runs in, which takes about a minute. The result is a `.ts` file; the script prints the command that puts it in an MP4.
 
 ## Rendering a picture across the pool
 
