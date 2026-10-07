@@ -40,7 +40,7 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `SetBootstrapPeers` | yes | Replace the address book. |
 | `SetPeerComputePermissions` | yes | Set the two sides of trust in a peer, separately. |
 | `SetPeerComputeTrust` | yes | Set both sides at once. Kept for clients with one switch. |
-| `ListWorkers` | | The nodes connected as this node's workers: name, hardware, slots, running tasks. |
+| `ListWorkers` | | The nodes connected as this node's workers: name, slots, running tasks, and what each machine has (processor, memory, graphics cards; zero and empty where unknown). |
 | `SubmitJob` | yes | Give the pool a job. Returns it as it stands at once. |
 | `GetJob` | | One job, with its tasks. |
 | `ListJobs`, `WatchJobs` | | Every job on record, newest first. `WatchJobs` re-sends the whole list when any job changes, progress included. |
@@ -85,7 +85,7 @@ To submit one of the built-in workloads:
 | `primes` | `{"from":0,"to":2000000}` | `{"count":148933}` |
 | `wordcount` | `{"input":"<CID of a stored file>"}` | Counts, and the CID of the full table in `output_blobs`. |
 
-`max_tasks` says how many pieces to split into; zero means one for each free worker slot. `task_timeout_seconds`, if set, stops and retries any attempt that runs longer.
+`min_memory_bytes` and `min_gpus` send its tasks only to workers that have that much. `max_tasks` says how many pieces to split into; zero means one for each free worker slot. `task_timeout_seconds`, if set, stops and retries any attempt that runs longer.
 
 ## What a job event tells you
 

@@ -20,6 +20,15 @@ message NodeCapabilities {
   uint32 task_slots = 6;
   // Names of the workloads this node can execute.
   repeated string workloads = 7;
+  // The processor's name, if known. memory_bytes is likewise zero if not.
+  string cpu_model = 8;
+  // The graphics cards the owner offers for computing on.
+  repeated Gpu gpus = 9;
+}
+
+message Gpu {
+  string name = 1;
+  uint64 memory_bytes = 2;
 }
 
 message NodeInfo {
@@ -82,6 +91,10 @@ message JobSpec {
   // If not zero, how long any one attempt at a task may run, in seconds. An
   // attempt that runs longer is stopped and counts as failed.
   uint32 task_timeout_seconds = 6;
+  // What a worker must have to be given this job's tasks: at least this
+  // much memory, and at least this many graphics cards. Zero asks nothing.
+  uint64 min_memory_bytes = 7;
+  uint32 min_gpus = 8;
 }
 
 message Task {

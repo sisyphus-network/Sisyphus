@@ -513,7 +513,7 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 		parts = int(spec.GetMaxTasks())
 		if parts == 0 {
 			c.mu.Lock()
-			parts = max(c.slotsLocked(workload.Name()), 1)
+			parts = max(c.slotsLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus())), 1)
 			c.mu.Unlock()
 		}
 	}
@@ -535,6 +535,7 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 	job := jobmodel.New(newID(), workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
 	job.Key = spec.GetKey()
 	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
+	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
 	job.NoteRead(touched.Read()...)
 	// A job is accepted only once it is on record: its submitter is about
 	// to be given an ID to ask after.
@@ -961,7 +962,7 @@ func (c *Coordinator) scheduleLocked() {
 	c.active = slices.DeleteFunc(c.active, func(job *jobmodel.Job) bool { return job.Terminal() })
 	for _, job := range c.active {
 		for _, task := range job.Assignable() {
-			w := c.pickWorkerLocked(job.Workload)
+			w := c.pickWorkerLocked(job)
 			if w == nil {
 				break
 			}
@@ -983,11 +984,11 @@ func (c *Coordinator) scheduleLocked() {
 
 // pickWorkerLocked returns the worker with the most free slots that supports
 // the workload, or nil if none has a free slot.
-func (c *Coordinator) pickWorkerLocked(workload string) *worker {
+func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job) *worker {
 	var best *worker
 	bestFree := 0
 	for _, w := range c.workers {
-		if !slices.Contains(w.capabilities.GetWorkloads(), workload) {
+		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs) {
 			continue
 		}
 		free := int(w.capabilities.GetTaskSlots()) - len(w.running)
@@ -1000,14 +1001,22 @@ func (c *Coordinator) pickWorkerLocked(workload string) *worker {
 
 // slotsLocked counts task slots across connected workers that support the
 // workload.
-func (c *Coordinator) slotsLocked(workload string) int {
+func (c *Coordinator) slotsLocked(workload string, minMemory uint64, minGPUs int) int {
 	total := 0
 	for _, w := range c.workers {
-		if slices.Contains(w.capabilities.GetWorkloads(), workload) {
+		if suits(w.capabilities, workload, minMemory, minGPUs) {
 			total += int(w.capabilities.GetTaskSlots())
 		}
 	}
 	return total
+}
+
+// suits reports whether a worker with the given capabilities can be given
+// tasks of a workload that ask for so much memory and so many graphics
+// cards. A worker that does not say how much memory it has is taken to have
+// none to speak of.
+func suits(has *pb.NodeCapabilities, workload string, minMemory uint64, minGPUs int) bool {
+	return slices.Contains(has.GetWorkloads(), workload) && has.GetMemoryBytes() >= minMemory && len(has.GetGpus()) >= minGPUs
 }
 
 // notifyLocked is called after every change to a job: it records the change

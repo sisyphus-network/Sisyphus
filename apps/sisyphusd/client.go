@@ -39,6 +39,8 @@ func jobSubmit(ctx context.Context, args []string) error {
 	mode := fs.String("mode", "distributed", "distributed (split across workers) or full-worker (whole job on one worker)")
 	tasks := fs.Uint("tasks", 0, "distributed mode: number of tasks to split into (default: one per connected worker slot)")
 	detach := fs.Bool("detach", false, "print the job ID and return without waiting")
+	minMemory := fs.Uint64("min-memory-mb", 0, "give the job's tasks only to workers with at least this much memory, in mebibytes")
+	minGPUs := fs.Uint("gpus", 0, "give the job's tasks only to workers with at least this many graphics cards")
 	timeout := fs.Duration("timeout", 0, "stop and retry any attempt at a task that runs longer than this; 0 means no limit")
 	keyFile := fs.String("key-file", "", "make the job private: seal everything it stores with this key, and open sealed inputs with it")
 	if err := fs.Parse(args); err != nil {
@@ -48,7 +50,8 @@ func jobSubmit(ctx context.Context, args []string) error {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 
-	spec := &pb.JobSpec{Workload: *workload, Params: []byte(*params), MaxTasks: uint32(*tasks), TaskTimeoutSeconds: uint32(*timeout / time.Second)}
+	spec := &pb.JobSpec{Workload: *workload, Params: []byte(*params), MaxTasks: uint32(*tasks), TaskTimeoutSeconds: uint32(*timeout / time.Second),
+		MinMemoryBytes: *minMemory << 20, MinGpus: uint32(*minGPUs)}
 	switch *mode {
 	case "distributed":
 		spec.Mode = pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED
@@ -239,7 +242,7 @@ func listNodes(ctx context.Context, args []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tNODE\tHOST\tPLATFORM\tCORES\tTASKS\tWORKLOADS\tRELAYED")
+	fmt.Fprintln(tw, "NAME\tNODE\tHOST\tPLATFORM\tCORES\tMEMORY\tGPUS\tTASKS\tWORKLOADS\tRELAYED")
 	for _, node := range listed.GetNodes() {
 		c := node.GetCapabilities()
 		// What a node that relays has carried between other members.
@@ -247,8 +250,12 @@ func listNodes(ctx context.Context, args []string) error {
 		if len(node.GetRelayAddresses()) > 0 {
 			relayed = fmt.Sprintf("%s in %d connections", byteCount(node.GetRelayedBytes()), node.GetRelayedConnections())
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s/%s\t%d\t%d/%d\t%s\t%s\n",
-			node.GetName(), node.GetNodeId(), c.GetHostname(), c.GetOs(), c.GetArch(), c.GetCpuCores(),
+		memory := "?"
+		if c.GetMemoryBytes() > 0 {
+			memory = byteCount(c.GetMemoryBytes())
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s/%s\t%d\t%s\t%d\t%d/%d\t%s\t%s\n",
+			node.GetName(), node.GetNodeId(), c.GetHostname(), c.GetOs(), c.GetArch(), c.GetCpuCores(), memory, len(c.GetGpus()),
 			node.GetRunningTasks(), c.GetTaskSlots(), strings.Join(c.GetWorkloads(), ","), relayed)
 	}
 	return tw.Flush()

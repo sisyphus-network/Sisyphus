@@ -236,6 +236,20 @@ A coordinator also collects every `--gc-interval` (default one hour), and with `
 
 A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
 
+## What each machine has
+
+A worker looks at the machine it runs on and tells its coordinator what it finds: the processor, how much memory, and any NVIDIA graphics cards. `sisyphusd nodes` shows it.
+
+```sh
+bin/sisyphusd run --offer-memory-mb 16384 --offer-gpus 1 ...     # offer the pool less than the machine has
+bin/sisyphusd job submit --min-memory-mb 8192 --gpus 1 ...       # a job that needs that much
+```
+
+- **A job can ask for memory and graphics cards**, and its tasks then go only to workers that have them. Asked to split itself, it splits to fit the workers that qualify. If none does, it waits until one connects.
+- **The owner decides what to offer.** `--offer-memory-mb` and `--offer-gpus` cap what the node says it has. They do not hold a workload to it: nothing yet stops a task using more memory than its node offered.
+- **What is found, and where.** Processor and memory are read on Linux. On other systems they are left unknown, and such a worker is given no job that asks for memory unless its owner says how much to offer. Graphics cards are found wherever NVIDIA's `nvidia-smi` is installed; other makes are not looked for.
+- **A requirement is a count, not a choice.** A task that asks for a graphics card is sent to a machine with one. Which card it then uses, and keeping two tasks off the same one, is the workload's business for now.
+
 ## The planner
 
 A node that coordinates a pool can be asked questions in plain words. A language model decides what needs computing, has the pool compute it, reads the result, and answers.
@@ -413,6 +427,7 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 | `apps/sisyphusd/p2p` | The node's libp2p host: one port shared with gRPC, the relay, discovery, reaching a node by its ID. |
 | `apps/sisyphusd/planner` | The loop in which a model reasons, has the pool compute, and reads the result. |
 | `packages/ai` | Talking to language models: Ollama and OpenAI-style services. |
+| `packages/hardware` | Finding out what a machine has: processor, memory, graphics cards. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
 | `packages/nodedb` | The node's SQLite database: jobs, tasks, attempts, members and invitations. |
 | `packages/storage` | Content-addressed blob store, pins, garbage collection. |
@@ -422,7 +437,6 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 ## Known limits
 
 - A task may fail three times, and losing its worker counts as a failure. Losing its coordinator does not.
-- Workers are chosen by free slots only, not by hardware.
 - A coordinator accepts whatever result a worker returns. Admit only workers you trust.
 - A node is remembered by address. If a coordinator's address changes, its workers and clients must join again.
 - A node's key cannot be changed without becoming a different node, and there is no way to stop a copied key being used other than removing that node.

@@ -391,7 +391,7 @@ func loosen(t *testing.T, db *DB, table, columns string) {
 
 func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	const (
-		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns"
+		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus"
 		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error"
 	)
 	for _, tt := range []struct {
@@ -432,7 +432,7 @@ func TestWriteReportsACommitThatFails(t *testing.T) {
 func TestAJobsEventsAndItsLimitAreKept(t *testing.T) {
 	db, file := newDB(t)
 	job := jobmodel.New("j1", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted)
-	job.TaskTimeout = 90 * time.Second
+	job.TaskTimeout, job.MinMemory, job.MinGPUs = 90*time.Second, 8<<30, 2
 	save(t, db, job)
 	events := []jobmodel.Event{
 		{Seq: 1, At: submitted, Kind: "submitted", Task: -1, Text: "primes, in 1 tasks"},
@@ -448,8 +448,8 @@ func TestAJobsEventsAndItsLimitAreKept(t *testing.T) {
 	if err != nil || len(got) != 2 || got[0].Kind != "submitted" || got[0].Task != -1 || !got[1].At.Equal(events[1].At) || got[1].Node != "rig" || got[1].Text != "counting" {
 		t.Errorf("events after reopening: %+v, %v", got, err)
 	}
-	if loaded := load(t, db)[0]; loaded.TaskTimeout != 90*time.Second {
-		t.Errorf("the job's limit after reopening: %v", loaded.TaskTimeout)
+	if loaded := load(t, db)[0]; loaded.TaskTimeout != 90*time.Second || loaded.MinMemory != 8<<30 || loaded.MinGPUs != 2 {
+		t.Errorf("after reopening the job's limit is %v and it asks for %d bytes and %d cards", loaded.TaskTimeout, loaded.MinMemory, loaded.MinGPUs)
 	}
 	if none, err := db.LoadEvents("no-such-job"); err != nil || len(none) != 0 {
 		t.Errorf("the events of a job that is not there: %v, %v", none, err)

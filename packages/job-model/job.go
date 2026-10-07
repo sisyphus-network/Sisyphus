@@ -80,12 +80,16 @@ type Job struct {
 	MaxTasks int
 	// TaskTimeout, if not zero, is how long one attempt at a task may run.
 	TaskTimeout time.Duration
-	State       State
-	Tasks       []*Task
-	Result      []byte
-	Err         string
-	CreatedAt   time.Time
-	FinishedAt  time.Time
+	// MinMemory and MinGPUs are what a worker must have to be given the
+	// job's tasks: bytes of memory, and graphics cards. Zero asks nothing.
+	MinMemory  uint64
+	MinGPUs    int
+	State      State
+	Tasks      []*Task
+	Result     []byte
+	Err        string
+	CreatedAt  time.Time
+	FinishedAt time.Time
 
 	// The stored blobs the job has touched so far, by CID.
 	read         map[string]struct{} // opened by the split, a task or the aggregation

@@ -1138,8 +1138,13 @@ type Worker struct {
 	Relays             bool   `protobuf:"varint,10,opt,name=relays,proto3" json:"relays,omitempty"`
 	RelayedConnections uint64 `protobuf:"varint,11,opt,name=relayed_connections,json=relayedConnections,proto3" json:"relayed_connections,omitempty"`
 	RelayedBytes       uint64 `protobuf:"varint,12,opt,name=relayed_bytes,json=relayedBytes,proto3" json:"relayed_bytes,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// What the machine has, as far as it could tell and its owner offers:
+	// zero and empty where unknown.
+	CpuModel      string       `protobuf:"bytes,13,opt,name=cpu_model,json=cpuModel,proto3" json:"cpu_model,omitempty"`
+	MemoryBytes   uint64       `protobuf:"varint,14,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
+	Gpus          []*WorkerGpu `protobuf:"bytes,15,rep,name=gpus,proto3" json:"gpus,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Worker) Reset() {
@@ -1256,6 +1261,79 @@ func (x *Worker) GetRelayedBytes() uint64 {
 	return 0
 }
 
+func (x *Worker) GetCpuModel() string {
+	if x != nil {
+		return x.CpuModel
+	}
+	return ""
+}
+
+func (x *Worker) GetMemoryBytes() uint64 {
+	if x != nil {
+		return x.MemoryBytes
+	}
+	return 0
+}
+
+func (x *Worker) GetGpus() []*WorkerGpu {
+	if x != nil {
+		return x.Gpus
+	}
+	return nil
+}
+
+type WorkerGpu struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	MemoryBytes   uint64                 `protobuf:"varint,2,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkerGpu) Reset() {
+	*x = WorkerGpu{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkerGpu) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkerGpu) ProtoMessage() {}
+
+func (x *WorkerGpu) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkerGpu.ProtoReflect.Descriptor instead.
+func (*WorkerGpu) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *WorkerGpu) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *WorkerGpu) GetMemoryBytes() uint64 {
+	if x != nil {
+		return x.MemoryBytes
+	}
+	return 0
+}
+
 type Job struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	JobId    string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
@@ -1277,13 +1355,15 @@ type Job struct {
 	Progress float64 `protobuf:"fixed64,13,opt,name=progress,proto3" json:"progress,omitempty"`
 	// If not zero, how long any one attempt at a task may run.
 	TaskTimeoutSeconds uint32 `protobuf:"varint,14,opt,name=task_timeout_seconds,json=taskTimeoutSeconds,proto3" json:"task_timeout_seconds,omitempty"`
+	MinMemoryBytes     uint64 `protobuf:"varint,15,opt,name=min_memory_bytes,json=minMemoryBytes,proto3" json:"min_memory_bytes,omitempty"`
+	MinGpus            uint32 `protobuf:"varint,16,opt,name=min_gpus,json=minGpus,proto3" json:"min_gpus,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Job) Reset() {
 	*x = Job{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[20]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1295,7 +1375,7 @@ func (x *Job) String() string {
 func (*Job) ProtoMessage() {}
 
 func (x *Job) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[20]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1308,7 +1388,7 @@ func (x *Job) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Job.ProtoReflect.Descriptor instead.
 func (*Job) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{20}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Job) GetJobId() string {
@@ -1409,6 +1489,20 @@ func (x *Job) GetTaskTimeoutSeconds() uint32 {
 	return 0
 }
 
+func (x *Job) GetMinMemoryBytes() uint64 {
+	if x != nil {
+		return x.MinMemoryBytes
+	}
+	return 0
+}
+
+func (x *Job) GetMinGpus() uint32 {
+	if x != nil {
+		return x.MinGpus
+	}
+	return 0
+}
+
 type JobTask struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Index uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
@@ -1428,7 +1522,7 @@ type JobTask struct {
 
 func (x *JobTask) Reset() {
 	*x = JobTask{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[21]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1440,7 +1534,7 @@ func (x *JobTask) String() string {
 func (*JobTask) ProtoMessage() {}
 
 func (x *JobTask) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[21]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1453,7 +1547,7 @@ func (x *JobTask) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobTask.ProtoReflect.Descriptor instead.
 func (*JobTask) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{21}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *JobTask) GetIndex() uint32 {
@@ -1515,13 +1609,17 @@ type SubmitJobRequest struct {
 	MaxTasks uint32 `protobuf:"varint,4,opt,name=max_tasks,json=maxTasks,proto3" json:"max_tasks,omitempty"`
 	// If not zero, stop and retry any attempt at a task that runs longer.
 	TaskTimeoutSeconds uint32 `protobuf:"varint,5,opt,name=task_timeout_seconds,json=taskTimeoutSeconds,proto3" json:"task_timeout_seconds,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Give its tasks only to workers with at least this much memory and this
+	// many graphics cards. Zero asks nothing.
+	MinMemoryBytes uint64 `protobuf:"varint,6,opt,name=min_memory_bytes,json=minMemoryBytes,proto3" json:"min_memory_bytes,omitempty"`
+	MinGpus        uint32 `protobuf:"varint,7,opt,name=min_gpus,json=minGpus,proto3" json:"min_gpus,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SubmitJobRequest) Reset() {
 	*x = SubmitJobRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[22]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1533,7 +1631,7 @@ func (x *SubmitJobRequest) String() string {
 func (*SubmitJobRequest) ProtoMessage() {}
 
 func (x *SubmitJobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[22]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1546,7 +1644,7 @@ func (x *SubmitJobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitJobRequest.ProtoReflect.Descriptor instead.
 func (*SubmitJobRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{22}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *SubmitJobRequest) GetWorkload() string {
@@ -1584,6 +1682,20 @@ func (x *SubmitJobRequest) GetTaskTimeoutSeconds() uint32 {
 	return 0
 }
 
+func (x *SubmitJobRequest) GetMinMemoryBytes() uint64 {
+	if x != nil {
+		return x.MinMemoryBytes
+	}
+	return 0
+}
+
+func (x *SubmitJobRequest) GetMinGpus() uint32 {
+	if x != nil {
+		return x.MinGpus
+	}
+	return 0
+}
+
 type SubmitJobResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Job           *Job                   `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
@@ -1593,7 +1705,7 @@ type SubmitJobResponse struct {
 
 func (x *SubmitJobResponse) Reset() {
 	*x = SubmitJobResponse{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[23]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1605,7 +1717,7 @@ func (x *SubmitJobResponse) String() string {
 func (*SubmitJobResponse) ProtoMessage() {}
 
 func (x *SubmitJobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[23]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1618,7 +1730,7 @@ func (x *SubmitJobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitJobResponse.ProtoReflect.Descriptor instead.
 func (*SubmitJobResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{23}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SubmitJobResponse) GetJob() *Job {
@@ -1637,7 +1749,7 @@ type CancelJobRequest struct {
 
 func (x *CancelJobRequest) Reset() {
 	*x = CancelJobRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[24]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1649,7 +1761,7 @@ func (x *CancelJobRequest) String() string {
 func (*CancelJobRequest) ProtoMessage() {}
 
 func (x *CancelJobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[24]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1662,7 +1774,7 @@ func (x *CancelJobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelJobRequest.ProtoReflect.Descriptor instead.
 func (*CancelJobRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{24}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *CancelJobRequest) GetJobId() string {
@@ -1681,7 +1793,7 @@ type CancelJobResponse struct {
 
 func (x *CancelJobResponse) Reset() {
 	*x = CancelJobResponse{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[25]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1693,7 +1805,7 @@ func (x *CancelJobResponse) String() string {
 func (*CancelJobResponse) ProtoMessage() {}
 
 func (x *CancelJobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[25]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1706,7 +1818,7 @@ func (x *CancelJobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelJobResponse.ProtoReflect.Descriptor instead.
 func (*CancelJobResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{25}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *CancelJobResponse) GetJob() *Job {
@@ -1727,7 +1839,7 @@ type WatchJobEventsRequest struct {
 
 func (x *WatchJobEventsRequest) Reset() {
 	*x = WatchJobEventsRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[26]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1739,7 +1851,7 @@ func (x *WatchJobEventsRequest) String() string {
 func (*WatchJobEventsRequest) ProtoMessage() {}
 
 func (x *WatchJobEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[26]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1752,7 +1864,7 @@ func (x *WatchJobEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchJobEventsRequest.ProtoReflect.Descriptor instead.
 func (*WatchJobEventsRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{26}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *WatchJobEventsRequest) GetJobId() string {
@@ -1788,7 +1900,7 @@ type JobEvent struct {
 
 func (x *JobEvent) Reset() {
 	*x = JobEvent{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[27]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1800,7 +1912,7 @@ func (x *JobEvent) String() string {
 func (*JobEvent) ProtoMessage() {}
 
 func (x *JobEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[27]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1813,7 +1925,7 @@ func (x *JobEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobEvent.ProtoReflect.Descriptor instead.
 func (*JobEvent) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{27}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *JobEvent) GetSeq() uint64 {
@@ -1867,7 +1979,7 @@ type GetJobRequest struct {
 
 func (x *GetJobRequest) Reset() {
 	*x = GetJobRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[28]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1879,7 +1991,7 @@ func (x *GetJobRequest) String() string {
 func (*GetJobRequest) ProtoMessage() {}
 
 func (x *GetJobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[28]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1892,7 +2004,7 @@ func (x *GetJobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetJobRequest.ProtoReflect.Descriptor instead.
 func (*GetJobRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{28}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *GetJobRequest) GetJobId() string {
@@ -1911,7 +2023,7 @@ type GetJobResponse struct {
 
 func (x *GetJobResponse) Reset() {
 	*x = GetJobResponse{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[29]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1923,7 +2035,7 @@ func (x *GetJobResponse) String() string {
 func (*GetJobResponse) ProtoMessage() {}
 
 func (x *GetJobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[29]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1936,7 +2048,7 @@ func (x *GetJobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetJobResponse.ProtoReflect.Descriptor instead.
 func (*GetJobResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{29}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *GetJobResponse) GetJob() *Job {
@@ -1954,7 +2066,7 @@ type ListJobsRequest struct {
 
 func (x *ListJobsRequest) Reset() {
 	*x = ListJobsRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[30]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1966,7 +2078,7 @@ func (x *ListJobsRequest) String() string {
 func (*ListJobsRequest) ProtoMessage() {}
 
 func (x *ListJobsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[30]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1979,7 +2091,7 @@ func (x *ListJobsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListJobsRequest.ProtoReflect.Descriptor instead.
 func (*ListJobsRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{30}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{31}
 }
 
 type WatchJobsRequest struct {
@@ -1990,7 +2102,7 @@ type WatchJobsRequest struct {
 
 func (x *WatchJobsRequest) Reset() {
 	*x = WatchJobsRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[31]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2002,7 +2114,7 @@ func (x *WatchJobsRequest) String() string {
 func (*WatchJobsRequest) ProtoMessage() {}
 
 func (x *WatchJobsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[31]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2015,7 +2127,7 @@ func (x *WatchJobsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchJobsRequest.ProtoReflect.Descriptor instead.
 func (*WatchJobsRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{31}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{32}
 }
 
 type ListJobsResponse struct {
@@ -2028,7 +2140,7 @@ type ListJobsResponse struct {
 
 func (x *ListJobsResponse) Reset() {
 	*x = ListJobsResponse{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[32]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2040,7 +2152,7 @@ func (x *ListJobsResponse) String() string {
 func (*ListJobsResponse) ProtoMessage() {}
 
 func (x *ListJobsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[32]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2053,7 +2165,7 @@ func (x *ListJobsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListJobsResponse.ProtoReflect.Descriptor instead.
 func (*ListJobsResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{32}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ListJobsResponse) GetJobs() []*Job {
@@ -2078,7 +2190,7 @@ type GetModelConfigRequest struct {
 
 func (x *GetModelConfigRequest) Reset() {
 	*x = GetModelConfigRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[33]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2090,7 +2202,7 @@ func (x *GetModelConfigRequest) String() string {
 func (*GetModelConfigRequest) ProtoMessage() {}
 
 func (x *GetModelConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[33]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2103,7 +2215,7 @@ func (x *GetModelConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetModelConfigRequest.ProtoReflect.Descriptor instead.
 func (*GetModelConfigRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{33}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{34}
 }
 
 type ModelConfig struct {
@@ -2120,7 +2232,7 @@ type ModelConfig struct {
 
 func (x *ModelConfig) Reset() {
 	*x = ModelConfig{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[34]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2132,7 +2244,7 @@ func (x *ModelConfig) String() string {
 func (*ModelConfig) ProtoMessage() {}
 
 func (x *ModelConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[34]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2145,7 +2257,7 @@ func (x *ModelConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelConfig.ProtoReflect.Descriptor instead.
 func (*ModelConfig) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{34}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ModelConfig) GetProvider() string {
@@ -2191,7 +2303,7 @@ type SetModelConfigRequest struct {
 
 func (x *SetModelConfigRequest) Reset() {
 	*x = SetModelConfigRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[35]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2203,7 +2315,7 @@ func (x *SetModelConfigRequest) String() string {
 func (*SetModelConfigRequest) ProtoMessage() {}
 
 func (x *SetModelConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[35]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2216,7 +2328,7 @@ func (x *SetModelConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetModelConfigRequest.ProtoReflect.Descriptor instead.
 func (*SetModelConfigRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{35}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *SetModelConfigRequest) GetProvider() string {
@@ -2262,7 +2374,7 @@ type ListModelsRequest struct {
 
 func (x *ListModelsRequest) Reset() {
 	*x = ListModelsRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[36]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2274,7 +2386,7 @@ func (x *ListModelsRequest) String() string {
 func (*ListModelsRequest) ProtoMessage() {}
 
 func (x *ListModelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[36]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2287,7 +2399,7 @@ func (x *ListModelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListModelsRequest.ProtoReflect.Descriptor instead.
 func (*ListModelsRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{36}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{37}
 }
 
 type ListModelsResponse struct {
@@ -2299,7 +2411,7 @@ type ListModelsResponse struct {
 
 func (x *ListModelsResponse) Reset() {
 	*x = ListModelsResponse{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[37]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2311,7 +2423,7 @@ func (x *ListModelsResponse) String() string {
 func (*ListModelsResponse) ProtoMessage() {}
 
 func (x *ListModelsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[37]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2324,7 +2436,7 @@ func (x *ListModelsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListModelsResponse.ProtoReflect.Descriptor instead.
 func (*ListModelsResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{37}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ListModelsResponse) GetModels() []string {
@@ -2345,7 +2457,7 @@ type AskRequest struct {
 
 func (x *AskRequest) Reset() {
 	*x = AskRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[38]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2357,7 +2469,7 @@ func (x *AskRequest) String() string {
 func (*AskRequest) ProtoMessage() {}
 
 func (x *AskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[38]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2370,7 +2482,7 @@ func (x *AskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AskRequest.ProtoReflect.Descriptor instead.
 func (*AskRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{38}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *AskRequest) GetChatId() string {
@@ -2407,7 +2519,7 @@ type AskEvent struct {
 
 func (x *AskEvent) Reset() {
 	*x = AskEvent{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[39]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2419,7 +2531,7 @@ func (x *AskEvent) String() string {
 func (*AskEvent) ProtoMessage() {}
 
 func (x *AskEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[39]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2432,7 +2544,7 @@ func (x *AskEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AskEvent.ProtoReflect.Descriptor instead.
 func (*AskEvent) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{39}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *AskEvent) GetChatId() string {
@@ -2478,7 +2590,7 @@ type ListChatsRequest struct {
 
 func (x *ListChatsRequest) Reset() {
 	*x = ListChatsRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[40]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2490,7 +2602,7 @@ func (x *ListChatsRequest) String() string {
 func (*ListChatsRequest) ProtoMessage() {}
 
 func (x *ListChatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[40]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2503,7 +2615,7 @@ func (x *ListChatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListChatsRequest.ProtoReflect.Descriptor instead.
 func (*ListChatsRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{40}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{41}
 }
 
 type ListChatsResponse struct {
@@ -2515,7 +2627,7 @@ type ListChatsResponse struct {
 
 func (x *ListChatsResponse) Reset() {
 	*x = ListChatsResponse{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[41]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2527,7 +2639,7 @@ func (x *ListChatsResponse) String() string {
 func (*ListChatsResponse) ProtoMessage() {}
 
 func (x *ListChatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[41]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2540,7 +2652,7 @@ func (x *ListChatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListChatsResponse.ProtoReflect.Descriptor instead.
 func (*ListChatsResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{41}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListChatsResponse) GetChats() []*ChatSummary {
@@ -2562,7 +2674,7 @@ type ChatSummary struct {
 
 func (x *ChatSummary) Reset() {
 	*x = ChatSummary{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[42]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2574,7 +2686,7 @@ func (x *ChatSummary) String() string {
 func (*ChatSummary) ProtoMessage() {}
 
 func (x *ChatSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[42]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2587,7 +2699,7 @@ func (x *ChatSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatSummary.ProtoReflect.Descriptor instead.
 func (*ChatSummary) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{42}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ChatSummary) GetChatId() string {
@@ -2620,7 +2732,7 @@ type GetChatRequest struct {
 
 func (x *GetChatRequest) Reset() {
 	*x = GetChatRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[43]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2632,7 +2744,7 @@ func (x *GetChatRequest) String() string {
 func (*GetChatRequest) ProtoMessage() {}
 
 func (x *GetChatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[43]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2645,7 +2757,7 @@ func (x *GetChatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetChatRequest.ProtoReflect.Descriptor instead.
 func (*GetChatRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{43}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *GetChatRequest) GetChatId() string {
@@ -2664,7 +2776,7 @@ type GetChatResponse struct {
 
 func (x *GetChatResponse) Reset() {
 	*x = GetChatResponse{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[44]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2676,7 +2788,7 @@ func (x *GetChatResponse) String() string {
 func (*GetChatResponse) ProtoMessage() {}
 
 func (x *GetChatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[44]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2689,7 +2801,7 @@ func (x *GetChatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetChatResponse.ProtoReflect.Descriptor instead.
 func (*GetChatResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{44}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *GetChatResponse) GetMessages() []*ChatMessage {
@@ -2714,7 +2826,7 @@ type ChatMessage struct {
 
 func (x *ChatMessage) Reset() {
 	*x = ChatMessage{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[45]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2726,7 +2838,7 @@ func (x *ChatMessage) String() string {
 func (*ChatMessage) ProtoMessage() {}
 
 func (x *ChatMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[45]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2739,7 +2851,7 @@ func (x *ChatMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatMessage.ProtoReflect.Descriptor instead.
 func (*ChatMessage) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{45}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *ChatMessage) GetRole() string {
@@ -2781,7 +2893,7 @@ type ChatToolCall struct {
 
 func (x *ChatToolCall) Reset() {
 	*x = ChatToolCall{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[46]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2793,7 +2905,7 @@ func (x *ChatToolCall) String() string {
 func (*ChatToolCall) ProtoMessage() {}
 
 func (x *ChatToolCall) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[46]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2806,7 +2918,7 @@ func (x *ChatToolCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatToolCall.ProtoReflect.Descriptor instead.
 func (*ChatToolCall) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{46}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ChatToolCall) GetName() string {
@@ -2832,7 +2944,7 @@ type DeleteChatRequest struct {
 
 func (x *DeleteChatRequest) Reset() {
 	*x = DeleteChatRequest{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[47]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2844,7 +2956,7 @@ func (x *DeleteChatRequest) String() string {
 func (*DeleteChatRequest) ProtoMessage() {}
 
 func (x *DeleteChatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[47]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2857,7 +2969,7 @@ func (x *DeleteChatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteChatRequest.ProtoReflect.Descriptor instead.
 func (*DeleteChatRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{47}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *DeleteChatRequest) GetChatId() string {
@@ -2875,7 +2987,7 @@ type DeleteChatResponse struct {
 
 func (x *DeleteChatResponse) Reset() {
 	*x = DeleteChatResponse{}
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[48]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2887,7 +2999,7 @@ func (x *DeleteChatResponse) String() string {
 func (*DeleteChatResponse) ProtoMessage() {}
 
 func (x *DeleteChatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_node_v1_node_proto_msgTypes[48]
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2900,7 +3012,7 @@ func (x *DeleteChatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteChatResponse.ProtoReflect.Descriptor instead.
 func (*DeleteChatResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{48}
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{49}
 }
 
 var File_sisyphus_node_v1_node_proto protoreflect.FileDescriptor
@@ -2963,7 +3075,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"takes_work\x18\b \x01(\bR\ttakesWork\"\x14\n" +
 	"\x12ListWorkersRequest\"I\n" +
 	"\x13ListWorkersResponse\x122\n" +
-	"\aworkers\x18\x01 \x03(\v2\x18.sisyphus.node.v1.WorkerR\aworkers\"\xe2\x02\n" +
+	"\aworkers\x18\x01 \x03(\v2\x18.sisyphus.node.v1.WorkerR\aworkers\"\xd3\x03\n" +
 	"\x06Worker\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -2978,7 +3090,13 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x06relays\x18\n" +
 	" \x01(\bR\x06relays\x12/\n" +
 	"\x13relayed_connections\x18\v \x01(\x04R\x12relayedConnections\x12#\n" +
-	"\rrelayed_bytes\x18\f \x01(\x04R\frelayedBytes\"\xec\x03\n" +
+	"\rrelayed_bytes\x18\f \x01(\x04R\frelayedBytes\x12\x1b\n" +
+	"\tcpu_model\x18\r \x01(\tR\bcpuModel\x12!\n" +
+	"\fmemory_bytes\x18\x0e \x01(\x04R\vmemoryBytes\x12/\n" +
+	"\x04gpus\x18\x0f \x03(\v2\x1b.sisyphus.node.v1.WorkerGpuR\x04gpus\"B\n" +
+	"\tWorkerGpu\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xb1\x04\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1a\n" +
 	"\bworkload\x18\x02 \x01(\tR\bworkload\x12\x16\n" +
@@ -2995,7 +3113,9 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"inputBlobs\x12!\n" +
 	"\foutput_blobs\x18\f \x03(\tR\voutputBlobs\x12\x1a\n" +
 	"\bprogress\x18\r \x01(\x01R\bprogress\x120\n" +
-	"\x14task_timeout_seconds\x18\x0e \x01(\rR\x12taskTimeoutSeconds\"\xd7\x01\n" +
+	"\x14task_timeout_seconds\x18\x0e \x01(\rR\x12taskTimeoutSeconds\x12(\n" +
+	"\x10min_memory_bytes\x18\x0f \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
+	"\bmin_gpus\x18\x10 \x01(\rR\aminGpus\"\xd7\x01\n" +
 	"\aJobTask\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x120\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1a.sisyphus.node.v1.JobStateR\x05state\x12\x18\n" +
@@ -3004,13 +3124,15 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\vworker_name\x18\x05 \x01(\tR\n" +
 	"workerName\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1a\n" +
-	"\bprogress\x18\a \x01(\x01R\bprogress\"\xc4\x01\n" +
+	"\bprogress\x18\a \x01(\x01R\bprogress\"\x89\x02\n" +
 	"\x10SubmitJobRequest\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
 	"\x04mode\x18\x03 \x01(\x0e2\x19.sisyphus.node.v1.JobModeR\x04mode\x12\x1b\n" +
 	"\tmax_tasks\x18\x04 \x01(\rR\bmaxTasks\x120\n" +
-	"\x14task_timeout_seconds\x18\x05 \x01(\rR\x12taskTimeoutSeconds\"<\n" +
+	"\x14task_timeout_seconds\x18\x05 \x01(\rR\x12taskTimeoutSeconds\x12(\n" +
+	"\x10min_memory_bytes\x18\x06 \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
+	"\bmin_gpus\x18\a \x01(\rR\aminGpus\"<\n" +
 	"\x11SubmitJobResponse\x12'\n" +
 	"\x03job\x18\x01 \x01(\v2\x15.sisyphus.node.v1.JobR\x03job\")\n" +
 	"\x10CancelJobRequest\x12\x15\n" +
@@ -3141,7 +3263,7 @@ func file_sisyphus_node_v1_node_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_node_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_sisyphus_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_sisyphus_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
 var file_sisyphus_node_v1_node_proto_goTypes = []any{
 	(PeerConnectionState)(0),                  // 0: sisyphus.node.v1.PeerConnectionState
 	(JobState)(0),                             // 1: sisyphus.node.v1.JobState
@@ -3166,35 +3288,36 @@ var file_sisyphus_node_v1_node_proto_goTypes = []any{
 	(*ListWorkersRequest)(nil),                // 20: sisyphus.node.v1.ListWorkersRequest
 	(*ListWorkersResponse)(nil),               // 21: sisyphus.node.v1.ListWorkersResponse
 	(*Worker)(nil),                            // 22: sisyphus.node.v1.Worker
-	(*Job)(nil),                               // 23: sisyphus.node.v1.Job
-	(*JobTask)(nil),                           // 24: sisyphus.node.v1.JobTask
-	(*SubmitJobRequest)(nil),                  // 25: sisyphus.node.v1.SubmitJobRequest
-	(*SubmitJobResponse)(nil),                 // 26: sisyphus.node.v1.SubmitJobResponse
-	(*CancelJobRequest)(nil),                  // 27: sisyphus.node.v1.CancelJobRequest
-	(*CancelJobResponse)(nil),                 // 28: sisyphus.node.v1.CancelJobResponse
-	(*WatchJobEventsRequest)(nil),             // 29: sisyphus.node.v1.WatchJobEventsRequest
-	(*JobEvent)(nil),                          // 30: sisyphus.node.v1.JobEvent
-	(*GetJobRequest)(nil),                     // 31: sisyphus.node.v1.GetJobRequest
-	(*GetJobResponse)(nil),                    // 32: sisyphus.node.v1.GetJobResponse
-	(*ListJobsRequest)(nil),                   // 33: sisyphus.node.v1.ListJobsRequest
-	(*WatchJobsRequest)(nil),                  // 34: sisyphus.node.v1.WatchJobsRequest
-	(*ListJobsResponse)(nil),                  // 35: sisyphus.node.v1.ListJobsResponse
-	(*GetModelConfigRequest)(nil),             // 36: sisyphus.node.v1.GetModelConfigRequest
-	(*ModelConfig)(nil),                       // 37: sisyphus.node.v1.ModelConfig
-	(*SetModelConfigRequest)(nil),             // 38: sisyphus.node.v1.SetModelConfigRequest
-	(*ListModelsRequest)(nil),                 // 39: sisyphus.node.v1.ListModelsRequest
-	(*ListModelsResponse)(nil),                // 40: sisyphus.node.v1.ListModelsResponse
-	(*AskRequest)(nil),                        // 41: sisyphus.node.v1.AskRequest
-	(*AskEvent)(nil),                          // 42: sisyphus.node.v1.AskEvent
-	(*ListChatsRequest)(nil),                  // 43: sisyphus.node.v1.ListChatsRequest
-	(*ListChatsResponse)(nil),                 // 44: sisyphus.node.v1.ListChatsResponse
-	(*ChatSummary)(nil),                       // 45: sisyphus.node.v1.ChatSummary
-	(*GetChatRequest)(nil),                    // 46: sisyphus.node.v1.GetChatRequest
-	(*GetChatResponse)(nil),                   // 47: sisyphus.node.v1.GetChatResponse
-	(*ChatMessage)(nil),                       // 48: sisyphus.node.v1.ChatMessage
-	(*ChatToolCall)(nil),                      // 49: sisyphus.node.v1.ChatToolCall
-	(*DeleteChatRequest)(nil),                 // 50: sisyphus.node.v1.DeleteChatRequest
-	(*DeleteChatResponse)(nil),                // 51: sisyphus.node.v1.DeleteChatResponse
+	(*WorkerGpu)(nil),                         // 23: sisyphus.node.v1.WorkerGpu
+	(*Job)(nil),                               // 24: sisyphus.node.v1.Job
+	(*JobTask)(nil),                           // 25: sisyphus.node.v1.JobTask
+	(*SubmitJobRequest)(nil),                  // 26: sisyphus.node.v1.SubmitJobRequest
+	(*SubmitJobResponse)(nil),                 // 27: sisyphus.node.v1.SubmitJobResponse
+	(*CancelJobRequest)(nil),                  // 28: sisyphus.node.v1.CancelJobRequest
+	(*CancelJobResponse)(nil),                 // 29: sisyphus.node.v1.CancelJobResponse
+	(*WatchJobEventsRequest)(nil),             // 30: sisyphus.node.v1.WatchJobEventsRequest
+	(*JobEvent)(nil),                          // 31: sisyphus.node.v1.JobEvent
+	(*GetJobRequest)(nil),                     // 32: sisyphus.node.v1.GetJobRequest
+	(*GetJobResponse)(nil),                    // 33: sisyphus.node.v1.GetJobResponse
+	(*ListJobsRequest)(nil),                   // 34: sisyphus.node.v1.ListJobsRequest
+	(*WatchJobsRequest)(nil),                  // 35: sisyphus.node.v1.WatchJobsRequest
+	(*ListJobsResponse)(nil),                  // 36: sisyphus.node.v1.ListJobsResponse
+	(*GetModelConfigRequest)(nil),             // 37: sisyphus.node.v1.GetModelConfigRequest
+	(*ModelConfig)(nil),                       // 38: sisyphus.node.v1.ModelConfig
+	(*SetModelConfigRequest)(nil),             // 39: sisyphus.node.v1.SetModelConfigRequest
+	(*ListModelsRequest)(nil),                 // 40: sisyphus.node.v1.ListModelsRequest
+	(*ListModelsResponse)(nil),                // 41: sisyphus.node.v1.ListModelsResponse
+	(*AskRequest)(nil),                        // 42: sisyphus.node.v1.AskRequest
+	(*AskEvent)(nil),                          // 43: sisyphus.node.v1.AskEvent
+	(*ListChatsRequest)(nil),                  // 44: sisyphus.node.v1.ListChatsRequest
+	(*ListChatsResponse)(nil),                 // 45: sisyphus.node.v1.ListChatsResponse
+	(*ChatSummary)(nil),                       // 46: sisyphus.node.v1.ChatSummary
+	(*GetChatRequest)(nil),                    // 47: sisyphus.node.v1.GetChatRequest
+	(*GetChatResponse)(nil),                   // 48: sisyphus.node.v1.GetChatResponse
+	(*ChatMessage)(nil),                       // 49: sisyphus.node.v1.ChatMessage
+	(*ChatToolCall)(nil),                      // 50: sisyphus.node.v1.ChatToolCall
+	(*DeleteChatRequest)(nil),                 // 51: sisyphus.node.v1.DeleteChatRequest
+	(*DeleteChatResponse)(nil),                // 52: sisyphus.node.v1.DeleteChatResponse
 }
 var file_sisyphus_node_v1_node_proto_depIdxs = []int32{
 	17, // 0: sisyphus.node.v1.GetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
@@ -3203,67 +3326,68 @@ var file_sisyphus_node_v1_node_proto_depIdxs = []int32{
 	19, // 3: sisyphus.node.v1.ListPeersResponse.peers:type_name -> sisyphus.node.v1.Peer
 	0,  // 4: sisyphus.node.v1.Peer.connection_state:type_name -> sisyphus.node.v1.PeerConnectionState
 	22, // 5: sisyphus.node.v1.ListWorkersResponse.workers:type_name -> sisyphus.node.v1.Worker
-	2,  // 6: sisyphus.node.v1.Job.mode:type_name -> sisyphus.node.v1.JobMode
-	1,  // 7: sisyphus.node.v1.Job.state:type_name -> sisyphus.node.v1.JobState
-	24, // 8: sisyphus.node.v1.Job.tasks:type_name -> sisyphus.node.v1.JobTask
-	1,  // 9: sisyphus.node.v1.JobTask.state:type_name -> sisyphus.node.v1.JobState
-	2,  // 10: sisyphus.node.v1.SubmitJobRequest.mode:type_name -> sisyphus.node.v1.JobMode
-	23, // 11: sisyphus.node.v1.SubmitJobResponse.job:type_name -> sisyphus.node.v1.Job
-	23, // 12: sisyphus.node.v1.CancelJobResponse.job:type_name -> sisyphus.node.v1.Job
-	23, // 13: sisyphus.node.v1.GetJobResponse.job:type_name -> sisyphus.node.v1.Job
-	23, // 14: sisyphus.node.v1.ListJobsResponse.jobs:type_name -> sisyphus.node.v1.Job
-	45, // 15: sisyphus.node.v1.ListChatsResponse.chats:type_name -> sisyphus.node.v1.ChatSummary
-	48, // 16: sisyphus.node.v1.GetChatResponse.messages:type_name -> sisyphus.node.v1.ChatMessage
-	49, // 17: sisyphus.node.v1.ChatMessage.calls:type_name -> sisyphus.node.v1.ChatToolCall
-	3,  // 18: sisyphus.node.v1.NodeService.GetNodeInfo:input_type -> sisyphus.node.v1.GetNodeInfoRequest
-	5,  // 19: sisyphus.node.v1.NodeService.ListPeers:input_type -> sisyphus.node.v1.ListPeersRequest
-	6,  // 20: sisyphus.node.v1.NodeService.WatchPeers:input_type -> sisyphus.node.v1.WatchPeersRequest
-	7,  // 21: sisyphus.node.v1.NodeService.GetBootstrapPeers:input_type -> sisyphus.node.v1.GetBootstrapPeersRequest
-	9,  // 22: sisyphus.node.v1.NodeService.SetBootstrapPeers:input_type -> sisyphus.node.v1.SetBootstrapPeersRequest
-	11, // 23: sisyphus.node.v1.NodeService.ConnectPeer:input_type -> sisyphus.node.v1.ConnectPeerRequest
-	13, // 24: sisyphus.node.v1.NodeService.SetPeerComputeTrust:input_type -> sisyphus.node.v1.SetPeerComputeTrustRequest
-	15, // 25: sisyphus.node.v1.NodeService.SetPeerComputePermissions:input_type -> sisyphus.node.v1.SetPeerComputePermissionsRequest
-	20, // 26: sisyphus.node.v1.NodeService.ListWorkers:input_type -> sisyphus.node.v1.ListWorkersRequest
-	25, // 27: sisyphus.node.v1.NodeService.SubmitJob:input_type -> sisyphus.node.v1.SubmitJobRequest
-	31, // 28: sisyphus.node.v1.NodeService.GetJob:input_type -> sisyphus.node.v1.GetJobRequest
-	33, // 29: sisyphus.node.v1.NodeService.ListJobs:input_type -> sisyphus.node.v1.ListJobsRequest
-	34, // 30: sisyphus.node.v1.NodeService.WatchJobs:input_type -> sisyphus.node.v1.WatchJobsRequest
-	27, // 31: sisyphus.node.v1.NodeService.CancelJob:input_type -> sisyphus.node.v1.CancelJobRequest
-	29, // 32: sisyphus.node.v1.NodeService.WatchJobEvents:input_type -> sisyphus.node.v1.WatchJobEventsRequest
-	36, // 33: sisyphus.node.v1.NodeService.GetModelConfig:input_type -> sisyphus.node.v1.GetModelConfigRequest
-	38, // 34: sisyphus.node.v1.NodeService.SetModelConfig:input_type -> sisyphus.node.v1.SetModelConfigRequest
-	39, // 35: sisyphus.node.v1.NodeService.ListModels:input_type -> sisyphus.node.v1.ListModelsRequest
-	41, // 36: sisyphus.node.v1.NodeService.Ask:input_type -> sisyphus.node.v1.AskRequest
-	43, // 37: sisyphus.node.v1.NodeService.ListChats:input_type -> sisyphus.node.v1.ListChatsRequest
-	46, // 38: sisyphus.node.v1.NodeService.GetChat:input_type -> sisyphus.node.v1.GetChatRequest
-	50, // 39: sisyphus.node.v1.NodeService.DeleteChat:input_type -> sisyphus.node.v1.DeleteChatRequest
-	4,  // 40: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
-	18, // 41: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	18, // 42: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	8,  // 43: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
-	10, // 44: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
-	12, // 45: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
-	14, // 46: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
-	16, // 47: sisyphus.node.v1.NodeService.SetPeerComputePermissions:output_type -> sisyphus.node.v1.SetPeerComputePermissionsResponse
-	21, // 48: sisyphus.node.v1.NodeService.ListWorkers:output_type -> sisyphus.node.v1.ListWorkersResponse
-	26, // 49: sisyphus.node.v1.NodeService.SubmitJob:output_type -> sisyphus.node.v1.SubmitJobResponse
-	32, // 50: sisyphus.node.v1.NodeService.GetJob:output_type -> sisyphus.node.v1.GetJobResponse
-	35, // 51: sisyphus.node.v1.NodeService.ListJobs:output_type -> sisyphus.node.v1.ListJobsResponse
-	35, // 52: sisyphus.node.v1.NodeService.WatchJobs:output_type -> sisyphus.node.v1.ListJobsResponse
-	28, // 53: sisyphus.node.v1.NodeService.CancelJob:output_type -> sisyphus.node.v1.CancelJobResponse
-	30, // 54: sisyphus.node.v1.NodeService.WatchJobEvents:output_type -> sisyphus.node.v1.JobEvent
-	37, // 55: sisyphus.node.v1.NodeService.GetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
-	37, // 56: sisyphus.node.v1.NodeService.SetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
-	40, // 57: sisyphus.node.v1.NodeService.ListModels:output_type -> sisyphus.node.v1.ListModelsResponse
-	42, // 58: sisyphus.node.v1.NodeService.Ask:output_type -> sisyphus.node.v1.AskEvent
-	44, // 59: sisyphus.node.v1.NodeService.ListChats:output_type -> sisyphus.node.v1.ListChatsResponse
-	47, // 60: sisyphus.node.v1.NodeService.GetChat:output_type -> sisyphus.node.v1.GetChatResponse
-	51, // 61: sisyphus.node.v1.NodeService.DeleteChat:output_type -> sisyphus.node.v1.DeleteChatResponse
-	40, // [40:62] is the sub-list for method output_type
-	18, // [18:40] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	23, // 6: sisyphus.node.v1.Worker.gpus:type_name -> sisyphus.node.v1.WorkerGpu
+	2,  // 7: sisyphus.node.v1.Job.mode:type_name -> sisyphus.node.v1.JobMode
+	1,  // 8: sisyphus.node.v1.Job.state:type_name -> sisyphus.node.v1.JobState
+	25, // 9: sisyphus.node.v1.Job.tasks:type_name -> sisyphus.node.v1.JobTask
+	1,  // 10: sisyphus.node.v1.JobTask.state:type_name -> sisyphus.node.v1.JobState
+	2,  // 11: sisyphus.node.v1.SubmitJobRequest.mode:type_name -> sisyphus.node.v1.JobMode
+	24, // 12: sisyphus.node.v1.SubmitJobResponse.job:type_name -> sisyphus.node.v1.Job
+	24, // 13: sisyphus.node.v1.CancelJobResponse.job:type_name -> sisyphus.node.v1.Job
+	24, // 14: sisyphus.node.v1.GetJobResponse.job:type_name -> sisyphus.node.v1.Job
+	24, // 15: sisyphus.node.v1.ListJobsResponse.jobs:type_name -> sisyphus.node.v1.Job
+	46, // 16: sisyphus.node.v1.ListChatsResponse.chats:type_name -> sisyphus.node.v1.ChatSummary
+	49, // 17: sisyphus.node.v1.GetChatResponse.messages:type_name -> sisyphus.node.v1.ChatMessage
+	50, // 18: sisyphus.node.v1.ChatMessage.calls:type_name -> sisyphus.node.v1.ChatToolCall
+	3,  // 19: sisyphus.node.v1.NodeService.GetNodeInfo:input_type -> sisyphus.node.v1.GetNodeInfoRequest
+	5,  // 20: sisyphus.node.v1.NodeService.ListPeers:input_type -> sisyphus.node.v1.ListPeersRequest
+	6,  // 21: sisyphus.node.v1.NodeService.WatchPeers:input_type -> sisyphus.node.v1.WatchPeersRequest
+	7,  // 22: sisyphus.node.v1.NodeService.GetBootstrapPeers:input_type -> sisyphus.node.v1.GetBootstrapPeersRequest
+	9,  // 23: sisyphus.node.v1.NodeService.SetBootstrapPeers:input_type -> sisyphus.node.v1.SetBootstrapPeersRequest
+	11, // 24: sisyphus.node.v1.NodeService.ConnectPeer:input_type -> sisyphus.node.v1.ConnectPeerRequest
+	13, // 25: sisyphus.node.v1.NodeService.SetPeerComputeTrust:input_type -> sisyphus.node.v1.SetPeerComputeTrustRequest
+	15, // 26: sisyphus.node.v1.NodeService.SetPeerComputePermissions:input_type -> sisyphus.node.v1.SetPeerComputePermissionsRequest
+	20, // 27: sisyphus.node.v1.NodeService.ListWorkers:input_type -> sisyphus.node.v1.ListWorkersRequest
+	26, // 28: sisyphus.node.v1.NodeService.SubmitJob:input_type -> sisyphus.node.v1.SubmitJobRequest
+	32, // 29: sisyphus.node.v1.NodeService.GetJob:input_type -> sisyphus.node.v1.GetJobRequest
+	34, // 30: sisyphus.node.v1.NodeService.ListJobs:input_type -> sisyphus.node.v1.ListJobsRequest
+	35, // 31: sisyphus.node.v1.NodeService.WatchJobs:input_type -> sisyphus.node.v1.WatchJobsRequest
+	28, // 32: sisyphus.node.v1.NodeService.CancelJob:input_type -> sisyphus.node.v1.CancelJobRequest
+	30, // 33: sisyphus.node.v1.NodeService.WatchJobEvents:input_type -> sisyphus.node.v1.WatchJobEventsRequest
+	37, // 34: sisyphus.node.v1.NodeService.GetModelConfig:input_type -> sisyphus.node.v1.GetModelConfigRequest
+	39, // 35: sisyphus.node.v1.NodeService.SetModelConfig:input_type -> sisyphus.node.v1.SetModelConfigRequest
+	40, // 36: sisyphus.node.v1.NodeService.ListModels:input_type -> sisyphus.node.v1.ListModelsRequest
+	42, // 37: sisyphus.node.v1.NodeService.Ask:input_type -> sisyphus.node.v1.AskRequest
+	44, // 38: sisyphus.node.v1.NodeService.ListChats:input_type -> sisyphus.node.v1.ListChatsRequest
+	47, // 39: sisyphus.node.v1.NodeService.GetChat:input_type -> sisyphus.node.v1.GetChatRequest
+	51, // 40: sisyphus.node.v1.NodeService.DeleteChat:input_type -> sisyphus.node.v1.DeleteChatRequest
+	4,  // 41: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
+	18, // 42: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	18, // 43: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	8,  // 44: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
+	10, // 45: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
+	12, // 46: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
+	14, // 47: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
+	16, // 48: sisyphus.node.v1.NodeService.SetPeerComputePermissions:output_type -> sisyphus.node.v1.SetPeerComputePermissionsResponse
+	21, // 49: sisyphus.node.v1.NodeService.ListWorkers:output_type -> sisyphus.node.v1.ListWorkersResponse
+	27, // 50: sisyphus.node.v1.NodeService.SubmitJob:output_type -> sisyphus.node.v1.SubmitJobResponse
+	33, // 51: sisyphus.node.v1.NodeService.GetJob:output_type -> sisyphus.node.v1.GetJobResponse
+	36, // 52: sisyphus.node.v1.NodeService.ListJobs:output_type -> sisyphus.node.v1.ListJobsResponse
+	36, // 53: sisyphus.node.v1.NodeService.WatchJobs:output_type -> sisyphus.node.v1.ListJobsResponse
+	29, // 54: sisyphus.node.v1.NodeService.CancelJob:output_type -> sisyphus.node.v1.CancelJobResponse
+	31, // 55: sisyphus.node.v1.NodeService.WatchJobEvents:output_type -> sisyphus.node.v1.JobEvent
+	38, // 56: sisyphus.node.v1.NodeService.GetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
+	38, // 57: sisyphus.node.v1.NodeService.SetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
+	41, // 58: sisyphus.node.v1.NodeService.ListModels:output_type -> sisyphus.node.v1.ListModelsResponse
+	43, // 59: sisyphus.node.v1.NodeService.Ask:output_type -> sisyphus.node.v1.AskEvent
+	45, // 60: sisyphus.node.v1.NodeService.ListChats:output_type -> sisyphus.node.v1.ListChatsResponse
+	48, // 61: sisyphus.node.v1.NodeService.GetChat:output_type -> sisyphus.node.v1.GetChatResponse
+	52, // 62: sisyphus.node.v1.NodeService.DeleteChat:output_type -> sisyphus.node.v1.DeleteChatResponse
+	41, // [41:63] is the sub-list for method output_type
+	19, // [19:41] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_node_v1_node_proto_init() }
@@ -3277,7 +3401,7 @@ func file_sisyphus_node_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_node_v1_node_proto_rawDesc), len(file_sisyphus_node_v1_node_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   49,
+			NumMessages:   50,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
