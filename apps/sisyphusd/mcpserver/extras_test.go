@@ -112,9 +112,13 @@ func TestAnAgentReadsThePoolAndTheSkillAndIsPrompted(t *testing.T) {
 		"sisyphus://skill/recipes.md": "# Recipes",
 	} {
 		read, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
-		if err != nil || !strings.Contains(read.Contents[0].Text, want) || n.token != "Bearer the-token" {
-			t.Errorf("%s: %v, %v (token %q)", uri, read, err, n.token)
+		if err != nil || !strings.Contains(read.Contents[0].Text, want) {
+			t.Errorf("%s: %v, %v", uri, read, err)
 		}
+	}
+	// What is read of the node is read as its owner.
+	if n.token != "Bearer the-token" {
+		t.Errorf("the node was shown %q", n.token)
 	}
 	n.failing = "ListWorkers"
 	if _, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: "sisyphus://pool"}); err == nil || !strings.Contains(err.Error(), "the node is down") || strings.Contains(err.Error(), "rpc error") {
