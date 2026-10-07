@@ -36,8 +36,11 @@ func sealingKey(file string) (sealed.Key, error) {
 // while it runs. The invitation is used as "pool join" uses it. Admitted
 // as a worker, the node then says it will take the other's work, which is
 // what starts it working for it, and its host is connected to the other's
-// and the address noted, so that it is found again after a restart.
-func joinFromDesktop(dataDir string, ident *identity.Identity, connect func(ctx context.Context, address string) error, book api.AddressBook, takes api.WorkFor) func(ctx context.Context, addr, invitation string) (string, access.Role, error) {
+// and the address noted, so that it is found again after a restart. Once
+// connected it knows where to ask for the work, and look has it do so at
+// once: it may have looked already, on saying it would take the work, and
+// found nowhere to ask.
+func joinFromDesktop(dataDir string, ident *identity.Identity, connect func(ctx context.Context, address string) error, book api.AddressBook, takes api.WorkFor, look func()) func(ctx context.Context, addr, invitation string) (string, access.Role, error) {
 	return func(ctx context.Context, addr, invitation string) (string, access.Role, error) {
 		role, known, err := joinPool(ctx, dataDir, ident, addr, invitation)
 		if err != nil {
@@ -58,6 +61,7 @@ func joinFromDesktop(dataDir string, ident *identity.Identity, connect func(ctx 
 			// The node is connected whether or not that can be written down.
 			book.AddBootstrapPeer(nodedb.BootstrapPeer{PeerID: id, Address: full})
 		}
+		look()
 		return id, access.Worker, nil
 	}
 }
