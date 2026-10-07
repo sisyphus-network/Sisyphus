@@ -318,16 +318,30 @@ The agent starts `sisyphusd mcp` itself and talks to it over standard input and 
 
 | Tool | What it does |
 | --- | --- |
-| `pool_status` | The workers connected, with their cores, memory, graphics cards and how busy they are. |
+| `pool_status` | The workers connected, with their cores, memory, graphics cards, the models they serve and how busy they are. |
 | `list_workloads` | What the pool can run, the parameters each workload takes, and how many connected workers run it. |
 | `run_job` | Runs a job and waits for its result, or returns at once with `detach`. |
-| `get_job`, `list_jobs`, `cancel_job` | Look at a job, list them, stop one. |
-| `job_logs` | The steps of a job's life and what its tasks have logged. |
-| `store_file`, `fetch_file`, `list_files` | Put a file from this machine in the pool's store, bring one back, list them. |
+| `get_job`, `list_jobs`, `cancel_job`, `job_logs` | Look at a job, list them, stop one, read what it logged. |
+| `store_file`, `fetch_file`, `list_files`, `remove_file` | Put a file from this machine in the pool's store, bring one back, list them, stop keeping one. |
+| `ask_model` | Has a model served by one of the pool's workers answer a prompt. |
+| `ask_planner`, `list_chats`, `get_chat` | Hand a whole question to the node's own planner, and read its conversations. |
+| `list_peers`, `list_members` | The nodes this node knows of, with their countries and which way work flows; who is in its pool. |
+| `get_model`, `list_models` | What the planner plans with, and what its service offers. |
+| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model` | Change the node itself: who is in its pool, which nodes it trusts, what it plans with. |
 
-- **It is a client of the local API** and holds the node's token, which it reads from the data directory. An agent using it can do what these tools do and nothing else: it cannot change the node's settings, its members or its model.
-- **That is still a good deal.** It can spend the pool's time, run any container image on workers that allow containers, and read and write files on this machine wherever the user running it can, through `store_file` and `fetch_file`. Connect it to agents you would trust with a shell.
-- **A skill comes with it.** [`skills/sisyphus`](../../skills/sisyphus/SKILL.md) tells an agent how to use a pool well: look before submitting, how to split work with a container, what goes wrong. Copy the directory into `~/.claude/skills` for Claude Code, or wherever your agent keeps skills. It works with the tools or, without them, with the command line.
+What the agent may do is yours to set, when you give its settings the command:
+
+| Flag | What it does |
+| --- | --- |
+| `--files-under <dir>` | The only directory `store_file` may read from and `fetch_file` write to. It is the directory the server is started in unless you say otherwise; `/` is anywhere you may. A link inside it that leads outside is outside. |
+| `--read-only` | Only the tools that look. Nothing is run, stored, written or changed. |
+| `--images a,b` | The only container images `run_job` may run. Any, if not given. |
+| `--admin` | Adds the tools that change the node itself. Without it there are none. |
+
+- **It is a client of the local API** and holds the node's token, which it reads from the data directory.
+- **With no flags it can use the pool and not reconfigure it.** It can spend the pool's time, run container images on workers that allow containers, and read and write files in the directory it was started in. It will not write over a file that is there unless told to in so many words.
+- **`--admin` is the node's keys.** An agent with it can invite anyone into the pool and join the node to others. It is never given a model service's key: `set_model` keeps the one already set.
+- **A skill comes with it.** [`skills/sisyphus`](../../skills/sisyphus/SKILL.md) tells an agent how to use a pool well: look before submitting, how to split work with a container, how to have the pool's models think, what goes wrong. Copy the directory into `~/.claude/skills` for Claude Code, or wherever your agent keeps skills. It works with the tools or, without them, with the command line.
 
 ## Following and stopping a job
 

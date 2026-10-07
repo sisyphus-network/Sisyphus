@@ -9,7 +9,9 @@ Sisyphus is a network of computers that people pool to run computations. One nod
 
 ## Two ways in
 
-**The tools, if you have them.** If tools named `pool_status`, `list_workloads`, `run_job`, `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `store_file`, `fetch_file` and `list_files` are available, the node is connected as an MCP server: use them. If they are not and the user wants them, the server is `sisyphusd mcp` (for Claude Code: `claude mcp add sisyphus -- sisyphusd mcp`), and it needs the node running with `--api-listen 127.0.0.1:50051`.
+**The tools, if you have them.** If tools named `pool_status`, `list_workloads`, `run_job`, `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `store_file`, `fetch_file`, `list_files` and `remove_file` are available, the node is connected as an MCP server: use them. Beside them are `ask_model` (a model on one of the pool's workers answers a prompt), `ask_planner`, `list_chats` and `get_chat` (the node's own planner), `list_peers` and `list_members` (who the node knows and who is in its pool), and `get_model` and `list_models` (what the planner plans with).
+
+**Which tools you have is the user's choice.** The server may have been started read-only, in which case nothing can be run or stored. It keeps `store_file` and `fetch_file` to one directory, usually the one you are working in, and refuses paths outside it: copy a file in rather than ask for the limit to be lifted. It may run only certain container images. The tools that change the node itself (`create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model`) are there only if the user started it with `--admin`. If a tool you need is missing, say which flag would add it and let the user decide. If they are not and the user wants them, the server is `sisyphusd mcp` (for Claude Code: `claude mcp add sisyphus -- sisyphusd mcp`), and it needs the node running with `--api-listen 127.0.0.1:50051`.
 
 **The command line, otherwise.** The same things, as `sisyphusd` commands:
 
@@ -62,6 +64,8 @@ The result lists each task's `stdout` and `files` by content ID, in task order; 
 - **A task fails and is retried**: `job_logs` shows each attempt and what the task printed. A container that exits with an error fails its task.
 - **The first container or transcode job on a worker is slow**: the worker is pulling or building the image.
 - **Private data.** With `private` on `store_file` and `run_job`, what is stored is sealed with the node's key, and only the workers that run the job are given it. Use it when the user says the data is sensitive; a private file can only be read by a private job.
+- **"is outside" from `store_file` or `fetch_file`**: the path is not in the directory the server keeps to. Use a path inside it.
+- **"there is a file at ... already"**: `fetch_file` does not write over a file unless given `overwrite`. Fetch to a new path unless the user wants the old one replaced.
 - **Permission denied from the tools**: the node's token could not be read. The server must be started as the user who runs the node, with the same `--data-dir`.
 
 ## What not to do

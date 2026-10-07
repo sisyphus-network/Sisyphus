@@ -13,7 +13,7 @@ import (
 
 // agent starts `sisyphusd mcp` against a node and returns an agent's end of
 // the conversation with it.
-func agent(t *testing.T, dataDir, apiAddr string) *mcp.ClientSession {
+func agent(t *testing.T, dataDir, apiAddr string, more ...string) *mcp.ClientSession {
 	t.Helper()
 	ours, theirs := mcp.NewInMemoryTransports()
 	stdio := agentTransport
@@ -21,7 +21,7 @@ func agent(t *testing.T, dataDir, apiAddr string) *mcp.ClientSession {
 	t.Cleanup(func() { agentTransport = stdio })
 	ctx, hangUp := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- run(ctx, []string{"mcp", "--data-dir", dataDir, "--api", apiAddr}) }()
+	go func() { served <- run(ctx, append([]string{"mcp", "--data-dir", dataDir, "--api", apiAddr}, more...)) }()
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "1"}, nil).Connect(ctx, ours, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -56,11 +56,12 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--slots", "2", "--api-listen", apiAddr)
 	poolAsSeenBy(t, desktop(t, apiAddr))
 	waitForOutput(t, "rig", "nodes", "--addr", addr)
-	session := agent(t, dataDir, apiAddr)
+	session := agent(t, dataDir, apiAddr, "--files-under", "/")
 
-	// The agent is told what there is: the tools, and how to begin.
+	// The agent is told what there is: the tools, and how to begin. Those
+	// that change the node itself are not among them unless asked for.
 	tools, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 10 {
+	if err != nil || len(tools.Tools) != 19 {
 		t.Fatalf("tools = %v, %v", tools, err)
 	}
 	if !strings.Contains(session.InitializeResult().Instructions, "pool_status") {
@@ -179,9 +180,90 @@ func TestOfferingANodeToAnAgentWhenItCannotBe(t *testing.T) {
 		{[]string{"mcp", "--no-such-flag"}, "flag provided but not defined"},
 		{[]string{"mcp", "extra"}, `unexpected argument "extra"`},
 		{[]string{"mcp", "--data-dir", t.TempDir()}, "read the node's API token"},
+		{[]string{"mcp", "--files-under", filepath.Join(t.TempDir(), "absent")}, "is not a directory"},
+		{[]string{"mcp", "--files-under", os.Args[0]}, "is not a directory"},
 	} {
 		if _, err := cli(t, tt.args...); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%v: %v, want %q", tt.args, err, tt.want)
 		}
+	}
+}
+
+func TestAnAgentIsKeptToWhatItsOwnerAllows(t *testing.T) {
+	dataDir := t.TempDir()
+	addr, apiAddr := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--slots", "2", "--api-listen", apiAddr)
+	poolAsSeenBy(t, desktop(t, apiAddr))
+	waitForOutput(t, "rig", "nodes", "--addr", addr)
+	names := func(session *mcp.ClientSession) string {
+		tools, err := session.ListTools(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var listed []string
+		for _, tool := range tools.Tools {
+			listed = append(listed, tool.Name)
+		}
+		return strings.Join(listed, " ")
+	}
+
+	// Told to look and not touch, it is given nothing that runs or changes.
+	looking := agent(t, dataDir, apiAddr, "--read-only", "--admin")
+	if got := names(looking); strings.Contains(got, "run_job") || strings.Contains(got, "store_file") || strings.Contains(got, "create_invitation") || !strings.Contains(got, "pool_status") || !strings.Contains(got, "list_peers") {
+		t.Errorf("a read-only agent has: %s", got)
+	}
+	looking.Close()
+
+	// Kept to a directory and to one image, and let change the node.
+	home := t.TempDir()
+	inside, outside := filepath.Join(home, "in.txt"), filepath.Join(t.TempDir(), "out.txt")
+	for _, file := range []string{inside, outside} {
+		if err := os.WriteFile(file, []byte("some words"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kept := agent(t, dataDir, apiAddr, "--files-under", home, "--images", "alpine:3.20, python:3-slim", "--admin")
+	if got := names(kept); !strings.Contains(got, "create_invitation") || !strings.Contains(got, "set_peer_trust") || !strings.Contains(got, "run_job") {
+		t.Errorf("an agent let change the node has: %s", got)
+	}
+	stored, text, failed := use(t, kept, "store_file", map[string]any{"path": inside})
+	if failed {
+		t.Fatalf("storing a file inside its directory: %s", text)
+	}
+	if _, text, failed := use(t, kept, "store_file", map[string]any{"path": outside}); !failed || !strings.Contains(text, "is outside") {
+		t.Errorf("storing a file outside its directory: %s", text)
+	}
+	cid := stored.(map[string]any)["cid"]
+	if _, text, failed := use(t, kept, "fetch_file", map[string]any{"cid": cid, "path": outside}); !failed || !strings.Contains(text, "is outside") {
+		t.Errorf("fetching to outside its directory: %s", text)
+	}
+	// A file already there is not written over unasked.
+	if _, text, failed := use(t, kept, "fetch_file", map[string]any{"cid": cid, "path": inside}); !failed || !strings.Contains(text, "already") {
+		t.Errorf("fetching over a file: %s", text)
+	}
+	if _, text, failed := use(t, kept, "fetch_file", map[string]any{"cid": cid, "path": inside, "overwrite": true}); failed {
+		t.Errorf("fetching over a file when told to: %s", text)
+	}
+	if _, text, failed := use(t, kept, "run_job", map[string]any{"workload": "container", "params": map[string]any{"image": "busybox"}}); !failed || !strings.Contains(text, "alpine:3.20, python:3-slim") {
+		t.Errorf("running an image not listed: %s", text)
+	}
+
+	// It can do the owner's errands on the node: invite, see who is in.
+	invited, text, failed := use(t, kept, "create_invitation", map[string]any{"role": "client", "ttl_hours": 1})
+	if failed || invited.(map[string]any)["role"] != "client" || invited.(map[string]any)["invitation"] == "" {
+		t.Errorf("create_invitation: %s", text)
+	}
+	if _, text, failed := use(t, kept, "list_members", nil); failed {
+		t.Errorf("list_members: %s", text)
+	}
+	if _, text, failed := use(t, kept, "list_peers", nil); failed {
+		t.Errorf("list_peers: %s", text)
+	}
+	if _, text, failed := use(t, kept, "remove_file", map[string]any{"cid": cid}); failed {
+		t.Errorf("remove_file: %s", text)
+	}
+	// With no model set, the planner says what to do about it.
+	if _, text, failed := use(t, kept, "ask_planner", map[string]any{"question": "How many primes below 100?"}); !failed || !strings.Contains(text, "has not been told which language model") {
+		t.Errorf("ask_planner with no model: %s", text)
 	}
 }

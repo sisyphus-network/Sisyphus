@@ -39,39 +39,53 @@ type Config struct {
 	Workloads *runtime.Registry
 	// Version is the daemon's, which the server gives as its own.
 	Version string
+
+	// FilesUnder is the directory the server may read files from and
+	// write them to, and nowhere else. Empty is anywhere its user may.
+	FilesUnder string
+	// ReadOnly has the server offer only the tools that change nothing.
+	ReadOnly bool
+	// Admin has it also offer the tools that change the node itself: who
+	// is in its pool, which nodes it trusts, what it plans with.
+	Admin bool
+	// Images, if not empty, are the only container images it will run.
+	Images []string
 }
 
 type server struct{ Config }
 
 const instructions = `Sisyphus is a pool of computers that run jobs. A job is one workload run over an input, split into tasks that the pool's machines run at once.
 
-Start with pool_status to see which machines there are, and list_workloads to see what they can run and what parameters each workload takes. Run something with run_job, which waits for the result. Inputs and outputs that are files are named by content ID: store_file puts a local file in the pool and returns its ID, and fetch_file brings one back.`
+Start with pool_status to see which machines there are, and list_workloads to see what they can run and what parameters each workload takes. Run something with run_job, which waits for the result. Inputs and outputs that are files are named by content ID: store_file puts a local file in the pool and returns its ID, and fetch_file brings one back.
+
+Workers may serve language models: ask_model has one answer a prompt, and ask_planner hands a whole question to the node's own planner. Which tools there are depends on how the server was started: it may be read-only, may keep to one directory for files, and offers the tools that change the node itself only if its owner allowed them.`
 
 // New returns a server offering cfg's node to an agent.
 func New(cfg Config) *mcp.Server {
 	s := &server{cfg}
 	out := mcp.NewServer(&mcp.Implementation{Name: "sisyphus", Title: "Sisyphus", Version: cfg.Version}, &mcp.ServerOptions{Instructions: instructions})
-	reads := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	mcp.AddTool(out, &mcp.Tool{Name: "pool_status", Annotations: reads,
+	seen := &mcp.ToolAnnotations{ReadOnlyHint: true}
+	add(s, out, reads, &mcp.Tool{Name: "pool_status", Annotations: seen,
 		Description: "Says what the pool is now: this node, and each worker with its cores, memory, graphics cards, the language models it serves, how many tasks it can run at once and how many it is running."}, s.poolStatus)
-	mcp.AddTool(out, &mcp.Tool{Name: "list_workloads", Annotations: reads,
+	add(s, out, reads, &mcp.Tool{Name: "list_workloads", Annotations: seen,
 		Description: "Lists the workloads the pool can run, each with what it does and the parameters it takes. Read this before run_job."}, s.listWorkloads)
-	mcp.AddTool(out, &mcp.Tool{Name: "run_job",
+	add(s, out, uses, &mcp.Tool{Name: "run_job",
 		Description: "Runs a job on the pool and waits for it to finish, returning its result. A job still running when the wait is over is returned as it stands, to be followed with get_job."}, s.runJob)
-	mcp.AddTool(out, &mcp.Tool{Name: "get_job", Annotations: reads,
+	add(s, out, reads, &mcp.Tool{Name: "get_job", Annotations: seen,
 		Description: "Returns the state of a job and, if it has finished, its result."}, s.getJob)
-	mcp.AddTool(out, &mcp.Tool{Name: "list_jobs", Annotations: reads,
+	add(s, out, reads, &mcp.Tool{Name: "list_jobs", Annotations: seen,
 		Description: "Lists the pool's jobs, newest first, without their results."}, s.listJobs)
-	mcp.AddTool(out, &mcp.Tool{Name: "cancel_job",
+	add(s, out, uses, &mcp.Tool{Name: "cancel_job",
 		Description: "Stops a job that has not finished."}, s.cancelJob)
-	mcp.AddTool(out, &mcp.Tool{Name: "job_logs", Annotations: reads,
+	add(s, out, reads, &mcp.Tool{Name: "job_logs", Annotations: seen,
 		Description: "Returns what has happened to a job: the steps of its life and the lines its tasks have logged."}, s.jobLogs)
-	mcp.AddTool(out, &mcp.Tool{Name: "store_file",
+	add(s, out, uses, &mcp.Tool{Name: "store_file",
 		Description: "Puts a file from this machine in the pool's store and returns its content ID, which is what a job takes as input."}, s.storeFile)
-	mcp.AddTool(out, &mcp.Tool{Name: "fetch_file",
+	add(s, out, uses, &mcp.Tool{Name: "fetch_file",
 		Description: "Fetches a stored file by content ID, such as one of a job's stored outputs. It is written to the path given, or returned as text if it is short text and no path is given."}, s.fetchFile)
-	mcp.AddTool(out, &mcp.Tool{Name: "list_files", Annotations: reads,
+	add(s, out, reads, &mcp.Tool{Name: "list_files", Annotations: seen,
 		Description: "Lists the files kept in the pool's store, with their content IDs."}, s.listFiles)
+	s.more(out)
 	return out
 }
 
@@ -173,6 +187,7 @@ type runJobArgs struct {
 	Params      map[string]any `json:"params,omitempty" jsonschema:"the workload's parameters, as its description gives them"`
 	Tasks       uint32         `json:"tasks,omitempty" jsonschema:"how many tasks to split the job into; leave out for one per free worker slot"`
 	Private     bool           `json:"private,omitempty" jsonschema:"seal everything the job stores with this node's key, so that only it and the workers running the job can read it"`
+	MinMemoryMB uint32         `json:"min_memory_mb,omitempty" jsonschema:"give its tasks only to workers with at least this much memory, in mebibytes"`
 	MinGPUs     uint32         `json:"min_gpus,omitempty" jsonschema:"give its tasks only to workers with at least this many graphics cards"`
 	TaskTimeout uint32         `json:"task_timeout_seconds,omitempty" jsonschema:"stop and retry any attempt at a task that runs longer than this"`
 	WaitSeconds uint32         `json:"wait_seconds,omitempty" jsonschema:"how long to wait for the job to finish before returning it as it stands; 300 if left out, 0 with detach"`
@@ -187,13 +202,16 @@ func (s *server) runJob(ctx context.Context, _ *mcp.CallToolRequest, args runJob
 }
 
 func (s *server) run(ctx context.Context, args runJobArgs) (any, error) {
+	if err := s.permitted(args); err != nil {
+		return nil, err
+	}
 	params, _ := json.Marshal(args.Params) // decoded from JSON a moment ago
 	if args.Params == nil {
 		params = nil
 	}
 	submitted, err := s.Node.SubmitJob(ctx, &nodepb.SubmitJobRequest{
 		Workload: args.Workload, Params: params, MaxTasks: args.Tasks, Private: args.Private,
-		MinGpus: args.MinGPUs, TaskTimeoutSeconds: args.TaskTimeout,
+		MinGpus: args.MinGPUs, MinMemoryBytes: uint64(args.MinMemoryMB) << 20, TaskTimeoutSeconds: args.TaskTimeout,
 	})
 	if err != nil {
 		return nil, err
@@ -371,7 +389,11 @@ func (s *server) storeFile(ctx context.Context, _ *mcp.CallToolRequest, args sto
 }
 
 func (s *server) store(ctx context.Context, args storeArgs) (any, error) {
-	file, err := os.Open(args.Path)
+	path, err := s.allowed(args.Path)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -410,8 +432,9 @@ func fileView(f *nodepb.File) map[string]any {
 }
 
 type fetchArgs struct {
-	CID  string `json:"cid" jsonschema:"the content ID of the file"`
-	Path string `json:"path,omitempty" jsonschema:"where on this machine to write it, replacing what is there; leave out to have a short text file returned instead"`
+	CID       string `json:"cid" jsonschema:"the content ID of the file"`
+	Path      string `json:"path,omitempty" jsonschema:"where on this machine to write it; leave out to have a short text file returned instead"`
+	Overwrite bool   `json:"overwrite,omitempty" jsonschema:"replace a file already at the path, which is otherwise left alone and the fetch refused"`
 }
 
 // maxInline is the longest file fetch_file returns as text.
@@ -422,21 +445,33 @@ func (s *server) fetchFile(ctx context.Context, _ *mcp.CallToolRequest, args fet
 }
 
 func (s *server) fetch(ctx context.Context, args fetchArgs) (any, error) {
-	stream, err := s.Node.FetchFile(ctx, &nodepb.FetchFileRequest{Cid: args.CID})
-	if err != nil {
-		return nil, err
-	}
 	var into io.Writer
 	var text strings.Builder
 	if args.Path == "" {
 		into = &text
 	} else {
-		file, err := os.Create(args.Path)
+		path, err := s.allowed(args.Path)
+		if err != nil {
+			return nil, err
+		}
+		// A file already there is left alone unless told otherwise.
+		how := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+		if args.Overwrite {
+			how = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		}
+		file, err := os.OpenFile(path, how, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("there is a file at %s already: fetch to another path, or pass overwrite to replace it", args.Path)
+		}
 		if err != nil {
 			return nil, err
 		}
 		defer file.Close()
 		into = file
+	}
+	stream, err := s.Node.FetchFile(ctx, &nodepb.FetchFileRequest{Cid: args.CID})
+	if err != nil {
+		return nil, err
 	}
 	size := 0
 	for {
