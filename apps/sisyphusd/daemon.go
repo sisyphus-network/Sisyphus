@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,6 +38,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/tunnel"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
+	"github.com/sisyphus-network/Sisyphus/packages/geo"
 	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	"github.com/sisyphus-network/Sisyphus/packages/kubo"
@@ -69,7 +71,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	relayAt := fs.String("relay", "", "worker-only node: listen on this address, as host:port, for the other members' libp2p hosts and relay between them; the port must be open to them. A coordinator relays already")
 	discovery := fs.String("discovery", "on", "whether to look for other nodes, on this network and through the nodes already known, and let them find this one: on or off")
 	bootstrap := fs.String("bootstrap", "", "addresses of nodes to connect to at startup, besides those in the address book: comma-separated, each ending in /p2p/<node ID>")
-	locate := fs.Bool("locate-country", false, "ask ipapi.co which country this node's address is in, to show in the desktop client; this tells that service the address")
+	locate := fs.Bool("locate-country", false, "if the node cannot tell which country it is in from its own addresses, ask ipapi.co, which thereby learns its address. Without this nothing is asked of anyone")
 	keepJobs := fs.Duration("keep-jobs", 30*24*time.Hour, "coordinator role: how long a finished job can still be asked after; 0 keeps them for good")
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
@@ -567,17 +569,22 @@ func runDaemon(ctx context.Context, args []string) error {
 	local.Peers = func() []*nodepb.Peer {
 		return withTrust(withFound(pool(), host.Peers()), takes.List(), worksFor)
 	}
+	// The node places itself by the addresses it is reached at, from a
+	// table it carries. Only if told to does it ask anyone.
+	var asked atomic.Value
 	if *locate {
-		var country atomic.Value
 		searches.Add(1)
 		go func() {
 			defer searches.Done()
-			country.Store(lookUpCountry(looking))
+			asked.Store(lookUpCountry(looking))
 		}()
-		local.Country = func() string {
-			code, _ := country.Load().(string)
+	}
+	local.Country = func() string {
+		if code := placed(host.Addrs()); code != "" {
 			return code
 		}
+		code, _ := asked.Load().(string)
+		return code
 	}
 
 	if *inferenceListen != "" {
@@ -689,6 +696,8 @@ func withFound(pool []*nodepb.Peer, found []p2p.Peer) []*nodepb.Peer {
 		if f.Connected() {
 			entry.ConnectionState = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
 		}
+		// Where it is connected from says most about where it is.
+		entry.CountryCode = placed(append(slices.Clone(f.Conns), f.Addrs...))
 	}
 	sort.Slice(pool, func(a, b int) bool { return pool[a].GetPeerId() < pool[b].GetPeerId() })
 	return pool
@@ -716,6 +725,29 @@ func withTrust(peers []*nodepb.Peer, takes []string, worksFor func(id string) bo
 	}
 	sort.Slice(peers, func(a, b int) bool { return peers[a].GetPeerId() < peers[b].GetPeerId() })
 	return peers
+}
+
+// countryOf says which country an address is registered in. It is the
+// table the daemon carries; tests put another here.
+var countryOf = geo.Country
+
+// placed returns the country of the first of some multiaddresses that has
+// a place in the world, or nothing if none has.
+func placed(multiaddrs []string) string {
+	for _, multiaddr := range multiaddrs {
+		parts := strings.Split(multiaddr, "/")
+		if len(parts) < 3 || (parts[1] != "ip4" && parts[1] != "ip6") {
+			continue
+		}
+		addr, err := netip.ParseAddr(parts[2])
+		if err != nil {
+			continue
+		}
+		if code := countryOf(addr); code != "" {
+			return code
+		}
+	}
+	return ""
 }
 
 // countryURL is the service asked which country this node's address is in.

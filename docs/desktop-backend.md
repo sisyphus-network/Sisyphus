@@ -33,7 +33,7 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 
 | Call | Token | What it gives |
 | --- | --- | --- |
-| `GetNodeInfo` | | The node's ID, version, addresses, the workloads it knows, and its country if it was started with `--locate-country`. |
+| `GetNodeInfo` | | The node's ID, version, addresses, the workloads it knows, and `country_code`, the country its address is registered in, worked out from a table the daemon carries, with nothing asked of anyone. Each entry of `ListPeers` has a `country_code` too, which is enough for a map. Either is empty when only home-network addresses are known. |
 | `ListPeers`, `WatchPeers` | | Every node this one knows of: its pool's members and the nodes it has found. `WatchPeers` re-sends the whole list when anything changes. |
 | `ConnectPeer` | yes | Connect to a node at an address ending in `/p2p/<node ID>`. |
 | `GetBootstrapPeers` | | The address book: nodes connected to at each start. |

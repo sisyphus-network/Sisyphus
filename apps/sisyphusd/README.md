@@ -385,7 +385,7 @@ What it shows, in this daemon's terms:
 | invitation, members | `pool invite`, `pool members` and `pool remove`, from the app. |
 | private | A file or job sealed with the key the node keeps in `private.key` in its data directory, made the first time one is asked for. The same as `--key-file` with that file. Lose the file and what it sealed is lost. |
 | join a pool | `pool join` and a restart with `--join`, without the restart: the node redeems an invitation, says it takes that node's work, and starts on it. |
-| country | Empty unless the node was started with `--locate-country`. Finding it means asking ipapi.co, which thereby learns the node's address, so it is not done unasked. |
+| country | Where the node's address is registered, and each peer's, from a table the daemon carries (`packages/geo`, made from the regional Internet registries' published allocations). Nothing is asked of anyone. It is empty for a node that knows itself only by a home-network address, until other nodes have told it the address they see it at; `--locate-country` then asks ipapi.co instead, which thereby learns the address, so that is not done unasked. The country is the one of registration, which now and then is not where the machine is. `scripts/update-geo.sh` remakes the table. |
 
 Anything on the machine can read from the local API. Changing something needs the token in `api.token` in the data directory, which the daemon makes on first use and only its own user can read. The desktop app looks for it in the daemon's default data directory, or in the file named by `SISYPHUS_API_TOKEN_FILE`.
 

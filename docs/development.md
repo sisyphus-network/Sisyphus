@@ -25,6 +25,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `proto/sisyphus/node/v1` | The local API between a node and the desktop app on the same machine. Shared by the Go daemon, the Rust daemon and the app. |
 | `packages/protocol` | Go generated from `proto/`. Never edited by hand; committed so a fresh clone builds without `protoc`. |
 | `packages/ai` | Talking to language models: one interface, with adapters for Ollama, for OpenAI's dialect, and for Anthropic. |
+| `packages/geo` | Which country an address is registered in, from a table carried in the program. |
 | `packages/hardware` | What a machine has: processor, memory, graphics cards. Reads Linux's `/proc` and asks `nvidia-smi`; unknown elsewhere. |
 | `packages/identity` | A node's key pair and the ID derived from it; signing and verifying; the TLS settings nodes connect with. |
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
