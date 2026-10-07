@@ -503,3 +503,37 @@ func TestWorkForAnotherNodeGoesOverItsPrivateNetwork(t *testing.T) {
 		t.Error("nothing was said about working for a node without its private network")
 	}
 }
+
+func TestNewsThatArrivesWhileANodeIsLookingIsNotMissed(t *testing.T) {
+	r := newReciprocity(&reciprocity{every: time.Hour})
+	ctx := context.Background()
+	// The node looks, and while it is looking something changes.
+	heard := r.heardSoFar()
+	r.nudge()
+	done := make(chan bool, 1)
+	go func() { done <- r.pause(ctx, &heard) }()
+	select {
+	case ended := <-done:
+		if ended {
+			t.Error("the pause reported the node stopped")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("news that arrived before the node paused was slept through")
+	}
+	// Having caught up, it waits for the next.
+	go func() { done <- r.pause(ctx, &heard) }()
+	select {
+	case <-done:
+		t.Fatal("the node did not wait though there was nothing new")
+	case <-time.After(100 * time.Millisecond):
+	}
+	r.nudge()
+	<-done
+	// And a node that is stopping says so, news or no news.
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	r.nudge()
+	if !r.pause(stopped, &heard) || !r.pause(stopped, &heard) {
+		t.Error("a pause on a stopped node did not report it")
+	}
+}
