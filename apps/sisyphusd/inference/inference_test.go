@@ -228,7 +228,33 @@ func TestWhatCannotBeAnsweredIsRefusedAsSuchAServiceRefuses(t *testing.T) {
 	if status, _, _ := ask(t, gone, http.MethodPost, "/v1/chat/completions", "the-token", hello); status != http.StatusServiceUnavailable || len(gone.cancelled) != 1 || gone.cancelled[0] != "job-1" {
 		t.Errorf("a reply not waited for: %d, cancelled %v", status, gone.cancelled)
 	}
-	if status, _, _ := ask(t, &pool{}, http.MethodGet, "/v1/embeddings", "the-token", ""); status != http.StatusNotFound {
+	if status, _, _ := ask(t, &pool{}, http.MethodGet, "/v1/images", "the-token", ""); status != http.StatusNotFound {
 		t.Errorf("something this service does not do: %d", status)
+	}
+}
+
+func TestTextsAreTurnedIntoVectorsByAJobSharedAmongWorkers(t *testing.T) {
+	const vectors = `{"object":"list","data":[{"index":0,"embedding":[0.1]}]}`
+	p := &pool{state: pb.JobState_JOB_STATE_SUCCEEDED, result: vectors}
+	status, body, header := ask(t, p, http.MethodPost, "/v1/embeddings", "the-token", `{"model":"QWEN3","input":["a","b"]}`)
+	if status != http.StatusOK || body != vectors || header.Get("X-Sisyphus-Job") != "job-1" {
+		t.Fatalf("embeddings: %d %s", status, body)
+	}
+	spec := p.submitted[0]
+	if spec.GetWorkload() != "embed" || !strings.Contains(string(spec.GetParams()), `"model":"qwen3:8b"`) || spec.GetMode() != pb.ScheduleMode_SCHEDULE_MODE_UNSPECIFIED {
+		t.Errorf("the job was %v", spec)
+	}
+	for name, tt := range map[string]struct {
+		pool   *pool
+		body   string
+		status int
+	}{
+		"a model no worker serves":   {&pool{}, `{"model":"gpt-5","input":"a"}`, http.StatusNotFound},
+		"a request the pool refuses": {&pool{refuses: errors.New("at most 128 texts")}, `{"model":"qwen3:8b","input":"a"}`, http.StatusBadRequest},
+		"a job that fails":           {&pool{state: pb.JobState_JOB_STATE_FAILED}, `{"model":"qwen3:8b","input":"a"}`, http.StatusBadGateway},
+	} {
+		if status, body, _ := ask(t, tt.pool, http.MethodPost, "/v1/embeddings", "the-token", tt.body); status != tt.status || !strings.Contains(body, `"error"`) {
+			t.Errorf("%s: %d %s", name, status, body)
+		}
 	}
 }

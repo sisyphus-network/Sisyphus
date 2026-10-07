@@ -134,10 +134,18 @@ func Builtin() *Registry {
 
 // WithContainers returns the built-in workloads and those that run in
 // containers: any image a job names, and the ones made of a fixed image.
-// It also has chat, as a coordinator has it: able to take such a job in
-// and pass it on, with no models of its own to run it.
+// It also has the workloads that use language models, as a coordinator has
+// them: able to take such a job in and pass it on, with no models of its
+// own to run it.
 func WithContainers() *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Container{}, Transcode{}, Chat{})
+	return NewRegistry(Primes{}, WordCount{}, Container{}, Transcode{}).With(WithModels("")...)
+}
+
+// WithModels returns the workloads that use the language models of the
+// model server at url: a worker's own, or none for a node that only takes
+// such jobs in.
+func WithModels(url string) []Workload {
+	return []Workload{Chat{URL: url}, Prompts{URL: url}, Embed{URL: url}}
 }
 
 func (r *Registry) Get(name string) (Workload, error) {

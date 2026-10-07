@@ -3,12 +3,16 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
+	"math"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,6 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/skills"
 )
 
@@ -148,6 +153,118 @@ func (s *server) fetchOutputs(ctx context.Context, args outputsArgs) (any, error
 	return map[string]any{"job_id": args.JobID, "state": jobView(got.GetJob(), false)["state"], "files": fetched}, nil
 }
 
+// create makes the file at a path the server may write to, with the
+// directory it goes in if that is not there. A file already there is left
+// alone unless told otherwise.
+func (s *server) create(asked string, overwrite bool) (*os.File, error) {
+	path, err := s.allowed(asked)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	how := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if overwrite {
+		how = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	file, err := os.OpenFile(path, how, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		return nil, fmt.Errorf("there is a file at %s already: use another path, or pass overwrite to replace it", asked)
+	}
+	return file, err
+}
+
+type saveArgs struct {
+	JobID     string `json:"job_id" jsonschema:"the job whose result to save"`
+	Path      string `json:"path" jsonschema:"where on this machine to write it"`
+	Overwrite bool   `json:"overwrite,omitempty" jsonschema:"replace a file already at the path"`
+}
+
+// saveResult writes a job's result to a file, whole: for one too long to
+// be shown, or one a program is to read.
+func (s *server) saveResult(ctx context.Context, args saveArgs) (any, error) {
+	got, err := s.Node.GetJob(ctx, &nodepb.GetJobRequest{JobId: args.JobID})
+	if err != nil {
+		return nil, err
+	}
+	file, err := s.create(args.Path, args.Overwrite)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	if _, err := file.Write(got.GetJob().GetResult()); err != nil {
+		return nil, fmt.Errorf("write %s: %w", args.Path, err)
+	}
+	return map[string]any{"job_id": args.JobID, "state": jobView(got.GetJob(), false)["state"], "path": args.Path, "size_bytes": len(got.GetJob().GetResult())}, nil
+}
+
+type compareArgs struct {
+	Model string   `json:"model" jsonschema:"an embedding model a worker serves, as pool_status names it"`
+	Texts []string `json:"texts" jsonschema:"the texts to compare, at most 127"`
+	Query string   `json:"query,omitempty" jsonschema:"rank the texts by how alike in meaning each is to this; leave out to rank pairs of the texts by how alike they are to each other"`
+	Top   int      `json:"top,omitempty" jsonschema:"how many of the most alike to return; 10 if left out"`
+}
+
+// compareTexts has an embedding model the pool serves turn texts into
+// vectors and says which mean most alike, so that the vectors themselves,
+// which are long, need not pass through whoever asked.
+func (s *server) compareTexts(ctx context.Context, args compareArgs) (any, error) {
+	if len(args.Texts) == 0 || len(args.Texts) > runtime.MaxEmbedInputs-1 {
+		return nil, fmt.Errorf("give between 1 and %d texts", runtime.MaxEmbedInputs-1)
+	}
+	input := args.Texts
+	if args.Query != "" {
+		input = append([]string{args.Query}, input...)
+	}
+	params, _ := json.Marshal(map[string]any{"model": args.Model, "input": input}) // strings always encode
+	submitted, err := s.Node.SubmitJob(ctx, &nodepb.SubmitJobRequest{Workload: "embed", Params: params})
+	if err != nil {
+		return nil, err
+	}
+	id := submitted.GetJob().GetJobId()
+	if _, err := s.follow(ctx, id, usualWait, len(submitted.GetJob().GetTasks())); err != nil {
+		return nil, err
+	}
+	got, _ := s.Node.GetJob(ctx, &nodepb.GetJobRequest{JobId: id}) // it answered a moment ago
+	var reply struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(got.GetJob().GetResult(), &reply); len(reply.Data) != len(input) {
+		return nil, fmt.Errorf("job %s did not turn the texts into vectors: %s %s", id, jobView(got.GetJob(), false)["state"], got.GetJob().GetError())
+	}
+	alike := func(a, b []float64) float64 {
+		var dot, aa, bb float64
+		for i := range min(len(a), len(b)) {
+			dot, aa, bb = dot+a[i]*b[i], aa+a[i]*a[i], bb+b[i]*b[i]
+		}
+		if aa == 0 || bb == 0 {
+			return 0
+		}
+		return math.Round(dot/math.Sqrt(aa*bb)*10000) / 10000
+	}
+	ranked := []map[string]any{}
+	if args.Query != "" {
+		for i, text := range args.Texts {
+			ranked = append(ranked, map[string]any{"text": text, "index": i, "similarity": alike(reply.Data[0].Embedding, reply.Data[i+1].Embedding)})
+		}
+	} else {
+		for i := range args.Texts {
+			for j := i + 1; j < len(args.Texts); j++ {
+				ranked = append(ranked, map[string]any{"a": args.Texts[i], "b": args.Texts[j], "a_index": i, "b_index": j, "similarity": alike(reply.Data[i].Embedding, reply.Data[j].Embedding)})
+			}
+		}
+	}
+	sort.SliceStable(ranked, func(a, b int) bool { return ranked[a]["similarity"].(float64) > ranked[b]["similarity"].(float64) })
+	top := args.Top
+	if top <= 0 {
+		top = 10
+	}
+	return map[string]any{"job_id": id, "most_alike": ranked[:min(top, len(ranked))]}, nil
+}
+
 func (s *server) deleteChat(ctx context.Context, args chatArgs) (any, error) {
 	if _, err := s.Node.DeleteChat(ctx, &nodepb.DeleteChatRequest{ChatId: args.ChatID}); err != nil {
 		return nil, err
@@ -183,6 +300,10 @@ func (s *server) extras(out *mcp.Server) {
 		Description: "Waits for a job to finish, for as long as told, and returns it as it then stands. For a job started with detach, or one still running when run_job's wait was over."}, s.waitForJob)
 	add(s, out, uses, &mcp.Tool{Name: "fetch_outputs",
 		Description: "Fetches every file a job stored into a directory on this machine. Each is named by where the job's result names it, such as tasks-0-stdout and tasks-0-files-part for a container job."}, doing(s, s.fetchOutputs))
+	add(s, out, uses, &mcp.Tool{Name: "save_result",
+		Description: "Writes a job's whole result to a file on this machine: for a result too long to be shown, or one a program is to read."}, doing(s, s.saveResult))
+	add(s, out, uses, &mcp.Tool{Name: "compare_texts",
+		Description: "Says which texts mean most alike, using an embedding model the pool serves: each text ranked against a query, or every pair of the texts ranked against each other. The workers running it see the texts."}, doing(s, s.compareTexts))
 	add(s, out, reads, &mcp.Tool{Name: "list_model_providers", Annotations: seen,
 		Description: "Lists the kinds of model service the node's planner can plan with."}, doing(s, s.listProviders))
 	add(s, out, uses, &mcp.Tool{Name: "delete_chat", Annotations: gone,

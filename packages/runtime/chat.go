@@ -107,13 +107,7 @@ func modelOf(params []byte) string {
 
 // Needs is the model the job asks for, and the worker if it asks for one:
 // its tasks go only to a worker that serves the model and has the name.
-func (Chat) Needs(params []byte) []string {
-	model, worker, pinned := strings.Cut(modelOf(params), "@")
-	if pinned {
-		return []string{modelLabel + model, WorkerLabel + worker}
-	}
-	return []string{modelLabel + model}
-}
+func (Chat) Needs(params []byte) []string { return modelNeeds(modelOf(params)) }
 
 // Offers is the models the worker's server has, asked for each time the
 // worker says what it is. A server that cannot be reached offers none.

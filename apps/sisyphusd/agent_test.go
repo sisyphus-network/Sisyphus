@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 	// The agent is told what there is: the tools, and how to begin. Those
 	// that change the node itself are not among them unless asked for.
 	tools, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 23 {
+	if err != nil || len(tools.Tools) != 25 {
 		t.Fatalf("tools = %v, %v", tools, err)
 	}
 	if !strings.Contains(session.InitializeResult().Instructions, "pool_status") {
@@ -81,7 +82,7 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 		// The one worker runs no containers and serves no models, and
 		// the agent is told so.
 		want := float64(1)
-		if w["name"] == "container" || w["name"] == "transcode" || w["name"] == "chat" {
+		if slices.Contains([]any{"container", "transcode", "chat", "prompts", "embed"}, w["name"]) {
 			want = 0
 		}
 		if w["workers_running_it"] != want {

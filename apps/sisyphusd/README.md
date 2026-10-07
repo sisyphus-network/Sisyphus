@@ -291,7 +291,8 @@ bin/sisyphusd model set --provider openai --url http://127.0.0.1:11435/v1 --mode
 ```
 
 - **Each reply is a job** of the `chat` workload, given to a worker that serves the model asked for, and shows among the pool's jobs like any other. The local API's `ListWorkers`, and an agent's `pool_status`, show which models each worker serves.
-- **The service** answers `GET /v1/models` and `POST /v1/chat/completions`, with tool calls. Its key is the node's API token, and it listens on this machine only.
+- **The service** answers `GET /v1/models`, `POST /v1/chat/completions`, with tool calls, and `POST /v1/embeddings`, for up to 128 texts in a request, which are shared out among the workers serving the model.
+- **Many prompts at once** is the `prompts` workload: `job submit --workload prompts --params '{"model":"llama3.1:8b","prompts":["...","..."],"system":"..."}'`, or `"input"` with the CID of a stored file that has a prompt on each line. The prompts are shared out among the workers serving the model and the answers come back in order. This is where several machines with models are faster than one. Its key is the node's API token, and it listens on this machine only.
 - **`--models-from` is a decision about your machine.** Whoever may submit jobs to the pool can then use your models and the power they draw, and your machine sees every conversation it is given: there is no sealing of a conversation from the machine that has to read it.
 - **Keep a conversation on a machine you trust** by asking for the model on a worker by name: `"model": "llama3.1:8b@rig"`. It goes to the worker named `rig` or, if that worker is not there, is refused; it never goes elsewhere. Asking for a model on your own machine's worker keeps the conversation at home while still going through the pool.
 - **A reply arrives as it is written.** A client that asks for a stream gets the words a few times a second, and at the end the tools the model asks for and what it used. The worker logs the reply in pieces as it comes, so `job logs` shows it too.
@@ -322,8 +323,8 @@ The agent starts `sisyphusd mcp` itself and talks to it over standard input and 
 | `list_workloads` | What the pool can run, the parameters each workload takes, and how many connected workers run it. |
 | `run_job` | Runs a job and waits for its result, or returns at once with `detach`. |
 | `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `wait_for_job` | Look at a job, list them, stop one, read what it logged, wait for one to finish. |
-| `store_file`, `fetch_file`, `list_files`, `remove_file`, `fetch_outputs` | Put a file from this machine in the pool's store, bring one back, list them, stop keeping one, bring back everything a job stored. |
-| `ask_model` | Has a model served by one of the pool's workers answer a prompt. |
+| `store_file`, `fetch_file`, `list_files`, `remove_file`, `fetch_outputs`, `save_result` | Put a file from this machine in the pool's store, bring one back, list them, stop keeping one, bring back everything a job stored, write a job's whole result to a file. |
+| `ask_model`, `compare_texts` | Has a model served by one of the pool's workers answer a prompt; says which texts mean most alike, by an embedding model the pool serves. |
 | `ask_planner`, `list_chats`, `get_chat`, `delete_chat` | Hand a whole question to the node's own planner, and read or forget its conversations. |
 | `list_peers`, `list_members` | The nodes this node knows of, with their countries and which way work flows; who is in its pool. |
 | `get_model`, `list_models`, `list_model_providers` | What the planner plans with, what its service offers, and the kinds of service there are. |
@@ -344,7 +345,7 @@ What the agent may do is yours to set, when you give its settings the command:
 - **With no flags it can use the pool and not reconfigure it.** It can spend the pool's time, run container images on workers that allow containers, and read and write files in the directory it was started in. It will not write over a file that is there unless told to in so many words.
 - **`--admin` is the node's keys.** An agent with it can invite anyone into the pool and join the node to others. It is never given a model service's key: `set_model` keeps the one already set.
 - **A skill comes with it**, carried in the daemon. `sisyphusd skill install` puts it where Claude Code keeps skills (`~/.claude/skills`), `--dir` puts it elsewhere, and `sisyphusd skill show` prints it. It tells an agent how to use a pool well: look before submitting, how to split work with a container, how to have the pool's models think, what goes wrong; `recipes.md` beside it has worked shapes for common jobs. It works with the tools or, without them, with the command line. Its source is [`skills/sisyphus`](../../skills/sisyphus/SKILL.md).
-- **It has been tried from Claude Code**, with the skill installed and the server kept to one directory: asked to describe the pool, upper-case a file across three tasks and have one of the pool's models answer a question, it read the skill, ran a `container` job and `ask_model`, and wrote the right file. Other agents have not been tried.
+- **It has been tried from Claude Code**, with the skill installed and the server kept to one directory: asked to describe the pool, upper-case a file across three tasks and have one of the pool's models answer a question, it read the skill, ran a `container` job and `ask_model`, and wrote the right file. A second run, on Opus, labelled eight reviews with one `prompts` job and found the two most alike with `embed`; what it stumbled on (a result of vectors too long to hand back) is why `save_result` and `compare_texts` exist. Other agents have not been tried.
 
 ## Following and stopping a job
 
