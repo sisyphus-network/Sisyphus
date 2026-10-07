@@ -375,3 +375,12 @@ func TestWordCountReportsStorageFailures(t *testing.T) {
 		t.Error("Aggregate accepted counts that are not JSON")
 	}
 }
+
+func mustCID(t *testing.T, s string) cid.Cid {
+	t.Helper()
+	c, err := cid.Decode(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}

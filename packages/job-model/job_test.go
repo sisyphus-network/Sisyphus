@@ -105,3 +105,40 @@ func TestStateNames(t *testing.T) {
 		}
 	}
 }
+
+func TestJobSortsTheBlobsItTouched(t *testing.T) {
+	j := newJob(2)
+	j.NoteRead("input", "dataset") // opened by the split
+	j.NoteRead("input")            // and again by a task
+	j.NoteTaskOutput("part-0", "part-1")
+	j.NoteRead("part-0", "part-1")     // the aggregation opens what tasks stored
+	j.NoteTaskOutput("passed-through") // a task stored something the aggregation re-stores as the result
+	j.NoteResult("table", "passed-through")
+
+	if got := j.InputBlobs(); !equal(got, "dataset", "input") {
+		t.Errorf("inputs %v", got)
+	}
+	if got := j.OutputBlobs(); !equal(got, "passed-through", "table") {
+		t.Errorf("outputs %v", got)
+	}
+	if got := j.IntermediateBlobs(); !equal(got, "part-0", "part-1") {
+		t.Errorf("intermediates %v", got)
+	}
+
+	p := j.ToProto()
+	if !equal(p.GetInputBlobs(), "dataset", "input") || !equal(p.GetOutputBlobs(), "passed-through", "table") {
+		t.Errorf("snapshot blobs: inputs %v, outputs %v", p.GetInputBlobs(), p.GetOutputBlobs())
+	}
+}
+
+func equal(got []string, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}

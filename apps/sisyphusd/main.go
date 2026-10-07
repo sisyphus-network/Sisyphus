@@ -24,6 +24,10 @@ const usage = `Usage:
   sisyphusd blob put <file>        store a file on a node and print its CID
   sisyphusd blob get <cid>         fetch a blob, checking it against its CID
   sisyphusd blob stat <cid>        show a blob's size
+  sisyphusd blob pin <cid>         keep a blob until unpinned, or for --ttl
+  sisyphusd blob unpin <cid>       stop keeping a blob
+  sisyphusd blob pins              list what the node is keeping, and for whom
+  sisyphusd blob gc                delete stored data that nothing is keeping
   sisyphusd version                print the version
 
 Run "sisyphusd <command> -h" for a command's flags.

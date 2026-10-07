@@ -520,10 +520,16 @@ type Job struct {
 	State JobState               `protobuf:"varint,3,opt,name=state,proto3,enum=sisyphus.v1.JobState" json:"state,omitempty"`
 	Tasks []*Task                `protobuf:"bytes,4,rep,name=tasks,proto3" json:"tasks,omitempty"`
 	// Aggregated result, set once the job has succeeded.
-	Result        []byte                 `protobuf:"bytes,5,opt,name=result,proto3" json:"result,omitempty"`
-	Error         string                 `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	FinishedAt    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	Result     []byte                 `protobuf:"bytes,5,opt,name=result,proto3" json:"result,omitempty"`
+	Error      string                 `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	CreatedAt  *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	FinishedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	// CIDs of the stored blobs the job consumed, and of those its result
+	// consists of. Both are kept for the node's retention period after the job
+	// ends. Blobs that only passed between tasks are not listed and are
+	// released when the job finishes.
+	InputBlobs    []string `protobuf:"bytes,9,rep,name=input_blobs,json=inputBlobs,proto3" json:"input_blobs,omitempty"`
+	OutputBlobs   []string `protobuf:"bytes,10,rep,name=output_blobs,json=outputBlobs,proto3" json:"output_blobs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -614,6 +620,20 @@ func (x *Job) GetFinishedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Job) GetInputBlobs() []string {
+	if x != nil {
+		return x.InputBlobs
+	}
+	return nil
+}
+
+func (x *Job) GetOutputBlobs() []string {
+	if x != nil {
+		return x.OutputBlobs
+	}
+	return nil
+}
+
 var File_sisyphus_v1_types_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_types_proto_rawDesc = "" +
@@ -646,7 +666,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x05state\x18\x03 \x01(\x0e2\x16.sisyphus.v1.TaskStateR\x05state\x12\x18\n" +
 	"\aattempt\x18\x04 \x01(\rR\aattempt\x12\x17\n" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12\x14\n" +
-	"\x05error\x18\x06 \x01(\tR\x05error\"\xc2\x02\n" +
+	"\x05error\x18\x06 \x01(\tR\x05error\"\x86\x03\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12(\n" +
 	"\x04spec\x18\x02 \x01(\v2\x14.sisyphus.v1.JobSpecR\x04spec\x12+\n" +
@@ -657,7 +677,11 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12;\n" +
 	"\vfinished_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"finishedAt*k\n" +
+	"finishedAt\x12\x1f\n" +
+	"\vinput_blobs\x18\t \x03(\tR\n" +
+	"inputBlobs\x12!\n" +
+	"\foutput_blobs\x18\n" +
+	" \x03(\tR\voutputBlobs*k\n" +
 	"\fScheduleMode\x12\x1d\n" +
 	"\x19SCHEDULE_MODE_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19SCHEDULE_MODE_DISTRIBUTED\x10\x01\x12\x1d\n" +

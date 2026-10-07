@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package sisyphus.v1;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
 
 // BlobService moves content-addressed artifacts to and from a node's store.
@@ -14,6 +16,15 @@ service BlobService {
   // they received hashes to the CID they asked for.
   rpc Get(GetBlobRequest) returns (stream GetBlobResponse);
   rpc Stat(StatBlobRequest) returns (StatBlobResponse);
+
+  // A node keeps a blob for as long as something pins it. Pin and Unpin act
+  // on the pin held on behalf of the node's user; jobs hold their own.
+  rpc Pin(PinBlobRequest) returns (PinBlobResponse);
+  rpc Unpin(UnpinBlobRequest) returns (UnpinBlobResponse);
+  rpc ListPins(ListPinsRequest) returns (ListPinsResponse);
+  // CollectGarbage drops pins that have expired and deletes every block no
+  // remaining pin reaches.
+  rpc CollectGarbage(CollectGarbageRequest) returns (CollectGarbageResponse);
 }
 
 message PutBlobRequest {
@@ -39,4 +50,41 @@ message StatBlobRequest {
 
 message StatBlobResponse {
   uint64 size = 1;
+}
+
+message PinBlobRequest {
+  string cid = 1;
+  // How long to keep the blob. Zero means until it is unpinned.
+  uint64 ttl_seconds = 2;
+}
+
+message PinBlobResponse {}
+
+message UnpinBlobRequest {
+  string cid = 1;
+}
+
+message UnpinBlobResponse {}
+
+message ListPinsRequest {}
+
+message ListPinsResponse {
+  repeated Pin pins = 1;
+}
+
+message Pin {
+  string cid = 1;
+  // Who holds the pin: "user", "job:<id>", or "recent" for the short pin
+  // every newly stored blob gets.
+  string owner = 2;
+  // Unset for a pin that holds until released.
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+message CollectGarbageRequest {}
+
+message CollectGarbageResponse {
+  uint32 expired_pins = 1;
+  uint64 blocks_removed = 2;
+  uint64 bytes_freed = 3;
 }

@@ -19,9 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BlobService_Put_FullMethodName  = "/sisyphus.v1.BlobService/Put"
-	BlobService_Get_FullMethodName  = "/sisyphus.v1.BlobService/Get"
-	BlobService_Stat_FullMethodName = "/sisyphus.v1.BlobService/Stat"
+	BlobService_Put_FullMethodName            = "/sisyphus.v1.BlobService/Put"
+	BlobService_Get_FullMethodName            = "/sisyphus.v1.BlobService/Get"
+	BlobService_Stat_FullMethodName           = "/sisyphus.v1.BlobService/Stat"
+	BlobService_Pin_FullMethodName            = "/sisyphus.v1.BlobService/Pin"
+	BlobService_Unpin_FullMethodName          = "/sisyphus.v1.BlobService/Unpin"
+	BlobService_ListPins_FullMethodName       = "/sisyphus.v1.BlobService/ListPins"
+	BlobService_CollectGarbage_FullMethodName = "/sisyphus.v1.BlobService/CollectGarbage"
 )
 
 // BlobServiceClient is the client API for BlobService service.
@@ -38,6 +42,14 @@ type BlobServiceClient interface {
 	// they received hashes to the CID they asked for.
 	Get(ctx context.Context, in *GetBlobRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetBlobResponse], error)
 	Stat(ctx context.Context, in *StatBlobRequest, opts ...grpc.CallOption) (*StatBlobResponse, error)
+	// A node keeps a blob for as long as something pins it. Pin and Unpin act
+	// on the pin held on behalf of the node's user; jobs hold their own.
+	Pin(ctx context.Context, in *PinBlobRequest, opts ...grpc.CallOption) (*PinBlobResponse, error)
+	Unpin(ctx context.Context, in *UnpinBlobRequest, opts ...grpc.CallOption) (*UnpinBlobResponse, error)
+	ListPins(ctx context.Context, in *ListPinsRequest, opts ...grpc.CallOption) (*ListPinsResponse, error)
+	// CollectGarbage drops pins that have expired and deletes every block no
+	// remaining pin reaches.
+	CollectGarbage(ctx context.Context, in *CollectGarbageRequest, opts ...grpc.CallOption) (*CollectGarbageResponse, error)
 }
 
 type blobServiceClient struct {
@@ -90,6 +102,46 @@ func (c *blobServiceClient) Stat(ctx context.Context, in *StatBlobRequest, opts 
 	return out, nil
 }
 
+func (c *blobServiceClient) Pin(ctx context.Context, in *PinBlobRequest, opts ...grpc.CallOption) (*PinBlobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PinBlobResponse)
+	err := c.cc.Invoke(ctx, BlobService_Pin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *blobServiceClient) Unpin(ctx context.Context, in *UnpinBlobRequest, opts ...grpc.CallOption) (*UnpinBlobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnpinBlobResponse)
+	err := c.cc.Invoke(ctx, BlobService_Unpin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *blobServiceClient) ListPins(ctx context.Context, in *ListPinsRequest, opts ...grpc.CallOption) (*ListPinsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPinsResponse)
+	err := c.cc.Invoke(ctx, BlobService_ListPins_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *blobServiceClient) CollectGarbage(ctx context.Context, in *CollectGarbageRequest, opts ...grpc.CallOption) (*CollectGarbageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CollectGarbageResponse)
+	err := c.cc.Invoke(ctx, BlobService_CollectGarbage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BlobServiceServer is the server API for BlobService service.
 // All implementations must embed UnimplementedBlobServiceServer
 // for forward compatibility.
@@ -104,6 +156,14 @@ type BlobServiceServer interface {
 	// they received hashes to the CID they asked for.
 	Get(*GetBlobRequest, grpc.ServerStreamingServer[GetBlobResponse]) error
 	Stat(context.Context, *StatBlobRequest) (*StatBlobResponse, error)
+	// A node keeps a blob for as long as something pins it. Pin and Unpin act
+	// on the pin held on behalf of the node's user; jobs hold their own.
+	Pin(context.Context, *PinBlobRequest) (*PinBlobResponse, error)
+	Unpin(context.Context, *UnpinBlobRequest) (*UnpinBlobResponse, error)
+	ListPins(context.Context, *ListPinsRequest) (*ListPinsResponse, error)
+	// CollectGarbage drops pins that have expired and deletes every block no
+	// remaining pin reaches.
+	CollectGarbage(context.Context, *CollectGarbageRequest) (*CollectGarbageResponse, error)
 	mustEmbedUnimplementedBlobServiceServer()
 }
 
@@ -122,6 +182,18 @@ func (UnimplementedBlobServiceServer) Get(*GetBlobRequest, grpc.ServerStreamingS
 }
 func (UnimplementedBlobServiceServer) Stat(context.Context, *StatBlobRequest) (*StatBlobResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Stat not implemented")
+}
+func (UnimplementedBlobServiceServer) Pin(context.Context, *PinBlobRequest) (*PinBlobResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Pin not implemented")
+}
+func (UnimplementedBlobServiceServer) Unpin(context.Context, *UnpinBlobRequest) (*UnpinBlobResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Unpin not implemented")
+}
+func (UnimplementedBlobServiceServer) ListPins(context.Context, *ListPinsRequest) (*ListPinsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPins not implemented")
+}
+func (UnimplementedBlobServiceServer) CollectGarbage(context.Context, *CollectGarbageRequest) (*CollectGarbageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CollectGarbage not implemented")
 }
 func (UnimplementedBlobServiceServer) mustEmbedUnimplementedBlobServiceServer() {}
 func (UnimplementedBlobServiceServer) testEmbeddedByValue()                     {}
@@ -180,6 +252,78 @@ func _BlobService_Stat_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BlobService_Pin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PinBlobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlobServiceServer).Pin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlobService_Pin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlobServiceServer).Pin(ctx, req.(*PinBlobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlobService_Unpin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnpinBlobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlobServiceServer).Unpin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlobService_Unpin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlobServiceServer).Unpin(ctx, req.(*UnpinBlobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlobService_ListPins_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPinsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlobServiceServer).ListPins(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlobService_ListPins_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlobServiceServer).ListPins(ctx, req.(*ListPinsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlobService_CollectGarbage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CollectGarbageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlobServiceServer).CollectGarbage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlobService_CollectGarbage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlobServiceServer).CollectGarbage(ctx, req.(*CollectGarbageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BlobService_ServiceDesc is the grpc.ServiceDesc for BlobService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -190,6 +334,22 @@ var BlobService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Stat",
 			Handler:    _BlobService_Stat_Handler,
+		},
+		{
+			MethodName: "Pin",
+			Handler:    _BlobService_Pin_Handler,
+		},
+		{
+			MethodName: "Unpin",
+			Handler:    _BlobService_Unpin_Handler,
+		},
+		{
+			MethodName: "ListPins",
+			Handler:    _BlobService_ListPins_Handler,
+		},
+		{
+			MethodName: "CollectGarbage",
+			Handler:    _BlobService_CollectGarbage_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

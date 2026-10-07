@@ -87,4 +87,10 @@ message Job {
   string error = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp finished_at = 8;
+  // CIDs of the stored blobs the job consumed, and of those its result
+  // consists of. Both are kept for the node's retention period after the job
+  // ends. Blobs that only passed between tasks are not listed and are
+  // released when the job finishes.
+  repeated string input_blobs = 9;
+  repeated string output_blobs = 10;
 }

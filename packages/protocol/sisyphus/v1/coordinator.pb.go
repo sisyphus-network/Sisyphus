@@ -224,7 +224,11 @@ type TaskResult struct {
 	//
 	//	*TaskResult_Output
 	//	*TaskResult_Error
-	Outcome       isTaskResult_Outcome `protobuf_oneof:"outcome"`
+	Outcome isTaskResult_Outcome `protobuf_oneof:"outcome"`
+	// CIDs of the stored blobs the task opened and stored. The coordinator
+	// uses them to keep a job's data for as long as the job needs it.
+	ReadBlobs     []string `protobuf:"bytes,5,rep,name=read_blobs,json=readBlobs,proto3" json:"read_blobs,omitempty"`
+	WrittenBlobs  []string `protobuf:"bytes,6,rep,name=written_blobs,json=writtenBlobs,proto3" json:"written_blobs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -296,6 +300,20 @@ func (x *TaskResult) GetError() string {
 		}
 	}
 	return ""
+}
+
+func (x *TaskResult) GetReadBlobs() []string {
+	if x != nil {
+		return x.ReadBlobs
+	}
+	return nil
+}
+
+func (x *TaskResult) GetWrittenBlobs() []string {
+	if x != nil {
+		return x.WrittenBlobs
+	}
+	return nil
 }
 
 type isTaskResult_Outcome interface {
@@ -531,13 +549,16 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\"0\n" +
 	"\tHeartbeat\x12#\n" +
-	"\rrunning_tasks\x18\x01 \x01(\rR\frunningTasks\"|\n" +
+	"\rrunning_tasks\x18\x01 \x01(\rR\frunningTasks\"\xc0\x01\n" +
 	"\n" +
 	"TaskResult\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x18\n" +
 	"\x06output\x18\x03 \x01(\fH\x00R\x06output\x12\x16\n" +
-	"\x05error\x18\x04 \x01(\tH\x00R\x05errorB\t\n" +
+	"\x05error\x18\x04 \x01(\tH\x00R\x05error\x12\x1d\n" +
+	"\n" +
+	"read_blobs\x18\x05 \x03(\tR\treadBlobs\x12#\n" +
+	"\rwritten_blobs\x18\x06 \x03(\tR\fwrittenBlobsB\t\n" +
 	"\aoutcome\"\x8d\x01\n" +
 	"\x12CoordinatorMessage\x120\n" +
 	"\awelcome\x18\x01 \x01(\v2\x14.sisyphus.v1.WelcomeH\x00R\awelcome\x12=\n" +

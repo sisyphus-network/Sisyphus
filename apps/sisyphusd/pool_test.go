@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,6 +38,9 @@ const primesBelowTwoMillion = `{"count":148933}`
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
+// testRetain is how long test coordinators keep a finished job's blobs.
+const testRetain = 24 * time.Hour
+
 type pool struct {
 	t         *testing.T
 	ctx       context.Context
@@ -54,6 +59,27 @@ type pool struct {
 	conn  *grpc.ClientConn
 	// heartbeat, if set, is how often workers started later report in.
 	heartbeat time.Duration
+	// logs is everything the coordinator has logged.
+	logs *syncBuffer
+}
+
+// syncBuffer is a bytes.Buffer safe to write from one goroutine while
+// another reads.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func countBlobGets(n *atomic.Int32) grpc.StreamServerInterceptor {
@@ -67,14 +93,25 @@ func countBlobGets(n *atomic.Int32) grpc.StreamServerInterceptor {
 
 func startPool(t *testing.T, workloads *runtime.Registry) *pool {
 	t.Helper()
+	return startPoolOver(t, workloads, func(store *storage.Store) coordinator.Store { return store })
+}
+
+// startPoolOver is startPool with the coordinator's view of its store
+// wrapped, for tests that make the store misbehave.
+func startPoolOver(t *testing.T, workloads *runtime.Registry, wrap func(*storage.Store) coordinator.Store) *pool {
+	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := storage.NewMemory()
-	coord := coordinator.New("coordinator", workloads, store, quiet)
+	logs := new(syncBuffer)
+	coord := coordinator.New(coordinator.Config{
+		ID: "coordinator", Workloads: workloads, Store: wrap(store), Retain: testRetain,
+		Log: slog.New(slog.NewTextHandler(logs, nil)),
+	})
 	gets := new(atomic.Int32)
-	srv := api.NewServer(coord, store, grpc.StreamInterceptor(countBlobGets(gets)))
+	srv := api.NewServer(api.Config{Coordinator: coord, Store: store}, grpc.StreamInterceptor(countBlobGets(gets)))
 	go srv.Serve(lis)
 	t.Cleanup(func() {
 		srv.Stop()
@@ -93,7 +130,7 @@ func startPool(t *testing.T, workloads *runtime.Registry) *pool {
 		t: t, ctx: ctx, addr: lis.Addr().String(), workloads: workloads,
 		client: pb.NewNodeServiceClient(conn), blobs: pb.NewBlobServiceClient(conn),
 		store: store, blobGets: gets, workerStores: make(map[string]*storage.Store),
-		coord: coord, conn: conn,
+		coord: coord, conn: conn, logs: logs,
 	}
 }
 
