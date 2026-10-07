@@ -46,8 +46,10 @@ type reciprocity struct {
 
 	mu sync.Mutex
 	// news is closed, and replaced, when something may have changed: this
-	// node's trust in another, or another's in this one.
+	// node's trust in another, or another's in this one. told counts how
+	// often, so that news arriving while nobody was waiting is not missed.
 	news chan struct{}
+	told int
 	// employed holds the nodes this one is working for right now.
 	employed map[string]bool
 }
@@ -58,22 +60,36 @@ type reciprocity struct {
 func (r *reciprocity) nudge() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.told++
 	close(r.news)
 	r.news = make(chan struct{})
 }
 
 // pause waits for the usual interval, for news, or for ctx to end, and
-// reports whether ctx has.
-func (r *reciprocity) pause(ctx context.Context) (ended bool) {
+// reports whether ctx has. heard is how much news the caller had heard of
+// when it last looked, and is brought up to date: if there has been more
+// since, there is no waiting to do.
+func (r *reciprocity) pause(ctx context.Context, heard *int) (ended bool) {
 	r.mu.Lock()
-	news := r.news
+	news, fresh := r.news, r.told != *heard
+	*heard = r.told
 	r.mu.Unlock()
+	if fresh {
+		return ctx.Err() != nil
+	}
 	select {
 	case <-time.After(r.every):
 	case <-news:
 	case <-ctx.Done():
 	}
 	return ctx.Err() != nil
+}
+
+// heardSoFar is how much news there has been, for a caller about to look.
+func (r *reciprocity) heardSoFar() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.told
 }
 
 // workingFor reports whether this node is working for the given one now.
@@ -104,6 +120,7 @@ func (r *reciprocity) run(ctx context.Context) {
 	}
 	working := make(map[string]engagement)
 	for {
+		heard := r.heardSoFar()
 		trusted := r.trusted()
 		for id, e := range working {
 			if !slices.Contains(trusted, id) {
@@ -125,7 +142,7 @@ func (r *reciprocity) run(ctx context.Context) {
 				r.workFor(for_, id)
 			}()
 		}
-		if r.pause(ctx) {
+		if r.pause(ctx, &heard) {
 			for _, e := range working {
 				e.stop()
 				<-e.ended
@@ -139,6 +156,7 @@ func (r *reciprocity) run(ctx context.Context) {
 // ends.
 func (r *reciprocity) workFor(ctx context.Context, id string) {
 	for {
+		heard := r.heardSoFar()
 		for _, addr := range r.addresses(id) {
 			if !r.ask(ctx, id, addr) {
 				continue
@@ -150,7 +168,7 @@ func (r *reciprocity) workFor(ctx context.Context, id string) {
 			r.log.Info("stopped working for a node", "node", id, "reason", err)
 			break
 		}
-		if r.pause(ctx) {
+		if r.pause(ctx, &heard) {
 			return
 		}
 	}
