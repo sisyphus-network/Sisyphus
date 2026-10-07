@@ -132,6 +132,8 @@ message Job {
   repeated string output_blobs = 10;
   // The mean of its tasks' progress, from 0 to 1.
   double progress = 11;
+  // Whether the job is private: submitted with a key, which is not here.
+  bool private = 12;
 }
 
 // JobEvent is one thing that happened to a job: a step in its life, or a

@@ -19,6 +19,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
 
 // The local API is how a desktop client on the same machine watches and
@@ -71,6 +72,13 @@ type LocalConfig struct {
 	Store         FileStore
 	Files         FileList
 	MaxStoreBytes uint64
+	// SealingKey, if set, returns the key this node seals private files
+	// and jobs with, making one the first time it is asked.
+	SealingKey func() (sealed.Key, error)
+	// Join, if set, has the node join the pool of the node at an address
+	// with an invitation from it, and says which node that is and what
+	// the node was admitted as. A node that runs no worker has none.
+	Join func(ctx context.Context, address, invitation string) (id string, role access.Role, err error)
 	// Token is what a caller must present to change anything.
 	Token string
 	// Poll is how often a peer watcher is checked for news. Zero means once
@@ -223,10 +231,18 @@ func (s *localService) SubmitJob(ctx context.Context, req *nodepb.SubmitJobReque
 	if s.cfg.Jobs == nil {
 		return nil, errNoPool
 	}
-	job, err := s.cfg.Jobs.Submit(ctx, &pb.JobSpec{
+	spec := &pb.JobSpec{
 		Workload: req.GetWorkload(), Params: req.GetParams(), Mode: pb.ScheduleMode(req.GetMode()), MaxTasks: req.GetMaxTasks(),
 		TaskTimeoutSeconds: req.GetTaskTimeoutSeconds(), MinMemoryBytes: req.GetMinMemoryBytes(), MinGpus: req.GetMinGpus(),
-	})
+	}
+	if req.GetPrivate() {
+		key, err := s.sealingKey()
+		if err != nil {
+			return nil, err
+		}
+		spec.Key = key[:]
+	}
+	job, err := s.cfg.Jobs.Submit(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -315,6 +331,7 @@ func localJob(job *pb.Job) *nodepb.Job {
 		InputBlobs: job.GetInputBlobs(), OutputBlobs: job.GetOutputBlobs(),
 		Progress: job.GetProgress(), TaskTimeoutSeconds: job.GetSpec().GetTaskTimeoutSeconds(),
 		MinMemoryBytes: job.GetSpec().GetMinMemoryBytes(), MinGpus: job.GetSpec().GetMinGpus(),
+		Private: job.GetPrivate(),
 	}
 	for _, task := range job.GetTasks() {
 		out.Tasks = append(out.Tasks, &nodepb.JobTask{

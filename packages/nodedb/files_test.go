@@ -15,7 +15,7 @@ func TestStoredFilesAreKeptAcrossReopening(t *testing.T) {
 	// Times come back in the machine's own zone.
 	at := submitted.Local()
 	old := File{CID: "bafyold", Name: "old.txt", Size: 10, Stored: at}
-	new := File{CID: "bafynew", Name: "new.txt", Size: 1 << 40, Stored: at.Add(time.Minute)}
+	new := File{CID: "bafynew", Name: "new.txt", Size: 1 << 40, Stored: at.Add(time.Minute), Private: true}
 	for _, f := range []File{old, new} {
 		if err := db.AddFile(f); err != nil {
 			t.Fatal(err)
@@ -48,7 +48,7 @@ func TestStoredFilesAreKeptAcrossReopening(t *testing.T) {
 
 func TestFileListFailuresAreReported(t *testing.T) {
 	db, _ := newDB(t)
-	loosen(t, db, "files", "cid, name, size_bytes, stored_at_ns")
+	loosen(t, db, "files", "cid, name, size_bytes, stored_at_ns, private")
 	if _, err := db.Files(); err == nil || !strings.Contains(err.Error(), "load files") {
 		t.Errorf("with a damaged table: %v", err)
 	}

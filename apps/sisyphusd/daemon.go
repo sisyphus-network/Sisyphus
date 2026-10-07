@@ -43,6 +43,7 @@ import (
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
@@ -306,10 +307,11 @@ func runDaemon(ctx context.Context, args []string) error {
 		// The node listens on one port for two kinds of caller: its gRPC
 		// clients and workers, and the libp2p hosts of its pool's members,
 		// for which it relays so that two of them with no port open can
-		// still reach each other.
+		// still reach each other. The nodes whose work this one takes are
+		// let in too: it is in their pools, if not they in its own.
 		host, err = p2p.New(p2p.Config{Identity: ident, Listen: *listen, Relay: true, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
 			_, admitted := admitted.Role(id)
-			return admitted
+			return admitted || slices.Contains(takes.List(), id)
 		}})
 		if err != nil {
 			return err
@@ -325,6 +327,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		local.Pool = api.NewPoolAdmin(config)
 		local.Jobs = coord
 		local.Store, local.Files, local.MaxStoreBytes = store, db, *maxStore
+		local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
 		planningPool = coord
 		offered = func(workload string) bool {
 			return slices.ContainsFunc(coord.Nodes(), func(node *pb.NodeInfo) bool {
@@ -390,7 +393,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// One that has a port open for the purpose relays as the coordinator
 		// does, and every worker keeps a place on each member that relays.
 		host, err = p2p.New(p2p.Config{Identity: ident, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
-			if id == coordinatorID {
+			if id == coordinatorID || slices.Contains(takes.List(), id) {
 				return true
 			}
 			asking, cancel := context.WithTimeout(ctx, memberCheck)
@@ -429,6 +432,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			// from, whenever that node will have it. All of that shares the
 			// node's slots with the work it was started to do.
 			local.WorkFor = takes
+			local.Join = joinFromDesktop(*dataDir, ident, host.Connect, db, takes)
 			w.Limit, w.Pool = worker.NewSlots(*slots), coordinatorID
 			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, kubo: *useKubo, syncCache: *syncCache, maxCache: *maxCache}
 			mutual := newReciprocity(&reciprocity{

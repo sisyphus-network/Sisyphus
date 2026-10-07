@@ -79,6 +79,11 @@ service NodeService {
   rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
   // RemoveMember takes a node out of the pool and disconnects it.
   rpc RemoveMember(RemoveMemberRequest) returns (RemoveMemberResponse);
+
+  // JoinPool has this node join another node's pool with an invitation
+  // from it, and start working for it, beside whatever else it is doing.
+  // It is what a node started with --join does, without the restart.
+  rpc JoinPool(JoinPoolRequest) returns (JoinPoolResponse);
 }
 
 message GetNodeInfoRequest {}
@@ -237,6 +242,7 @@ message Job {
   uint32 task_timeout_seconds = 14;
   uint64 min_memory_bytes = 15;
   uint32 min_gpus = 16;
+  bool private = 17;
 }
 
 message JobTask {
@@ -266,6 +272,11 @@ message SubmitJobRequest {
   // many graphics cards. Zero asks nothing.
   uint64 min_memory_bytes = 6;
   uint32 min_gpus = 7;
+  // Make the job private: everything it stores is sealed with this node's
+  // key, and inputs stored as private files are opened with it. The pool's
+  // other members hold only what they cannot read; the workers that run
+  // the job's tasks are given the key.
+  bool private = 8;
 }
 
 message SubmitJobResponse { Job job = 1; }
@@ -392,6 +403,10 @@ message StoreFileRequest {
   // What to call the file, in the first message.
   string name = 1;
   bytes data = 2;
+  // In the first message: seal the file with this node's key before it is
+  // stored, so that the rest of the pool holds only what it cannot read.
+  // Give it to jobs submitted as private.
+  bool private = 3;
 }
 
 message File {
@@ -399,6 +414,7 @@ message File {
   string name = 2;
   uint64 size_bytes = 3;
   int64 stored_at_ms = 4;
+  bool private = 5;
 }
 
 message FetchFileRequest { string cid = 1; }
@@ -446,3 +462,16 @@ message PoolMember {
 message RemoveMemberRequest { string peer_id = 1; }
 
 message RemoveMemberResponse {}
+
+message JoinPoolRequest {
+  // Where the other node listens, as host:port.
+  string address = 1;
+  // What its owner made with CreateInvitation or `pool invite`.
+  string invitation = 2;
+}
+
+message JoinPoolResponse {
+  // The node whose pool was joined.
+  string peer_id = 1;
+  PoolRole role = 2;
+}

@@ -332,6 +332,8 @@ What it shows, in this daemon's terms:
 | bootstrap peers | The node's address book: the addresses it connects to each time it starts. |
 | files | What was put in the pool's store through the app: kept until removed, listed by name, and given to jobs by CID. The same store `blob put` and `blob get` use. |
 | invitation, members | `pool invite`, `pool members` and `pool remove`, from the app. |
+| private | A file or job sealed with the key the node keeps in `private.key` in its data directory, made the first time one is asked for. The same as `--key-file` with that file. Lose the file and what it sealed is lost. |
+| join a pool | `pool join` and a restart with `--join`, without the restart: the node redeems an invitation, says it takes that node's work, and starts on it. |
 | country | Empty unless the node was started with `--locate-country`. Finding it means asking ipapi.co, which thereby learns the node's address, so it is not done unasked. |
 
 Anything on the machine can read from the local API. Changing something needs the token in `api.token` in the data directory, which the daemon makes on first use and only its own user can read. The desktop app looks for it in the daemon's default data directory, or in the file named by `SISYPHUS_API_TOKEN_FILE`.
