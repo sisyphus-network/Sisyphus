@@ -242,3 +242,55 @@ func TestMultiaddrs(t *testing.T) {
 		}
 	}
 }
+
+func TestTheDesktopSubmitsAJobAndWatchesItRun(t *testing.T) {
+	dataDir := t.TempDir()
+	addr, apiAddr := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--slots", "2", "--api-listen", apiAddr)
+	client := desktop(t, apiAddr)
+	poolAsSeenBy(t, client)
+	ctx := tokenOf(t, dataDir)
+
+	info, err := client.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil || !slices.Contains(info.GetWorkloads(), "primes") || !slices.Contains(info.GetWorkloads(), "wordcount") {
+		t.Fatalf("node info %v, %v", info, err)
+	}
+	waitFor(t, func() bool {
+		workers, err := client.ListWorkers(ctx, &nodepb.ListWorkersRequest{})
+		return err == nil && len(workers.GetWorkers()) == 1 && workers.GetWorkers()[0].GetName() == "rig" && workers.GetWorkers()[0].GetTaskSlots() == 2
+	})
+
+	// A job from the command line first, then one from the desktop.
+	mustCLI(t, "job", "submit", "--addr", addr, "--params", `{"from":0,"to":100}`)
+	watching, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := client.WatchJobs(watching, &nodepb.WatchJobsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first, err := stream.Recv(); err != nil || len(first.GetJobs()) != 1 || string(first.GetJobs()[0].GetResult()) != `{"count":25}` {
+		t.Fatalf("jobs on record before the desktop's: %v, %v", first, err)
+	}
+	submitted, err := client.SubmitJob(ctx, &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":2000000}`), MaxTasks: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := submitted.GetJob().GetJobId()
+	// The watcher sees it through to the end, newest job first.
+	for {
+		update, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if newest := update.GetJobs()[0]; newest.GetJobId() == id && newest.GetState() == nodepb.JobState_JOB_STATE_SUCCEEDED {
+			if string(newest.GetResult()) != primesBelowTwoMillion || len(newest.GetTasks()) != 4 || newest.GetTasks()[0].GetWorkerName() != "rig" || len(update.GetJobs()) != 2 {
+				t.Errorf("the finished job: %v", newest)
+			}
+			break
+		}
+	}
+	got, err := client.GetJob(ctx, &nodepb.GetJobRequest{JobId: id})
+	if err != nil || got.GetJob().GetFinishedAtMs() < got.GetJob().GetCreatedAtMs() {
+		t.Errorf("GetJob = %v, %v", got, err)
+	}
+}

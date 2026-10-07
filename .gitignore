@@ -1,6 +1,7 @@
 /bin/
 /coverage.out
 /sisyphus-pool/
+/sisyphus-desktop-pool/
 *.key
 
 # Rust workspace build artifacts

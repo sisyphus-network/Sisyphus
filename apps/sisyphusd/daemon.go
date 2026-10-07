@@ -139,7 +139,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	stopped := make(chan error, 2)
 
 	// local is what the desktop client on this machine is told and may do.
-	local := api.LocalConfig{NodeID: ident.ID(), Version: version}
+	local := api.LocalConfig{NodeID: ident.ID(), Version: version, Workloads: workloads.Names()}
 
 	// coordinatorID is the ID of the node this one's worker answers to: the
 	// node itself, or for a worker-only node the coordinator it joined.
@@ -302,6 +302,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		srv := api.NewServer(config)
 		local.Pool = api.NewPoolAdmin(config)
+		local.Jobs = coord
 		local.Peers = func() []*nodepb.Peer { return poolPeers(ident.ID(), coord.Nodes(), admitted.Members()) }
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish. The coordinator is closed first, so that it knows

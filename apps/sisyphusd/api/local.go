@@ -11,10 +11,12 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 // The local API is how a desktop client on the same machine watches and
@@ -51,6 +53,10 @@ type LocalConfig struct {
 	// Country returns the two-letter code of the country the node is in,
 	// if it has been allowed to find out, and otherwise nothing.
 	Country func() string
+	// Jobs, if set, is the pool this node coordinates, for the calls about
+	// its workers and jobs. Workloads are the workloads the node knows.
+	Jobs      JobControl
+	Workloads []string
 	// WorkFor, if set, is the list of nodes this one takes work from. A
 	// node that runs no worker has none.
 	WorkFor WorkFor
@@ -67,6 +73,15 @@ type AddressBook interface {
 	BootstrapPeers() ([]nodedb.BootstrapPeer, error)
 	SetBootstrapPeers([]nodedb.BootstrapPeer) error
 	AddBootstrapPeer(nodedb.BootstrapPeer) error
+}
+
+// JobControl is what the local API needs of a coordinator. A
+// coordinator.Coordinator is one.
+type JobControl interface {
+	Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, error)
+	Get(jobID string) (*pb.Job, error)
+	Jobs() []*pb.Job
+	Nodes() []*pb.NodeInfo
 }
 
 // WorkFor is the list of nodes a node is willing to take tasks from. It
@@ -109,7 +124,7 @@ type localService struct {
 
 func (s *localService) GetNodeInfo(context.Context, *nodepb.GetNodeInfoRequest) (*nodepb.GetNodeInfoResponse, error) {
 	return &nodepb.GetNodeInfoResponse{
-		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, ListenAddresses: s.cfg.Listen(), CountryCode: s.cfg.Country(),
+		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, ListenAddresses: s.cfg.Listen(), CountryCode: s.cfg.Country(), Workloads: s.cfg.Workloads,
 	}, nil
 }
 
@@ -120,28 +135,145 @@ func (s *localService) ListPeers(context.Context, *nodepb.ListPeersRequest) (*no
 // WatchPeers sends the peers as they stand and again, in full, whenever
 // they change, with a revision that counts up from one.
 func (s *localService) WatchPeers(_ *nodepb.WatchPeersRequest, stream grpc.ServerStreamingServer[nodepb.ListPeersResponse]) error {
-	last := &nodepb.ListPeersResponse{Peers: s.cfg.Peers(), Revision: 1}
-	if err := stream.Send(last); err != nil {
+	return watch(stream.Context(), s.cfg.Poll,
+		func() *nodepb.ListPeersResponse { return &nodepb.ListPeersResponse{Peers: s.cfg.Peers()} },
+		func(now *nodepb.ListPeersResponse, revision uint64) error {
+			return stream.Send(&nodepb.ListPeersResponse{Peers: now.GetPeers(), Revision: revision})
+		})
+}
+
+// watch sends what current returns at once and again whenever it has
+// changed, numbering what it sends from one, until ctx ends or a send fails.
+func watch[T proto.Message](ctx context.Context, every time.Duration, current func() T, send func(now T, revision uint64) error) error {
+	last, revision := current(), uint64(1)
+	if err := send(last, revision); err != nil {
 		return err
 	}
-	poll := time.NewTicker(s.cfg.Poll)
+	poll := time.NewTicker(every)
 	defer poll.Stop()
 	for {
 		select {
 		case <-poll.C:
-			now := &nodepb.ListPeersResponse{Peers: s.cfg.Peers(), Revision: last.GetRevision()}
+			now := current()
 			if proto.Equal(now, last) {
 				continue
 			}
-			now.Revision++
-			if err := stream.Send(now); err != nil {
+			revision++
+			if err := send(now, revision); err != nil {
 				return err
 			}
 			last = now
-		case <-stream.Context().Done():
+		case <-ctx.Done():
 			return nil
 		}
 	}
+}
+
+// errNoPool is the answer to a call about a pool on a node that runs none.
+var errNoPool = status.Error(codes.FailedPrecondition, "this node coordinates no pool, so it has no workers or jobs of its own")
+
+// ListWorkers lists the nodes connected to this one as its workers.
+func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) (*nodepb.ListWorkersResponse, error) {
+	if s.cfg.Jobs == nil {
+		return nil, errNoPool
+	}
+	res := new(nodepb.ListWorkersResponse)
+	for _, node := range s.cfg.Jobs.Nodes() {
+		c := node.GetCapabilities()
+		res.Workers = append(res.Workers, &nodepb.Worker{
+			PeerId: node.GetNodeId(), Name: node.GetName(), Hostname: c.GetHostname(), Os: c.GetOs(), Arch: c.GetArch(),
+			CpuCores: c.GetCpuCores(), TaskSlots: c.GetTaskSlots(), RunningTasks: node.GetRunningTasks(), Workloads: c.GetWorkloads(),
+			Relays: len(node.GetRelayAddresses()) > 0, RelayedConnections: node.GetRelayedConnections(), RelayedBytes: node.GetRelayedBytes(),
+		})
+	}
+	return res, nil
+}
+
+// SubmitJob gives the pool a job. It spends the pool's time, so it needs
+// the node's token.
+func (s *localService) SubmitJob(ctx context.Context, req *nodepb.SubmitJobRequest) (*nodepb.SubmitJobResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.Jobs == nil {
+		return nil, errNoPool
+	}
+	job, err := s.cfg.Jobs.Submit(ctx, &pb.JobSpec{
+		Workload: req.GetWorkload(), Params: req.GetParams(), Mode: pb.ScheduleMode(req.GetMode()), MaxTasks: req.GetMaxTasks(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &nodepb.SubmitJobResponse{Job: localJob(job)}, nil
+}
+
+func (s *localService) GetJob(_ context.Context, req *nodepb.GetJobRequest) (*nodepb.GetJobResponse, error) {
+	if s.cfg.Jobs == nil {
+		return nil, errNoPool
+	}
+	job, err := s.cfg.Jobs.Get(req.GetJobId())
+	if err != nil {
+		return nil, err
+	}
+	return &nodepb.GetJobResponse{Job: localJob(job)}, nil
+}
+
+// ListJobs lists the jobs this node has on record, newest first.
+func (s *localService) ListJobs(context.Context, *nodepb.ListJobsRequest) (*nodepb.ListJobsResponse, error) {
+	if s.cfg.Jobs == nil {
+		return nil, errNoPool
+	}
+	return &nodepb.ListJobsResponse{Jobs: s.jobs(), Revision: 1}, nil
+}
+
+// WatchJobs sends the jobs as they stand and again, in full, whenever any
+// of them changes.
+func (s *localService) WatchJobs(_ *nodepb.WatchJobsRequest, stream grpc.ServerStreamingServer[nodepb.ListJobsResponse]) error {
+	if s.cfg.Jobs == nil {
+		return errNoPool
+	}
+	return watch(stream.Context(), s.cfg.Poll,
+		func() *nodepb.ListJobsResponse { return &nodepb.ListJobsResponse{Jobs: s.jobs()} },
+		func(now *nodepb.ListJobsResponse, revision uint64) error {
+			return stream.Send(&nodepb.ListJobsResponse{Jobs: now.GetJobs(), Revision: revision})
+		})
+}
+
+func (s *localService) jobs() []*nodepb.Job {
+	recorded := s.cfg.Jobs.Jobs()
+	jobs := make([]*nodepb.Job, 0, len(recorded))
+	for _, job := range recorded {
+		jobs = append(jobs, localJob(job))
+	}
+	return jobs
+}
+
+// localJob gives a job in the local API's own terms, which stand alone so
+// that a client needs only the one protocol file. The states and modes are
+// numbered as the pool's own are.
+func localJob(job *pb.Job) *nodepb.Job {
+	out := &nodepb.Job{
+		JobId: job.GetJobId(), Workload: job.GetSpec().GetWorkload(), Params: job.GetSpec().GetParams(),
+		Mode: nodepb.JobMode(job.GetSpec().GetMode()), State: nodepb.JobState(job.GetState()),
+		Result: job.GetResult(), Error: job.GetError(),
+		CreatedAtMs: millis(job.GetCreatedAt()), FinishedAtMs: millis(job.GetFinishedAt()),
+		InputBlobs: job.GetInputBlobs(), OutputBlobs: job.GetOutputBlobs(),
+	}
+	for _, task := range job.GetTasks() {
+		out.Tasks = append(out.Tasks, &nodepb.JobTask{
+			Index: task.GetIndex(), State: nodepb.JobState(task.GetState()), Attempt: task.GetAttempt(),
+			PeerId: task.GetNodeId(), WorkerName: task.GetNodeName(), Error: task.GetError(),
+		})
+	}
+	return out
+}
+
+// millis is a time as milliseconds since the Unix epoch, or zero for none.
+func millis(t *timestamppb.Timestamp) int64 {
+	if t == nil {
+		return 0
+	}
+	return t.AsTime().UnixMilli()
 }
 
 const noAddressBook = "this node keeps no address book"

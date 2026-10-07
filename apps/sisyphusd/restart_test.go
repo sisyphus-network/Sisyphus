@@ -551,3 +551,28 @@ func TestANodeForgetsOldJobsAndKeepsItsMembersAndInvitations(t *testing.T) {
 		t.Errorf("the old member list is still in place: %v", err)
 	}
 }
+
+func TestJobsAreListedNewestFirst(t *testing.T) {
+	journal := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
+	at := time.Now().Add(-time.Hour)
+	// Two submitted at the same instant, and one since.
+	for id, created := range map[string]time.Time{"twin-b": at, "twin-a": at, "latest": at.Add(time.Minute), "oldest": at.Add(-time.Minute)} {
+		job := jobmodel.New(id, "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, created)
+		if err := journal.SaveJob(job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	coord := coordinator.New(coordinator.Config{Workloads: runtime.Builtin(), Store: storage.NewMemory(), Journal: journal, Log: quiet})
+	defer coord.Close()
+	if _, err := coord.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, job := range coord.Jobs() {
+		order = append(order, job.GetJobId())
+	}
+	// Those of one instant keep a settled order, by ID.
+	if strings.Join(order, " ") != "latest twin-a twin-b oldest" {
+		t.Errorf("jobs listed as %v", order)
+	}
+}
