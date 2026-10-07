@@ -1,0 +1,1239 @@
+@import "tailwindcss";
+
+@keyframes asset-image-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -40% 0; }
+}
+
+.asset-image-shimmer {
+  background-color: var(--app-wash);
+  background-image: linear-gradient(110deg, transparent 34%, color-mix(in oklab, var(--app-ink) 10%, transparent) 48%, transparent 62%);
+  background-size: 220% 100%;
+  animation: asset-image-shimmer 1.45s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .asset-image-shimmer { animation: none; }
+}
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: light;
+  --app-bg: #fafafa;
+  --app-sidebar: #f4f4f5;
+  --app-ink: #18181b;
+  --app-muted: #71717a;
+  --app-subtle: #a1a1aa;
+  --app-line: #e4e4e7;
+  --app-border: #d4d4d8;
+  --app-card-base: #ffffff;
+  --app-card: var(--app-card-base);
+  --app-wash: #f4f4f5;
+  --app-user-bubble: #f4f4f5;
+  --app-user-border: #e4e4e7;
+  --app-placeholder: #a1a1aa;
+  --app-send-bg: #18181b;
+  --app-send-ink: #fafafa;
+  --app-orb-bg: #fafafa;
+  --app-accent: #18181b;
+  --app-accent-ink: #fafafa;
+  --app-accent-soft: #f4f4f5;
+  --paper: #fafafa;
+  --wash: #f4f4f5;
+  --ink: #18181b;
+  --muted: oklch(0.97 0 0);
+  --line: #d4d4d8;
+  --accent: #18181b;
+  --accent-light: #e4e4e7;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: var(--app-card);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --app-bg: #09090b;
+    --app-sidebar: #111113;
+    --app-ink: #fafafa;
+    --app-muted: #a1a1aa;
+    --app-subtle: #71717a;
+    --app-line: #27272a;
+    --app-border: #3f3f46;
+    --app-card-base: #18181b;
+    --app-wash: #27272a;
+    --app-user-bubble: #27272a;
+    --app-user-border: #3f3f46;
+    --app-placeholder: #71717a;
+    --app-send-bg: #f4f4f5;
+    --app-send-ink: #18181b;
+    --app-orb-bg: #09090b;
+    --app-accent: #fafafa;
+    --app-accent-ink: #18181b;
+    --app-accent-soft: #27272a;
+    --paper: #09090b;
+    --wash: #27272a;
+    --ink: #fafafa;
+    --muted: #a1a1aa;
+    --line: #27272a;
+  }
+}
+
+:root[data-theme="light"] .liquid-dock {
+  background-color: color-mix(in srgb, var(--app-card) 78%, var(--app-wash));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--app-card) 92%, transparent),
+    inset 1.8px 3px 0 -2px color-mix(in srgb, #fff 92%, transparent),
+    inset -2px -2px 0 -2px color-mix(in srgb, var(--app-border) 52%, transparent),
+    inset 0 -7px 1px -6px color-mix(in srgb, var(--app-border) 34%, transparent),
+    inset 0 3px 4px -2px color-mix(in srgb, var(--app-border) 22%, transparent),
+    0 3px 10px color-mix(in srgb, var(--app-ink) 12%, transparent),
+    0 7px 18px color-mix(in srgb, var(--app-ink) 7%, transparent);
+}
+
+:root[data-theme="light"] .liquid-dock__active {
+  background-color: color-mix(in srgb, var(--app-wash) 88%, #fff);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #fff 88%, transparent),
+    inset 2px 1px 0 -1px color-mix(in srgb, #fff 82%, transparent),
+    inset -1px 2px 3px -1px color-mix(in srgb, var(--app-border) 24%, transparent),
+    0 2px 7px color-mix(in srgb, var(--app-ink) 10%, transparent);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .liquid-dock {
+    background-color: color-mix(in srgb, var(--app-card) 78%, var(--app-wash));
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--app-card) 92%, transparent),
+      inset 1.8px 3px 0 -2px color-mix(in srgb, #fff 92%, transparent),
+      inset -2px -2px 0 -2px color-mix(in srgb, var(--app-border) 52%, transparent),
+      inset 0 -7px 1px -6px color-mix(in srgb, var(--app-border) 34%, transparent),
+      inset 0 3px 4px -2px color-mix(in srgb, var(--app-border) 22%, transparent),
+      0 3px 10px color-mix(in srgb, var(--app-ink) 12%, transparent),
+      0 7px 18px color-mix(in srgb, var(--app-ink) 7%, transparent);
+  }
+
+  :root:not([data-theme]) .liquid-dock__active {
+    background-color: color-mix(in srgb, var(--app-wash) 88%, #fff);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, #fff 88%, transparent),
+      inset 2px 1px 0 -1px color-mix(in srgb, #fff 82%, transparent),
+      inset -1px 2px 3px -1px color-mix(in srgb, var(--app-border) 24%, transparent),
+      0 2px 7px color-mix(in srgb, var(--app-ink) 10%, transparent);
+  }
+}
+
+/* Bridge the app palette to shadcn after all mode/accent presets have been declared. */
+:root:is([data-theme], [data-theme-style], .dark):is([data-theme], [data-theme-style], .dark),
+:root {
+  --background: var(--app-bg);
+  --foreground: var(--app-ink);
+  --card: var(--app-card);
+  --card-foreground: var(--app-ink);
+  --popover: var(--app-card);
+  --popover-foreground: var(--app-ink);
+  --primary: var(--app-accent);
+  --primary-foreground: var(--app-accent-ink);
+  --secondary: var(--app-wash);
+  --secondary-foreground: var(--app-ink);
+  --muted: var(--app-wash);
+  --muted-foreground: var(--app-muted);
+  --accent: var(--app-accent-soft);
+  --accent-foreground: var(--app-ink);
+  --border: var(--app-line);
+  --input: var(--app-border);
+  --ring: var(--app-accent);
+  --paper: var(--app-bg);
+  --wash: var(--app-wash);
+  --ink: var(--app-ink);
+  --line: var(--app-line);
+  --accent-light: var(--app-accent-soft);
+  --sidebar: var(--app-sidebar);
+  --sidebar-foreground: var(--app-ink);
+  --sidebar-primary: var(--app-accent);
+  --sidebar-primary-foreground: var(--app-accent-ink);
+  --sidebar-accent: var(--app-accent-soft);
+  --sidebar-accent-foreground: var(--app-ink);
+  --sidebar-border: var(--app-line);
+  --sidebar-ring: var(--app-accent);
+}
+
+/* Size illustrations against the space left after the stepper, not screen width alone. */
+.onboarding-panel {
+  container-type: size;
+  overscroll-behavior-y: contain;
+}
+
+.onboarding-welcome__avatar {
+  width: min(32vw, 19cqh, 12rem);
+}
+
+@media (min-width: 1024px) {
+  .onboarding-welcome__avatar {
+    width: min(24vw, 48cqh, 18rem);
+  }
+}
+
+@media (max-width: 1023px) {
+  .onboarding-panel__inner .onboarding-welcome {
+    gap: clamp(0.5rem, 2cqh, 1.25rem) !important;
+  }
+
+  .onboarding-welcome h1 {
+    font-size: clamp(1.75rem, 4.5cqh, 2.75rem);
+    line-height: 1.1;
+  }
+
+  .onboarding-welcome .mt-4,
+  .onboarding-welcome .mt-7,
+  .onboarding-welcome .mt-8 {
+    margin-top: clamp(0.5rem, 2cqh, 1rem) !important;
+  }
+
+  .onboarding-welcome .leading-7 {
+    line-height: 1.5;
+  }
+
+  .onboarding-welcome li {
+    padding-block: clamp(0.4rem, 1.3cqh, 0.75rem);
+  }
+}
+
+/* Exceptional text/viewport sizes may scroll rather than lose the final action. */
+.onboarding-panel__inner {
+  padding-block: clamp(0.5rem, 2cqh, 1.25rem);
+}
+
+.onboarding-experience .onboarding-panel .onboarding-panel__inner {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom)) !important;
+}
+
+@media (max-height: 760px) {
+  .onboarding-experience {
+    padding-top: 0.5rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner {
+    padding-block: 0.35rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .mt-8 {
+    margin-top: 1rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .mt-7 {
+    margin-top: 0.9rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .mt-6 {
+    margin-top: 0.75rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .size-20 {
+    width: 4rem !important;
+    height: 4rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner h1 {
+    font-size: clamp(1.75rem, 5vw, 3rem) !important;
+    line-height: 1.05 !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .min-h-24 {
+    min-height: 4.5rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .min-h-48 {
+    min-height: 9rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .min-h-56 {
+    min-height: 10rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .h-14 {
+    height: 3.25rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .leading-7 {
+    line-height: 1.45 !important;
+  }
+}
+
+@media (max-height: 620px) {
+  .onboarding-experience .onboarding-panel__inner {
+    zoom: 0.88;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .mt-5 {
+    margin-top: 0.5rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .mt-4 {
+    margin-top: 0.5rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .mt-3 {
+    margin-top: 0.35rem !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .onboarding-stepper > nav {
+    padding-top: 0 !important;
+    padding-bottom: 0.5rem !important;
+  }
+
+  .onboarding-stepper > nav ol > li {
+    gap: 0.25rem;
+  }
+
+  .onboarding-stepper > nav ol > li > span:first-child {
+    width: 2rem !important;
+    height: 2rem !important;
+  }
+
+  .onboarding-stepper > nav ol > li > span:last-child {
+    font-size: 0.55rem !important;
+    line-height: 1.1 !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner {
+    padding-block: 0.25rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .text-4xl {
+    font-size: clamp(1.8rem, 8vw, 2.4rem) !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .gap-8 {
+    gap: 1rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .gap-7 {
+    gap: 0.75rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .py-4 {
+    padding-block: 0.25rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .leading-6 {
+    line-height: 1.35 !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .leading-7 {
+    line-height: 1.4 !important;
+  }
+
+  .onboarding-experience .onboarding-companion-card {
+    min-height: 0 !important;
+    padding: 0.7rem !important;
+    gap: 0.7rem !important;
+  }
+
+  .onboarding-experience .onboarding-companion-avatar {
+    width: 5.25rem !important;
+    flex: 0 0 5.25rem;
+  }
+
+  .onboarding-experience .onboarding-companion-copy strong {
+    font-size: 1.15rem !important;
+    line-height: 1.1 !important;
+  }
+
+  .onboarding-experience .onboarding-companion-copy .mt-3 {
+    margin-top: 0.35rem !important;
+  }
+
+  .onboarding-experience .onboarding-companion-copy .leading-6 {
+    font-size: 0.72rem !important;
+    line-height: 1.3 !important;
+  }
+}
+
+@media (max-width: 640px) and (max-height: 820px) {
+  .onboarding-experience .onboarding-panel__inner {
+    zoom: 0.9;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .mt-8 {
+    margin-top: 0.75rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .mt-7 {
+    margin-top: 0.65rem !important;
+  }
+
+  .onboarding-experience .onboarding-panel__inner .mt-6 {
+    margin-top: 0.5rem !important;
+  }
+}
+
+@media (max-width: 640px) and (min-height: 700px) {
+  .onboarding-experience[data-locale="pl"] .onboarding-panel__inner,
+  .onboarding-experience[data-locale="ru"] .onboarding-panel__inner,
+  .onboarding-experience[data-locale="fr"] .onboarding-panel__inner {
+    zoom: 0.94;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --app-bg: #fafafa;
+  --app-sidebar: #f4f4f5;
+  --app-ink: #18181b;
+  --app-muted: #71717a;
+  --app-subtle: #a1a1aa;
+  --app-line: #e4e4e7;
+  --app-border: #d4d4d8;
+  --app-card-base: #ffffff;
+  --app-wash: #f4f4f5;
+  --app-user-bubble: #f4f4f5;
+  --app-user-border: #e4e4e7;
+  --app-placeholder: #a1a1aa;
+  --app-send-bg: #18181b;
+  --app-send-ink: #fafafa;
+  --app-orb-bg: #fafafa;
+  --app-accent: #18181b;
+  --app-accent-ink: #fafafa;
+  --app-accent-soft: #f4f4f5;
+  --paper: #fafafa;
+  --wash: #f4f4f5;
+  --ink: #18181b;
+  --muted: #71717a;
+  --line: #d4d4d8;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --app-bg: #09090b;
+  --app-sidebar: #111113;
+  --app-ink: #fafafa;
+  --app-muted: #a1a1aa;
+  --app-subtle: #71717a;
+  --app-line: #27272a;
+  --app-border: #3f3f46;
+  --app-card-base: #18181b;
+  --app-wash: #27272a;
+  --app-user-bubble: #27272a;
+  --app-user-border: #3f3f46;
+  --app-placeholder: #71717a;
+  --app-send-bg: #f4f4f5;
+  --app-send-ink: #18181b;
+  --app-orb-bg: #09090b;
+  --app-accent: #fafafa;
+  --app-accent-ink: #18181b;
+  --app-accent-soft: #27272a;
+  --paper: #09090b;
+  --wash: #27272a;
+  --ink: #fafafa;
+  --muted: #a1a1aa;
+  --line: #27272a;
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --sidebar: #111113;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #fafafa;
+  --sidebar-primary-foreground: #18181b;
+  --sidebar-accent: #27272a;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #3f3f46;
+  --sidebar-ring: #71717a;
+}
+
+:root[data-theme-style="blue"] {
+  --app-accent: #4f8cff;
+  --app-accent-ink: #ffffff;
+  --app-accent-soft: #e8f0ff;
+  --app-bg: #f9fbff;
+  --app-wash: #edf4ff;
+  --app-line: #dbe7ff;
+  --app-border: #c7d8ff;
+  --app-user-bubble: #edf4ff;
+  --app-user-border: #dbe7ff;
+  --app-send-bg: #4f8cff;
+  --app-send-ink: #ffffff;
+  --app-card-base: #ffffff;
+  --app-sidebar: #f3f7ff;
+  --app-orb-bg: #edf4ff;
+}
+
+:root[data-theme-style="pink"] {
+  --app-accent: #e968a5;
+  --app-accent-ink: #ffffff;
+  --app-accent-soft: #ffe8f2;
+  --app-bg: #fffafd;
+  --app-wash: #fff0f6;
+  --app-line: #f6dce9;
+  --app-border: #efbfd3;
+  --app-user-bubble: #fff0f6;
+  --app-user-border: #f6dce9;
+  --app-send-bg: #e968a5;
+  --app-send-ink: #ffffff;
+  --app-card-base: #ffffff;
+  --app-sidebar: #fff4f8;
+  --app-orb-bg: #fff0f6;
+}
+
+:root[data-theme="dark"][data-theme-style="blue"] {
+  --app-accent: #83adff;
+  --app-accent-ink: #0b1220;
+  --app-accent-soft: #1d2b45;
+  --app-bg: #090d16;
+  --app-wash: #17243b;
+  --app-line: #263958;
+  --app-border: #38527c;
+  --app-user-bubble: #17243b;
+  --app-user-border: #263958;
+  --app-send-bg: #83adff;
+  --app-send-ink: #0b1220;
+  --app-card-base: #111a2a;
+  --app-sidebar: #0d1422;
+  --app-orb-bg: #101b2e;
+}
+
+:root[data-theme="dark"][data-theme-style="pink"] {
+  --app-accent: #f59ac4;
+  --app-accent-ink: #2a0d1c;
+  --app-accent-soft: #452034;
+  --app-bg: #150b11;
+  --app-wash: #34202b;
+  --app-line: #543242;
+  --app-border: #75445a;
+  --app-user-bubble: #34202b;
+  --app-user-border: #543242;
+  --app-send-bg: #f59ac4;
+  --app-send-ink: #2a0d1c;
+  --app-card-base: #21131c;
+  --app-sidebar: #160b12;
+  --app-orb-bg: #2a1823;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme])[data-theme-style="blue"] {
+    --app-accent: #83adff;
+    --app-accent-ink: #0b1220;
+    --app-accent-soft: #1d2b45;
+    --app-bg: #090d16;
+    --app-wash: #17243b;
+    --app-line: #263958;
+    --app-border: #38527c;
+    --app-user-bubble: #17243b;
+    --app-user-border: #263958;
+    --app-send-bg: #83adff;
+    --app-send-ink: #0b1220;
+    --app-card-base: #111a2a;
+    --app-sidebar: #0d1422;
+    --app-orb-bg: #101b2e;
+  }
+
+  :root:not([data-theme])[data-theme-style="pink"] {
+    --app-accent: #f59ac4;
+    --app-accent-ink: #2a0d1c;
+    --app-accent-soft: #452034;
+    --app-bg: #150b11;
+    --app-wash: #34202b;
+    --app-line: #543242;
+    --app-border: #75445a;
+    --app-user-bubble: #34202b;
+    --app-user-border: #543242;
+    --app-send-bg: #f59ac4;
+    --app-send-ink: #2a0d1c;
+    --app-card-base: #21131c;
+    --app-sidebar: #160b12;
+    --app-orb-bg: #2a1823;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --sidebar: #111113;
+    --sidebar-foreground: #fafafa;
+    --sidebar-primary: #fafafa;
+    --sidebar-primary-foreground: #18181b;
+    --sidebar-accent: #27272a;
+    --sidebar-accent-foreground: #fafafa;
+    --sidebar-border: #3f3f46;
+    --sidebar-ring: #71717a;
+  }
+}
+
+@theme inline {
+  --color-background: var(--paper);
+  --color-foreground: var(--ink);
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-heading: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+body {
+  background: var(--app-bg);
+  color: var(--app-ink);
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+.theme-mode-preload-icon,
+.theme-mode-preload-label {
+  display: none;
+}
+
+:root[data-sisyphus-theme-hydrated] .theme-mode-preload-icon,
+:root[data-sisyphus-theme-hydrated] .theme-mode-preload-label {
+  display: none !important;
+}
+
+:root:not([data-sisyphus-theme-hydrated]) .theme-mode-react {
+  display: none !important;
+}
+
+:root:not([data-sisyphus-theme-mode]) [data-theme-mode="system"].theme-mode-preload-icon,
+:root[data-sisyphus-theme-mode="system"] [data-theme-mode="system"].theme-mode-preload-icon,
+:root[data-sisyphus-theme-mode="light"] [data-theme-mode="light"].theme-mode-preload-icon,
+:root[data-sisyphus-theme-mode="dark"] [data-theme-mode="dark"].theme-mode-preload-icon {
+  display: inline-flex;
+}
+
+@media (min-width: 640px) {
+  :root:not([data-sisyphus-theme-mode]) [data-theme-mode="system"].theme-mode-preload-label,
+  :root[data-sisyphus-theme-mode="system"] [data-theme-mode="system"].theme-mode-preload-label,
+  :root[data-sisyphus-theme-mode="light"] [data-theme-mode="light"].theme-mode-preload-label,
+  :root[data-sisyphus-theme-mode="dark"] [data-theme-mode="dark"].theme-mode-preload-label {
+    display: inline;
+  }
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.28;
+  background-image: linear-gradient(rgba(49, 93, 57, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(49, 93, 57, 0.05) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: linear-gradient(to bottom, black, transparent 75%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a, button { transition-duration: 180ms; }
+}
+
+.assistant-typing {
+  text-shadow: 0 1px 0 color-mix(in srgb, var(--app-card) 75%, transparent), 0 6px 18px color-mix(in srgb, var(--app-ink) 12%, transparent);
+}
+
+:root[data-theme="light"] .auth-orb-monochrome {
+  filter: invert(1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .auth-orb-monochrome {
+    filter: invert(1);
+  }
+}
+
+.assistant-empty-orb {
+  -webkit-mask-image: radial-gradient(circle closest-side, #000 0 80%, transparent 100%);
+  mask-image: radial-gradient(circle closest-side, #000 0 80%, transparent 100%);
+}
+
+.coach-asset-shimmer {
+  border-radius: 48% 52% 44% 56% / 54% 45% 55% 46%;
+  background: linear-gradient(112deg, var(--app-wash) 18%, color-mix(in srgb, var(--app-card) 82%, transparent) 42%, var(--app-wash) 62%);
+  background-size: 220% 100%;
+  animation: coach-asset-shimmer 1.7s ease-in-out infinite;
+}
+
+.onboarding-mobile-progress__track {
+  isolation: isolate;
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--app-ink) 12%, transparent);
+}
+
+.onboarding-mobile-progress__fill {
+  min-width: 0.7rem;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--app-accent) 38%, transparent), inset 0 1px 0 color-mix(in srgb, var(--app-accent-ink) 42%, transparent);
+}
+
+@keyframes coach-asset-shimmer {
+  0%, 100% { background-position: 100% 50%; opacity: 0.58; }
+  50% { background-position: 0% 50%; opacity: 0.9; }
+}
+
+.assistant-orb-static {
+  display: grid;
+  place-items: center;
+  background: transparent;
+}
+
+.assistant-orb-active {
+  border: 0;
+  padding: 0;
+  border-radius: 999px;
+  -webkit-mask-image: radial-gradient(circle closest-side, #000 0 70%, transparent 84%);
+  mask-image: radial-gradient(circle closest-side, #000 0 70%, transparent 84%);
+}
+
+.assistant-orb-static-mark {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 36% 32%, color-mix(in srgb, var(--app-muted) 46%, var(--app-card)), color-mix(in srgb, var(--app-muted) 14%, var(--app-card)) 72%);
+  box-shadow: 0 1px 5px color-mix(in srgb, var(--app-ink) 8%, transparent);
+  opacity: 0.72;
+}
+
+/* Keep native scrolling and let explicit scrollbar-hiding utilities take precedence. */
+@layer base {
+  @media (forced-colors: none) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--app-muted) 65%, var(--app-accent)) transparent;
+    }
+
+    @supports selector(::-webkit-scrollbar) {
+      * {
+        /* Standard properties otherwise override WebKit's rounded thumb styling. */
+        scrollbar-width: auto;
+        scrollbar-color: auto;
+      }
+
+      *::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+
+      *::-webkit-scrollbar-track,
+      *::-webkit-scrollbar-corner {
+        background: transparent;
+      }
+
+      *::-webkit-scrollbar-thumb {
+        min-height: 32px;
+        min-width: 32px;
+        border: 3px solid transparent;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--app-muted) 65%, var(--app-accent));
+        background-clip: padding-box;
+      }
+
+      *::-webkit-scrollbar-thumb:hover {
+        background-color: color-mix(in srgb, var(--app-muted) 30%, var(--app-accent));
+      }
+
+      *::-webkit-scrollbar-thumb:active {
+        background-color: var(--app-accent);
+      }
+    }
+  }
+}
+
+.liquid-dock-wrap {
+  position: relative;
+  width: 244px;
+  max-width: 100%;
+  margin-bottom: 10px;
+  font-family: "DM Sans", sans-serif;
+}
+
+.liquid-dock {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 244px;
+  max-width: 100%;
+  height: 70px;
+  box-sizing: border-box;
+  padding: 8px 12px 10px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--app-card) 28%, transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  backdrop-filter: blur(8px) saturate(150%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--app-card) 28%, transparent),
+    inset 1.8px 3px 0 -2px color-mix(in srgb, var(--app-card) 78%, transparent),
+    inset -2px -2px 0 -2px color-mix(in srgb, var(--app-card) 64%, transparent),
+    inset -3px -8px 1px -6px color-mix(in srgb, var(--app-card) 48%, transparent),
+    inset -0.3px -1px 4px color-mix(in srgb, #000 12%, transparent),
+    inset 0 3px 4px -2px color-mix(in srgb, #000 18%, transparent),
+    0 1px 5px color-mix(in srgb, #000 10%, transparent),
+    0 6px 16px color-mix(in srgb, #000 8%, transparent);
+}
+
+.liquid-dock__active {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 0;
+  display: block;
+  width: 84px;
+  height: calc(100% - 10px);
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--app-wash) 72%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--app-card) 30%, transparent),
+    inset 2px 1px 0 -1px color-mix(in srgb, var(--app-card) 72%, transparent),
+    inset -1.5px -1px 0 -1px color-mix(in srgb, var(--app-card) 60%, transparent),
+    inset -1px 2px 3px -1px color-mix(in srgb, #000 16%, transparent),
+    0 3px 6px color-mix(in srgb, #000 8%, transparent);
+  transform: translateX(calc(var(--liquid-index) * -76px));
+  transform-origin: right center;
+  transition: transform 400ms cubic-bezier(1, 0, 0.4, 1), background-color 90ms linear, box-shadow 90ms linear;
+  animation: liquid-scale-toggle 440ms ease;
+}
+
+.liquid-dock[data-active="false"] .liquid-dock__active {
+  opacity: 0;
+  transform: translateX(calc(var(--liquid-index) * -76px)) scale(0.82, 0.9);
+  pointer-events: none;
+}
+
+.liquid-dock[data-previous="2"] .liquid-dock__active,
+.liquid-dock[data-previous="1"] .liquid-dock__active {
+  transform-origin: left center;
+}
+
+.liquid-dock__option {
+  --liquid-option-color: var(--app-muted);
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border-radius: 999px;
+  color: var(--liquid-option-color);
+  transition: color 90ms linear;
+}
+
+.liquid-dock__option:hover {
+  --liquid-option-color: var(--app-ink);
+  cursor: pointer;
+}
+
+.liquid-dock__option[data-active="true"] {
+  --liquid-option-color: var(--app-ink);
+  cursor: default;
+}
+
+.liquid-dock__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(100%);
+  white-space: nowrap;
+}
+
+.liquid-dock__link {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.liquid-dock__icon {
+  display: block;
+  color: var(--liquid-option-color);
+  transition: transform 200ms cubic-bezier(0.5, 0, 0, 1), color 90ms linear;
+}
+
+.liquid-dock__option:hover .liquid-dock__icon {
+  transform: scale(1.2);
+}
+
+.liquid-dock__option[data-active="true"] .liquid-dock__icon {
+  transform: scale(1);
+}
+
+.liquid-dock-wrap--single,
+.liquid-dock-wrap--single .liquid-dock {
+  width: 84px;
+}
+
+.liquid-dock-wrap--single .liquid-dock {
+  justify-content: center;
+  padding-inline: 8px;
+}
+
+.liquid-dock-wrap--single .liquid-dock__active {
+  width: calc(100% - 8px);
+}
+
+.app-skeleton {
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--app-wash) 62%, transparent) 28%,
+    color-mix(in srgb, var(--app-card) 88%, var(--app-wash)) 48%,
+    color-mix(in srgb, var(--app-wash) 62%, transparent) 68%
+  );
+  background-size: 220% 100%;
+  animation: app-skeleton-shimmer 1.7s ease-in-out infinite;
+}
+
+@keyframes app-skeleton-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-skeleton { animation: none; }
+}
+
+.liquid-glass-menu,
+.liquid-glass-avatar {
+  border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+  background-color: color-mix(in srgb, var(--app-card) 42%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  backdrop-filter: blur(12px) saturate(150%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--app-card) 30%, transparent),
+    inset 1.8px 3px 0 -2px color-mix(in srgb, var(--app-card) 58%, transparent),
+    inset -2px -2px 0 -2px color-mix(in srgb, var(--app-card) 42%, transparent),
+    inset 0 -8px 1px -6px color-mix(in srgb, #000 42%, transparent),
+    inset 0 3px 4px -2px color-mix(in srgb, #000 38%, transparent),
+    0 1px 5px color-mix(in srgb, #000 36%, transparent),
+    0 7px 18px color-mix(in srgb, #000 28%, transparent);
+}
+
+@media (max-width: 1023px) {
+  [data-calendar-drawer="true"],
+  [data-calendar-fullscreen="true"] {
+    border: 0 !important;
+  }
+}
+
+/* Toasts use the same glass material as navigation while staying legible above content. */
+.app-toast {
+  border: 1px solid color-mix(in srgb, var(--app-border) 78%, transparent) !important;
+  border-radius: 18px !important;
+  background-color: color-mix(in srgb, var(--app-card) 62%, transparent) !important;
+  color: var(--app-ink) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--app-card) 32%, transparent),
+    inset 1.8px 3px 0 -2px color-mix(in srgb, var(--app-card) 70%, transparent),
+    inset -2px -2px 0 -2px color-mix(in srgb, #000 20%, transparent),
+    0 12px 32px color-mix(in srgb, #000 22%, transparent) !important;
+}
+
+.app-toast__title { font-weight: 600 !important; letter-spacing: -0.01em; }
+.app-toast__description { color: var(--app-muted) !important; }
+.app-toast__icon { color: var(--app-ink) !important; }
+
+.app-toast__close {
+  width: 28px !important;
+  height: 28px !important;
+  border: 1px solid color-mix(in srgb, var(--app-border) 78%, transparent) !important;
+  border-radius: 999px !important;
+  background: color-mix(in srgb, var(--app-card) 54%, transparent) !important;
+  color: var(--app-muted) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(145%);
+  backdrop-filter: blur(12px) saturate(145%);
+  box-shadow:
+    inset 1px 1.5px 0 -1px color-mix(in srgb, var(--app-card) 76%, transparent),
+    inset -1px -1px 0 -1px color-mix(in srgb, #000 18%, transparent),
+    0 2px 8px color-mix(in srgb, #000 16%, transparent) !important;
+  transition: transform 160ms ease, background-color 160ms ease, color 160ms ease !important;
+}
+
+.app-toast__close:hover {
+  background: color-mix(in srgb, var(--app-wash) 82%, transparent) !important;
+  color: var(--app-ink) !important;
+  transform: scale(1.06);
+}
+
+.app-toast__close:focus-visible {
+  outline: 2px solid var(--app-ink) !important;
+  outline-offset: 2px !important;
+}
+
+.app-toast__action,
+.app-toast__cancel {
+  border-radius: 999px !important;
+  font-weight: 600 !important;
+}
+
+.app-toast__action {
+  background: var(--app-ink) !important;
+  color: var(--app-bg) !important;
+}
+
+.app-toast__cancel {
+  background: color-mix(in srgb, var(--app-wash) 76%, transparent) !important;
+  color: var(--app-ink) !important;
+}
+
+.liquid-glass-avatar {
+  background-image: linear-gradient(145deg, color-mix(in srgb, var(--app-wash) 72%, transparent), transparent);
+}
+
+.liquid-glass-menu-enter {
+  animation: liquid-glass-menu-enter 360ms cubic-bezier(0.22, 0.9, 0.27, 1) both;
+  will-change: opacity, transform;
+}
+
+@keyframes liquid-glass-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.96);
+  }
+  68% {
+    opacity: 1;
+    transform: translateY(2px) scale(1.01);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-glass-menu-enter {
+    animation: none;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .liquid-glass-menu,
+  :root:not([data-theme]) .liquid-glass-avatar {
+    border-color: color-mix(in srgb, var(--app-border) 62%, transparent);
+    background-color: color-mix(in srgb, var(--app-card) 78%, var(--app-wash));
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--app-card) 92%, transparent),
+      inset 1.8px 3px 0 -2px color-mix(in srgb, #fff 92%, transparent),
+      inset -2px -2px 0 -2px color-mix(in srgb, var(--app-border) 52%, transparent),
+      inset 0 -7px 1px -6px color-mix(in srgb, var(--app-border) 34%, transparent),
+      inset 0 3px 4px -2px color-mix(in srgb, var(--app-border) 22%, transparent),
+      0 3px 10px color-mix(in srgb, var(--app-ink) 12%, transparent),
+      0 7px 18px color-mix(in srgb, var(--app-ink) 7%, transparent);
+  }
+}
+
+:root[data-theme="light"] .liquid-glass-menu,
+:root[data-theme="light"] .liquid-glass-avatar {
+  border-color: color-mix(in srgb, var(--app-border) 62%, transparent);
+  background-color: color-mix(in srgb, var(--app-card) 78%, var(--app-wash));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--app-card) 92%, transparent),
+    inset 1.8px 3px 0 -2px color-mix(in srgb, #fff 92%, transparent),
+    inset -2px -2px 0 -2px color-mix(in srgb, var(--app-border) 52%, transparent),
+    inset 0 -7px 1px -6px color-mix(in srgb, var(--app-border) 34%, transparent),
+    inset 0 3px 4px -2px color-mix(in srgb, var(--app-border) 22%, transparent),
+    0 3px 10px color-mix(in srgb, var(--app-ink) 12%, transparent),
+    0 7px 18px color-mix(in srgb, var(--app-ink) 7%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  .liquid-dock {
+    border: 1px solid color-mix(in srgb, var(--app-border) 80%, transparent);
+    background-color: color-mix(in srgb, var(--app-card) 42%, transparent);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--app-card) 30%, transparent),
+      inset 1.8px 3px 0 -2px color-mix(in srgb, var(--app-card) 58%, transparent),
+      inset -2px -2px 0 -2px color-mix(in srgb, var(--app-card) 42%, transparent),
+      inset 0 -8px 1px -6px color-mix(in srgb, #000 42%, transparent),
+      inset 0 3px 4px -2px color-mix(in srgb, #000 38%, transparent),
+      0 1px 5px color-mix(in srgb, #000 36%, transparent),
+      0 7px 18px color-mix(in srgb, #000 28%, transparent);
+  }
+
+  .liquid-dock__active {
+    border: 1px solid color-mix(in srgb, var(--app-border) 90%, transparent);
+    background-color: color-mix(in srgb, var(--app-wash) 82%, transparent);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--app-card) 34%, transparent),
+      inset 2px 1px 0 -1px color-mix(in srgb, var(--app-card) 62%, transparent),
+      inset -1px 2px 3px -1px color-mix(in srgb, #000 32%, transparent),
+      0 3px 8px color-mix(in srgb, #000 26%, transparent);
+  }
+}
+
+@keyframes liquid-scale-toggle {
+  0% { scale: 1 1; }
+  50% { scale: 1.12 1; }
+  100% { scale: 1 1; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .assistant-typing {
+    text-shadow: 0 1px 0 color-mix(in srgb, var(--app-bg) 80%, transparent), 0 8px 22px color-mix(in srgb, #000 35%, transparent);
+  }
+
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* Light glass tuning stays after the component styles so it wins over the base dock skin. */
+:root[data-theme="light"] .liquid-dock {
+  background-color: color-mix(in srgb, var(--app-card) 78%, var(--app-wash));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--app-card) 92%, transparent),
+    inset 1.8px 3px 0 -2px color-mix(in srgb, #fff 92%, transparent),
+    inset -2px -2px 0 -2px color-mix(in srgb, var(--app-border) 52%, transparent),
+    inset 0 -7px 1px -6px color-mix(in srgb, var(--app-border) 34%, transparent),
+    inset 0 3px 4px -2px color-mix(in srgb, var(--app-border) 22%, transparent),
+    0 3px 10px color-mix(in srgb, var(--app-ink) 12%, transparent),
+    0 7px 18px color-mix(in srgb, var(--app-ink) 7%, transparent);
+}
+
+:root[data-theme="light"] .liquid-dock__active {
+  background-color: color-mix(in srgb, var(--app-wash) 88%, #fff);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #fff 88%, transparent),
+    inset 2px 1px 0 -1px color-mix(in srgb, #fff 82%, transparent),
+    inset -1px 2px 3px -1px color-mix(in srgb, var(--app-border) 24%, transparent),
+    0 2px 7px color-mix(in srgb, var(--app-ink) 10%, transparent);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .liquid-dock {
+    background-color: color-mix(in srgb, var(--app-card) 78%, var(--app-wash));
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--app-card) 92%, transparent),
+      inset 1.8px 3px 0 -2px color-mix(in srgb, #fff 92%, transparent),
+      inset -2px -2px 0 -2px color-mix(in srgb, var(--app-border) 52%, transparent),
+      inset 0 -7px 1px -6px color-mix(in srgb, var(--app-border) 34%, transparent),
+      inset 0 3px 4px -2px color-mix(in srgb, var(--app-border) 22%, transparent),
+      0 3px 10px color-mix(in srgb, var(--app-ink) 12%, transparent),
+      0 7px 18px color-mix(in srgb, var(--app-ink) 7%, transparent);
+  }
+
+  :root:not([data-theme]) .liquid-dock__active {
+    background-color: color-mix(in srgb, var(--app-wash) 88%, #fff);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, #fff 88%, transparent),
+      inset 2px 1px 0 -1px color-mix(in srgb, #fff 82%, transparent),
+      inset -1px 2px 3px -1px color-mix(in srgb, var(--app-border) 24%, transparent),
+      0 2px 7px color-mix(in srgb, var(--app-ink) 10%, transparent);
+  }
+}

@@ -50,6 +50,9 @@ type Worker struct {
 	// pool's private IPFS network whenever the coordinator states it: on
 	// joining, and when the key changes. It must not block for long.
 	OnSwarm func(fingerprint string)
+	// connected is whether the coordinator has this node in its pool right
+	// now.
+	connected atomic.Bool
 	// HeartbeatInterval is how often the coordinator hears from this node
 	// while it is idle. Zero means five seconds.
 	HeartbeatInterval time.Duration
@@ -154,6 +157,8 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 			w.swarmChanged(kind.SwarmUpdate.GetSwarmFingerprint())
 		case *pb.CoordinatorMessage_Welcome:
 			welcomed = true
+			w.connected.Store(true)
+			defer w.connected.Store(false)
 			w.swarmChanged(kind.Welcome.GetSwarmFingerprint())
 			w.Log.Info("joined pool", "node", w.Name, "coordinator", kind.Welcome.GetCoordinatorId(), "slots", w.Slots)
 		case *pb.CoordinatorMessage_Assignment:
@@ -171,6 +176,12 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 			}()
 		}
 	}
+}
+
+// Connected reports whether the worker is connected to its coordinator and
+// has been welcomed into the pool.
+func (w *Worker) Connected() bool {
+	return w.connected.Load()
 }
 
 func (w *Worker) swarmChanged(fingerprint string) {

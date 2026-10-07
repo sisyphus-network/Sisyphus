@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
 	"github.com/excho0/Sisyphus/packages/identity"
 	"github.com/excho0/Sisyphus/packages/kubo"
+	nodepb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/excho0/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/excho0/Sisyphus/packages/runtime"
 	"github.com/excho0/Sisyphus/packages/storage"
@@ -40,6 +42,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	invitation := fs.String("join", "", "worker-only node: an invitation from the coordinator, needed the first time this node connects to it and ignored after that")
 	serve := fs.String("serve", "", "worker-only node: address to serve its cached data on to the other workers of its pool, so that they need not all fetch it from the coordinator")
 	advertise := fs.String("advertise", "", "worker-only node: the address other workers should use to reach --serve, if not the same")
+	apiListen := fs.String("api-listen", "", "loopback address to serve the local API on, for the desktop client on this machine (it expects 127.0.0.1:50051); off if empty")
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
@@ -78,6 +81,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	if *slots < 1 {
 		return errors.New("--slots must be at least 1")
 	}
+	if host, _, err := net.SplitHostPort(*apiListen); *apiListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
+		return errors.New("--api-listen must be a loopback address such as 127.0.0.1:50051: the local API is for programs on this machine only")
+	}
 	if isCoordinator && *invitation != "" {
 		return errors.New("--join is for worker-only nodes")
 	}
@@ -109,6 +115,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	defer cancel()
 	// Each role reports once when it stops; the first to stop ends the node.
 	stopped := make(chan error, 2)
+
+	// local is what the desktop client on this machine is told and may do.
+	local := api.LocalConfig{NodeID: ident.ID(), Version: version}
 
 	// coordinatorID is the ID of the node this one's worker answers to: the
 	// node itself, or for a worker-only node the coordinator it joined.
@@ -208,6 +217,9 @@ func runDaemon(ctx context.Context, args []string) error {
 			coord.AnnounceSwarm(swarm.Fingerprint())
 		}
 		srv := api.NewServer(config)
+		local.Pool = api.NewPoolAdmin(config)
+		local.Listen = func() []string { return multiaddrs(lis.Addr().String()) }
+		local.Peers = func() []*nodepb.Peer { return poolPeers(ident.ID(), coord.Nodes(), admitted.Members()) }
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish.
 		defer srv.Stop()
@@ -276,6 +288,18 @@ func runDaemon(ctx context.Context, args []string) error {
 				}()
 			}
 		}
+		if !isCoordinator {
+			// A worker's pool, as far as it knows, is its coordinator.
+			coordinatorAddr := *join
+			local.Listen = func() []string { return multiaddrs(*advertise) }
+			local.Peers = func() []*nodepb.Peer {
+				state := nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED
+				if w.Connected() {
+					state = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
+				}
+				return []*nodepb.Peer{{PeerId: coordinatorID, ConnectionState: state, KnownAddresses: multiaddrs(coordinatorAddr)}}
+			}
+		}
 		done := make(chan struct{})
 		// Tasks must finish before the store they use closes.
 		defer func() {
@@ -288,6 +312,21 @@ func runDaemon(ctx context.Context, args []string) error {
 		}()
 	}
 
+	if *apiListen != "" {
+		lis, err := net.Listen("tcp", *apiListen)
+		if err != nil {
+			return err
+		}
+		if local.Token, err = apiToken(filepath.Join(*dataDir, "api.token")); err != nil {
+			lis.Close()
+			return err
+		}
+		desktop := api.NewLocalServer(local)
+		defer desktop.Stop()
+		log.Info("local API listening", "addr", lis.Addr().String())
+		go desktop.Serve(lis)
+	}
+
 	select {
 	case err := <-stopped:
 		return err
@@ -295,6 +334,61 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("shutting down")
 		return nil
 	}
+}
+
+// poolPeers describes the nodes admitted to a coordinator's pool, in order
+// of ID, for the local API: whether each is connected, and whether it is
+// trusted to run tasks.
+func poolPeers(self string, connected []*pb.NodeInfo, members []access.Member) []*nodepb.Peer {
+	online := make(map[string]bool, len(connected))
+	for _, node := range connected {
+		online[node.GetNodeId()] = true
+	}
+	peers := make([]*nodepb.Peer, 0, len(members))
+	for _, member := range members {
+		state := nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED
+		if online[member.ID] {
+			state = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
+		}
+		peers = append(peers, &nodepb.Peer{PeerId: member.ID, ConnectionState: state, TrustedForCompute: member.Role == access.Worker})
+	}
+	return peers
+}
+
+// multiaddrs gives a host:port address in the multiaddress form the local
+// API speaks, or nothing if it is not an address.
+func multiaddrs(hostport string) []string {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return nil
+	}
+	kind := "dns"
+	if ip := net.ParseIP(host); ip != nil {
+		kind = "ip6"
+		if ip.To4() != nil {
+			kind = "ip4"
+		}
+	}
+	return []string{"/" + kind + "/" + host + "/tcp/" + port}
+}
+
+// apiToken returns the secret a local program must present to change this
+// node through the local API, kept in file and made the first time.
+func apiToken(file string) (string, error) {
+	data, err := os.ReadFile(file)
+	if err == nil {
+		return strings.TrimSpace(string(data)), nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read API token: %w", err)
+	}
+	var secret [32]byte
+	rand.Read(secret[:]) // never fails; see crypto/rand
+	token := hex.EncodeToString(secret[:])
+	if err := os.WriteFile(file, []byte(token+"\n"), 0o600); err != nil {
+		return "", fmt.Errorf("save API token: %w", err)
+	}
+	return token, nil
 }
 
 // poolSwarm is the private IPFS network of the pool this node belongs to,

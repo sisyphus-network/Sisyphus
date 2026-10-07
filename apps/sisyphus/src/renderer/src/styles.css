@@ -1,0 +1,39 @@
+@import "@fontsource-variable/dm-sans";
+@import "./design-system/app.css";
+
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100dvh;
+  overflow: auto;
+}
+
+#root { min-height: 100dvh; }
+
+button,
+select {
+  font: inherit;
+}
+
+::selection {
+  color: var(--app-accent-ink);
+  background: color-mix(in srgb, var(--app-accent) 30%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

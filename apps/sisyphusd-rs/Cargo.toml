@@ -1,0 +1,46 @@
+[package]
+name = "sisyphusd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait = "0.1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+directories = "6"
+futures-util = "0.3"
+libp2p = { version = "0.57", features = [
+  "ed25519",
+  "identify",
+  "kad",
+  "macros",
+  "mdns",
+  "noise",
+  "ping",
+  "quic",
+  "tcp",
+  "tokio",
+  "yamux",
+] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+prost = "0.14.1"
+sqlx = { version = "0.8.6", default-features = false, features = [
+  "macros",
+  "migrate",
+  "runtime-tokio",
+  "sqlite",
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = { version = "0.14.6", features = ["transport"] }
+tonic-prost = "0.14.6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+tonic-prost-build = "0.14.6"
