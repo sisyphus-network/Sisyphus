@@ -41,6 +41,13 @@ const (
 	NodeService_ListChats_FullMethodName                 = "/sisyphus.node.v1.NodeService/ListChats"
 	NodeService_GetChat_FullMethodName                   = "/sisyphus.node.v1.NodeService/GetChat"
 	NodeService_DeleteChat_FullMethodName                = "/sisyphus.node.v1.NodeService/DeleteChat"
+	NodeService_StoreFile_FullMethodName                 = "/sisyphus.node.v1.NodeService/StoreFile"
+	NodeService_FetchFile_FullMethodName                 = "/sisyphus.node.v1.NodeService/FetchFile"
+	NodeService_ListFiles_FullMethodName                 = "/sisyphus.node.v1.NodeService/ListFiles"
+	NodeService_RemoveFile_FullMethodName                = "/sisyphus.node.v1.NodeService/RemoveFile"
+	NodeService_CreateInvitation_FullMethodName          = "/sisyphus.node.v1.NodeService/CreateInvitation"
+	NodeService_ListMembers_FullMethodName               = "/sisyphus.node.v1.NodeService/ListMembers"
+	NodeService_RemoveMember_FullMethodName              = "/sisyphus.node.v1.NodeService/RemoveMember"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -88,6 +95,26 @@ type NodeServiceClient interface {
 	ListChats(ctx context.Context, in *ListChatsRequest, opts ...grpc.CallOption) (*ListChatsResponse, error)
 	GetChat(ctx context.Context, in *GetChatRequest, opts ...grpc.CallOption) (*GetChatResponse, error)
 	DeleteChat(ctx context.Context, in *DeleteChatRequest, opts ...grpc.CallOption) (*DeleteChatResponse, error)
+	// StoreFile puts a file in the pool's store and keeps it there until it
+	// is removed. The first message names it; every message may carry data.
+	// The answer has its CID, which is what a job is given as its input.
+	StoreFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[StoreFileRequest, File], error)
+	// FetchFile sends what is stored under a CID: a file stored here, or
+	// something a job produced.
+	FetchFile(ctx context.Context, in *FetchFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FetchFileResponse], error)
+	// ListFiles lists the files stored through StoreFile, newest first.
+	ListFiles(ctx context.Context, in *ListFilesRequest, opts ...grpc.CallOption) (*ListFilesResponse, error)
+	// RemoveFile stops keeping a file. Its content goes when the store is
+	// next cleared of what nothing holds.
+	RemoveFile(ctx context.Context, in *RemoveFileRequest, opts ...grpc.CallOption) (*RemoveFileResponse, error)
+	// CreateInvitation makes an invitation for another machine to join the
+	// pool with: as a worker, or as a client that may only submit jobs. It
+	// works once.
+	CreateInvitation(ctx context.Context, in *CreateInvitationRequest, opts ...grpc.CallOption) (*CreateInvitationResponse, error)
+	// ListMembers lists the nodes admitted to the pool.
+	ListMembers(ctx context.Context, in *ListMembersRequest, opts ...grpc.CallOption) (*ListMembersResponse, error)
+	// RemoveMember takes a node out of the pool and disconnects it.
+	RemoveMember(ctx context.Context, in *RemoveMemberRequest, opts ...grpc.CallOption) (*RemoveMemberResponse, error)
 }
 
 type nodeServiceClient struct {
@@ -354,6 +381,88 @@ func (c *nodeServiceClient) DeleteChat(ctx context.Context, in *DeleteChatReques
 	return out, nil
 }
 
+func (c *nodeServiceClient) StoreFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[StoreFileRequest, File], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[4], NodeService_StoreFile_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StoreFileRequest, File]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_StoreFileClient = grpc.ClientStreamingClient[StoreFileRequest, File]
+
+func (c *nodeServiceClient) FetchFile(ctx context.Context, in *FetchFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FetchFileResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[5], NodeService_FetchFile_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[FetchFileRequest, FetchFileResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_FetchFileClient = grpc.ServerStreamingClient[FetchFileResponse]
+
+func (c *nodeServiceClient) ListFiles(ctx context.Context, in *ListFilesRequest, opts ...grpc.CallOption) (*ListFilesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFilesResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListFiles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) RemoveFile(ctx context.Context, in *RemoveFileRequest, opts ...grpc.CallOption) (*RemoveFileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveFileResponse)
+	err := c.cc.Invoke(ctx, NodeService_RemoveFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) CreateInvitation(ctx context.Context, in *CreateInvitationRequest, opts ...grpc.CallOption) (*CreateInvitationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateInvitationResponse)
+	err := c.cc.Invoke(ctx, NodeService_CreateInvitation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) ListMembers(ctx context.Context, in *ListMembersRequest, opts ...grpc.CallOption) (*ListMembersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListMembersResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListMembers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) RemoveMember(ctx context.Context, in *RemoveMemberRequest, opts ...grpc.CallOption) (*RemoveMemberResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveMemberResponse)
+	err := c.cc.Invoke(ctx, NodeService_RemoveMember_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -399,6 +508,26 @@ type NodeServiceServer interface {
 	ListChats(context.Context, *ListChatsRequest) (*ListChatsResponse, error)
 	GetChat(context.Context, *GetChatRequest) (*GetChatResponse, error)
 	DeleteChat(context.Context, *DeleteChatRequest) (*DeleteChatResponse, error)
+	// StoreFile puts a file in the pool's store and keeps it there until it
+	// is removed. The first message names it; every message may carry data.
+	// The answer has its CID, which is what a job is given as its input.
+	StoreFile(grpc.ClientStreamingServer[StoreFileRequest, File]) error
+	// FetchFile sends what is stored under a CID: a file stored here, or
+	// something a job produced.
+	FetchFile(*FetchFileRequest, grpc.ServerStreamingServer[FetchFileResponse]) error
+	// ListFiles lists the files stored through StoreFile, newest first.
+	ListFiles(context.Context, *ListFilesRequest) (*ListFilesResponse, error)
+	// RemoveFile stops keeping a file. Its content goes when the store is
+	// next cleared of what nothing holds.
+	RemoveFile(context.Context, *RemoveFileRequest) (*RemoveFileResponse, error)
+	// CreateInvitation makes an invitation for another machine to join the
+	// pool with: as a worker, or as a client that may only submit jobs. It
+	// works once.
+	CreateInvitation(context.Context, *CreateInvitationRequest) (*CreateInvitationResponse, error)
+	// ListMembers lists the nodes admitted to the pool.
+	ListMembers(context.Context, *ListMembersRequest) (*ListMembersResponse, error)
+	// RemoveMember takes a node out of the pool and disconnects it.
+	RemoveMember(context.Context, *RemoveMemberRequest) (*RemoveMemberResponse, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -474,6 +603,27 @@ func (UnimplementedNodeServiceServer) GetChat(context.Context, *GetChatRequest) 
 }
 func (UnimplementedNodeServiceServer) DeleteChat(context.Context, *DeleteChatRequest) (*DeleteChatResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteChat not implemented")
+}
+func (UnimplementedNodeServiceServer) StoreFile(grpc.ClientStreamingServer[StoreFileRequest, File]) error {
+	return status.Error(codes.Unimplemented, "method StoreFile not implemented")
+}
+func (UnimplementedNodeServiceServer) FetchFile(*FetchFileRequest, grpc.ServerStreamingServer[FetchFileResponse]) error {
+	return status.Error(codes.Unimplemented, "method FetchFile not implemented")
+}
+func (UnimplementedNodeServiceServer) ListFiles(context.Context, *ListFilesRequest) (*ListFilesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFiles not implemented")
+}
+func (UnimplementedNodeServiceServer) RemoveFile(context.Context, *RemoveFileRequest) (*RemoveFileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveFile not implemented")
+}
+func (UnimplementedNodeServiceServer) CreateInvitation(context.Context, *CreateInvitationRequest) (*CreateInvitationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateInvitation not implemented")
+}
+func (UnimplementedNodeServiceServer) ListMembers(context.Context, *ListMembersRequest) (*ListMembersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListMembers not implemented")
+}
+func (UnimplementedNodeServiceServer) RemoveMember(context.Context, *RemoveMemberRequest) (*RemoveMemberResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveMember not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -864,6 +1014,114 @@ func _NodeService_DeleteChat_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_StoreFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(NodeServiceServer).StoreFile(&grpc.GenericServerStream[StoreFileRequest, File]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_StoreFileServer = grpc.ClientStreamingServer[StoreFileRequest, File]
+
+func _NodeService_FetchFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(FetchFileRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).FetchFile(m, &grpc.GenericServerStream[FetchFileRequest, FetchFileResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_FetchFileServer = grpc.ServerStreamingServer[FetchFileResponse]
+
+func _NodeService_ListFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFilesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListFiles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListFiles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListFiles(ctx, req.(*ListFilesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_RemoveFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveFileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RemoveFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RemoveFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RemoveFile(ctx, req.(*RemoveFileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_CreateInvitation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateInvitationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).CreateInvitation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_CreateInvitation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).CreateInvitation(ctx, req.(*CreateInvitationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_ListMembers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListMembersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListMembers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListMembers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListMembers(ctx, req.(*ListMembersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_RemoveMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RemoveMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RemoveMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RemoveMember(ctx, req.(*RemoveMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -943,6 +1201,26 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "DeleteChat",
 			Handler:    _NodeService_DeleteChat_Handler,
 		},
+		{
+			MethodName: "ListFiles",
+			Handler:    _NodeService_ListFiles_Handler,
+		},
+		{
+			MethodName: "RemoveFile",
+			Handler:    _NodeService_RemoveFile_Handler,
+		},
+		{
+			MethodName: "CreateInvitation",
+			Handler:    _NodeService_CreateInvitation_Handler,
+		},
+		{
+			MethodName: "ListMembers",
+			Handler:    _NodeService_ListMembers_Handler,
+		},
+		{
+			MethodName: "RemoveMember",
+			Handler:    _NodeService_RemoveMember_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -963,6 +1241,16 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Ask",
 			Handler:       _NodeService_Ask_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "StoreFile",
+			Handler:       _NodeService_StoreFile_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "FetchFile",
+			Handler:       _NodeService_FetchFile_Handler,
 			ServerStreams: true,
 		},
 	},

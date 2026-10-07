@@ -51,6 +51,13 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `ListModels` | | What the configured service offers, for a picker. |
 | `Ask` | yes | Put a question to the planner. A stream of what it does; see below. |
 | `ListChats`, `GetChat`, `DeleteChat` | yes | Conversations on record, newest first; one in full; forget one. |
+| `StoreFile` | yes | Put a file in the pool's store and keep it. A stream from you: the first message carries `name`, every message may carry `data`. Returns its `cid`, which is what a job takes as input. |
+| `ListFiles` | | The files stored this way, newest first: name, CID, size, when. |
+| `FetchFile` | yes | The content under a CID, as a stream: a stored file, or anything in a job's `output_blobs`. |
+| `RemoveFile` | yes | Stop keeping a file. |
+| `CreateInvitation` | yes | An invitation for another machine to join with, as a worker or as a client that only submits jobs. Works once; lasts an hour unless `ttl_seconds` says otherwise. |
+| `ListMembers` | | The nodes admitted to the pool, with role and when they joined. |
+| `RemoveMember` | yes | Take a node out of the pool and disconnect it. |
 
 The two `Watch` calls are the ones to build live views on. Each message carries a `revision` that counts up from one.
 
@@ -118,13 +125,26 @@ If the planner fails, the stream ends with an error instead of `done`, and what 
 
 Before any model is set, `Ask` fails with `FAILED_PRECONDITION` and a message saying so, which is the cue to show a model picker (`ListModels` needs a provider set first, so offer Ollama at its default address as the starting point).
 
+## Files and invitations
+
+**Files.** A file picker maps onto `StoreFile` directly: send the file in pieces of any size up to a few megabytes (256 KiB is what the daemon itself uses), with the name in the first. The same content stored twice is one file, under its latest name. The answer's `cid` goes into a job's parameters, for example `{"input":"<cid>"}` for `wordcount` or `container`. When the job finishes, each entry of `output_blobs` is fetched with `FetchFile`. `FetchFile` needs the token even though it changes nothing, because it returns what the files contain.
+
+A stored file is kept until `RemoveFile`. If the node was started with `--max-store`, `StoreFile` fails with `RESOURCE_EXHAUSTED` when the file would not fit.
+
+**Inviting a machine.** `CreateInvitation` returns one string. The person at the other machine starts their node with it:
+
+```sh
+sisyphusd run --role worker --coordinator <this node's address> --join <invitation>
+```
+
+Show the invitation with a copy button and its expiry. Once used, the machine appears in `ListMembers`, and in `ListWorkers` while it is connected. An invitation is the only secret involved, and it works once.
+
+These calls exist only on a node that coordinates a pool. On a worker-only node they fail with `FAILED_PRECONDITION`.
+
 ## What the API does not have yet
 
-These exist in the daemon but not in the local API. Ask for them when the UI wants them.
-
-- **Storing and fetching files** (`wordcount` inputs, job outputs). For now: `sisyphusd blob put <file>` and `blob get <cid>`.
-- **Invitations and the member list**, other than as peers. For now: `sisyphusd pool invite`, `pool members`.
-- **Private jobs**, which take a key.
+- **Private jobs**, which take a key and store everything sealed. For now: `sisyphusd job submit --key-file`.
+- **Joining someone else's pool from the desktop.** A node joins when it is started with `--join`.
 
 ## Changing the API
 

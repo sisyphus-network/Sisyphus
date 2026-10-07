@@ -65,6 +65,12 @@ type LocalConfig struct {
 	// WorkFor, if set, is the list of nodes this one takes work from. A
 	// node that runs no worker has none.
 	WorkFor WorkFor
+	// Store, if set, is the pool's store, for the calls about files;
+	// Files is then the list of what was stored through them, and
+	// MaxStoreBytes the most disk the store may use, or zero for no limit.
+	Store         FileStore
+	Files         FileList
+	MaxStoreBytes uint64
 	// Token is what a caller must present to change anything.
 	Token string
 	// Poll is how often a peer watcher is checked for news. Zero means once
