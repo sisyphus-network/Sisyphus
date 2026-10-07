@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"slices"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
@@ -561,5 +564,200 @@ func TestEndingTheGivingOfWorkReportsAListThatCannotBeSaved(t *testing.T) {
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
 	if _, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID}); status.Code(err) != codes.Internal {
 		t.Errorf("error %v, want Internal", err)
+	}
+}
+
+// office is a pool as the local API sees it, with whatever it is given.
+type office struct {
+	mu        sync.Mutex
+	jobs      []*pb.Job
+	nodes     []*pb.NodeInfo
+	submitted []*pb.JobSpec
+	err       error
+}
+
+func (o *office) Submit(_ context.Context, spec *pb.JobSpec) (*pb.Job, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.err != nil {
+		return nil, o.err
+	}
+	o.submitted = append(o.submitted, spec)
+	job := &pb.Job{JobId: fmt.Sprintf("job-%d", len(o.jobs)+1), Spec: spec, State: pb.JobState_JOB_STATE_PENDING, CreatedAt: timestamppb.New(time.UnixMilli(1_700_000_000_000))}
+	o.jobs = append([]*pb.Job{job}, o.jobs...)
+	return job, nil
+}
+
+func (o *office) Get(id string) (*pb.Job, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, job := range o.jobs {
+		if job.GetJobId() == id {
+			return job, nil
+		}
+	}
+	return nil, status.Errorf(codes.NotFound, "job %q not found", id)
+}
+
+func (o *office) Jobs() []*pb.Job {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slices.Clone(o.jobs)
+}
+
+func (o *office) Nodes() []*pb.NodeInfo { return o.nodes }
+
+// finish marks a job done, as the pool would.
+func (o *office) finish(id string, result []byte) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for i, job := range o.jobs {
+		if job.GetJobId() == id {
+			done := proto.Clone(job).(*pb.Job)
+			done.State, done.Result, done.FinishedAt = pb.JobState_JOB_STATE_SUCCEEDED, result, timestamppb.New(time.UnixMilli(1_700_000_005_000))
+			done.Tasks = []*pb.Task{{Index: 0, State: pb.TaskState_TASK_STATE_SUCCEEDED, Attempt: 2, NodeId: "12D3KooWworker", NodeName: "rig", Error: "first try failed"}}
+			done.InputBlobs, done.OutputBlobs = []string{"bafy-in"}, []string{"bafy-out"}
+			o.jobs[i] = done
+		}
+	}
+}
+
+// startOffice serves the local API of a node that coordinates the given
+// pool, or none.
+func startOffice(t *testing.T, pool JobControl) nodepb.NodeServiceClient {
+	t.Helper()
+	cfg := LocalConfig{
+		NodeID: "12D3KooWnode", Token: "the-token", Poll: 5 * time.Millisecond, Workloads: []string{"primes", "wordcount"},
+		Listen: func() []string { return nil }, Peers: func() []*nodepb.Peer { return nil },
+	}
+	if pool != nil {
+		cfg.Jobs = pool
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewLocalServer(cfg)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return nodepb.NewNodeServiceClient(conn)
+}
+
+func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
+	pool := &office{}
+	client := startOffice(t, pool)
+	ctx := context.Background()
+
+	info, err := client.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil || !slices.Equal(info.GetWorkloads(), []string{"primes", "wordcount"}) {
+		t.Errorf("node info %v, %v", info, err)
+	}
+	watching, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := client.WatchJobs(watching, &nodepb.WatchJobsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first, err := stream.Recv(); err != nil || first.GetRevision() != 1 || len(first.GetJobs()) != 0 {
+		t.Fatalf("the first list of jobs: %v, %v", first, err)
+	}
+
+	request := &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":100}`), Mode: nodepb.JobMode_JOB_MODE_FULL_WORKER, MaxTasks: 3}
+	// It spends the pool's time, so it needs the token.
+	if _, err := client.SubmitJob(ctx, request); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("submitting without the token: %v", err)
+	}
+	submitted, err := client.SubmitJob(withToken("the-token"), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := submitted.GetJob()
+	if job.GetJobId() != "job-1" || job.GetWorkload() != "primes" || string(job.GetParams()) != `{"from":0,"to":100}` ||
+		job.GetMode() != nodepb.JobMode_JOB_MODE_FULL_WORKER || job.GetState() != nodepb.JobState_JOB_STATE_PENDING ||
+		job.GetCreatedAtMs() != 1_700_000_000_000 || job.GetFinishedAtMs() != 0 {
+		t.Errorf("the job as submitted: %v", job)
+	}
+	if spec := pool.submitted[0]; spec.GetMode() != pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER || spec.GetMaxTasks() != 3 {
+		t.Errorf("the pool was given %v", spec)
+	}
+	if second, err := stream.Recv(); err != nil || second.GetRevision() != 2 || len(second.GetJobs()) != 1 {
+		t.Fatalf("the list after submitting: %v, %v", second, err)
+	}
+
+	// The pool finishes it, and the watcher is told with everything a
+	// client would show.
+	pool.finish("job-1", []byte(`{"count":25}`))
+	third, err := stream.Recv()
+	if err != nil || third.GetRevision() != 3 {
+		t.Fatalf("the list after the job finished: %v, %v", third, err)
+	}
+	done := third.GetJobs()[0]
+	task := done.GetTasks()[0]
+	if done.GetState() != nodepb.JobState_JOB_STATE_SUCCEEDED || string(done.GetResult()) != `{"count":25}` || done.GetFinishedAtMs() != 1_700_000_005_000 ||
+		!slices.Equal(done.GetInputBlobs(), []string{"bafy-in"}) || !slices.Equal(done.GetOutputBlobs(), []string{"bafy-out"}) ||
+		task.GetState() != nodepb.JobState_JOB_STATE_SUCCEEDED || task.GetAttempt() != 2 || task.GetPeerId() != "12D3KooWworker" || task.GetWorkerName() != "rig" || task.GetError() != "first try failed" {
+		t.Errorf("the finished job: %v", done)
+	}
+
+	got, err := client.GetJob(ctx, &nodepb.GetJobRequest{JobId: "job-1"})
+	if err != nil || got.GetJob().GetState() != nodepb.JobState_JOB_STATE_SUCCEEDED {
+		t.Errorf("GetJob = %v, %v", got, err)
+	}
+	if _, err := client.GetJob(ctx, &nodepb.GetJobRequest{JobId: "no-such-job"}); status.Code(err) != codes.NotFound {
+		t.Errorf("a job that is not there: %v", err)
+	}
+	listed, err := client.ListJobs(ctx, &nodepb.ListJobsRequest{})
+	if err != nil || len(listed.GetJobs()) != 1 || listed.GetJobs()[0].GetJobId() != "job-1" {
+		t.Errorf("ListJobs = %v, %v", listed, err)
+	}
+	// What the pool refuses, the caller is told as the pool put it.
+	pool.err = status.Error(codes.InvalidArgument, `unknown workload "nope"`)
+	if _, err := client.SubmitJob(withToken("the-token"), request); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("a job the pool refuses: %v", err)
+	}
+}
+
+func TestTheLocalAPIListsThePoolsWorkers(t *testing.T) {
+	pool := &office{nodes: []*pb.NodeInfo{
+		{NodeId: "12D3KooWa", Name: "rig", RunningTasks: 3, RelayAddresses: []string{"/ip4/10.0.0.5/tcp/7701/p2p/12D3KooWa"}, RelayedConnections: 4, RelayedBytes: 5 << 20,
+			Capabilities: &pb.NodeCapabilities{Hostname: "rig.local", Os: "linux", Arch: "amd64", CpuCores: 32, TaskSlots: 8, Workloads: []string{"primes"}}},
+		{NodeId: "12D3KooWb", Name: "laptop", Capabilities: &pb.NodeCapabilities{TaskSlots: 2}},
+	}}
+	listed, err := startOffice(t, pool).ListWorkers(context.Background(), &nodepb.ListWorkersRequest{})
+	if err != nil || len(listed.GetWorkers()) != 2 {
+		t.Fatalf("ListWorkers = %v, %v", listed, err)
+	}
+	rig, laptop := listed.GetWorkers()[0], listed.GetWorkers()[1]
+	if rig.GetPeerId() != "12D3KooWa" || rig.GetName() != "rig" || rig.GetHostname() != "rig.local" || rig.GetOs() != "linux" || rig.GetArch() != "amd64" ||
+		rig.GetCpuCores() != 32 || rig.GetTaskSlots() != 8 || rig.GetRunningTasks() != 3 || !slices.Equal(rig.GetWorkloads(), []string{"primes"}) ||
+		!rig.GetRelays() || rig.GetRelayedConnections() != 4 || rig.GetRelayedBytes() != 5<<20 {
+		t.Errorf("the rig is listed as %v", rig)
+	}
+	if laptop.GetRelays() || laptop.GetTaskSlots() != 2 {
+		t.Errorf("the laptop is listed as %v", laptop)
+	}
+}
+
+func TestANodeWithNoPoolHasNoWorkersOrJobs(t *testing.T) {
+	client := startOffice(t, nil)
+	ctx := withToken("the-token")
+	_, workers := client.ListWorkers(ctx, &nodepb.ListWorkersRequest{})
+	_, submit := client.SubmitJob(ctx, &nodepb.SubmitJobRequest{Workload: "primes"})
+	_, get := client.GetJob(ctx, &nodepb.GetJobRequest{JobId: "any"})
+	_, list := client.ListJobs(ctx, &nodepb.ListJobsRequest{})
+	stream, err := client.WatchJobs(ctx, &nodepb.WatchJobsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, watch := stream.Recv()
+	for call, err := range map[string]error{"ListWorkers": workers, "SubmitJob": submit, "GetJob": get, "ListJobs": list, "WatchJobs": watch} {
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Errorf("%s on a node with no pool: %v, want FailedPrecondition", call, err)
+		}
 	}
 }

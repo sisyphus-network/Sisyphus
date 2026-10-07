@@ -70,6 +70,112 @@ func (PeerConnectionState) EnumDescriptor() ([]byte, []int) {
 	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{0}
 }
 
+type JobState int32
+
+const (
+	JobState_JOB_STATE_UNSPECIFIED JobState = 0
+	JobState_JOB_STATE_PENDING     JobState = 1
+	JobState_JOB_STATE_RUNNING     JobState = 2
+	JobState_JOB_STATE_SUCCEEDED   JobState = 3
+	JobState_JOB_STATE_FAILED      JobState = 4
+)
+
+// Enum value maps for JobState.
+var (
+	JobState_name = map[int32]string{
+		0: "JOB_STATE_UNSPECIFIED",
+		1: "JOB_STATE_PENDING",
+		2: "JOB_STATE_RUNNING",
+		3: "JOB_STATE_SUCCEEDED",
+		4: "JOB_STATE_FAILED",
+	}
+	JobState_value = map[string]int32{
+		"JOB_STATE_UNSPECIFIED": 0,
+		"JOB_STATE_PENDING":     1,
+		"JOB_STATE_RUNNING":     2,
+		"JOB_STATE_SUCCEEDED":   3,
+		"JOB_STATE_FAILED":      4,
+	}
+)
+
+func (x JobState) Enum() *JobState {
+	p := new(JobState)
+	*p = x
+	return p
+}
+
+func (x JobState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (JobState) Descriptor() protoreflect.EnumDescriptor {
+	return file_sisyphus_node_v1_node_proto_enumTypes[1].Descriptor()
+}
+
+func (JobState) Type() protoreflect.EnumType {
+	return &file_sisyphus_node_v1_node_proto_enumTypes[1]
+}
+
+func (x JobState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use JobState.Descriptor instead.
+func (JobState) EnumDescriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{1}
+}
+
+type JobMode int32
+
+const (
+	JobMode_JOB_MODE_UNSPECIFIED JobMode = 0
+	// Split into tasks spread across workers.
+	JobMode_JOB_MODE_DISTRIBUTED JobMode = 1
+	// Sent whole to one worker.
+	JobMode_JOB_MODE_FULL_WORKER JobMode = 2
+)
+
+// Enum value maps for JobMode.
+var (
+	JobMode_name = map[int32]string{
+		0: "JOB_MODE_UNSPECIFIED",
+		1: "JOB_MODE_DISTRIBUTED",
+		2: "JOB_MODE_FULL_WORKER",
+	}
+	JobMode_value = map[string]int32{
+		"JOB_MODE_UNSPECIFIED": 0,
+		"JOB_MODE_DISTRIBUTED": 1,
+		"JOB_MODE_FULL_WORKER": 2,
+	}
+)
+
+func (x JobMode) Enum() *JobMode {
+	p := new(JobMode)
+	*p = x
+	return p
+}
+
+func (x JobMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (JobMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_sisyphus_node_v1_node_proto_enumTypes[2].Descriptor()
+}
+
+func (JobMode) Type() protoreflect.EnumType {
+	return &file_sisyphus_node_v1_node_proto_enumTypes[2]
+}
+
+func (x JobMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use JobMode.Descriptor instead.
+func (JobMode) EnumDescriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{2}
+}
+
 type GetNodeInfoRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -112,8 +218,10 @@ type GetNodeInfoResponse struct {
 	DaemonVersion   string                 `protobuf:"bytes,2,opt,name=daemon_version,json=daemonVersion,proto3" json:"daemon_version,omitempty"`
 	ListenAddresses []string               `protobuf:"bytes,3,rep,name=listen_addresses,json=listenAddresses,proto3" json:"listen_addresses,omitempty"`
 	CountryCode     string                 `protobuf:"bytes,4,opt,name=country_code,json=countryCode,proto3" json:"country_code,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// The names of the workloads this node can run or coordinate.
+	Workloads     []string `protobuf:"bytes,5,rep,name=workloads,proto3" json:"workloads,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetNodeInfoResponse) Reset() {
@@ -172,6 +280,13 @@ func (x *GetNodeInfoResponse) GetCountryCode() string {
 		return x.CountryCode
 	}
 	return ""
+}
+
+func (x *GetNodeInfoResponse) GetWorkloads() []string {
+	if x != nil {
+		return x.Workloads
+	}
+	return nil
 }
 
 type ListPeersRequest struct {
@@ -922,17 +1037,782 @@ func (x *Peer) GetTakesWork() bool {
 	return false
 }
 
+type ListWorkersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListWorkersRequest) Reset() {
+	*x = ListWorkersRequest{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListWorkersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListWorkersRequest) ProtoMessage() {}
+
+func (x *ListWorkersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListWorkersRequest.ProtoReflect.Descriptor instead.
+func (*ListWorkersRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{17}
+}
+
+type ListWorkersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Workers       []*Worker              `protobuf:"bytes,1,rep,name=workers,proto3" json:"workers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListWorkersResponse) Reset() {
+	*x = ListWorkersResponse{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListWorkersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListWorkersResponse) ProtoMessage() {}
+
+func (x *ListWorkersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListWorkersResponse.ProtoReflect.Descriptor instead.
+func (*ListWorkersResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *ListWorkersResponse) GetWorkers() []*Worker {
+	if x != nil {
+		return x.Workers
+	}
+	return nil
+}
+
+type Worker struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	PeerId string                 `protobuf:"bytes,1,opt,name=peer_id,json=peerId,proto3" json:"peer_id,omitempty"`
+	// The label the node gave itself.
+	Name     string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Hostname string `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Os       string `protobuf:"bytes,4,opt,name=os,proto3" json:"os,omitempty"`
+	Arch     string `protobuf:"bytes,5,opt,name=arch,proto3" json:"arch,omitempty"`
+	CpuCores uint32 `protobuf:"varint,6,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
+	// How many tasks it runs at once, and how many it is running now.
+	TaskSlots    uint32   `protobuf:"varint,7,opt,name=task_slots,json=taskSlots,proto3" json:"task_slots,omitempty"`
+	RunningTasks uint32   `protobuf:"varint,8,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
+	Workloads    []string `protobuf:"bytes,9,rep,name=workloads,proto3" json:"workloads,omitempty"`
+	// Whether it relays between the pool's other members, and what it says it
+	// has carried for them since it started.
+	Relays             bool   `protobuf:"varint,10,opt,name=relays,proto3" json:"relays,omitempty"`
+	RelayedConnections uint64 `protobuf:"varint,11,opt,name=relayed_connections,json=relayedConnections,proto3" json:"relayed_connections,omitempty"`
+	RelayedBytes       uint64 `protobuf:"varint,12,opt,name=relayed_bytes,json=relayedBytes,proto3" json:"relayed_bytes,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *Worker) Reset() {
+	*x = Worker{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Worker) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Worker) ProtoMessage() {}
+
+func (x *Worker) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Worker.ProtoReflect.Descriptor instead.
+func (*Worker) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *Worker) GetPeerId() string {
+	if x != nil {
+		return x.PeerId
+	}
+	return ""
+}
+
+func (x *Worker) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Worker) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *Worker) GetOs() string {
+	if x != nil {
+		return x.Os
+	}
+	return ""
+}
+
+func (x *Worker) GetArch() string {
+	if x != nil {
+		return x.Arch
+	}
+	return ""
+}
+
+func (x *Worker) GetCpuCores() uint32 {
+	if x != nil {
+		return x.CpuCores
+	}
+	return 0
+}
+
+func (x *Worker) GetTaskSlots() uint32 {
+	if x != nil {
+		return x.TaskSlots
+	}
+	return 0
+}
+
+func (x *Worker) GetRunningTasks() uint32 {
+	if x != nil {
+		return x.RunningTasks
+	}
+	return 0
+}
+
+func (x *Worker) GetWorkloads() []string {
+	if x != nil {
+		return x.Workloads
+	}
+	return nil
+}
+
+func (x *Worker) GetRelays() bool {
+	if x != nil {
+		return x.Relays
+	}
+	return false
+}
+
+func (x *Worker) GetRelayedConnections() uint64 {
+	if x != nil {
+		return x.RelayedConnections
+	}
+	return 0
+}
+
+func (x *Worker) GetRelayedBytes() uint64 {
+	if x != nil {
+		return x.RelayedBytes
+	}
+	return 0
+}
+
+type Job struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	JobId    string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Workload string                 `protobuf:"bytes,2,opt,name=workload,proto3" json:"workload,omitempty"`
+	// Workload-defined parameters and result. The built-in workloads use JSON.
+	Params []byte     `protobuf:"bytes,3,opt,name=params,proto3" json:"params,omitempty"`
+	Mode   JobMode    `protobuf:"varint,4,opt,name=mode,proto3,enum=sisyphus.node.v1.JobMode" json:"mode,omitempty"`
+	State  JobState   `protobuf:"varint,5,opt,name=state,proto3,enum=sisyphus.node.v1.JobState" json:"state,omitempty"`
+	Tasks  []*JobTask `protobuf:"bytes,6,rep,name=tasks,proto3" json:"tasks,omitempty"`
+	Result []byte     `protobuf:"bytes,7,opt,name=result,proto3" json:"result,omitempty"`
+	Error  string     `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"`
+	// Milliseconds since the Unix epoch; zero for a job not yet finished.
+	CreatedAtMs  int64 `protobuf:"varint,9,opt,name=created_at_ms,json=createdAtMs,proto3" json:"created_at_ms,omitempty"`
+	FinishedAtMs int64 `protobuf:"varint,10,opt,name=finished_at_ms,json=finishedAtMs,proto3" json:"finished_at_ms,omitempty"`
+	// CIDs of the stored data the job consumed and of what its result is.
+	InputBlobs    []string `protobuf:"bytes,11,rep,name=input_blobs,json=inputBlobs,proto3" json:"input_blobs,omitempty"`
+	OutputBlobs   []string `protobuf:"bytes,12,rep,name=output_blobs,json=outputBlobs,proto3" json:"output_blobs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Job) Reset() {
+	*x = Job{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Job) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Job) ProtoMessage() {}
+
+func (x *Job) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Job.ProtoReflect.Descriptor instead.
+func (*Job) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *Job) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *Job) GetWorkload() string {
+	if x != nil {
+		return x.Workload
+	}
+	return ""
+}
+
+func (x *Job) GetParams() []byte {
+	if x != nil {
+		return x.Params
+	}
+	return nil
+}
+
+func (x *Job) GetMode() JobMode {
+	if x != nil {
+		return x.Mode
+	}
+	return JobMode_JOB_MODE_UNSPECIFIED
+}
+
+func (x *Job) GetState() JobState {
+	if x != nil {
+		return x.State
+	}
+	return JobState_JOB_STATE_UNSPECIFIED
+}
+
+func (x *Job) GetTasks() []*JobTask {
+	if x != nil {
+		return x.Tasks
+	}
+	return nil
+}
+
+func (x *Job) GetResult() []byte {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+func (x *Job) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *Job) GetCreatedAtMs() int64 {
+	if x != nil {
+		return x.CreatedAtMs
+	}
+	return 0
+}
+
+func (x *Job) GetFinishedAtMs() int64 {
+	if x != nil {
+		return x.FinishedAtMs
+	}
+	return 0
+}
+
+func (x *Job) GetInputBlobs() []string {
+	if x != nil {
+		return x.InputBlobs
+	}
+	return nil
+}
+
+func (x *Job) GetOutputBlobs() []string {
+	if x != nil {
+		return x.OutputBlobs
+	}
+	return nil
+}
+
+type JobTask struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Index uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	State JobState               `protobuf:"varint,2,opt,name=state,proto3,enum=sisyphus.node.v1.JobState" json:"state,omitempty"`
+	// How many times it has been handed to a worker.
+	Attempt uint32 `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	// The worker running it, or that last did.
+	PeerId     string `protobuf:"bytes,4,opt,name=peer_id,json=peerId,proto3" json:"peer_id,omitempty"`
+	WorkerName string `protobuf:"bytes,5,opt,name=worker_name,json=workerName,proto3" json:"worker_name,omitempty"`
+	// Why its last failed attempt failed, if one did.
+	Error         string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JobTask) Reset() {
+	*x = JobTask{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JobTask) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JobTask) ProtoMessage() {}
+
+func (x *JobTask) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JobTask.ProtoReflect.Descriptor instead.
+func (*JobTask) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *JobTask) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *JobTask) GetState() JobState {
+	if x != nil {
+		return x.State
+	}
+	return JobState_JOB_STATE_UNSPECIFIED
+}
+
+func (x *JobTask) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
+func (x *JobTask) GetPeerId() string {
+	if x != nil {
+		return x.PeerId
+	}
+	return ""
+}
+
+func (x *JobTask) GetWorkerName() string {
+	if x != nil {
+		return x.WorkerName
+	}
+	return ""
+}
+
+func (x *JobTask) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type SubmitJobRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Workload string                 `protobuf:"bytes,1,opt,name=workload,proto3" json:"workload,omitempty"`
+	Params   []byte                 `protobuf:"bytes,2,opt,name=params,proto3" json:"params,omitempty"`
+	Mode     JobMode                `protobuf:"varint,3,opt,name=mode,proto3,enum=sisyphus.node.v1.JobMode" json:"mode,omitempty"`
+	// Distributed mode only: how many tasks to split into. Zero means one for
+	// each worker slot connected now.
+	MaxTasks      uint32 `protobuf:"varint,4,opt,name=max_tasks,json=maxTasks,proto3" json:"max_tasks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitJobRequest) Reset() {
+	*x = SubmitJobRequest{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitJobRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitJobRequest) ProtoMessage() {}
+
+func (x *SubmitJobRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitJobRequest.ProtoReflect.Descriptor instead.
+func (*SubmitJobRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *SubmitJobRequest) GetWorkload() string {
+	if x != nil {
+		return x.Workload
+	}
+	return ""
+}
+
+func (x *SubmitJobRequest) GetParams() []byte {
+	if x != nil {
+		return x.Params
+	}
+	return nil
+}
+
+func (x *SubmitJobRequest) GetMode() JobMode {
+	if x != nil {
+		return x.Mode
+	}
+	return JobMode_JOB_MODE_UNSPECIFIED
+}
+
+func (x *SubmitJobRequest) GetMaxTasks() uint32 {
+	if x != nil {
+		return x.MaxTasks
+	}
+	return 0
+}
+
+type SubmitJobResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Job           *Job                   `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitJobResponse) Reset() {
+	*x = SubmitJobResponse{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitJobResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitJobResponse) ProtoMessage() {}
+
+func (x *SubmitJobResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitJobResponse.ProtoReflect.Descriptor instead.
+func (*SubmitJobResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *SubmitJobResponse) GetJob() *Job {
+	if x != nil {
+		return x.Job
+	}
+	return nil
+}
+
+type GetJobRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetJobRequest) Reset() {
+	*x = GetJobRequest{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetJobRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetJobRequest) ProtoMessage() {}
+
+func (x *GetJobRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetJobRequest.ProtoReflect.Descriptor instead.
+func (*GetJobRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *GetJobRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+type GetJobResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Job           *Job                   `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetJobResponse) Reset() {
+	*x = GetJobResponse{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetJobResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetJobResponse) ProtoMessage() {}
+
+func (x *GetJobResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetJobResponse.ProtoReflect.Descriptor instead.
+func (*GetJobResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *GetJobResponse) GetJob() *Job {
+	if x != nil {
+		return x.Job
+	}
+	return nil
+}
+
+type ListJobsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListJobsRequest) Reset() {
+	*x = ListJobsRequest{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListJobsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListJobsRequest) ProtoMessage() {}
+
+func (x *ListJobsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListJobsRequest.ProtoReflect.Descriptor instead.
+func (*ListJobsRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{26}
+}
+
+type WatchJobsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchJobsRequest) Reset() {
+	*x = WatchJobsRequest{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchJobsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchJobsRequest) ProtoMessage() {}
+
+func (x *WatchJobsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchJobsRequest.ProtoReflect.Descriptor instead.
+func (*WatchJobsRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{27}
+}
+
+type ListJobsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jobs          []*Job                 `protobuf:"bytes,1,rep,name=jobs,proto3" json:"jobs,omitempty"`
+	Revision      uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListJobsResponse) Reset() {
+	*x = ListJobsResponse{}
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListJobsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListJobsResponse) ProtoMessage() {}
+
+func (x *ListJobsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_node_v1_node_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListJobsResponse.ProtoReflect.Descriptor instead.
+func (*ListJobsResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_node_v1_node_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *ListJobsResponse) GetJobs() []*Job {
+	if x != nil {
+		return x.Jobs
+	}
+	return nil
+}
+
+func (x *ListJobsResponse) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
 var File_sisyphus_node_v1_node_proto protoreflect.FileDescriptor
 
 const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\n" +
 	"\x1bsisyphus/node/v1/node.proto\x12\x10sisyphus.node.v1\"\x14\n" +
-	"\x12GetNodeInfoRequest\"\xa3\x01\n" +
+	"\x12GetNodeInfoRequest\"\xc1\x01\n" +
 	"\x13GetNodeInfoResponse\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12%\n" +
 	"\x0edaemon_version\x18\x02 \x01(\tR\rdaemonVersion\x12)\n" +
 	"\x10listen_addresses\x18\x03 \x03(\tR\x0flistenAddresses\x12!\n" +
-	"\fcountry_code\x18\x04 \x01(\tR\vcountryCode\"\x12\n" +
+	"\fcountry_code\x18\x04 \x01(\tR\vcountryCode\x12\x1c\n" +
+	"\tworkloads\x18\x05 \x03(\tR\tworkloads\"\x12\n" +
 	"\x10ListPeersRequest\"\x13\n" +
 	"\x11WatchPeersRequest\"\x1a\n" +
 	"\x18GetBootstrapPeersRequest\"R\n" +
@@ -978,11 +1858,78 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\n" +
 	"gives_work\x18\a \x01(\bR\tgivesWork\x12\x1d\n" +
 	"\n" +
-	"takes_work\x18\b \x01(\bR\ttakesWork*\x89\x01\n" +
+	"takes_work\x18\b \x01(\bR\ttakesWork\"\x14\n" +
+	"\x12ListWorkersRequest\"I\n" +
+	"\x13ListWorkersResponse\x122\n" +
+	"\aworkers\x18\x01 \x03(\v2\x18.sisyphus.node.v1.WorkerR\aworkers\"\xe2\x02\n" +
+	"\x06Worker\x12\x17\n" +
+	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
+	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\x0e\n" +
+	"\x02os\x18\x04 \x01(\tR\x02os\x12\x12\n" +
+	"\x04arch\x18\x05 \x01(\tR\x04arch\x12\x1b\n" +
+	"\tcpu_cores\x18\x06 \x01(\rR\bcpuCores\x12\x1d\n" +
+	"\n" +
+	"task_slots\x18\a \x01(\rR\ttaskSlots\x12#\n" +
+	"\rrunning_tasks\x18\b \x01(\rR\frunningTasks\x12\x1c\n" +
+	"\tworkloads\x18\t \x03(\tR\tworkloads\x12\x16\n" +
+	"\x06relays\x18\n" +
+	" \x01(\bR\x06relays\x12/\n" +
+	"\x13relayed_connections\x18\v \x01(\x04R\x12relayedConnections\x12#\n" +
+	"\rrelayed_bytes\x18\f \x01(\x04R\frelayedBytes\"\x9e\x03\n" +
+	"\x03Job\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1a\n" +
+	"\bworkload\x18\x02 \x01(\tR\bworkload\x12\x16\n" +
+	"\x06params\x18\x03 \x01(\fR\x06params\x12-\n" +
+	"\x04mode\x18\x04 \x01(\x0e2\x19.sisyphus.node.v1.JobModeR\x04mode\x120\n" +
+	"\x05state\x18\x05 \x01(\x0e2\x1a.sisyphus.node.v1.JobStateR\x05state\x12/\n" +
+	"\x05tasks\x18\x06 \x03(\v2\x19.sisyphus.node.v1.JobTaskR\x05tasks\x12\x16\n" +
+	"\x06result\x18\a \x01(\fR\x06result\x12\x14\n" +
+	"\x05error\x18\b \x01(\tR\x05error\x12\"\n" +
+	"\rcreated_at_ms\x18\t \x01(\x03R\vcreatedAtMs\x12$\n" +
+	"\x0efinished_at_ms\x18\n" +
+	" \x01(\x03R\ffinishedAtMs\x12\x1f\n" +
+	"\vinput_blobs\x18\v \x03(\tR\n" +
+	"inputBlobs\x12!\n" +
+	"\foutput_blobs\x18\f \x03(\tR\voutputBlobs\"\xbb\x01\n" +
+	"\aJobTask\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\rR\x05index\x120\n" +
+	"\x05state\x18\x02 \x01(\x0e2\x1a.sisyphus.node.v1.JobStateR\x05state\x12\x18\n" +
+	"\aattempt\x18\x03 \x01(\rR\aattempt\x12\x17\n" +
+	"\apeer_id\x18\x04 \x01(\tR\x06peerId\x12\x1f\n" +
+	"\vworker_name\x18\x05 \x01(\tR\n" +
+	"workerName\x12\x14\n" +
+	"\x05error\x18\x06 \x01(\tR\x05error\"\x92\x01\n" +
+	"\x10SubmitJobRequest\x12\x1a\n" +
+	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
+	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
+	"\x04mode\x18\x03 \x01(\x0e2\x19.sisyphus.node.v1.JobModeR\x04mode\x12\x1b\n" +
+	"\tmax_tasks\x18\x04 \x01(\rR\bmaxTasks\"<\n" +
+	"\x11SubmitJobResponse\x12'\n" +
+	"\x03job\x18\x01 \x01(\v2\x15.sisyphus.node.v1.JobR\x03job\"&\n" +
+	"\rGetJobRequest\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"9\n" +
+	"\x0eGetJobResponse\x12'\n" +
+	"\x03job\x18\x01 \x01(\v2\x15.sisyphus.node.v1.JobR\x03job\"\x11\n" +
+	"\x0fListJobsRequest\"\x12\n" +
+	"\x10WatchJobsRequest\"Y\n" +
+	"\x10ListJobsResponse\x12)\n" +
+	"\x04jobs\x18\x01 \x03(\v2\x15.sisyphus.node.v1.JobR\x04jobs\x12\x1a\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision*\x89\x01\n" +
 	"\x13PeerConnectionState\x12%\n" +
 	"!PEER_CONNECTION_STATE_UNSPECIFIED\x10\x00\x12&\n" +
 	"\"PEER_CONNECTION_STATE_DISCONNECTED\x10\x01\x12#\n" +
-	"\x1fPEER_CONNECTION_STATE_CONNECTED\x10\x022\xcc\x06\n" +
+	"\x1fPEER_CONNECTION_STATE_CONNECTED\x10\x02*\x82\x01\n" +
+	"\bJobState\x12\x19\n" +
+	"\x15JOB_STATE_UNSPECIFIED\x10\x00\x12\x15\n" +
+	"\x11JOB_STATE_PENDING\x10\x01\x12\x15\n" +
+	"\x11JOB_STATE_RUNNING\x10\x02\x12\x17\n" +
+	"\x13JOB_STATE_SUCCEEDED\x10\x03\x12\x14\n" +
+	"\x10JOB_STATE_FAILED\x10\x04*W\n" +
+	"\aJobMode\x12\x18\n" +
+	"\x14JOB_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14JOB_MODE_DISTRIBUTED\x10\x01\x12\x18\n" +
+	"\x14JOB_MODE_FULL_WORKER\x10\x022\xf5\t\n" +
 	"\vNodeService\x12Z\n" +
 	"\vGetNodeInfo\x12$.sisyphus.node.v1.GetNodeInfoRequest\x1a%.sisyphus.node.v1.GetNodeInfoResponse\x12T\n" +
 	"\tListPeers\x12\".sisyphus.node.v1.ListPeersRequest\x1a#.sisyphus.node.v1.ListPeersResponse\x12X\n" +
@@ -992,7 +1939,12 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x11SetBootstrapPeers\x12*.sisyphus.node.v1.SetBootstrapPeersRequest\x1a+.sisyphus.node.v1.SetBootstrapPeersResponse\x12Z\n" +
 	"\vConnectPeer\x12$.sisyphus.node.v1.ConnectPeerRequest\x1a%.sisyphus.node.v1.ConnectPeerResponse\x12r\n" +
 	"\x13SetPeerComputeTrust\x12,.sisyphus.node.v1.SetPeerComputeTrustRequest\x1a-.sisyphus.node.v1.SetPeerComputeTrustResponse\x12\x84\x01\n" +
-	"\x19SetPeerComputePermissions\x122.sisyphus.node.v1.SetPeerComputePermissionsRequest\x1a3.sisyphus.node.v1.SetPeerComputePermissionsResponseBPZNgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1b\x06proto3"
+	"\x19SetPeerComputePermissions\x122.sisyphus.node.v1.SetPeerComputePermissionsRequest\x1a3.sisyphus.node.v1.SetPeerComputePermissionsResponse\x12Z\n" +
+	"\vListWorkers\x12$.sisyphus.node.v1.ListWorkersRequest\x1a%.sisyphus.node.v1.ListWorkersResponse\x12T\n" +
+	"\tSubmitJob\x12\".sisyphus.node.v1.SubmitJobRequest\x1a#.sisyphus.node.v1.SubmitJobResponse\x12K\n" +
+	"\x06GetJob\x12\x1f.sisyphus.node.v1.GetJobRequest\x1a .sisyphus.node.v1.GetJobResponse\x12Q\n" +
+	"\bListJobs\x12!.sisyphus.node.v1.ListJobsRequest\x1a\".sisyphus.node.v1.ListJobsResponse\x12U\n" +
+	"\tWatchJobs\x12\".sisyphus.node.v1.WatchJobsRequest\x1a\".sisyphus.node.v1.ListJobsResponse0\x01BPZNgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1;nodev1b\x06proto3"
 
 var (
 	file_sisyphus_node_v1_node_proto_rawDescOnce sync.Once
@@ -1006,55 +1958,88 @@ func file_sisyphus_node_v1_node_proto_rawDescGZIP() []byte {
 	return file_sisyphus_node_v1_node_proto_rawDescData
 }
 
-var file_sisyphus_node_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sisyphus_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_sisyphus_node_v1_node_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_sisyphus_node_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_sisyphus_node_v1_node_proto_goTypes = []any{
 	(PeerConnectionState)(0),                  // 0: sisyphus.node.v1.PeerConnectionState
-	(*GetNodeInfoRequest)(nil),                // 1: sisyphus.node.v1.GetNodeInfoRequest
-	(*GetNodeInfoResponse)(nil),               // 2: sisyphus.node.v1.GetNodeInfoResponse
-	(*ListPeersRequest)(nil),                  // 3: sisyphus.node.v1.ListPeersRequest
-	(*WatchPeersRequest)(nil),                 // 4: sisyphus.node.v1.WatchPeersRequest
-	(*GetBootstrapPeersRequest)(nil),          // 5: sisyphus.node.v1.GetBootstrapPeersRequest
-	(*GetBootstrapPeersResponse)(nil),         // 6: sisyphus.node.v1.GetBootstrapPeersResponse
-	(*SetBootstrapPeersRequest)(nil),          // 7: sisyphus.node.v1.SetBootstrapPeersRequest
-	(*SetBootstrapPeersResponse)(nil),         // 8: sisyphus.node.v1.SetBootstrapPeersResponse
-	(*ConnectPeerRequest)(nil),                // 9: sisyphus.node.v1.ConnectPeerRequest
-	(*ConnectPeerResponse)(nil),               // 10: sisyphus.node.v1.ConnectPeerResponse
-	(*SetPeerComputeTrustRequest)(nil),        // 11: sisyphus.node.v1.SetPeerComputeTrustRequest
-	(*SetPeerComputeTrustResponse)(nil),       // 12: sisyphus.node.v1.SetPeerComputeTrustResponse
-	(*SetPeerComputePermissionsRequest)(nil),  // 13: sisyphus.node.v1.SetPeerComputePermissionsRequest
-	(*SetPeerComputePermissionsResponse)(nil), // 14: sisyphus.node.v1.SetPeerComputePermissionsResponse
-	(*BootstrapPeer)(nil),                     // 15: sisyphus.node.v1.BootstrapPeer
-	(*ListPeersResponse)(nil),                 // 16: sisyphus.node.v1.ListPeersResponse
-	(*Peer)(nil),                              // 17: sisyphus.node.v1.Peer
+	(JobState)(0),                             // 1: sisyphus.node.v1.JobState
+	(JobMode)(0),                              // 2: sisyphus.node.v1.JobMode
+	(*GetNodeInfoRequest)(nil),                // 3: sisyphus.node.v1.GetNodeInfoRequest
+	(*GetNodeInfoResponse)(nil),               // 4: sisyphus.node.v1.GetNodeInfoResponse
+	(*ListPeersRequest)(nil),                  // 5: sisyphus.node.v1.ListPeersRequest
+	(*WatchPeersRequest)(nil),                 // 6: sisyphus.node.v1.WatchPeersRequest
+	(*GetBootstrapPeersRequest)(nil),          // 7: sisyphus.node.v1.GetBootstrapPeersRequest
+	(*GetBootstrapPeersResponse)(nil),         // 8: sisyphus.node.v1.GetBootstrapPeersResponse
+	(*SetBootstrapPeersRequest)(nil),          // 9: sisyphus.node.v1.SetBootstrapPeersRequest
+	(*SetBootstrapPeersResponse)(nil),         // 10: sisyphus.node.v1.SetBootstrapPeersResponse
+	(*ConnectPeerRequest)(nil),                // 11: sisyphus.node.v1.ConnectPeerRequest
+	(*ConnectPeerResponse)(nil),               // 12: sisyphus.node.v1.ConnectPeerResponse
+	(*SetPeerComputeTrustRequest)(nil),        // 13: sisyphus.node.v1.SetPeerComputeTrustRequest
+	(*SetPeerComputeTrustResponse)(nil),       // 14: sisyphus.node.v1.SetPeerComputeTrustResponse
+	(*SetPeerComputePermissionsRequest)(nil),  // 15: sisyphus.node.v1.SetPeerComputePermissionsRequest
+	(*SetPeerComputePermissionsResponse)(nil), // 16: sisyphus.node.v1.SetPeerComputePermissionsResponse
+	(*BootstrapPeer)(nil),                     // 17: sisyphus.node.v1.BootstrapPeer
+	(*ListPeersResponse)(nil),                 // 18: sisyphus.node.v1.ListPeersResponse
+	(*Peer)(nil),                              // 19: sisyphus.node.v1.Peer
+	(*ListWorkersRequest)(nil),                // 20: sisyphus.node.v1.ListWorkersRequest
+	(*ListWorkersResponse)(nil),               // 21: sisyphus.node.v1.ListWorkersResponse
+	(*Worker)(nil),                            // 22: sisyphus.node.v1.Worker
+	(*Job)(nil),                               // 23: sisyphus.node.v1.Job
+	(*JobTask)(nil),                           // 24: sisyphus.node.v1.JobTask
+	(*SubmitJobRequest)(nil),                  // 25: sisyphus.node.v1.SubmitJobRequest
+	(*SubmitJobResponse)(nil),                 // 26: sisyphus.node.v1.SubmitJobResponse
+	(*GetJobRequest)(nil),                     // 27: sisyphus.node.v1.GetJobRequest
+	(*GetJobResponse)(nil),                    // 28: sisyphus.node.v1.GetJobResponse
+	(*ListJobsRequest)(nil),                   // 29: sisyphus.node.v1.ListJobsRequest
+	(*WatchJobsRequest)(nil),                  // 30: sisyphus.node.v1.WatchJobsRequest
+	(*ListJobsResponse)(nil),                  // 31: sisyphus.node.v1.ListJobsResponse
 }
 var file_sisyphus_node_v1_node_proto_depIdxs = []int32{
-	15, // 0: sisyphus.node.v1.GetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
-	15, // 1: sisyphus.node.v1.SetBootstrapPeersRequest.peers:type_name -> sisyphus.node.v1.BootstrapPeer
-	15, // 2: sisyphus.node.v1.SetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
-	17, // 3: sisyphus.node.v1.ListPeersResponse.peers:type_name -> sisyphus.node.v1.Peer
+	17, // 0: sisyphus.node.v1.GetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
+	17, // 1: sisyphus.node.v1.SetBootstrapPeersRequest.peers:type_name -> sisyphus.node.v1.BootstrapPeer
+	17, // 2: sisyphus.node.v1.SetBootstrapPeersResponse.peers:type_name -> sisyphus.node.v1.BootstrapPeer
+	19, // 3: sisyphus.node.v1.ListPeersResponse.peers:type_name -> sisyphus.node.v1.Peer
 	0,  // 4: sisyphus.node.v1.Peer.connection_state:type_name -> sisyphus.node.v1.PeerConnectionState
-	1,  // 5: sisyphus.node.v1.NodeService.GetNodeInfo:input_type -> sisyphus.node.v1.GetNodeInfoRequest
-	3,  // 6: sisyphus.node.v1.NodeService.ListPeers:input_type -> sisyphus.node.v1.ListPeersRequest
-	4,  // 7: sisyphus.node.v1.NodeService.WatchPeers:input_type -> sisyphus.node.v1.WatchPeersRequest
-	5,  // 8: sisyphus.node.v1.NodeService.GetBootstrapPeers:input_type -> sisyphus.node.v1.GetBootstrapPeersRequest
-	7,  // 9: sisyphus.node.v1.NodeService.SetBootstrapPeers:input_type -> sisyphus.node.v1.SetBootstrapPeersRequest
-	9,  // 10: sisyphus.node.v1.NodeService.ConnectPeer:input_type -> sisyphus.node.v1.ConnectPeerRequest
-	11, // 11: sisyphus.node.v1.NodeService.SetPeerComputeTrust:input_type -> sisyphus.node.v1.SetPeerComputeTrustRequest
-	13, // 12: sisyphus.node.v1.NodeService.SetPeerComputePermissions:input_type -> sisyphus.node.v1.SetPeerComputePermissionsRequest
-	2,  // 13: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
-	16, // 14: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	16, // 15: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	6,  // 16: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
-	8,  // 17: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
-	10, // 18: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
-	12, // 19: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
-	14, // 20: sisyphus.node.v1.NodeService.SetPeerComputePermissions:output_type -> sisyphus.node.v1.SetPeerComputePermissionsResponse
-	13, // [13:21] is the sub-list for method output_type
-	5,  // [5:13] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	22, // 5: sisyphus.node.v1.ListWorkersResponse.workers:type_name -> sisyphus.node.v1.Worker
+	2,  // 6: sisyphus.node.v1.Job.mode:type_name -> sisyphus.node.v1.JobMode
+	1,  // 7: sisyphus.node.v1.Job.state:type_name -> sisyphus.node.v1.JobState
+	24, // 8: sisyphus.node.v1.Job.tasks:type_name -> sisyphus.node.v1.JobTask
+	1,  // 9: sisyphus.node.v1.JobTask.state:type_name -> sisyphus.node.v1.JobState
+	2,  // 10: sisyphus.node.v1.SubmitJobRequest.mode:type_name -> sisyphus.node.v1.JobMode
+	23, // 11: sisyphus.node.v1.SubmitJobResponse.job:type_name -> sisyphus.node.v1.Job
+	23, // 12: sisyphus.node.v1.GetJobResponse.job:type_name -> sisyphus.node.v1.Job
+	23, // 13: sisyphus.node.v1.ListJobsResponse.jobs:type_name -> sisyphus.node.v1.Job
+	3,  // 14: sisyphus.node.v1.NodeService.GetNodeInfo:input_type -> sisyphus.node.v1.GetNodeInfoRequest
+	5,  // 15: sisyphus.node.v1.NodeService.ListPeers:input_type -> sisyphus.node.v1.ListPeersRequest
+	6,  // 16: sisyphus.node.v1.NodeService.WatchPeers:input_type -> sisyphus.node.v1.WatchPeersRequest
+	7,  // 17: sisyphus.node.v1.NodeService.GetBootstrapPeers:input_type -> sisyphus.node.v1.GetBootstrapPeersRequest
+	9,  // 18: sisyphus.node.v1.NodeService.SetBootstrapPeers:input_type -> sisyphus.node.v1.SetBootstrapPeersRequest
+	11, // 19: sisyphus.node.v1.NodeService.ConnectPeer:input_type -> sisyphus.node.v1.ConnectPeerRequest
+	13, // 20: sisyphus.node.v1.NodeService.SetPeerComputeTrust:input_type -> sisyphus.node.v1.SetPeerComputeTrustRequest
+	15, // 21: sisyphus.node.v1.NodeService.SetPeerComputePermissions:input_type -> sisyphus.node.v1.SetPeerComputePermissionsRequest
+	20, // 22: sisyphus.node.v1.NodeService.ListWorkers:input_type -> sisyphus.node.v1.ListWorkersRequest
+	25, // 23: sisyphus.node.v1.NodeService.SubmitJob:input_type -> sisyphus.node.v1.SubmitJobRequest
+	27, // 24: sisyphus.node.v1.NodeService.GetJob:input_type -> sisyphus.node.v1.GetJobRequest
+	29, // 25: sisyphus.node.v1.NodeService.ListJobs:input_type -> sisyphus.node.v1.ListJobsRequest
+	30, // 26: sisyphus.node.v1.NodeService.WatchJobs:input_type -> sisyphus.node.v1.WatchJobsRequest
+	4,  // 27: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
+	18, // 28: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	18, // 29: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	8,  // 30: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
+	10, // 31: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
+	12, // 32: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
+	14, // 33: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
+	16, // 34: sisyphus.node.v1.NodeService.SetPeerComputePermissions:output_type -> sisyphus.node.v1.SetPeerComputePermissionsResponse
+	21, // 35: sisyphus.node.v1.NodeService.ListWorkers:output_type -> sisyphus.node.v1.ListWorkersResponse
+	26, // 36: sisyphus.node.v1.NodeService.SubmitJob:output_type -> sisyphus.node.v1.SubmitJobResponse
+	28, // 37: sisyphus.node.v1.NodeService.GetJob:output_type -> sisyphus.node.v1.GetJobResponse
+	31, // 38: sisyphus.node.v1.NodeService.ListJobs:output_type -> sisyphus.node.v1.ListJobsResponse
+	31, // 39: sisyphus.node.v1.NodeService.WatchJobs:output_type -> sisyphus.node.v1.ListJobsResponse
+	27, // [27:40] is the sub-list for method output_type
+	14, // [14:27] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_node_v1_node_proto_init() }
@@ -1067,8 +2052,8 @@ func file_sisyphus_node_v1_node_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_node_v1_node_proto_rawDesc), len(file_sisyphus_node_v1_node_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   17,
+			NumEnums:      3,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -16,6 +16,20 @@ service NodeService {
   rpc SetPeerComputeTrust(SetPeerComputeTrustRequest) returns (SetPeerComputeTrustResponse);
   // SetPeerComputePermissions sets the two sides separately.
   rpc SetPeerComputePermissions(SetPeerComputePermissionsRequest) returns (SetPeerComputePermissionsResponse);
+
+  // The rest is the work of the pool this node coordinates. A node that
+  // coordinates none answers them with FAILED_PRECONDITION.
+
+  // ListWorkers lists the nodes connected to this one as its workers.
+  rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+  // SubmitJob gives the pool a job and returns it as it stands at once.
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+  // ListJobs lists the jobs this node has on record, newest first.
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  // WatchJobs sends that list at once and again, in full, whenever any job
+  // changes, with a revision that counts up from one.
+  rpc WatchJobs(WatchJobsRequest) returns (stream ListJobsResponse);
 }
 
 message GetNodeInfoRequest {}
@@ -25,6 +39,8 @@ message GetNodeInfoResponse {
   string daemon_version = 2;
   repeated string listen_addresses = 3;
   string country_code = 4;
+  // The names of the workloads this node can run or coordinate.
+  repeated string workloads = 5;
 }
 
 message ListPeersRequest {}
@@ -96,4 +112,99 @@ enum PeerConnectionState {
   PEER_CONNECTION_STATE_UNSPECIFIED = 0;
   PEER_CONNECTION_STATE_DISCONNECTED = 1;
   PEER_CONNECTION_STATE_CONNECTED = 2;
+}
+
+message ListWorkersRequest {}
+
+message ListWorkersResponse {
+  repeated Worker workers = 1;
+}
+
+message Worker {
+  string peer_id = 1;
+  // The label the node gave itself.
+  string name = 2;
+  string hostname = 3;
+  string os = 4;
+  string arch = 5;
+  uint32 cpu_cores = 6;
+  // How many tasks it runs at once, and how many it is running now.
+  uint32 task_slots = 7;
+  uint32 running_tasks = 8;
+  repeated string workloads = 9;
+  // Whether it relays between the pool's other members, and what it says it
+  // has carried for them since it started.
+  bool relays = 10;
+  uint64 relayed_connections = 11;
+  uint64 relayed_bytes = 12;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_PENDING = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_SUCCEEDED = 3;
+  JOB_STATE_FAILED = 4;
+}
+
+enum JobMode {
+  JOB_MODE_UNSPECIFIED = 0;
+  // Split into tasks spread across workers.
+  JOB_MODE_DISTRIBUTED = 1;
+  // Sent whole to one worker.
+  JOB_MODE_FULL_WORKER = 2;
+}
+
+message Job {
+  string job_id = 1;
+  string workload = 2;
+  // Workload-defined parameters and result. The built-in workloads use JSON.
+  bytes params = 3;
+  JobMode mode = 4;
+  JobState state = 5;
+  repeated JobTask tasks = 6;
+  bytes result = 7;
+  string error = 8;
+  // Milliseconds since the Unix epoch; zero for a job not yet finished.
+  int64 created_at_ms = 9;
+  int64 finished_at_ms = 10;
+  // CIDs of the stored data the job consumed and of what its result is.
+  repeated string input_blobs = 11;
+  repeated string output_blobs = 12;
+}
+
+message JobTask {
+  uint32 index = 1;
+  JobState state = 2;
+  // How many times it has been handed to a worker.
+  uint32 attempt = 3;
+  // The worker running it, or that last did.
+  string peer_id = 4;
+  string worker_name = 5;
+  // Why its last failed attempt failed, if one did.
+  string error = 6;
+}
+
+message SubmitJobRequest {
+  string workload = 1;
+  bytes params = 2;
+  JobMode mode = 3;
+  // Distributed mode only: how many tasks to split into. Zero means one for
+  // each worker slot connected now.
+  uint32 max_tasks = 4;
+}
+
+message SubmitJobResponse { Job job = 1; }
+
+message GetJobRequest { string job_id = 1; }
+
+message GetJobResponse { Job job = 1; }
+
+message ListJobsRequest {}
+
+message WatchJobsRequest {}
+
+message ListJobsResponse {
+  repeated Job jobs = 1;
+  uint64 revision = 2;
 }

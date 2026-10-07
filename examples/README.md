@@ -68,3 +68,7 @@ Both are stand-ins that exercise the network; neither computes anything of value
 - **`wordcount`** moves real data: the input is stored once and fetched by each worker, tasks store their partial counts, and the result is a stored file. Its first run on a pool includes fetching the input; later runs use each worker's cache.
 
 A job's result is the same whichever way it was split, down to the CID of a stored result. If two runs of the same job print different results, something is wrong.
+
+## A backend for the desktop app
+
+`examples/desktop-backend.sh` starts three nodes for the desktop app to be built against: the one it talks to, a worker of its pool, and a node it finds by itself. See [`docs/desktop-backend.md`](../docs/desktop-backend.md).

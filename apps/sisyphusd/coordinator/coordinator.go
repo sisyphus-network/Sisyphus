@@ -375,6 +375,23 @@ func (c *Coordinator) Get(jobID string) (*pb.Job, error) {
 	return job.ToProto(), nil
 }
 
+// Jobs returns every job the coordinator has on record, newest first.
+func (c *Coordinator) Jobs() []*pb.Job {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	jobs := make([]*pb.Job, 0, len(c.jobs))
+	for _, job := range c.jobs {
+		jobs = append(jobs, job.ToProto())
+	}
+	sort.Slice(jobs, func(a, b int) bool {
+		if at, bt := jobs[a].GetCreatedAt().AsTime(), jobs[b].GetCreatedAt().AsTime(); !at.Equal(bt) {
+			return at.After(bt)
+		}
+		return jobs[a].GetJobId() < jobs[b].GetJobId()
+	})
+	return jobs
+}
+
 // Watch calls fn with the job's current state and again after every change,
 // returning nil once it has delivered a terminal state.
 func (c *Coordinator) Watch(ctx context.Context, jobID string, fn func(*pb.Job) error) error {

@@ -27,6 +27,11 @@ const (
 	NodeService_ConnectPeer_FullMethodName               = "/sisyphus.node.v1.NodeService/ConnectPeer"
 	NodeService_SetPeerComputeTrust_FullMethodName       = "/sisyphus.node.v1.NodeService/SetPeerComputeTrust"
 	NodeService_SetPeerComputePermissions_FullMethodName = "/sisyphus.node.v1.NodeService/SetPeerComputePermissions"
+	NodeService_ListWorkers_FullMethodName               = "/sisyphus.node.v1.NodeService/ListWorkers"
+	NodeService_SubmitJob_FullMethodName                 = "/sisyphus.node.v1.NodeService/SubmitJob"
+	NodeService_GetJob_FullMethodName                    = "/sisyphus.node.v1.NodeService/GetJob"
+	NodeService_ListJobs_FullMethodName                  = "/sisyphus.node.v1.NodeService/ListJobs"
+	NodeService_WatchJobs_FullMethodName                 = "/sisyphus.node.v1.NodeService/WatchJobs"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -44,6 +49,16 @@ type NodeServiceClient interface {
 	SetPeerComputeTrust(ctx context.Context, in *SetPeerComputeTrustRequest, opts ...grpc.CallOption) (*SetPeerComputeTrustResponse, error)
 	// SetPeerComputePermissions sets the two sides separately.
 	SetPeerComputePermissions(ctx context.Context, in *SetPeerComputePermissionsRequest, opts ...grpc.CallOption) (*SetPeerComputePermissionsResponse, error)
+	// ListWorkers lists the nodes connected to this one as its workers.
+	ListWorkers(ctx context.Context, in *ListWorkersRequest, opts ...grpc.CallOption) (*ListWorkersResponse, error)
+	// SubmitJob gives the pool a job and returns it as it stands at once.
+	SubmitJob(ctx context.Context, in *SubmitJobRequest, opts ...grpc.CallOption) (*SubmitJobResponse, error)
+	GetJob(ctx context.Context, in *GetJobRequest, opts ...grpc.CallOption) (*GetJobResponse, error)
+	// ListJobs lists the jobs this node has on record, newest first.
+	ListJobs(ctx context.Context, in *ListJobsRequest, opts ...grpc.CallOption) (*ListJobsResponse, error)
+	// WatchJobs sends that list at once and again, in full, whenever any job
+	// changes, with a revision that counts up from one.
+	WatchJobs(ctx context.Context, in *WatchJobsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListJobsResponse], error)
 }
 
 type nodeServiceClient struct {
@@ -143,6 +158,65 @@ func (c *nodeServiceClient) SetPeerComputePermissions(ctx context.Context, in *S
 	return out, nil
 }
 
+func (c *nodeServiceClient) ListWorkers(ctx context.Context, in *ListWorkersRequest, opts ...grpc.CallOption) (*ListWorkersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListWorkersResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListWorkers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) SubmitJob(ctx context.Context, in *SubmitJobRequest, opts ...grpc.CallOption) (*SubmitJobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubmitJobResponse)
+	err := c.cc.Invoke(ctx, NodeService_SubmitJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetJob(ctx context.Context, in *GetJobRequest, opts ...grpc.CallOption) (*GetJobResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetJobResponse)
+	err := c.cc.Invoke(ctx, NodeService_GetJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) ListJobs(ctx context.Context, in *ListJobsRequest, opts ...grpc.CallOption) (*ListJobsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListJobsResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListJobs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) WatchJobs(ctx context.Context, in *WatchJobsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListJobsResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[1], NodeService_WatchJobs_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchJobsRequest, ListJobsResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchJobsClient = grpc.ServerStreamingClient[ListJobsResponse]
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -158,6 +232,16 @@ type NodeServiceServer interface {
 	SetPeerComputeTrust(context.Context, *SetPeerComputeTrustRequest) (*SetPeerComputeTrustResponse, error)
 	// SetPeerComputePermissions sets the two sides separately.
 	SetPeerComputePermissions(context.Context, *SetPeerComputePermissionsRequest) (*SetPeerComputePermissionsResponse, error)
+	// ListWorkers lists the nodes connected to this one as its workers.
+	ListWorkers(context.Context, *ListWorkersRequest) (*ListWorkersResponse, error)
+	// SubmitJob gives the pool a job and returns it as it stands at once.
+	SubmitJob(context.Context, *SubmitJobRequest) (*SubmitJobResponse, error)
+	GetJob(context.Context, *GetJobRequest) (*GetJobResponse, error)
+	// ListJobs lists the jobs this node has on record, newest first.
+	ListJobs(context.Context, *ListJobsRequest) (*ListJobsResponse, error)
+	// WatchJobs sends that list at once and again, in full, whenever any job
+	// changes, with a revision that counts up from one.
+	WatchJobs(*WatchJobsRequest, grpc.ServerStreamingServer[ListJobsResponse]) error
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -191,6 +275,21 @@ func (UnimplementedNodeServiceServer) SetPeerComputeTrust(context.Context, *SetP
 }
 func (UnimplementedNodeServiceServer) SetPeerComputePermissions(context.Context, *SetPeerComputePermissionsRequest) (*SetPeerComputePermissionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetPeerComputePermissions not implemented")
+}
+func (UnimplementedNodeServiceServer) ListWorkers(context.Context, *ListWorkersRequest) (*ListWorkersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListWorkers not implemented")
+}
+func (UnimplementedNodeServiceServer) SubmitJob(context.Context, *SubmitJobRequest) (*SubmitJobResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitJob not implemented")
+}
+func (UnimplementedNodeServiceServer) GetJob(context.Context, *GetJobRequest) (*GetJobResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetJob not implemented")
+}
+func (UnimplementedNodeServiceServer) ListJobs(context.Context, *ListJobsRequest) (*ListJobsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListJobs not implemented")
+}
+func (UnimplementedNodeServiceServer) WatchJobs(*WatchJobsRequest, grpc.ServerStreamingServer[ListJobsResponse]) error {
+	return status.Error(codes.Unimplemented, "method WatchJobs not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -350,6 +449,89 @@ func _NodeService_SetPeerComputePermissions_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_ListWorkers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListWorkersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListWorkers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListWorkers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListWorkers(ctx, req.(*ListWorkersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_SubmitJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitJobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).SubmitJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_SubmitJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).SubmitJob(ctx, req.(*SubmitJobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetJobRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetJob(ctx, req.(*GetJobRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_ListJobs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListJobsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListJobs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListJobs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListJobs(ctx, req.(*ListJobsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_WatchJobs_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchJobsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).WatchJobs(m, &grpc.GenericServerStream[WatchJobsRequest, ListJobsResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchJobsServer = grpc.ServerStreamingServer[ListJobsResponse]
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -385,11 +567,32 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "SetPeerComputePermissions",
 			Handler:    _NodeService_SetPeerComputePermissions_Handler,
 		},
+		{
+			MethodName: "ListWorkers",
+			Handler:    _NodeService_ListWorkers_Handler,
+		},
+		{
+			MethodName: "SubmitJob",
+			Handler:    _NodeService_SubmitJob_Handler,
+		},
+		{
+			MethodName: "GetJob",
+			Handler:    _NodeService_GetJob_Handler,
+		},
+		{
+			MethodName: "ListJobs",
+			Handler:    _NodeService_ListJobs_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "WatchPeers",
 			Handler:       _NodeService_WatchPeers_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "WatchJobs",
+			Handler:       _NodeService_WatchJobs_Handler,
 			ServerStreams: true,
 		},
 	},

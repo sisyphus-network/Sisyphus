@@ -4,6 +4,8 @@ The Electron + React desktop client is the first visual client for `sisyphusd`. 
 
 ## Development
 
+**The quick way to a backend with something in it** is `examples/desktop-backend.sh` from the repository root: three nodes, a worker, a discovered peer and a finished job. [`docs/desktop-backend.md`](../../docs/desktop-backend.md) describes it and every call the app can make.
+
 From this directory:
 
 ```sh

@@ -128,6 +128,8 @@ impl proto::node_service_server::NodeService for NodeServiceImpl {
             daemon_version: state.daemon_version,
             listen_addresses: state.listen_addresses,
             country_code: state.country_code.unwrap_or_default(),
+            // It runs no workloads.
+            workloads: Vec::new(),
         }))
     }
 
@@ -289,7 +291,48 @@ impl proto::node_service_server::NodeService for NodeServiceImpl {
             "this daemon keeps a single trust flag per peer; use SetPeerComputeTrust",
         ))
     }
+
+    // This daemon runs no pool, so it has no workers or jobs. The Go daemon
+    // serves these.
+    type WatchJobsStream = Pin<Box<dyn Stream<Item = Result<proto::ListJobsResponse, Status>> + Send + 'static>>;
+
+    async fn list_workers(
+        &self,
+        _request: Request<proto::ListWorkersRequest>,
+    ) -> Result<Response<proto::ListWorkersResponse>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
+
+    async fn submit_job(
+        &self,
+        _request: Request<proto::SubmitJobRequest>,
+    ) -> Result<Response<proto::SubmitJobResponse>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
+
+    async fn get_job(
+        &self,
+        _request: Request<proto::GetJobRequest>,
+    ) -> Result<Response<proto::GetJobResponse>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
+
+    async fn list_jobs(
+        &self,
+        _request: Request<proto::ListJobsRequest>,
+    ) -> Result<Response<proto::ListJobsResponse>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
+
+    async fn watch_jobs(
+        &self,
+        _request: Request<proto::WatchJobsRequest>,
+    ) -> Result<Response<Self::WatchJobsStream>, Status> {
+        Err(Status::failed_precondition(NO_POOL))
+    }
 }
+
+const NO_POOL: &str = "this node coordinates no pool, so it has no workers or jobs of its own";
 
 fn parse_bootstrap_peers(peers: Vec<proto::BootstrapPeer>) -> Result<Vec<BootstrapPeer>, Status> {
     let mut parsed = Vec::with_capacity(peers.len());
