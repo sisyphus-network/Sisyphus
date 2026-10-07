@@ -123,3 +123,13 @@ func Verify(id string, data, signature []byte) (bool, error) {
 	valid, _ := public.Verify(data, signature) // an Ed25519 check has no error of its own
 	return valid, nil
 }
+
+// Libp2pKey returns the node's private key in libp2p's encoding, which is
+// how Kubo and other libp2p programs store a peer's identity. Handle it as
+// carefully as the key file itself.
+func (i *Identity) Libp2pKey() []byte {
+	// Neither step fails for an Ed25519 key.
+	private, _ := crypto.UnmarshalEd25519PrivateKey(i.key)
+	encoded, _ := crypto.MarshalPrivateKey(private)
+	return encoded
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/excho0/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/excho0/Sisyphus/apps/sisyphusd/worker"
 	"github.com/excho0/Sisyphus/packages/identity"
+	"github.com/excho0/Sisyphus/packages/kubo"
 	"github.com/excho0/Sisyphus/packages/runtime"
 	"github.com/excho0/Sisyphus/packages/storage"
 )
@@ -38,6 +39,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
 	maxCache := fs.Uint64("max-cache-bytes", 0, "worker-only node: evict the least recently used cached blobs once the cache uses this much disk; 0 means no limit")
+	useKubo := fs.Bool("kubo", false, "coordinator role: keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself; needs the ipfs program installed")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
 	verbose := fs.Bool("v", false, "log per-task detail")
 	if err := fs.Parse(args); err != nil {
@@ -70,6 +72,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	if isCoordinator && *invitation != "" {
 		return errors.New("--join is for worker-only nodes")
 	}
+	if !isCoordinator && *useKubo {
+		return errors.New("--kubo is, for now, only for nodes with the coordinator role")
+	}
 
 	level := slog.LevelInfo
 	if *verbose {
@@ -96,7 +101,17 @@ func runDaemon(ctx context.Context, args []string) error {
 	// the two kinds never mix. Deferred calls run last-in first-out, so the
 	// store closes only after everything using it has stopped.
 	var store *storage.Store
-	if isCoordinator {
+	if *useKubo {
+		// Kubo runs as the same peer as this node, on a repository beside
+		// the node's other data, and is stopped when the node stops.
+		sidecar, startErr := kubo.Start(ctx, kubo.Config{Repo: filepath.Join(*dataDir, "ipfs"), Identity: ident})
+		if startErr != nil {
+			return startErr
+		}
+		defer sidecar.Stop()
+		log.Info("kubo started", "repo", filepath.Join(*dataDir, "ipfs"))
+		store, err = storage.OpenKubo(sidecar, filepath.Join(*dataDir, "kubo-pins"))
+	} else if isCoordinator {
 		store, err = storage.OpenLocal(filepath.Join(*dataDir, "blobs"))
 	} else {
 		store, err = storage.OpenCache(filepath.Join(*dataDir, "cache"), *syncCache)

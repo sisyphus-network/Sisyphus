@@ -4,6 +4,8 @@
 
 You need Go 1.27 or newer. To change the protocol you also need `protoc` and the plugins that `make tools` installs.
 
+Some tests run a real IPFS daemon and need the `ipfs` program ([Kubo](https://github.com/ipfs/kubo/releases)) on the PATH; CI uses the version pinned in `.github/workflows/ci.yml`. Without it those tests are skipped and `make cover` fails, since the code they exercise goes unrun. Each test daemon gets a repository of its own in a temporary directory and never touches `~/.ipfs` or a daemon already running on the machine.
+
 ```sh
 make build   # bin/sisyphusd
 make test    # go vet, then the tests under the race detector
@@ -22,6 +24,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `proto/sisyphus/v1` | Message and service definitions. The source of truth for the protocol. |
 | `packages/protocol` | Go generated from `proto/`. Never edited by hand; committed so a fresh clone builds without `protoc`. |
 | `packages/identity` | A node's key pair and the ID derived from it; signing and verifying; the TLS settings nodes connect with. |
+| `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
 | `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
 | `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. |
@@ -58,7 +61,11 @@ A workload implements `Split`, `Execute` and `Aggregate` in `packages/runtime`. 
 
 ## Storage and IPFS
 
-`packages/storage` is built from Boxo, the library set that Kubo, the main IPFS implementation, is itself built from. A blob gets the CID that `ipfs add --cid-version=1` gives the same bytes, and blocks are laid out on disk as Kubo lays them out; the tests check the CIDs against values taken from a real Kubo node. No Kubo process runs alongside `sisyphusd`, and nodes do not join the IPFS network: blobs move between Sisyphus nodes over Sisyphus's own protocol.
+`packages/storage` is built from Boxo, the library set that Kubo, the main IPFS implementation, is itself built from. A blob gets the CID that `ipfs add --cid-version=1` gives the same bytes; the tests check the CIDs against values taken from a real Kubo node.
+
+A store keeps its blocks in one of several places behind the same interface: files laid out as Kubo lays them out (`OpenLocal`, `OpenCache`), memory, or a running Kubo daemon (`OpenKubo`). Splitting files into blocks, pins, garbage collection and verification are the store's own and identical on all of them; only where a block is put and fetched differs. With Kubo the store talks to the daemon's HTTP API, one block per call.
+
+Nodes do not yet join an IPFS network: Kubo, when used, runs offline, and blobs move between Sisyphus nodes over Sisyphus's own protocol.
 
 ## Branches and pull requests
 

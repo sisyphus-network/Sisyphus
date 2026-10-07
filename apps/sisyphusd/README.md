@@ -120,6 +120,22 @@ bin/sisyphusd job submit --workload wordcount --params "{\"input\":\"$cid\"}"
 bin/sisyphusd blob get <output CID from the result> | head
 ```
 
+### Keeping data in Kubo
+
+By default a coordinator keeps blocks in files of its own. With `--kubo` it starts [Kubo](https://github.com/ipfs/kubo), the main IPFS implementation, beside itself and keeps them there instead. The `ipfs` program must be installed.
+
+```sh
+bin/sisyphusd run --kubo
+IPFS_PATH=~/.sisyphus/ipfs ipfs cat <cid>     # anything the node stores is an ordinary IPFS file
+```
+
+- Kubo runs as the same peer as the node: `ipfs id` and `sisyphusd id` print the same ID.
+- Its repository is `ipfs` in the node's data directory. It is started and stopped with the node.
+- It is kept off the public IPFS network: it runs offline, with no bootstrap peers and no gateway. Nodes do not yet exchange data through it; that comes next.
+- Files added with the `ipfs` command on that repository can be used as job inputs by CID.
+- The node's own pins decide what it keeps, as described below. Anything pinned with `ipfs pin add` is also kept. Do not run `ipfs repo gc` on the repository: Kubo's collector does not know about the node's pins.
+- Moving an existing node to `--kubo`, or back, does not carry its stored data across.
+
 ### How long data is kept
 
 A node keeps a blob for as long as something pins it, and deletes what nothing pins.
@@ -178,6 +194,7 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 - A node is remembered by address. If a coordinator's address changes, its workers and clients must join again.
 - A node's key cannot be changed without becoming a different node, and there is no way to stop a copied key being used other than removing that node.
 - Encryption hides what nodes say to each other, not that they are talking, how much, or when.
+- If a node using `--kubo` is killed outright rather than stopped, its Kubo daemon keeps running and must be stopped by hand before the node will start again.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - A worker downloads a whole input even when its tasks need only part of it.
 - Without `--max-cache-bytes` a worker's cache grows until the disk is full. The limit is not strict: blobs that tasks have open are kept even if they alone exceed it.

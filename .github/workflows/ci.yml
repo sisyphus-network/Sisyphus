@@ -11,11 +11,28 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Fail, rather than skip, any test that finds no ipfs program.
+      SISYPHUS_REQUIRE_KUBO: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Install Kubo
+        # Some tests run a real IPFS daemon. The version is pinned so that a
+        # new release cannot change test results unannounced.
+        env:
+          KUBO_VERSION: v0.43.1
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$KUBO_VERSION" -R ipfs/kubo \
+            -p "kubo_${KUBO_VERSION}_linux-amd64.tar.gz" -p "kubo_${KUBO_VERSION}_linux-amd64.tar.gz.sha512"
+          echo "$(cut -d' ' -f1 "kubo_${KUBO_VERSION}_linux-amd64.tar.gz.sha512")  kubo_${KUBO_VERSION}_linux-amd64.tar.gz" | sha512sum -c -
+          tar -xzf "kubo_${KUBO_VERSION}_linux-amd64.tar.gz"
+          sudo install -m 755 kubo/ipfs /usr/local/bin/ipfs
+          rm -rf kubo "kubo_${KUBO_VERSION}_linux-amd64.tar.gz"*
+          ipfs version
       - name: Check formatting
         run: test -z "$(gofmt -l apps packages)" || { gofmt -l apps packages; exit 1; }
       - run: go vet ./...
