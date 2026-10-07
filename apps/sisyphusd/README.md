@@ -236,6 +236,31 @@ A coordinator also collects every `--gc-interval` (default one hour), and with `
 
 A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
 
+## The planner
+
+A node that coordinates a pool can be asked questions in plain words. A language model decides what needs computing, has the pool compute it, reads the result, and answers.
+
+```sh
+bin/sisyphusd model set --model qwen3:8b                         # a model served by Ollama on this machine
+bin/sisyphusd run --api-listen 127.0.0.1:50051                   # the node, with its local API on
+bin/sisyphusd ask "How many primes are there below ten million?"
+bin/sisyphusd ask --chat <id> "And below a hundred million?"     # carry the conversation on
+```
+
+- **Which model.** `model set` takes `--provider ollama` (the default) or `--provider openai`, which is for OpenAI and for anything that speaks as it does: most hosted services and local servers. `--url` says where the service is if not in its usual place, and `--api-key-file` gives a key if it wants one. `model list` asks the service what it offers; `model show` prints what is set, without the key. A running node picks up a change at the next question.
+- **What the model can do.** Two things: run a job on the pool and read the result, and look up a job run earlier. It is told which workloads the pool has and what parameters each takes. It has no other reach: it cannot run commands, read files or touch the node's settings.
+- **What you see.** `ask` prints the model's words as they come, each job it starts, and what each returned. The jobs are ordinary jobs: `job get` and `job logs` work on them.
+- **Conversations are kept** in the node's database, with every request the model made and what came back, and are there for the desktop to list and read.
+- **It needs the node's token**, like anything else that spends the pool's time. `ask` reads it from the data directory.
+
+What to know before relying on it:
+
+- **It is as good as the model.** A small model may ask for the wrong parameters, or answer without computing. The model must support tool calling; many small ones do not.
+- **It has been tested against a stand-in model, not a real one making real decisions.** The streaming was checked against a real Ollama, but this machine has no tool-calling model to plan with. Expect the instructions it is given to need tuning once real models are tried.
+- **The key is kept in the node's database**, which only its owner can read, not in the operating system's keychain.
+- **One question at a time per conversation.** Two asked at once in the same conversation are recorded in whichever order they finish.
+- **It gives up after eight rounds** of asking for more without answering.
+
 ## Following and stopping a job
 
 ```sh
@@ -386,6 +411,8 @@ Both built-in workloads are stand-ins that exercise the network rather than comp
 | `apps/sisyphusd/access` | Who has been admitted and in what role; invitations; checking every call. |
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream. |
 | `apps/sisyphusd/p2p` | The node's libp2p host: one port shared with gRPC, the relay, discovery, reaching a node by its ID. |
+| `apps/sisyphusd/planner` | The loop in which a model reasons, has the pool compute, and reads the result. |
+| `packages/ai` | Talking to language models: Ollama and OpenAI-style services. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
 | `packages/nodedb` | The node's SQLite database: jobs, tasks, attempts, members and invitations. |
 | `packages/storage` | Content-addressed blob store, pins, garbage collection. |

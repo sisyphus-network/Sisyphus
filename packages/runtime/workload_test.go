@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -34,5 +35,18 @@ func TestWorkloadsReportOnThemselves(t *testing.T) {
 		if said.progress[i] < said.progress[i-1] {
 			t.Fatalf("primes' progress went backwards: %v", said.progress)
 		}
+	}
+}
+
+func TestWorkloadsDescribeThemselves(t *testing.T) {
+	r := Builtin()
+	for _, name := range []string{"primes", "wordcount"} {
+		if got := r.Describe(name); len(got) < 40 || !strings.Contains(got, "Parameters:") {
+			t.Errorf("%s describes itself as %q", name, got)
+		}
+	}
+	// One that is not there, or says nothing, has nothing to say.
+	if got := r.Describe("no-such-workload"); got != "" {
+		t.Errorf("a workload that is not there describes itself as %q", got)
 	}
 }

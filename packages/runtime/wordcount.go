@@ -86,6 +86,10 @@ func (WordCount) Split(ctx context.Context, blobs Blobs, params []byte, parts in
 	return payloads, nil
 }
 
+func (WordCount) Describe() string {
+	return `Counts how often each word occurs in a stored text file. Parameters: {"input": "<CID of the stored file>"}. Result: {"words": <total words>, "distinct": <distinct words>, "output": "<CID of the full table of counts>"}.`
+}
+
 func (WordCount) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
 	var r wordCountRange
 	if err := json.Unmarshal(payload, &r); err != nil {

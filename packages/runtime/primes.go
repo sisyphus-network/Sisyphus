@@ -50,6 +50,10 @@ func (Primes) Split(_ context.Context, _ Blobs, params []byte, parts int) ([][]b
 	return payloads, nil
 }
 
+func (Primes) Describe() string {
+	return `Counts the prime numbers in a range. Parameters: {"from": <integer>, "to": <integer>}, counting from "from" up to but not including "to". Result: {"count": <integer>}.`
+}
+
 func (Primes) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, error) {
 	r, err := parsePrimesRange(payload)
 	if err != nil {

@@ -34,6 +34,13 @@ const (
 	NodeService_WatchJobs_FullMethodName                 = "/sisyphus.node.v1.NodeService/WatchJobs"
 	NodeService_CancelJob_FullMethodName                 = "/sisyphus.node.v1.NodeService/CancelJob"
 	NodeService_WatchJobEvents_FullMethodName            = "/sisyphus.node.v1.NodeService/WatchJobEvents"
+	NodeService_GetModelConfig_FullMethodName            = "/sisyphus.node.v1.NodeService/GetModelConfig"
+	NodeService_SetModelConfig_FullMethodName            = "/sisyphus.node.v1.NodeService/SetModelConfig"
+	NodeService_ListModels_FullMethodName                = "/sisyphus.node.v1.NodeService/ListModels"
+	NodeService_Ask_FullMethodName                       = "/sisyphus.node.v1.NodeService/Ask"
+	NodeService_ListChats_FullMethodName                 = "/sisyphus.node.v1.NodeService/ListChats"
+	NodeService_GetChat_FullMethodName                   = "/sisyphus.node.v1.NodeService/GetChat"
+	NodeService_DeleteChat_FullMethodName                = "/sisyphus.node.v1.NodeService/DeleteChat"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -67,6 +74,20 @@ type NodeServiceClient interface {
 	// the one named, and goes on as more happens until the job has finished:
 	// the steps of its life and the lines its tasks log.
 	WatchJobEvents(ctx context.Context, in *WatchJobEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JobEvent], error)
+	// GetModelConfig says which model the node plans with. It never returns
+	// the service's key, only whether one is set.
+	GetModelConfig(ctx context.Context, in *GetModelConfigRequest, opts ...grpc.CallOption) (*ModelConfig, error)
+	SetModelConfig(ctx context.Context, in *SetModelConfigRequest, opts ...grpc.CallOption) (*ModelConfig, error)
+	// ListModels asks the configured service which models it offers.
+	ListModels(ctx context.Context, in *ListModelsRequest, opts ...grpc.CallOption) (*ListModelsResponse, error)
+	// Ask puts a question to the planner, in a new conversation or an
+	// existing one, and sends what it does as it does it: what the model
+	// says, each job it runs, and at the end the event "done".
+	Ask(ctx context.Context, in *AskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AskEvent], error)
+	// ListChats lists the conversations on record, newest first.
+	ListChats(ctx context.Context, in *ListChatsRequest, opts ...grpc.CallOption) (*ListChatsResponse, error)
+	GetChat(ctx context.Context, in *GetChatRequest, opts ...grpc.CallOption) (*GetChatResponse, error)
+	DeleteChat(ctx context.Context, in *DeleteChatRequest, opts ...grpc.CallOption) (*DeleteChatResponse, error)
 }
 
 type nodeServiceClient struct {
@@ -254,6 +275,85 @@ func (c *nodeServiceClient) WatchJobEvents(ctx context.Context, in *WatchJobEven
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchJobEventsClient = grpc.ServerStreamingClient[JobEvent]
 
+func (c *nodeServiceClient) GetModelConfig(ctx context.Context, in *GetModelConfigRequest, opts ...grpc.CallOption) (*ModelConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ModelConfig)
+	err := c.cc.Invoke(ctx, NodeService_GetModelConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) SetModelConfig(ctx context.Context, in *SetModelConfigRequest, opts ...grpc.CallOption) (*ModelConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ModelConfig)
+	err := c.cc.Invoke(ctx, NodeService_SetModelConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) ListModels(ctx context.Context, in *ListModelsRequest, opts ...grpc.CallOption) (*ListModelsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListModelsResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListModels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) Ask(ctx context.Context, in *AskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AskEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[3], NodeService_Ask_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[AskRequest, AskEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_AskClient = grpc.ServerStreamingClient[AskEvent]
+
+func (c *nodeServiceClient) ListChats(ctx context.Context, in *ListChatsRequest, opts ...grpc.CallOption) (*ListChatsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListChatsResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListChats_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetChat(ctx context.Context, in *GetChatRequest, opts ...grpc.CallOption) (*GetChatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetChatResponse)
+	err := c.cc.Invoke(ctx, NodeService_GetChat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) DeleteChat(ctx context.Context, in *DeleteChatRequest, opts ...grpc.CallOption) (*DeleteChatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteChatResponse)
+	err := c.cc.Invoke(ctx, NodeService_DeleteChat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -285,6 +385,20 @@ type NodeServiceServer interface {
 	// the one named, and goes on as more happens until the job has finished:
 	// the steps of its life and the lines its tasks log.
 	WatchJobEvents(*WatchJobEventsRequest, grpc.ServerStreamingServer[JobEvent]) error
+	// GetModelConfig says which model the node plans with. It never returns
+	// the service's key, only whether one is set.
+	GetModelConfig(context.Context, *GetModelConfigRequest) (*ModelConfig, error)
+	SetModelConfig(context.Context, *SetModelConfigRequest) (*ModelConfig, error)
+	// ListModels asks the configured service which models it offers.
+	ListModels(context.Context, *ListModelsRequest) (*ListModelsResponse, error)
+	// Ask puts a question to the planner, in a new conversation or an
+	// existing one, and sends what it does as it does it: what the model
+	// says, each job it runs, and at the end the event "done".
+	Ask(*AskRequest, grpc.ServerStreamingServer[AskEvent]) error
+	// ListChats lists the conversations on record, newest first.
+	ListChats(context.Context, *ListChatsRequest) (*ListChatsResponse, error)
+	GetChat(context.Context, *GetChatRequest) (*GetChatResponse, error)
+	DeleteChat(context.Context, *DeleteChatRequest) (*DeleteChatResponse, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -339,6 +453,27 @@ func (UnimplementedNodeServiceServer) CancelJob(context.Context, *CancelJobReque
 }
 func (UnimplementedNodeServiceServer) WatchJobEvents(*WatchJobEventsRequest, grpc.ServerStreamingServer[JobEvent]) error {
 	return status.Error(codes.Unimplemented, "method WatchJobEvents not implemented")
+}
+func (UnimplementedNodeServiceServer) GetModelConfig(context.Context, *GetModelConfigRequest) (*ModelConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetModelConfig not implemented")
+}
+func (UnimplementedNodeServiceServer) SetModelConfig(context.Context, *SetModelConfigRequest) (*ModelConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetModelConfig not implemented")
+}
+func (UnimplementedNodeServiceServer) ListModels(context.Context, *ListModelsRequest) (*ListModelsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListModels not implemented")
+}
+func (UnimplementedNodeServiceServer) Ask(*AskRequest, grpc.ServerStreamingServer[AskEvent]) error {
+	return status.Error(codes.Unimplemented, "method Ask not implemented")
+}
+func (UnimplementedNodeServiceServer) ListChats(context.Context, *ListChatsRequest) (*ListChatsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListChats not implemented")
+}
+func (UnimplementedNodeServiceServer) GetChat(context.Context, *GetChatRequest) (*GetChatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetChat not implemented")
+}
+func (UnimplementedNodeServiceServer) DeleteChat(context.Context, *DeleteChatRequest) (*DeleteChatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteChat not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -610,6 +745,125 @@ func _NodeService_WatchJobEvents_Handler(srv interface{}, stream grpc.ServerStre
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchJobEventsServer = grpc.ServerStreamingServer[JobEvent]
 
+func _NodeService_GetModelConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetModelConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetModelConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetModelConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetModelConfig(ctx, req.(*GetModelConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_SetModelConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetModelConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).SetModelConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_SetModelConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).SetModelConfig(ctx, req.(*SetModelConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_ListModels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListModelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListModels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListModels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListModels(ctx, req.(*ListModelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_Ask_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(AskRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).Ask(m, &grpc.GenericServerStream[AskRequest, AskEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_AskServer = grpc.ServerStreamingServer[AskEvent]
+
+func _NodeService_ListChats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListChatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListChats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListChats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListChats(ctx, req.(*ListChatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetChat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetChatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetChat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetChat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetChat(ctx, req.(*GetChatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_DeleteChat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteChatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).DeleteChat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_DeleteChat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).DeleteChat(ctx, req.(*DeleteChatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -665,6 +919,30 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "CancelJob",
 			Handler:    _NodeService_CancelJob_Handler,
 		},
+		{
+			MethodName: "GetModelConfig",
+			Handler:    _NodeService_GetModelConfig_Handler,
+		},
+		{
+			MethodName: "SetModelConfig",
+			Handler:    _NodeService_SetModelConfig_Handler,
+		},
+		{
+			MethodName: "ListModels",
+			Handler:    _NodeService_ListModels_Handler,
+		},
+		{
+			MethodName: "ListChats",
+			Handler:    _NodeService_ListChats_Handler,
+		},
+		{
+			MethodName: "GetChat",
+			Handler:    _NodeService_GetChat_Handler,
+		},
+		{
+			MethodName: "DeleteChat",
+			Handler:    _NodeService_DeleteChat_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -680,6 +958,11 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "WatchJobEvents",
 			Handler:       _NodeService_WatchJobEvents_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "Ask",
+			Handler:       _NodeService_Ask_Handler,
 			ServerStreams: true,
 		},
 	},

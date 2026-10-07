@@ -36,6 +36,24 @@ service NodeService {
   // the one named, and goes on as more happens until the job has finished:
   // the steps of its life and the lines its tasks log.
   rpc WatchJobEvents(WatchJobEventsRequest) returns (stream JobEvent);
+
+  // The rest is the planner: a language model that is asked a question,
+  // has the pool compute what the answer needs, and answers.
+
+  // GetModelConfig says which model the node plans with. It never returns
+  // the service's key, only whether one is set.
+  rpc GetModelConfig(GetModelConfigRequest) returns (ModelConfig);
+  rpc SetModelConfig(SetModelConfigRequest) returns (ModelConfig);
+  // ListModels asks the configured service which models it offers.
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+  // Ask puts a question to the planner, in a new conversation or an
+  // existing one, and sends what it does as it does it: what the model
+  // says, each job it runs, and at the end the event "done".
+  rpc Ask(AskRequest) returns (stream AskEvent);
+  // ListChats lists the conversations on record, newest first.
+  rpc ListChats(ListChatsRequest) returns (ListChatsResponse);
+  rpc GetChat(GetChatRequest) returns (GetChatResponse);
+  rpc DeleteChat(DeleteChatRequest) returns (DeleteChatResponse);
 }
 
 message GetNodeInfoRequest {}
@@ -247,3 +265,84 @@ message ListJobsResponse {
   repeated Job jobs = 1;
   uint64 revision = 2;
 }
+
+message GetModelConfigRequest {}
+
+message ModelConfig {
+  // "ollama", or "openai" for OpenAI and anything that speaks as it does.
+  string provider = 1;
+  // Where the service is, if not in that provider's usual place.
+  string base_url = 2;
+  string model = 3;
+  bool has_api_key = 4;
+}
+
+message SetModelConfigRequest {
+  string provider = 1;
+  string base_url = 2;
+  string model = 3;
+  // The service's key, if it wants one. Leave empty and set keep_api_key to
+  // change the rest without sending the key again.
+  string api_key = 4;
+  bool keep_api_key = 5;
+}
+
+message ListModelsRequest {}
+
+message ListModelsResponse { repeated string models = 1; }
+
+message AskRequest {
+  // The conversation to continue, or empty to start one.
+  string chat_id = 1;
+  string text = 2;
+}
+
+message AskEvent {
+  // The conversation this belongs to. Set on every event, so that the first
+  // one tells a caller that started a conversation what it is called.
+  string chat_id = 1;
+  // "text": a piece of what the model is saying, in text.
+  // "call": the model asked for a tool; tool names it, text is its arguments.
+  // "job": the planner gave the pool a job; job_id names it.
+  // "result": what a tool returned, in text.
+  // "done": the answer is complete. Always the last event.
+  string kind = 2;
+  string text = 3;
+  string job_id = 4;
+  string tool = 5;
+}
+
+message ListChatsRequest {}
+
+message ListChatsResponse { repeated ChatSummary chats = 1; }
+
+message ChatSummary {
+  string chat_id = 1;
+  // The start of its first question.
+  string title = 2;
+  int64 created_at_ms = 3;
+}
+
+message GetChatRequest { string chat_id = 1; }
+
+message GetChatResponse { repeated ChatMessage messages = 1; }
+
+message ChatMessage {
+  // "user", "assistant", or "tool" for what a tool returned.
+  string role = 1;
+  string content = 2;
+  // On an assistant's message: the tools it asked for.
+  repeated ChatToolCall calls = 3;
+  // On a tool's message: which tool.
+  string tool = 4;
+}
+
+message ChatToolCall {
+  string name = 1;
+  // A JSON object.
+  string arguments = 2;
+}
+
+message DeleteChatRequest { string chat_id = 1; }
+
+message DeleteChatResponse {}

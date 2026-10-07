@@ -341,6 +341,58 @@ impl proto::node_service_server::NodeService for NodeServiceImpl {
         Err(Status::failed_precondition(NO_POOL))
     }
 
+    type AskStream =
+        Pin<Box<dyn Stream<Item = Result<proto::AskEvent, Status>> + Send + 'static>>;
+
+    async fn get_model_config(
+        &self,
+        _request: Request<proto::GetModelConfigRequest>,
+    ) -> Result<Response<proto::ModelConfig>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
+    async fn set_model_config(
+        &self,
+        _request: Request<proto::SetModelConfigRequest>,
+    ) -> Result<Response<proto::ModelConfig>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
+    async fn list_models(
+        &self,
+        _request: Request<proto::ListModelsRequest>,
+    ) -> Result<Response<proto::ListModelsResponse>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
+    async fn ask(
+        &self,
+        _request: Request<proto::AskRequest>,
+    ) -> Result<Response<Self::AskStream>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
+    async fn list_chats(
+        &self,
+        _request: Request<proto::ListChatsRequest>,
+    ) -> Result<Response<proto::ListChatsResponse>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
+    async fn get_chat(
+        &self,
+        _request: Request<proto::GetChatRequest>,
+    ) -> Result<Response<proto::GetChatResponse>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
+    async fn delete_chat(
+        &self,
+        _request: Request<proto::DeleteChatRequest>,
+    ) -> Result<Response<proto::DeleteChatResponse>, Status> {
+        Err(Status::failed_precondition(NO_PLANNER))
+    }
+
     async fn watch_jobs(
         &self,
         _request: Request<proto::WatchJobsRequest>,
@@ -349,6 +401,7 @@ impl proto::node_service_server::NodeService for NodeServiceImpl {
     }
 }
 
+const NO_PLANNER: &str = "this node has no planner";
 const NO_POOL: &str = "this node coordinates no pool, so it has no workers or jobs of its own";
 
 fn parse_bootstrap_peers(peers: Vec<proto::BootstrapPeer>) -> Result<Vec<BootstrapPeer>, Status> {

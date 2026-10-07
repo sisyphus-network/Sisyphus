@@ -243,11 +243,13 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Encrypted connections between nodes, each identified by its own key; nodes join a pool by invitation, as a worker or a client, and can be removed.
 - Nodes that find each other: on one network by multicast DNS, beyond it through a distributed hash table, and from an address book. A node can be trusted for compute straight from the list of those found, or admitted by invitation, Trust has two sides, giving a node work and taking its work, and work starts between two nodes wherever one gives and the other takes, without either being restarted.
 - Jobs kept in a SQLite database, so a coordinator that is restarted takes up its unfinished jobs where they were.
+- A planner: ask a node a question in plain words, and a language model (from Ollama, OpenAI or anything that speaks as OpenAI does) decides what to compute, has the pool compute it, and answers from the result.
+- Jobs that can be followed as they run, with progress, logs and a record of what happened to them, and cancelled or given a time limit.
 - A desktop client that shows a node and its pool, and admits or removes workers.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds for Linux, macOS, Windows, the BSDs and Android.
 
-**Not built yet**: the AI planner and model providers, real workloads in containers, and hardware discovery. A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
+**Not built yet**: real workloads in containers, and hardware discovery. A coordinator accepts whatever result a worker returns, so a pool is only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
 
 Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/sisyphus-network/Sisyphus/issues/23).
 

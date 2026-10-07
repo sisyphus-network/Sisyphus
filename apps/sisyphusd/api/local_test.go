@@ -20,6 +20,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
+	"github.com/sisyphus-network/Sisyphus/packages/ai"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -852,3 +854,69 @@ func TestTheLocalAPICancelsJobsAndFollowsTheirEvents(t *testing.T) {
 		t.Errorf("events on a node with no pool: %v", err)
 	}
 }
+
+// absent is a planner whose state cannot be read or changed.
+type absent struct{ Assistant }
+
+var errAbsent = errors.New("the database is locked")
+
+func (absent) ModelConfig() (nodedb.ModelConfig, bool, error) {
+	return nodedb.ModelConfig{}, false, errAbsent
+}
+func (absent) SetModelConfig(nodedb.ModelConfig) error  { return errAbsent }
+func (absent) Models(context.Context) ([]string, error) { return nil, errAbsent }
+func (absent) Chats() ([]nodedb.Chat, error)            { return nil, errAbsent }
+func (absent) Chat(string) ([]ai.Message, error)        { return nil, errAbsent }
+func (absent) DeleteChat(string) error                  { return errAbsent }
+func (absent) Ask(context.Context, string, string, func(string, planner.Event)) (string, error) {
+	return "", errAbsent
+}
+
+// settable is one that keeps a configuration and fails at nothing but
+// saving it.
+type settable struct{ absent }
+
+func (settable) ModelConfig() (nodedb.ModelConfig, bool, error) {
+	return nodedb.ModelConfig{Provider: "ollama", Model: "m", APIKey: "k"}, true, nil
+}
+
+func TestThePlannersCallsOnANodeWithoutOneAndOnOneThatFails(t *testing.T) {
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	calls := func(s *localService) map[string]error {
+		_, get := s.GetModelConfig(ctx, &nodepb.GetModelConfigRequest{})
+		_, set := s.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", Model: "m"})
+		_, keep := s.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", Model: "m", KeepApiKey: true})
+		_, models := s.ListModels(ctx, &nodepb.ListModelsRequest{})
+		_, chats := s.ListChats(ctx, &nodepb.ListChatsRequest{})
+		_, chat := s.GetChat(ctx, &nodepb.GetChatRequest{ChatId: "c"})
+		_, del := s.DeleteChat(ctx, &nodepb.DeleteChatRequest{ChatId: "c"})
+		ask := s.Ask(&nodepb.AskRequest{Text: "Anything."}, &askStream{ctx: ctx})
+		return map[string]error{"GetModelConfig": get, "SetModelConfig": set, "SetModelConfig keeping the key": keep, "ListModels": models,
+			"ListChats": chats, "GetChat": chat, "DeleteChat": del, "Ask": ask}
+	}
+	for call, err := range calls(&localService{cfg: LocalConfig{Token: "the-token"}}) {
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Errorf("%s on a node with no planner: %v", call, err)
+		}
+	}
+	// A failure that is not already a status is given as an internal one.
+	for call, err := range calls(&localService{cfg: LocalConfig{Token: "the-token", Assistant: absent{}}}) {
+		if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "the database is locked") {
+			t.Errorf("%s with a planner that fails: %v", call, err)
+		}
+	}
+	// Keeping the key reads the configuration first; saving can still fail.
+	s := &localService{cfg: LocalConfig{Token: "the-token", Assistant: settable{}}}
+	if _, err := s.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", Model: "m", KeepApiKey: true}); status.Code(err) != codes.Internal {
+		t.Errorf("keeping the key and failing to save: %v", err)
+	}
+}
+
+// askStream is where an Ask sends its events, for a call made directly.
+type askStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (a *askStream) Context() context.Context  { return a.ctx }
+func (*askStream) Send(*nodepb.AskEvent) error { return nil }
