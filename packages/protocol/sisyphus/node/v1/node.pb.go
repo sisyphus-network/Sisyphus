@@ -1241,9 +1241,11 @@ type Worker struct {
 	RelayedBytes       uint64 `protobuf:"varint,12,opt,name=relayed_bytes,json=relayedBytes,proto3" json:"relayed_bytes,omitempty"`
 	// What the machine has, as far as it could tell and its owner offers:
 	// zero and empty where unknown.
-	CpuModel      string       `protobuf:"bytes,13,opt,name=cpu_model,json=cpuModel,proto3" json:"cpu_model,omitempty"`
-	MemoryBytes   uint64       `protobuf:"varint,14,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
-	Gpus          []*WorkerGpu `protobuf:"bytes,15,rep,name=gpus,proto3" json:"gpus,omitempty"`
+	CpuModel    string       `protobuf:"bytes,13,opt,name=cpu_model,json=cpuModel,proto3" json:"cpu_model,omitempty"`
+	MemoryBytes uint64       `protobuf:"varint,14,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
+	Gpus        []*WorkerGpu `protobuf:"bytes,15,rep,name=gpus,proto3" json:"gpus,omitempty"`
+	// The language models the worker serves to the pool, by name.
+	Models        []string `protobuf:"bytes,16,rep,name=models,proto3" json:"models,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1379,6 +1381,13 @@ func (x *Worker) GetMemoryBytes() uint64 {
 func (x *Worker) GetGpus() []*WorkerGpu {
 	if x != nil {
 		return x.Gpus
+	}
+	return nil
+}
+
+func (x *Worker) GetModels() []string {
+	if x != nil {
+		return x.Models
 	}
 	return nil
 }
@@ -4552,7 +4561,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"takes_work\x18\b \x01(\bR\ttakesWork\"\x14\n" +
 	"\x12ListWorkersRequest\"I\n" +
 	"\x13ListWorkersResponse\x122\n" +
-	"\aworkers\x18\x01 \x03(\v2\x18.sisyphus.node.v1.WorkerR\aworkers\"\xd3\x03\n" +
+	"\aworkers\x18\x01 \x03(\v2\x18.sisyphus.node.v1.WorkerR\aworkers\"\xeb\x03\n" +
 	"\x06Worker\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -4570,7 +4579,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\rrelayed_bytes\x18\f \x01(\x04R\frelayedBytes\x12\x1b\n" +
 	"\tcpu_model\x18\r \x01(\tR\bcpuModel\x12!\n" +
 	"\fmemory_bytes\x18\x0e \x01(\x04R\vmemoryBytes\x12/\n" +
-	"\x04gpus\x18\x0f \x03(\v2\x1b.sisyphus.node.v1.WorkerGpuR\x04gpus\"B\n" +
+	"\x04gpus\x18\x0f \x03(\v2\x1b.sisyphus.node.v1.WorkerGpuR\x04gpus\x12\x16\n" +
+	"\x06models\x18\x10 \x03(\tR\x06models\"B\n" +
 	"\tWorkerGpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xcb\x04\n" +

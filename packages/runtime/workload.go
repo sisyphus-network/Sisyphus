@@ -48,6 +48,51 @@ type Described interface {
 	Describe() string
 }
 
+// Needy is a workload whose tasks cannot run on just any worker that has
+// the workload: they need something more of it, which depends on the job.
+type Needy interface {
+	// Needs returns the labels a worker must have to be given the tasks
+	// of a job with these parameters.
+	Needs(params []byte) []string
+}
+
+// Offering is a workload that gives the worker running it something a job
+// may need, which it can name.
+type Offering interface {
+	// Offers returns the labels the worker has by running this workload.
+	Offers(ctx context.Context) []string
+}
+
+// Needs returns the labels a worker must have to be given the tasks of a
+// job of the named workload with the given parameters.
+func (r *Registry) Needs(name string, params []byte) []string {
+	if n, ok := r.workloads[name].(Needy); ok {
+		return n.Needs(params)
+	}
+	return nil
+}
+
+// Offers returns the labels a worker has by running these workloads.
+func (r *Registry) Offers(ctx context.Context) []string {
+	var labels []string
+	for _, name := range r.Names() {
+		if o, ok := r.workloads[name].(Offering); ok {
+			labels = append(labels, o.Offers(ctx)...)
+		}
+	}
+	return labels
+}
+
+// With returns a registry of these workloads and more. One of the same
+// name as one already there takes its place.
+func (r *Registry) With(more ...Workload) *Registry {
+	all := make([]Workload, 0, len(r.workloads)+len(more))
+	for _, w := range r.workloads {
+		all = append(all, w)
+	}
+	return NewRegistry(append(all, more...)...)
+}
+
 // Describe returns what the workload with the given name says of itself, or
 // nothing if it says nothing or is not there.
 func (r *Registry) Describe(name string) string {
@@ -89,8 +134,10 @@ func Builtin() *Registry {
 
 // WithContainers returns the built-in workloads and those that run in
 // containers: any image a job names, and the ones made of a fixed image.
+// It also has chat, as a coordinator has it: able to take such a job in
+// and pass it on, with no models of its own to run it.
 func WithContainers() *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Container{}, Transcode{})
+	return NewRegistry(Primes{}, WordCount{}, Container{}, Transcode{}, Chat{})
 }
 
 func (r *Registry) Get(name string) (Workload, error) {

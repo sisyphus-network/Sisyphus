@@ -244,6 +244,8 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Nodes that find each other: on one network by multicast DNS, beyond it through a distributed hash table, and from an address book. A node can be trusted for compute straight from the list of those found, or admitted by invitation, Trust has two sides, giving a node work and taking its work, and work starts between two nodes wherever one gives and the other takes, without either being restarted.
 - Jobs kept in a SQLite database, so a coordinator that is restarted takes up its unfinished jobs where they were.
 - A planner: ask a node a question in plain words, and a language model (from Ollama, Anthropic, OpenAI or anything that speaks as OpenAI does) decides what to compute, has the pool compute it, and answers from the result.
+- Thinking on the pool: workers with Ollama offer their models, and the coordinator offers them all as one OpenAI-style service, which the planner or any agent can use.
+- An MCP server and a skill, so that Claude Code and other agents can run jobs on a pool.
 - An MCP server and an agent skill: `sisyphusd mcp` offers the pool to any AI agent that speaks the Model Context Protocol, and `skills/sisyphus` teaches one to use it.
 - Jobs that can be followed as they run, with progress, logs and a record of what happened to them, and cancelled or given a time limit.
 - A desktop client that shows a node and its pool, and admits or removes workers.

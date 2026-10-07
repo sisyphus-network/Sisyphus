@@ -82,8 +82,12 @@ type Job struct {
 	TaskTimeout time.Duration
 	// MinMemory and MinGPUs are what a worker must have to be given the
 	// job's tasks: bytes of memory, and graphics cards. Zero asks nothing.
-	MinMemory  uint64
-	MinGPUs    int
+	MinMemory uint64
+	MinGPUs   int
+	// Needs is what else a worker must have, as labels. It follows from
+	// the workload and the parameters and is worked out by whoever holds
+	// the job, not saved with it.
+	Needs      []string
 	State      State
 	Tasks      []*Task
 	Result     []byte

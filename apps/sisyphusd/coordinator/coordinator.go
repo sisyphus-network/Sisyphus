@@ -395,6 +395,7 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, job := range jobs {
+		job.Needs = c.workloads.Needs(job.Workload, job.Params)
 		// What happened to it before comes back with it. A job whose events
 		// cannot be read is still a job.
 		events, err := c.journal.LoadEvents(job.ID)
@@ -513,7 +514,7 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 		parts = int(spec.GetMaxTasks())
 		if parts == 0 {
 			c.mu.Lock()
-			parts = max(c.slotsLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus())), 1)
+			parts = max(c.slotsLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), c.workloads.Needs(workload.Name(), spec.GetParams())), 1)
 			c.mu.Unlock()
 		}
 	}
@@ -536,6 +537,7 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 	job.Key = spec.GetKey()
 	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
+	job.Needs = c.workloads.Needs(job.Workload, job.Params)
 	job.NoteRead(touched.Read()...)
 	// A job is accepted only once it is on record: its submitter is about
 	// to be given an ID to ask after.
@@ -988,7 +990,7 @@ func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job) *worker {
 	var best *worker
 	bestFree := 0
 	for _, w := range c.workers {
-		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs) {
+		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) {
 			continue
 		}
 		free := int(w.capabilities.GetTaskSlots()) - len(w.running)
@@ -1001,10 +1003,10 @@ func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job) *worker {
 
 // slotsLocked counts task slots across connected workers that support the
 // workload.
-func (c *Coordinator) slotsLocked(workload string, minMemory uint64, minGPUs int) int {
+func (c *Coordinator) slotsLocked(workload string, minMemory uint64, minGPUs int, needs []string) int {
 	total := 0
 	for _, w := range c.workers {
-		if suits(w.capabilities, workload, minMemory, minGPUs) {
+		if suits(w.capabilities, workload, minMemory, minGPUs, needs) {
 			total += int(w.capabilities.GetTaskSlots())
 		}
 	}
@@ -1012,10 +1014,15 @@ func (c *Coordinator) slotsLocked(workload string, minMemory uint64, minGPUs int
 }
 
 // suits reports whether a worker with the given capabilities can be given
-// tasks of a workload that ask for so much memory and so many graphics
-// cards. A worker that does not say how much memory it has is taken to have
-// none to speak of.
-func suits(has *pb.NodeCapabilities, workload string, minMemory uint64, minGPUs int) bool {
+// tasks of a workload that ask for so much memory, so many graphics cards,
+// and whatever else is named in needs. A worker that does not say how much
+// memory it has is taken to have none to speak of.
+func suits(has *pb.NodeCapabilities, workload string, minMemory uint64, minGPUs int, needs []string) bool {
+	for _, need := range needs {
+		if !slices.Contains(has.GetLabels(), need) {
+			return false
+		}
+	}
 	return slices.Contains(has.GetWorkloads(), workload) && has.GetMemoryBytes() >= minMemory && len(has.GetGpus()) >= minGPUs
 }
 

@@ -207,6 +207,8 @@ message Worker {
   string cpu_model = 13;
   uint64 memory_bytes = 14;
   repeated WorkerGpu gpus = 15;
+  // The language models the worker serves to the pool, by name.
+  repeated string models = 16;
 }
 
 message WorkerGpu {

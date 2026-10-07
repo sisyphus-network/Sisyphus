@@ -53,7 +53,7 @@ func New(cfg Config) *mcp.Server {
 	out := mcp.NewServer(&mcp.Implementation{Name: "sisyphus", Title: "Sisyphus", Version: cfg.Version}, &mcp.ServerOptions{Instructions: instructions})
 	reads := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	mcp.AddTool(out, &mcp.Tool{Name: "pool_status", Annotations: reads,
-		Description: "Says what the pool is now: this node, and each worker with its cores, memory, graphics cards, how many tasks it can run at once and how many it is running."}, s.poolStatus)
+		Description: "Says what the pool is now: this node, and each worker with its cores, memory, graphics cards, the language models it serves, how many tasks it can run at once and how many it is running."}, s.poolStatus)
 	mcp.AddTool(out, &mcp.Tool{Name: "list_workloads", Annotations: reads,
 		Description: "Lists the workloads the pool can run, each with what it does and the parameters it takes. Read this before run_job."}, s.listWorkloads)
 	mcp.AddTool(out, &mcp.Tool{Name: "run_job",
@@ -124,6 +124,9 @@ func (s *server) status(ctx context.Context) (any, error) {
 		}
 		if cards != nil {
 			worker["gpus"] = cards
+		}
+		if models := w.GetModels(); models != nil {
+			worker["models"] = models
 		}
 		workers = append(workers, worker)
 		slots += int(w.GetTaskSlots())

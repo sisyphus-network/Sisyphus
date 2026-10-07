@@ -206,7 +206,10 @@ type NodeCapabilities struct {
 	// The processor's name, if known. memory_bytes is likewise zero if not.
 	CpuModel string `protobuf:"bytes,8,opt,name=cpu_model,json=cpuModel,proto3" json:"cpu_model,omitempty"`
 	// The graphics cards the owner offers for computing on.
-	Gpus          []*Gpu `protobuf:"bytes,9,rep,name=gpus,proto3" json:"gpus,omitempty"`
+	Gpus []*Gpu `protobuf:"bytes,9,rep,name=gpus,proto3" json:"gpus,omitempty"`
+	// What else the node has that a job's tasks may need, as plain labels. A
+	// node serving language models has "model:<name>" for each.
+	Labels        []string `protobuf:"bytes,10,rep,name=labels,proto3" json:"labels,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -300,6 +303,13 @@ func (x *NodeCapabilities) GetCpuModel() string {
 func (x *NodeCapabilities) GetGpus() []*Gpu {
 	if x != nil {
 		return x.Gpus
+	}
+	return nil
+}
+
+func (x *NodeCapabilities) GetLabels() []string {
+	if x != nil {
+		return x.Labels
 	}
 	return nil
 }
@@ -919,7 +929,7 @@ var File_sisyphus_v1_types_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\n" +
-	"\x17sisyphus/v1/types.proto\x12\vsisyphus.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x92\x02\n" +
+	"\x17sisyphus/v1/types.proto\x12\vsisyphus.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xaa\x02\n" +
 	"\x10NodeCapabilities\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x12\n" +
@@ -930,7 +940,9 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"task_slots\x18\x06 \x01(\rR\ttaskSlots\x12\x1c\n" +
 	"\tworkloads\x18\a \x03(\tR\tworkloads\x12\x1b\n" +
 	"\tcpu_model\x18\b \x01(\tR\bcpuModel\x12$\n" +
-	"\x04gpus\x18\t \x03(\v2\x10.sisyphus.v1.GpuR\x04gpus\"<\n" +
+	"\x04gpus\x18\t \x03(\v2\x10.sisyphus.v1.GpuR\x04gpus\x12\x16\n" +
+	"\x06labels\x18\n" +
+	" \x03(\tR\x06labels\"<\n" +
 	"\x03Gpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\x9b\x03\n" +
