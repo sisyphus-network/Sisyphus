@@ -351,8 +351,15 @@ func (Chat) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, err
 	return outputs[0], nil
 }
 
+// tagsWait is how long a worker waits to hear which models its server has.
+// It asks whenever it says what it is, so a server that does not answer
+// must not hold that up for long.
+var tagsWait = 3 * time.Second
+
 // tags asks the worker's model server which models it has.
 func (c Chat) tags(ctx context.Context) ([]byte, error) {
+	ctx, done := context.WithTimeout(ctx, tagsWait)
+	defer done()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+"/api/tags", nil)
 	if err != nil {
 		return nil, err
