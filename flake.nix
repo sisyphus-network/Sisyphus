@@ -1,5 +1,5 @@
 {
-  description = "Sisyphus Rust P2P development environment";
+  description = "Sisyphus Go daemon and Electron development environment";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -18,27 +18,34 @@
         in {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              rustc
-              cargo
-              rustfmt
-              clippy
-              rust-analyzer
+              go
+              gopls
+              delve
+              go-tools
+              golangci-lint
+              gnumake
+              git
               protobuf
+              protoc-gen-go
+              protoc-gen-go-grpc
+              kubo
               pkg-config
-              clang
-              cmake
-              cargo-watch
-              cargo-deny
-              cargo-audit
-              nodejs_22
-              gtk3
-              gsettings-desktop-schemas
+              nodejs_24
+            ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+              pkgs.gtk3
+              pkgs.gsettings-desktop-schemas
             ];
 
+            # Follow the minimum toolchain version declared by go.mod, including
+            # when the locked nixpkgs ships an older bootstrap Go compiler.
+            GOTOOLCHAIN = "auto";
+
             shellHook = ''
-              export XDG_DATA_DIRS="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS"
-              echo "Sisyphus development shell (Rust + Electron/React)"
-              echo "Rust: $(rustc --version)"
+              ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+                export XDG_DATA_DIRS="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:''${XDG_DATA_DIRS:-}"
+              ''}
+              echo "Sisyphus development shell (Go + Electron/React)"
+              echo "Go: $(go version)"
               echo "Protobuf: $(protoc --version)"
               echo "Node: $(node --version)"
             '';

@@ -224,6 +224,16 @@ This is one product and one repository: **Sisyphus** is the product and desktop 
 
 **One daemon, in Go.** `apps/sisyphusd` is the node: the job loop, storage, security, IPFS, discovery and the local API the desktop client uses. An earlier daemon in Rust, which the desktop client was first built on, was retired once the Go daemon did everything it did ([#90](https://github.com/sisyphus-network/Sisyphus/issues/90)); a node that ran it carries its key, address book and trusted peers over on first start.
 
+Start the development environment from the repository root:
+
+```sh
+nix develop
+make build
+bin/sisyphusd run --api-listen 127.0.0.1:50051
+```
+
+The development shell includes Go, gopls, Delve, lint tools, Protocol Buffer generators, Kubo and Node.js for Electron. Go selects the compiler version required by `go.mod` automatically. The local API listens on loopback for the Electron client; pool connections use the separate `--listen` address.
+
 ## Project status
 
 Sisyphus is an early prototype. The network loop works without AI: a coordinator splits a job, workers on other nodes run the tasks, and the results are combined. Everything so far has run on one machine as separate processes; it has not yet been tried across physically separate machines.

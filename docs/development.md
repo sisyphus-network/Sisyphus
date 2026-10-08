@@ -96,4 +96,3 @@ Push a tag such as `v0.1.0`. The release workflow builds every supported platfor
 - A pull request merges once its checks are green, by **squash**, so that `dev` gets one commit for each pull request and every commit on it has passed. The branch is deleted on merging. (The first forty or so pull requests were merged with merge commits, which is why some early commits on `dev` carry a failed check: they are intermediate commits that a later commit in the same pull request put right.)
 - `integration` is kept identical to `dev`, as a fixed name to build the desktop app against.
 - Before pushing, run `gofmt -l apps packages skills` (nothing should be listed), `make cover`, and `go test -race -count=3` on any package with new tests: the coverage run checks neither formatting nor tests that depend on timing or order.
-
