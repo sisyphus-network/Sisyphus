@@ -263,3 +263,20 @@ func TestAModelServerThatFailsFailsTheTask(t *testing.T) {
 		t.Errorf("a worker with no server: %v", err)
 	}
 }
+
+func TestAModelServerThatDoesNotAnswerDoesNotHoldAWorkerUp(t *testing.T) {
+	old := tagsWait
+	tagsWait = 50 * time.Millisecond
+	defer func() { tagsWait = old }()
+	release := make(chan struct{})
+	silent := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	defer silent.Close()
+	defer close(release)
+	began := time.Now()
+	if got := (Chat{URL: silent.URL}).Offers(context.Background()); got != nil {
+		t.Errorf("a server that says nothing offers %v", got)
+	}
+	if waited := time.Since(began); waited > 5*time.Second {
+		t.Errorf("the worker waited %v to hear nothing", waited)
+	}
+}
