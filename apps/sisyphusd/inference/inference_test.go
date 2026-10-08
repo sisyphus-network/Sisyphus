@@ -48,7 +48,9 @@ func (p *pool) Watch(_ context.Context, _ string, fn func(*pb.Job) error) error 
 
 func (p *pool) WatchEvents(_ context.Context, _ string, _ uint64, fn func(*pb.JobEvent) error) error {
 	for _, e := range p.events {
-		fn(e)
+		if err := fn(e); err != nil {
+			return err
+		}
 	}
 	return p.lost
 }
@@ -191,6 +193,23 @@ func TestAReplyAskedForAsAStreamIsSentAsItIsWritten(t *testing.T) {
 			t.Errorf("a job that %s: %q", name, body)
 		}
 	}
+	// A worker lost part way has another begin the reply again. What was
+	// sent cannot be unsent, so the stream ends saying so, and the job is
+	// stopped. One that had sent nothing yet just carries on.
+	again := &pool{state: pb.JobState_JOB_STATE_SUCCEEDED, result: whole, events: []*pb.JobEvent{
+		{Kind: "task-started", Text: "attempt 1"}, {Kind: "log", Text: `"Two"`}, {Kind: "task-lost"}, {Kind: "task-started", Text: "attempt 2"}, {Kind: "log", Text: `"Two jobs."`},
+	}}
+	_, body, _ = ask(t, again, http.MethodPost, "/v1/chat/completions", "the-token", streaming)
+	if said, last, done := chunks(t, body); said != "Two" || !done || last["error"] == nil || !strings.Contains(body, "lost part way") || len(again.cancelled) != 1 {
+		t.Errorf("a reply begun again: %q, cancelled %v", body, again.cancelled)
+	}
+	early := &pool{state: pb.JobState_JOB_STATE_SUCCEEDED, result: whole, events: []*pb.JobEvent{
+		{Kind: "task-started"}, {Kind: "task-lost"}, {Kind: "task-started"}, {Kind: "log", Text: `"Two jobs."`},
+	}}
+	if said, _, _ := chunks(t, second(ask(t, early, http.MethodPost, "/v1/chat/completions", "the-token", streaming))); said != "Two jobs." || len(early.cancelled) != 0 {
+		t.Errorf("a reply begun again before anything was sent: %q", said)
+	}
+
 	// A reply nobody waits for any longer is not made.
 	left := &pool{lost: context.Canceled}
 	ask(t, left, http.MethodPost, "/v1/chat/completions", "the-token", streaming)
