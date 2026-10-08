@@ -181,5 +181,4 @@ It needs a node that runs a worker, which is every node unless it was started wi
 `node.proto` is shared. After editing it:
 
 1. `make proto` regenerates the Go side.
-2. `apps/sisyphusd-rs/src/rpc.rs` must implement any new call, even if only to say it is not supported, or the Rust daemon stops building.
-3. Add new fields and calls; do not renumber or remove existing ones.
+2. Add new fields and calls; do not renumber or remove existing ones.
