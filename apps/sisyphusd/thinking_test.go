@@ -128,3 +128,84 @@ func TestThePoolsModelsAreOfferedOnThisMachineByACoordinator(t *testing.T) {
 		}
 	}
 }
+
+func TestAMachineThatUsesAPoolOffersItsModelsToItsOwnPrograms(t *testing.T) {
+	served := newModel(t, replies("Hello from the pool."), replies("And again."))
+	addr, thinkAddr := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", t.TempDir(), "--listen", addr, "--name", "rig", "--slots", "2", "--models-from", served.URL)
+	waitForOutput(t, "rig", "nodes", "--addr", addr)
+	// Another machine joins as a client, and offers the pool's models to
+	// its own programs through the coordinator.
+	laptop := t.TempDir()
+	mustCLI(t, "pool", "join", "--data-dir", laptop, "--addr", addr, invite(t, addr, "client"))
+	ctx, stop := context.WithCancel(context.Background())
+	stopped := make(chan error, 1)
+	go func() {
+		stopped <- run(ctx, []string{"inference", "--data-dir", laptop, "--addr", addr, "--listen", thinkAddr})
+	}()
+	tokenFile := filepath.Join(laptop, "api.token")
+	waitFor(t, func() bool {
+		conn, err := net.Dial("tcp", thinkAddr)
+		if err == nil {
+			conn.Close()
+		}
+		_, noToken := os.Stat(tokenFile)
+		return err == nil && noToken == nil
+	})
+	token, _ := os.ReadFile(tokenFile)
+	ask := func(method, path, body string) (int, string) {
+		req, _ := http.NewRequest(method, "http://"+thinkAddr+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		said, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(said)
+	}
+	if status, body := ask(http.MethodGet, "/v1/models", ""); status != http.StatusOK || !strings.Contains(body, `"test-model"`) {
+		t.Fatalf("the pool's models as the client lists them: %d %s", status, body)
+	}
+	if status, body := ask(http.MethodPost, "/v1/chat/completions", `{"model":"test-model","messages":[{"role":"user","content":"Hi"}]}`); status != http.StatusOK || !strings.Contains(body, "Hello from the pool.") {
+		t.Fatalf("a reply through the client: %d %s", status, body)
+	}
+	// Asked for as a stream, with the model named on the worker that has it.
+	if status, body := ask(http.MethodPost, "/v1/chat/completions", `{"model":"test-model@rig","stream":true,"messages":[{"role":"user","content":"Hi"}]}`); status != http.StatusOK || !strings.Contains(body, "And again.") || !strings.HasSuffix(body, "data: [DONE]\n\n") {
+		t.Fatalf("a streamed reply through the client: %d %s", status, body)
+	}
+	// What the coordinator refuses, the client is told.
+	if status, body := ask(http.MethodPost, "/v1/chat/completions", `{"model":"test-model"}`); status != http.StatusBadRequest || !strings.Contains(body, "must have messages") {
+		t.Errorf("a request with nothing to say: %d %s", status, body)
+	}
+	stop()
+	if err := <-stopped; err != nil {
+		t.Errorf("the service stopped with %v", err)
+	}
+
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	spoiled := t.TempDir()
+	mustCLI(t, "pool", "join", "--data-dir", spoiled, "--addr", addr, invite(t, addr, "client"))
+	os.Mkdir(filepath.Join(spoiled, "api.token"), 0o700)
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a flag there is none of", []string{"--no-such-flag"}, "flag provided but not defined"},
+		{"something extra", []string{"extra"}, `unexpected argument "extra"`},
+		{"every interface", []string{"--listen", "0.0.0.0:11435"}, "must be a loopback address"},
+		{"a pool not joined", []string{"--data-dir", t.TempDir(), "--addr", addr, "--listen", freeAddr(t)}, "reach the pool at"},
+		{"no place for a key", []string{"--data-dir", filepath.Join(tokenFile, "under-a-file"), "--addr", addr, "--listen", freeAddr(t)}, "not a directory"},
+		{"an address in use", []string{"--data-dir", laptop, "--addr", addr, "--listen", taken.Addr().String()}, "address already in use"},
+		{"a token that cannot be read", []string{"--data-dir", spoiled, "--addr", addr, "--listen", freeAddr(t)}, "read API token"},
+	} {
+		if err := run(context.Background(), append([]string{"inference"}, tt.args...)); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("inference with %s: %v, want %q", tt.name, err, tt.want)
+		}
+	}
+}
