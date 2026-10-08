@@ -65,8 +65,13 @@ func freeAddr(t *testing.T) string {
 	// and the caller listening, the system may give that same port to
 	// something else, and nodes and their Kubo daemons take such ports all
 	// the time. Ports below the range it chooses from are left alone.
+	// Nor one given out before: a node handed an address may not have
+	// begun to listen on it when the next address is asked for.
 	for {
 		addr := "127.0.0.1:" + strconv.Itoa(20000+rand.IntN(12000))
+		if _, given := givenAddrs.LoadOrStore(addr, true); given {
+			continue
+		}
 		lis, err := net.Listen("tcp", addr)
 		if err != nil {
 			continue
@@ -75,6 +80,9 @@ func freeAddr(t *testing.T) string {
 		return addr
 	}
 }
+
+// givenAddrs is every address freeAddr has returned.
+var givenAddrs sync.Map
 
 // startDaemon runs "sisyphusd run" with the given flags until the test ends
 // or the returned stop function is called, whichever comes first. It gives
