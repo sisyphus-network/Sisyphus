@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { BrowserRouter, HashRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Cpu, House, MonitorCog, Settings2, Wifi, WifiOff } from 'lucide-react'
+import { ArrowLeft, Boxes, Cpu, House, MonitorCog, Settings2, Wifi, WifiOff } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { NodeSnapshot } from '../../preload'
 import { Badge } from '@/components/ui/badge'
@@ -11,12 +12,14 @@ import { getMessages } from '@/i18n/messages'
 import { NodeDetailsPage } from '@/pages/NodeDetailsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { WorkspacePage } from '@/pages/WorkspacePage'
+import { OperationsPage } from '@/pages/OperationsPage'
 import { getNodeApi } from '@/lib/node-api'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/liquid-glass-dock'
 import { initializeThemeMode } from '@/components/theme-mode-switch'
 import { initializeThemeStyle } from '@/components/theme-style-picker'
 import { ToasterResponsive } from '@/components/toaster-responsive'
+import { NodeConnectionState } from '@/components/node-connection-state'
 
 const initialSnapshot: NodeSnapshot = {
   status: 'connecting', endpoint: '127.0.0.1:50051', info: null, peers: [], revision: '0', lastUpdated: null, error: null,
@@ -104,7 +107,6 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
     let restored = false
     let latestTop = savedTop
     let lastUserScrollIntent = 0
-    let restoreFrame = 0
     let saveTimer = 0
 
     const savePosition = () => {
@@ -150,11 +152,11 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) markUserScrollIntent()
     }
 
-    restoreFrame = window.requestAnimationFrame(() => {
-      setTop(savedTop)
-      latestTop = getTop()
-      restored = true
-    })
+    // Restore before paint so the new route never fades in at the previous
+    // route's scroll offset and then visibly jumps to its own saved position.
+    setTop(savedTop)
+    latestTop = getTop()
+    restored = true
     scrollTarget.addEventListener('scroll', onScroll, { passive: true })
     scrollTarget.addEventListener('wheel', markUserScrollIntent, { passive: true })
     scrollTarget.addEventListener('touchstart', markUserScrollIntent, { passive: true })
@@ -165,7 +167,6 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
     window.addEventListener('pagehide', onPageHide)
 
     return () => {
-      window.cancelAnimationFrame(restoreFrame)
       if (saveTimer) window.clearTimeout(saveTimer)
       savePosition()
       scrollTarget.removeEventListener('scroll', onScroll)
@@ -181,6 +182,7 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
   const navItems: LiquidDockItem[] = [
     { id: 'workspace', label: messages.workspace, href: '/', icon: <House size={21} strokeWidth={1.8} />, active: location.pathname === '/' },
     { id: 'node', label: messages.nodeOverview, href: '/node', icon: <MonitorCog size={21} strokeWidth={1.8} />, active: location.pathname === '/node' },
+    { id: 'operations', label: messages.operations, href: '/operations', icon: <Boxes size={21} strokeWidth={1.8} />, active: location.pathname === '/operations' },
     { id: 'settings', label: messages.settings, href: '/settings', icon: <Settings2 size={21} strokeWidth={1.8} />, active: location.pathname === '/settings' },
   ]
   return <div dir={direction} className={`app-shell flex min-h-0 bg-background text-foreground ${advanced ? 'app-shell--advanced' : 'app-shell--workspace'} ${location.pathname === '/settings' ? 'app-shell--settings' : ''}`}>
@@ -195,6 +197,7 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
         <NavItem to="/" icon={House} label={messages.workspace} end />
         <div className="mb-2 mt-7 px-2 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">{messages.node}</div>
         <NavItem to="/node" icon={MonitorCog} label={messages.nodeOverview} />
+        <NavItem to="/operations" icon={Boxes} label={messages.operations} />
         <div className="mb-2 mt-7 px-2 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">{messages.preferences}</div>
         <NavItem to="/settings" icon={Settings2} label={messages.settings} />
 
@@ -209,27 +212,34 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
       <div className={`app-content-column flex min-h-0 min-w-0 flex-1 flex-col ${advanced ? 'app-content-column--advanced' : ''}`}>
       {advanced && <header className="app-global-header flex h-[68px] w-full shrink-0 items-center justify-between border-b border-[var(--app-line)] px-8 max-[1000px]:px-5 max-[760px]:h-[58px] max-[760px]:px-4"><Breadcrumb messages={messages} direction={direction} /><Badge variant="outline" className={`h-7 gap-1.5 rounded-full px-2.5 text-[10px] font-medium ${snapshot.status === 'connected' ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300' : snapshot.status === 'connecting' ? 'border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300' : ''}`}><StatusIcon className="size-3.5" />{statusLabel}</Badge></header>}
       <main className={`app-main mx-auto min-w-0 w-full ${advanced ? 'max-w-[1440px] px-8 pb-7 max-[1000px]:px-5 max-[760px]:px-4' : 'max-w-none max-[760px]:px-0'}`}>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={location.pathname}
-            className="route-transition"
-            initial={reduceMotion ? false : { opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
-            transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <Routes location={location}>
-              <Route path="/" element={<WorkspacePage snapshot={snapshot} messages={messages} />} />
+        <motion.div
+          className="workspace-persistent"
+          aria-hidden={advanced}
+          initial={false}
+          animate={{ opacity: advanced ? 0 : 1 }}
+          style={{ visibility: advanced ? 'hidden' : 'visible', pointerEvents: advanced ? 'none' : 'auto' }}
+          transition={reduceMotion ? { duration: 0 } : { opacity: { duration: 0.18, ease: [0.22, 1, 0.36, 1] } }}
+        >
+          <WorkspacePage snapshot={snapshot} messages={messages} direction={direction} visible={!advanced} />
+        </motion.div>
+        {advanced && <motion.div
+          key={`${location.pathname}:${snapshot.status === 'connected' ? 'ready' : 'offline'}`}
+          className="route-transition"
+          initial={reduceMotion ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={reduceMotion ? { duration: 0 } : { opacity: { duration: 0.18, ease: [0.22, 1, 0.36, 1] } }}
+        >
+            {snapshot.status !== 'connected' ? <NodeConnectionState snapshot={snapshot} messages={messages} /> : <Routes location={location}>
               <Route path="/node" element={<NodeDetailsPage snapshot={snapshot} messages={messages} />} />
+              <Route path="/operations" element={<OperationsPage messages={messages} />} />
               <Route path="/settings" element={<SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} />} />
               <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </motion.div>
-        </AnimatePresence>
+            </Routes>}
+        </motion.div>}
       </main>
       </div>
       </div>
-      {advanced && compact && <nav className="app-mobile-dock" aria-label={messages.preferences}><LiquidGlassDock items={navItems} label={messages.preferences} onNavigate={(_id, href) => { if (location.pathname !== href) { scrollPathRef.current = href; navigate(href) } }} /></nav>}
+      {advanced && compact && createPortal(<nav className="app-mobile-dock" aria-label={messages.preferences}><LiquidGlassDock items={navItems} label={messages.preferences} onNavigate={(_id, href) => { if (location.pathname !== href) { scrollPathRef.current = href; navigate(href) } }} /></nav>, document.body)}
     </div>
 }
 
@@ -239,7 +249,7 @@ function NavItem({ to, icon: Icon, label, end = false }: { to: string; icon: typ
 
 function Breadcrumb({ messages, direction }: { messages: ReturnType<typeof getMessages>; direction: 'ltr' | 'rtl' }) {
   const location = useLocation()
-  const label = location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/settings' ? messages.settings : messages.workspace
+  const label = location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/operations' ? messages.operations : location.pathname === '/settings' ? messages.settings : messages.workspace
   const slideDistance = direction === 'rtl' ? -10 : 10
   return <div dir={direction} className="flex h-full min-w-0 flex-1 items-center gap-3 sm:gap-4">
     <NavLink to="/" aria-label={messages.workspace} title={messages.workspace} className={`${buttonVariants({ variant: 'ghost', size: 'icon' })} size-10 shrink-0 rounded-full`}>
