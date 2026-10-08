@@ -183,6 +183,9 @@
   "plannerRunsOnNode": "Dostawca AI działa lokalnie na tym węźle",
   "closePreview": "Zamknij podgląd obrazu",
   "operationText": {
+    "openingJob": "Otwieranie zadania…",
+    "loadJobFailed": "Nie udało się otworzyć zadania",
+    "jobNotFound": "Nie znaleziono zadania.",
     "unspecified": "Nie określono",
     "unknown": "Nieznany",
     "pending": "Oczekuje",

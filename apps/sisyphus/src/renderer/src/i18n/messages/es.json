@@ -183,6 +183,9 @@
   "plannerRunsOnNode": "Tu proveedor de IA se ejecuta localmente en este nodo",
   "closePreview": "Cerrar vista previa de imagen",
   "operationText": {
+    "openingJob": "Abriendo tarea…",
+    "loadJobFailed": "No se pudo abrir la tarea",
+    "jobNotFound": "No se encontró la tarea.",
     "unspecified": "Sin especificar",
     "unknown": "Desconocido",
     "pending": "Pendiente",

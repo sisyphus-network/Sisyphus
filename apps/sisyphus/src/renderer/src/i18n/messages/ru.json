@@ -183,6 +183,9 @@
   "plannerRunsOnNode": "Провайдер ИИ работает локально на этом узле",
   "closePreview": "Закрыть просмотр изображения",
   "operationText": {
+    "openingJob": "Открываем задачу…",
+    "loadJobFailed": "Не удалось открыть задачу",
+    "jobNotFound": "Задача не найдена.",
     "unspecified": "Не задано",
     "unknown": "Неизвестно",
     "pending": "Ожидает",

@@ -183,6 +183,9 @@
   "plannerRunsOnNode": "ספק ה־AI שלכם פועל מקומית בצומת הזו",
   "closePreview": "סגירת תצוגת התמונה",
   "operationText": {
+    "openingJob": "פותח עבודה…",
+    "loadJobFailed": "לא ניתן לפתוח את העבודה",
+    "jobNotFound": "העבודה לא נמצאה.",
     "unspecified": "לא צוין",
     "unknown": "לא ידוע",
     "pending": "ממתין",
