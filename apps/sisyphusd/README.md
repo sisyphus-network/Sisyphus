@@ -299,7 +299,8 @@ bin/sisyphusd model set --provider openai --url http://127.0.0.1:11435/v1 --mode
 - **A model may be named loosely** at the service: in another case, without its tag when the pool has a `latest`, or by its family alone (`llama3.1`) when the pool serves one model of that family. A name that could mean two models is refused, with the list of those served. A `chat` job submitted directly names its model exactly.
 - **A model fetched later is offered within seconds.** A worker tells the coordinator when its models change, and a conversation that was waiting for one is then had.
 - **Conversations are kept** with the pool's other jobs, parameters and result, for as long as jobs are kept (`--keep-jobs`).
-- **A reply begun twice.** If the worker writing a reply is lost part way, another starts it again, and a client reading the stream sees the beginning a second time.
+- **From another machine**, the models are reached through that machine's own membership of the pool, not by opening the service to the network. Join as a client (`pool join` with a client invitation), then `sisyphusd inference --addr <coordinator>` offers the pool's models at `http://127.0.0.1:11435/v1` to programs on that machine, with the key in `api.token` in its data directory. Requests travel as jobs over the connection the pool already authenticates. A machine that is in the pool only as a worker cannot use it this way: workers run the pool's work and do not submit any.
+- **A worker lost part way through a streamed reply** ends the stream with an error saying so, and the job is stopped. Another worker would begin the reply again, and a reply whose beginning came twice would look right and be wrong. Ask again. A reply not asked for as a stream is simply made again.
 - It has been tried on one machine with `llama3.1:8b` on a processor: the planner, set as above, ran the right job and answered correctly, and a streamed reply arrived a word or two at a time. It has not been tried on a graphics card, or with workers on other machines.
 
 ## Agents
@@ -315,7 +316,7 @@ claude mcp add sisyphus -- /path/to/sisyphusd mcp     # Claude Code; other agent
 { "mcpServers": { "sisyphus": { "command": "/path/to/sisyphusd", "args": ["mcp"] } } }
 ```
 
-The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir` and `--api` if the node's are not the usual ones.
+The second form is what Claude Desktop (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`) and most others take. The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir` and `--api` if the node's are not the usual ones.
 
 | Tool | What it does |
 | --- | --- |

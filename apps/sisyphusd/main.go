@@ -41,6 +41,7 @@ const usage = `Usage:
   sisyphusd model providers|pull|remove  the kinds of model service, and fetching a model into Ollama or deleting one
   sisyphusd ask <question>         put a question to a running node's planner (--chat <id> to carry on a conversation)
   sisyphusd mcp                    offer a running node to an AI agent, as a Model Context Protocol server on standard input and output
+  sisyphusd inference              offer the language models of a pool this machine has joined, to programs on this machine (--addr, --listen)
   sisyphusd skill show|install     the skill that teaches an AI agent to use a pool: print it, or put it where the agent keeps skills (--dir)
   sisyphusd id                     print this node's ID, creating its key if it has none
   sisyphusd data-dir               print where this node keeps its data unless told otherwise
@@ -108,6 +109,8 @@ func run(ctx context.Context, args []string) error {
 		return serveAgent(ctx, args[1:])
 	case "skill":
 		return skillCommand(args[1:])
+	case "inference":
+		return serveInference(ctx, args[1:])
 	case "id":
 		return showIdentity(args[1:])
 	case "data-dir":

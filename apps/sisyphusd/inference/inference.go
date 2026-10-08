@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -182,8 +183,20 @@ func streamed(pool Pool, w http.ResponseWriter, r *http.Request, jobID, model st
 		return map[string]any{"choices": []any{map[string]any{"index": 0, "delta": d, "finish_reason": finish}}}
 	}
 	send(delta(map[string]any{"role": "assistant", "content": ""}, nil))
+	fail := func(why string) {
+		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", mustJSON(map[string]any{"error": map[string]string{"message": why, "type": "server_error", "code": "server_error"}}))
+		flush()
+	}
 	sent := false
+	errAgain := errors.New("begun again")
 	err := pool.WatchEvents(r.Context(), jobID, 0, func(e *pb.JobEvent) error {
+		// A worker lost part way through a reply has another begin it
+		// again. What has been sent cannot be taken back, and sending the
+		// beginning twice would be a wrong reply that looks like a right
+		// one, so the stream ends here saying so.
+		if e.GetKind() == "task-started" && sent {
+			return errAgain
+		}
 		var text string
 		if e.GetKind() == "log" && json.Unmarshal([]byte(e.GetText()), &text) == nil && text != "" {
 			send(delta(map[string]any{"content": text}, nil))
@@ -193,14 +206,15 @@ func streamed(pool Pool, w http.ResponseWriter, r *http.Request, jobID, model st
 	})
 	if err != nil {
 		pool.Cancel(jobID)
+		if errors.Is(err, errAgain) {
+			fail(fmt.Sprintf("the worker writing this reply was lost part way through (job %s): ask again", jobID))
+		}
 		return
 	}
 	job, err := pool.Get(jobID)
 	if err != nil || job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
 		// The reply has begun, so its failure is said in the stream.
-		failure := fmt.Sprintf("job %s did not produce a reply: %s", jobID, job.GetError())
-		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", mustJSON(map[string]any{"error": map[string]string{"message": failure, "type": "server_error", "code": "server_error"}}))
-		flush()
+		fail(fmt.Sprintf("job %s did not produce a reply: %s", jobID, job.GetError()))
 		return
 	}
 	var whole struct {
