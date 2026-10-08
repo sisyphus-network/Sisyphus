@@ -22,7 +22,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | Path | What it holds |
 | --- | --- |
 | `proto/sisyphus/v1` | Message and service definitions. The source of truth for the protocol. |
-| `proto/sisyphus/node/v1` | The local API between a node and the desktop app on the same machine. Shared by the Go daemon, the Rust daemon and the app. |
+| `proto/sisyphus/node/v1` | The local API between a node and the desktop app on the same machine. Shared by the daemon and the app. |
 | `packages/protocol` | Go generated from `proto/`. Never edited by hand; committed so a fresh clone builds without `protoc`. |
 | `packages/ai` | Talking to language models: one interface, with adapters for Ollama, for OpenAI's dialect, and for Anthropic. |
 | `packages/geo` | Which country an address is registered in, from a table carried in the program. |
@@ -45,7 +45,6 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `apps/sisyphusd/blobclient` | Uploading and downloading blobs, checked against their CIDs. |
 | `apps/sisyphusd` | The `sisyphusd` command: flags, startup, the command-line client. |
 | `apps/sisyphus` | The desktop app: Electron and React. `npm ci`, then `npm run typecheck` and `npm run build`. |
-| `apps/sisyphusd-rs` | The Rust daemon: libp2p peer discovery, node state in SQLite, the local API. `cargo test -p sisyphusd`. |
 
 ## Tests
 
