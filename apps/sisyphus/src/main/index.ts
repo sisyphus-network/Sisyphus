@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WindowStreams } from './window-streams'
 import { isTrustedRendererUrl } from './renderer-policy'
+import { collectDownload } from './file-download'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
@@ -329,7 +330,7 @@ app.whenReady().then(() => {
     if (typeof id !== 'string') return
     activeStreams.stop(event.sender.id, id)
   })
-  handleNode('node:store-file', (_event, payload: unknown) => new Promise((resolve, reject) => {
+  handleNode('node:store-file', (event, payload: unknown) => new Promise((resolve, reject) => {
     if (!client) return reject(new Error('The local daemon is not connected.'))
     if (!payload || typeof payload !== 'object' || !('name' in payload) || !('data' in payload) || !('private' in payload)) return reject(new Error('Invalid file upload.'))
     const file = payload as { name: unknown; data: unknown; private: unknown }
@@ -337,11 +338,22 @@ app.whenReady().then(() => {
     const data = file.data
     if (data.byteLength > 256 * 1024 * 1024) return reject(new Error('The file exceeds this desktop client’s 256 MiB upload limit.'))
     let settled = false
+    const owner = event.sender.id
+    const transferId = `upload:${crypto.randomUUID()}`
     const stream = client.storeFile(authorization(), (error, response) => {
+      activeStreams.release(owner, transferId, transfer)
+      if (settled) return
       settled = true
       if (error) reject(new Error(error.message))
       else resolve(response ?? {})
     })
+    const transfer = { cancel: () => {
+      if (settled) return
+      settled = true
+      reject(new Error('The file upload was cancelled.'))
+      stream.cancel()
+    } }
+    activeStreams.add(owner, transferId, transfer)
     const chunkSize = 256 * 1024
     const writeChunk = (offset: number): void => {
       if (settled) return
@@ -350,7 +362,9 @@ app.whenReady().then(() => {
         ? { name: file.name, private: file.private, data: chunk }
         : { data: chunk }
       stream.write(request, (error?: Error | null) => {
+        if (settled) return
         if (error) {
+          activeStreams.release(owner, transferId, transfer)
           settled = true
           stream.cancel()
           reject(new Error(error.message))
@@ -364,7 +378,9 @@ app.whenReady().then(() => {
     // Empty files still need an initial message carrying their metadata.
     if (data.byteLength === 0) {
       stream.write({ name: file.name, private: file.private, data: Buffer.alloc(0) }, (error?: Error | null) => {
+        if (settled) return
         if (error) {
+          activeStreams.release(owner, transferId, transfer)
           settled = true
           stream.cancel()
           reject(new Error(error.message))
@@ -372,15 +388,16 @@ app.whenReady().then(() => {
       })
     } else writeChunk(0)
   }))
-  handleNode('node:fetch-file', (_event, cid: unknown) => new Promise<Uint8Array>((resolve, reject) => {
-    if (!client) return reject(new Error('The local daemon is not connected.'))
-    if (typeof cid !== 'string' || !cid.trim()) return reject(new Error('A file CID is required.'))
-    const chunks: Buffer[] = []
+  handleNode('node:fetch-file', (event, cid: unknown) => {
+    if (!client) throw new Error('The local daemon is not connected.')
+    if (typeof cid !== 'string' || !cid.trim()) throw new Error('A file CID is required.')
     const stream = client.fetchFile({ cid: cid.trim() }, authorization())
-    stream.on('data', (response) => chunks.push(Buffer.from(response.data)))
-    stream.on('error', (error: Error) => reject(new Error(error.message)))
-    stream.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
-  }))
+    const transfer = collectDownload(stream)
+    const owner = event.sender.id
+    const transferId = `download:${crypto.randomUUID()}`
+    activeStreams.add(owner, transferId, transfer)
+    return transfer.promise.finally(() => activeStreams.release(owner, transferId, transfer))
+  })
   createWindow()
   connectToNode()
   app.on('activate', () => {
