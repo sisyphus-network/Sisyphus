@@ -110,3 +110,33 @@ Pass `private: true` to `store_file` and to `run_job`. The file is sealed before
 2. `wait_for_job` follows it for as long as you say and returns it as it stands. Call it again if it has not finished.
 3. `job_logs` with `after_seq` set to the last `last_seq` shows only what is new.
 4. `cancel_job` stops it.
+
+## Keeping a result
+
+What a job stores is held for the job for some days after it ends (seven unless the node's owner said otherwise) and then deleted. To keep it longer:
+
+1. `get_job` gives the job's `stored_outputs`. `pin_file` each one to keep, with `ttl_hours` for a time (`24` is a day) or without to keep it until `unpin_file`.
+2. Its answer lists every pin on the file, as `list_pins` with the `cid` does: `user` is the pin you placed, `job:<id>` the job's own. The file is kept until the last of them lapses, so a pin makes a file last longer and never shorter: asked to keep a result for a day, say that the job's own pin keeps it for longer anyway.
+3. `storage_status` with the `cid` says how many other nodes hold a copy. `kept_by` is `followers` or `cluster` in a pool that keeps copies, and `this node alone` in one that does not: then the file is on one disk, and the user should hear that. A copy takes a moment to arrive, so `copies` may be short just after pinning; ask again before calling it a problem.
+
+A file has one pin of the user's, so pinning again with another `ttl_hours` replaces how long it is kept. `unpin_file` releases it, and the file goes once nothing else holds it.
+
+## A name for a result that changes
+
+A content ID names bytes that never change, so each new result has a new ID. The node's **name**, which is its ID, stands for whichever file it was last pointed at, so that whoever has the name finds the latest.
+
+1. `pin_file` the result: a name does not keep the file it stands for.
+2. `publish_name` with the `cid`. The name is not yours to choose: it is the node's ID. It returns the name and `good_until`: the record runs out then (48 hours on, or `lifetime_hours`), and the name stands for nothing until published again.
+3. `resolve_name` with the name, or with nothing for this node's own, returns the `cid` it stands for now, checked against the name's node's signature.
+
+A node has one name, and publishing replaces what it stood for. Ask before pointing it somewhere new.
+
+## Proof of what ran
+
+When a job is over, the coordinator writes its history as a record: what was asked, which worker ran each task, and the content IDs of its inputs and outputs, all named by one ID that changes if anything in the history does.
+
+- `get_job_record` with the job's ID returns `record_cid` and the record's `nodes`. In them `{"/": "<content ID>"}` is a link and `{"/": {"bytes": "<base64>"}}` is bytes, such as the parameters and the result.
+- With `verify: true` the node works the record out again from the job as it holds it now, and answers `verified: true`, or fails if that gives another ID. Quote `record_cid` when the user wants something to hold the pool to.
+- A private job's record holds commitments in place of what was sealed. `check_commitments: true` verifies and also checks them with the node's own key; it says so if there are none to check.
+
+The record outlives the job's data: its links name outputs the node may no longer hold unless they were pinned.
