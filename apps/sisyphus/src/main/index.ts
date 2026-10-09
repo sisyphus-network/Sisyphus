@@ -1,8 +1,10 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { WindowStreams } from './window-streams'
+import { isTrustedRendererUrl } from './renderer-policy'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
@@ -109,7 +111,18 @@ let retryDelayMs = 1_000
 let reconnecting = false
 let isQuitting = false
 let connectionGeneration = 0
-const activeStreams = new Map<string, grpc.ClientReadableStream<unknown>>()
+const activeStreams = new WindowStreams()
+const appWindows = new Set<number>()
+const developmentRenderer = !app.isPackaged && Boolean(process.env.ELECTRON_RENDERER_URL)
+const rendererUrl = developmentRenderer ? process.env.ELECTRON_RENDERER_URL! : pathToFileURL(join(here, '../renderer/index.html')).href
+function handleNode(channel: string, handler: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!appWindows.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame || !event.senderFrame || !isTrustedRendererUrl(event.senderFrame.url, rendererUrl, developmentRenderer)) {
+      throw new Error('This frame is not allowed to access the node bridge.')
+    }
+    return handler(event, ...args)
+  })
+}
 const unaryRpcMethods = new Set([
   'getNodeInfo', 'listPeers', 'getBootstrapPeers', 'setBootstrapPeers', 'listWorkers', 'submitJob', 'getJob', 'listJobs', 'cancelJob',
   'getModelConfig', 'setModelConfig', 'listProviders', 'listModels', 'removeModel', 'listChats', 'getChat', 'deleteChat',
@@ -141,8 +154,7 @@ function clearConnection() {
   const previousClient = client
   peerStream = null
   client = null
-  for (const stream of activeStreams.values()) stream.cancel()
-  activeStreams.clear()
+  activeStreams.clearAll()
   previousStream?.cancel()
   previousClient?.close()
 }
@@ -225,10 +237,20 @@ function createWindow() {
     },
   })
   window.removeMenu()
+  const owner = window.webContents.id
+  appWindows.add(owner)
+  window.webContents.on('destroyed', () => { appWindows.delete(owner); activeStreams.clear(owner) })
+  window.webContents.on('render-process-gone', () => activeStreams.clear(owner))
+  window.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+    if (mainFrame && !inPlace) activeStreams.clear(owner)
+  })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (!isTrustedRendererUrl(url, rendererUrl, developmentRenderer)) event.preventDefault()
+  })
 
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
+  if (developmentRenderer) {
+    void window.loadURL(rendererUrl)
   } else {
     void window.loadFile(join(here, '../renderer/index.html'))
   }
@@ -241,8 +263,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  ipcMain.handle('node:get-snapshot', () => snapshot)
-  ipcMain.handle('node:reconnect', () => {
+  handleNode('node:get-snapshot', () => snapshot)
+  handleNode('node:reconnect', () => {
     if (retryTimer) clearTimeout(retryTimer)
     retryTimer = null
     reconnecting = false
@@ -251,7 +273,7 @@ app.whenReady().then(() => {
     connectToNode()
     return snapshot
   })
-  ipcMain.handle('node:connect-peer', (_event, address: unknown) => new Promise<string>((resolve, reject) => {
+  handleNode('node:connect-peer', (_event, address: unknown) => new Promise<string>((resolve, reject) => {
     if (typeof address !== 'string' || !address.trim()) return reject(new Error('Enter a peer multiaddress.'))
     if (!client) return reject(new Error('The local daemon is not connected.'))
     client.connectPeer({ address: address.trim() }, authorization(), (error, response) => {
@@ -259,54 +281,55 @@ app.whenReady().then(() => {
       else resolve(response?.peerId ?? '')
     })
   }))
-  ipcMain.handle('node:set-peer-compute-trust', (_event, payload: unknown) => new Promise<void>((resolve, reject) => {
+  handleNode('node:set-peer-compute-trust', (_event, payload: unknown) => new Promise<void>((resolve, reject) => {
     if (!payload || typeof payload !== 'object' || !('peerId' in payload) || !('trusted' in payload)) return reject(new Error('Invalid peer trust request.'))
     const request = payload as { peerId: string; trusted: boolean }
     if (!client) return reject(new Error('The local daemon is not connected.'))
     client.setPeerComputeTrust(request, authorization(), (error) => error ? reject(new Error(error.message)) : resolve())
   }))
-  ipcMain.handle('node:set-peer-compute-permissions', (_event, payload: unknown) => new Promise<void>((resolve, reject) => {
+  handleNode('node:set-peer-compute-permissions', (_event, payload: unknown) => new Promise<void>((resolve, reject) => {
     if (!payload || typeof payload !== 'object' || !('peerId' in payload) || !('givesWork' in payload) || !('takesWork' in payload)) return reject(new Error('Invalid peer trust request.'))
     const request = payload as { peerId: string; givesWork: boolean; takesWork: boolean }
     if (!client) return reject(new Error('The local daemon is not connected.'))
     client.setPeerComputePermissions(request, authorization(), (error) => error ? reject(new Error(error.message)) : resolve())
   }))
-  ipcMain.handle('node:rpc', (_event, payload: unknown) => {
+  handleNode('node:rpc', (_event, payload: unknown) => {
     if (!payload || typeof payload !== 'object' || !('method' in payload) || !('request' in payload)) throw new Error('Invalid daemon RPC request.')
     const { method, request } = payload as { method: unknown; request: unknown }
     if (typeof method !== 'string' || !unaryRpcMethods.has(method)) throw new Error('This daemon operation is not available to the desktop.')
     if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Invalid daemon RPC parameters.')
     return callUnary(method, request as Record<string, unknown>)
   })
-  ipcMain.handle('node:rpc-stream-start', (event, payload: unknown) => {
+  handleNode('node:rpc-stream-start', (event, payload: unknown) => {
     if (!payload || typeof payload !== 'object' || !('id' in payload) || !('method' in payload) || !('request' in payload)) throw new Error('Invalid daemon stream request.')
     const { id, method, request } = payload as { id: unknown; method: unknown; request: unknown }
     if (typeof id !== 'string' || !/^[\da-f-]{36}$/i.test(id)) throw new Error('Invalid stream identifier.')
     if (typeof method !== 'string' || !streamingRpcMethods.has(method)) throw new Error('This daemon stream is not available to the desktop.')
     if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Invalid daemon stream parameters.')
     if (!client) throw new Error('The local daemon is not connected.')
-    activeStreams.get(id)?.cancel()
+    const owner = event.sender.id
     const rpc = (client as unknown as Record<string, unknown>)[method]
     if (typeof rpc !== 'function') throw new Error(`The daemon does not implement ${method}.`)
     const stream = (rpc as (request: Record<string, unknown>, metadata: grpc.Metadata) => grpc.ClientReadableStream<unknown>).call(client, request as Record<string, unknown>, authorization())
-    activeStreams.set(id, stream)
+    activeStreams.add(owner, id, stream)
     const channel = `node:rpc-stream:${id}`
-    stream.on('data', (data) => { if (!event.sender.isDestroyed()) event.sender.send(channel, { data }) })
+    stream.on('data', (data) => { if (activeStreams.has(owner, id, stream) && !event.sender.isDestroyed()) event.sender.send(channel, { data }) })
     stream.on('error', (error: grpc.ServiceError) => {
-      activeStreams.delete(id)
+      if (!activeStreams.has(owner, id, stream)) return
+      activeStreams.release(owner, id, stream)
       if (!event.sender.isDestroyed()) event.sender.send(channel, { error: error.message, errorCode: error.code })
     })
     stream.on('end', () => {
-      activeStreams.delete(id)
+      if (!activeStreams.has(owner, id, stream)) return
+      activeStreams.release(owner, id, stream)
       if (!event.sender.isDestroyed()) event.sender.send(channel, { end: true })
     })
   })
-  ipcMain.handle('node:rpc-stream-stop', (_event, id: unknown) => {
+  handleNode('node:rpc-stream-stop', (event, id: unknown) => {
     if (typeof id !== 'string') return
-    activeStreams.get(id)?.cancel()
-    activeStreams.delete(id)
+    activeStreams.stop(event.sender.id, id)
   })
-  ipcMain.handle('node:store-file', (_event, payload: unknown) => new Promise((resolve, reject) => {
+  handleNode('node:store-file', (_event, payload: unknown) => new Promise((resolve, reject) => {
     if (!client) return reject(new Error('The local daemon is not connected.'))
     if (!payload || typeof payload !== 'object' || !('name' in payload) || !('data' in payload) || !('private' in payload)) return reject(new Error('Invalid file upload.'))
     const file = payload as { name: unknown; data: unknown; private: unknown }
@@ -349,7 +372,7 @@ app.whenReady().then(() => {
       })
     } else writeChunk(0)
   }))
-  ipcMain.handle('node:fetch-file', (_event, cid: unknown) => new Promise<Uint8Array>((resolve, reject) => {
+  handleNode('node:fetch-file', (_event, cid: unknown) => new Promise<Uint8Array>((resolve, reject) => {
     if (!client) return reject(new Error('The local daemon is not connected.'))
     if (typeof cid !== 'string' || !cid.trim()) return reject(new Error('A file CID is required.'))
     const chunks: Buffer[] = []
