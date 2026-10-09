@@ -207,7 +207,7 @@ type runJobArgs struct {
 	MinMemoryMB uint32         `json:"min_memory_mb,omitempty" jsonschema:"give its tasks only to workers with at least this much memory, in mebibytes"`
 	MinGPUs     uint32         `json:"min_gpus,omitempty" jsonschema:"give its tasks only to workers with at least this many graphics cards"`
 	TaskTimeout uint32         `json:"task_timeout_seconds,omitempty" jsonschema:"stop and retry any attempt at a task that runs longer than this"`
-	Verify      uint32         `json:"verify,omitempty" jsonschema:"have each task run by this many different workers and take its result only once that many have returned the same one; only for work that gives the same result every time it is run, not with private, and it multiplies the work by that many"`
+	Verify      uint32         `json:"verify,omitempty" jsonschema:"have each task run by this many different workers and take its result only once that many have returned the same one; only for work that gives the same result every time it is run, and it multiplies the work by that many"`
 	VerifyShare float64        `json:"verify_share,omitempty" jsonschema:"with verify, verify only this share of the tasks, from 0 to 1, picked at random, and run the rest once: it costs less, and a worker caught returning a different result has its other tasks in the job verified after all. Every task is verified if left out"`
 	WaitSeconds uint32         `json:"wait_seconds,omitempty" jsonschema:"how long to wait for the job to finish before returning it as it stands; 300 if left out, 0 with detach"`
 	Detach      bool           `json:"detach,omitempty" jsonschema:"return at once with the job's ID instead of waiting"`

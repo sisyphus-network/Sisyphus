@@ -19,7 +19,8 @@
 // restart, such as when an attempt began, are left out for that reason.
 //
 // A private job's record leaves out everything that was not sealed: its
-// parameters, its result, what its tasks returned, and every error message,
+// parameters, its result, what its tasks returned, the digest of what each
+// worker returned for a task that was verified, and every error message,
 // since a message may quote data. It says the job is private, and still
 // links the job's sealed inputs and outputs. In place of each value left
 // out it holds a commitment to it, which only the job's key can check; see
@@ -120,6 +121,10 @@ func attemptErrorCommitment(task, attempt int) string {
 	return fmt.Sprintf("receipts/%d/attempts/%d/error_commitment", task, attempt)
 }
 
+func digestCommitment(task, result int) string {
+	return fmt.Sprintf("receipts/%d/results/%d/digest_commitment", task, result)
+}
+
 // committed is a value a private job's record leaves out and commits to
 // instead, with the name of its commitment.
 type committed struct {
@@ -136,13 +141,17 @@ func committedValues(job *jobmodel.Job) []committed {
 		for n, attempt := range task.History {
 			values = append(values, committed{attemptErrorCommitment(i, n), []byte(attempt.Err)})
 		}
+		for n, result := range task.Results {
+			values = append(values, committed{digestCommitment(i, n), []byte(result.Digest())})
+		}
 	}
 	return append(values, committed{resultCommitment, job.Result}, committed{errorCommitment, []byte(job.Err)})
 }
 
 // Commit returns a commitment to each value the record of a private job
 // leaves out, by name: the job's parameters, its result and its error, each
-// task's output, and the error of each attempt. A value that is empty is
+// task's output, the error of each attempt, and the digest of each result a
+// worker returned for a task that was verified. A value that is empty is
 // committed to like any other, so a commitment does not say whether there
 // was one.
 //
@@ -361,15 +370,18 @@ func (b *builder) receipt(index int, task *jobmodel.Task, spot bool) datamodel.N
 		}
 		// What each worker returned for a task that was verified, by a
 		// digest that is the same for results that are the same, and
-		// whether it is one of those the task was settled by.
+		// whether it is one of those the task was settled by. The digest
+		// of a private job's result is left out like its output, which it
+		// is a hash of: someone who guessed the output could tell from it
+		// that they were right.
 		agreed := task.Agreed()
 		m.AssembleEntry("results").CreateList(-1, func(l fluent.ListAssembler) {
-			for _, r := range task.Results {
+			for n, r := range task.Results {
 				l.AssembleValue().CreateMap(-1, func(m fluent.MapAssembler) {
 					m.AssembleEntry("attempt").AssignInt(int64(r.Attempt))
 					m.AssembleEntry("node").AssignString(r.NodeID)
 					m.AssembleEntry("name").AssignString(r.NodeName)
-					m.AssembleEntry("digest").AssignString(r.Digest())
+					b.message(m, "digest", r.Digest(), digestCommitment(index, n))
 					m.AssembleEntry("agreed").AssignBool(len(agreed) > 0 && r.Digest() == agreed[0].Digest())
 				})
 			}

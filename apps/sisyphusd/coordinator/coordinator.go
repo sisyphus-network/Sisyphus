@@ -565,9 +565,6 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	if share > 0 && verify < 2 {
 		return nil, status.Error(codes.InvalidArgument, "verify_share says how many of a job's tasks to verify, and needs verify to say by how many workers")
 	}
-	if verify >= 2 && len(spec.GetKey()) > 0 {
-		return nil, status.Error(codes.InvalidArgument, "a private job cannot be verified: each worker seals what it stores afresh, so the results of two that did the same work never compare as the same")
-	}
 	needs := c.workloads.Needs(workload.Name(), spec.GetParams())
 
 	parts := 1

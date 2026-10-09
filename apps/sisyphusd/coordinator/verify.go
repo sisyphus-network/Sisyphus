@@ -18,6 +18,8 @@ import (
 //
 //   - Two results are the same if their outputs are the same bytes and the
 //     blobs their attempts stored have the same CIDs.
+//     That holds for a private job too: sealing gives the same blob for
+//     the same key and data, so the same work stores the same CIDs.
 //   - A task is handed to as many workers at once as must agree. No worker
 //     is asked twice for a result: one that has returned a result for a
 //     task, or has a copy of it, is not given it again.

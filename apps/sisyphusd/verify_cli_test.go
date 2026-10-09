@@ -82,6 +82,20 @@ func TestCLIVerifiedJobSucceedsThoughOneOfItsThreeWorkersLies(t *testing.T) {
 		t.Errorf("job record printed:\n%s", record)
 	}
 
+	// A private job is verified like any other. Its record names the worker
+	// that was outvoted, and holds what each returned only as something
+	// the job's key can check.
+	key := newKeyFile(t)
+	out = mustCLI(t, "job", "submit", "--addr", addr, "--verify", "2", "--tasks", "3", "--key-file", key, "--params", `{"from":0,"to":1000000}`)
+	if !strings.Contains(out, "3 task(s), each verified by 2 workers") || !strings.Contains(out, `{"count":78498}`) {
+		t.Errorf("submit output of a private job:\n%s", out)
+	}
+	record = mustCLI(t, "job", "record", "--addr", addr, "--key-file", key, strings.TrimSuffix(strings.Fields(out)[1], ":"))
+	if !strings.Contains(record, `"agreed": false`) || !strings.Contains(record, `"digest_commitment"`) || strings.Contains(record, `"digest":`) ||
+		!strings.Contains(record, "/digest_commitment: matches") || !strings.Contains(record, "checked: the key and the values the node holds give all") {
+		t.Errorf("job record of a private job printed:\n%s", record)
+	}
+
 	// With a share, only so many of the tasks are verified, and the job
 	// says how many that came to. (What it counts is not looked at here:
 	// the task that is run once may be the liar's.)
@@ -143,9 +157,5 @@ func TestCLIVerifiedJobFailsWhenItsWorkersDisagreeAndNobodyIsLeftToAsk(t *testin
 	if _, err := cli(t, "job", "submit", "--addr", addr, "--verify", "3", "--params", `{"from":0,"to":100}`); err == nil ||
 		!strings.Contains(err.Error(), "verify asks for 3 different workers to run each task, and 2 connected now could take this job") {
 		t.Errorf("a job to be verified by more workers than there are: %v", err)
-	}
-	if _, err := cli(t, "job", "submit", "--addr", addr, "--verify", "2", "--key-file", newKeyFile(t), "--params", `{"from":0,"to":100}`); err == nil ||
-		!strings.Contains(err.Error(), "a private job cannot be verified") {
-		t.Errorf("a private job to be verified: %v", err)
 	}
 }
