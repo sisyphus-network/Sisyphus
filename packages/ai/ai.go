@@ -163,6 +163,19 @@ const (
 
 var usualPlace = map[string]string{Ollama: "http://127.0.0.1:11434", OpenAI: "https://api.openai.com/v1", Anthropic: "https://api.anthropic.com"}
 
+// SameService reports whether two configurations are of one service: the
+// same provider at the same place, where no place given is that provider's
+// usual one. A key for one service is no business of another.
+func SameService(a, b Config) bool {
+	place := func(c Config) string {
+		if c.BaseURL == "" {
+			return usualPlace[c.Provider]
+		}
+		return strings.TrimRight(c.BaseURL, "/")
+	}
+	return a.Provider == b.Provider && place(a) == place(b)
+}
+
 // New returns the provider cfg describes.
 func New(cfg Config) (Provider, error) {
 	base, known := usualPlace[cfg.Provider]

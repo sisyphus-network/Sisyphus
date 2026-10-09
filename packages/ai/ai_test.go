@@ -211,3 +211,19 @@ func TestRepliesThatCannotBeUsed(t *testing.T) {
 		t.Errorf("an address that is none: %v", err)
 	}
 }
+
+func TestTwoConfigurationsOfOneServiceAreKnownForOne(t *testing.T) {
+	for name, tt := range map[string]struct {
+		a, b Config
+		same bool
+	}{
+		"the usual place, said and unsaid": {Config{Provider: Ollama}, Config{Provider: Ollama, BaseURL: "http://127.0.0.1:11434/"}, true},
+		"nothing said twice":               {Config{Provider: Anthropic}, Config{Provider: Anthropic}, true},
+		"another address":                  {Config{Provider: OpenAI}, Config{Provider: OpenAI, BaseURL: "https://example.org/v1"}, false},
+		"another provider at one address":  {Config{Provider: Ollama, BaseURL: "http://h:1"}, Config{Provider: OpenAI, BaseURL: "http://h:1"}, false},
+	} {
+		if SameService(tt.a, tt.b) != tt.same || SameService(tt.b, tt.a) != tt.same {
+			t.Errorf("%s: taken for the same service: %v", name, !tt.same)
+		}
+	}
+}

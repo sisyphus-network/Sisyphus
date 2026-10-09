@@ -541,7 +541,12 @@ func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelC
 		if err != nil {
 			return nil, asError(err)
 		}
-		cfg.APIKey = current.APIKey
+		// The key is kept for the service it was given for and no other:
+		// a change of provider or address is saved without one, and the
+		// answer says so.
+		if sameService(current, cfg) {
+			cfg.APIKey = current.APIKey
+		}
 	}
 	if err := s.cfg.Assistant.SetModelConfig(cfg); err != nil {
 		return nil, asError(err)

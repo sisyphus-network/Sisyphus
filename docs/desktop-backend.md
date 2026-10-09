@@ -47,7 +47,7 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `CancelJob` | yes | Stop a job that has not finished. |
 | `WatchJobEvents` | | What has happened to one job, then what happens next, ending when the job does: the steps of its life and the lines its tasks log. Pass `after_seq` to pick up where you left off. |
 | `GetModelConfig` | | Which model the node plans with, and whether a key is set. Never the key. |
-| `SetModelConfig` | yes | Set it. `keep_api_key` changes the rest without sending the key again. |
+| `SetModelConfig` | yes | Set it. `keep_api_key` changes the model without sending the key again. The key is kept only for the provider and address it was saved with, where an empty address is the provider's usual one: change either and the configuration is saved with no key, which `has_api_key` in the answer shows. |
 | `ListProviders` | | The kinds of model service there are: Ollama, Anthropic, and OpenAI and whatever speaks as it does. Each with its usual address, whether it wants a key, and whether its models are fetched before use. |
 | `ListModels` | for a named service | What a service offers, each model with its size and whether it can call tools. With no `service`, the configured one; with one, the service described, before anything is saved. |
 | `PullModel` | yes | Fetch a model to the machine its service runs on (Ollama). A stream of progress, ending when the model is there. |
