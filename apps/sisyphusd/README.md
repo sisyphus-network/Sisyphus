@@ -2,7 +2,7 @@
 
 The Sisyphus node daemon. One binary runs the coordinator role, the worker role, or both, and doubles as the command-line client.
 
-This is the walking skeleton: a coordinator splits a job into tasks, workers execute them, and the results are aggregated. There is no AI planner, persistence, authentication or container runtime yet; see the [roadmap](https://github.com/sisyphus-network/Sisyphus/issues/23).
+A coordinator splits a job into tasks, workers execute them, and the results are aggregated. Around that are the pieces a pool needs: who may connect, storage that outlasts a job, private and verified jobs, containers, a planner, and a server for AI agents. What is built and what is not is on the [roadmap](https://github.com/sisyphus-network/Sisyphus/issues/23); what it protects and what it does not is in the [security model](../../docs/security-model.md).
 
 ## Build
 
@@ -90,12 +90,12 @@ Every connection between nodes is encrypted, and each end proves who it is.
 | Role | Who | May |
 | --- | --- | --- |
 | owner | Whoever holds the node's own key: its own worker, and commands run from its data directory | Everything, including inviting and removing others |
-| worker | A node invited with `pool invite` | Take tasks, and fetch and store the blobs they need |
+| worker | A node invited with `pool invite` | Take tasks, fetch any stored blob it can name and store blobs, be given the key of the pool's private network, and publish its own name |
 | client | A node invited with `pool invite --role client` | Submit and watch jobs, list nodes, and manage stored data |
 
 Anyone else can complete the handshake and is then refused.
 
-**Joining.** An invitation is the inviting node's ID and a one-time token. The ID is what makes joining safe: the joiner will only talk to the node named in it, so nobody in between can pose as that node. It lasts an hour unless `--ttl` says otherwise, and is void if the inviting node restarts before it is used. Once joined, a node remembers which node it expects at that address in `known.json` and refuses any other.
+**Joining.** An invitation is the inviting node's ID and a one-time token. The ID is what makes joining safe: the joiner will only talk to the node named in it, so nobody in between can pose as that node. It lasts an hour unless `--ttl` says otherwise, and is still good if the inviting node restarts before it is used. Once joined, a node remembers which node it expects at that address in `known.json` and refuses any other.
 
 ```sh
 bin/sisyphusd pool members            # who has been admitted, and as what
@@ -267,7 +267,7 @@ bin/sisyphusd blob get --key-file job.key <output CID>          # unsealed after
 - **What is sealed.** The input you seal, everything the job's tasks store, and its stored result. Each is encrypted with the key, so stores, caches and the private network hold only ciphertext.
 - **Who gets the key.** The coordinator, when you submit the job, and from it each worker that is assigned one of the job's tasks. It is never reported back in the job, logged, or given to anyone else. Those nodes see the data in the clear, as they must to compute on it.
 - **Where the key is kept.** In the coordinator's database, readable by its owner only, and only until the job finishes: an unfinished job could not be taken up after a restart without it. When the job finishes the key is erased from the database's files. That is as much as software can promise; a disk may keep traces of what it once held.
-- **What still shows.** The size of each blob, and that the job happened. The job's parameters and the small result it reports (for `wordcount`, the counts of words and of distinct words) are not sealed; they travel over the pool's encrypted connections but are visible to clients of the coordinator.
+- **What still shows.** The size of each blob, and that the job happened. The job's parameters, the small result it reports (for `wordcount`, the counts of words and of distinct words), what each task returns to the coordinator, error messages and log lines are not sealed; they travel over the pool's encrypted connections but are visible to clients of the coordinator. A `container` task's every printed line is a log line, so a private container job should print nothing it means to keep private and write to `/output` instead.
 - **Same result every time.** Sealing with the same key always gives the same bytes, so a private job's result has the same CID however the job is split, like any other. The other side of that: someone who can see two sealed blobs can tell whether they, or same-sized pieces at the same position in them, are identical under one key. Use a new key for data where that matters.
 - **Its record leaves the unsealed parts out.** A finished job's [record](#a-jobs-record) goes into the shared store, so a private job's holds no parameters, results or error messages.
 - **Lose the key and the data is gone.** `key new` will not overwrite a key file for that reason.
@@ -824,7 +824,7 @@ What it shows, in this daemon's terms:
 | bootstrap peers | The node's address book: the addresses it connects to each time it starts. |
 | files | What was put in the pool's store through the app: kept until removed, listed by name, and given to jobs by CID. The same store `blob put` and `blob get` use. |
 | invitation, members | `pool invite`, `pool members` and `pool remove`, from the app. |
-| private | A file or job sealed with the key the node keeps in `private.key` in its data directory, made the first time one is asked for. The same as `--key-file` with that file. Lose the file and what it sealed is lost. |
+| private | A file or job sealed with the key the node keeps in `private.key` in its data directory, made the first time one is asked for. The same as `--key-file` with that file. Lose the file and what it sealed is lost. It is one key for everything the node makes private: a worker handed any private job from this node can open all of its private files and the data of its other private jobs. |
 | join a pool | `pool join` and a restart with `--join`, without the restart: the node redeems an invitation, says it takes that node's work, and starts on it. |
 | country | Where the node's address is registered, and each peer's, from a table the daemon carries (`packages/geo`, made from the regional Internet registries' published allocations). Nothing is asked of anyone. It is empty for a node that knows itself only by a home-network address, until other nodes have told it the address they see it at; `--locate-country` then asks ipapi.co instead, which thereby learns the address, so that is not done unasked. The country is the one of registration, which now and then is not where the machine is. `scripts/update-geo.sh` remakes the table. |
 
@@ -921,7 +921,7 @@ examples/render.sh                                                       # a pic
 - **One copy for each task.** Every task runs the same image and command and is told which copy it is, in `SISYPHUS_TASK_INDEX` (from 0) and `SISYPHUS_TASK_COUNT`. A program that does a share of some larger work takes its share from those.
 - **Input.** `"input": "<CID>"` gives every task that stored file at `/input/data`, read-only.
 - **Output.** What the command prints is stored and its CID returned for each task, and so is every file it leaves in `/output`. `blob get <CID>` fetches them. What it prints is also the task's log, live, in `job logs`.
-- **Limits.** `"memory_mb"` and `"cpus"` cap what each task may use, and unlike a node's offer these are enforced, by Docker. A task has no network unless the job says `"network": true`. It runs as the user the node runs as, not as root.
+- **Limits.** `"memory_mb"` and `"cpus"` cap what each task may use, and unlike a node's offer these are enforced, by Docker. A task has no network unless the job says `"network": true`. It runs as the user the node runs as: not as root unless the node itself does. Where the system has no user numbers, as on Windows, it runs as the image has it.
 - **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container.
 - **A job is taken in by any coordinator**, and waits until a worker that runs containers is connected.
 - **Tasks of a job that run on one machine share one copy of its input**, fetched once. Tasks of different jobs share nothing.
@@ -990,7 +990,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 ## Known limits
 
 - A task may fail three times, and losing its worker counts as a failure. Losing its coordinator does not.
-- A coordinator accepts whatever result a worker returns, unless the job asks to be [verified](#verifying-results), and then it believes any `N` workers that agree. Verification is for deterministic work only and not for private jobs. Admit only workers you trust.
+- A coordinator accepts whatever result a worker returns, unless the job asks to be [verified](#verifying-results), and then it believes any `N` workers that agree. Verification is for deterministic work only. Admit only workers you trust.
 - A node is remembered by address. If a coordinator's address changes, its workers and clients must join again.
 - A node's key cannot be changed without becoming a different node, and there is no way to stop a copied key being used other than removing that node.
 - Encryption hides what nodes say to each other, not that they are talking, how much, or when.
