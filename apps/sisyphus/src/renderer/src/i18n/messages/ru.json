@@ -151,6 +151,7 @@
   "agentActionRunJob": "Планирование вычислительной задачи",
   "agentActionGetJob": "Проверка состояния задачи",
   "agentActionComplete": "Планирование завершено",
+  "agentActionIncomplete": "Некоторые действия не завершены",
   "agentActions": "Действия агента",
   "jobId": "Задача",
   "openConversationFailed": "Не удалось открыть беседу",

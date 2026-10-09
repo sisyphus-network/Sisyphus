@@ -151,6 +151,7 @@
   "agentActionRunJob": "Planning a compute job",
   "agentActionGetJob": "Checking job status",
   "agentActionComplete": "Finished planning",
+  "agentActionIncomplete": "Some actions did not finish",
   "agentActions": "Agent activity",
   "jobId": "Job",
   "openConversationFailed": "Could not open conversation",

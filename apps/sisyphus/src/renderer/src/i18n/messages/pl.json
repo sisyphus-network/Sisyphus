@@ -151,6 +151,7 @@
   "agentActionRunJob": "Planowanie zadania obliczeniowego",
   "agentActionGetJob": "Sprawdzanie stanu zadania",
   "agentActionComplete": "Planowanie zakończone",
+  "agentActionIncomplete": "Niektóre działania nie zostały zakończone",
   "agentActions": "Aktywność agenta",
   "jobId": "Zadanie",
   "openConversationFailed": "Nie udało się otworzyć rozmowy",

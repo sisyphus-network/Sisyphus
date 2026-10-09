@@ -151,6 +151,7 @@
   "agentActionRunJob": "תכנון משימת חישוב",
   "agentActionGetJob": "בדיקת מצב המשימה",
   "agentActionComplete": "התכנון הושלם",
+  "agentActionIncomplete": "חלק מהפעולות לא הושלמו",
   "agentActions": "פעילות הסוכן",
   "jobId": "משימה",
   "openConversationFailed": "לא ניתן לפתוח את השיחה",

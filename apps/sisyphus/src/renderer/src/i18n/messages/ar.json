@@ -151,6 +151,7 @@
   "agentActionRunJob": "التخطيط لمهمة حوسبة",
   "agentActionGetJob": "التحقق من حالة المهمة",
   "agentActionComplete": "اكتمل التخطيط",
+  "agentActionIncomplete": "لم تكتمل بعض الإجراءات",
   "agentActions": "نشاط الوكيل",
   "jobId": "المهمة",
   "openConversationFailed": "تعذر فتح المحادثة",
