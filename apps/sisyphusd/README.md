@@ -605,22 +605,28 @@ claude mcp add sisyphus -- /path/to/sisyphusd mcp     # Claude Code; other agent
 { "mcpServers": { "sisyphus": { "command": "/path/to/sisyphusd", "args": ["mcp"] } } }
 ```
 
-The second form is what Claude Desktop (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`) and most others take. The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir` and `--api` if the node's are not the usual ones.
+The second form is what Claude Desktop (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`) and most others take. The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir`, `--api` and `--addr` if the node's data directory, `--api-listen` and `--listen` are not the usual ones.
+
+There are 42 tools: 18 that only look, 14 more that use the pool, and 10 more with `--admin`.
 
 | Tool | What it does |
 | --- | --- |
 | `pool_status` | The workers connected, with their cores, memory, graphics cards, the models they serve and how busy they are. |
 | `list_workloads` | What the pool can run, the parameters each workload takes, and how many connected workers run it. |
-| `run_job` | Runs a job and waits for its result, or returns at once with `detach`. |
+| `run_job` | Runs a job and waits for its result, or returns at once with `detach`. It takes what `job submit` takes: `tasks`, `mode`, `private`, `min_memory_mb`, `min_gpus` and `task_timeout_seconds`. |
 | `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `wait_for_job` | Look at a job, list them, stop one, read what it logged, wait for one to finish. |
 | `store_file`, `fetch_file`, `list_files`, `remove_file`, `fetch_outputs`, `save_result` | Put a file from this machine in the pool's store, bring one back, list them, stop keeping one, bring back everything a job stored, write a job's whole result to a file. |
+| `list_pins`, `pin_file`, `unpin_file` | What the node keeps, for whom and until when ([How long data is kept](#how-long-data-is-kept)); keep a file, such as a job's output, for good or for so many hours; release it. |
+| `storage_status` | Which other nodes hold copies of what is pinned, against how many should: the storage followers of [Copies on other nodes](#copies-on-other-nodes), or the members of the pool's [IPFS Cluster](#ipfs-cluster-pins-held-by-several-nodes), whichever the pool uses, and it says so plainly of a pool that uses neither. |
+| `get_job_record` | A finished job's [record](#a-jobs-record): its ID and its nodes as JSON. With `verify` it is checked against the job as `job record --verify` checks it, and with `check_commitments` a private job's commitments are checked with the node's own `private.key`. |
+| `resolve_name`, `publish_name` | What a node's [name](#names-for-what-changes) stands for, checked against the name as `name resolve` checks it; point this node's name at a file. |
 | `ask_model`, `compare_texts` | Has a model served by one of the pool's workers answer a prompt; says which texts mean most alike, by an embedding model the pool serves. |
 | `ask_planner`, `list_chats`, `get_chat`, `delete_chat` | Hand a whole question to the node's own planner, and read or forget its conversations. |
 | `list_peers`, `list_members` | The nodes this node knows of, with their countries and which way work flows; who is in its pool. |
 | `get_model`, `list_models`, `list_model_providers` | What the planner plans with, what its service offers, and the kinds of service there are. |
-| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model`, `remove_model` | Change the node itself: who is in its pool, which nodes it trusts, what it plans with. |
+| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model`, `remove_model`, `collect_garbage`, `restore_files` | Change the node itself: who is in its pool, which nodes it trusts, what it plans with; clear its store of what nothing pins now, and take back from its followers what a lost store held (`blob gc`, `blob restore`). |
 
-Besides tools, the server gives an agent things to read (`sisyphus://pool`, `sisyphus://workloads`, and the skill itself as `sisyphus://skill/SKILL.md` and `sisyphus://skill/recipes.md`), two prompts (`run-on-pool`, `pool-report`), and, while `run_job` or `wait_for_job` waits, word of each task as it finishes.
+Besides tools, the server gives an agent things to read (`sisyphus://pool`, `sisyphus://workloads`, and the skill itself as `sisyphus://skill/SKILL.md` and `sisyphus://skill/recipes.md`), three prompts (`run-on-pool`, `pool-report`, `keep-result`), and, while `run_job` or `wait_for_job` waits, word of each task as it finishes.
 
 What the agent may do is yours to set, when you give its settings the command:
 
@@ -632,10 +638,13 @@ What the agent may do is yours to set, when you give its settings the command:
 | `--admin` | Adds the tools that change the node itself. Without it there are none. |
 
 - **It is a client of the local API** and holds the node's token, which it reads from the data directory.
+- **Pins, copies, names and records are not in the local API**, so for those tools it reaches the node's main address, `--addr`, as the command line does: with the node's key in `--data-dir`. That connection is made the first time one of them is called. If it cannot be made, or the node is not at `--addr`, those tools fail saying why and every other tool goes on working. The token is not sent there.
+- **`publish_name` signs with the node's key**, as `name publish` does, and `get_job_record` with `check_commitments` sends the node its own `private.key`, as `job record --key-file` would. It reads that key and never makes one, and no tool hands either key to the agent.
+- **Pinning services are not offered.** `blob pin-remote` and its fellows need another service's key, and an agent is given no key to pass on.
 - **With no flags it can use the pool and not reconfigure it.** It can spend the pool's time, run container images on workers that allow containers, and read and write files in the directory it was started in. It will not write over a file that is there unless told to in so many words.
 - **`--admin` is the node's keys.** An agent with it can invite anyone into the pool and join the node to others. It is never given a model service's key: `set_model` keeps the one already set.
 - **A skill comes with it**, carried in the daemon. `sisyphusd skill install` puts it where Claude Code keeps skills (`~/.claude/skills`), `--dir` puts it elsewhere, and `sisyphusd skill show` prints it. It tells an agent how to use a pool well: look before submitting, how to split work with a container, how to have the pool's models think, what goes wrong; `recipes.md` beside it has worked shapes for common jobs. It works with the tools or, without them, with the command line. Its source is [`skills/sisyphus`](../../skills/sisyphus/SKILL.md).
-- **It has been tried from Claude Code**, with the skill installed and the server kept to one directory: asked to describe the pool, upper-case a file across three tasks and have one of the pool's models answer a question, it read the skill, ran a `container` job and `ask_model`, and wrote the right file. A second run, on Opus, labelled eight reviews with one `prompts` job and found the two most alike with `embed`; what it stumbled on (a result of vectors too long to hand back) is why `save_result` and `compare_texts` exist. Other agents have not been tried.
+- **It has been tried from Claude Code**, with the skill installed and the server kept to one directory: asked to describe the pool, upper-case a file across three tasks and have one of the pool's models answer a question, it read the skill, ran a `container` job and `ask_model`, and wrote the right file. A second run, on Opus, labelled eight reviews with one `prompts` job and found the two most alike with `embed`; what it stumbled on (a result of vectors too long to hand back) is why `save_result` and `compare_texts` exist. A third, with the tools for what the node keeps and no skill, counted a file's words, pinned the result for a day, verified the job's record, found from `storage_status` that no other node held a copy, and published and resolved the node's name. It had to find out from `list_pins` that the job's own pin outlasts a day's pin, which is why `pin_file` now answers with every pin on the file. Other agents have not been tried.
 
 ## Following and stopping a job
 
@@ -645,12 +654,43 @@ bin/sisyphusd job cancel <job-id>               # stop it
 bin/sisyphusd job submit --timeout 10m ...      # stop and retry any attempt at a task that runs longer
 ```
 
-- **Events.** A coordinator records what happens to each job: submitted, each task started, succeeded, failed, lost with its worker or timed out, and how the job ended. `job logs` prints them and follows a running job to its end. They are kept in the database with the job.
+- **Events.** A coordinator records what happens to each job: submitted, each task started, succeeded, failed, lost with its worker or timed out, and how the job ended. A [verified](#verifying-results) job also has each result a worker returned, and each time the results for a task differed. `job logs` prints them and follows a running job to its end. They are kept in the database with the job.
 - **Logs.** A task can log lines as it runs, and those appear among the job's events with the task and worker they came from. The two built-in workloads log one line each.
 - **Progress.** A task can say how far along it is. `job get` and the desktop's API give it for each task, from 0 to 1, and for the job as the mean of its tasks. It is as true as the workload makes it, and is not kept across a restart.
 - **Cancelling** stops the job at once: its running tasks are told to stop, their slots are free again, and nothing more of it is handed out. A cancelled job is over, like one that succeeded or failed, and stays on record.
 - **Timeouts.** With `--timeout`, an attempt at a task that runs longer is stopped and counts as a failure, so it is tried again up to the usual three times.
 - **A job that fails stops its other tasks** the same way, rather than leaving them to finish for nothing.
+
+## Verifying results
+
+A coordinator takes what a worker returns as it is, unless the job asks otherwise. A job submitted with `--verify N` has each of its tasks run by `N` different workers, and takes a result only once `N` of them have returned the same one.
+
+```sh
+bin/sisyphusd job submit --verify 2 --params '{"from":0,"to":100000000}'   # each task on two workers, which must agree
+bin/sisyphusd job logs <job-id>                                            # who returned what, and who disagreed
+```
+
+- **What "the same" means.** Two results are the same if the outputs are the same bytes and the tasks stored the same blobs, by CID. Stored data is named by its content, so two workers that wrote the same file named the same CID.
+- **Different workers.** A task goes to `N` workers at once, each a different node. A worker that has returned a result for a task, or is running it, is never given that task again, so the results that settle a task come from `N` different nodes.
+- **When they agree**, which is the usual case, the task has succeeded with that result. The task is shown as the first of those workers'.
+- **When they differ**, the task goes to one more worker that has not been asked, for each result the larger side still lacks, until some result has been returned by `N` workers. With `--verify 2`, two that differ are settled by a third. A task takes in at most `2N-1` results. If no result can reach `N` within that, or no connected worker is left that has not been asked, the task fails and the job with it. The error names each worker and a short digest of what it returned.
+- **Each disagreement is an event.** `job logs` shows `task-result` for every result with the worker that returned it, `task-disagreed` with the workers on each side when the results in for a task differ, and `task-succeeded` with the workers that agreed and any that returned something else. The job's [record](#a-jobs-record) has the same for good: each receipt lists every result by worker, with a digest and whether it was one of those that settled the task.
+- **A failed attempt is not a disagreement.** An attempt that fails, times out (`--timeout`) or is lost with its worker returned no result. It is tried again, by that worker or another, and counts towards the usual three failures a task may have.
+- **A job that asks for more workers than there are is refused** when it is submitted: `--verify 3` needs three connected workers that could take the job, counting those that are busy. If workers leave afterwards, a task that still needs one waits for it, as a task of any job waits for a worker; the coordinator cannot tell a worker that has gone for good from one that is restarting. Cancel the job if nobody is coming.
+- **With no `--tasks`**, a job is split into one task for every `N` free slots, since each task takes a slot on `N` workers. `--mode full-worker` runs the whole job as one task on `N` workers.
+- **A restart loses nothing.** The results in are kept in the database. A coordinator that is restarted asks only the workers that had not answered.
+- **Logs and progress.** Every copy of a task logs its own lines, each shown with the worker it came from. A task's progress counts the results it has and the furthest of its running copies.
+- **A graph hands it on.** A job made of jobs that is verified has each of its steps verified, by as many workers. The graph itself is taken in whoever is connected; a step that cannot be verified when it begins fails the graph and says why.
+
+**What it costs.** `N` times the work, and more when workers differ. A task is as slow as the slowest of the workers it needs.
+
+**What it is for, and what it is not.**
+
+- **It is for work that gives the same result every time it is run.** `primes`, `wordcount` and a container that is deterministic do. Work that involves a language model (`chat`, `prompts`, `embed`), `transcode`, and containers that use the time, random numbers or the network may not: two honest workers then differ, and the job fails saying so. Nothing here makes such work comparable.
+- **It cannot be asked of a private job**, and such a job is refused. Each worker seals what it stores afresh, so two that did the same work stored blobs with different CIDs.
+- **It does not protect against workers that agree to lie.** `N` workers that return the same wrong result are believed. Nor does it protect against one operator running several nodes: different node IDs are not different people.
+- **It does not judge workers.** A worker that was outvoted is named in the events and the record, and nothing else happens to it: no score, no stake and no ban. Removing it is up to the pool's owner (`pool remove`).
+- **It checks what workers return, not how the coordinator combines it.** The coordinator still splits the job and aggregates the outputs itself.
 
 ## A job's record
 
@@ -667,8 +707,8 @@ A record is made of these nodes:
 | Node | What it holds |
 | --- | --- |
 | root | `kind` (`sisyphus-job-record`), `version` (1), the job's ID, whether it is `private`, and links to the others. A step of a graph has `parent`: the graph's job ID and the step's name. |
-| manifest | What was asked: `workload`, `params`, `mode`, `requirements` (tasks asked for, task timeout, memory, graphics cards), links to the `inputs` it read, the node ID of the `submitter` (absent for a job the node gave itself, from the desktop app or the planner), `created_at`. |
-| a receipt for each task | The task's number, how it ended, its `output`, how many attempts failed, and every attempt in order: which worker (node ID and name), how it went, and why it failed if it did. |
+| manifest | What was asked: `workload`, `params`, `mode`, `requirements` (tasks asked for, task timeout, memory, graphics cards, and `verify` for a job that was [verified](#verifying-results)), links to the `inputs` it read, the node ID of the `submitter` (absent for a job the node gave itself, from the desktop app or the planner), `created_at`. |
+| a receipt for each task | The task's number, how it ended, its `output`, how many attempts failed, and every attempt in order: which worker (node ID and name), how it went, and why it failed if it did. For a verified job also `results`: for each result a worker returned, the attempt, the worker, a `digest` that is the same for results that are the same, and whether it `agreed` with the result the task was settled by. |
 | result | How the job ended, its `result` or `error`, links to the `outputs` it stored and to the `intermediate` data that passed between its tasks, `finished_at`. |
 | graph | Only for a job made of jobs: each step's name, its job's ID, and a link to that job's record. |
 
@@ -706,7 +746,7 @@ In place of each value left out, the record of a private job holds a **commitmen
 A coordinator keeps its jobs in `node.db`, a SQLite database in its data directory, so stopping it loses nothing:
 
 - **Finished jobs** are still there to be asked after, with their results.
-- **Unfinished jobs** are taken up where they were. Tasks that had finished stay finished. Tasks that were running go back to wait for a worker, and that is not counted against them, however often it happens. If every task had finished and only combining their outputs was cut short, the combining is done again, with no worker needed.
+- **Unfinished jobs** are taken up where they were. Tasks that had finished stay finished. Tasks that were running go back to wait for a worker, and that is not counted against them, however often it happens. A task of a [verified](#verifying-results) job keeps the results it had, and only the workers that had not answered are asked again. If every task had finished and only combining their outputs was cut short, the combining is done again, with no worker needed.
 - **A job's data** stays pinned across the restart for as long as the job takes.
 - **Workers** reconnect by themselves once the coordinator is back.
 - **Storage followers** go on holding what they held. A coordinator that comes back without its stored data takes it back from them; see [Copies on other nodes](#copies-on-other-nodes).
@@ -902,7 +942,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 | `packages/hardware` | Finding out what a machine has: processor, memory, graphics cards. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
 | `packages/names` | The signed records behind names: making, checking and comparing them. |
-| `packages/nodedb` | The node's SQLite database: jobs, tasks, attempts, members and invitations. |
+| `packages/nodedb` | The node's SQLite database: jobs, tasks, attempts and what they returned, members and invitations. |
 | `packages/storage` | Content-addressed blob store, pins, garbage collection. |
 
 `make proto` needs `protoc` on your path and the plugins from `make tools`.
@@ -910,7 +950,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 ## Known limits
 
 - A task may fail three times, and losing its worker counts as a failure. Losing its coordinator does not.
-- A coordinator accepts whatever result a worker returns. Admit only workers you trust.
+- A coordinator accepts whatever result a worker returns, unless the job asks to be [verified](#verifying-results), and then it believes any `N` workers that agree. Verification is for deterministic work only and not for private jobs. Admit only workers you trust.
 - A node is remembered by address. If a coordinator's address changes, its workers and clients must join again.
 - A node's key cannot be changed without becoming a different node, and there is no way to stop a copied key being used other than removing that node.
 - Encryption hides what nodes say to each other, not that they are talking, how much, or when.
