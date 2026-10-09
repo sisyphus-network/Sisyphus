@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { createRpcStream } from './rpc-stream'
 
 export type Peer = {
   peerId: string
@@ -48,22 +49,7 @@ const api = {
   setPeerComputePermissions: (peerId: string, givesWork: boolean, takesWork: boolean): Promise<void> => ipcRenderer.invoke('node:set-peer-compute-permissions', { peerId, givesWork, takesWork }),
   call: <T = Record<string, unknown>>(method: NodeRpcMethod, request: Record<string, unknown> = {}): Promise<T> => ipcRenderer.invoke('node:rpc', { method, request }),
   stream: <T = Record<string, unknown>>(method: NodeStreamMethod, request: Record<string, unknown>, callback: (event: T) => void, onError?: (error: string) => void, onEnd?: () => void) => {
-    const id = crypto.randomUUID()
-    const channel = `node:rpc-stream:${id}`
-    const listener = (_event: Electron.IpcRendererEvent, payload: { data?: T; error?: string; end?: boolean }) => {
-      if (payload.data !== undefined) callback(payload.data)
-      if (payload.error) onError?.(payload.error)
-      if (payload.end) { ipcRenderer.removeListener(channel, listener); onEnd?.() }
-    }
-    ipcRenderer.on(channel, listener)
-    void ipcRenderer.invoke('node:rpc-stream-start', { id, method, request }).catch((error: unknown) => {
-      ipcRenderer.removeListener(channel, listener)
-      onError?.(error instanceof Error ? error.message : String(error))
-    })
-    return () => {
-      ipcRenderer.removeListener(channel, listener)
-      void ipcRenderer.invoke('node:rpc-stream-stop', id)
-    }
+    return createRpcStream(ipcRenderer, method, request, callback, onError, onEnd)
   },
   storeFile: (file: { name: string; data: Uint8Array; private: boolean }): Promise<Record<string, unknown>> => ipcRenderer.invoke('node:store-file', file),
   fetchFile: (cid: string): Promise<Uint8Array> => ipcRenderer.invoke('node:fetch-file', cid),
