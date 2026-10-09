@@ -30,6 +30,8 @@ const usage = `Usage:
   sisyphusd blob unpin <cid>       stop keeping a blob
   sisyphusd blob pins              list what the node is keeping, and for whom
   sisyphusd blob gc                delete stored data that nothing is keeping
+  sisyphusd blob replicas [<cid>]  show which storage followers hold copies of what the node has pinned
+  sisyphusd blob restore           fetch back what followers hold from a store this node has lost
   sisyphusd key new <file>         make a key for sealing a private job's data
   sisyphusd pool invite            issue an invitation for another node to join this one
   sisyphusd pool join <invitation> join another node, to use it from this machine

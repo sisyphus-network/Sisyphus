@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/replication"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
@@ -33,6 +34,8 @@ type blobService struct {
 	// holders names the workers likely to hold a blob, other than the one
 	// asking.
 	holders func(blob, asker string) []*pb.BlobHolder
+	// replication tells the node's storage followers what to hold.
+	replication *replication.Manager
 }
 
 // FileStore is the part of a storage.Store needed to put things in it,
@@ -121,13 +124,18 @@ func (r *uploadReader) Read(p []byte) (int, error) {
 }
 
 func (s *blobService) Get(req *pb.GetBlobRequest, stream grpc.ServerStreamingServer[pb.GetBlobResponse]) error {
-	return sendBlob(stream.Context(), s.store, req.GetCid(), func(data []byte) error {
+	return getBlob(s.store, req, stream)
+}
+
+// getBlob answers Get from any store that can be read.
+func getBlob(store Opener, req *pb.GetBlobRequest, stream grpc.ServerStreamingServer[pb.GetBlobResponse]) error {
+	return sendBlob(stream.Context(), store, req.GetCid(), func(data []byte) error {
 		return stream.Send(&pb.GetBlobResponse{Data: data})
 	})
 }
 
 // sendBlob sends what is stored under a CID, piece by piece.
-func sendBlob(ctx context.Context, store FileStore, id string, send func([]byte) error) error {
+func sendBlob(ctx context.Context, store Opener, id string, send func([]byte) error) error {
 	blob, err := openBlob(ctx, store, id)
 	if err != nil {
 		return err
@@ -163,7 +171,12 @@ func (s *blobService) Locate(ctx context.Context, req *pb.LocateBlobRequest) (*p
 }
 
 func (s *blobService) Stat(ctx context.Context, req *pb.StatBlobRequest) (*pb.StatBlobResponse, error) {
-	blob, err := openBlob(ctx, s.store, req.GetCid())
+	return statBlob(ctx, s.store, req)
+}
+
+// statBlob answers Stat from any store that can be read.
+func statBlob(ctx context.Context, store Opener, req *pb.StatBlobRequest) (*pb.StatBlobResponse, error) {
+	blob, err := openBlob(ctx, store, req.GetCid())
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +184,7 @@ func (s *blobService) Stat(ctx context.Context, req *pb.StatBlobRequest) (*pb.St
 	return &pb.StatBlobResponse{Size: blob.Size()}, nil
 }
 
-func openBlob(ctx context.Context, store FileStore, id string) (storage.Blob, error) {
+func openBlob(ctx context.Context, store Opener, id string) (storage.Blob, error) {
 	c, err := cid.Decode(id)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", id, err)
@@ -238,4 +251,26 @@ func (s *blobService) CollectGarbage(ctx context.Context, _ *pb.CollectGarbageRe
 		BlocksRemoved: uint64(done.Blocks),
 		BytesFreed:    done.Bytes,
 	}, nil
+}
+
+func (s *blobService) Replicate(ctx context.Context, req *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+	hold, store := s.replication.Replicate(access.Caller(ctx), req.GetStore(), req.GetHolding())
+	return &pb.ReplicateResponse{Hold: hold, Store: store}, nil
+}
+
+func (s *blobService) Replicas(_ context.Context, req *pb.ReplicasRequest) (*pb.ReplicasResponse, error) {
+	var only string
+	if req.GetCid() != "" {
+		c, err := cid.Decode(req.GetCid())
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", req.GetCid(), err)
+		}
+		only = c.String()
+	}
+	return s.replication.Status(only), nil
+}
+
+func (s *blobService) Restore(ctx context.Context, _ *pb.RestoreRequest) (*pb.RestoreResponse, error) {
+	restored, failed := s.replication.Restore(ctx, userOwner)
+	return &pb.RestoreResponse{Restored: uint32(restored), Failed: failed}, nil
 }

@@ -27,6 +27,9 @@ const (
 	BlobService_Unpin_FullMethodName          = "/sisyphus.v1.BlobService/Unpin"
 	BlobService_ListPins_FullMethodName       = "/sisyphus.v1.BlobService/ListPins"
 	BlobService_CollectGarbage_FullMethodName = "/sisyphus.v1.BlobService/CollectGarbage"
+	BlobService_Replicate_FullMethodName      = "/sisyphus.v1.BlobService/Replicate"
+	BlobService_Replicas_FullMethodName       = "/sisyphus.v1.BlobService/Replicas"
+	BlobService_Restore_FullMethodName        = "/sisyphus.v1.BlobService/Restore"
 )
 
 // BlobServiceClient is the client API for BlobService service.
@@ -56,6 +59,18 @@ type BlobServiceClient interface {
 	// CollectGarbage drops pins that have expired and deletes every block no
 	// remaining pin reaches.
 	CollectGarbage(ctx context.Context, in *CollectGarbageRequest, opts ...grpc.CallOption) (*CollectGarbageResponse, error)
+	// Replicate is how a follower learns what to hold. It says what it holds
+	// and is told what it should: it fetches what it lacks with Get and drops
+	// the rest. Asking is also how the node knows the follower is there, so a
+	// follower asks again every so often.
+	Replicate(ctx context.Context, in *ReplicateRequest, opts ...grpc.CallOption) (*ReplicateResponse, error)
+	// Replicas reports which followers hold each blob the node has pinned,
+	// against how many should.
+	Replicas(ctx context.Context, in *ReplicasRequest, opts ...grpc.CallOption) (*ReplicasResponse, error)
+	// Restore is for a node whose store was lost and replaced. It fetches
+	// back what its followers still hold from the store it had before and
+	// pins it on behalf of the node's user.
+	Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResponse, error)
 }
 
 type blobServiceClient struct {
@@ -158,6 +173,36 @@ func (c *blobServiceClient) CollectGarbage(ctx context.Context, in *CollectGarba
 	return out, nil
 }
 
+func (c *blobServiceClient) Replicate(ctx context.Context, in *ReplicateRequest, opts ...grpc.CallOption) (*ReplicateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReplicateResponse)
+	err := c.cc.Invoke(ctx, BlobService_Replicate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *blobServiceClient) Replicas(ctx context.Context, in *ReplicasRequest, opts ...grpc.CallOption) (*ReplicasResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReplicasResponse)
+	err := c.cc.Invoke(ctx, BlobService_Replicas_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *blobServiceClient) Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreResponse)
+	err := c.cc.Invoke(ctx, BlobService_Restore_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BlobServiceServer is the server API for BlobService service.
 // All implementations must embed UnimplementedBlobServiceServer
 // for forward compatibility.
@@ -185,6 +230,18 @@ type BlobServiceServer interface {
 	// CollectGarbage drops pins that have expired and deletes every block no
 	// remaining pin reaches.
 	CollectGarbage(context.Context, *CollectGarbageRequest) (*CollectGarbageResponse, error)
+	// Replicate is how a follower learns what to hold. It says what it holds
+	// and is told what it should: it fetches what it lacks with Get and drops
+	// the rest. Asking is also how the node knows the follower is there, so a
+	// follower asks again every so often.
+	Replicate(context.Context, *ReplicateRequest) (*ReplicateResponse, error)
+	// Replicas reports which followers hold each blob the node has pinned,
+	// against how many should.
+	Replicas(context.Context, *ReplicasRequest) (*ReplicasResponse, error)
+	// Restore is for a node whose store was lost and replaced. It fetches
+	// back what its followers still hold from the store it had before and
+	// pins it on behalf of the node's user.
+	Restore(context.Context, *RestoreRequest) (*RestoreResponse, error)
 	mustEmbedUnimplementedBlobServiceServer()
 }
 
@@ -218,6 +275,15 @@ func (UnimplementedBlobServiceServer) ListPins(context.Context, *ListPinsRequest
 }
 func (UnimplementedBlobServiceServer) CollectGarbage(context.Context, *CollectGarbageRequest) (*CollectGarbageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CollectGarbage not implemented")
+}
+func (UnimplementedBlobServiceServer) Replicate(context.Context, *ReplicateRequest) (*ReplicateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Replicate not implemented")
+}
+func (UnimplementedBlobServiceServer) Replicas(context.Context, *ReplicasRequest) (*ReplicasResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Replicas not implemented")
+}
+func (UnimplementedBlobServiceServer) Restore(context.Context, *RestoreRequest) (*RestoreResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Restore not implemented")
 }
 func (UnimplementedBlobServiceServer) mustEmbedUnimplementedBlobServiceServer() {}
 func (UnimplementedBlobServiceServer) testEmbeddedByValue()                     {}
@@ -366,6 +432,60 @@ func _BlobService_CollectGarbage_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BlobService_Replicate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlobServiceServer).Replicate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlobService_Replicate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlobServiceServer).Replicate(ctx, req.(*ReplicateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlobService_Replicas_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicasRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlobServiceServer).Replicas(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlobService_Replicas_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlobServiceServer).Replicas(ctx, req.(*ReplicasRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlobService_Restore_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlobServiceServer).Restore(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BlobService_Restore_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlobServiceServer).Restore(ctx, req.(*RestoreRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BlobService_ServiceDesc is the grpc.ServiceDesc for BlobService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -396,6 +516,18 @@ var BlobService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CollectGarbage",
 			Handler:    _BlobService_CollectGarbage_Handler,
+		},
+		{
+			MethodName: "Replicate",
+			Handler:    _BlobService_Replicate_Handler,
+		},
+		{
+			MethodName: "Replicas",
+			Handler:    _BlobService_Replicas_Handler,
+		},
+		{
+			MethodName: "Restore",
+			Handler:    _BlobService_Restore_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

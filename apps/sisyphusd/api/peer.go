@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
+
+	"github.com/ipfs/go-cid"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -16,10 +19,11 @@ import (
 
 // NewPeerServer returns a gRPC server by which a worker lets the other
 // members of its pool fetch blobs from its store, so that they need not all
-// come from the coordinator. It answers only Get and Stat, and only for
+// come from the coordinator. A storage follower serves what it holds for
+// the pool the same way; see Stores. It answers only Get and Stat, and only for
 // callers that isMember vouches for. A worker does not keep the list of
 // members itself; isMember asks whoever does.
-func NewPeerServer(ident *identity.Identity, store *storage.Store, isMember func(ctx context.Context, nodeID string) (bool, error)) *grpc.Server {
+func NewPeerServer(ident *identity.Identity, store Opener, isMember func(ctx context.Context, nodeID string) (bool, error)) *grpc.Server {
 	// check refuses a call unless it comes from a member.
 	check := func(ctx context.Context) error {
 		caller, err := access.Identify(ctx)
@@ -50,7 +54,7 @@ func NewPeerServer(ident *identity.Identity, store *storage.Store, isMember func
 			return handler(srv, stream)
 		}),
 	)
-	pb.RegisterBlobServiceServer(srv, &peerBlobService{blobs: blobService{store: store}})
+	pb.RegisterBlobServiceServer(srv, &peerBlobService{store: store})
 	return srv
 }
 
@@ -58,13 +62,29 @@ func NewPeerServer(ident *identity.Identity, store *storage.Store, isMember func
 // call is refused as unimplemented.
 type peerBlobService struct {
 	pb.UnimplementedBlobServiceServer
-	blobs blobService
+	store Opener
 }
 
 func (s *peerBlobService) Get(req *pb.GetBlobRequest, stream grpc.ServerStreamingServer[pb.GetBlobResponse]) error {
-	return s.blobs.Get(req, stream)
+	return getBlob(s.store, req, stream)
 }
 
 func (s *peerBlobService) Stat(ctx context.Context, req *pb.StatBlobRequest) (*pb.StatBlobResponse, error) {
-	return s.blobs.Stat(ctx, req)
+	return statBlob(ctx, s.store, req)
+}
+
+// Stores returns several stores as one to read from: a blob is opened from
+// the first that holds it.
+func Stores(stores ...Opener) Opener { return anyOf(stores) }
+
+type anyOf []Opener
+
+func (s anyOf) Open(ctx context.Context, c cid.Cid) (blob storage.Blob, err error) {
+	err = storage.ErrNotFound
+	for _, store := range s {
+		if blob, err = store.Open(ctx, c); !errors.Is(err, storage.ErrNotFound) {
+			break
+		}
+	}
+	return blob, err
 }

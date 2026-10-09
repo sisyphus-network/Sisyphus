@@ -44,6 +44,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `apps/sisyphusd/mcpserver` | The node as a Model Context Protocol server: ten tools over the local API, for agents other than the node's own. Tested against a real node and against one that fails. |
 | `apps/sisyphusd/planner` | The planner's loop: the model is asked, the tools it asks for are run, and it is asked again with what they returned. Tested against a scripted model. |
 | `apps/sisyphusd/blobclient` | Uploading and downloading blobs, checked against their CIDs. |
+| `apps/sisyphusd/replication` | Copies of a pool's stored data on its storage followers. The coordinator's side says which followers hold each pinned blob, by rendezvous hashing, and fetches a blob back; the follower's side holds what it is told. Tested without a network, and in `apps/sisyphusd` with real nodes. |
 | `apps/sisyphusd` | The `sisyphusd` command: flags, startup, the command-line client. |
 | `apps/sisyphus` | The desktop app: Electron and React. `npm ci`, then `npm run typecheck` and `npm run build`. |
 
