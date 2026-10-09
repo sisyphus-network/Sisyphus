@@ -718,8 +718,15 @@ type Job struct {
 	Private bool `protobuf:"varint,12,opt,name=private,proto3" json:"private,omitempty"`
 	// Set on a job that is a step of another, a graph: the job it is a step
 	// of, and the step's name.
-	ParentJobId   string `protobuf:"bytes,13,opt,name=parent_job_id,json=parentJobId,proto3" json:"parent_job_id,omitempty"`
-	Step          string `protobuf:"bytes,14,opt,name=step,proto3" json:"step,omitempty"`
+	ParentJobId string `protobuf:"bytes,13,opt,name=parent_job_id,json=parentJobId,proto3" json:"parent_job_id,omitempty"`
+	Step        string `protobuf:"bytes,14,opt,name=step,proto3" json:"step,omitempty"`
+	// Set once the job is over: the CID of its record, the root of a small
+	// graph of linked data that holds what was asked, who did what, and what
+	// came of it. See NodeService.GetJobRecord.
+	RecordCid string `protobuf:"bytes,15,opt,name=record_cid,json=recordCid,proto3" json:"record_cid,omitempty"`
+	// The node whose key the job was submitted with. Empty for a job the
+	// coordinator's node gave itself, through its local API or its planner.
+	SubmitterId   string `protobuf:"bytes,16,opt,name=submitter_id,json=submitterId,proto3" json:"submitter_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -852,6 +859,237 @@ func (x *Job) GetStep() string {
 	return ""
 }
 
+func (x *Job) GetRecordCid() string {
+	if x != nil {
+		return x.RecordCid
+	}
+	return ""
+}
+
+func (x *Job) GetSubmitterId() string {
+	if x != nil {
+		return x.SubmitterId
+	}
+	return ""
+}
+
+// JobRecord is a finished job's record as its coordinator's store holds it:
+// the root node and the nodes it links to.
+type JobRecord struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	JobId string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	// The CID of the root node, which names the whole record.
+	RootCid string `protobuf:"bytes,2,opt,name=root_cid,json=rootCid,proto3" json:"root_cid,omitempty"`
+	// The root first, then the nodes it links to, in the order it links to
+	// them.
+	Nodes []*RecordNode `protobuf:"bytes,3,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	// Set if the record was asked to be checked: the root CID worked out
+	// afresh from the job as the coordinator holds it now, and whether that
+	// is the record's.
+	RecomputedCid string `protobuf:"bytes,4,opt,name=recomputed_cid,json=recomputedCid,proto3" json:"recomputed_cid,omitempty"`
+	Matches       bool   `protobuf:"varint,5,opt,name=matches,proto3" json:"matches,omitempty"`
+	// Set if a key was sent: each commitment of a private job's record, in
+	// the order the record has them, and whether the key gives it. Empty for
+	// a record that holds no commitments.
+	Commitments   []*CommitmentCheck `protobuf:"bytes,6,rep,name=commitments,proto3" json:"commitments,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JobRecord) Reset() {
+	*x = JobRecord{}
+	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JobRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JobRecord) ProtoMessage() {}
+
+func (x *JobRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JobRecord.ProtoReflect.Descriptor instead.
+func (*JobRecord) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *JobRecord) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *JobRecord) GetRootCid() string {
+	if x != nil {
+		return x.RootCid
+	}
+	return ""
+}
+
+func (x *JobRecord) GetNodes() []*RecordNode {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+func (x *JobRecord) GetRecomputedCid() string {
+	if x != nil {
+		return x.RecomputedCid
+	}
+	return ""
+}
+
+func (x *JobRecord) GetMatches() bool {
+	if x != nil {
+		return x.Matches
+	}
+	return false
+}
+
+func (x *JobRecord) GetCommitments() []*CommitmentCheck {
+	if x != nil {
+		return x.Commitments
+	}
+	return nil
+}
+
+// CommitmentCheck is whether a key and a value the coordinator holds give
+// one of the commitments in a private job's record.
+type CommitmentCheck struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The path from the record's root to the commitment, such as
+	// "receipts/0/output_commitment".
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// False if the key is not the job's, or the value has changed since the
+	// job ended. The two cannot be told apart.
+	Matches       bool `protobuf:"varint,2,opt,name=matches,proto3" json:"matches,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CommitmentCheck) Reset() {
+	*x = CommitmentCheck{}
+	mi := &file_sisyphus_v1_types_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommitmentCheck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommitmentCheck) ProtoMessage() {}
+
+func (x *CommitmentCheck) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_types_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommitmentCheck.ProtoReflect.Descriptor instead.
+func (*CommitmentCheck) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CommitmentCheck) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CommitmentCheck) GetMatches() bool {
+	if x != nil {
+		return x.Matches
+	}
+	return false
+}
+
+// RecordNode is one node of a record.
+type RecordNode struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Cid   string                 `protobuf:"bytes,1,opt,name=cid,proto3" json:"cid,omitempty"`
+	// The node as stored, in DAG-CBOR, which is what its CID is the hash of.
+	Data []byte `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	// The same node in DAG-JSON, for reading: a link is {"/": "<cid>"} and
+	// bytes are {"/": {"bytes": "<base64>"}}.
+	Json          string `protobuf:"bytes,3,opt,name=json,proto3" json:"json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecordNode) Reset() {
+	*x = RecordNode{}
+	mi := &file_sisyphus_v1_types_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecordNode) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecordNode) ProtoMessage() {}
+
+func (x *RecordNode) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_types_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecordNode.ProtoReflect.Descriptor instead.
+func (*RecordNode) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RecordNode) GetCid() string {
+	if x != nil {
+		return x.Cid
+	}
+	return ""
+}
+
+func (x *RecordNode) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *RecordNode) GetJson() string {
+	if x != nil {
+		return x.Json
+	}
+	return ""
+}
+
 // JobEvent is one thing that happened to a job: a step in its life, or a
 // line a task logged.
 type JobEvent struct {
@@ -873,7 +1111,7 @@ type JobEvent struct {
 
 func (x *JobEvent) Reset() {
 	*x = JobEvent{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -885,7 +1123,7 @@ func (x *JobEvent) String() string {
 func (*JobEvent) ProtoMessage() {}
 
 func (x *JobEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -898,7 +1136,7 @@ func (x *JobEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobEvent.ProtoReflect.Descriptor instead.
 func (*JobEvent) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{6}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *JobEvent) GetSeq() uint64 {
@@ -992,7 +1230,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1b\n" +
 	"\tnode_name\x18\a \x01(\tR\bnodeName\x12\x1a\n" +
-	"\bprogress\x18\b \x01(\x01R\bprogress\"\xf4\x03\n" +
+	"\bprogress\x18\b \x01(\x01R\bprogress\"\xb6\x04\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12(\n" +
 	"\x04spec\x18\x02 \x01(\v2\x14.sisyphus.v1.JobSpecR\x04spec\x12+\n" +
@@ -1011,7 +1249,25 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\bprogress\x18\v \x01(\x01R\bprogress\x12\x18\n" +
 	"\aprivate\x18\f \x01(\bR\aprivate\x12\"\n" +
 	"\rparent_job_id\x18\r \x01(\tR\vparentJobId\x12\x12\n" +
-	"\x04step\x18\x0e \x01(\tR\x04step\"\xac\x01\n" +
+	"\x04step\x18\x0e \x01(\tR\x04step\x12\x1d\n" +
+	"\n" +
+	"record_cid\x18\x0f \x01(\tR\trecordCid\x12!\n" +
+	"\fsubmitter_id\x18\x10 \x01(\tR\vsubmitterId\"\xed\x01\n" +
+	"\tJobRecord\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x19\n" +
+	"\broot_cid\x18\x02 \x01(\tR\arootCid\x12-\n" +
+	"\x05nodes\x18\x03 \x03(\v2\x17.sisyphus.v1.RecordNodeR\x05nodes\x12%\n" +
+	"\x0erecomputed_cid\x18\x04 \x01(\tR\rrecomputedCid\x12\x18\n" +
+	"\amatches\x18\x05 \x01(\bR\amatches\x12>\n" +
+	"\vcommitments\x18\x06 \x03(\v2\x1c.sisyphus.v1.CommitmentCheckR\vcommitments\"?\n" +
+	"\x0fCommitmentCheck\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\amatches\x18\x02 \x01(\bR\amatches\"F\n" +
+	"\n" +
+	"RecordNode\x12\x10\n" +
+	"\x03cid\x18\x01 \x01(\tR\x03cid\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\x12\x12\n" +
+	"\x04json\x18\x03 \x01(\tR\x04json\"\xac\x01\n" +
 	"\bJobEvent\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x12\n" +
@@ -1052,7 +1308,7 @@ func file_sisyphus_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_sisyphus_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_sisyphus_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_sisyphus_v1_types_proto_goTypes = []any{
 	(ScheduleMode)(0),             // 0: sisyphus.v1.ScheduleMode
 	(JobState)(0),                 // 1: sisyphus.v1.JobState
@@ -1063,27 +1319,32 @@ var file_sisyphus_v1_types_proto_goTypes = []any{
 	(*JobSpec)(nil),               // 6: sisyphus.v1.JobSpec
 	(*Task)(nil),                  // 7: sisyphus.v1.Task
 	(*Job)(nil),                   // 8: sisyphus.v1.Job
-	(*JobEvent)(nil),              // 9: sisyphus.v1.JobEvent
-	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
+	(*JobRecord)(nil),             // 9: sisyphus.v1.JobRecord
+	(*CommitmentCheck)(nil),       // 10: sisyphus.v1.CommitmentCheck
+	(*RecordNode)(nil),            // 11: sisyphus.v1.RecordNode
+	(*JobEvent)(nil),              // 12: sisyphus.v1.JobEvent
+	(*timestamppb.Timestamp)(nil), // 13: google.protobuf.Timestamp
 }
 var file_sisyphus_v1_types_proto_depIdxs = []int32{
 	4,  // 0: sisyphus.v1.NodeCapabilities.gpus:type_name -> sisyphus.v1.Gpu
 	3,  // 1: sisyphus.v1.NodeInfo.capabilities:type_name -> sisyphus.v1.NodeCapabilities
-	10, // 2: sisyphus.v1.NodeInfo.connected_at:type_name -> google.protobuf.Timestamp
-	10, // 3: sisyphus.v1.NodeInfo.last_seen_at:type_name -> google.protobuf.Timestamp
+	13, // 2: sisyphus.v1.NodeInfo.connected_at:type_name -> google.protobuf.Timestamp
+	13, // 3: sisyphus.v1.NodeInfo.last_seen_at:type_name -> google.protobuf.Timestamp
 	0,  // 4: sisyphus.v1.JobSpec.mode:type_name -> sisyphus.v1.ScheduleMode
 	2,  // 5: sisyphus.v1.Task.state:type_name -> sisyphus.v1.TaskState
 	6,  // 6: sisyphus.v1.Job.spec:type_name -> sisyphus.v1.JobSpec
 	1,  // 7: sisyphus.v1.Job.state:type_name -> sisyphus.v1.JobState
 	7,  // 8: sisyphus.v1.Job.tasks:type_name -> sisyphus.v1.Task
-	10, // 9: sisyphus.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	10, // 10: sisyphus.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
-	10, // 11: sisyphus.v1.JobEvent.at:type_name -> google.protobuf.Timestamp
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	13, // 9: sisyphus.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	13, // 10: sisyphus.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
+	11, // 11: sisyphus.v1.JobRecord.nodes:type_name -> sisyphus.v1.RecordNode
+	10, // 12: sisyphus.v1.JobRecord.commitments:type_name -> sisyphus.v1.CommitmentCheck
+	13, // 13: sisyphus.v1.JobEvent.at:type_name -> google.protobuf.Timestamp
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_types_proto_init() }
@@ -1097,7 +1358,7 @@ func file_sisyphus_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_types_proto_rawDesc), len(file_sisyphus_v1_types_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   7,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

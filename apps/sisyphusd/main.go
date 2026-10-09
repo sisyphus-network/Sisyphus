@@ -22,6 +22,7 @@ const usage = `Usage:
   sisyphusd job get <job-id>       show a job
   sisyphusd job logs <job-id>      print what has happened to a job, and follow it until it is over
   sisyphusd job cancel <job-id>    stop a job that has not finished
+  sisyphusd job record <job-id>    print a finished job's record, its history as linked data (--verify to check it against the job, and --key-file to check a private job's commitments)
   sisyphusd nodes                  list the workers connected to a coordinator
   sisyphusd blob put <file>        store a file on a node and print its CID
   sisyphusd blob get <cid>         fetch a blob, checking it against its CID
@@ -98,9 +99,11 @@ func run(ctx context.Context, args []string) error {
 				return jobCancel(ctx, args[2:])
 			case "logs":
 				return jobLogs(ctx, args[2:])
+			case "record":
+				return jobRecord(ctx, args[2:])
 			}
 		}
-		return errors.New(`expected job submit, get, logs or cancel`)
+		return errors.New(`expected job submit, get, logs, cancel or record`)
 	case "nodes":
 		return listNodes(ctx, args[1:])
 	case "blob":

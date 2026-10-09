@@ -63,6 +63,7 @@ var allowed = map[string][]Role{
 	pb.NodeService_WatchJob_FullMethodName:       {Client},
 	pb.NodeService_CancelJob_FullMethodName:      {Client},
 	pb.NodeService_WatchJobEvents_FullMethodName: {Client},
+	pb.NodeService_GetJobRecord_FullMethodName:   {Client},
 	pb.NodeService_ListNodes_FullMethodName:      {Client},
 }
 

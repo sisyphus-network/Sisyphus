@@ -263,7 +263,7 @@ func TestCLIRejectsBadUsage(t *testing.T) {
 		want string
 	}{
 		{[]string{"frobnicate"}, `unknown command "frobnicate"`},
-		{[]string{"job"}, `expected job submit, get, logs or cancel`},
+		{[]string{"job"}, `expected job submit, get, logs, cancel or record`},
 		{[]string{"job", "get"}, "expected exactly one job ID"},
 		{[]string{"job", "submit", "--mode", "sideways"}, `unknown mode "sideways"`},
 		{[]string{"job", "submit", "extra"}, `unexpected argument "extra"`},

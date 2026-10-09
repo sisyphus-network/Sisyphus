@@ -34,11 +34,12 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
 | `packages/names` | The signed records behind names, which are IPNS records: making one with a node's key, checking one against the name, and telling which of two is newer. No network. |
 | `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
+| `packages/jobrecord` | A finished job as linked data: the record's layout, building it from a job, reading it back. No I/O in the building, so the same job always gives the same CID. |
 | `packages/nodedb` | The node's SQLite database, where a coordinator keeps its jobs, its members, the invitations it has issued, the requests made of it as a pinning service and the records of the names it answers for. Schema changes are new numbered files in `migrations/`, never edits to old ones. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
 | `packages/s3` | A bucket in an S3-style object store, for a store that keeps its blocks there. Its tests run against a real one, SeaweedFS in a container. |
 | `packages/sealed` | Encrypting a private job's blobs: the format, sealing and seekable unsealing. |
-| `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. |
+| `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. Also holds nodes of linked data (DAG-CBOR), which a pin keeps without keeping the blobs they link. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. |
 | `apps/sisyphusd/worker` | Connecting to a coordinator, running tasks, the blob cache. |
 | `apps/sisyphusd/api` | The gRPC server and the client-facing services. |

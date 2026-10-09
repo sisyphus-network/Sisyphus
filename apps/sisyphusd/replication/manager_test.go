@@ -305,6 +305,13 @@ func TestOnlyWhatSomebodyAskedToKeepIsCopied(t *testing.T) {
 	pin("job:1", time.Now().Add(24*time.Hour), lasting)
 	pin("job:1", time.Time{}, twice)
 	pin("user", time.Time{}, twice)
+	// The record of a job is pinned too, and is not a file: it is not
+	// handed to followers.
+	record, err := r.store.PutNodes(ctx, []byte{0xa0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin("record:1", time.Time{}, record.String())
 
 	want := []string{lasting, twice}
 	slices.Sort(want)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -337,6 +338,10 @@ func TestTheDesktopStoresFilesRunsThemAndInvitesAWorker(t *testing.T) {
 	})
 	if len(job.GetOutputBlobs()) != 1 {
 		t.Fatalf("the finished job: %v", job)
+	}
+	// It names its record, and a job still to finish does not.
+	if record, err := cid.Decode(job.GetRecordCid()); err != nil || record.Type() != cid.DagCBOR || submitted.GetJob().GetRecordCid() != "" {
+		t.Errorf("the finished job names record %q, and the job as submitted %q", job.GetRecordCid(), submitted.GetJob().GetRecordCid())
 	}
 	// What the job produced is fetched the way a stored file is.
 	fetch := func() (string, error) {

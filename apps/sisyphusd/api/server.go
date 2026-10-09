@@ -136,6 +136,10 @@ func (s *nodeService) WatchJobEvents(req *pb.WatchJobEventsRequest, stream grpc.
 	return s.coordinator.WatchEvents(stream.Context(), req.GetJobId(), req.GetAfterSeq(), stream.Send)
 }
 
+func (s *nodeService) GetJobRecord(ctx context.Context, req *pb.GetJobRecordRequest) (*pb.JobRecord, error) {
+	return s.coordinator.Record(ctx, req.GetJobId(), req.GetVerify(), req.GetKey())
+}
+
 func (s *nodeService) ListNodes(context.Context, *pb.ListNodesRequest) (*pb.ListNodesResponse, error) {
 	return &pb.ListNodesResponse{Nodes: s.coordinator.Nodes()}, nil
 }

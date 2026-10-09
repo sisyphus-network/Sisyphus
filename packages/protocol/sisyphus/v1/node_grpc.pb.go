@@ -25,6 +25,7 @@ const (
 	NodeService_ListNodes_FullMethodName      = "/sisyphus.v1.NodeService/ListNodes"
 	NodeService_CancelJob_FullMethodName      = "/sisyphus.v1.NodeService/CancelJob"
 	NodeService_WatchJobEvents_FullMethodName = "/sisyphus.v1.NodeService/WatchJobEvents"
+	NodeService_GetJobRecord_FullMethodName   = "/sisyphus.v1.NodeService/GetJobRecord"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -47,6 +48,9 @@ type NodeServiceClient interface {
 	// the one named, and goes on sending as more happens until the job has
 	// finished.
 	WatchJobEvents(ctx context.Context, in *WatchJobEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JobEvent], error)
+	// GetJobRecord returns the record of a job that is over, read from the
+	// coordinator's store.
+	GetJobRecord(ctx context.Context, in *GetJobRecordRequest, opts ...grpc.CallOption) (*JobRecord, error)
 }
 
 type nodeServiceClient struct {
@@ -135,6 +139,16 @@ func (c *nodeServiceClient) WatchJobEvents(ctx context.Context, in *WatchJobEven
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchJobEventsClient = grpc.ServerStreamingClient[JobEvent]
 
+func (c *nodeServiceClient) GetJobRecord(ctx context.Context, in *GetJobRecordRequest, opts ...grpc.CallOption) (*JobRecord, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JobRecord)
+	err := c.cc.Invoke(ctx, NodeService_GetJobRecord_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -155,6 +169,9 @@ type NodeServiceServer interface {
 	// the one named, and goes on sending as more happens until the job has
 	// finished.
 	WatchJobEvents(*WatchJobEventsRequest, grpc.ServerStreamingServer[JobEvent]) error
+	// GetJobRecord returns the record of a job that is over, read from the
+	// coordinator's store.
+	GetJobRecord(context.Context, *GetJobRecordRequest) (*JobRecord, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -182,6 +199,9 @@ func (UnimplementedNodeServiceServer) CancelJob(context.Context, *CancelJobReque
 }
 func (UnimplementedNodeServiceServer) WatchJobEvents(*WatchJobEventsRequest, grpc.ServerStreamingServer[JobEvent]) error {
 	return status.Error(codes.Unimplemented, "method WatchJobEvents not implemented")
+}
+func (UnimplementedNodeServiceServer) GetJobRecord(context.Context, *GetJobRecordRequest) (*JobRecord, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetJobRecord not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -298,6 +318,24 @@ func _NodeService_WatchJobEvents_Handler(srv interface{}, stream grpc.ServerStre
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchJobEventsServer = grpc.ServerStreamingServer[JobEvent]
 
+func _NodeService_GetJobRecord_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetJobRecordRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetJobRecord(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetJobRecord_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetJobRecord(ctx, req.(*GetJobRecordRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -320,6 +358,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelJob",
 			Handler:    _NodeService_CancelJob_Handler,
+		},
+		{
+			MethodName: "GetJobRecord",
+			Handler:    _NodeService_GetJobRecord_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

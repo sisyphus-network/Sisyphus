@@ -224,11 +224,15 @@ func (s *Store) GC(ctx context.Context, now time.Time) (Collected, error) {
 	return done, nil
 }
 
-// links returns the blocks that block c refers to. Leaves refer to none, and
-// are not read to find that out.
+// links returns the blocks that block c refers to and a pin on it keeps.
+// Leaves refer to none, and are not read to find that out. A node of linked
+// data keeps the nodes it links to and not the blobs.
 func (s *Store) links(ctx context.Context, c cid.Cid) ([]*ipld.Link, error) {
-	if c.Type() == cid.Raw {
+	switch c.Type() {
+	case cid.Raw:
 		return nil, nil
+	case cid.DagCBOR:
+		return s.nodesLinked(ctx, c)
 	}
 	node, err := s.dag.Get(ctx, c)
 	if err != nil {

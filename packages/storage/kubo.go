@@ -76,12 +76,12 @@ type kuboBlocks struct {
 }
 
 // codecNames gives Kubo's name for each kind of block a store writes.
-var codecNames = map[uint64]string{cid.Raw: "raw", cid.DagProtobuf: "dag-pb"}
+var codecNames = map[uint64]string{cid.Raw: "raw", cid.DagProtobuf: "dag-pb", cid.DagCBOR: "dag-cbor"}
 
 func (k kuboBlocks) Put(ctx context.Context, block blocks.Block) error {
 	codec, ok := codecNames[block.Cid().Type()]
 	if !ok {
-		return fmt.Errorf("cannot store block %s in Kubo: its format is neither raw nor dag-pb", block.Cid())
+		return fmt.Errorf("cannot store block %s in Kubo: its format is not raw, dag-pb or dag-cbor", block.Cid())
 	}
 	stored, err := k.api.BlockPut(ctx, codec, block.RawData())
 	if err != nil {

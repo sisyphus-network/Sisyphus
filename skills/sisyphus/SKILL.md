@@ -22,6 +22,7 @@ Sisyphus is a network of computers that people pool to run computations. One nod
 | Run a job and wait for it | `sisyphusd job submit --workload <name> --params '<json>'` |
 | Look at a job, or its log | `sisyphusd job get <id>`, `sisyphusd job logs <id>` |
 | Stop a job | `sisyphusd job cancel <id>` |
+| See who ran each task of a finished job, and check the job against its record | `sisyphusd job record --verify <id>` |
 | Fetch a stored file | `sisyphusd blob get <cid> > <file>` |
 
 `--addr <host:port>` names a coordinator other than the one on this machine. `sisyphusd <command> -h` lists a command's flags.

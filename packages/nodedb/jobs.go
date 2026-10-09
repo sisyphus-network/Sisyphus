@@ -27,12 +27,12 @@ func (db *DB) SaveJob(job *jobmodel.Job) error {
 		key = nil
 	}
 	err := db.write(func(b *batch) {
-		b.exec(`INSERT INTO jobs (job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		b.exec(`INSERT INTO jobs (job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (job_id) DO UPDATE SET state = excluded.state, result = excluded.result, error = excluded.error,
-				sealing_key = excluded.sealing_key, finished_at_ns = excluded.finished_at_ns`,
+				sealing_key = excluded.sealing_key, finished_at_ns = excluded.finished_at_ns, record_cid = excluded.record_cid`,
 			job.ID, job.Workload, blob(job.Params), int(job.Mode), job.MaxTasks, int(job.State), blob(job.Result), job.Err,
-			key, nanos(job.CreatedAt), nanos(job.FinishedAt), int64(job.TaskTimeout), int64(job.MinMemory), job.MinGPUs, job.Parent, job.Step)
+			key, nanos(job.CreatedAt), nanos(job.FinishedAt), int64(job.TaskTimeout), int64(job.MinMemory), job.MinGPUs, job.Parent, job.Step, job.Submitter, job.Record, job.Private)
 		for _, t := range changes.Tasks {
 			b.exec(`INSERT INTO tasks (job_id, task_index, payload, state, attempt, failures, node_id, node_name, output, error)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -40,13 +40,18 @@ func (db *DB) SaveJob(job *jobmodel.Job) error {
 					failures = excluded.failures, node_id = excluded.node_id, node_name = excluded.node_name,
 					output = excluded.output, error = excluded.error`,
 				job.ID, t.Index, blob(t.Payload), int(t.State), t.Attempt, t.Failures, t.NodeID, t.NodeName, blob(t.Output), t.Err)
-			if t.Attempt == 0 {
-				continue // never handed to anyone yet
+			// Every attempt, not only the latest, so that one whose save
+			// failed is written with the next.
+			for _, a := range t.History {
+				b.exec(`INSERT INTO task_attempts (job_id, task_index, attempt, node_id, node_name, state, error)
+					VALUES (?, ?, ?, ?, ?, ?, ?)
+					ON CONFLICT (job_id, task_index, attempt) DO UPDATE SET state = excluded.state, error = excluded.error`,
+					job.ID, a.TaskIndex, a.Number, a.NodeID, a.NodeName, int(a.State), a.Err)
 			}
-			b.exec(`INSERT INTO task_attempts (job_id, task_index, attempt, node_id, node_name, state, error)
-				VALUES (?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT (job_id, task_index, attempt) DO UPDATE SET state = excluded.state, error = excluded.error`,
-				job.ID, t.Index, t.Attempt, t.NodeID, t.NodeName, int(t.State), t.Err)
+		}
+		// A job's commitments are made once, when it ends, and do not change.
+		for name, commitment := range job.Commitments {
+			b.exec(`INSERT OR IGNORE INTO job_commitments (job_id, name, commitment) VALUES (?, ?, ?)`, job.ID, name, commitment)
 		}
 		for role, cids := range map[int][]string{blobRead: changes.Read, blobTaskOutput: changes.TaskOutputs, blobResult: changes.Results} {
 			for _, c := range cids {
@@ -72,19 +77,24 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 		job := new(jobmodel.Job)
 		var created, finished int64
 		err := rows.Scan(&job.ID, &job.Workload, &job.Params, &job.Mode, &job.MaxTasks, &job.State, &job.Result, &job.Err,
-			&job.Key, &created, &finished, &job.TaskTimeout, &job.MinMemory, &job.MinGPUs, &job.Parent, &job.Step)
+			&job.Key, &created, &finished, &job.TaskTimeout, &job.MinMemory, &job.MinGPUs, &job.Parent, &job.Step, &job.Submitter, &job.Record, &job.Private)
 		if err != nil {
 			return err
 		}
 		job.CreatedAt, job.FinishedAt = moment(created), moment(finished)
 		saved, byID[job.ID] = append(saved, job), job
 		return nil
-	}, `SELECT job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step
+	}, `SELECT job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private
 		FROM jobs ORDER BY seq`)
 	if err != nil {
 		return nil, fmt.Errorf("load jobs: %w", err)
 	}
 
+	type taskKey struct {
+		job   string
+		index int
+	}
+	tasks := make(map[taskKey]*jobmodel.Task)
 	err = db.read(func(rows *sql.Rows) error {
 		var jobID string
 		t := new(jobmodel.Task)
@@ -93,11 +103,27 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 		}
 		t.ID = jobmodel.TaskID(jobID, t.Index)
 		byID[jobID].Tasks = append(byID[jobID].Tasks, t)
+		tasks[taskKey{jobID, t.Index}] = t
 		return nil
 	}, `SELECT job_id, task_index, payload, state, attempt, failures, node_id, node_name, output, error
 		FROM tasks WHERE job_id IN (SELECT job_id FROM jobs) ORDER BY job_id, task_index`)
 	if err != nil {
 		return nil, fmt.Errorf("load tasks: %w", err)
+	}
+
+	err = db.read(func(rows *sql.Rows) error {
+		var jobID string
+		var a jobmodel.Attempt
+		if err := rows.Scan(&jobID, &a.TaskIndex, &a.Number, &a.NodeID, &a.NodeName, &a.State, &a.Err); err != nil {
+			return err
+		}
+		t := tasks[taskKey{jobID, a.TaskIndex}]
+		t.History = append(t.History, a)
+		return nil
+	}, `SELECT job_id, task_index, a.attempt, a.node_id, a.node_name, a.state, a.error
+		FROM task_attempts a JOIN tasks USING (job_id, task_index) JOIN jobs USING (job_id) ORDER BY job_id, task_index, a.attempt`)
+	if err != nil {
+		return nil, fmt.Errorf("load attempts: %w", err)
 	}
 
 	blobs := make(map[string]map[int][]string)
@@ -115,6 +141,23 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 	}, `SELECT job_id, role, cid FROM job_blobs`)
 	if err != nil {
 		return nil, fmt.Errorf("load job blobs: %w", err)
+	}
+
+	err = db.read(func(rows *sql.Rows) error {
+		var jobID, name string
+		var commitment []byte
+		if err := rows.Scan(&jobID, &name, &commitment); err != nil {
+			return err
+		}
+		job := byID[jobID]
+		if job.Commitments == nil {
+			job.Commitments = make(map[string][]byte)
+		}
+		job.Commitments[name] = commitment
+		return nil
+	}, `SELECT job_id, name, commitment FROM job_commitments WHERE job_id IN (SELECT job_id FROM jobs)`)
+	if err != nil {
+		return nil, fmt.Errorf("load job commitments: %w", err)
 	}
 
 	jobs := make([]*jobmodel.Job, 0, len(saved))
@@ -157,8 +200,8 @@ func (db *DB) LoadEvents(jobID string) ([]jobmodel.Event, error) {
 	return events, nil
 }
 
-// DeleteJobs forgets jobs, with their tasks, the attempts at them and the
-// record of the blobs they touched.
+// DeleteJobs forgets jobs, with their tasks, the attempts at them, the
+// record of the blobs they touched and their commitments.
 func (db *DB) DeleteJobs(ids []string) error {
 	err := db.write(func(b *batch) {
 		for _, id := range ids {
@@ -172,17 +215,7 @@ func (db *DB) DeleteJobs(ids []string) error {
 }
 
 // Attempt is one time a task was handed to a worker.
-type Attempt struct {
-	TaskIndex int
-	// Number counts a task's attempts from one.
-	Number   int
-	NodeID   string
-	NodeName string
-	// State is how the attempt stands: running, succeeded, or pending if it
-	// was lost or failed and the task went back to wait for another.
-	State jobmodel.State
-	Err   string
-}
+type Attempt = jobmodel.Attempt
 
 // Attempts returns every attempt at every task of a job, by task and then in
 // the order they were made.
