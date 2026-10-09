@@ -158,6 +158,59 @@ func TestFilesAreStoredListedFetchedAndRemoved(t *testing.T) {
 	}
 }
 
+func TestReferencedFilesStayPinnedUntilEveryOwnerReleasesThem(t *testing.T) {
+	store := storage.NewMemory()
+	db := newFileList(t)
+	client := serveLocal(t, LocalConfig{Store: store, Files: db})
+	ctx := withToken("the-token")
+	file, err := storeFile(ctx, client, "shared.txt", "shared attachment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []string{"chat:first", "chat:second"} {
+		if err := db.AddFileReference(file.GetCid(), owner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertRetained := func() {
+		t.Helper()
+		if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: file.GetCid()}); status.Code(err) != codes.Internal {
+			t.Fatalf("removing a referenced file: %v, want rejection", err)
+		}
+		listed, err := client.ListFiles(ctx, &nodepb.ListFilesRequest{})
+		if err != nil || len(listed.GetFiles()) != 1 || listed.GetFiles()[0].GetCid() != file.GetCid() {
+			t.Fatalf("referenced file lost from catalogue: %v, %v", listed, err)
+		}
+		held := false
+		for _, pin := range store.Pins() {
+			held = held || (pin.CID.String() == file.GetCid() && pin.Owner == userOwner && pin.Expires.IsZero())
+		}
+		if !held {
+			t.Fatal("rejected removal released the storage pin")
+		}
+		got, err := fetchFile(ctx, client, file.GetCid())
+		if err != nil || string(got) != "shared attachment" {
+			t.Fatalf("referenced file cannot be fetched: %q, %v", got, err)
+		}
+	}
+	assertRetained()
+	if err := db.RemoveFileReference(file.GetCid(), "chat:first"); err != nil {
+		t.Fatal(err)
+	}
+	assertRetained()
+	if err := db.RemoveFileReference(file.GetCid(), "chat:second"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: file.GetCid()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, pin := range store.Pins() {
+		if pin.CID.String() == file.GetCid() && pin.Owner == userOwner {
+			t.Fatal("unreferenced file remains pinned after explicit removal")
+		}
+	}
+}
+
 func TestFilesNeedTheTokenAndAStore(t *testing.T) {
 	calls := func(ctx context.Context, client nodepb.NodeServiceClient) map[string]error {
 		_, stored := storeFile(ctx, client, "a", "data")
