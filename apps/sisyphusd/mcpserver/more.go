@@ -72,7 +72,7 @@ func (s *server) more(out *mcp.Server) {
 	add(s, out, reads, &mcp.Tool{Name: "list_peers", Annotations: seen,
 		Description: "Lists the nodes this node knows of: whether each is connected, the country its address is registered in, and which way work flows between them."}, doing(s, s.listPeers))
 	add(s, out, reads, &mcp.Tool{Name: "list_members", Annotations: seen,
-		Description: "Lists the nodes admitted to this node's pool, as workers or as clients."}, doing(s, s.listMembers))
+		Description: "Lists the nodes admitted to this node's pool by invitation, as workers or as clients. The node itself, whose pool it is, is not among them: pool_status shows it with the workers connected now."}, doing(s, s.listMembers))
 	add(s, out, reads, &mcp.Tool{Name: "get_model", Annotations: seen,
 		Description: "Says which language model the node's planner plans with, and whether a key is set for its service."}, doing(s, s.getModel))
 	add(s, out, reads, &mcp.Tool{Name: "list_models", Annotations: seen,
