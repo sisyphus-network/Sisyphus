@@ -1,4 +1,5 @@
 {
+  "providerKeyRequired": "Ten dostawca wymaga klucza API. Wprowadź go lub użyj klucza zapisanego dla tej usługi.",
   "node": "Węzeł",
   "overview": "Przegląd",
   "computeNetwork": "SIEĆ OBLICZENIOWA",

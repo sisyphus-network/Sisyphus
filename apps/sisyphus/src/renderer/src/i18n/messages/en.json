@@ -1,4 +1,5 @@
 {
+  "providerKeyRequired": "This provider requires an API key. Enter one or use the key saved for this service.",
   "node": "Node",
   "overview": "Overview",
   "computeNetwork": "COMPUTE NETWORK",
