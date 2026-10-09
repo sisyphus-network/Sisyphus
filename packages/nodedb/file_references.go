@@ -5,6 +5,20 @@ import (
 	"fmt"
 )
 
+// RetainChatFile assigns an uploaded file to an existing conversation.
+// The caller supplies authenticated upload metadata, never parsed model text.
+// Checking the chat and recording ownership share a transaction with deletion.
+func (db *DB) RetainChatFile(chatID, cid string) error {
+	return db.durably("retain chat file", func(b *batch) {
+		var exists int
+		b.err = b.tx.QueryRow(`SELECT 1 FROM chats WHERE chat_id = ?`, chatID).Scan(&exists)
+		b.exec(`INSERT INTO file_references(owner, cid) VALUES (?, ?) ON CONFLICT(owner, cid) DO NOTHING`, chatFileOwner(chatID), cid)
+	})
+}
+
+// chatFileOwner is a reserved namespace used only for explicit chat ownership.
+func chatFileOwner(chatID string) string { return "chat:" + chatID }
+
 // AddFileReference records an explicit owner of a file already on record.
 // An owner is an opaque ID for a chat, upload draft or explicit user pin.
 // Repeating the same reference is idempotent. Do not derive ownership from
