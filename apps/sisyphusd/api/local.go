@@ -243,6 +243,7 @@ func (s *localService) SubmitJob(ctx context.Context, req *nodepb.SubmitJobReque
 	spec := &pb.JobSpec{
 		Workload: req.GetWorkload(), Params: req.GetParams(), Mode: pb.ScheduleMode(req.GetMode()), MaxTasks: req.GetMaxTasks(),
 		TaskTimeoutSeconds: req.GetTaskTimeoutSeconds(), MinMemoryBytes: req.GetMinMemoryBytes(), MinGpus: req.GetMinGpus(),
+		Verify: req.GetVerify(),
 	}
 	if req.GetPrivate() {
 		key, err := s.sealingKey()
@@ -341,7 +342,7 @@ func localJob(job *pb.Job) *nodepb.Job {
 		Progress: job.GetProgress(), TaskTimeoutSeconds: job.GetSpec().GetTaskTimeoutSeconds(),
 		MinMemoryBytes: job.GetSpec().GetMinMemoryBytes(), MinGpus: job.GetSpec().GetMinGpus(),
 		Private: job.GetPrivate(), ParentJobId: job.GetParentJobId(), Step: job.GetStep(),
-		RecordCid: job.GetRecordCid(),
+		RecordCid: job.GetRecordCid(), Verify: job.GetSpec().GetVerify(),
 	}
 	for _, task := range job.GetTasks() {
 		out.Tasks = append(out.Tasks, &nodepb.JobTask{

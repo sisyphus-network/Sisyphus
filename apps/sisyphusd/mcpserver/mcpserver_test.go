@@ -37,6 +37,8 @@ type node struct {
 	watched context.Context
 	stored  []*nodepb.StoreFileRequest
 	token   string
+	// submitted is the job the node was last asked to run.
+	submitted *nodepb.SubmitJobRequest
 }
 
 var errDown = status.Error(codes.Unavailable, "the node is down")
@@ -59,8 +61,9 @@ func (n *node) ListWorkers(context.Context, *nodepb.ListWorkersRequest, ...grpc.
 	return &nodepb.ListWorkersResponse{Workers: n.workers}, n.fail("ListWorkers")
 }
 
-func (n *node) SubmitJob(context.Context, *nodepb.SubmitJobRequest, ...grpc.CallOption) (*nodepb.SubmitJobResponse, error) {
-	return &nodepb.SubmitJobResponse{Job: &nodepb.Job{JobId: "job-1"}}, n.fail("SubmitJob")
+func (n *node) SubmitJob(_ context.Context, req *nodepb.SubmitJobRequest, _ ...grpc.CallOption) (*nodepb.SubmitJobResponse, error) {
+	n.submitted = req
+	return &nodepb.SubmitJobResponse{Job: &nodepb.Job{JobId: "job-1", Verify: req.GetVerify()}}, n.fail("SubmitJob")
 }
 
 func (n *node) GetJob(context.Context, *nodepb.GetJobRequest, ...grpc.CallOption) (*nodepb.GetJobResponse, error) {
@@ -220,6 +223,21 @@ func TestAJobIsShownAsItIs(t *testing.T) {
 	long := jobView(&nodepb.Job{Result: []byte(strings.Repeat("9", maxResult+1))}, true)
 	if got := long["result_begins"].(string); len(got) != resultBegins || long["result"] != nil || long["result_bytes"] != maxResult+1 {
 		t.Errorf("a long result is shown as %v", long)
+	}
+}
+
+func TestAJobCanBeAskedToBeVerifiedAndIsShownToHaveBeen(t *testing.T) {
+	n := &node{}
+	shown, err := serving(n).run(context.Background(), runJobArgs{Workload: "primes", Verify: 3, Detach: true})
+	if err != nil || n.submitted.GetVerify() != 3 {
+		t.Fatalf("the node was asked for %v, %v", n.submitted, err)
+	}
+	if view := shown.(map[string]any); view["verified_by"] != uint32(3) {
+		t.Errorf("a job each task of which three workers must agree on: %v", view)
+	}
+	// One that was not says nothing of it.
+	if plain := jobView(&nodepb.Job{JobId: "j", Verify: 1}, true); plain["verified_by"] != nil {
+		t.Errorf("a job that is not verified: %v", plain)
 	}
 }
 
