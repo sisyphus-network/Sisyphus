@@ -172,6 +172,7 @@ func (s *localService) GetNodeInfo(context.Context, *nodepb.GetNodeInfoRequest) 
 	}
 	if _, ok := s.cfg.Assistant.(attachmentAssistant); ok && s.cfg.Store != nil && s.cfg.Files != nil {
 		info.Capabilities = append(info.Capabilities, "chat-file-references-v1")
+		info.Capabilities = append(info.Capabilities, "chat-attachment-retention-v1")
 	}
 	return info, nil
 }

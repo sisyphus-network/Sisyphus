@@ -1,7 +1,7 @@
 {
   "chatAttachmentsNeedNodeUpdate": "Zaktualizuj węzeł przed wysłaniem załączników. Ten demon nie obsługuje bezpiecznego przypisywania plików do czatu.",
   "privateFileWarning": "Pliki prywatne są szyfrowane kluczem private.key. Jego utrata oznacza trwałą utratę dostępu. Mogą je czytać tylko prywatne zadania, których wykonawcy otrzymują klucz deszyfrowania. Korzystaj z zaufanych wykonawców.",
-  "chatAttachmentPrivacyNotice": "Załączniki są szyfrowane kluczem węzła private.key. Jego utrata oznacza trwałą utratę dostępu. Zadania tej rozmowy są prywatne; wykonawcy otrzymują klucz, więc używaj zaufanych wykonawców. Usunięcie czatu nie usuwa plików; zarządzaj nimi w Operacje → Pliki.",
+  "chatAttachmentPrivacyNotice": "Załączniki są szyfrowane kluczem private.key; jego utrata trwale odbiera dostęp. Prywatne zadania przekazują klucz zaufanym wykonawcom. Usunięcie czatu zwalnia jego własność. Nieprzypisane pliki mogą być usunięte po 24 godzinach; ręczne przesłania i pliki potrzebne innym czatom lub zadaniom pozostają zachowane.",
   "modelSettings": {
     "localAi": "LOKALNA AI",
     "title": "Dostawca modeli",

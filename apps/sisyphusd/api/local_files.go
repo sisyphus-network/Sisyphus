@@ -30,6 +30,9 @@ type FileList interface {
 // store for a pool.
 var errNoStore = status.Error(codes.FailedPrecondition, "this node coordinates no pool, so it has no store of files")
 
+const chatDraftOwner = "chat-draft"
+const chatDraftRetention = 24 * time.Hour
+
 // StoreFile puts what the caller sends in the store, sealed first if it is
 // to be private, keeps it there, and lists it under the name given.
 func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreFileRequest, nodepb.File]) error {
@@ -48,7 +51,10 @@ func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreF
 		return ended
 	}
 	start, started := first.GetData(), false
-	file, err := s.keep(ctx, first.GetName(), first.GetPrivate(), func() ([]byte, error) {
+	if first.GetChatAttachment() && !first.GetPrivate() {
+		return status.Error(codes.InvalidArgument, "chat attachments must be private")
+	}
+	file, err := s.keep(ctx, first.GetName(), first.GetPrivate(), first.GetChatAttachment(), func() ([]byte, error) {
 		if !started {
 			started = true
 			return start, ended
@@ -65,7 +71,7 @@ func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreF
 // keep stores a file that arrives in pieces, sealed if it is private, and
 // puts it on record as one of the user's. recv gives each piece and then
 // io.EOF.
-func (s *localService) keep(ctx context.Context, name string, private bool, recv func() ([]byte, error)) (*nodepb.File, error) {
+func (s *localService) keep(ctx context.Context, name string, private, attachment bool, recv func() ([]byte, error)) (*nodepb.File, error) {
 	as := plain
 	if private {
 		key, err := s.sealingKey()
@@ -78,8 +84,14 @@ func (s *localService) keep(ctx context.Context, name string, private bool, recv
 	if err != nil {
 		return nil, err
 	}
-	// Held for the user, as `blob pin` holds it, until it is removed.
-	if err := s.cfg.Store.Pin(ctx, userOwner, time.Time{}, c); err != nil {
+	// Drafts never receive a permanent user pin. Identical concurrent draft
+	// uploads share a bounded grace pin; do not roll it back by CID, because
+	// another upload may still be using it. Each chat gains its own pin at Ask.
+	owner, expires := userOwner, time.Time{}
+	if attachment {
+		owner, expires = chatDraftOwner, time.Now().Add(chatDraftRetention)
+	}
+	if err := s.cfg.Store.Pin(ctx, owner, expires, c); err != nil {
 		return nil, status.Errorf(codes.Internal, "keep file: %v", err)
 	}
 	file := nodedb.File{CID: c.String(), Name: name, Size: size, Stored: time.Now(), Private: private}

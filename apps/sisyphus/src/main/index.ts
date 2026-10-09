@@ -333,8 +333,10 @@ app.whenReady().then(() => {
   handleNode('node:store-file', (event, payload: unknown) => new Promise((resolve, reject) => {
     if (!client) return reject(new Error('The local daemon is not connected.'))
     if (!payload || typeof payload !== 'object' || !('name' in payload) || !('data' in payload) || !('private' in payload)) return reject(new Error('Invalid file upload.'))
-    const file = payload as { name: unknown; data: unknown; private: unknown }
+    const file = payload as { name: unknown; data: unknown; private: unknown; chatAttachment?: unknown }
     if (typeof file.name !== 'string' || typeof file.private !== 'boolean' || !(file.data instanceof Uint8Array)) return reject(new Error('Invalid file upload.'))
+    if (file.chatAttachment !== undefined && typeof file.chatAttachment !== 'boolean') return reject(new Error('Invalid attachment upload.'))
+    if (file.chatAttachment && !file.private) return reject(new Error('Chat attachments must be private.'))
     const data = file.data
     if (data.byteLength > 256 * 1024 * 1024) return reject(new Error('The file exceeds this desktop client’s 256 MiB upload limit.'))
     let settled = false
@@ -359,7 +361,7 @@ app.whenReady().then(() => {
       if (settled) return
       const chunk = Buffer.from(data.subarray(offset, Math.min(offset + chunkSize, data.byteLength)))
       const request = offset === 0
-        ? { name: file.name, private: file.private, data: chunk }
+        ? { name: file.name, private: file.private, chatAttachment: file.chatAttachment ?? false, data: chunk }
         : { data: chunk }
       stream.write(request, (error?: Error | null) => {
         if (settled) return

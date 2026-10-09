@@ -39,7 +39,7 @@ func TestPrivateChatAttachmentRunsEncryptedWorkAcrossTurns(t *testing.T) {
 		t.Fatal("daemon does not advertise its attachment ownership support")
 	}
 	const text = "the quick brown fox jumps over the lazy dog and the fox sleeps"
-	file := storeThroughDesktop(t, ctx, client, "secret.txt", text, true)
+	file := storeThroughDesktop(t, ctx, client, "secret.txt", text, true, true)
 	key, err := sealingKey(filepath.Join(dataDir, "private.key"))
 	if err != nil {
 		t.Fatal(err)

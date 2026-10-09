@@ -51,7 +51,7 @@ const api = {
   stream: <T = Record<string, unknown>>(method: NodeStreamMethod, request: Record<string, unknown>, callback: (event: T) => void, onError?: (error: string, code?: number) => void, onEnd?: () => void) => {
     return createRpcStream(ipcRenderer, method, request, callback, onError, onEnd)
   },
-  storeFile: (file: { name: string; data: Uint8Array; private: boolean }): Promise<Record<string, unknown>> => ipcRenderer.invoke('node:store-file', file),
+  storeFile: (file: { name: string; data: Uint8Array; private: boolean; chatAttachment?: boolean }): Promise<Record<string, unknown>> => ipcRenderer.invoke('node:store-file', file),
   fetchFile: (cid: string): Promise<Uint8Array> => ipcRenderer.invoke('node:fetch-file', cid),
   onSnapshot: (callback: (snapshot: NodeSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: NodeSnapshot) => callback(snapshot)

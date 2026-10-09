@@ -549,6 +549,10 @@ message StoreFileRequest {
   // stored, so that the rest of the pool holds only what it cannot read.
   // Give it to jobs submitted as private.
   bool private = 3;
+  // In the first message: a chat attachment, held temporarily until Ask
+  // retains it for a conversation. Must also be private. Normal uploads
+  // remain explicitly user-owned until RemoveFile.
+  bool chat_attachment = 4;
 }
 
 message File {

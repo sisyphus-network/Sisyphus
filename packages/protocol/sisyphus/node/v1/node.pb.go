@@ -3841,9 +3841,13 @@ type StoreFileRequest struct {
 	// In the first message: seal the file with this node's key before it is
 	// stored, so that the rest of the pool holds only what it cannot read.
 	// Give it to jobs submitted as private.
-	Private       bool `protobuf:"varint,3,opt,name=private,proto3" json:"private,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Private bool `protobuf:"varint,3,opt,name=private,proto3" json:"private,omitempty"`
+	// In the first message: a chat attachment, held temporarily until Ask
+	// retains it for a conversation. Must also be private. Normal uploads
+	// remain explicitly user-owned until RemoveFile.
+	ChatAttachment bool `protobuf:"varint,4,opt,name=chat_attachment,json=chatAttachment,proto3" json:"chat_attachment,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *StoreFileRequest) Reset() {
@@ -3893,6 +3897,13 @@ func (x *StoreFileRequest) GetData() []byte {
 func (x *StoreFileRequest) GetPrivate() bool {
 	if x != nil {
 		return x.Private
+	}
+	return false
+}
+
+func (x *StoreFileRequest) GetChatAttachment() bool {
+	if x != nil {
+		return x.ChatAttachment
 	}
 	return false
 }
@@ -4902,11 +4913,12 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\targuments\x18\x02 \x01(\tR\targuments\",\n" +
 	"\x11DeleteChatRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\"\x14\n" +
-	"\x12DeleteChatResponse\"T\n" +
+	"\x12DeleteChatResponse\"}\n" +
 	"\x10StoreFileRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\x12\x18\n" +
-	"\aprivate\x18\x03 \x01(\bR\aprivate\"\x87\x01\n" +
+	"\aprivate\x18\x03 \x01(\bR\aprivate\x12'\n" +
+	"\x0fchat_attachment\x18\x04 \x01(\bR\x0echatAttachment\"\x87\x01\n" +
 	"\x04File\x12\x10\n" +
 	"\x03cid\x18\x01 \x01(\tR\x03cid\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +

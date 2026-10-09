@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"path/filepath"
@@ -208,6 +209,57 @@ func TestReferencedFilesStayPinnedUntilEveryOwnerReleasesThem(t *testing.T) {
 		if pin.CID.String() == file.GetCid() && pin.Owner == userOwner {
 			t.Fatal("unreferenced file remains pinned after explicit removal")
 		}
+	}
+}
+
+func TestChatDraftsExpireWithoutReleasingExplicitUserFiles(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+			store := storage.NewMemory()
+			key := sealed.NewKey()
+			client := serveLocal(t, LocalConfig{Store: store, Files: newFileList(t), SealingKey: func() (sealed.Key, error) { return key, nil }})
+			ctx := withToken("the-token")
+			upload := func(attachment, private bool) (*nodepb.File, error) {
+				stream, err := client.StoreFile(ctx)
+				if err != nil {
+					return nil, err
+				}
+				stream.Send(&nodepb.StoreFileRequest{Name: "same.txt", Data: []byte("identical content"), Private: private, ChatAttachment: attachment})
+				return stream.CloseAndRecv()
+			}
+			if _, err := upload(true, false); status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("public draft accepted: %v", err)
+			}
+			file, err := upload(true, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, pin := range store.Pins() {
+				if pin.Owner == userOwner {
+					t.Fatal("chat draft gained permanent user ownership")
+				}
+				if pin.Owner == chatDraftOwner && pin.Expires.IsZero() {
+					t.Fatal("draft pin never expires")
+				}
+			}
+			if explicit {
+				manual, err := upload(false, true)
+				if err != nil || manual.GetCid() != file.GetCid() {
+					t.Fatalf("identical manual upload: %v, %v", manual, err)
+				}
+			}
+			if _, err := store.GC(ctx, time.Now().Add(chatDraftRetention+time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			got, err := fetchFile(ctx, client, file.GetCid())
+			if explicit {
+				if err != nil || string(got) != "identical content" {
+					t.Fatalf("explicit user file lost with expired draft: %q, %v", got, err)
+				}
+			} else if status.Code(err) != codes.NotFound {
+				t.Fatalf("expired unattached draft not collected: %v", err)
+			}
+		})
 	}
 }
 
