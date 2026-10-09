@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -376,7 +377,13 @@ func listNodes(ctx context.Context, args []string) error {
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tNODE\tHOST\tPLATFORM\tCORES\tMEMORY\tGPUS\tTASKS\tWORKLOADS\tRELAYED")
+	// What verified tasks have shown of the nodes they have shown anything
+	// of, one to a line below the table.
+	var standings []string
 	for _, node := range listed.GetNodes() {
+		if standing := standingOf(node); standing != "" {
+			standings = append(standings, standing)
+		}
 		c := node.GetCapabilities()
 		// What a node that relays has carried between other members.
 		relayed := "-"
@@ -391,7 +398,26 @@ func listNodes(ctx context.Context, args []string) error {
 			node.GetName(), node.GetNodeId(), c.GetHostname(), c.GetOs(), c.GetArch(), c.GetCpuCores(), memory, len(c.GetGpus()),
 			node.GetRunningTasks(), c.GetTaskSlots(), strings.Join(c.GetWorkloads(), ","), relayed)
 	}
+	for _, standing := range standings {
+		// A line with no tabs in it leaves the columns as they are.
+		fmt.Fprintln(tw, standing)
+	}
 	return tw.Flush()
+}
+
+// standingOf says how a node's results for verified tasks have come out, in
+// every job so far, and whether it is on probation. It says nothing of a
+// node that has returned none that were settled.
+func standingOf(node *pb.NodeInfo) string {
+	agreed, outvoted, owed := node.GetVerifiedAgreed(), node.GetVerifiedOutvoted(), node.GetProbation()
+	if agreed+outvoted == 0 {
+		return ""
+	}
+	said := fmt.Sprintf("%s: results for verified tasks: %d agreed, %d outvoted", cmp.Or(node.GetName(), node.GetNodeId()), agreed, outvoted)
+	if owed > 0 {
+		said += fmt.Sprintf("; on probation, %d more to agree", owed)
+	}
+	return said
 }
 
 // reportOutcome prints a finished job's result, or returns its failure.

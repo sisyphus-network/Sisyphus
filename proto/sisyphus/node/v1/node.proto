@@ -216,6 +216,15 @@ message Worker {
   repeated WorkerGpu gpus = 15;
   // The language models the worker serves to the pool, by name.
   repeated string models = 16;
+  // Its standing, which outlasts any one job: how many results it has
+  // returned for verified tasks that were among those the task was settled
+  // by, and how many that were not. probation is how many agreeing results
+  // it still owes, having been outvoted, before a job that verifies a
+  // share of its tasks takes its word alone again; zero for a worker that
+  // is not on probation.
+  uint64 verified_agreed = 17;
+  uint64 verified_outvoted = 18;
+  uint32 probation = 19;
 }
 
 message WorkerGpu {

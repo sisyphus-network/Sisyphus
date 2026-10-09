@@ -360,3 +360,30 @@ func TestAWorkerThatIsOutvotedHasWhatItRanUnverifiedVerifiedAfterAll(t *testing.
 		t.Error("a job that is not verified has a worker that was outvoted")
 	}
 }
+
+func TestAWorkerThatIsOutvotedIsOnProbationUntilEnoughOfItsResultsAgree(t *testing.T) {
+	s := Standing{NodeID: "node-a"}
+	// Agreeing owes nothing to begin with, and leaves nothing owed.
+	s.Agree()
+	if want := (Standing{NodeID: "node-a", Agreed: 1}); s != want {
+		t.Errorf("after one result that agreed: %+v", s)
+	}
+	s.Outvote()
+	for range 3 {
+		s.Agree()
+	}
+	if want := (Standing{NodeID: "node-a", Agreed: 4, Outvoted: 1, Probation: Probation - 3}); s != want {
+		t.Errorf("outvoted once and agreed three times since: %+v", s)
+	}
+	// Outvoted again, it starts over.
+	s.Outvote()
+	if s.Outvoted != 2 || s.Probation != Probation {
+		t.Errorf("outvoted again: %+v", s)
+	}
+	for range Probation + 2 {
+		s.Agree()
+	}
+	if want := (Standing{NodeID: "node-a", Agreed: 4 + Probation + 2, Outvoted: 2}); s != want {
+		t.Errorf("once it has agreed as often as asked, and twice more: %+v", s)
+	}
+}

@@ -320,3 +320,36 @@ func (j *Job) Dispute(t *Task, reason string, now time.Time) {
 	j.mark(t)
 	j.Finish(nil, errors.New(reason), now)
 }
+
+// Probation is how many results a worker that has been outvoted must then
+// return that agree, before its word alone is taken again.
+const Probation = 10
+
+// Standing is what a coordinator has seen of a worker across jobs: how the
+// results it returned for verified tasks came out once those tasks were
+// settled. It is kept by the worker's node ID, and counts results, not
+// tasks run: an attempt that failed returned none, and a task that was not
+// verified, or never settled, says nothing about its workers.
+type Standing struct {
+	NodeID string
+	// Agreed counts the results that were among those a task was settled
+	// by, and Outvoted those a task was settled without.
+	Agreed, Outvoted uint64
+	// Probation is how many agreeing results the worker still owes, having
+	// been outvoted: zero for one that never was, or has since returned as
+	// many as were asked.
+	Probation int
+}
+
+// Agree counts a result that was one of those its task was settled by.
+func (s *Standing) Agree() {
+	s.Agreed++
+	s.Probation = max(s.Probation-1, 0)
+}
+
+// Outvote counts a result its task was settled without, which puts the
+// worker on probation from the start, however far along one it was.
+func (s *Standing) Outvote() {
+	s.Outvoted++
+	s.Probation = Probation
+}

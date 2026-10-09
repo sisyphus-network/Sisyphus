@@ -380,8 +380,17 @@ type NodeInfo struct {
 	RelayAddresses     []string `protobuf:"bytes,7,rep,name=relay_addresses,json=relayAddresses,proto3" json:"relay_addresses,omitempty"`
 	RelayedConnections uint64   `protobuf:"varint,8,opt,name=relayed_connections,json=relayedConnections,proto3" json:"relayed_connections,omitempty"`
 	RelayedBytes       uint64   `protobuf:"varint,9,opt,name=relayed_bytes,json=relayedBytes,proto3" json:"relayed_bytes,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// The node's standing as a worker, which outlasts any one job: how many
+	// results it has returned for verified tasks that were among those the
+	// task was settled by, and how many that were not. probation is how many
+	// agreeing results it still owes, having been outvoted, before a job
+	// that verifies a share of its tasks takes its word alone again; zero
+	// for a node that is not on probation.
+	VerifiedAgreed   uint64 `protobuf:"varint,10,opt,name=verified_agreed,json=verifiedAgreed,proto3" json:"verified_agreed,omitempty"`
+	VerifiedOutvoted uint64 `protobuf:"varint,11,opt,name=verified_outvoted,json=verifiedOutvoted,proto3" json:"verified_outvoted,omitempty"`
+	Probation        uint32 `protobuf:"varint,12,opt,name=probation,proto3" json:"probation,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *NodeInfo) Reset() {
@@ -473,6 +482,27 @@ func (x *NodeInfo) GetRelayedConnections() uint64 {
 func (x *NodeInfo) GetRelayedBytes() uint64 {
 	if x != nil {
 		return x.RelayedBytes
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetVerifiedAgreed() uint64 {
+	if x != nil {
+		return x.VerifiedAgreed
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetVerifiedOutvoted() uint64 {
+	if x != nil {
+		return x.VerifiedOutvoted
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetProbation() uint32 {
+	if x != nil {
+		return x.Probation
 	}
 	return 0
 }
@@ -1246,7 +1276,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	" \x03(\tR\x06labels\"<\n" +
 	"\x03Gpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\x9b\x03\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\x8f\x04\n" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12#\n" +
@@ -1257,7 +1287,11 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x04name\x18\x06 \x01(\tR\x04name\x12'\n" +
 	"\x0frelay_addresses\x18\a \x03(\tR\x0erelayAddresses\x12/\n" +
 	"\x13relayed_connections\x18\b \x01(\x04R\x12relayedConnections\x12#\n" +
-	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\xcd\x02\n" +
+	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\x12'\n" +
+	"\x0fverified_agreed\x18\n" +
+	" \x01(\x04R\x0everifiedAgreed\x12+\n" +
+	"\x11verified_outvoted\x18\v \x01(\x04R\x10verifiedOutvoted\x12\x1c\n" +
+	"\tprobation\x18\f \x01(\rR\tprobation\"\xcd\x02\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
