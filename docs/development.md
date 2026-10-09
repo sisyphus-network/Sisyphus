@@ -30,7 +30,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `packages/identity` | A node's key pair and the ID derived from it; signing and verifying; the TLS settings nodes connect with. |
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
 | `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
-| `packages/nodedb` | The node's SQLite database, where a coordinator keeps its jobs, its members and the invitations it has issued. Schema changes are new numbered files in `migrations/`, never edits to old ones. |
+| `packages/nodedb` | The node's SQLite database, where a coordinator keeps its jobs, its members, the invitations it has issued and the requests made of it as a pinning service. Schema changes are new numbered files in `migrations/`, never edits to old ones. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
 | `packages/s3` | A bucket in an S3-style object store, for a store that keeps its blocks there. Its tests run against a real one, SeaweedFS in a container. |
 | `packages/sealed` | Encrypting a private job's blobs: the format, sealing and seekable unsealing. |
@@ -44,6 +44,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `apps/sisyphusd/mcpserver` | The node as a Model Context Protocol server: ten tools over the local API, for agents other than the node's own. Tested against a real node and against one that fails. |
 | `apps/sisyphusd/planner` | The planner's loop: the model is asked, the tools it asks for are run, and it is asked again with what they returned. Tested against a scripted model. |
 | `apps/sisyphusd/blobclient` | Uploading and downloading blobs, checked against their CIDs. |
+| `apps/sisyphusd/pinning` | The IPFS Pinning Service API, both ways: the service a coordinator offers with `--pinning-listen`, and the client behind `blob pin-remote`. The service is tested against a store and a Kubo that can be made to fail; the real `ipfs pin remote` commands are run against a node in `apps/sisyphusd/pinning_test.go`. |
 | `apps/sisyphusd` | The `sisyphusd` command: flags, startup, the command-line client. |
 | `apps/sisyphus` | The desktop app: Electron and React. `npm ci`, then `npm run typecheck` and `npm run build`. |
 

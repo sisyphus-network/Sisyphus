@@ -36,9 +36,15 @@ func blobCommand(ctx context.Context, args []string) error {
 			return blobPins(ctx, args[1:])
 		case "gc":
 			return blobGC(ctx, args[1:])
+		case "pin-remote":
+			return blobPinRemote(ctx, args[1:])
+		case "unpin-remote":
+			return blobUnpinRemote(ctx, args[1:])
+		case "pins-remote":
+			return blobPinsRemote(ctx, args[1:])
 		}
 	}
-	return errors.New("expected blob put, get, stat, pin, unpin, pins or gc")
+	return errors.New("expected blob put, get, stat, pin, unpin, pins, gc, pin-remote, unpin-remote or pins-remote")
 }
 
 func blobPut(ctx context.Context, args []string) error {

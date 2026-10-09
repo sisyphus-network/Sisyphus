@@ -35,6 +35,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/inference"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/p2p"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/pinning"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/tunnel"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
@@ -62,6 +63,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	modelsFrom := fs.String("models-from", "", "worker role: offer the language models of the Ollama at this address, such as http://127.0.0.1:11434, to the pool's jobs. Whoever may submit jobs can then use them, and this machine sees what they ask")
 	inferenceListen := fs.String("inference-listen", "", "coordinator: loopback address to offer the pool's language models on, as a service speaking OpenAI's dialect whose key is the node's API token; off if empty")
 	gatewayListen := fs.String("gateway-listen", "", "address to serve stored files on by content ID, read-only, as GET /ipfs/<cid>, to whoever shows the node's API token; off if empty")
+	pinningListen := fs.String("pinning-listen", "", "coordinator: address to serve the IPFS Pinning Service API on, so that ipfs pin remote and other standard tools can have this node keep data; its key is in the file pinning.token in the data directory; off if empty")
 	gatewayOpen := fs.Bool("gateway-open", false, "let anyone who can reach --gateway-listen and knows a file's content ID fetch it, without the token. Sealed files are never served")
 	webListen := fs.String("web-listen", "", "loopback address to serve the local API on to web pages, as gRPC-Web and Connect, with every call needing the node's API token; off if empty")
 	webOrigins := fs.String("web-origin", "", "the origins of the web pages that may use --web-listen, separated by commas, such as http://localhost:5173; pages from anywhere else are refused")
@@ -132,6 +134,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if *inferenceListen != "" && !isCoordinator {
 		return errors.New("--inference-listen is for a node that coordinates a pool: it is that pool's models it offers")
+	}
+	if *pinningListen != "" && !isCoordinator {
+		return errors.New("--pinning-listen is for a node that coordinates a pool: it is that pool's store the data is kept in")
 	}
 	if host, _, err := net.SplitHostPort(*webListen); *webListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
 		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052: the local API is for this machine only, its web pages included")
@@ -669,6 +674,37 @@ func runDaemon(ctx context.Context, args []string) error {
 		go gateway.Serve(lis)
 	}
 
+	if *pinningListen != "" {
+		lis, err := net.Listen("tcp", *pinningListen)
+		if err != nil {
+			return err
+		}
+		// A key of its own, not the node's API token: it is handed to other
+		// programs and other machines, and should let them do no more than
+		// ask for data to be kept.
+		token, err := secretIn(filepath.Join(*dataDir, "pinning.token"), "pinning token")
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		config := pinning.Config{Store: store, Records: db, Token: token, MaxStoreBytes: *maxStore, Log: log}
+		if sidecar != nil {
+			// What the node does not hold, its Kubo fetches.
+			config.Network = sidecar
+		}
+		service, err := pinning.NewService(config)
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		pins := &http.Server{Handler: service}
+		// The fetches stop before the store they fill closes.
+		defer service.Close()
+		defer pins.Close()
+		log.Info("pinning service listening", "addr", lis.Addr().String(), "fetches", sidecar != nil)
+		go pins.Serve(lis)
+	}
+
 	if *webListen != "" {
 		lis, err := net.Listen("tcp", *webListen)
 		if err != nil {
@@ -929,18 +965,24 @@ func multiaddrs(hostport string) []string {
 // apiToken returns the secret a local program must present to change this
 // node through the local API, kept in file and made the first time.
 func apiToken(file string) (string, error) {
+	return secretIn(file, "API token")
+}
+
+// secretIn returns the secret kept in file, making one the first time.
+// what says what it is, for when it cannot be read or saved.
+func secretIn(file, what string) (string, error) {
 	data, err := os.ReadFile(file)
 	if err == nil {
 		return strings.TrimSpace(string(data)), nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("read API token: %w", err)
+		return "", fmt.Errorf("read %s: %w", what, err)
 	}
 	var secret [32]byte
 	rand.Read(secret[:]) // never fails; see crypto/rand
 	token := hex.EncodeToString(secret[:])
 	if err := os.WriteFile(file, []byte(token+"\n"), 0o600); err != nil {
-		return "", fmt.Errorf("save API token: %w", err)
+		return "", fmt.Errorf("save %s: %w", what, err)
 	}
 	return token, nil
 }
