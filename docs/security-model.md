@@ -13,7 +13,7 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 - **The coordinator is trusted with everything**: every job's parameters and results, every private job's key, the member list, and how each job is split and combined.
 - **A worker sees everything it is given to compute on**, private or not, and can return anything. Verification catches a worker that disagrees with others, not workers that agree to lie.
 - **A private job** keeps stored data from members that are not the coordinator or one of its workers. It does not seal the job's parameters, small result, log lines or error messages.
-- **A worker that runs containers gives the pool's clients the run of its machine.** Docker is not a boundary against the job's submitter here.
+- **A worker that runs containers runs whatever image and command a client names.** Docker's defaults are all that confine it; nothing here adds to them.
 
 ## Who the parties are
 
@@ -46,7 +46,7 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 | none | No tools that reconfigure the node | It can run jobs, including any container image on workers that allow containers, and read and write files under the directory it was started in. |
 | `--read-only` | Only tools that look (`mcpserver/more.go`, `offers`) | Looking covers every job's parameters, results and logs. |
 | `--files-under <dir>` | `store_file`, `fetch_file` and the other tools that touch disk stay inside it, links followed (`server.allowed`) | Which files inside it the agent reads or overwrites. |
-| `--images a,b` | A `container` job submitted with `run_job` must name a listed image (`server.permitted`) | Only that. A `graph` job whose steps are `container` jobs is not checked, and neither is what the node's planner runs when asked through `ask_planner`. |
+| `--images a,b` | A `container` job submitted with `run_job`, or a `container` step of a `graph` at any depth, must name a listed image, and `ask_planner` is refused, since the planner chooses what to run (`server.permitted`, `server.listed`) | What a listed image is told to do: the command, the input and the environment are the agent's. |
 | `--admin` | Nothing: it adds inviting and removing members, joining pools, trust, the model, garbage collection and restore | An agent with it can admit anyone to the pool. |
 
 An agent reads job results and files, which are data from other parties. Nothing separates what it reads from what it then decides to do.
@@ -115,7 +115,8 @@ Detail: [Verifying results](../apps/sisyphusd/README.md#verifying-results), [Spo
 - **By default there is none.** The coordinator takes what a worker returns.
 - **Stored bytes are checked against their CID** on upload and download, so nobody can substitute a blob under a name. This says nothing about whether the blob is the right answer.
 - **`--verify N`** runs each task on `N` different node IDs and takes a result once `N` have returned the same output bytes and the same stored CIDs (`apps/sisyphusd/coordinator/verify.go`, `returnedLocked`).
-- **`--verify-share`** verifies a random share of tasks, drawn from the system's randomness at submission (`shuffled`). A worker outvoted on one task has its other tasks in that job verified after all. Nothing follows it to the next job.
+- **`--verify-share`** verifies a random share of tasks, drawn from the system's randomness at submission (`shuffled`). A worker outvoted on one task has its other tasks in that job verified after all.
+- **A worker's standing** is kept by node ID from one job to the next: how many of its results for verified tasks agreed and how many were outvoted. One that was outvoted is on probation until ten of its results have agreed, and while it is, a task handed to it in a job that asked for spot checks is verified (`coordinator/verify.go`, `countLocked`). It changes nothing in a job that did not ask for verification.
 - **Private jobs are verified the same way**, because sealing is deterministic.
 
 What none of it catches:
@@ -127,7 +128,7 @@ What none of it catches:
 | A wrong result in a task a spot check did not pick | A share `s` catches a single wrong result with probability `s`. |
 | Honest non-determinism | Models, `transcode`, and containers that use time, randomness or the network differ between honest workers; the job fails. |
 | The coordinator | It splits the job and combines the outputs itself (`Split` and `Aggregate` run on the coordinator, `packages/runtime/workload.go`). A wrong split, a wrong combination or an altered result is not detectable by anyone. |
-| A lying worker's cost | No stake, score or ban. Removal is by hand. |
+| A lying worker's cost | Probation, which costs it nothing but being checked. No stake and no ban, and it is handed tasks like any other. Removal is by hand. An honest worker outvoted by ones that agreed to lie lands on probation too. |
 
 **Job records.** A finished job's history is content-addressed, so a record cannot be changed without changing its CID. `job record --verify` has the coordinator rebuild the record from its own database and compare. That detects a database or store altered after the job ended. It proves nothing to someone who does not trust the coordinator: the record is not signed, and "verified" in a receipt means only that this coordinator says so many workers agreed. Checking a private record's commitments means sending the job's key to the coordinator again (`coordinator/record.go`, `Record`).
 
@@ -149,12 +150,12 @@ Detail: [Running containers](../apps/sisyphusd/README.md#running-containers).
 
 What that does not do:
 
-- **The image name is not checked to be one.** It is placed in Docker's arguments before the command with nothing to mark the end of options, so a job whose `image` begins with `-` has Docker read it as an option, and the true image can follow in `command`. A submitter can add Docker options of its own that way, mounts and `--privileged` among them, which leaves nothing of the left column to rely on. Naming an image by digest pins what runs only if the submitter wants it pinned.
+- **The image is whatever the submitter names.** The name is checked only so far that Docker cannot read it as an option: one that begins with a dash, or has a space or control character in it, is refused when the job is submitted and again by the worker (`checkImage`). Before that check a job could add Docker options of its own, mounts and `--privileged` among them; a worker on a build without it is still open to that. Naming an image by digest pins what runs only if the submitter wants it pinned.
 - **No further confinement.** No capabilities are dropped, there is no `no-new-privileges`, no process limit, no read-only root, no limit on what is written to `/output` or to the container's own layer, and no user namespace or sandboxed runtime. A node run as root runs containers as root; where the system has no user numbers, the image's user is used.
 - **Limits are the submitter's, not the worker's.** A worker's `--offer-memory-mb` is what it advertises and is not enforced.
 - **Output is barely bounded.** What the command prints is kept up to 16 MiB as the task's output. Each line of it is also a log line, cut at 4 KiB, and every one is saved in the coordinator's database with no limit on their number. Files left in `/output` are stored whatever their size.
 
-So a worker with `--containers` must trust every client of every pool it works for, and those pools' coordinators, as it would someone with a login and Docker access. A node that takes work from several pools ([Trust](../apps/sisyphusd/README.md#trust)) keeps their stores apart, not their containers.
+So a worker with `--containers` must trust every client of every pool it works for, and those pools' coordinators, as it would someone it lets run programs of their choosing in a Docker container with default settings, on its network if they ask. A node that takes work from several pools ([Trust](../apps/sisyphusd/README.md#trust)) keeps their stores apart, not their containers.
 
 **What a malicious job can do to a worker:** with containers, the above. Without, it can spend the worker's slots, fill its cache where `--max-cache-bytes` is not set, and feed crafted input to the built-in workloads and to ffmpeg.
 
@@ -182,7 +183,7 @@ Detail: [How long data is kept](../apps/sisyphusd/README.md#how-long-data-is-kep
 | Clients interfering with each other | Not protected: any client reads and cancels any job and unpins any user pin. |
 | Colluding workers, or one operator with many nodes | Not protected. |
 | Wrong results from non-deterministic work | Not detectable. |
-| A client attacking a container worker's machine | Not protected. |
+| A client attacking a container worker's machine | Docker's defaults only. |
 | Programs on a node's machine reading jobs and conversations | Not protected for reads of the local API; changes need the token. |
 | A stolen node key | No rotation or revocation; remove the node. |
 | Denial of service by a member | No quotas or rate limits. |
@@ -193,7 +194,7 @@ Detail: [How long data is kept](../apps/sisyphusd/README.md#how-long-data-is-kep
 
 **What the open network in [#22](https://github.com/sisyphus-network/Sisyphus/issues/22) would have to add.** Strangers as workers and clients remove the assumption everything above rests on, that the owner knows whom it admitted. At the least: a sandbox for work that holds against its submitter (gVisor, Firecracker or Kata are named there), with the worker and not the job setting network, mounts and limits; separation of clients from each other, with per-client ownership of jobs and pins, and quotas; access to blobs by something other than knowing a CID; a key for each private job or file and a way to say which workers may be given it; an answer for a coordinator that is itself a stranger, starting with signed records; and handling of abuse. None of it makes data confidential from the machine that computes on it. That needs trusted hardware or cryptography the project does not have, and should be said to requesters plainly.
 
-**What the research in [#19](https://github.com/sisyphus-network/Sisyphus/issues/19) would have to add.** Replication is the only method in the code. Open are: resistance to colluding workers and to one operator with many identities, which needs identities that cost something or workers chosen in a way the submitter cannot be gamed on; a consequence for a worker caught, which needs stake or reputation that outlasts a job; comparison of results that are not bit-for-bit equal; and verification of the coordinator's own splitting and combining.
+**What the research in [#19](https://github.com/sisyphus-network/Sisyphus/issues/19) would have to add.** Replication is the only method in the code. Open are: resistance to colluding workers and to one operator with many identities, which needs identities that cost something or workers chosen in a way the submitter cannot be gamed on; a consequence for a worker caught beyond being checked more, which needs stake or a reputation that work is handed out by; comparison of results that are not bit-for-bit equal; and verification of the coordinator's own splitting and combining.
 
 ## For a reviewer of the sealing
 
