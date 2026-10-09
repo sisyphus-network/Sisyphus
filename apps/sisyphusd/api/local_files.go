@@ -173,6 +173,9 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 	// Off the list first: a file listed but no longer kept would be a
 	// promise the store does not make.
 	if err := s.cfg.Files.RemoveFile(c.String()); err != nil {
+		if errors.Is(err, nodedb.ErrFileReferenced) {
+			return nil, status.Error(codes.FailedPrecondition, "file is still referenced; release its owners before removing it")
+		}
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 	if err := unpinForUser(s.cfg.Store, c); err != nil {

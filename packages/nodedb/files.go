@@ -2,6 +2,7 @@ package nodedb
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -46,10 +47,19 @@ func (db *DB) AddFile(f File) error {
 	})
 }
 
-// RemoveFile forgets a stored file. Forgetting one that is not there is
-// not an error.
+// ErrFileReferenced means another owner still needs a catalogue entry.
+var ErrFileReferenced = errors.New("file is still referenced")
+
+// RemoveFile forgets an unreferenced stored file. Forgetting one that is
+// not there is not an error. The check and deletion share a transaction;
+// the foreign key remains a second guard against dangling references.
 func (db *DB) RemoveFile(cid string) error {
 	return db.durably("remove file", func(b *batch) {
+		var referenced bool
+		b.err = b.tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM file_references WHERE cid = ?)`, cid).Scan(&referenced)
+		if b.err == nil && referenced {
+			b.err = ErrFileReferenced
+		}
 		b.exec(`DELETE FROM files WHERE cid = ?`, cid)
 	})
 }
