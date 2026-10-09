@@ -184,6 +184,12 @@
   "plannerRunsOnNode": "يعمل مزود الذكاء الاصطناعي محلياً على هذه العقدة",
   "closePreview": "إغلاق معاينة الصورة",
   "operationText": {
+    "taskTimeoutSeconds": "مهلة المهمة (ثوانٍ)",
+    "taskTimeoutHint": "0 يستخدم الإعداد الافتراضي. يتم إيقاف المحاولات المتأخرة وإعادتها.",
+    "invalidTaskTimeout": "أدخل عددًا صحيحًا من 0 إلى 4294967295.",
+    "jobResult": "نتيجة المهمة",
+    "binaryResult": "نتيجة ثنائية — نزّلها للفحص.",
+    "resultTruncated": "المعاينة مختصرة. نزّل النتيجة الكاملة.",
     "openingJob": "جارٍ فتح المهمة…",
     "loadJobFailed": "تعذر فتح المهمة",
     "jobNotFound": "لم يتم العثور على المهمة.",

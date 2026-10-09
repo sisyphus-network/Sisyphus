@@ -184,6 +184,12 @@
   "plannerRunsOnNode": "ספק ה־AI שלכם פועל מקומית בצומת הזו",
   "closePreview": "סגירת תצוגת התמונה",
   "operationText": {
+    "taskTimeoutSeconds": "זמן מרבי למשימה (שניות)",
+    "taskTimeoutHint": "0 משתמש בברירת המחדל של הדיימון. ניסיונות שחורגים נעצרים ומנוסים שוב.",
+    "invalidTaskTimeout": "יש להזין מספר שלם בין 0 ל־4294967295.",
+    "jobResult": "תוצאת העבודה",
+    "binaryResult": "תוצאה בינארית — יש להוריד כדי לבדוק.",
+    "resultTruncated": "התצוגה קוצרה. ניתן להוריד את התוצאה המלאה.",
     "openingJob": "פותח עבודה…",
     "loadJobFailed": "לא ניתן לפתוח את העבודה",
     "jobNotFound": "העבודה לא נמצאה.",
