@@ -236,6 +236,20 @@ A coordinator also collects every `--gc-interval` (default one hour), and with `
 
 A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
 
+### Fetching a file with a browser
+
+A node can serve what it holds over plain HTTP, read-only, by content ID, as any IPFS gateway does:
+
+```sh
+bin/sisyphusd run --gateway-listen 127.0.0.1:8080
+curl -H "Authorization: Bearer $(cat "$(bin/sisyphusd data-dir)/api.token")" http://127.0.0.1:8080/ipfs/<cid>
+```
+
+- **It is its owner's unless opened.** A request must show the node's API token, as a bearer token or as `?token=` in the address. Started with `--gateway-open`, anyone who can reach the address and knows a file's content ID can fetch it, which is how a link to a result is shared; a content ID cannot be guessed, but anyone given one can pass it on.
+- **A sealed file is never served**, with or without the token: what the gateway holds of it is what was sealed. Private data is fetched through the node, by whoever has its key.
+- `?filename=report.pdf` names the file for the browser and decides what kind it is taken for; without it the kind is told from how the file begins. Part of a file may be asked for, so video can be played and seeked from it.
+- It serves single files only. A directory, or a path inside one, is not something a node stores.
+
 ### In a bucket
 
 A coordinator can keep the pool's stored data in a bucket of an object store that speaks S3, instead of on its own disk: Ceph, MinIO, SeaweedFS, Storj, Wasabi, AWS.
