@@ -648,7 +648,7 @@ func (o *office) finish(id string, result []byte) {
 		if job.GetJobId() == id {
 			done := proto.Clone(job).(*pb.Job)
 			done.State, done.Result, done.FinishedAt = pb.JobState_JOB_STATE_SUCCEEDED, result, timestamppb.New(time.UnixMilli(1_700_000_005_000))
-			done.Tasks = []*pb.Task{{Index: 0, State: pb.TaskState_TASK_STATE_SUCCEEDED, Attempt: 2, NodeId: "12D3KooWworker", NodeName: "rig", Error: "first try failed"}}
+			done.Tasks = []*pb.Task{{Index: 0, State: pb.TaskState_TASK_STATE_SUCCEEDED, Attempt: 2, NodeId: "12D3KooWworker", NodeName: "rig", Error: "first try failed", Verify: 2}}
 			done.InputBlobs, done.OutputBlobs = []string{"bafy-in"}, []string{"bafy-out"}
 			o.jobs[i] = done
 		}
@@ -700,7 +700,7 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 		t.Fatalf("the first list of jobs: %v, %v", first, err)
 	}
 
-	request := &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":100}`), Mode: nodepb.JobMode_JOB_MODE_FULL_WORKER, MaxTasks: 3, Verify: 2}
+	request := &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":100}`), Mode: nodepb.JobMode_JOB_MODE_FULL_WORKER, MaxTasks: 3, Verify: 2, VerifyShare: 0.5}
 	// It spends the pool's time, so it needs the token.
 	if _, err := client.SubmitJob(ctx, request); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("submitting without the token: %v", err)
@@ -715,7 +715,7 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 		job.GetCreatedAtMs() != 1_700_000_000_000 || job.GetFinishedAtMs() != 0 || job.GetVerify() != 2 {
 		t.Errorf("the job as submitted: %v", job)
 	}
-	if spec := pool.submitted[0]; spec.GetMode() != pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER || spec.GetMaxTasks() != 3 || spec.GetVerify() != 2 {
+	if spec := pool.submitted[0]; spec.GetMode() != pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER || spec.GetMaxTasks() != 3 || spec.GetVerify() != 2 || spec.GetVerifyShare() != 0.5 {
 		t.Errorf("the pool was given %v", spec)
 	}
 	if second, err := stream.Recv(); err != nil || second.GetRevision() != 2 || len(second.GetJobs()) != 1 {
@@ -733,7 +733,8 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 	task := done.GetTasks()[0]
 	if done.GetState() != nodepb.JobState_JOB_STATE_SUCCEEDED || string(done.GetResult()) != `{"count":25}` || done.GetFinishedAtMs() != 1_700_000_005_000 ||
 		!slices.Equal(done.GetInputBlobs(), []string{"bafy-in"}) || !slices.Equal(done.GetOutputBlobs(), []string{"bafy-out"}) ||
-		task.GetState() != nodepb.JobState_JOB_STATE_SUCCEEDED || task.GetAttempt() != 2 || task.GetPeerId() != "12D3KooWworker" || task.GetWorkerName() != "rig" || task.GetError() != "first try failed" {
+		task.GetState() != nodepb.JobState_JOB_STATE_SUCCEEDED || task.GetAttempt() != 2 || task.GetPeerId() != "12D3KooWworker" || task.GetWorkerName() != "rig" || task.GetError() != "first try failed" ||
+		done.GetVerify() != 2 || done.GetVerifyShare() != 0.5 || task.GetVerify() != 2 {
 		t.Errorf("the finished job: %v", done)
 	}
 

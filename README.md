@@ -264,7 +264,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Jobs that can be followed as they run, with progress, logs and a record of what happened to them, and cancelled or given a time limit.
 - A finished job's record: its history as linked data under one CID, which anyone can check against the job. A private job's record commits to its results without naming them.
 - Jobs made of steps, each a job of its own that can use the results of those before it.
-- Opt-in verification by replication: a job can ask that each of its tasks be run by several different workers and take a result only when they agree. A worker that returns something else is outvoted and named. It is for deterministic work, and does not stop workers that agree to lie.
+- Opt-in verification by replication: a job can ask that each of its tasks be run by several different workers and take a result only when they agree. A worker that returns something else is outvoted and named. It is for deterministic work, and does not stop workers that agree to lie. With spot checks only a share of the tasks, picked at random, is verified, and a worker that is caught has its other tasks in the job verified after all.
 - The node's local API over Connect and gRPC-Web as well as gRPC, so that a page in a browser can use it.
 - A desktop client that shows a node and its pool, and admits or removes workers.
 - A first real workload, `transcode`: a video is cut into stretches, encoded by ffmpeg on different workers, and joined.

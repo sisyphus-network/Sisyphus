@@ -46,6 +46,7 @@ func jobSubmit(ctx context.Context, args []string) error {
 	timeout := fs.Duration("timeout", 0, "stop and retry any attempt at a task that runs longer than this; 0 means no limit")
 	keyFile := fs.String("key-file", "", "make the job private: seal everything it stores with this key, and open sealed inputs with it")
 	verify := fs.Uint("verify", 0, "have each task run by this many different workers, and take its result only once that many have returned the same one; for work that gives the same result every time, and not with --key-file. 0 or 1 runs each task once")
+	share := fs.Float64("verify-share", 0, "with --verify, verify only this share of the tasks, from 0 to 1, picked at random, and run the rest once; a worker caught returning a different result has its other tasks in the job verified after all. 0 or 1 verifies every task")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -54,7 +55,7 @@ func jobSubmit(ctx context.Context, args []string) error {
 	}
 
 	spec := &pb.JobSpec{Workload: *workload, Params: []byte(*params), MaxTasks: uint32(*tasks), TaskTimeoutSeconds: uint32(*timeout / time.Second),
-		MinMemoryBytes: *minMemory << 20, MinGpus: uint32(*minGPUs), Verify: uint32(*verify)}
+		MinMemoryBytes: *minMemory << 20, MinGpus: uint32(*minGPUs), Verify: uint32(*verify), VerifyShare: *share}
 	switch *mode {
 	case "distributed":
 		spec.Mode = pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED
@@ -91,13 +92,40 @@ func jobSubmit(ctx context.Context, args []string) error {
 	return followJob(ctx, client, job)
 }
 
-// verified says, of a job that is verified, by how many workers each of its
-// tasks is.
+// verified says, of a job that is verified, by how many workers its tasks
+// are, and how many of them if not all.
 func verified(job *pb.Job) string {
-	if job.GetSpec().GetVerify() < 2 {
+	by := job.GetSpec().GetVerify()
+	if by < 2 {
 		return ""
 	}
-	return fmt.Sprintf(", each verified by %d workers", job.GetSpec().GetVerify())
+	if job.GetSpec().GetVerifyShare() == 0 {
+		return fmt.Sprintf(", each verified by %d workers", by)
+	}
+	checked := 0
+	for _, task := range job.GetTasks() {
+		if task.GetVerify() >= 2 {
+			checked++
+		}
+	}
+	if checked == 0 {
+		// A job whose tasks are jobs, each of which picks its own.
+		return fmt.Sprintf(", a share of %.3g of the tasks of each verified by %d workers", job.GetSpec().GetVerifyShare(), by)
+	}
+	return fmt.Sprintf(", %d of them verified by %d workers", checked, by)
+}
+
+// heldTo says, of a task of a job only some of whose tasks are verified,
+// whether it is one of them. It says nothing of a task that is itself a
+// job.
+func heldTo(job *pb.Job, task *pb.Task) string {
+	switch {
+	case job.GetSpec().GetVerifyShare() == 0, task.GetVerify() == 0:
+		return ""
+	case task.GetVerify() >= 2:
+		return fmt.Sprintf(", verified by %d workers", task.GetVerify())
+	}
+	return ", not verified"
 }
 
 // followJob prints a job's progress until it finishes, then its outcome.
@@ -151,7 +179,7 @@ func jobGet(ctx context.Context, args []string) error {
 	job := got.GetJob()
 	fmt.Fprintf(stdout, "job %s: %s, workload %s%s\n", job.GetJobId(), stateName(job.GetState().String()), job.GetSpec().GetWorkload(), verified(job))
 	for _, task := range job.GetTasks() {
-		fmt.Fprintln(stdout, "  "+describeTask(task))
+		fmt.Fprintln(stdout, "  "+describeTask(task)+heldTo(job, task))
 	}
 	if job.GetRecordCid() != "" {
 		fmt.Fprintln(stdout, "  record "+job.GetRecordCid())

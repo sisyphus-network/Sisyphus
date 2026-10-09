@@ -208,6 +208,7 @@ type runJobArgs struct {
 	MinGPUs     uint32         `json:"min_gpus,omitempty" jsonschema:"give its tasks only to workers with at least this many graphics cards"`
 	TaskTimeout uint32         `json:"task_timeout_seconds,omitempty" jsonschema:"stop and retry any attempt at a task that runs longer than this"`
 	Verify      uint32         `json:"verify,omitempty" jsonschema:"have each task run by this many different workers and take its result only once that many have returned the same one; only for work that gives the same result every time it is run, not with private, and it multiplies the work by that many"`
+	VerifyShare float64        `json:"verify_share,omitempty" jsonschema:"with verify, verify only this share of the tasks, from 0 to 1, picked at random, and run the rest once: it costs less, and a worker caught returning a different result has its other tasks in the job verified after all. Every task is verified if left out"`
 	WaitSeconds uint32         `json:"wait_seconds,omitempty" jsonschema:"how long to wait for the job to finish before returning it as it stands; 300 if left out, 0 with detach"`
 	Detach      bool           `json:"detach,omitempty" jsonschema:"return at once with the job's ID instead of waiting"`
 }
@@ -234,7 +235,7 @@ func (s *server) run(ctx context.Context, args runJobArgs) (any, error) {
 	submitted, err := s.Node.SubmitJob(ctx, &nodepb.SubmitJobRequest{
 		Workload: args.Workload, Params: params, MaxTasks: args.Tasks, Private: args.Private, Mode: mode,
 		MinGpus: args.MinGPUs, MinMemoryBytes: uint64(args.MinMemoryMB) << 20, TaskTimeoutSeconds: args.TaskTimeout,
-		Verify: args.Verify,
+		Verify: args.Verify, VerifyShare: args.VerifyShare,
 	})
 	if err != nil {
 		return nil, err
@@ -272,6 +273,22 @@ func jobView(job *nodepb.Job, result bool) map[string]any {
 		// How many different workers had to return the same result for
 		// each task.
 		out["verified_by"] = job.GetVerify()
+		if job.GetVerifyShare() > 0 {
+			// Spot checks: that share of the tasks was held to it, the
+			// rest having been run once.
+			out["verify_share"] = job.GetVerifyShare()
+		}
+		var checked []uint32
+		for _, task := range job.GetTasks() {
+			if task.GetVerify() >= 2 {
+				checked = append(checked, task.GetIndex())
+			}
+		}
+		if job.GetVerifyShare() > 0 && len(checked) > 0 {
+			// Which those were. A job whose tasks are jobs has none of its
+			// own: each of them names its own.
+			out["verified_tasks"] = checked
+		}
 	}
 	if !result {
 		return out

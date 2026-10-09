@@ -506,7 +506,15 @@ type JobSpec struct {
 	// what its worker returns is taken as it is. It is for workloads that
 	// give the same result every time they are run, and cannot be asked of a
 	// private job.
-	Verify        uint32 `protobuf:"varint,9,opt,name=verify,proto3" json:"verify,omitempty"`
+	Verify uint32 `protobuf:"varint,9,opt,name=verify,proto3" json:"verify,omitempty"`
+	// Spot checks. With verify, a share between 0 and 1 has only that share
+	// of the job's tasks verified, rounded up to a whole task, and the rest
+	// run once. Which tasks are verified is chosen at random when the job is
+	// submitted, and no worker is told. A worker whose result for a verified
+	// task loses to the result the others agree on has every task it ran
+	// unverified in the job verified after all, and so has whatever of the
+	// job it is given afterwards. Zero, and one, verify every task.
+	VerifyShare   float64 `protobuf:"fixed64,10,opt,name=verify_share,json=verifyShare,proto3" json:"verify_share,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -604,6 +612,13 @@ func (x *JobSpec) GetVerify() uint32 {
 	return 0
 }
 
+func (x *JobSpec) GetVerifyShare() float64 {
+	if x != nil {
+		return x.VerifyShare
+	}
+	return 0
+}
+
 type Task struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -619,7 +634,11 @@ type Task struct {
 	NodeName string `protobuf:"bytes,7,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
 	// How far along the current attempt says it is, from 0 to 1. A workload
 	// that does not say leaves it at 0 until the task succeeds.
-	Progress      float64 `protobuf:"fixed64,8,opt,name=progress,proto3" json:"progress,omitempty"`
+	Progress float64 `protobuf:"fixed64,8,opt,name=progress,proto3" json:"progress,omitempty"`
+	// In a job that is verified, how many different workers must return the
+	// same result for this task: as many as the job asks for, or one for a
+	// task its spot checks passed over.
+	Verify        uint32 `protobuf:"varint,9,opt,name=verify,proto3" json:"verify,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -706,6 +725,13 @@ func (x *Task) GetNodeName() string {
 func (x *Task) GetProgress() float64 {
 	if x != nil {
 		return x.Progress
+	}
+	return 0
+}
+
+func (x *Task) GetVerify() uint32 {
+	if x != nil {
+		return x.Verify
 	}
 	return 0
 }
@@ -1115,7 +1141,9 @@ type JobEvent struct {
 	// What happened: submitted, task-started, task-succeeded, task-failed,
 	// task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
 	// In a job that is verified, also task-result, for each result a worker
-	// returns, and task-disagreed, when the results in for a task differ.
+	// returns, task-disagreed, when the results in for a task differ, and
+	// task-rechecked, when a task that spot checks had passed over is to be
+	// verified after all.
 	Kind string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
 	// The task concerned, or -1 if the event is about the job as a whole.
 	TaskIndex int32 `protobuf:"varint,4,opt,name=task_index,json=taskIndex,proto3" json:"task_index,omitempty"`
@@ -1229,7 +1257,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x04name\x18\x06 \x01(\tR\x04name\x12'\n" +
 	"\x0frelay_addresses\x18\a \x03(\tR\x0erelayAddresses\x12/\n" +
 	"\x13relayed_connections\x18\b \x01(\x04R\x12relayedConnections\x12#\n" +
-	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\xaa\x02\n" +
+	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\xcd\x02\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
@@ -1239,7 +1267,9 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x14task_timeout_seconds\x18\x06 \x01(\rR\x12taskTimeoutSeconds\x12(\n" +
 	"\x10min_memory_bytes\x18\a \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
 	"\bmin_gpus\x18\b \x01(\rR\aminGpus\x12\x16\n" +
-	"\x06verify\x18\t \x01(\rR\x06verify\"\xe5\x01\n" +
+	"\x06verify\x18\t \x01(\rR\x06verify\x12!\n" +
+	"\fverify_share\x18\n" +
+	" \x01(\x01R\vverifyShare\"\xfd\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\rR\x05index\x12,\n" +
@@ -1248,7 +1278,8 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1b\n" +
 	"\tnode_name\x18\a \x01(\tR\bnodeName\x12\x1a\n" +
-	"\bprogress\x18\b \x01(\x01R\bprogress\"\xb6\x04\n" +
+	"\bprogress\x18\b \x01(\x01R\bprogress\x12\x16\n" +
+	"\x06verify\x18\t \x01(\rR\x06verify\"\xb6\x04\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12(\n" +
 	"\x04spec\x18\x02 \x01(\v2\x14.sisyphus.v1.JobSpecR\x04spec\x12+\n" +

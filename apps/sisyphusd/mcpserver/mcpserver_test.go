@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -238,6 +239,19 @@ func TestAJobCanBeAskedToBeVerifiedAndIsShownToHaveBeen(t *testing.T) {
 	// One that was not says nothing of it.
 	if plain := jobView(&nodepb.Job{JobId: "j", Verify: 1}, true); plain["verified_by"] != nil {
 		t.Errorf("a job that is not verified: %v", plain)
+	}
+
+	// With a share, the node is asked for that, and the job is shown with
+	// the tasks that were held to it.
+	if _, err := serving(n).run(context.Background(), runJobArgs{Workload: "primes", Verify: 2, VerifyShare: 0.25, Detach: true}); err != nil || n.submitted.GetVerifyShare() != 0.25 {
+		t.Fatalf("the node was asked for %v, %v", n.submitted, err)
+	}
+	spot := jobView(&nodepb.Job{JobId: "j", Verify: 2, VerifyShare: 0.25, Tasks: []*nodepb.JobTask{{Index: 0, Verify: 1}, {Index: 1, Verify: 2}, {Index: 2, Verify: 1}}}, true)
+	if got, _ := json.Marshal(spot["verified_tasks"]); string(got) != "[1]" || spot["verified_by"] != uint32(2) {
+		t.Errorf("a job one task of which was verified: %v", spot)
+	}
+	if graph := jobView(&nodepb.Job{JobId: "j", Verify: 2, VerifyShare: 0.25, Tasks: []*nodepb.JobTask{{Index: 0}}}, true); graph["verified_tasks"] != nil || graph["verify_share"] != 0.25 {
+		t.Errorf("a job whose tasks are jobs, a quarter of each to be verified: %v", graph)
 	}
 }
 

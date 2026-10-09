@@ -62,6 +62,8 @@ func (j *Job) mark(t *Task) {
 func Restore(saved Job, read, taskOutputs, results []string) *Job {
 	j := &saved
 	j.init()
+	// Who was outvoted is worked out again from the tasks.
+	j.outvoted = nil
 	// Progress is not saved, but a task that succeeded is known to be done.
 	for _, t := range j.Tasks {
 		if t.State == Succeeded {

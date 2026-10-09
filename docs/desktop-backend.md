@@ -103,6 +103,8 @@ To submit one of the built-in workloads:
 
 `verify`, if two or more, has each task run by that many different workers and takes a result only once that many have returned the same one; `Job.verify` gives it back. Zero or one runs each task once, as before. It multiplies the work by that number, is only for work that gives the same result every time it is run, and cannot be combined with `private`. `SubmitJob` refuses it with `FAILED_PRECONDITION` when fewer workers that could take the job are connected, and a task whose workers cannot agree fails the job with an error that names them. While it runs, a task's `attempt` counts every copy handed out and `peer_id` is the worker last given one; once it has succeeded, `peer_id` is the first worker that returned the result agreed on. The job's events have two more kinds, `task-result` and `task-disagreed`. The desktop app does not offer the field yet.
 
+`verify_share`, with `verify`, has only that share of the tasks verified, from 0 to 1, drawn at random and rounded up to a whole task; the rest run once. `Job.verify_share` gives it back, and `JobTask.verify` says how many workers each task is held to: `verify` for one that is verified, 1 for one that is run once. A worker whose result for a verified task is outvoted has the tasks it ran unverified in the job verified after all, so a task that had succeeded can go back to running, with `JobTask.verify` raised and a `task-rechecked` event. Zero, and one, verify every task. A share outside 0 to 1, or one without `verify`, is `INVALID_ARGUMENT`.
+
 ## What a job event tells you
 
 Each has a `seq` (counting from one within the job), a time, a `kind`, the task it concerns (`-1` for the job as a whole), the worker concerned if one was, and some text.
