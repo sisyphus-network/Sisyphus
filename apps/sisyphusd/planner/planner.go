@@ -17,6 +17,7 @@ import (
 
 	"github.com/sisyphus-network/Sisyphus/packages/ai"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
 
 // Pool is the pool the planner has jobs run on. A coordinator is one.
@@ -40,6 +41,9 @@ type Planner struct {
 	ModelName string
 	Pool      Pool
 	Workloads []Workload
+	// SealingKey supplies this node's key for private jobs. It is never
+	// passed to the model or accepted from tool arguments.
+	SealingKey func() (sealed.Key, error)
 	// MaxSteps is how many times the model may be asked before the planner
 	// gives up on a question. Zero means eight.
 	MaxSteps int
@@ -72,6 +76,8 @@ When a question needs computing, do not guess and do not work it out in your hea
 
 If a question needs no computation, just answer it. If the pool cannot do what is asked, say so rather than pretend.
 
+For encrypted input files, run a private job. Private jobs give the decryption key to their workers, so use only trusted workers. Never ask the user for the key or put it in parameters.
+
 The pool can run these workloads and no others:
 `
 
@@ -83,7 +89,8 @@ var tools = []ai.Tool{
 		Parameters: json.RawMessage(`{"type":"object","properties":{` +
 			`"workload":{"type":"string","description":"The name of the workload to run."},` +
 			`"params":{"type":"object","description":"The workload's parameters, as its description gives them."},` +
-			`"tasks":{"type":"integer","description":"How many tasks to split the job into. Leave out to use one for each free machine slot."}` +
+			`"tasks":{"type":"integer","description":"How many tasks to split the job into. Leave out to use one for each free machine slot."},` +
+			`"private":{"type":"boolean","description":"Use this node's encryption key for sealed input files and private output. Workers running the job receive the key."}` +
 			`},"required":["workload","params"]}`),
 	},
 	{
@@ -161,11 +168,23 @@ func (p *Planner) runJob(ctx context.Context, arguments json.RawMessage, report 
 		Workload string          `json:"workload"`
 		Params   json.RawMessage `json:"params"`
 		Tasks    uint32          `json:"tasks"`
+		Private  bool            `json:"private"`
 	}
 	if err := json.Unmarshal(arguments, &args); err != nil {
 		return nil, fmt.Errorf("the arguments are not what run_job takes: %w", err)
 	}
-	submitted, err := p.Pool.Submit(ctx, &pb.JobSpec{Workload: args.Workload, Params: args.Params, MaxTasks: args.Tasks})
+	spec := &pb.JobSpec{Workload: args.Workload, Params: args.Params, MaxTasks: args.Tasks}
+	if args.Private {
+		if p.SealingKey == nil {
+			return nil, errors.New("private jobs are unavailable: this node has no sealing key provider")
+		}
+		key, err := p.SealingKey()
+		if err != nil {
+			return nil, fmt.Errorf("private job key unavailable: %w", err)
+		}
+		spec.Key = key[:]
+	}
+	submitted, err := p.Pool.Submit(ctx, spec)
 	if err != nil {
 		return nil, err
 	}

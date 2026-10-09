@@ -743,7 +743,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// The node's planner is there whatever its role, so that its model can
 	// be set and its conversations read; it has something to compute on
 	// only where the node coordinates a pool.
-	local.Assistant = &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered}
+	local.Assistant = &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey}
 
 	// Whatever its role, the node is connected to the nodes in its address
 	// book and those named on the command line, and through them finds
