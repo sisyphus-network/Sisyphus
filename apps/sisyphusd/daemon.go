@@ -44,6 +44,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/geo"
 	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
+	"github.com/sisyphus-network/Sisyphus/packages/ipfscluster"
 	"github.com/sisyphus-network/Sisyphus/packages/kubo"
 	"github.com/sisyphus-network/Sisyphus/packages/names"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
@@ -94,8 +95,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	s3Region := fs.String("s3-region", "", "the bucket's region, for stores that have them")
 	s3Credentials := fs.String("s3-credentials", "", "a file with the access key on its first line and the secret key on its second; they stay on this node")
 	useKubo := fs.Bool("kubo", false, "keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself, on a private network with the rest of its pool; needs the ipfs program installed, and for a worker, a coordinator that uses it too")
+	useCluster := fs.Bool("cluster", false, "with --kubo: also run an IPFS Cluster peer beside Kubo, so that what the pool's coordinator pins is kept by several of the pool's nodes; needs the ipfs-cluster-service program installed, and for a worker, a coordinator that uses it too")
 	swarmPort := fs.Int("swarm-port", 0, "coordinator role with --kubo: TCP port to open so that members' Kubo daemons can connect to this node's directly, which is faster; 0 opens none, and they reach it through --listen")
-	replicas := fs.Int("replicas", 0, "coordinator role: have this many of the pool's storage followers each hold a copy of everything this node has pinned; 0 asks none to")
+	replicas := fs.Int("replicas", 0, "coordinator role: how many copies of everything this node has pinned are to be held by other nodes of the pool, besides its own. Without --cluster they are held by storage followers, and 0 asks none to; with --cluster they are held by the cluster's peers, and 0 means 1")
 	replicaDir := fs.String("replica-dir", "", "worker-only node: be a storage follower, keeping in this directory, which must be used for nothing else, copies of whatever stored data its coordinator says to")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
 	verbose := fs.Bool("v", false, "log per-task detail")
@@ -156,6 +158,9 @@ func runDaemon(ctx context.Context, args []string) error {
 		case *s3Bucket == "":
 			return errors.New("--s3-endpoint needs --s3-bucket, the bucket to keep stored data in")
 		}
+	}
+	if *useCluster && !*useKubo {
+		return errors.New("--cluster needs --kubo: it is on Kubo that a cluster peer pins")
 	}
 	if *publishRecord && !isCoordinator {
 		return errors.New("--publish-record is for a node that coordinates a pool: it is the pool it describes")
@@ -273,6 +278,30 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("kubo started", "repo", filepath.Join(*dataDir, "ipfs"))
 	}
 
+	// With --cluster as well, a cluster peer runs beside Kubo, as the same
+	// peer again, and is stopped before Kubo is. A coordinator's is the one
+	// member of the pool's cluster that says what is pinned; a worker's
+	// follows it.
+	var cluster *poolCluster
+	if *useCluster {
+		peer := ipfscluster.Config{Dir: filepath.Join(*dataDir, "ipfs-cluster"), Identity: ident, Name: *name, Heartbeat: clusterHeartbeat}
+		if isCoordinator {
+			peer.Secret, peer.KuboAPI, peer.Trusted = clusterSecret(swarm.Key()), sidecar.Address(), []string{ident.ID()}
+			if swarm.cluster, err = ipfscluster.Start(ctx, peer); err != nil {
+				return err
+			}
+			defer swarm.cluster.Stop()
+			cluster = &poolCluster{peer: swarm.cluster.Client, replicas: clusterHolders(*replicas)}
+		} else {
+			leave, err := joinCluster(ctx, swarm, peer)
+			if err != nil {
+				return err
+			}
+			defer leave()
+		}
+		log.Info("cluster peer started", "dir", peer.Dir)
+	}
+
 	// Every node keeps a blob store. A coordinator's is durable, because it
 	// is where a job's inputs and results live. A worker-only node's is a
 	// cache of what the pool holds, kept apart from any durable store. With
@@ -371,8 +400,14 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		var coord *coordinator.Coordinator
+		// With a cluster it is the cluster's peers that keep the copies, and
+		// storage followers are asked for none.
+		followerCopies := *replicas
+		if *useCluster {
+			followerCopies = 0
+		}
 		replicated := replication.New(replication.Config{
-			ID: ident.ID(), Store: store, StoreID: storeID, Replicas: *replicas, Log: log,
+			ID: ident.ID(), Store: store, StoreID: storeID, Replicas: followerCopies, Log: log,
 			Address: func(id string) string { return coord.ServeAddress(id) },
 			// A follower is reached as one worker reaches another: at the
 			// address it gave, or by name through the node's libp2p host.
@@ -386,8 +421,8 @@ func runDaemon(ctx context.Context, args []string) error {
 					})
 			},
 		})
-		if *replicas > 0 {
-			log.Info("storage followers are to hold copies of what this node has pinned", "copies", *replicas)
+		if followerCopies > 0 {
+			log.Info("storage followers are to hold copies of what this node has pinned", "copies", followerCopies)
 		}
 		// Everything else reads the store through this: a blob it turns out
 		// to lack is first fetched back from a follower.
@@ -443,6 +478,22 @@ func runDaemon(ctx context.Context, args []string) error {
 		if swarm != nil {
 			config.Swarm = swarm
 			coord.AnnounceSwarm(swarm.Fingerprint())
+		}
+		if cluster != nil {
+			config.Cluster = cluster
+			// What the store pins, the cluster is told to pin, for as long
+			// as the node runs. The store must outlive the telling.
+			mirror := newClusterPins(store.Kept, cluster.peer, ident.ID(), clusterHolders(*replicas), log)
+			store.OnPinChange(mirror.nudge)
+			mirrored := make(chan struct{})
+			defer func() {
+				cancel()
+				<-mirrored
+			}()
+			go func() {
+				defer close(mirrored)
+				mirror.run(ctx)
+			}()
 		}
 		srv := api.NewServer(config)
 		local.Pool = api.NewPoolAdmin(config)
@@ -957,6 +1008,15 @@ func openBucket(ctx context.Context, endpoint, bucket, prefix, region, credentia
 	return s3.Open(ctx, cfg)
 }
 
+// clusterHolders is how many of a cluster's peers hold each pin, given how
+// many copies besides the coordinator's were asked for: those, and the
+// coordinator's own, whose Kubo holds everything the node stores in any
+// case. A cluster asked for none besides is given one, since a cluster of
+// one holder is no cluster.
+func clusterHolders(copies int) int {
+	return max(copies, 1) + 1
+}
+
 // countryOf says which country an address is registered in. It is the
 // table the daemon carries; tests put another here.
 var countryOf = geo.Country
@@ -1099,8 +1159,19 @@ type poolSwarm struct {
 	// zero if it has opened none.
 	keyFile string
 	port    int
-	// route is how a worker's Kubo reaches its coordinator's.
-	route *route
+	// route is how a worker's Kubo reaches its coordinator's, and forward
+	// carries what connects to a port on this machine to a service on the
+	// coordinator, through the coordinator's own port.
+	route   *route
+	forward func(lis *net.TCPListener, target pb.TunnelTarget)
+
+	// cluster is this node's IPFS Cluster peer, if it runs one, which is
+	// restarted whenever Kubo is: with the secret that goes with the key,
+	// and connecting to clusterPeers. clustered is whether the pool's
+	// coordinator runs a peer, as a worker was last told.
+	cluster      *ipfscluster.Daemon
+	clusterPeers []string
+	clustered    bool
 
 	// mu serialises changes of key.
 	mu  sync.Mutex
@@ -1243,11 +1314,22 @@ func (r *route) choose(addresses []string) []string {
 // fetch asks the coordinator how to join the pool's network and works out
 // how this worker's Kubo will reach it.
 func (s *poolSwarm) fetch(ctx context.Context, coordinator string, creds credentials.TransportCredentials) (key string, peers []string, err error) {
-	key, addresses, err := fetchSwarm(ctx, coordinator, creds)
+	key, addresses, clustered, err := fetchSwarm(ctx, coordinator, creds)
 	if err != nil {
 		return "", nil, err
 	}
+	s.clustered = clustered
 	return key, s.route.choose(addresses), nil
+}
+
+// recluster restarts this node's cluster peer, if it runs one, after its
+// Kubo has been restarted on key: the cluster's secret goes with the key,
+// and Kubo is now at another address.
+func (s *poolSwarm) recluster(ctx context.Context, key string) error {
+	if s.cluster == nil {
+		return nil
+	}
+	return s.cluster.Restart(ctx, clusterSecret(key), s.daemon.Address(), s.clusterPeers)
 }
 
 // listenLoopback opens a port on this machine only, for the system to pick.
@@ -1256,8 +1338,9 @@ var listenLoopback = func() (*net.TCPListener, error) {
 }
 
 // Rekey gives the pool's network a new key, on a coordinator: it saves the
-// key and restarts this node's Kubo on it. Every other holder of the old key
-// is then outside the network until it is given the new one.
+// key and restarts this node's Kubo on it, and its cluster peer if it runs
+// one. Every other holder of the old key is then outside the network until
+// it is given the new one.
 func (s *poolSwarm) Rekey(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1269,7 +1352,7 @@ func (s *poolSwarm) Rekey(ctx context.Context) error {
 		return err
 	}
 	s.key = key
-	return nil
+	return s.recluster(ctx, key)
 }
 
 // joinSwarm starts a Kubo daemon, on the repository in repo, as a member of
@@ -1290,8 +1373,11 @@ func joinSwarm(ctx context.Context, ident *identity.Identity, repo, addr, coordi
 		return nil, nil, fmt.Errorf("listen for this node's Kubo: %w", err)
 	}
 	forwarding, stop := context.WithCancel(ctx)
-	go tunnel.Forward(forwarding, lis, pb.NewTunnelServiceClient(conn), pb.TunnelTarget_TUNNEL_TARGET_SWARM, log)
 	swarm = &poolSwarm{route: &route{coordinator: coordinatorID, coordinatorAddr: addr, tunnel: lis.Addr().String(), log: log}}
+	swarm.forward = func(lis *net.TCPListener, target pb.TunnelTarget) {
+		go tunnel.Forward(forwarding, lis, pb.NewTunnelServiceClient(conn), target, log)
+	}
+	swarm.forward(lis, pb.TunnelTarget_TUNNEL_TARGET_SWARM)
 	key, peers, err := swarm.fetch(ctx, addr, creds)
 	if err == nil {
 		swarm.daemon, err = kubo.Start(ctx, kubo.Config{Repo: repo, Identity: ident, Swarm: &kubo.Swarm{Key: key, Peers: peers}})
@@ -1328,6 +1414,9 @@ func (s *poolSwarm) adopt(ctx context.Context, coordinator string, creds credent
 		key, peers, err := s.fetch(ctx, coordinator, creds)
 		if err == nil {
 			err = s.daemon.Rekey(ctx, &kubo.Swarm{Key: key, Peers: peers})
+		}
+		if err == nil {
+			err = s.recluster(ctx, key)
 		}
 		if err == nil {
 			s.key = key
@@ -1407,18 +1496,19 @@ func storeName(pinsDir string) (string, error) {
 }
 
 // fetchSwarm asks the coordinator at addr how to join its pool's private
-// network: the key, and where its own Kubo daemon is.
-func fetchSwarm(ctx context.Context, addr string, creds credentials.TransportCredentials) (key string, peers []string, err error) {
+// network: the key, where its own Kubo daemon is, and whether it runs a
+// cluster peer beside it.
+func fetchSwarm(ctx context.Context, addr string, creds credentials.TransportCredentials) (key string, peers []string, clustered bool, err error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	defer conn.Close()
 	swarm, err := pb.NewPoolServiceClient(conn).Swarm(ctx, &pb.SwarmRequest{})
 	if err != nil {
-		return "", nil, fmt.Errorf("ask the coordinator about its private IPFS network: %w", err)
+		return "", nil, false, fmt.Errorf("ask the coordinator about its private IPFS network: %w", err)
 	}
-	return swarm.GetSwarmKey(), swarm.GetAddresses(), nil
+	return swarm.GetSwarmKey(), swarm.GetAddresses(), swarm.GetCluster(), nil
 }
 
 // loadIdentity returns the key of the node whose data is in dataDir, making

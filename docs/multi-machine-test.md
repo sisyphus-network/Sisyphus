@@ -10,6 +10,7 @@ Before giving it the hour, [`examples/rehearsal.sh`](../examples/rehearsal.sh) r
 - **`sisyphusd` on each.** Build it with `make build` on a machine with Go and copy `bin/sisyphusd` across, or cross-build with `scripts/build-release.sh v0.0.0-test dist` and take the binary for each machine's system from `dist/`. Check with `sisyphusd version`.
 - **One port open on the coordinator**: TCP 7700, from the workers. Nothing needs opening on the workers, and nothing more for the Kubo part.
 - For the Kubo part, **`ipfs` (Kubo) installed on every machine**, the same version if possible.
+- For the cluster part, **`ipfs-cluster-service` (IPFS Cluster) installed on every machine** as well. It needs at least three machines to show a copy moving.
 - This repository's `examples/` directory on the machine you will submit jobs from.
 
 Throughout, `COORD` stands for the coordinator's address as the workers see it, such as `192.168.1.10`.
@@ -220,6 +221,59 @@ The removed worker exits. Within a few seconds each remaining worker logs `moved
 
 ✎ On the removed machine, start Kubo by hand on its old repository (`IPFS_PATH=$(sisyphusd data-dir)/ipfs LIBP2P_FORCE_PNET=1 ipfs daemon`) and try `ipfs swarm connect` to the coordinator's address from `ipfs id` there. It must fail: that machine holds the old key.
 
+## Part 3: with IPFS Cluster
+
+This part has never been run across machines. Stop every node and start them again as in part 2 with `--cluster` added to each, keeping the data directories:
+
+```sh
+sisyphusd run --kubo --cluster --listen 0.0.0.0:7700 --name coordinator
+sisyphusd run --kubo --cluster --role worker --coordinator COORD:7700 --name <a-name>
+```
+
+### 1. Check the cluster
+
+On the coordinator, half a minute after the last worker started:
+
+```sh
+sisyphusd pool cluster
+```
+
+✎ Is every node listed as `answering`? A worker that is missing has a cluster peer that cannot reach the coordinator's: its log is `ipfs-cluster/daemon.log` in its data directory, and its node's log will show "a tunnel failed" if that is why.
+
+### 2. Store something and see it copied
+
+```sh
+sisyphusd blob put "$(examples/big-file.sh 200)"
+sisyphusd pool cluster
+```
+
+✎ The file's CID is listed with `1/2` while a worker fetches it and `2/2` once it has. Record how long that took and which worker was chosen. On that worker, `IPFS_PATH=$(sisyphusd data-dir)/ipfs ipfs pin ls --type=recursive` lists the CID.
+
+### 3. Lose a holder
+
+Stop the worker that holds the copy.
+
+✎ Within about a minute `pool cluster` no longer lists that worker, shows the pin as `1/2` with another worker fetching, and then `2/2` again. With only two machines there is no other worker, and it stays at `1/2` until the stopped one is started again.
+
+### 4. A worker cannot change what is pinned
+
+On a worker, read the address and password of its cluster peer's API from `ipfs-cluster/service.json` in its data directory (`api.restapi`), and try to unpin the file:
+
+```sh
+curl -u sisyphusd:<password> -X DELETE http://127.0.0.1:<port>/pins/<cid>
+```
+
+✎ It must be refused, with a message about follower mode, and `pool cluster` on the coordinator must still list the pin.
+
+### 5. Unpin
+
+```sh
+sisyphusd blob unpin <cid>
+sisyphusd pool cluster
+```
+
+✎ The pin is gone from the list at once, and from `ipfs pin ls` on the worker that held it within a few seconds.
+
 ## What to report
 
 Add a comment to [#18](https://github.com/sisyphus-network/Sisyphus/issues/18) with:
@@ -245,4 +299,7 @@ Logs go to each node's standard error. Start a node with `-v` to log each task. 
 | `kubo: ... executable file not found` | `ipfs` is not installed or not on the PATH of the user running `sisyphusd`. |
 | `kubo: the daemon stopped while starting: ... someone else has the lock` | Another Kubo, or an `ipfs` command, has that repository open. A node that was killed outright leaves its Kubo running: find it with `pgrep -af 'ipfs daemon'` and stop it. |
 | `does not run a private IPFS network` | A worker was started with `--kubo` but its coordinator was not. |
+| `ipfs-cluster: ... executable file not found` | `ipfs-cluster-service` is not installed or not on the PATH of the user running `sisyphusd`. |
+| `the coordinator does not run an IPFS Cluster for its pool` | A worker was started with `--cluster` but its coordinator was not. |
+| `ipfs-cluster: the peer stopped while starting` | The message ends with the peer's last word; the rest is in `ipfs-cluster/daemon.log` in the node's data directory. A node that was killed outright leaves its peer running: find it with `pgrep -af ipfs-cluster-service` and stop it. |
 | Jobs work but every first run is slow, and workers log the "did not supply a blob" warning | The workers' Kubo daemons are not connected to the coordinator's. On a worker, `IPFS_PATH=<data-dir>/ipfs ipfs swarm peers` should list the coordinator's ID; if it does not, look for "a tunnel failed" in the worker's log. |

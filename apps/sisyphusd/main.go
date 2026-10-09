@@ -45,6 +45,7 @@ const usage = `Usage:
   sisyphusd pool remove <node-id>  take a node off that list and disconnect it
   sisyphusd pool work-for <node-id>  take tasks from a node whenever it will have this one (--stop to stop)
   sisyphusd pool rekey             change the key of the pool's private IPFS network
+  sisyphusd pool cluster           show which of the pool's nodes hold each thing pinned, in a pool run with --cluster
   sisyphusd model set|show|list    which language model this node plans with (set --provider --model [--url] [--api-key-file])
   sisyphusd model providers|pull|remove  the kinds of model service, and fetching a model into Ollama or deleting one
   sisyphusd ask <question>         put a question to a running node's planner (--chat <id> to carry on a conversation)

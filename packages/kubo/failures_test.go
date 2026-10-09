@@ -107,6 +107,12 @@ func TestCallsFailWhenKuboCannotBeReached(t *testing.T) {
 	}
 }
 
+func TestAClientSaysWhereItsKuboIs(t *testing.T) {
+	if got := NewClient("127.0.0.1:5001").Address(); got != "127.0.0.1:5001" {
+		t.Errorf("Address = %q, want the address the client was made for", got)
+	}
+}
+
 func TestBlockRemoveReportsAFailureKuboPutsInTheBody(t *testing.T) {
 	c := misbehaving(t, http.StatusOK, `{"Hash":"bafkexample","Error":"pinned: recursive"}`)
 	if err := c.BlockRemove(ctx, "bafkexample"); err == nil || !strings.Contains(err.Error(), "pinned: recursive") {

@@ -101,6 +101,7 @@ Anyone else can complete the handshake and is then refused.
 bin/sisyphusd pool members            # who has been admitted, and as what
 bin/sisyphusd pool remove <node-id>   # take a node off the list and disconnect it
 bin/sisyphusd pool rekey              # change the key of the pool's private IPFS network
+bin/sisyphusd pool cluster            # with --cluster: which nodes hold each thing pinned
 ```
 
 ## Storing data
@@ -158,6 +159,64 @@ IPFS_PATH=$(bin/sisyphusd data-dir)/ipfs ipfs cat <cid>                  # anyth
 - The node's own pins decide what it keeps, as described below. Anything pinned with `ipfs pin add` is also kept. Do not run `ipfs repo gc` on the repository: Kubo's collector does not know about the node's pins.
 - Moving an existing node to `--kubo`, or back, does not carry its stored data across.
 
+### IPFS Cluster: pins held by several nodes
+
+With `--kubo` alone, the coordinator's disk holds the only copy of the pool's data that anything promises to keep; what workers hold is a cache. With `--cluster` as well, each node also runs an [IPFS Cluster](https://ipfscluster.io) peer beside its Kubo, the pool's peers form one cluster, and whatever the coordinator pins is pinned on several nodes. The `ipfs-cluster-service` program must be installed on every node that uses it.
+
+```sh
+bin/sisyphusd run --kubo --cluster --replicas 1             # the coordinator: one copy besides its own
+bin/sisyphusd run --kubo --cluster --role worker --coordinator <addr> --join <invitation>
+bin/sisyphusd pool cluster                                  # which nodes hold what
+```
+
+- **The node's pins are the cluster's pins.** Everything in `blob pins`, apart from the hour's grace every upload gets and the records of jobs, which are not files, is pinned on the cluster, and unpinned from it when the last pin on the node goes: unpinned by hand, or lapsed and collected. Retention is still managed in the one place, with `blob pin`, `blob unpin`, `--retain` and `--ttl`. The coordinator compares the two lists when it starts and every minute after, and puts right whatever differs.
+- **`--replicas N` is how many nodes hold each pin besides the coordinator**, one unless told otherwise; `pool cluster` counts the coordinator too, so it shows N + 1. The coordinator always holds everything: its Kubo is where the node stores it in any case. The others are chosen by the cluster, by free space, and fetch the data over the pool's private network.
+- **With fewer nodes than that, a pin is held by as many as there are**, and gains holders within about a minute of more joining.
+- **When a holder goes, another takes its place.** A node not heard from for thirty seconds is taken to be gone, and the coordinator's peer has another node fetch what it held, if there is one that does not hold it already. If the node comes back, the pin stays where it was moved to.
+- **Only the coordinator says what is pinned.** A worker's peer is a follower: it keeps what it is allocated, refuses to pin or unpin anything itself, and every peer ignores changes that do not come from the coordinator's. Someone who gives a pool disk space gives it nothing else.
+- **The cluster is closed as the private network is.** Its secret is derived from the swarm key, so nothing more is handed out, and `pool remove` and `pool rekey` change both: each node restarts its cluster peer after its Kubo.
+- **It needs no port.** Every peer listens on its own machine only. A worker's reaches the coordinator's through the coordinator's `--listen` port, as its Kubo does; only word of what is pinned and who is there travels that way. Workers' peers on different machines are not connected to each other, and need not be.
+- **Each peer is its node**, with the node's ID and name, as its Kubo is. Its settings and its record of the pins are in `ipfs-cluster` in the node's data directory, and its log is `daemon.log` there.
+
+`pool cluster` lists the members the coordinator's peer has heard from lately, and for each pin how many nodes hold all of it, out of how many were asked for, and which are still fetching or have failed:
+
+```text
+MEMBER                                                NAME   STATE
+12D3KooWEixYEKkqKVZuwtPDXJaQs2Jevnv3CRz1B1sCsnnnWtSS  hub    answering
+12D3KooWK5P7C6zFJ9ozcn9cHgQn1niHdbeW8YWH2cZJ5baCJqza  north  answering
+12D3KooWRgaq6Nb65k1ZzAtBrLrwGS1X8GCGTnBXiupDuzZ3Z6eb  south  answering
+
+each pin is to be held by 2 of them
+
+CID                                                          COPIES  HELD BY     WAITING FOR
+bafybeifnshe3y2i4sl46bbjbagfdu5xbsbq55uxqras5an73qgcqocpyeq  2/2     hub, north  -
+```
+
+**Sizing.** Every copy costs its size on the node that holds it, so a pool storing S with `--replicas N` needs (N + 1) × S of disk in all, S of it on the coordinator. The cluster allocates by what each Kubo reports as free, which is its `Datastore.StorageMax`, 10 GB unless changed, less what its repository holds. To offer more or less on a node, set it and restart the node:
+
+```sh
+IPFS_PATH=$(bin/sisyphusd data-dir)/ipfs ipfs config Datastore.StorageMax 200GB
+```
+
+A cluster peer is one more process per node; with a handful of pins it used 60 to 75 MB of memory here.
+
+**Adding a storage node.** Start a worker with `--kubo --cluster`. It appears in `pool cluster` within half a minute. Pins that had fewer holders than asked for get it as one; pins that already had enough are not moved onto it.
+
+**Removing one.** Stop it, or `pool remove` it. Thirty seconds later the coordinator's peer starts moving what it held to other nodes, if there are any that do not hold it already; `pool cluster` shows `1/2` until they have fetched it. A removed node is shut out by the change of key, and keeps on its disk what it had.
+
+**Next to the built-in replication.** `--replicas` and `--replica-dir`, described under [Copies on other nodes](#copies-on-other-nodes), are replication done by `sisyphusd` itself, with no other program to run. The two are alternatives: this one is for pools that already run Kubo and want IPFS Cluster's allocation by free space and its repair, at the price of a second program on every node. `--replicas` means the same for both, copies besides the coordinator's own, and with `--cluster` it is the cluster that keeps them: the built-in scheme is then off, and a worker's `--replica-dir` holds nothing.
+
+What to know before relying on it:
+
+- Everything said of `--kubo` above and under [Known limits](#known-limits) holds here too: a node killed outright leaves both programs running, and both must be stopped by hand before it will start again.
+- While the coordinator is down the copies stay where they are, and nothing is moved or repaired.
+- Data is safe against the loss of a node only once `pool cluster` shows it held by more than one. A pin made a moment ago is still being fetched.
+- Losing the coordinator's data directory loses the list of what is pinned, on the node and on the cluster, though the other holders still have the blocks. There is no way yet to rebuild a coordinator from them.
+- A worker's disk is freed of what the cluster has let go only when its cache is next trimmed, which happens only with `--max-cache-bytes`. That limit counts what the cluster has the node hold, so set it well above that.
+- A node that works for other pools (see [Trust](#trust)) joins their private networks and not their clusters.
+- A pin put on the cluster by hand, with `ipfs-cluster-ctl` and under any name but `sisyphus`, is left alone and not shown by `pool cluster`.
+- Tried with IPFS Cluster 1.1.6 and Kubo 0.43.1, on one machine: three nodes, a 50 MB file copied to a second node in four seconds, and to a third forty seconds after the second was stopped. Not tried across machines, nor with more than three nodes or more than a few pins.
+
 ### One port
 
 To take part in a pool a node needs to make outgoing connections to its coordinator and nothing else. It opens no port, so it works from behind a home router or a firewall as it is. The coordinator is the one node that has to be reachable, on `--listen`.
@@ -165,7 +224,7 @@ To take part in a pool a node needs to make outgoing connections to its coordina
 That one port carries everything:
 
 - **The node's own protocol**: jobs, tasks, uploads and downloads, over TLS.
-- **A tunnel to the coordinator's Kubo**, for pools that use `--kubo`, inside that same TLS connection.
+- **A tunnel to the coordinator's Kubo**, for pools that use `--kubo`, inside that same TLS connection, and another to its cluster peer for pools that use `--cluster`.
 - **libp2p**, by which the pool's nodes reach each other. The coordinator tells the two kinds of caller apart by how they begin.
 
 **Workers reach each other through the coordinator.** Every node runs a libp2p host under its own ID. A worker keeps a place on the coordinator, which relays: when one worker wants a blob another has cached, it asks for that worker by ID, and the coordinator joins the two. Having met, the two try each other's own addresses, and if either can reach the other, on the same network for instance, they connect directly and the coordinator carries nothing more. Only the pool's members are let in or relayed for.
@@ -803,6 +862,8 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 | `packages/jobrecord` | A finished job as linked data: building the record and reading it back. |
 | `packages/runtime` | The `Workload` interface and built-in workloads. |
 | `packages/storage` | Content-addressed blob store with IPFS-compatible CIDs. |
+| `packages/kubo` | Running a Kubo daemon beside the node, and calling it. |
+| `packages/ipfscluster` | Running an IPFS Cluster peer beside the node's Kubo, and calling it. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections. |
 | `apps/sisyphusd/worker` | Connects to a coordinator and executes tasks. |
 | `apps/sisyphusd/api` | gRPC server wiring and the client-facing services. |
@@ -830,7 +891,8 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 - A node is remembered by address. If a coordinator's address changes, its workers and clients must join again.
 - A node's key cannot be changed without becoming a different node, and there is no way to stop a copied key being used other than removing that node.
 - Encryption hides what nodes say to each other, not that they are talking, how much, or when.
-- If a node using `--kubo` is killed outright rather than stopped, its Kubo daemon keeps running and must be stopped by hand before the node will start again.
+- If a node using `--kubo` is killed outright rather than stopped, its Kubo daemon keeps running and must be stopped by hand before the node will start again. With `--cluster` the same goes for its cluster peer.
+- With `--cluster`, only the coordinator's peer can change what is pinned or find a new holder for it. While the coordinator is down the copies stay as they are.
 - A removed node keeps whatever it had already fetched from the pool's private network. Changing the key stops it fetching anything more.
 - Run `ipfs` commands against a node's repository only while the node is up. With its Kubo down, including for the few seconds of a key change, the `ipfs` command takes the repository's lock and the node cannot start Kubo until the command ends.
 - Whatever is on the pool's private network can be fetched by every member of it. The network keeps outsiders out; it is private jobs, which seal their data, that keep members from reading each other's.

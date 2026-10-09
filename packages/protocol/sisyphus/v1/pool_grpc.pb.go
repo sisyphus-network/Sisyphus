@@ -19,15 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PoolService_Join_FullMethodName         = "/sisyphus.v1.PoolService/Join"
-	PoolService_Swarm_FullMethodName        = "/sisyphus.v1.PoolService/Swarm"
-	PoolService_IsMember_FullMethodName     = "/sisyphus.v1.PoolService/IsMember"
-	PoolService_Relays_FullMethodName       = "/sisyphus.v1.PoolService/Relays"
-	PoolService_Invite_FullMethodName       = "/sisyphus.v1.PoolService/Invite"
-	PoolService_ListMembers_FullMethodName  = "/sisyphus.v1.PoolService/ListMembers"
-	PoolService_RemoveMember_FullMethodName = "/sisyphus.v1.PoolService/RemoveMember"
-	PoolService_SetWorkFor_FullMethodName   = "/sisyphus.v1.PoolService/SetWorkFor"
-	PoolService_Rekey_FullMethodName        = "/sisyphus.v1.PoolService/Rekey"
+	PoolService_Join_FullMethodName          = "/sisyphus.v1.PoolService/Join"
+	PoolService_Swarm_FullMethodName         = "/sisyphus.v1.PoolService/Swarm"
+	PoolService_IsMember_FullMethodName      = "/sisyphus.v1.PoolService/IsMember"
+	PoolService_Relays_FullMethodName        = "/sisyphus.v1.PoolService/Relays"
+	PoolService_Invite_FullMethodName        = "/sisyphus.v1.PoolService/Invite"
+	PoolService_ListMembers_FullMethodName   = "/sisyphus.v1.PoolService/ListMembers"
+	PoolService_RemoveMember_FullMethodName  = "/sisyphus.v1.PoolService/RemoveMember"
+	PoolService_SetWorkFor_FullMethodName    = "/sisyphus.v1.PoolService/SetWorkFor"
+	PoolService_Rekey_FullMethodName         = "/sisyphus.v1.PoolService/Rekey"
+	PoolService_ClusterStatus_FullMethodName = "/sisyphus.v1.PoolService/ClusterStatus"
 )
 
 // PoolServiceClient is the client API for PoolService service.
@@ -67,6 +68,10 @@ type PoolServiceClient interface {
 	// workers are told and fetch the new one; anything else holding the old
 	// key is shut out.
 	Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error)
+	// ClusterStatus says how the pool's IPFS Cluster stands: which members it
+	// hears from, and which of them hold each of the pool's pins. Clients may
+	// call it too. It fails if this node does not run a cluster peer.
+	ClusterStatus(ctx context.Context, in *ClusterStatusRequest, opts ...grpc.CallOption) (*ClusterStatusResponse, error)
 }
 
 type poolServiceClient struct {
@@ -167,6 +172,16 @@ func (c *poolServiceClient) Rekey(ctx context.Context, in *RekeyRequest, opts ..
 	return out, nil
 }
 
+func (c *poolServiceClient) ClusterStatus(ctx context.Context, in *ClusterStatusRequest, opts ...grpc.CallOption) (*ClusterStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClusterStatusResponse)
+	err := c.cc.Invoke(ctx, PoolService_ClusterStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PoolServiceServer is the server API for PoolService service.
 // All implementations must embed UnimplementedPoolServiceServer
 // for forward compatibility.
@@ -204,6 +219,10 @@ type PoolServiceServer interface {
 	// workers are told and fetch the new one; anything else holding the old
 	// key is shut out.
 	Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error)
+	// ClusterStatus says how the pool's IPFS Cluster stands: which members it
+	// hears from, and which of them hold each of the pool's pins. Clients may
+	// call it too. It fails if this node does not run a cluster peer.
+	ClusterStatus(context.Context, *ClusterStatusRequest) (*ClusterStatusResponse, error)
 	mustEmbedUnimplementedPoolServiceServer()
 }
 
@@ -240,6 +259,9 @@ func (UnimplementedPoolServiceServer) SetWorkFor(context.Context, *SetWorkForReq
 }
 func (UnimplementedPoolServiceServer) Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Rekey not implemented")
+}
+func (UnimplementedPoolServiceServer) ClusterStatus(context.Context, *ClusterStatusRequest) (*ClusterStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClusterStatus not implemented")
 }
 func (UnimplementedPoolServiceServer) mustEmbedUnimplementedPoolServiceServer() {}
 func (UnimplementedPoolServiceServer) testEmbeddedByValue()                     {}
@@ -424,6 +446,24 @@ func _PoolService_Rekey_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PoolService_ClusterStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClusterStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PoolServiceServer).ClusterStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PoolService_ClusterStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PoolServiceServer).ClusterStatus(ctx, req.(*ClusterStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PoolService_ServiceDesc is the grpc.ServiceDesc for PoolService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -466,6 +506,10 @@ var PoolService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Rekey",
 			Handler:    _PoolService_Rekey_Handler,
+		},
+		{
+			MethodName: "ClusterStatus",
+			Handler:    _PoolService_ClusterStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -121,9 +121,11 @@ func poolCommand(ctx context.Context, args []string) error {
 			return poolRekey(ctx, args[1:])
 		case "work-for":
 			return poolWorkFor(ctx, args[1:])
+		case "cluster":
+			return showCluster(ctx, args[1:])
 		}
 	}
-	return errors.New("expected pool invite, join, members, remove, work-for or rekey")
+	return errors.New("expected pool invite, join, members, remove, work-for, rekey or cluster")
 }
 
 func poolInvite(ctx context.Context, args []string) error {

@@ -41,6 +41,14 @@ func NewClient(addr string) *Client {
 	return &Client{base: "http://" + addr + "/api/v0/", http: &http.Client{}}
 }
 
+// Address returns the host and port the Kubo API listens at, for another
+// program that is to call it. It changes when the daemon is restarted.
+func (c *Client) Address() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSuffix(strings.TrimPrefix(c.base, "http://"), "/api/v0/")
+}
+
 // call makes one API call and returns its response body, which the caller
 // must close. Kubo reports failures as a JSON object with an HTTP error
 // status; those come back as errors.

@@ -45,6 +45,11 @@ service PoolService {
   // workers are told and fetch the new one; anything else holding the old
   // key is shut out.
   rpc Rekey(RekeyRequest) returns (RekeyResponse);
+
+  // ClusterStatus says how the pool's IPFS Cluster stands: which members it
+  // hears from, and which of them hold each of the pool's pins. Clients may
+  // call it too. It fails if this node does not run a cluster peer.
+  rpc ClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse);
 }
 
 enum Role {
@@ -90,6 +95,10 @@ message SwarmResponse {
   // no connections from outside; it is then reached through
   // TunnelService.Open.
   repeated string addresses = 2;
+  // Whether this node also runs an IPFS Cluster peer for the pool, which a
+  // member's own peer reaches through TunnelService.Open. The cluster's
+  // secret is not sent: each member derives it from the swarm key.
+  bool cluster = 3;
 }
 
 message InviteRequest {
@@ -137,4 +146,38 @@ message RekeyRequest {}
 
 message RekeyResponse {
   string swarm_fingerprint = 1;
+}
+
+message ClusterStatusRequest {}
+
+message ClusterStatusResponse {
+  // How many members each pin is meant to be held by.
+  uint32 replicas = 1;
+  // The members the cluster has heard from lately, this node among them.
+  repeated ClusterMember members = 2;
+  // What the cluster keeps for the pool.
+  repeated ClusterPin pins = 3;
+}
+
+message ClusterMember {
+  string node_id = 1;
+  string name = 2;
+  // Why the member could not be asked about itself, if it could not.
+  string error = 3;
+}
+
+message ClusterPin {
+  string cid = 1;
+  // The members chosen to hold it, and how far each has got.
+  repeated ClusterCopy copies = 2;
+}
+
+message ClusterCopy {
+  string node_id = 1;
+  string name = 2;
+  // "pinned" once the member holds all of it. Anything else is the
+  // cluster's own word for a copy that is not there yet, such as
+  // "pinning", "pin_queued" or "pin_error".
+  string status = 3;
+  string error = 4;
 }
