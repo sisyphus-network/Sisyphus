@@ -306,14 +306,23 @@ func TestFilesAreKeptToTheDirectoryGivenAndImagesToThoseListed(t *testing.T) {
 		args runJobArgs
 		ok   bool
 	}{
-		"a listed image":   {runJobArgs{Workload: "container", Params: map[string]any{"image": "alpine:3.20"}}, true},
-		"an unlisted one":  {runJobArgs{Workload: "container", Params: map[string]any{"image": "busybox"}}, false},
-		"no image at all":  {runJobArgs{Workload: "container"}, false},
-		"another workload": {runJobArgs{Workload: "primes"}, true},
+		"a listed image":               {runJobArgs{Workload: "container", Params: map[string]any{"image": "alpine:3.20"}}, true},
+		"an unlisted one":              {runJobArgs{Workload: "container", Params: map[string]any{"image": "busybox"}}, false},
+		"no image at all":              {runJobArgs{Workload: "container"}, false},
+		"another workload":             {runJobArgs{Workload: "primes"}, true},
+		"a graph of listed images":     {runJobArgs{Workload: "graph", Params: map[string]any{"steps": []any{map[string]any{"name": "s", "workload": "primes", "params": map[string]any{"to": 10}}, map[string]any{"name": "s", "workload": "container", "params": map[string]any{"image": "alpine:3.20"}}}}}, true},
+		"a graph with an unlisted one": {runJobArgs{Workload: "graph", Params: map[string]any{"steps": []any{map[string]any{"name": "s", "workload": "container", "params": map[string]any{"image": "alpine:3.20"}}, map[string]any{"name": "s", "workload": "container", "params": map[string]any{"image": "busybox"}}}}}, false},
+		"a graph within a graph":       {runJobArgs{Workload: "graph", Params: map[string]any{"steps": []any{map[string]any{"name": "s", "workload": "graph", "params": map[string]any{"steps": []any{map[string]any{"name": "s", "workload": "container", "params": map[string]any{"image": "busybox"}}}}}}}}, false},
+		"an image a step would learn":  {runJobArgs{Workload: "graph", Params: map[string]any{"steps": []any{map[string]any{"name": "s", "workload": "container", "params": map[string]any{"image": "${s.result}"}}}}}, false},
+		"a graph that is not one":      {runJobArgs{Workload: "graph", Params: map[string]any{"steps": []any{"step"}}}, true},
 	} {
 		if err := s.permitted(tt.args); (err == nil) != tt.ok {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	// The planner would pick what to run where nothing here could see it.
+	if _, err := s.askPlanner(ctx, askPlannerArgs{Question: "How many?"}); err == nil || !strings.Contains(err.Error(), "chooses for itself what to run") || !strings.Contains(err.Error(), "alpine:3.20") {
+		t.Errorf("the planner, asked through a server held to listed images: %v", err)
 	}
 	if _, err := s.run(ctx, runJobArgs{Workload: "container", Params: map[string]any{"image": "busybox"}}); err == nil || !strings.Contains(err.Error(), "alpine:3.20") {
 		t.Errorf("running an image not listed: %v", err)

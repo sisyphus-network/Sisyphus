@@ -634,7 +634,7 @@ What the agent may do is yours to set, when you give its settings the command:
 | --- | --- |
 | `--files-under <dir>` | The only directory `store_file` may read from and `fetch_file` write to. It is the directory the server is started in unless you say otherwise; `/` is anywhere you may. A link inside it that leads outside is outside. |
 | `--read-only` | Only the tools that look. Nothing is run, stored, written or changed. |
-| `--images a,b` | The only container images `run_job` may run. Any, if not given. |
+| `--images a,b` | The only container images `run_job` may run, in a `container` job or in any step of a `graph`. An image a step would take from an earlier step's result is not a listed one. `ask_planner` is refused while images are listed, since the planner chooses what to run itself. Any, if not given. |
 | `--admin` | Adds the tools that change the node itself. Without it there are none. |
 
 - **It is a client of the local API** and holds the node's token, which it reads from the data directory.

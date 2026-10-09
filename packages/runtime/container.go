@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/ipfs/go-cid"
 )
@@ -96,8 +97,8 @@ func (Container) Split(_ context.Context, _ Blobs, params []byte, parts int) ([]
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("container parameters: %w", err)
 	}
-	if p.Image == "" {
-		return nil, errors.New("container parameters: no image is named")
+	if err := checkImage(p.Image); err != nil {
+		return nil, fmt.Errorf("container parameters: %w", err)
 	}
 	if p.Input != "" {
 		if _, err := cid.Decode(p.Input); err != nil {
@@ -117,12 +118,34 @@ func (Container) Split(_ context.Context, _ Blobs, params []byte, parts int) ([]
 	return payloads, nil
 }
 
+// checkImage refuses what cannot be the name of an image. The name is
+// handed to the engine among its options, so one that began with a dash
+// would be read as an option: a mount of the worker's disk, say, or leave
+// to run privileged. No image's name begins with one, or has a space or a
+// control character in it.
+func checkImage(image string) error {
+	switch {
+	case image == "":
+		return errors.New("no image is named")
+	case strings.HasPrefix(image, "-"):
+		return fmt.Errorf("%q is not the name of an image: it begins with a dash", image)
+	case strings.ContainsFunc(image, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }):
+		return fmt.Errorf("%q is not the name of an image: it has a space or a control character in it", image)
+	}
+	return nil
+}
+
 // maxStdout is how much of what a task prints is kept.
 const maxStdout = 16 << 20
 
 func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
 	var task containerTask
 	if err := json.Unmarshal(payload, &task); err != nil {
+		return nil, fmt.Errorf("container payload: %w", err)
+	}
+	// The worker checks for itself: what it is handed came over the
+	// network, and the image is put among the engine's own arguments.
+	if err := checkImage(task.Image); err != nil {
 		return nil, fmt.Errorf("container payload: %w", err)
 	}
 	engine := c.Engine

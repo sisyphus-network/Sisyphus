@@ -187,6 +187,41 @@ type unreadable struct{ storage.Blob }
 
 func (unreadable) Read([]byte) (int, error) { return 0, errAwkward }
 
+func TestAnImageThatWouldBeReadAsAnOptionIsRefused(t *testing.T) {
+	ctx := context.Background()
+	ran := false
+	c := Container{Engine: func(context.Context, []string, io.Writer, io.Writer) (int, error) { ran = true; return 0, nil }}
+	for image, want := range map[string]string{
+		"":                     "no image is named",
+		"--privileged":         "it begins with a dash",
+		"--volume=/:/host":     "it begins with a dash",
+		"-v":                   "it begins with a dash",
+		"alpine --privileged":  "it has a space or a control character in it",
+		"alpine\n--privileged": "it has a space or a control character in it",
+		"alpine\u0000":         "it has a space or a control character in it",
+	} {
+		params := mustJSON(ContainerParams{Image: image, Command: []string{"alpine", "id"}})
+		if _, err := c.Split(ctx, nil, params, 1); err == nil || !strings.Contains(err.Error(), "container parameters: ") || !strings.Contains(err.Error(), want) {
+			t.Errorf("a job with the image %q: %v", image, err)
+		}
+		// A worker handed such a task by a coordinator that did not check
+		// refuses it too, and starts nothing.
+		payload := mustJSON(containerTask{ContainerParams: ContainerParams{Image: image, Command: []string{"alpine", "id"}}, Count: 1})
+		if _, err := c.Execute(ctx, storage.NewMemory(), payload); err == nil || !strings.Contains(err.Error(), "container payload: ") || !strings.Contains(err.Error(), want) {
+			t.Errorf("a task with the image %q: %v", image, err)
+		}
+	}
+	if ran {
+		t.Error("the engine was started for a task whose image is no image")
+	}
+	// Names that are images, in every form they take.
+	for _, image := range []string{"alpine", "alpine:3.20", "ghcr.io/owner/name:tag", "localhost:5000/a/b", "alpine@sha256:" + strings.Repeat("a", 64)} {
+		if _, err := c.Split(ctx, nil, mustJSON(ContainerParams{Image: image}), 1); err != nil {
+			t.Errorf("a job with the image %q: %v", image, err)
+		}
+	}
+}
+
 func TestContainerTasksThatFail(t *testing.T) {
 	store := storage.NewMemory()
 	ctx := context.Background()
