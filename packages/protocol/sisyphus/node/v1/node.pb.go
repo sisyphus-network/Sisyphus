@@ -1495,7 +1495,10 @@ type Job struct {
 	Step        string `protobuf:"bytes,19,opt,name=step,proto3" json:"step,omitempty"`
 	// Set once the job is over: the CID of its record, which names the
 	// job's whole history. Empty until then.
-	RecordCid     string `protobuf:"bytes,20,opt,name=record_cid,json=recordCid,proto3" json:"record_cid,omitempty"`
+	RecordCid string `protobuf:"bytes,20,opt,name=record_cid,json=recordCid,proto3" json:"record_cid,omitempty"`
+	// How many different workers must return the same result for each task;
+	// see SubmitJobRequest. Zero or one for a job that is not verified.
+	Verify        uint32 `protobuf:"varint,21,opt,name=verify,proto3" json:"verify,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1670,6 +1673,13 @@ func (x *Job) GetRecordCid() string {
 	return ""
 }
 
+func (x *Job) GetVerify() uint32 {
+	if x != nil {
+		return x.Verify
+	}
+	return 0
+}
+
 type JobTask struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Index uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
@@ -1784,7 +1794,14 @@ type SubmitJobRequest struct {
 	// key, and inputs stored as private files are opened with it. The pool's
 	// other members hold only what they cannot read; the workers that run
 	// the job's tasks are given the key.
-	Private       bool `protobuf:"varint,8,opt,name=private,proto3" json:"private,omitempty"`
+	Private bool `protobuf:"varint,8,opt,name=private,proto3" json:"private,omitempty"`
+	// Verify the job's results by replication: two or more has each task run
+	// by that many different workers, and the task succeeds only once that
+	// many have returned the same result. Zero or one runs each task once.
+	// Only for work that gives the same result every time, and not for a
+	// private job. It is refused if fewer workers that could take the job
+	// are connected.
+	Verify        uint32 `protobuf:"varint,9,opt,name=verify,proto3" json:"verify,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1873,6 +1890,13 @@ func (x *SubmitJobRequest) GetPrivate() bool {
 		return x.Private
 	}
 	return false
+}
+
+func (x *SubmitJobRequest) GetVerify() uint32 {
+	if x != nil {
+		return x.Verify
+	}
+	return 0
 }
 
 type SubmitJobResponse struct {
@@ -2068,6 +2092,8 @@ type JobEvent struct {
 	AtMs int64 `protobuf:"varint,2,opt,name=at_ms,json=atMs,proto3" json:"at_ms,omitempty"`
 	// What happened: submitted, task-started, task-succeeded, task-failed,
 	// task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
+	// In a job that is verified, also task-result, for each result a worker
+	// returns, and task-disagreed, when the results in for a task differ.
 	Kind string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
 	// The task concerned, or -1 if the event is about the job as a whole.
 	TaskIndex     int32  `protobuf:"varint,4,opt,name=task_index,json=taskIndex,proto3" json:"task_index,omitempty"`
@@ -4647,7 +4673,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x06models\x18\x10 \x03(\tR\x06models\"B\n" +
 	"\tWorkerGpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xa2\x05\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xba\x05\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1a\n" +
 	"\bworkload\x18\x02 \x01(\tR\bworkload\x12\x16\n" +
@@ -4671,7 +4697,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\rparent_job_id\x18\x12 \x01(\tR\vparentJobId\x12\x12\n" +
 	"\x04step\x18\x13 \x01(\tR\x04step\x12\x1d\n" +
 	"\n" +
-	"record_cid\x18\x14 \x01(\tR\trecordCid\"\xd7\x01\n" +
+	"record_cid\x18\x14 \x01(\tR\trecordCid\x12\x16\n" +
+	"\x06verify\x18\x15 \x01(\rR\x06verify\"\xd7\x01\n" +
 	"\aJobTask\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x120\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1a.sisyphus.node.v1.JobStateR\x05state\x12\x18\n" +
@@ -4680,7 +4707,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\vworker_name\x18\x05 \x01(\tR\n" +
 	"workerName\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1a\n" +
-	"\bprogress\x18\a \x01(\x01R\bprogress\"\xa3\x02\n" +
+	"\bprogress\x18\a \x01(\x01R\bprogress\"\xbb\x02\n" +
 	"\x10SubmitJobRequest\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
@@ -4689,7 +4716,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x14task_timeout_seconds\x18\x05 \x01(\rR\x12taskTimeoutSeconds\x12(\n" +
 	"\x10min_memory_bytes\x18\x06 \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
 	"\bmin_gpus\x18\a \x01(\rR\aminGpus\x12\x18\n" +
-	"\aprivate\x18\b \x01(\bR\aprivate\"<\n" +
+	"\aprivate\x18\b \x01(\bR\aprivate\x12\x16\n" +
+	"\x06verify\x18\t \x01(\rR\x06verify\"<\n" +
 	"\x11SubmitJobResponse\x12'\n" +
 	"\x03job\x18\x01 \x01(\v2\x15.sisyphus.node.v1.JobR\x03job\")\n" +
 	"\x10CancelJobRequest\x12\x15\n" +
