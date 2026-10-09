@@ -18,7 +18,7 @@
         in {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              go
+              go_1_27
               gopls
               delve
               go-tools
@@ -36,9 +36,9 @@
               pkgs.gsettings-desktop-schemas
             ];
 
-            # Follow the minimum toolchain version declared by go.mod, including
-            # when the locked nixpkgs ships an older bootstrap Go compiler.
-            GOTOOLCHAIN = "auto";
+            # Use the Nix-provided compiler rather than silently downloading
+            # another toolchain. Keep this package aligned with go.mod.
+            GOTOOLCHAIN = "local";
 
             shellHook = ''
               ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
