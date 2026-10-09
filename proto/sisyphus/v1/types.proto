@@ -98,6 +98,14 @@ message JobSpec {
   // much memory, and at least this many graphics cards. Zero asks nothing.
   uint64 min_memory_bytes = 7;
   uint32 min_gpus = 8;
+  // Verification by replication. Two or more has each task run by that many
+  // different workers, and the task succeeds only once that many of them
+  // have returned the same result: the same output, and the same stored
+  // blobs by CID. Zero and one ask for nothing: each task is run once and
+  // what its worker returns is taken as it is. It is for workloads that
+  // give the same result every time they are run, and cannot be asked of a
+  // private job.
+  uint32 verify = 9;
 }
 
 message Task {
@@ -199,6 +207,8 @@ message JobEvent {
   google.protobuf.Timestamp at = 2;
   // What happened: submitted, task-started, task-succeeded, task-failed,
   // task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
+  // In a job that is verified, also task-result, for each result a worker
+  // returns, and task-disagreed, when the results in for a task differ.
   string kind = 3;
   // The task concerned, or -1 if the event is about the job as a whole.
   int32 task_index = 4;

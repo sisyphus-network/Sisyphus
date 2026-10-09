@@ -36,6 +36,9 @@ const (
 	maxAttempts = 3
 	// maxTasksPerJob bounds how finely a submitter can ask to split a job.
 	maxTasksPerJob = 10_000
+	// maxVerify bounds how many workers a submitter can ask to have run
+	// each task of a job; see verify.go.
+	maxVerify = 10
 )
 
 // Store is the blob store a coordinator works against: workloads split from
@@ -203,6 +206,11 @@ func (o *outbox) close() {
 type assignment struct {
 	job  *jobmodel.Job
 	task *jobmodel.Task
+	// attempt is the number of the attempt at the task that this is, and
+	// started when it was handed out. A task of a job that is verified is
+	// with several workers at once, each of them a different attempt.
+	attempt int
+	started time.Time
 }
 
 func New(cfg Config) *Coordinator {
@@ -266,6 +274,10 @@ const (
 	eventTaskFailed    = "task-failed"
 	eventTaskLost      = "task-lost"
 	eventTaskTimedOut  = "task-timed-out"
+	// In a job that is verified: a worker returned a result for a task,
+	// and the results in for a task are not all the same.
+	eventTaskResult    = "task-result"
+	eventTaskDisagreed = "task-disagreed"
 	eventLog           = "log"
 	whole              = -1 // the task index of an event about the job itself
 )
@@ -333,14 +345,14 @@ func (c *Coordinator) Expire(now time.Time) {
 	defer c.mu.Unlock()
 	for _, w := range c.workers {
 		for id, a := range w.running {
-			if a.job.TaskTimeout <= 0 || now.Sub(a.task.StartedAt) <= a.job.TaskTimeout {
+			if a.job.TaskTimeout <= 0 || now.Sub(a.started) <= a.job.TaskTimeout {
 				continue
 			}
 			delete(w.running, id)
-			w.send.add(cancelOf(a.task))
+			w.send.add(cancelOf(a))
 			reason := "timed out after " + a.job.TaskTimeout.String()
 			c.recordLocked(a.job, eventTaskTimedOut, a.task.Index, w.name, reason)
-			a.job.Fail(a.task, reason, maxAttempts, now)
+			c.failLocked(a, reason, now)
 			c.settleLocked(a.job)
 			c.notifyLocked(a.job)
 		}
@@ -348,9 +360,9 @@ func (c *Coordinator) Expire(now time.Time) {
 	c.scheduleLocked()
 }
 
-// cancelOf is the message that tells a worker to stop a task.
-func cancelOf(task *jobmodel.Task) *pb.CoordinatorMessage {
-	return &pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Cancel{Cancel: &pb.TaskCancel{TaskId: task.ID, Attempt: uint32(task.Attempt)}}}
+// cancelOf is the message that tells a worker to stop a task it was given.
+func cancelOf(a assignment) *pb.CoordinatorMessage {
+	return &pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Cancel{Cancel: &pb.TaskCancel{TaskId: a.task.ID, Attempt: uint32(a.attempt)}}}
 }
 
 // stopTasksLocked tells every worker running a task of a job that is over to
@@ -361,7 +373,7 @@ func (c *Coordinator) stopTasksLocked(job *jobmodel.Job) {
 		for id, a := range w.running {
 			if a.job == job {
 				delete(w.running, id)
-				w.send.add(cancelOf(a.task))
+				w.send.add(cancelOf(a))
 			}
 		}
 	}
@@ -373,10 +385,14 @@ func (c *Coordinator) handleUpdate(w *worker, update *pb.TaskUpdate) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	a, ok := w.running[update.GetTaskId()]
-	if !ok || uint32(a.task.Attempt) != update.GetAttempt() {
+	if !ok || uint32(a.attempt) != update.GetAttempt() {
 		return
 	}
-	a.task.Progress = min(max(update.GetProgress(), 0), 1)
+	if progress := min(max(update.GetProgress(), 0), 1); c.replicated(a.job) {
+		a.job.ReportCopy(a.task, progress)
+	} else {
+		a.task.Progress = progress
+	}
 	for _, line := range update.GetLog() {
 		c.recordLocked(a.job, eventLog, a.task.Index, w.name, line)
 	}
@@ -390,6 +406,8 @@ func (c *Coordinator) handleUpdate(w *worker, update *pb.TaskUpdate) {
 // A task that was running goes back to wait for a worker: whoever had it
 // has lost its connection, and anything it sends later is for an attempt
 // this coordinator did not hand out. That does not count against the task.
+// The results a task of a verified job already had are kept, and only the
+// workers that had not answered are asked again.
 func (c *Coordinator) Recover() (unfinished int, err error) {
 	jobs, err := c.journal.LoadJobs()
 	if err != nil {
@@ -431,7 +449,7 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 		waiting := false
 		for _, task := range job.Tasks {
 			if task.State == jobmodel.Running {
-				job.Requeue(task, "the coordinator was restarted")
+				c.takeBack(job, task, "the coordinator was restarted")
 			}
 			waiting = waiting || task.State != jobmodel.Succeeded
 		}
@@ -535,12 +553,23 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		return nil, status.Errorf(codes.InvalidArgument, "unknown schedule mode %d", spec.GetMode())
 	}
 
+	verify := int(spec.GetVerify())
+	if verify > maxVerify {
+		return nil, status.Errorf(codes.InvalidArgument, "verify exceeds %d", maxVerify)
+	}
+	if verify >= 2 && len(spec.GetKey()) > 0 {
+		return nil, status.Error(codes.InvalidArgument, "a private job cannot be verified: each worker seals what it stores afresh, so the results of two that did the same work never compare as the same")
+	}
+	needs := c.workloads.Needs(workload.Name(), spec.GetParams())
+
 	parts := 1
 	if mode == jobmodel.Distributed {
 		parts = int(spec.GetMaxTasks())
 		if parts == 0 {
+			// A task of a verified job takes a slot on each worker it is
+			// handed to.
 			c.mu.Lock()
-			parts = max(c.slotsLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), c.workloads.Needs(workload.Name(), spec.GetParams())), 1)
+			parts = max(c.slotsLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs)/max(verify, 1), 1)
 			c.mu.Unlock()
 		}
 	}
@@ -564,11 +593,18 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		// would be nobody's to stop, and no part of the job's record.
 		return nil, status.Errorf(codes.Aborted, "job %q, which this would be a step of, is over", parent)
 	}
+	// A job cannot be verified by fewer workers than it asks to agree. The
+	// steps of a job whose tasks are jobs are held to that as each begins.
+	_, steps := workload.(runtime.Composite)
+	if able := c.ableLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs); verify >= 2 && !steps && able < verify {
+		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job", verify, able)
+	}
 	job := jobmodel.New(newID(), workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
+	job.Verify = verify
 	job.Key, job.Private, job.Submitter = spec.GetKey(), len(spec.GetKey()) > 0, submitter
 	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
-	job.Needs = c.workloads.Needs(job.Workload, job.Params)
+	job.Needs = needs
 	job.Parent, job.Step = parent, step
 	job.NoteRead(touched.Read()...)
 	// A job is accepted only once it is on record: its submitter is about
@@ -582,7 +618,11 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	// Hold the job's inputs until it is over, however long that takes.
 	c.pin(job, time.Time{}, touched.Read())
 	c.log.Info("job submitted", "job", job.ID, "workload", job.Workload, "tasks", len(job.Tasks))
-	c.recordLocked(job, eventSubmitted, whole, "", fmt.Sprintf("%s, in %d tasks", job.Workload, len(job.Tasks)))
+	asked := fmt.Sprintf("%s, in %d tasks", job.Workload, len(job.Tasks))
+	if verify >= 2 {
+		asked += fmt.Sprintf(", each to be verified by %d workers", verify)
+	}
+	c.recordLocked(job, eventSubmitted, whole, "", asked)
 
 	c.scheduleLocked()
 	return job.ToProto(), nil
@@ -840,10 +880,10 @@ func (c *Coordinator) disconnect(w *worker) {
 	for _, a := range w.running {
 		if c.ctx.Err() != nil {
 			// It is the coordinator that is going away, not the worker.
-			a.job.Requeue(a.task, "the coordinator stopped")
+			c.requeueLocked(a, "the coordinator stopped")
 		} else {
 			c.recordLocked(a.job, eventTaskLost, a.task.Index, w.name, "its worker disconnected")
-			a.job.Fail(a.task, "worker "+w.id+" disconnected", maxAttempts, now)
+			c.failLocked(a, "worker "+w.id+" disconnected", now)
 		}
 		c.settleLocked(a.job)
 		c.notifyLocked(a.job)
@@ -862,7 +902,7 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	w.lastSeen = time.Now()
 
 	a, ok := w.running[result.GetTaskId()]
-	if !ok || uint32(a.task.Attempt) != result.GetAttempt() {
+	if !ok || uint32(a.attempt) != result.GetAttempt() {
 		c.log.Warn("dropping result for a task this worker is not running", "node", w.id, "task", result.GetTaskId())
 		return
 	}
@@ -888,20 +928,28 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 			w.holds[held] = struct{}{}
 		}
 		c.pin(a.job, time.Time{}, result.GetWrittenBlobs())
-		c.recordLocked(a.job, eventTaskSucceeded, a.task.Index, w.name, "")
-		if a.job.Succeed(a.task, outcome.Output) {
-			// Succeed reports the last task only once, so each job is
+		done := false
+		if c.replicated(a.job) {
+			// One result among several, which settles the task only if
+			// enough of them are the same.
+			done = c.returnedLocked(w, a, outcome.Output, result.GetWrittenBlobs())
+		} else {
+			c.recordLocked(a.job, eventTaskSucceeded, a.task.Index, w.name, "")
+			done = a.job.Succeed(a.task, outcome.Output)
+		}
+		if done {
+			// The last task is reported only once, so each job is
 			// aggregated once.
 			c.aggregating.Add(1)
 			go c.aggregate(a.job)
 		}
 	case *pb.TaskResult_Error:
-		c.log.Warn("task attempt failed", "task", a.task.ID, "node", w.id, "attempt", a.task.Attempt, "error", outcome.Error)
+		c.log.Warn("task attempt failed", "task", a.task.ID, "node", w.id, "attempt", a.attempt, "error", outcome.Error)
 		c.recordLocked(a.job, eventTaskFailed, a.task.Index, w.name, outcome.Error)
-		a.job.Fail(a.task, outcome.Error, maxAttempts, now)
+		c.failLocked(a, outcome.Error, now)
 	default:
 		c.recordLocked(a.job, eventTaskFailed, a.task.Index, w.name, "worker reported no outcome")
-		a.job.Fail(a.task, "worker reported no outcome", maxAttempts, now)
+		c.failLocked(a, "worker reported no outcome", now)
 	}
 	c.settleLocked(a.job)
 	c.notifyLocked(a.job)
@@ -1018,34 +1066,47 @@ func (c *Coordinator) scheduleLocked() {
 			c.stepsLocked(job, composite)
 			continue
 		}
+		if c.replicated(job) {
+			// Each of its tasks goes to several workers at once.
+			c.copiesLocked(job)
+			continue
+		}
 		for _, task := range job.Assignable() {
-			w := c.pickWorkerLocked(job)
+			w := c.pickWorkerLocked(job, task)
 			if w == nil {
 				break
 			}
-			job.Start(task, w.id, w.name, time.Now())
-			c.recordLocked(job, eventTaskStarted, task.Index, w.name, fmt.Sprintf("attempt %d", task.Attempt))
-			w.running[task.ID] = assignment{job: job, task: task}
-			w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
-				TaskId:   task.ID,
-				JobId:    job.ID,
-				Attempt:  uint32(task.Attempt),
-				Workload: job.Workload,
-				Payload:  task.Payload,
-				Key:      job.Key,
-			}}})
-			c.notifyLocked(job)
+			now := time.Now()
+			job.Start(task, w.id, w.name, now)
+			c.handLocked(w, assignment{job: job, task: task, attempt: task.Attempt, started: now})
 		}
 	}
 }
 
+// handLocked gives a worker an attempt at a task.
+func (c *Coordinator) handLocked(w *worker, a assignment) {
+	c.recordLocked(a.job, eventTaskStarted, a.task.Index, w.name, fmt.Sprintf("attempt %d", a.attempt))
+	w.running[a.task.ID] = a
+	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
+		TaskId:   a.task.ID,
+		JobId:    a.job.ID,
+		Attempt:  uint32(a.attempt),
+		Workload: a.job.Workload,
+		Payload:  a.task.Payload,
+		Key:      a.job.Key,
+	}}})
+	c.notifyLocked(a.job)
+}
+
 // pickWorkerLocked returns the worker with the most free slots that supports
-// the workload, or nil if none has a free slot.
-func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job) *worker {
+// the workload, or nil if none has a free slot. A worker that has a copy of
+// the task, or has returned a result for it, is passed over: only a task of
+// a verified job has such workers while it waits for another.
+func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) *worker {
 	var best *worker
 	bestFree := 0
 	for _, w := range c.workers {
-		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) {
+		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) {
 			continue
 		}
 		free := int(w.capabilities.GetTaskSlots()) - len(w.running)
