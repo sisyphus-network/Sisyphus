@@ -745,28 +745,15 @@ func runDaemon(ctx context.Context, args []string) error {
 	// only where the node coordinates a pool.
 	planning := &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey, filePins: local.Store}
 	local.Assistant = planning
-	if err := planning.replayFilePins(ctx); err != nil {
-		log.Warn("attachment pins will be retried", "error", err)
-	}
+	// What a conversation's attachments ask of the store is queued with the
+	// conversation, and applied here: at once, for what a stop left
+	// undone, and again for whatever fails.
 	pinCtx, stopPins := context.WithCancel(ctx)
 	pinDone := make(chan struct{})
 	defer func() { stopPins(); <-pinDone }()
 	go func() {
 		defer close(pinDone)
-		tick := time.NewTicker(2 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-pinCtx.Done():
-				return
-			case <-tick.C:
-				attempt, cancel := context.WithTimeout(pinCtx, 10*time.Second)
-				if err := planning.replayFilePins(attempt); err != nil {
-					log.Warn("attachment pins will be retried", "error", err)
-				}
-				cancel()
-			}
-		}
+		replayFilePinsPeriodically(pinCtx, planning, filePinInterval, log)
 	}()
 
 	// Whatever its role, the node is connected to the nodes in its address
@@ -1576,6 +1563,41 @@ func showIdentity(args []string) error {
 	}
 	fmt.Fprintln(stdout, ident.ID())
 	return nil
+}
+
+// filePinInterval is how often queued attachment pin changes are tried
+// again, and filePinTimeout how long one round of them may take.
+const (
+	filePinInterval = 2 * time.Second
+	filePinTimeout  = 10 * time.Second
+)
+
+// replayFilePinsPeriodically applies the attachment pin changes a node has
+// queued, now and every interval until ctx ends. A round that fails is
+// logged once, not every interval, and so is the round that then succeeds.
+func replayFilePinsPeriodically(ctx context.Context, planning *assistant, interval time.Duration, log *slog.Logger) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	failing := false
+	for {
+		attempt, cancel := context.WithTimeout(ctx, filePinTimeout)
+		err := planning.replayFilePins(attempt)
+		cancel()
+		switch {
+		case ctx.Err() != nil:
+			return
+		case err != nil && !failing:
+			log.Warn("attachment pins could not be applied and will be retried", "error", err)
+		case err == nil && failing:
+			log.Info("attachment pins applied")
+		}
+		failing = err != nil
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // collectPeriodically clears out, every interval until ctx ends, what has

@@ -285,6 +285,7 @@ A node keeps a blob for as long as something pins it, and deletes what nothing p
 | `restored` | A coordinator that lost its store, on what it took back from its followers | Until `blob unpin`, or until the time the lost store kept it to; see [Copies on other nodes](#copies-on-other-nodes) |
 | `job:<id>` | The coordinator, on a job's inputs and results | While the job runs, then for `--retain` (default 7 days) |
 | `record:<id>` | The coordinator, on a finished job's [record](#a-jobs-record) | Until the job is forgotten (`--keep-jobs`) |
+| `chat:<id>` | The node, on a file attached to a conversation with its planner | Until the conversation is deleted. The change is queued in the node's database with the conversation and applied to the store after, so one that fails, or that a stop cut short, is tried again every two seconds and when the node next starts |
 | `recent` | Every upload | One hour, so there is time to pin it properly |
 | `pool:<store>` | A storage follower, in its own store, on what its coordinator has it hold | Until the coordinator stops listing it; see [Copies on other nodes](#copies-on-other-nodes) |
 | `pinning-service:<request>` | A request made through the [pinning service](#pinning-services) | Until the request is removed |

@@ -1,6 +1,7 @@
 package nodedb
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,5 +49,13 @@ func TestChatPinOperationsAreDurableAndOrdered(t *testing.T) {
 	}
 	if err := db.CompleteFilePin(ops[1].Seq); err == nil {
 		t.Fatal("closed database accepted acknowledgement")
+	}
+}
+
+func TestADamagedQueueOfPinOperationsIsReported(t *testing.T) {
+	db, _ := newDB(t)
+	loosen(t, db, "file_pin_operations", "seq, owner, cid, keep")
+	if _, err := db.PendingFilePins(); err == nil || !strings.Contains(err.Error(), "load file pin operations") {
+		t.Errorf("with a damaged queue: %v", err)
 	}
 }
