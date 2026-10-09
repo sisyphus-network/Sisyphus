@@ -125,6 +125,11 @@ func (c *Client) List(ctx context.Context) ([]Status, error) {
 func (c *Client) Wait(ctx context.Context, requestID string, every time.Duration) (Status, error) {
 	for {
 		status, err := c.Status(ctx, requestID)
+		if ctx.Err() != nil {
+			// Given up on while asking: that, and not how the asking
+			// failed, is what there is to say.
+			return status, ctx.Err()
+		}
 		if err != nil {
 			return status, err
 		}

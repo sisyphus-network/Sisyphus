@@ -193,10 +193,17 @@ func TestWaitingAsksUntilTheRequestIsSettled(t *testing.T) {
 		for asks() == 0 {
 			time.Sleep(time.Millisecond)
 		}
+		// Long enough for the answer to that first ask to have arrived,
+		// so that it is the waiting between asks that is given up on.
+		time.Sleep(100 * time.Millisecond)
 		cancel()
 	}()
 	if last, err := client.Wait(giveUp, "r1", time.Hour); err != context.Canceled || last.Status != Queued {
 		t.Errorf("a wait given up: %+v, %v", last, err)
+	}
+	// And one given up on before it began says so, not that asking failed.
+	if _, err := client.Wait(giveUp, "r1", time.Hour); err != context.Canceled {
+		t.Errorf("a wait given up before it began: %v", err)
 	}
 }
 
