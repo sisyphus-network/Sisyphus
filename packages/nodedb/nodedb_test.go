@@ -523,6 +523,7 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	// Put the database back as it was before the migration that added the
 	// column, and so before those that came after it, and open it again.
 	for _, statement := range []string{
+		`DROP TABLE file_references`,
 		`DROP TABLE task_results`,
 		`ALTER TABLE jobs DROP COLUMN verify`,
 		`DROP TABLE job_commitments`,
