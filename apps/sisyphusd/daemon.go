@@ -438,7 +438,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		kept := replication.Recovering{Store: store, From: replicated}
 		blobs, readable = kept, kept
 		coord = coordinator.New(coordinator.Config{
-			ID: ident.ID(), Workloads: workloads, Store: kept, Journal: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			ID: ident.ID(), Workloads: workloads, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
 		unfinished, err := coord.Recover()

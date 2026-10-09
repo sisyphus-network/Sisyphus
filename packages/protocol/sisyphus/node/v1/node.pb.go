@@ -1266,9 +1266,18 @@ type Worker struct {
 	MemoryBytes uint64       `protobuf:"varint,14,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
 	Gpus        []*WorkerGpu `protobuf:"bytes,15,rep,name=gpus,proto3" json:"gpus,omitempty"`
 	// The language models the worker serves to the pool, by name.
-	Models        []string `protobuf:"bytes,16,rep,name=models,proto3" json:"models,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Models []string `protobuf:"bytes,16,rep,name=models,proto3" json:"models,omitempty"`
+	// Its standing, which outlasts any one job: how many results it has
+	// returned for verified tasks that were among those the task was settled
+	// by, and how many that were not. probation is how many agreeing results
+	// it still owes, having been outvoted, before a job that verifies a
+	// share of its tasks takes its word alone again; zero for a worker that
+	// is not on probation.
+	VerifiedAgreed   uint64 `protobuf:"varint,17,opt,name=verified_agreed,json=verifiedAgreed,proto3" json:"verified_agreed,omitempty"`
+	VerifiedOutvoted uint64 `protobuf:"varint,18,opt,name=verified_outvoted,json=verifiedOutvoted,proto3" json:"verified_outvoted,omitempty"`
+	Probation        uint32 `protobuf:"varint,19,opt,name=probation,proto3" json:"probation,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Worker) Reset() {
@@ -1411,6 +1420,27 @@ func (x *Worker) GetModels() []string {
 		return x.Models
 	}
 	return nil
+}
+
+func (x *Worker) GetVerifiedAgreed() uint64 {
+	if x != nil {
+		return x.VerifiedAgreed
+	}
+	return 0
+}
+
+func (x *Worker) GetVerifiedOutvoted() uint64 {
+	if x != nil {
+		return x.VerifiedOutvoted
+	}
+	return 0
+}
+
+func (x *Worker) GetProbation() uint32 {
+	if x != nil {
+		return x.Probation
+	}
+	return 0
 }
 
 type WorkerGpu struct {
@@ -4686,7 +4716,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\fcountry_code\x18\t \x01(\tR\vcountryCode\"\x14\n" +
 	"\x12ListWorkersRequest\"I\n" +
 	"\x13ListWorkersResponse\x122\n" +
-	"\aworkers\x18\x01 \x03(\v2\x18.sisyphus.node.v1.WorkerR\aworkers\"\xeb\x03\n" +
+	"\aworkers\x18\x01 \x03(\v2\x18.sisyphus.node.v1.WorkerR\aworkers\"\xdf\x04\n" +
 	"\x06Worker\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -4705,7 +4735,10 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\tcpu_model\x18\r \x01(\tR\bcpuModel\x12!\n" +
 	"\fmemory_bytes\x18\x0e \x01(\x04R\vmemoryBytes\x12/\n" +
 	"\x04gpus\x18\x0f \x03(\v2\x1b.sisyphus.node.v1.WorkerGpuR\x04gpus\x12\x16\n" +
-	"\x06models\x18\x10 \x03(\tR\x06models\"B\n" +
+	"\x06models\x18\x10 \x03(\tR\x06models\x12'\n" +
+	"\x0fverified_agreed\x18\x11 \x01(\x04R\x0everifiedAgreed\x12+\n" +
+	"\x11verified_outvoted\x18\x12 \x01(\x04R\x10verifiedOutvoted\x12\x1c\n" +
+	"\tprobation\x18\x13 \x01(\rR\tprobation\"B\n" +
 	"\tWorkerGpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xdd\x05\n" +

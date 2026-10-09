@@ -80,6 +80,23 @@ func (noJournal) LoadEvents(string) ([]jobmodel.Event, error) {
 	return nil, nil
 }
 
+// Standings keeps what has been seen of workers somewhere that outlasts the
+// coordinator. A nodedb.DB is one.
+type Standings interface {
+	// SaveStanding writes one worker's standing, in place of what was
+	// saved for it before.
+	SaveStanding(s jobmodel.Standing) error
+	// LoadStandings returns the standing of every worker that has one.
+	LoadStandings() ([]jobmodel.Standing, error)
+}
+
+// noStandings is what keeps them for a coordinator that holds its workers'
+// standing in memory only.
+type noStandings struct{}
+
+func (noStandings) SaveStanding(jobmodel.Standing) error        { return nil }
+func (noStandings) LoadStandings() ([]jobmodel.Standing, error) { return nil, nil }
+
 type Config struct {
 	// ID names this coordinator to its workers.
 	ID        string
@@ -87,6 +104,9 @@ type Config struct {
 	Store     Store
 	// Journal, if set, is where jobs are kept across restarts; see Recover.
 	Journal Journal
+	// Standings, if set, is where the standing of workers is kept across
+	// restarts; see Recover. With none it lasts as long as the coordinator.
+	Standings Standings
 	// Retain is how long a job's inputs and results stay pinned after it
 	// finishes.
 	Retain time.Duration
@@ -103,6 +123,7 @@ type Coordinator struct {
 	workloads *runtime.Registry
 	store     Store
 	journal   Journal
+	standings Standings
 	retain    time.Duration
 	keepJobs  time.Duration
 	log       *slog.Logger
@@ -119,6 +140,10 @@ type Coordinator struct {
 	jobs             map[string]*jobmodel.Job
 	active           []*jobmodel.Job // unfinished jobs in submission order
 	workers          map[string]*worker
+	// standing holds, per worker that has one, how its results for verified
+	// tasks have come out; see verify.go. It is by node ID, and has workers
+	// that are not connected now.
+	standing map[string]jobmodel.Standing
 	// changed holds, per job, a channel that is closed and replaced every
 	// time the job changes or something happens to it. Watchers wait on it.
 	changed map[string]chan struct{}
@@ -218,11 +243,15 @@ func New(cfg Config) *Coordinator {
 	if cfg.Journal == nil {
 		cfg.Journal = noJournal{}
 	}
+	if cfg.Standings == nil {
+		cfg.Standings = noStandings{}
+	}
 	c := &Coordinator{
 		id:        cfg.ID,
 		workloads: cfg.Workloads,
 		store:     cfg.Store,
 		journal:   cfg.Journal,
+		standings: cfg.Standings,
 		retain:    cfg.Retain,
 		keepJobs:  cfg.KeepJobs,
 		log:       cfg.Log,
@@ -230,6 +259,7 @@ func New(cfg Config) *Coordinator {
 		cancel:    cancel,
 		jobs:      make(map[string]*jobmodel.Job),
 		workers:   make(map[string]*worker),
+		standing:  make(map[string]jobmodel.Standing),
 		changed:   make(map[string]chan struct{}),
 		events:    make(map[string][]jobmodel.Event),
 		seqs:      make(map[string]uint64),
@@ -409,13 +439,23 @@ func (c *Coordinator) handleUpdate(w *worker, update *pb.TaskUpdate) {
 // this coordinator did not hand out. That does not count against the task.
 // The results a task of a verified job already had are kept, and only the
 // workers that had not answered are asked again.
+//
+// The standing of workers comes back too, so that one outvoted before the
+// restart is still on probation after it.
 func (c *Coordinator) Recover() (unfinished int, err error) {
 	jobs, err := c.journal.LoadJobs()
 	if err != nil {
 		return 0, err
 	}
+	standings, err := c.standings.LoadStandings()
+	if err != nil {
+		return 0, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for _, s := range standings {
+		c.standing[s.NodeID] = s
+	}
 	for _, job := range jobs {
 		job.Needs = c.workloads.Needs(job.Workload, job.Params)
 		// What happened to it before comes back with it. A job whose events
@@ -704,6 +744,7 @@ func (c *Coordinator) Nodes() []*pb.NodeInfo {
 	defer c.mu.Unlock()
 	nodes := make([]*pb.NodeInfo, 0, len(c.workers))
 	for _, w := range c.workers {
+		standing := c.standing[w.id]
 		nodes = append(nodes, &pb.NodeInfo{
 			NodeId:       w.id,
 			Name:         w.name,
@@ -713,6 +754,8 @@ func (c *Coordinator) Nodes() []*pb.NodeInfo {
 			LastSeenAt:   timestamppb.New(w.lastSeen),
 
 			RelayAddresses: w.relayAddresses, RelayedConnections: w.relayedConnections, RelayedBytes: w.relayedBytes,
+
+			VerifiedAgreed: standing.Agreed, VerifiedOutvoted: standing.Outvoted, Probation: uint32(standing.Probation),
 		})
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeId < nodes[j].NodeId })

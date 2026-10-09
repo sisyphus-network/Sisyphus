@@ -198,7 +198,8 @@ func TestEveryToolSaysSoWhenTheNodeFailsIt(t *testing.T) {
 
 func TestThePoolIsDescribedWithItsCardsAndTheTokenIsShown(t *testing.T) {
 	n := &node{workers: []*nodepb.Worker{
-		{Name: "rig", TaskSlots: 4, RunningTasks: 1, Workloads: []string{"primes"}, Gpus: []*nodepb.WorkerGpu{{Name: "RTX 5090"}}, Models: []string{"llama3.1:8b"}},
+		{Name: "rig", TaskSlots: 4, RunningTasks: 1, Workloads: []string{"primes"}, Gpus: []*nodepb.WorkerGpu{{Name: "RTX 5090"}}, Models: []string{"llama3.1:8b"},
+			VerifiedAgreed: 12, VerifiedOutvoted: 1, Probation: 7},
 		{Name: "laptop", TaskSlots: 2},
 	}}
 	got, err := serving(n).status(serving(n).as(context.Background()))
@@ -210,6 +211,11 @@ func TestThePoolIsDescribedWithItsCardsAndTheTokenIsShown(t *testing.T) {
 	if pool["task_slots"] != 6 || pool["running_tasks"] != 1 || workers[0]["gpus"].([]string)[0] != "RTX 5090" || workers[1]["gpus"] != nil ||
 		workers[0]["models"].([]string)[0] != "llama3.1:8b" || workers[1]["models"] != nil {
 		t.Errorf("pool = %v", pool)
+	}
+	// A worker is shown with its standing once verified tasks have given
+	// it one.
+	if shown, _ := json.Marshal(workers[0]["verified"]); string(shown) != `{"agreed":12,"outvoted":1,"probation":7}` || workers[1]["verified"] != nil {
+		t.Errorf("the standing of the rig is shown as %s, and of the laptop as %v", shown, workers[1]["verified"])
 	}
 	if n.token != "Bearer the-token" {
 		t.Errorf("the node was shown %q", n.token)

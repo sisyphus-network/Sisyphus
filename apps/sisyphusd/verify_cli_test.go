@@ -53,6 +53,10 @@ func startCrew(t *testing.T, names ...string) string {
 func TestCLIVerifiedJobSucceedsThoughOneOfItsThreeWorkersLies(t *testing.T) {
 	withALiar(t)
 	addr := startCrew(t, "one", "two", "liar")
+	// Nothing is known of any of them yet, and nothing is said.
+	if nodes := mustCLI(t, "nodes", "--addr", addr); strings.Contains(nodes, "verified tasks") || strings.Count(strings.TrimSpace(nodes), "\n") != 3 {
+		t.Errorf("nodes printed, before any job:\n%s", nodes)
+	}
 
 	// Three tasks, each for two workers, and three workers of one slot:
 	// every worker is given something at once, the liar too.
@@ -81,6 +85,13 @@ func TestCLIVerifiedJobSucceedsThoughOneOfItsThreeWorkersLies(t *testing.T) {
 		!strings.Contains(record, "verified: the job as the node holds it gives this record") {
 		t.Errorf("job record printed:\n%s", record)
 	}
+	// What the job showed of each worker is listed with it from then on.
+	// The liar agreed with nobody, and each of the others with somebody.
+	nodes := mustCLI(t, "nodes", "--addr", addr)
+	if !strings.Contains(nodes, "\nliar: results for verified tasks: 0 agreed, ") || strings.Count(nodes, " outvoted; on probation, 10 more to agree\n") != 1 ||
+		strings.Count(nodes, " agreed, 0 outvoted\n") != 2 || strings.Contains(nodes, ": results for verified tasks: 0 agreed, 0 outvoted") {
+		t.Errorf("nodes printed, after a job in which the liar was outvoted:\n%s", nodes)
+	}
 
 	// A private job is verified like any other. Its record names the worker
 	// that was outvoted, and holds what each returned only as something
@@ -97,14 +108,15 @@ func TestCLIVerifiedJobSucceedsThoughOneOfItsThreeWorkersLies(t *testing.T) {
 	}
 
 	// With a share, only so many of the tasks are verified, and the job
-	// says how many that came to. (What it counts is not looked at here:
-	// the task that is run once may be the liar's.)
+	// says how many that came to: both, if the one that would have been
+	// run once was handed to the liar, which is on probation by now. So
+	// whichever task the liar is handed is verified, and the count is right.
 	out = mustCLI(t, "job", "submit", "--addr", addr, "--verify", "2", "--verify-share", "0.5", "--tasks", "2", "--params", `{"from":0,"to":1000000}`)
-	if !strings.Contains(out, "2 task(s), 1 of them verified by 2 workers") || !strings.Contains(out, "succeeded in") {
+	if !strings.Contains(out, "2 task(s), 1 of them verified by 2 workers") && !strings.Contains(out, "2 task(s), 2 of them verified by 2 workers") ||
+		!strings.Contains(out, "succeeded in") || !strings.Contains(out, `{"count":78498}`) {
 		t.Errorf("submit output of a job with half its tasks verified:\n%s", out)
 	}
-	// Each task is shown with whether it was one of them. Both are, if the
-	// liar was caught on one and had run the other.
+	// Each task is shown with whether it was one of them.
 	got := mustCLI(t, "job", "get", "--addr", addr, strings.TrimSuffix(strings.Fields(out)[1], ":"))
 	if !strings.Contains(got, "1 of them verified by 2 workers") && !strings.Contains(got, "2 of them verified by 2 workers") ||
 		strings.Count(got, ", verified by 2 workers")+strings.Count(got, ", not verified") != 2 || !strings.Contains(got, ", verified by 2 workers") {

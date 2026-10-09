@@ -185,8 +185,11 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A journal that can also keep the standing of workers, as a node's
+	// database can, keeps that too.
+	standings, _ := journal.(coordinator.Standings)
 	coord := coordinator.New(coordinator.Config{
-		ID: ident.ID(), Workloads: workloads, Store: wrap(store), Journal: journal, Retain: testRetain,
+		ID: ident.ID(), Workloads: workloads, Store: wrap(store), Journal: journal, Standings: standings, Retain: testRetain,
 		Log: slog.New(slog.NewTextHandler(logs, nil)),
 	})
 	if _, err := coord.Recover(); err != nil {

@@ -47,6 +47,15 @@ message NodeInfo {
   repeated string relay_addresses = 7;
   uint64 relayed_connections = 8;
   uint64 relayed_bytes = 9;
+  // The node's standing as a worker, which outlasts any one job: how many
+  // results it has returned for verified tasks that were among those the
+  // task was settled by, and how many that were not. probation is how many
+  // agreeing results it still owes, having been outvoted, before a job
+  // that verifies a share of its tasks takes its word alone again; zero
+  // for a node that is not on probation.
+  uint64 verified_agreed = 10;
+  uint64 verified_outvoted = 11;
+  uint32 probation = 12;
 }
 
 enum ScheduleMode {

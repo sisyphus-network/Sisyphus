@@ -700,16 +700,35 @@ bin/sisyphusd job submit --verify 2 --verify-share 0.25 --tasks 16 --params '{"f
 What a spot check does not do:
 
 - **It does not catch every wrong result.** A worker that returns a wrong result for one task in a hundred is caught only if that task is one of those verified. A share of `s` catches a single wrong result with probability `s`, and a worker that is wrong on `k` of the tasks it ran with probability `1 - (1 - s)^k`, less whatever it gets right. What is not caught is in the job's result.
-- **Nothing is held against a worker beyond the job.** It is not scored, charged or kept out of the next job, and it is still given tasks in this one.
+- **It does not shut a worker out.** A worker that is caught is still given tasks, in this job and the next. What is carried over to the next job is its [standing](#a-workers-standing): a count of its results, and a probation during which a job with spot checks verifies whatever it is handed.
 - **A member that is both a worker and a client of the pool can tell.** Whoever may read a job can see which of its tasks went to two workers. Workers that are only workers cannot read jobs.
 - **Workers that agree to lie** are no more caught by a spot check than by verifying everything.
+
+### A worker's standing
+
+What verified tasks show of a worker outlasts the job. The coordinator keeps three numbers for each worker, by its node ID:
+
+- **Agreed and outvoted.** When a task that `N` workers had to agree on succeeds, each worker whose result was one of those `N` has one more result that agreed, and each worker that returned something else has one more that was outvoted. A task is counted once, when it is settled.
+- **What is not counted.** A task that fails because its workers could not agree counts for nobody: nothing says which of them was right. An attempt that fails, times out or is lost returned no result. A task that was run once and taken as it was shows nothing, unless it is verified after all and settled, and then it counts like any other. A job that is not verified counts for nothing.
+- **Probation.** A worker that is outvoted is on probation until ten results it returns after that have agreed. Being outvoted again starts the ten over.
+- **What probation does.** In a job with `--verify-share`, a worker on probation is treated as one already caught in that job: a task handed to it is verified, even if it was one of those to be run once, and goes to as many more workers as that takes. `job logs` shows it as `task-rechecked`, saying that the worker was outvoted in another job and how many results it still owes.
+- **What probation does not touch.** A job that verifies every task treats the worker as it treats any other. A job without `--verify` still takes its word: it asked for nothing to be checked, and probation does not change that. Only results for verified tasks work a probation off, so in a pool that runs no verified jobs it stays.
+- **Where it shows.** `sisyphusd nodes` prints a line under the table for each connected worker that has any, such as `liar: results for verified tasks: 3 agreed, 2 outvoted; on probation, 7 more to agree`. The desktop's API gives the same in `ListWorkers`, and the MCP server in `pool_status`.
+- **It is kept in the node's database**, so it survives a restart. It does not go when the jobs it came from are forgotten (`--keep-jobs`), and nothing makes it lapse with time.
+
+What it does not do:
+
+- **It is not a score, and nothing is scheduled by it.** A worker on probation is handed tasks as it was before, in the same order as the others. No worker is ranked, charged or banned, and there is no stake to lose. Removing a worker is still up to the pool's owner (`pool remove`).
+- **Being on probation does not mean a worker lied.** A worker outvoted by workers that agreed to lie lands on probation, and so does an honest one whose work does not give the same result every time, when two others happened to agree. What it costs is the pool's time: the tasks such a worker is handed in a job with spot checks are run by `N` workers.
+- **It goes by node ID, not by person.** A member that is removed and invited again under a new key starts clean, with no counts and no probation. What was counted under its old ID stays there, and comes back only if that same key is admitted again.
+- **It does not go back over other jobs.** A task a worker was handed before it went on probation, in another job running at the same time, is not verified after all. Only the job that caught it does that.
 
 **What it is for, and what it is not.**
 
 - **It is for work that gives the same result every time it is run.** `primes`, `wordcount` and a container that is deterministic do. Work that involves a language model (`chat`, `prompts`, `embed`), `transcode`, and containers that use the time, random numbers or the network may not: two honest workers then differ, and the job fails saying so. Nothing here makes such work comparable.
 - **A private job is verified like any other.** Sealing gives the same blob for the same key and data, so workers that did the same work stored blobs with the same CIDs. Every worker asked is given the job's key, as every worker of a private job is: asking more workers shows the job's data to more of them. In the job's record, what each worker returned is not given by its digest but by a commitment only the job's key can check (`receipts/N/results/M/digest_commitment`), since a digest would tell someone who guessed a task's output that they were right; which workers agreed is still there to read.
 - **It does not protect against workers that agree to lie.** `N` workers that return the same wrong result are believed. Nor does it protect against one operator running several nodes: different node IDs are not different people.
-- **It does not judge workers.** A worker that was outvoted is named in the events and the record, and nothing else happens to it: no score, no stake and no ban. Removing it is up to the pool's owner (`pool remove`).
+- **It judges workers only this far.** A worker that was outvoted is named in the events and the record, has that result counted in its [standing](#a-workers-standing), and is on probation until ten of its results have agreed. Nothing else happens to it: no score that decides who is given work, no stake and no ban. Removing it is up to the pool's owner (`pool remove`).
 - **It checks what workers return, not how the coordinator combines it.** The coordinator still splits the job and aggregates the outputs itself.
 
 ## A job's record

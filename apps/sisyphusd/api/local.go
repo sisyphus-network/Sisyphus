@@ -233,7 +233,8 @@ func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) 
 			CpuCores: c.GetCpuCores(), TaskSlots: c.GetTaskSlots(), RunningTasks: node.GetRunningTasks(), Workloads: c.GetWorkloads(),
 			Relays: len(node.GetRelayAddresses()) > 0, RelayedConnections: node.GetRelayedConnections(), RelayedBytes: node.GetRelayedBytes(),
 			CpuModel: c.GetCpuModel(), MemoryBytes: c.GetMemoryBytes(), Gpus: localGPUs(c.GetGpus()),
-			Models: runtime.Models(c.GetLabels()),
+			Models:         runtime.Models(c.GetLabels()),
+			VerifiedAgreed: node.GetVerifiedAgreed(), VerifiedOutvoted: node.GetVerifiedOutvoted(), Probation: node.GetProbation(),
 		})
 	}
 	return res, nil

@@ -50,9 +50,29 @@ import (
 //     many more workers as it now lacks. So does any task of the job that
 //     is handed to that worker afterwards.
 //
-// Beyond that, nothing here judges a worker: no worker is scored, charged
-// or shut out for what it returned, and what one job found out about a
-// worker is not carried over to the next.
+// Standing: what verified tasks show of a worker is kept from one job to
+// the next, by the worker's node ID. Then:
+//
+//   - When a task that two or more workers had to agree on succeeds, each
+//     worker whose result was one of those that settled it has one more
+//     result that agreed, and each worker that returned another has one
+//     more that was outvoted. A task counts once, when it is settled: one
+//     that fails because its workers cannot agree counts for nobody, and
+//     neither does one that was run once and taken as it was, unless it is
+//     verified after all and settled then. An attempt that fails, times
+//     out or is lost is not a result and counts for nothing.
+//   - A worker that is outvoted is on probation until it has returned
+//     jobmodel.Probation results that agreed, counted from the last time
+//     it was outvoted.
+//   - A worker on probation is, in a job that asked for spot checks, taken
+//     as one outvoted in that job: a task handed to it while it is on
+//     probation is verified after all. A job that verifies every task
+//     holds it to that already, and a job that is not verified still takes
+//     its word: nothing here verifies what a job did not ask to have
+//     verified.
+//
+// Beyond that, nothing here judges a worker: it is not scored, charged or
+// shut out for what it returned, and is handed tasks like any other.
 
 // replicated reports whether a job's tasks are each handed to several
 // workers: it asked to be verified, and its tasks are not jobs, which are
@@ -74,23 +94,69 @@ func (c *Coordinator) copiesLocked(job *jobmodel.Job) {
 			}
 			now := time.Now()
 			c.handLocked(w, assignment{job: job, task: task, attempt: job.StartCopy(task, w.id, w.name, now), started: now})
-			if job.Outvoted(w.id) {
+			switch owed := c.standing[w.id].Probation; {
+			case job.Outvoted(w.id):
 				// Its word alone is not taken again in this job.
-				c.recheckLocked(job, w.id, w.name)
+				c.recheckLocked(job, w.id, w.name, outvotedHere)
+			case owed > 0:
+				// Nor is that of a worker another job found wrong, yet.
+				c.recheckLocked(job, w.id, w.name, fmt.Sprintf("was outvoted in another job and has %d more %s to agree on before its word is taken alone", owed, plural(owed, "result")))
 			}
 		}
 	}
 }
 
 // recheckLocked has the tasks a worker ran unverified, or is running so,
-// verified after all, for a worker that has been outvoted in the job.
-func (c *Coordinator) recheckLocked(job *jobmodel.Job, id, name string) (reopened bool) {
+// verified after all, for a worker whose word alone is not taken: one that
+// has been outvoted in the job, or is on probation. why says which, and is
+// what the job's events say of each such task.
+func (c *Coordinator) recheckLocked(job *jobmodel.Job, id, name, why string) (reopened bool) {
 	for _, task := range job.Recheck(id) {
 		reopened = true
 		c.recordLocked(job, eventTaskRechecked, task.Index, cmp.Or(name, id),
-			fmt.Sprintf("was outvoted elsewhere in the job, so this task is now to be verified by %d workers", task.Verify))
+			fmt.Sprintf("%s, so this task is now to be verified by %d workers", why, task.Verify))
 	}
 	return reopened
+}
+
+// outvotedHere is why a task is verified after all for a worker the job
+// itself has found wrong.
+const outvotedHere = "was outvoted elsewhere in the job"
+
+// plural is a word for so many of something: itself for one, and with an s
+// for any other number.
+func plural(n int, word string) string {
+	if n == 1 {
+		return word
+	}
+	return word + "s"
+}
+
+// countLocked adds a task that has just succeeded to the standing of the
+// workers that returned results for it: those on the side that settled it
+// agreed, and the rest were outvoted. A task that one result was enough for
+// was not verified, and says nothing of its worker.
+func (c *Coordinator) countLocked(task *jobmodel.Task, sides [][]jobmodel.Result) {
+	if task.Verify < 2 {
+		return
+	}
+	for at, side := range sides {
+		for _, r := range side {
+			standing := c.standing[r.NodeID]
+			standing.NodeID = r.NodeID
+			if at == 0 {
+				standing.Agree()
+			} else {
+				standing.Outvote()
+			}
+			c.standing[r.NodeID] = standing
+			// A count that could not be saved is still held here, and is
+			// written with the worker's next.
+			if err := c.standings.SaveStanding(standing); err != nil {
+				c.log.Warn("could not save a worker's standing; it will be lost if the coordinator stops now", "node", r.NodeID, "error", err)
+			}
+		}
+	}
 }
 
 // shuffled returns the numbers from 0 up to n in an order nobody could have
@@ -152,11 +218,12 @@ func (c *Coordinator) returnedLocked(w *worker, a assignment, output []byte, sto
 			said += "; " + names(other) + " returned another"
 		}
 		c.recordLocked(job, eventTaskSucceeded, task.Index, "", said)
+		c.countLocked(task, sides)
 		for _, other := range sides[1:] {
 			for _, r := range other {
 				// What else it returned in this job is no longer taken on
 				// its word, which may undo tasks that had succeeded.
-				if c.recheckLocked(job, r.NodeID, r.NodeName) {
+				if c.recheckLocked(job, r.NodeID, r.NodeName, outvotedHere) {
 					allDone = false
 				}
 			}

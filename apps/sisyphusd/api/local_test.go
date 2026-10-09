@@ -759,6 +759,7 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 func TestTheLocalAPIListsThePoolsWorkers(t *testing.T) {
 	pool := &office{nodes: []*pb.NodeInfo{
 		{NodeId: "12D3KooWa", Name: "rig", RunningTasks: 3, RelayAddresses: []string{"/ip4/10.0.0.5/tcp/7701/p2p/12D3KooWa"}, RelayedConnections: 4, RelayedBytes: 5 << 20,
+			VerifiedAgreed: 12, VerifiedOutvoted: 1, Probation: 7,
 			Capabilities: &pb.NodeCapabilities{Hostname: "rig.local", Os: "linux", Arch: "amd64", CpuCores: 32, TaskSlots: 8, Workloads: []string{"primes"},
 				CpuModel: "a big one", MemoryBytes: 256 << 30, Gpus: []*pb.Gpu{{Name: "RTX 4090", MemoryBytes: 24 << 30}}}},
 		{NodeId: "12D3KooWb", Name: "laptop", Capabilities: &pb.NodeCapabilities{TaskSlots: 2}},
@@ -778,6 +779,11 @@ func TestTheLocalAPIListsThePoolsWorkers(t *testing.T) {
 	}
 	if laptop.GetRelays() || laptop.GetTaskSlots() != 2 {
 		t.Errorf("the laptop is listed as %v", laptop)
+	}
+	// Its standing as a worker is passed on as the coordinator has it.
+	if rig.GetVerifiedAgreed() != 12 || rig.GetVerifiedOutvoted() != 1 || rig.GetProbation() != 7 ||
+		laptop.GetVerifiedAgreed() != 0 || laptop.GetVerifiedOutvoted() != 0 || laptop.GetProbation() != 0 {
+		t.Errorf("the standing of the rig is listed as %v, and of the laptop as %v", rig, laptop)
 	}
 }
 
