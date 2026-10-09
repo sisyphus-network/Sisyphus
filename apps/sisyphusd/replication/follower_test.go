@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
@@ -32,6 +35,10 @@ type scripted struct {
 	hold []string
 	name string
 	err  error
+	// list, if set, is the signed list it answers with, and asks is whether
+	// it asks a follower that shows no list for the one it has.
+	list *pb.KeepList
+	asks bool
 	// asked holds every request it has had.
 	asked []*pb.ReplicateRequest
 }
@@ -43,7 +50,7 @@ func (s *scripted) Replicate(_ context.Context, req *pb.ReplicateRequest) (*pb.R
 	if s.err != nil {
 		return nil, s.err
 	}
-	return &pb.ReplicateResponse{Hold: s.hold, Store: s.name}, nil
+	return &pb.ReplicateResponse{Hold: s.hold, Store: s.name, List: s.list, ShowList: s.asks && req.GetList() == nil}, nil
 }
 
 func (s *scripted) Get(req *pb.GetBlobRequest, stream grpc.ServerStreamingServer[pb.GetBlobResponse]) error {
@@ -63,7 +70,19 @@ func (s *scripted) Get(req *pb.GetBlobRequest, stream grpc.ServerStreamingServer
 func (s *scripted) say(name string, err error, hold ...string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.name, s.err, s.hold = name, err, hold
+	s.name, s.err, s.hold, s.list = name, err, hold, nil
+}
+
+// sign has the coordinator answer from now on with a list of the given
+// blobs, as one that signs what it says does.
+func (s *scripted) sign(name string, hold ...string) *pb.KeepList {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.name, s.err, s.hold, s.list = name, nil, nil, &pb.KeepList{Store: name, Sequence: uint64(len(s.asked)) + 1, Signature: []byte("signed")}
+	for _, id := range hold {
+		s.list.Blobs = append(s.list.Blobs, &pb.KeptBlob{Cid: id})
+	}
+	return s.list
 }
 
 // requests returns how many times the coordinator has been asked, and the
@@ -96,7 +115,7 @@ func following(t *testing.T) (*scripted, *Follower, *storage.Store, *logged) {
 	}
 	t.Cleanup(func() { conn.Close() })
 	copies, logs := storage.NewMemory(), new(logged)
-	return coordinator, &Follower{Store: copies, Coordinator: pb.NewBlobServiceClient(conn), Log: logs.logger()}, copies, logs
+	return coordinator, &Follower{Store: copies, ListFile: filepath.Join(t.TempDir(), "kept.list"), Coordinator: pb.NewBlobServiceClient(conn), Log: logs.logger()}, copies, logs
 }
 
 // run runs a follower, asking every interval, until the test ends or the
@@ -313,5 +332,114 @@ func TestAFollowerWhoseStoreFailsSaysSoAndDoesNotAskInARush(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if asked, _ := coordinator.requests(); asked != 2 {
 		t.Errorf("the follower has asked %d times, want once by hand and once more: a fetch that could not be kept is no reason to ask again at once", asked)
+	}
+}
+
+func TestAFollowerKeepsTheLastListItsCoordinatorSigned(t *testing.T) {
+	coordinator, follower, copies, _ := following(t)
+	first, second := put(t, coordinator.store, "on the first list"), put(t, coordinator.store, "on both lists")
+	if list, err := loadList(follower.ListFile); list != nil || err != nil {
+		t.Fatalf("before it has asked the follower keeps %v, error %v", list, err)
+	}
+
+	signed := coordinator.sign("node/first", first, second)
+	if changed, err := follower.sync(ctx); err != nil || !changed {
+		t.Fatalf("fetching what a list names: changed %v, error %v", changed, err)
+	}
+	want := []string{"pool:node/first " + first, "pool:node/first " + second}
+	slices.Sort(want)
+	if pins := pinsOf(copies); !slices.Equal(pins, want) {
+		t.Errorf("the follower's pins are %v, want the two blobs the list names", pins)
+	}
+	if kept, err := loadList(follower.ListFile); err != nil || !proto.Equal(kept, signed) {
+		t.Errorf("the follower keeps %v, error %v, want the list it was given, signature and all", kept, err)
+	}
+	if _, last := coordinator.requests(); !last.GetKeepsLists() || last.GetList() != nil {
+		t.Errorf("the follower asked with %v, want it to say it keeps lists and to show none unasked", last)
+	}
+
+	// A later list takes the place of the first, and what it leaves out goes.
+	signed = coordinator.sign("node/first", second)
+	if changed, err := follower.sync(ctx); err != nil || !changed {
+		t.Fatalf("dropping what a list no longer names: changed %v, error %v", changed, err)
+	}
+	if kept, err := loadList(follower.ListFile); err != nil || !proto.Equal(kept, signed) {
+		t.Errorf("the follower keeps %v, error %v, want the later list", kept, err)
+	}
+	if holds(t, copies, first) || !holds(t, copies, second) {
+		t.Error("the follower does not hold exactly what the later list names")
+	}
+	// An answer with no list leaves the one it has alone.
+	coordinator.say("node/first", nil, second)
+	if _, err := follower.sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := loadList(follower.ListFile); err != nil || !proto.Equal(kept, signed) {
+		t.Errorf("after an answer without a list the follower keeps %v, error %v", kept, err)
+	}
+}
+
+func TestAFollowerShowsItsListWhenItsCoordinatorAsks(t *testing.T) {
+	coordinator, follower, copies, logs := following(t)
+	blob := put(t, coordinator.store, "held for a store the coordinator has lost")
+	signed := coordinator.sign("node/first", blob)
+	if _, err := follower.sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The coordinator comes back with another store, and asks.
+	coordinator.say("node/first", nil, blob)
+	coordinator.mu.Lock()
+	coordinator.asks = true
+	coordinator.mu.Unlock()
+	before, _ := coordinator.requests()
+	if changed, err := follower.sync(ctx); err != nil || changed {
+		t.Fatalf("showing the list: changed %v, error %v", changed, err)
+	}
+	asked, last := coordinator.requests()
+	if asked != before+2 || !proto.Equal(last.GetList(), signed) || !slices.Equal(last.GetHolding(), []string{blob}) || last.GetStore() != "node/first" {
+		t.Errorf("asked for its list, the follower made %d requests, the last %v, want a second that shows the list it kept", asked-before, last)
+	}
+
+	// A follower whose list cannot be read says so and carries on with what
+	// it was told; one that has none just carries on.
+	if err := os.WriteFile(follower.ListFile, []byte("not a list"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, unreadable := range []int{1, 1} {
+		before, _ = coordinator.requests()
+		if _, err := follower.sync(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if asked, _ := coordinator.requests(); asked != before+1 {
+			t.Errorf("with no list to show the follower made %d requests, want one", asked-before)
+		}
+		if n := logs.count("could not read the list this node's coordinator signed"); n != unreadable {
+			t.Errorf("a list that cannot be read was logged %d times, want %d", n, unreadable)
+		}
+		if err := os.Remove(follower.ListFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
+	if !holds(t, copies, blob) {
+		t.Error("the follower dropped its copy while its coordinator was asking for a list")
+	}
+}
+
+func TestAFollowerThatCannotKeepAListDoesNotActOnIt(t *testing.T) {
+	coordinator, follower, copies, _ := following(t)
+	held, fresh := put(t, coordinator.store, "held already"), put(t, coordinator.store, "named by a list that cannot be kept")
+	coordinator.say("node/first", nil, held)
+	if _, err := follower.sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	follower.ListFile = filepath.Join(t.TempDir(), "absent", "kept.list")
+	coordinator.sign("node/first", fresh)
+	if changed, err := follower.sync(ctx); err == nil || changed {
+		t.Fatalf("with nowhere to keep the list: changed %v, error %v", changed, err)
+	}
+	if !holds(t, copies, held) || holds(t, copies, fresh) {
+		t.Error("the follower acted on a list it could not keep")
 	}
 }

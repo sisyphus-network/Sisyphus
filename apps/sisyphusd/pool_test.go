@@ -80,9 +80,11 @@ type pool struct {
 	// names is where the coordinator keeps the records of names.
 	names *nameShelf
 	// copies are the stores in which the storage followers started by name
-	// keep what they hold for the pool, addresses where each serves blobs,
+	// keep what they hold for the pool, lists the files in which each keeps
+	// the list its coordinator signed, addresses where each serves blobs,
 	// and unfollow how to stop each following while it goes on serving.
 	copies    map[string]*storage.Store
+	lists     map[string]string
 	addresses map[string]string
 	unfollow  map[string]func()
 }
@@ -164,13 +166,20 @@ func startPoolWith(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 // many storage followers hold a copy of whatever it has pinned.
 func startPoolKeeping(t *testing.T, workloads *runtime.Registry, wrap func(*storage.Store) coordinator.Store, journal coordinator.Journal, replicas int) *pool {
 	t.Helper()
+	return startPoolAs(t, workloads, wrap, journal, replication.Config{Identity: newIdentity(t), StoreID: "first", Replicas: replicas})
+}
+
+// startPoolAs is startPoolKeeping for a pool whose coordinator has the key,
+// the name for its store, and the rest that copies says.
+func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.Store) coordinator.Store, journal coordinator.Journal, copies replication.Config) *pool {
+	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := storage.NewMemory()
 	logs := new(syncBuffer)
-	ident := newIdentity(t)
+	ident := copies.Identity
 	// Kept in memory: an access list with no file saves nothing.
 	admitted, err := access.Open(access.InMemory(), ident.ID())
 	if err != nil {
@@ -185,15 +194,13 @@ func startPoolKeeping(t *testing.T, workloads *runtime.Registry, wrap func(*stor
 	}
 	gets := new(atomic.Int32)
 	kept := &nameShelf{records: make(map[string][]byte)}
-	replicated := replication.New(replication.Config{
-		ID: ident.ID(), Store: store, StoreID: "first", Replicas: replicas, Log: slog.New(slog.NewTextHandler(logs, nil)),
-		Address: coord.ServeAddress,
-		Fetch: func(ctx context.Context, from *pb.BlobHolder, c cid.Cid, into blobclient.Putter) error {
-			return worker.FetchFromPeer(ctx, from, c, into, func(nodeID string) credentials.TransportCredentials {
-				return credentials.NewTLS(ident.ClientTLS(nodeID))
-			}, nil)
-		},
-	})
+	copies.Store, copies.Log, copies.Address = store, slog.New(slog.NewTextHandler(logs, nil)), coord.ServeAddress
+	copies.Fetch = func(ctx context.Context, from *pb.BlobHolder, c cid.Cid, into blobclient.Putter) error {
+		return worker.FetchFromPeer(ctx, from, c, into, func(nodeID string) credentials.TransportCredentials {
+			return credentials.NewTLS(ident.ClientTLS(nodeID))
+		}, nil)
+	}
+	replicated := replication.New(copies)
 	srv := api.NewServer(
 		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Replication: replicated, Names: api.NewNames(kept, func(id string) bool {
 			_, admitted := admitted.Role(id)
@@ -225,7 +232,8 @@ func startPoolKeeping(t *testing.T, workloads *runtime.Registry, wrap func(*stor
 		ident: ident, access: admitted, workerIdents: make(map[string]*identity.Identity),
 		rawIdents: make(map[*rawWorker]*identity.Identity),
 		names:     kept,
-		copies:    make(map[string]*storage.Store), addresses: make(map[string]string), unfollow: make(map[string]func()),
+		copies:    make(map[string]*storage.Store), lists: make(map[string]string),
+		addresses: make(map[string]string), unfollow: make(map[string]func()),
 	}
 }
 
@@ -233,19 +241,20 @@ func startPoolKeeping(t *testing.T, workloads *runtime.Registry, wrap func(*stor
 // is called, whichever comes first. stop waits for the worker to exit.
 func (p *pool) startWorker(id string, slots int) (stop func()) {
 	p.t.Helper()
-	return p.startMember(id, slots, nil)
+	return p.startMember(id, slots, nil, "")
 }
 
 // startFollower runs a worker that is also a storage follower, as one
 // started with --replica-dir is.
 func (p *pool) startFollower(id string) (stop func()) {
 	p.t.Helper()
-	return p.startMember(id, 1, storage.NewMemory())
+	return p.startMember(id, 1, storage.NewMemory(), filepath.Join(p.t.TempDir(), "kept.list"))
 }
 
-// startMember runs a worker which, given a store for them, also holds
-// copies of the pool's data as the coordinator directs.
-func (p *pool) startMember(id string, slots int, copies *storage.Store) (stop func()) {
+// startMember runs a worker which, given a store for them and a file for
+// the list its coordinator signs, also holds copies of the pool's data as
+// the coordinator directs.
+func (p *pool) startMember(id string, slots int, copies *storage.Store, list string) (stop func()) {
 	p.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -270,8 +279,8 @@ func (p *pool) startMember(id string, slots int, copies *storage.Store) (stop fu
 	if copies == nil {
 		close(following)
 	} else {
-		p.copies[id], served = copies, api.Stores(copies, local)
-		follower := &replication.Follower{Store: copies, Coordinator: pb.NewBlobServiceClient(blobs.Conn()), Log: quiet}
+		p.copies[id], p.lists[id], served = copies, list, api.Stores(copies, local)
+		follower := &replication.Follower{Store: copies, ListFile: list, Coordinator: pb.NewBlobServiceClient(blobs.Conn()), Log: quiet}
 		asking, unfollow := context.WithCancel(ctx)
 		go func() {
 			defer close(following)

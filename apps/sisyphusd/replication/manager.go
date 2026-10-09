@@ -8,6 +8,11 @@
 // lacks, drops what is no longer listed, and says what it holds. It decides
 // nothing.
 //
+// The coordinator signs each list, and the follower keeps the last one. A
+// coordinator that comes back with its key and without its store is shown
+// the list, knows its own signature, and takes back what the list names. A
+// follower's word alone still brings nothing back.
+//
 // The coordinator's side is a Manager and a follower's a Follower.
 package replication
 
@@ -15,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sort"
@@ -23,8 +29,10 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
@@ -49,13 +57,21 @@ type Store interface {
 }
 
 type Config struct {
-	// ID is the coordinator's node ID.
-	ID string
+	// Identity is the coordinator's key. Its ID names the node, and it signs
+	// what followers are told to hold. A node without one signs nothing and
+	// takes nothing back by itself.
+	Identity *identity.Identity
 	// Store is the coordinator's store, and StoreID a name for it that is
 	// lost if its pins are: a coordinator found with a store of another
 	// name has lost the one its followers hold copies of.
 	Store   Store
 	StoreID string
+	// Formerly is the ID the node had under a key it has since lost, or "".
+	// What followers hold for a store of that node is kept, as it is for an
+	// earlier store of this one, until Restore takes it back. A list signed
+	// with the lost key cannot be told for the node's own and is not acted
+	// on.
+	Formerly string
 	// Replicas is how many followers should hold each pinned blob. Zero
 	// asks none to.
 	Replicas int
@@ -70,9 +86,11 @@ type Config struct {
 // Manager is the coordinator's side of replication. It hears from the
 // followers, tells each what to hold, and knows what each says it holds.
 type Manager struct {
+	identity *identity.Identity
+	id       string
 	store    Store
 	storeID  string
-	earlier  string // what the name of any earlier store of this node begins with
+	earlier  []string // what the name of any earlier store of this node begins with
 	replicas int
 	address  func(nodeID string) string
 	fetch    func(ctx context.Context, from *pb.BlobHolder, c cid.Cid, into blobclient.Putter) error
@@ -82,11 +100,23 @@ type Manager struct {
 	// atStart holds the blobs that were pinned when the manager started,
 	// and settled is when it stops waiting for followers that may already
 	// hold them.
-	atStart map[string]struct{}
+	atStart map[string]time.Time
 	settled time.Time
+
+	// taking is held while a list is being taken back, so that two followers
+	// with the same blob listed do not race for its expiry.
+	taking sync.Mutex
 
 	mu        sync.Mutex
 	followers map[string]*follower
+	// sequence is the sequence of the last list signed.
+	sequence uint64
+	// restored holds what has been taken back from a list, and the expiry
+	// each blob was given. A list shown again brings back nothing that was
+	// taken once and released since, for as long as the node runs.
+	restored map[string]time.Time
+	// restoring counts the lists being taken back at the moment.
+	restoring int
 }
 
 // follower is what a coordinator knows of one follower.
@@ -96,22 +126,41 @@ type follower struct {
 	// held is what it then said it holds.
 	held map[string]struct{}
 	// stranded lists what it holds from an earlier store of this node that
-	// the present store has not pinned.
+	// the present store has not pinned, and unsigned those of them that no
+	// list it showed, signed by this node, names.
 	stranded []string
+	unsigned []string
+	// warned is whether what it is stranded with has been logged, and
+	// refused whether a list it showed was found not to be this node's.
+	warned  bool
+	refused bool
 }
 
 // New returns a manager for a coordinator that has just started.
 func New(cfg Config) *Manager {
 	m := &Manager{
+		identity:  cfg.Identity,
 		store:     cfg.Store,
-		storeID:   cfg.ID + "/" + cfg.StoreID,
-		earlier:   cfg.ID + "/",
 		replicas:  cfg.Replicas,
 		address:   cfg.Address,
 		fetch:     cfg.Fetch,
 		log:       cfg.Log,
 		grace:     Grace,
 		followers: make(map[string]*follower),
+		restored:  make(map[string]time.Time),
+	}
+	if cfg.Identity != nil {
+		m.id = cfg.Identity.ID()
+	}
+	m.storeID, m.earlier = m.id+"/"+cfg.StoreID, []string{m.id + "/"}
+	if cfg.Formerly != "" {
+		m.earlier = append(m.earlier, cfg.Formerly+"/")
+	}
+	// What an earlier run took back is known by the pins it left.
+	for _, pin := range m.store.Pins() {
+		if pin.Owner == RestoredOwner {
+			m.restored[pin.CID.String()] = pin.Expires
+		}
 	}
 	now := time.Now()
 	m.atStart, _ = m.pinned(now)
@@ -124,11 +173,13 @@ func Off(store Store) *Manager {
 	return New(Config{Store: store, Address: func(string) string { return "" }, Log: slog.New(slog.DiscardHandler)})
 }
 
-// pinned returns the blobs the store is keeping as of now, as a set and in
-// order. The short pin every new blob gets does not count: a blob is copied
-// once somebody has asked for it to be kept.
-func (m *Manager) pinned(now time.Time) (set map[string]struct{}, order []string) {
-	set = make(map[string]struct{})
+// pinned returns the blobs the store is keeping as of now, in order, and
+// until when each is kept: the latest expiry of the pins on it, or the zero
+// time if one of them holds until released. The short pin every new blob
+// gets does not count: a blob is copied once somebody has asked for it to be
+// kept.
+func (m *Manager) pinned(now time.Time) (until map[string]time.Time, order []string) {
+	until = make(map[string]time.Time)
 	for _, pin := range m.store.Pins() {
 		if pin.Owner == storage.GraceOwner || (!pin.Expires.IsZero() && pin.Expires.Before(now)) {
 			continue
@@ -140,12 +191,21 @@ func (m *Manager) pinned(now time.Time) (set map[string]struct{}, order []string
 			continue
 		}
 		id := pin.CID.String()
-		if _, listed := set[id]; !listed {
-			set[id] = struct{}{}
+		kept, listed := until[id]
+		if !listed {
 			order = append(order, id)
 		}
+		if !listed || later(pin.Expires, kept) {
+			until[id] = pin.Expires
+		}
 	}
-	return set, order
+	return until, order
+}
+
+// later reports whether a pin expiring at a outlasts one expiring at b. The
+// zero time is no expiry, and outlasts any other.
+func later(a, b time.Time) bool {
+	return !b.IsZero() && (a.IsZero() || a.After(b))
 }
 
 // liveLocked returns the followers heard from within the grace period, in
@@ -185,9 +245,24 @@ func (m *Manager) chosen(blob string, followers []string) []string {
 }
 
 // Replicate takes a follower's word for what it holds, and for which store,
-// and returns what it should hold from now on and the store to name next
-// time.
-func (m *Manager) Replicate(caller, store string, holding []string) (hold []string, storeID string) {
+// and tells it what to hold from now on and the store to name next time.
+//
+// A follower that shows a list this node signed for an earlier store has
+// what the list names taken back first, so that the answer is to hold it for
+// the store the node has now.
+func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.ReplicateRequest) *pb.ReplicateResponse {
+	store, holding, shown := req.GetStore(), req.GetHolding(), req.GetList()
+	vouched := shown != nil && m.signedHere(shown)
+	// named is what a list of an earlier store names, and owed what of that
+	// could not be taken back this time.
+	var named, owed map[string]struct{}
+	if vouched && shown.GetStore() != m.storeID {
+		owed = m.takeBack(ctx, caller, shown)
+		named = make(map[string]struct{}, len(shown.GetBlobs()))
+		for _, blob := range shown.GetBlobs() {
+			named[blob.GetCid()] = struct{}{}
+		}
+	}
 	now := time.Now()
 	pinned, order := m.pinned(now)
 
@@ -205,6 +280,14 @@ func (m *Manager) Replicate(caller, store string, holding []string) (hold []stri
 	m.followers[caller] = f
 	live := m.liveLocked(now)
 
+	// A list that is not this node's is as good as none. A follower that
+	// shows none this time is asked for it again, and is not logged twice.
+	f.refused = (shown != nil && !vouched) || (shown == nil && before.refused)
+	if f.refused && !before.refused {
+		m.log.Warn("a storage follower showed a list of what to hold that this node did not sign; it is ignored, and nothing is taken back on the strength of it", "node", caller, "store", shown.GetStore())
+	}
+
+	var hold []string
 	for _, blob := range order {
 		chosen := m.chosen(blob, live)
 		mine := slices.Contains(chosen, caller)
@@ -224,21 +307,163 @@ func (m *Manager) Replicate(caller, store string, holding []string) (hold []stri
 	// What a follower holds that is not pinned has been released, and it
 	// drops it, unless it holds it for a store this node had before: then
 	// this node has lost its pins, and that copy may be the only one left.
-	if store != m.storeID && strings.HasPrefix(store, m.earlier) {
-		for _, id := range holding {
-			if _, kept := pinned[id]; !kept {
-				f.stranded = append(f.stranded, id)
-			}
+	// For what a list this node signed names there is no need to guess. It
+	// has been taken back, and is pinned; or it could not be fetched this
+	// time, and is still to be kept; or it has lapsed, or was released after
+	// it came back, and goes. A follower that shows a list of the store the
+	// node has now was told by that list what to drop, and stopped before
+	// it had.
+	current := vouched && shown.GetStore() == m.storeID
+	earlier := !current && store != m.storeID && slices.ContainsFunc(m.earlier, func(prefix string) bool {
+		return strings.HasPrefix(store, prefix)
+	})
+	for _, id := range holding {
+		_, kept := pinned[id]
+		_, listed := named[id]
+		_, due := owed[id]
+		switch {
+		case kept, listed && !due, !listed && !earlier:
+		case listed:
+			f.stranded = append(f.stranded, id)
+		default:
+			f.stranded, f.unsigned = append(f.stranded, id), append(f.unsigned, id)
 		}
-		sort.Strings(f.stranded)
 	}
-	if len(f.stranded) == 0 {
-		return hold, m.storeID
+	sort.Strings(f.stranded)
+
+	// A follower that says it keeps lists is told what to hold in one.
+	lists := req.GetKeepsLists() && m.identity != nil
+	if len(f.stranded) > 0 {
+		// It goes on holding for the earlier store, and keeps the list it
+		// has. If it has yet to show that list, it is asked to, and what it
+		// is left with is logged once it has answered.
+		ask := lists && shown == nil
+		f.warned = before.warned
+		if !ask && !f.warned {
+			m.log.Warn("a storage follower holds blobs from a store this node had before and no longer has pinned; it keeps them until they are restored", "node", caller, "blobs", len(f.stranded), "in_no_list_this_node_signed", len(f.unsigned))
+			f.warned = true
+		}
+		return &pb.ReplicateResponse{Hold: append(hold, f.stranded...), Store: store, ShowList: ask}
 	}
-	if len(before.stranded) == 0 {
-		m.log.Warn("a storage follower holds blobs from a store this node had before and no longer has pinned; it keeps them until they are restored", "node", caller, "blobs", len(f.stranded))
+	if lists {
+		return &pb.ReplicateResponse{Store: m.storeID, List: m.signLocked(now, hold, pinned)}
 	}
-	return append(hold, f.stranded...), store
+	return &pb.ReplicateResponse{Hold: hold, Store: m.storeID}
+}
+
+// signLocked returns a signed list of the given blobs, each with the expiry
+// the store has it pinned until.
+func (m *Manager) signLocked(now time.Time, hold []string, until map[string]time.Time) *pb.KeepList {
+	m.sequence = max(uint64(now.UnixNano()), m.sequence+1)
+	list := &pb.KeepList{Store: m.storeID, Sequence: m.sequence}
+	for _, id := range hold {
+		blob := &pb.KeptBlob{Cid: id}
+		if expires := until[id]; !expires.IsZero() {
+			blob.KeepUntil = timestamppb.New(expires)
+		}
+		list.Blobs = append(list.Blobs, blob)
+	}
+	list.Signature = m.identity.Sign(signedBytes(list))
+	return list
+}
+
+// signedHere reports whether a list carries this node's signature.
+func (m *Manager) signedHere(list *pb.KeepList) bool {
+	if m.identity == nil {
+		return false
+	}
+	signed, _ := identity.Verify(m.id, signedBytes(list), list.GetSignature()) // fails only for an ID that is not one
+	return signed
+}
+
+// takeBackTries is how many blobs in a row may fail to come back before the
+// rest of a list is left for the next time its follower asks. A follower
+// that cannot be reached costs seconds for each blob tried.
+const takeBackTries = 3
+
+// takeBack fetches from a follower what a list signed by this node names,
+// and pins each blob as restored until the expiry the list gives. What has
+// lapsed is passed over. It returns what is still to come: the blobs it
+// could not fetch or pin this time.
+func (m *Manager) takeBack(ctx context.Context, caller string, list *pb.KeepList) (owed map[string]struct{}) {
+	m.taking.Lock()
+	defer m.taking.Unlock()
+	m.mu.Lock()
+	m.restoring++
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.restoring--
+		m.mu.Unlock()
+	}()
+
+	now := time.Now()
+	from := &pb.BlobHolder{NodeId: caller, Address: m.address(caller)}
+	owed = make(map[string]struct{})
+	took, failures := 0, 0
+	// first is the first thing to go wrong, which is as much as is logged:
+	// a follower that cannot be reached fails alike for every blob.
+	var first error
+	if from.GetAddress() == "" {
+		failures, first = takeBackTries, errors.New("the follower is not connected as a worker yet, or serves nothing")
+	}
+	for _, blob := range list.GetBlobs() {
+		id := blob.GetCid()
+		var expires time.Time
+		if blob.GetKeepUntil() != nil {
+			expires = blob.GetKeepUntil().AsTime()
+		}
+		if !expires.IsZero() && !expires.After(now) {
+			continue
+		}
+		// Of two lists that name a blob, the one that keeps it longer wins.
+		m.mu.Lock()
+		had, done := m.restored[id]
+		m.mu.Unlock()
+		if done && !later(expires, had) {
+			continue
+		}
+		if failures == takeBackTries {
+			owed[id] = struct{}{}
+			continue
+		}
+		if err := m.takeOne(ctx, from, id, expires); err != nil {
+			if first == nil {
+				first = fmt.Errorf("%s: %w", id, err)
+			}
+			owed[id] = struct{}{}
+			failures++
+			continue
+		}
+		failures = 0
+		took++
+		m.mu.Lock()
+		m.restored[id] = expires
+		m.mu.Unlock()
+	}
+	if len(owed) > 0 {
+		m.log.Warn("could not take back everything a list signed by this node names; the rest is tried again when the follower next asks", "node", caller, "blobs", len(owed), "error", first)
+	}
+	if took > 0 {
+		m.log.Info("took back from a storage follower what a store this node had before was keeping, on the strength of a list this node signed",
+			"node", caller, "store", list.GetStore(), "signed", time.Unix(0, int64(list.GetSequence())).UTC().Format(time.RFC3339), "blobs", took, "still_to_come", len(owed))
+	}
+	return owed
+}
+
+// takeOne pins a blob as restored, fetching it from a follower first if the
+// store lacks it. The store checks what arrives against the CID.
+func (m *Manager) takeOne(ctx context.Context, from *pb.BlobHolder, id string, expires time.Time) error {
+	c, err := cid.Decode(id)
+	if err == nil {
+		err = m.store.Pin(ctx, RestoredOwner, expires, c)
+	}
+	if errors.Is(err, storage.ErrNotFound) {
+		if err = m.fetch(ctx, from, c, m.store); err == nil {
+			err = m.store.Pin(ctx, RestoredOwner, expires, c)
+		}
+	}
+	return err
 }
 
 // allHoldLocked reports whether every one of some followers says it holds a
@@ -265,7 +490,14 @@ func (m *Manager) Status(only string) *pb.ReplicasResponse {
 		Wanted: uint32(m.replicas), Followers: live,
 		Settling: len(m.atStart) > 0 && now.Before(m.settled),
 	}
-	res.FromEarlierStore = uint32(len(m.strandedLocked(live)))
+	res.FromEarlierStore = uint32(len(m.strandedLocked(live, false)))
+	res.UnsignedFromEarlierStore = uint32(len(m.strandedLocked(live, true)))
+	res.Restoring = m.restoring > 0
+	for _, pin := range m.store.Pins() {
+		if pin.Owner == RestoredOwner && (pin.Expires.IsZero() || pin.Expires.After(now)) {
+			res.Restored++
+		}
+	}
 	for _, blob := range order {
 		if only != "" && blob != only {
 			continue
@@ -282,11 +514,15 @@ func (m *Manager) Status(only string) *pb.ReplicasResponse {
 }
 
 // strandedLocked lists, in order, what the given followers hold from an
-// earlier store.
-func (m *Manager) strandedLocked(followers []string) []string {
+// earlier store, or only what no list signed by this node names.
+func (m *Manager) strandedLocked(followers []string, unsigned bool) []string {
 	var stranded []string
 	for _, id := range followers {
-		stranded = append(stranded, m.followers[id].stranded...)
+		if unsigned {
+			stranded = append(stranded, m.followers[id].unsigned...)
+		} else {
+			stranded = append(stranded, m.followers[id].stranded...)
+		}
 	}
 	sort.Strings(stranded)
 	return slices.Compact(stranded)
@@ -325,10 +561,12 @@ func (m *Manager) Recover(ctx context.Context, c cid.Cid) bool {
 
 // Restore fetches back what followers hold from an earlier store of this
 // node and pins it for owner, until released. It returns how many blobs it
-// restored and which it could not.
+// restored and which it could not. It takes the followers' word for what
+// that store kept, so it is for the node's owner to ask for: what a list
+// signed by this node names is taken back without it.
 func (m *Manager) Restore(ctx context.Context, owner string) (restored int, failed []string) {
 	m.mu.Lock()
-	stranded := m.strandedLocked(m.liveLocked(time.Now()))
+	stranded := m.strandedLocked(m.liveLocked(time.Now()), false)
 	m.mu.Unlock()
 
 	done := make(map[string]struct{})

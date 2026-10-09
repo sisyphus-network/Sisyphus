@@ -63,13 +63,20 @@ type BlobServiceClient interface {
 	// and is told what it should: it fetches what it lacks with Get and drops
 	// the rest. Asking is also how the node knows the follower is there, so a
 	// follower asks again every so often.
+	//
+	// What the node tells a follower to hold it signs, and the follower keeps
+	// the signed list. A node that has lost its store asks to be shown the
+	// list, checks that the signature is its own, and takes back what the
+	// list names. A follower's word alone brings nothing back.
 	Replicate(ctx context.Context, in *ReplicateRequest, opts ...grpc.CallOption) (*ReplicateResponse, error)
 	// Replicas reports which followers hold each blob the node has pinned,
 	// against how many should.
 	Replicas(ctx context.Context, in *ReplicasRequest, opts ...grpc.CallOption) (*ReplicasResponse, error)
-	// Restore is for a node whose store was lost and replaced. It fetches
-	// back what its followers still hold from the store it had before and
-	// pins it on behalf of the node's user.
+	// Restore is for a node whose store was lost and replaced, and which
+	// cannot take back by itself what its followers hold from the store it
+	// had before: because it has lost its key too, or because a follower has
+	// no list it signed. It fetches those blobs back on the followers' word
+	// and pins them on behalf of the node's user.
 	Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResponse, error)
 }
 
@@ -234,13 +241,20 @@ type BlobServiceServer interface {
 	// and is told what it should: it fetches what it lacks with Get and drops
 	// the rest. Asking is also how the node knows the follower is there, so a
 	// follower asks again every so often.
+	//
+	// What the node tells a follower to hold it signs, and the follower keeps
+	// the signed list. A node that has lost its store asks to be shown the
+	// list, checks that the signature is its own, and takes back what the
+	// list names. A follower's word alone brings nothing back.
 	Replicate(context.Context, *ReplicateRequest) (*ReplicateResponse, error)
 	// Replicas reports which followers hold each blob the node has pinned,
 	// against how many should.
 	Replicas(context.Context, *ReplicasRequest) (*ReplicasResponse, error)
-	// Restore is for a node whose store was lost and replaced. It fetches
-	// back what its followers still hold from the store it had before and
-	// pins it on behalf of the node's user.
+	// Restore is for a node whose store was lost and replaced, and which
+	// cannot take back by itself what its followers hold from the store it
+	// had before: because it has lost its key too, or because a follower has
+	// no list it signed. It fetches those blobs back on the followers' word
+	// and pins them on behalf of the node's user.
 	Restore(context.Context, *RestoreRequest) (*RestoreResponse, error)
 	mustEmbedUnimplementedBlobServiceServer()
 }

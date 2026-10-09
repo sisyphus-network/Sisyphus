@@ -344,7 +344,8 @@ func blobGC(ctx context.Context, args []string) error {
 }
 
 // blobReplicas shows how many of a node's storage followers hold each blob
-// it has pinned, against how many should.
+// it has pinned, against how many should, and what a node that lost its
+// store has taken back from them or has yet to.
 func blobReplicas(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob replicas", flag.ContinueOnError)
 	node := targetFlags(fs)
@@ -365,8 +366,19 @@ func blobReplicas(ctx context.Context, args []string) error {
 		return err
 	}
 	wanted, followers := int(listed.GetWanted()), len(listed.GetFollowers())
-	if stranded := listed.GetFromEarlierStore(); stranded > 0 {
-		fmt.Fprintf(stdout, "followers hold %d blob(s) from a store this node had before, which it no longer has pinned: \"sisyphusd blob restore\" fetches them back\n", stranded)
+	if listed.GetRestoring() {
+		fmt.Fprintf(stdout, "this node is taking back what a follower holds from a store it had before: %d blob(s) are back so far\n", listed.GetRestored())
+	} else if restored := listed.GetRestored(); restored > 0 {
+		fmt.Fprintf(stdout, "%d blob(s) are kept that this node took back from its followers after losing its store: \"sisyphusd blob pins\" lists them as held for \"restored\"\n", restored)
+	}
+	// What a list signed by this node names it takes back by itself. The
+	// rest it has only the followers' word for.
+	unsigned := listed.GetUnsignedFromEarlierStore()
+	if signed := listed.GetFromEarlierStore() - unsigned; signed > 0 {
+		fmt.Fprintf(stdout, "followers hold %d blob(s) from a store this node had before that it has yet to take back: it tries again each time a follower asks what to hold, and there is nothing to run\n", signed)
+	}
+	if unsigned > 0 {
+		fmt.Fprintf(stdout, "followers hold %d blob(s) from a store this node had before that no list signed by this node names: it does not take those back by itself, and \"sisyphusd blob restore\" does\n", unsigned)
 	}
 	if wanted == 0 {
 		fmt.Fprintln(stdout, "this node asks no followers to hold copies of its data: it was started without --replicas")
@@ -404,7 +416,8 @@ func blobReplicas(ctx context.Context, args []string) error {
 }
 
 // blobRestore has a node whose store was lost fetch back what its storage
-// followers still hold of it.
+// followers still hold of it, on their word. A node that still has its key
+// does that by itself for whatever it had signed for.
 func blobRestore(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob restore", flag.ContinueOnError)
 	node := targetFlags(fs)
@@ -425,6 +438,10 @@ func blobRestore(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "restored %d blob(s), pinned until unpinned\n", done.GetRestored())
+	if done.GetRestored() == 0 && len(done.GetFailed()) == 0 {
+		fmt.Fprintln(stdout, "followers hold nothing from an earlier store that this node has not pinned")
+		fmt.Fprintln(stdout, "a node that comes back with its key and without its store takes back by itself what it had signed for; this command is for one that has lost its key too and was started with --formerly, or whose followers kept no signed list")
+	}
 	if failed := done.GetFailed(); len(failed) > 0 {
 		return fmt.Errorf("%d blob(s) could not be fetched back from any follower: %s", len(failed), strings.Join(failed, ", "))
 	}

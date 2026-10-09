@@ -28,13 +28,13 @@ const usage = `Usage:
   sisyphusd blob get <cid>         fetch a blob, checking it against its CID
   sisyphusd blob stat <cid>        show a blob's size
   sisyphusd blob pin <cid>         keep a blob until unpinned, or for --ttl
-  sisyphusd blob unpin <cid>       stop keeping a blob
+  sisyphusd blob unpin <cid>       stop keeping a blob, whether it was pinned by hand or taken back from followers
   sisyphusd blob pins              list what the node is keeping, and for whom
   sisyphusd blob gc                delete stored data that nothing is keeping
   sisyphusd name publish <cid>     point this node's name, which is its ID, at a stored file (--lifetime, --ttl)
   sisyphusd name resolve <node-id> ask a node what a name stands for, check the answer and print the CID
-  sisyphusd blob replicas [<cid>]  show which storage followers hold copies of what the node has pinned
-  sisyphusd blob restore           fetch back what followers hold from a store this node has lost
+  sisyphusd blob replicas [<cid>]  show which storage followers hold copies of what the node has pinned, and what it has taken back from them
+  sisyphusd blob restore           fetch back, on the followers' word, what they hold from a store this node has lost; needed only if it lost its key too
   sisyphusd blob pin-remote <cid> [name]  ask a pinning service to keep a blob too (--service <url> --key-file <file>, --wait)
   sisyphusd blob pins-remote       list what a pinning service has been asked to keep
   sisyphusd blob unpin-remote <request-id>  have a pinning service stop keeping something
