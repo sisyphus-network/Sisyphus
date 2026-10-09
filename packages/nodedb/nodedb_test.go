@@ -308,6 +308,22 @@ func TestOpenRefusesWhatItCannotUse(t *testing.T) {
 		t.Errorf("a database from a newer version: %v", err)
 	}
 
+	// A migration with a lower number than one a database has had is still
+	// applied: the two were written apart, and the higher arrived first.
+	gap := filepath.Join(dir, "gap.db")
+	db = open(t, gap)
+	for _, statement := range []string{`DROP TABLE names`, `DELETE FROM schema_migrations WHERE version = 12`} {
+		if _, err := db.sql.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	db.Close()
+	db = open(t, gap)
+	if _, err := db.sql.Exec(`SELECT name FROM names`); err != nil {
+		t.Errorf("a migration that was passed over was not applied: %v", err)
+	}
+	db.Close()
+
 	// One that claims no migrations but already has their tables.
 	clash := filepath.Join(dir, "clash.db")
 	db = open(t, clash)
