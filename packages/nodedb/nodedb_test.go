@@ -308,6 +308,22 @@ func TestOpenRefusesWhatItCannotUse(t *testing.T) {
 		t.Errorf("a database from a newer version: %v", err)
 	}
 
+	// A migration with a lower number than one a database has had is still
+	// applied: the two were written apart, and the higher arrived first.
+	gap := filepath.Join(dir, "gap.db")
+	db = open(t, gap)
+	for _, statement := range []string{`DROP TABLE names`, `DELETE FROM schema_migrations WHERE version = 12`} {
+		if _, err := db.sql.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	db.Close()
+	db = open(t, gap)
+	if _, err := db.sql.Exec(`SELECT name FROM names`); err != nil {
+		t.Errorf("a migration that was passed over was not applied: %v", err)
+	}
+	db.Close()
+
 	// One that claims no migrations but already has their tables.
 	clash := filepath.Join(dir, "clash.db")
 	db = open(t, clash)
@@ -391,7 +407,7 @@ func loosen(t *testing.T, db *DB, table, columns string) {
 
 func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	const (
-		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private"
+		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify"
 		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error"
 	)
 	for _, tt := range []struct {
@@ -403,6 +419,7 @@ func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 		{"job_commitments", "job_id DEFAULT 'j1', name, commitment", "load job commitments"},
 		// A row for the one task there is, with nothing else in it.
 		{"task_attempts", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, state, error", "load attempts"},
+		{"task_results", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, output, blobs", "load task results"},
 	} {
 		db, _ := newDB(t)
 		save(t, db, jobmodel.New("j1", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted))
@@ -507,6 +524,8 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	// column, and so before those that came after it, and open it again.
 	for _, statement := range []string{
 		`DROP TABLE file_references`,
+		`DROP TABLE task_results`,
+		`ALTER TABLE jobs DROP COLUMN verify`,
 		`DROP TABLE job_commitments`,
 		`ALTER TABLE jobs DROP COLUMN record_cid`,
 		`ALTER TABLE jobs DROP COLUMN submitter_id`,
@@ -553,5 +572,56 @@ func TestAJobsCommitmentsAreKeptWithItAndGoWhenItDoes(t *testing.T) {
 	var left int
 	if err := db.sql.QueryRow(`SELECT count(*) FROM job_commitments`).Scan(&left); err != nil || left != 0 {
 		t.Errorf("%d commitments left after their job was deleted, %v", left, err)
+	}
+}
+
+func TestWhatEachWorkerReturnedForAVerifiedTaskIsKeptWithItAndGoesWhenItDoes(t *testing.T) {
+	db, file := newDB(t)
+	job := jobmodel.New("j1", "wordcount", nil, jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
+	job.Verify = 2
+	save(t, db, job)
+	task := job.Tasks[0]
+	first := job.StartCopy(task, "node-a", "alpha", submitted)
+	second := job.StartCopy(task, "node-b", "beta", submitted)
+	save(t, db, job)
+	// The second answers first, with blobs; the first with none, and
+	// something else.
+	job.ReturnCopy(task, second, []byte("counts"), []string{"cid-1", "cid-2"})
+	save(t, db, job)
+	job.ReturnCopy(task, first, nil, nil)
+	job.FailCopy(task, job.StartCopy(task, "node-c", "gamma", submitted), "disk full", 3, submitted)
+	save(t, db, job)
+	// Saved again with nothing new: a result is written once.
+	job.RequeueCopy(task, job.StartCopy(task, "node-c", "gamma", submitted), "the coordinator stopped")
+	save(t, db, job)
+
+	db = reopen(t, db, file)
+	loaded := load(t, db)[0]
+	got := loaded.Tasks[0]
+	if loaded.Verify != 2 || loaded.ToProto().GetSpec().GetVerify() != 2 {
+		t.Errorf("loaded as verified by %d", loaded.Verify)
+	}
+	if len(got.Results) != 2 || got.Results[0].Digest() != task.Results[0].Digest() || got.Results[1].Digest() != task.Results[1].Digest() {
+		t.Fatalf("results as loaded:\n%+v\nas saved:\n%+v", got.Results, task.Results)
+	}
+	if r := got.Results[1]; r.Attempt != 2 || r.NodeID != "node-b" || r.NodeName != "beta" || string(r.Output) != "counts" || !reflect.DeepEqual(r.Blobs, []string{"cid-1", "cid-2"}) {
+		t.Errorf("the second attempt's result as loaded: %+v", r)
+	}
+	if r := got.Results[0]; r.Attempt != 1 || r.NodeName != "alpha" || len(r.Output) != 0 || r.Blobs != nil {
+		t.Errorf("the first attempt's result as loaded: %+v", r)
+	}
+	// It stands where it stood: two results that differ, two attempts lost,
+	// one more worker to ask, and neither of the two that answered.
+	if !reflect.DeepEqual(got.History, task.History) || got.State != jobmodel.Pending || got.Failures != 1 || loaded.Wanted(got) != 1 ||
+		!got.Asked("node-a") || !got.Asked("node-b") || got.Asked("node-c") || len(loaded.Tasks[1].Results) != 0 {
+		t.Errorf("the task as loaded: %v after %d failures, wanting %d, attempts\n%+v\nsaved as\n%+v", got.State, got.Failures, loaded.Wanted(got), got.History, task.History)
+	}
+
+	if err := db.DeleteJobs([]string{"j1"}); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := db.sql.QueryRow(`SELECT count(*) FROM task_results`).Scan(&left); err != nil || left != 0 {
+		t.Errorf("%d results left after their job was deleted, %v", left, err)
 	}
 }
