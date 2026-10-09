@@ -164,13 +164,13 @@ IPFS_PATH=$(bin/sisyphusd data-dir)/ipfs ipfs cat <cid>                  # anyth
 With `--kubo` alone, the coordinator's disk holds the only copy of the pool's data that anything promises to keep; what workers hold is a cache. With `--cluster` as well, each node also runs an [IPFS Cluster](https://ipfscluster.io) peer beside its Kubo, the pool's peers form one cluster, and whatever the coordinator pins is pinned on several nodes. The `ipfs-cluster-service` program must be installed on every node that uses it.
 
 ```sh
-bin/sisyphusd run --kubo --cluster --cluster-replicas 2     # the coordinator
+bin/sisyphusd run --kubo --cluster --replicas 1             # the coordinator: one copy besides its own
 bin/sisyphusd run --kubo --cluster --role worker --coordinator <addr> --join <invitation>
 bin/sisyphusd pool cluster                                  # which nodes hold what
 ```
 
 - **The node's pins are the cluster's pins.** Everything in `blob pins`, apart from the hour's grace every upload gets, is pinned on the cluster, and unpinned from it when the last pin on the node goes: unpinned by hand, or lapsed and collected. Retention is still managed in the one place, with `blob pin`, `blob unpin`, `--retain` and `--ttl`. The coordinator compares the two lists when it starts and every minute after, and puts right whatever differs.
-- **Each pin is held by `--cluster-replicas` nodes**, two unless told otherwise. The coordinator is always one of them: its Kubo holds everything the node stores in any case. The others are chosen by the cluster, by free space, and fetch the data over the pool's private network.
+- **`--replicas N` is how many nodes hold each pin besides the coordinator**, one unless told otherwise; `pool cluster` counts the coordinator too, so it shows N + 1. The coordinator always holds everything: its Kubo is where the node stores it in any case. The others are chosen by the cluster, by free space, and fetch the data over the pool's private network.
 - **With fewer nodes than that, a pin is held by as many as there are**, and gains holders within about a minute of more joining.
 - **When a holder goes, another takes its place.** A node not heard from for thirty seconds is taken to be gone, and the coordinator's peer has another node fetch what it held, if there is one that does not hold it already. If the node comes back, the pin stays where it was moved to.
 - **Only the coordinator says what is pinned.** A worker's peer is a follower: it keeps what it is allocated, refuses to pin or unpin anything itself, and every peer ignores changes that do not come from the coordinator's. Someone who gives a pool disk space gives it nothing else.
@@ -192,7 +192,7 @@ CID                                                          COPIES  HELD BY    
 bafybeifnshe3y2i4sl46bbjbagfdu5xbsbq55uxqras5an73qgcqocpyeq  2/2     hub, north  -
 ```
 
-**Sizing.** Every copy costs its size on the node that holds it, so a pool storing S with `--cluster-replicas N` needs N × S of disk in all, S of it on the coordinator. The cluster allocates by what each Kubo reports as free, which is its `Datastore.StorageMax`, 10 GB unless changed, less what its repository holds. To offer more or less on a node, set it and restart the node:
+**Sizing.** Every copy costs its size on the node that holds it, so a pool storing S with `--replicas N` needs (N + 1) × S of disk in all, S of it on the coordinator. The cluster allocates by what each Kubo reports as free, which is its `Datastore.StorageMax`, 10 GB unless changed, less what its repository holds. To offer more or less on a node, set it and restart the node:
 
 ```sh
 IPFS_PATH=$(bin/sisyphusd data-dir)/ipfs ipfs config Datastore.StorageMax 200GB
@@ -204,7 +204,7 @@ A cluster peer is one more process per node; with a handful of pins it used 60 t
 
 **Removing one.** Stop it, or `pool remove` it. Thirty seconds later the coordinator's peer starts moving what it held to other nodes, if there are any that do not hold it already; `pool cluster` shows `1/2` until they have fetched it. A removed node is shut out by the change of key, and keeps on its disk what it had.
 
-**Next to the built-in replication.** `--replicas` and `--replica-dir`, described under [Copies on other nodes](#copies-on-other-nodes), are replication done by `sisyphusd` itself, with no other program to run. The two are alternatives: this one is for pools that already run Kubo and want IPFS Cluster's allocation by free space and its repair, at the price of a second program on every node. They count differently: `--replicas 2` is two copies besides the coordinator's, `--cluster-replicas 2` is two with the coordinator's. Running both in one pool has not been tried.
+**Next to the built-in replication.** `--replicas` and `--replica-dir`, described under [Copies on other nodes](#copies-on-other-nodes), are replication done by `sisyphusd` itself, with no other program to run. The two are alternatives: this one is for pools that already run Kubo and want IPFS Cluster's allocation by free space and its repair, at the price of a second program on every node. `--replicas` means the same for both, copies besides the coordinator's own, and with `--cluster` it is the cluster that keeps them: the built-in scheme is then off, and a worker's `--replica-dir` holds nothing.
 
 What to know before relying on it:
 

@@ -445,7 +445,6 @@ func TestPoolClusterCommandFailures(t *testing.T) {
 		{[]string{"pool", "cluster", "--addr", broken}, "ask the cluster peer: it went away"},
 		{[]string{"pool", "cluster", "--addr", plain}, "does not run an IPFS Cluster peer; start it with --kubo --cluster"},
 		{[]string{"run", "--cluster", "--data-dir", t.TempDir()}, "--cluster needs --kubo"},
-		{[]string{"run", "--kubo", "--cluster", "--cluster-replicas", "0", "--data-dir", t.TempDir()}, "--cluster-replicas must be at least 1"},
 	} {
 		if _, err := cli(t, tt.args...); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%v: error %v, want one containing %q", tt.args, err, tt.want)

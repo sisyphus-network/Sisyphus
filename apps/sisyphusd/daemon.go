@@ -96,9 +96,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	s3Credentials := fs.String("s3-credentials", "", "a file with the access key on its first line and the secret key on its second; they stay on this node")
 	useKubo := fs.Bool("kubo", false, "keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself, on a private network with the rest of its pool; needs the ipfs program installed, and for a worker, a coordinator that uses it too")
 	useCluster := fs.Bool("cluster", false, "with --kubo: also run an IPFS Cluster peer beside Kubo, so that what the pool's coordinator pins is kept by several of the pool's nodes; needs the ipfs-cluster-service program installed, and for a worker, a coordinator that uses it too")
-	clusterReplicas := fs.Int("cluster-replicas", 2, "coordinator role with --cluster: how many of the pool's nodes are to hold each thing pinned")
 	swarmPort := fs.Int("swarm-port", 0, "coordinator role with --kubo: TCP port to open so that members' Kubo daemons can connect to this node's directly, which is faster; 0 opens none, and they reach it through --listen")
-	replicas := fs.Int("replicas", 0, "coordinator role: have this many of the pool's storage followers each hold a copy of everything this node has pinned; 0 asks none to")
+	replicas := fs.Int("replicas", 0, "coordinator role: how many copies of everything this node has pinned are to be held by other nodes of the pool, besides its own. Without --cluster they are held by storage followers, and 0 asks none to; with --cluster they are held by the cluster's peers, and 0 means 1")
 	replicaDir := fs.String("replica-dir", "", "worker-only node: be a storage follower, keeping in this directory, which must be used for nothing else, copies of whatever stored data its coordinator says to")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
 	verbose := fs.Bool("v", false, "log per-task detail")
@@ -162,9 +161,6 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if *useCluster && !*useKubo {
 		return errors.New("--cluster needs --kubo: it is on Kubo that a cluster peer pins")
-	}
-	if *clusterReplicas < 1 {
-		return errors.New("--cluster-replicas must be at least 1")
 	}
 	if *publishRecord && !isCoordinator {
 		return errors.New("--publish-record is for a node that coordinates a pool: it is the pool it describes")
@@ -295,7 +291,7 @@ func runDaemon(ctx context.Context, args []string) error {
 				return err
 			}
 			defer swarm.cluster.Stop()
-			cluster = &poolCluster{peer: swarm.cluster.Client, replicas: *clusterReplicas}
+			cluster = &poolCluster{peer: swarm.cluster.Client, replicas: clusterHolders(*replicas)}
 		} else {
 			leave, err := joinCluster(ctx, swarm, peer)
 			if err != nil {
@@ -404,8 +400,14 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		var coord *coordinator.Coordinator
+		// With a cluster it is the cluster's peers that keep the copies, and
+		// storage followers are asked for none.
+		followerCopies := *replicas
+		if *useCluster {
+			followerCopies = 0
+		}
 		replicated := replication.New(replication.Config{
-			ID: ident.ID(), Store: store, StoreID: storeID, Replicas: *replicas, Log: log,
+			ID: ident.ID(), Store: store, StoreID: storeID, Replicas: followerCopies, Log: log,
 			Address: func(id string) string { return coord.ServeAddress(id) },
 			// A follower is reached as one worker reaches another: at the
 			// address it gave, or by name through the node's libp2p host.
@@ -419,8 +421,8 @@ func runDaemon(ctx context.Context, args []string) error {
 					})
 			},
 		})
-		if *replicas > 0 {
-			log.Info("storage followers are to hold copies of what this node has pinned", "copies", *replicas)
+		if followerCopies > 0 {
+			log.Info("storage followers are to hold copies of what this node has pinned", "copies", followerCopies)
 		}
 		// Everything else reads the store through this: a blob it turns out
 		// to lack is first fetched back from a follower.
@@ -481,7 +483,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			config.Cluster = cluster
 			// What the store pins, the cluster is told to pin, for as long
 			// as the node runs. The store must outlive the telling.
-			mirror := newClusterPins(store.Kept, cluster.peer, ident.ID(), *clusterReplicas, log)
+			mirror := newClusterPins(store.Kept, cluster.peer, ident.ID(), clusterHolders(*replicas), log)
 			store.OnPinChange(mirror.nudge)
 			mirrored := make(chan struct{})
 			defer func() {
@@ -1004,6 +1006,15 @@ func openBucket(ctx context.Context, endpoint, bucket, prefix, region, credentia
 		cfg.AccessKey, cfg.SecretKey = lines[0], lines[1]
 	}
 	return s3.Open(ctx, cfg)
+}
+
+// clusterHolders is how many of a cluster's peers hold each pin, given how
+// many copies besides the coordinator's were asked for: those, and the
+// coordinator's own, whose Kubo holds everything the node stores in any
+// case. A cluster asked for none besides is given one, since a cluster of
+// one holder is no cluster.
+func clusterHolders(copies int) int {
+	return max(copies, 1) + 1
 }
 
 // countryOf says which country an address is registered in. It is the

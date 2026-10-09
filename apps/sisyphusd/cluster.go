@@ -24,7 +24,7 @@ import (
 // peers of a pool form one cluster, in which the coordinator alone says what
 // is pinned and the workers keep what they are allocated. What the
 // coordinator's store pins, its cluster peer is told to pin, on as many
-// members as --cluster-replicas asks for.
+// members as --replicas asks for, and the coordinator.
 
 // clusterSecret derives the secret of a pool's cluster from the key of its
 // private IPFS network, so that whoever has been given the one has the
@@ -153,7 +153,7 @@ func (p *clusterPins) run(ctx context.Context) {
 // not, or keeps on fewer members than it now could, and unpins what the
 // store has let go of.
 //
-// Each pin asks for as many holders as --cluster-replicas says. The cluster
+// Each pin asks for as many holders as --replicas says, and the coordinator. The cluster
 // refuses a pin it cannot find the least number of holders for, so that
 // least number is no more than the members there are, and is raised as
 // members join.
