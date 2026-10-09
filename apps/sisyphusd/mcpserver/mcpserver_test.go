@@ -33,8 +33,10 @@ type node struct {
 	// broken has a stream fail part way.
 	content []string
 	broken  bool
-	stored  []*nodepb.StoreFileRequest
-	token   string
+	// eventsEnd is what a job's events end with, when not their plain end.
+	eventsEnd error
+	stored    []*nodepb.StoreFileRequest
+	token     string
 }
 
 var errDown = status.Error(codes.Unavailable, "the node is down")
@@ -78,12 +80,17 @@ type eventStream struct {
 	grpc.ClientStream
 	left   []*nodepb.JobEvent
 	broken bool
+	// ends is what the stream ends with in place of its plain end.
+	ends error
 }
 
 func (e *eventStream) Recv() (*nodepb.JobEvent, error) {
 	if len(e.left) == 0 {
 		if e.broken {
 			return nil, errDown
+		}
+		if e.ends != nil {
+			return nil, e.ends
 		}
 		return nil, io.EOF
 	}
@@ -96,7 +103,7 @@ func (n *node) WatchJobEvents(context.Context, *nodepb.WatchJobEventsRequest, ..
 	if err := n.fail("WatchJobEvents"); err != nil {
 		return nil, err
 	}
-	return &eventStream{left: n.events, broken: n.broken}, nil
+	return &eventStream{left: n.events, broken: n.broken, ends: n.eventsEnd}, nil
 }
 
 type fileStream struct {
@@ -298,5 +305,25 @@ func TestWhatAToolReturnsIsWrittenToBeRead(t *testing.T) {
 	result, _, err := shown(map[string]string{"description": `{"image": "<image>"}`}, nil)
 	if err != nil || result.Content[0].(*mcp.TextContent).Text != `{"description":"{\"image\": \"<image>\"}"}` {
 		t.Fatalf("shown = %v, %v", result.Content[0], err)
+	}
+}
+
+// A node that is listened to for a moment may be the first to say the moment
+// is over; the agent is then given what came, as when this side's clock says
+// so, and is not told of a failure.
+func TestLogsOfARunningJobEndWhenTheNodeSaysTheMomentIsOver(t *testing.T) {
+	n := &node{events: []*nodepb.JobEvent{{Seq: 1, Kind: "submitted", TaskIndex: -1}}, eventsEnd: status.Error(codes.DeadlineExceeded, "context deadline exceeded")}
+	said, err := serving(n).logs(context.Background(), logArgs{JobID: "job-1"})
+	if err != nil {
+		t.Fatalf("the logs of a running job: %v", err)
+	}
+	if got := said.(map[string]any); got["job_finished"] != false || got["last_seq"] != uint64(1) || len(got["events"].([]map[string]any)) != 1 {
+		t.Errorf("the logs of a running job: %v", got)
+	}
+	// An agent that stopped waiting is told so, whatever the node said.
+	stopped, stop := context.WithCancel(context.Background())
+	stop()
+	if _, err := serving(n).logs(stopped, logArgs{JobID: "job-1"}); err == nil {
+		t.Error("an agent that stopped waiting was given logs")
 	}
 }

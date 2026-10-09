@@ -91,7 +91,10 @@ func TestFinishedJobKeepsItsInputsAndResultsForTheRetentionPeriod(t *testing.T) 
 	}
 
 	// Once the grace period is over, a collection removes the four tables of
-	// counts the tasks passed to the aggregation, and nothing else.
+	// counts the tasks passed to the aggregation, and nothing else. The
+	// job's record is stored and then pinned a moment after the job ends;
+	// a collection this far ahead would take it in between.
+	waitFor(t, func() bool { return len(jobRecordPins(p.store, job.GetJobId())) == 1 })
 	done, err := p.store.GC(p.ctx, afterGrace())
 	if err != nil {
 		t.Fatal(err)
