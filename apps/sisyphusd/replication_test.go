@@ -147,8 +147,8 @@ func TestPinnedDataEndsUpOnAsManyFollowersAsAsked(t *testing.T) {
 	}
 
 	listed := p.replicas()
-	if listed.GetWanted() != 2 || len(listed.GetFollowers()) != 3 || len(listed.GetBlobs()) != 6 || listed.GetSettling() {
-		t.Errorf("the coordinator reports %v, want six blobs on two of three followers each", listed)
+	if listed.GetWanted() != 2 || len(listed.GetFollowers()) != 3 || len(listed.GetBlobs()) != len(kept) || listed.GetSettling() {
+		t.Errorf("the coordinator reports %v, want every blob kept, on two of three followers each", listed)
 	}
 	one, err := p.blobs.Replicas(p.ctx, &pb.ReplicasRequest{Cid: kept[0]})
 	if err != nil || len(one.GetBlobs()) != 1 || one.GetBlobs()[0].GetCid() != kept[0] {
