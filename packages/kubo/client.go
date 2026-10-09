@@ -41,6 +41,14 @@ func NewClient(addr string) *Client {
 	return &Client{base: "http://" + addr + "/api/v0/", http: &http.Client{}}
 }
 
+// Address returns the host and port the Kubo API listens at, for another
+// program that is to call it. It changes when the daemon is restarted.
+func (c *Client) Address() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSuffix(strings.TrimPrefix(c.base, "http://"), "/api/v0/")
+}
+
 // call makes one API call and returns its response body, which the caller
 // must close. Kubo reports failures as a JSON object with an HTTP error
 // status; those come back as errors.
@@ -193,7 +201,7 @@ func (c *Client) PutName(ctx context.Context, name string, record []byte) error 
 }
 
 // BlockPut stores one block and returns the CID Kubo gave it. codec is the
-// block's format, "raw" or "dag-pb"; the CID is version 1 with a SHA-256
+// block's format, "raw", "dag-pb" or "dag-cbor"; the CID is version 1 with a SHA-256
 // hash.
 func (c *Client) BlockPut(ctx context.Context, codec string, data []byte) (string, error) {
 	var form bytes.Buffer

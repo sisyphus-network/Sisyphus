@@ -50,6 +50,8 @@ var allowed = map[string][]Role{
 	pb.BlobService_CollectGarbage_FullMethodName: {Client},
 	pb.BlobService_Replicas_FullMethodName:       {Client},
 	pb.BlobService_Restore_FullMethodName:        {Client},
+	// Which members hold what is pinned is part of managing stored data.
+	pb.PoolService_ClusterStatus_FullMethodName: {Client},
 
 	// A member publishes under its own name, which the service holds it to,
 	// and resolves the names of the pool.
@@ -61,6 +63,7 @@ var allowed = map[string][]Role{
 	pb.NodeService_WatchJob_FullMethodName:       {Client},
 	pb.NodeService_CancelJob_FullMethodName:      {Client},
 	pb.NodeService_WatchJobEvents_FullMethodName: {Client},
+	pb.NodeService_GetJobRecord_FullMethodName:   {Client},
 	pb.NodeService_ListNodes_FullMethodName:      {Client},
 }
 

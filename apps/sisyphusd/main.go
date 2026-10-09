@@ -22,6 +22,7 @@ const usage = `Usage:
   sisyphusd job get <job-id>       show a job
   sisyphusd job logs <job-id>      print what has happened to a job, and follow it until it is over
   sisyphusd job cancel <job-id>    stop a job that has not finished
+  sisyphusd job record <job-id>    print a finished job's record, its history as linked data (--verify to check it against the job, and --key-file to check a private job's commitments)
   sisyphusd nodes                  list the workers connected to a coordinator
   sisyphusd blob put <file>        store a file on a node and print its CID
   sisyphusd blob get <cid>         fetch a blob, checking it against its CID
@@ -44,6 +45,7 @@ const usage = `Usage:
   sisyphusd pool remove <node-id>  take a node off that list and disconnect it
   sisyphusd pool work-for <node-id>  take tasks from a node whenever it will have this one (--stop to stop)
   sisyphusd pool rekey             change the key of the pool's private IPFS network
+  sisyphusd pool cluster           show which of the pool's nodes hold each thing pinned, in a pool run with --cluster
   sisyphusd model set|show|list    which language model this node plans with (set --provider --model [--url] [--api-key-file])
   sisyphusd model providers|pull|remove  the kinds of model service, and fetching a model into Ollama or deleting one
   sisyphusd ask <question>         put a question to a running node's planner (--chat <id> to carry on a conversation)
@@ -97,9 +99,11 @@ func run(ctx context.Context, args []string) error {
 				return jobCancel(ctx, args[2:])
 			case "logs":
 				return jobLogs(ctx, args[2:])
+			case "record":
+				return jobRecord(ctx, args[2:])
 			}
 		}
-		return errors.New(`expected job submit, get, logs or cancel`)
+		return errors.New(`expected job submit, get, logs, cancel or record`)
 	case "nodes":
 		return listNodes(ctx, args[1:])
 	case "blob":

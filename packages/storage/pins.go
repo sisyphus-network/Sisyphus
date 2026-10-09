@@ -63,6 +63,7 @@ func (s *Store) Pin(ctx context.Context, owner string, expires time.Time, cids .
 	for _, c := range cids {
 		s.pins[pinKey{c, owner}] = expires
 	}
+	s.tellPinsChangedLocked()
 	return s.savePinsLocked()
 }
 
@@ -77,6 +78,7 @@ func (s *Store) Unpin(owner string, cids ...cid.Cid) error {
 	for _, c := range cids {
 		delete(s.pins, pinKey{c, owner})
 	}
+	s.tellPinsChangedLocked()
 	return s.savePinsLocked()
 }
 
@@ -111,6 +113,47 @@ func (s *Store) Pins() []Pin {
 	return pins
 }
 
+// Kept lists the blobs that something has pinned, each once, in order of
+// CID. A blob that only the grace period after Put is keeping is not among
+// them: nobody has asked for it to be kept. Nor is anything pinned that is
+// not a blob, such as the record of a job: that is linked data, whose pin
+// keeps it and not the blobs it names, which a pin made of it elsewhere
+// would not know to leave out.
+func (s *Store) Kept() []cid.Cid {
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	seen := make(map[cid.Cid]struct{})
+	var kept []cid.Cid
+	for key := range s.pins {
+		if kind := key.cid.Type(); kind != cid.Raw && kind != cid.DagProtobuf {
+			continue
+		}
+		if _, dup := seen[key.cid]; key.owner == GraceOwner || dup {
+			continue
+		}
+		seen[key.cid] = struct{}{}
+		kept = append(kept, key.cid)
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].String() < kept[j].String() })
+	return kept
+}
+
+// OnPinChange has f called after every pin that is placed, released or
+// dropped as expired, so that whatever mirrors the store's pins elsewhere
+// can look again at Kept. f is called with the pins locked: it must return
+// at once and must not call the store.
+func (s *Store) OnPinChange(f func()) {
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	s.pinsChanged = f
+}
+
+func (s *Store) tellPinsChangedLocked() {
+	if s.pinsChanged != nil {
+		s.pinsChanged()
+	}
+}
+
 // Size returns how many bytes the store occupies on disk. It is zero for a
 // store that is not on disk.
 func (s *Store) Size(ctx context.Context) (uint64, error) {
@@ -142,6 +185,9 @@ func (s *Store) GC(ctx context.Context, now time.Time) (Collected, error) {
 			continue
 		}
 		roots = append(roots, key.cid)
+	}
+	if done.ExpiredPins > 0 {
+		s.tellPinsChangedLocked()
 	}
 	err := s.savePinsLocked()
 	s.pinMu.Unlock()
@@ -184,11 +230,15 @@ func (s *Store) GC(ctx context.Context, now time.Time) (Collected, error) {
 	return done, nil
 }
 
-// links returns the blocks that block c refers to. Leaves refer to none, and
-// are not read to find that out.
+// links returns the blocks that block c refers to and a pin on it keeps.
+// Leaves refer to none, and are not read to find that out. A node of linked
+// data keeps the nodes it links to and not the blobs.
 func (s *Store) links(ctx context.Context, c cid.Cid) ([]*ipld.Link, error) {
-	if c.Type() == cid.Raw {
+	switch c.Type() {
+	case cid.Raw:
 		return nil, nil
+	case cid.DagCBOR:
+		return s.nodesLinked(ctx, c)
 	}
 	node, err := s.dag.Get(ctx, c)
 	if err != nil {

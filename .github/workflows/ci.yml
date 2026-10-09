@@ -16,6 +16,8 @@ jobs:
       SISYPHUS_REQUIRE_KUBO: "1"
       # Likewise any that finds it cannot use Docker.
       SISYPHUS_REQUIRE_DOCKER: "1"
+      # Or that finds no ipfs-cluster-service program.
+      SISYPHUS_REQUIRE_CLUSTER: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -35,6 +37,22 @@ jobs:
           sudo install -m 755 kubo/ipfs /usr/local/bin/ipfs
           rm -rf kubo "kubo_${KUBO_VERSION}_linux-amd64.tar.gz"*
           ipfs version
+      - name: Install IPFS Cluster
+        # Some tests run real cluster peers beside those IPFS daemons. The
+        # project publishes no checksums beside its releases, so the one
+        # here was taken from the release when the version was chosen.
+        env:
+          CLUSTER_VERSION: v1.1.6
+          CLUSTER_SHA256: 813a5d9f51359b0a55961f57f5e4d92de8031835502c9fa69821ef89d87ef584
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$CLUSTER_VERSION" -R ipfs-cluster/ipfs-cluster \
+            -p "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
+          echo "$CLUSTER_SHA256  ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz" | sha256sum -c -
+          tar -xzf "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
+          sudo install -m 755 ipfs-cluster-service/ipfs-cluster-service /usr/local/bin/ipfs-cluster-service
+          rm -rf ipfs-cluster-service "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
+          ipfs-cluster-service --version
       - name: Check formatting
         run: test -z "$(gofmt -l apps packages)" || { gofmt -l apps packages; exit 1; }
       - run: go vet ./...

@@ -88,6 +88,7 @@ Work flows one way when one side gives and the other takes, so the second pair c
 - `tasks`: one entry for each piece of the job, with the worker that ran it, how many attempts it took, and why the last one failed if one did.
 - `params` and `result` are bytes. For the two built-in workloads they are JSON.
 - `created_at_ms` and `finished_at_ms` are milliseconds since the Unix epoch; the second is zero until the job ends.
+- `record_cid`: empty until the job is over, then the content ID of the job's record, its history as linked data (see the daemon's README, "A job's record"). It is one short string that names everything about the job, fit to show and to copy. It is also empty for a job that ended before records were kept.
 
 To submit one of the built-in workloads:
 
@@ -175,6 +176,7 @@ It needs a node that runs a worker, which is every node unless it was started wi
 
 - **Submitting jobs to a pool this node has joined as a client.** `SubmitJob` gives work to this node's own pool.
 - **Choosing the key** private files are sealed with, or having more than one.
+- **Reading a job's record.** The API gives its ID in `record_cid`. The record itself is read with `sisyphusd job record <job-id>`, or `GetJobRecord` on the pool's own API.
 
 ## Changing the API
 

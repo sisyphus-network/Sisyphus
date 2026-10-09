@@ -284,6 +284,16 @@ func requireDocker(t *testing.T) {
 
 func TestARealContainerRuns(t *testing.T) {
 	requireDocker(t)
+	// A temporary directory of this test's own, so that what it finds
+	// left behind is its own doing and not that of another package's
+	// tests, which run at the same time and make task directories too.
+	// Under the usual one, which Docker can always reach.
+	own, err := os.MkdirTemp(os.TempDir(), "sisyphus-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(own) })
+	t.Setenv("TMPDIR", own)
 	store := storage.NewMemory()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()

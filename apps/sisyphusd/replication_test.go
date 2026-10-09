@@ -191,8 +191,11 @@ func TestALostFollowerIsReplacedAfterTheGracePeriod(t *testing.T) {
 		}
 		return true
 	})
-	if waited := time.Since(lostAt); waited < 500*time.Millisecond {
-		t.Errorf("the lost follower's share was handed on after %v, before the grace period was over", waited)
+	// The grace period runs from when the follower was last heard from,
+	// which is some while before it was stopped: an interval at least, and
+	// more on a machine that is busy. Well short of it is too soon.
+	if waited := time.Since(lostAt); waited < 250*time.Millisecond {
+		t.Errorf("the lost follower's share was handed on after %v, long before the grace period was over", waited)
 	}
 	p.waitForCopies(2)
 	if listed := p.replicas(); len(listed.GetFollowers()) != 2 || slices.Contains(listed.GetFollowers(), p.workerIdents[lost].ID()) {

@@ -28,6 +28,9 @@ const (
 	// The node's Kubo daemon, as a member of the pool's private IPFS network
 	// would connect to it.
 	TunnelTarget_TUNNEL_TARGET_SWARM TunnelTarget = 1
+	// The node's IPFS Cluster peer, as another member of the pool's cluster
+	// would connect to it.
+	TunnelTarget_TUNNEL_TARGET_CLUSTER TunnelTarget = 2
 )
 
 // Enum value maps for TunnelTarget.
@@ -35,10 +38,12 @@ var (
 	TunnelTarget_name = map[int32]string{
 		0: "TUNNEL_TARGET_UNSPECIFIED",
 		1: "TUNNEL_TARGET_SWARM",
+		2: "TUNNEL_TARGET_CLUSTER",
 	}
 	TunnelTarget_value = map[string]int32{
 		"TUNNEL_TARGET_UNSPECIFIED": 0,
 		"TUNNEL_TARGET_SWARM":       1,
+		"TUNNEL_TARGET_CLUSTER":     2,
 	}
 )
 
@@ -130,10 +135,11 @@ const file_sisyphus_v1_tunnel_proto_rawDesc = "" +
 	"\n" +
 	"TunnelData\x121\n" +
 	"\x06target\x18\x01 \x01(\x0e2\x19.sisyphus.v1.TunnelTargetR\x06target\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data*F\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data*a\n" +
 	"\fTunnelTarget\x12\x1d\n" +
 	"\x19TUNNEL_TARGET_UNSPECIFIED\x10\x00\x12\x17\n" +
-	"\x13TUNNEL_TARGET_SWARM\x10\x012M\n" +
+	"\x13TUNNEL_TARGET_SWARM\x10\x01\x12\x19\n" +
+	"\x15TUNNEL_TARGET_CLUSTER\x10\x022M\n" +
 	"\rTunnelService\x12<\n" +
 	"\x04Open\x12\x17.sisyphus.v1.TunnelData\x1a\x17.sisyphus.v1.TunnelData(\x010\x01BOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 

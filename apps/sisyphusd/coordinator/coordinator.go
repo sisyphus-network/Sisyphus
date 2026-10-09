@@ -39,12 +39,15 @@ const (
 )
 
 // Store is the blob store a coordinator works against: workloads split from
-// it and aggregate into it, and the coordinator pins a job's blobs in it for
-// as long as they are needed. A storage.Store is one.
+// it and aggregate into it, the coordinator pins a job's blobs in it for as
+// long as they are needed, and writes the job's record into it when the job
+// is over. A storage.Store is one.
 type Store interface {
 	runtime.Blobs
 	Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error
 	Unpin(owner string, cids ...cid.Cid) error
+	PutNodes(ctx context.Context, root []byte, linked ...[]byte) (cid.Cid, error)
+	GetNode(ctx context.Context, c cid.Cid) ([]byte, error)
 }
 
 // Journal keeps jobs somewhere that outlasts the coordinator. A nodedb.DB is
@@ -408,6 +411,10 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 		}
 		c.jobs[job.ID] = job
 		c.changed[job.ID] = make(chan struct{})
+	}
+	// Every job is known before any is taken up, so that one which ends
+	// here finds the jobs carrying out its steps.
+	for _, job := range jobs {
 		if job.Terminal() {
 			continue
 		}
@@ -446,9 +453,15 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 func (c *Coordinator) Prune(now time.Time) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	aged := func(job *jobmodel.Job) bool {
+		return c.keepJobs > 0 && job.Terminal() && now.Sub(job.FinishedAt) > c.keepJobs
+	}
 	var old []string
 	for id, job := range c.jobs {
-		if c.keepJobs > 0 && job.Terminal() && now.Sub(job.FinishedAt) > c.keepJobs {
+		// A step is kept as long as the job it is a step of, whose record
+		// links its own.
+		parent, step := c.jobs[job.Parent]
+		if aged(job) && (!step || aged(parent)) {
 			old = append(old, id)
 		}
 	}
@@ -456,6 +469,10 @@ func (c *Coordinator) Prune(now time.Time) (int, error) {
 		return 0, err
 	}
 	for _, id := range old {
+		// A job's record is kept as long as the job is, and no longer.
+		if err := c.store.Unpin(recordOwner(id), decode([]string{c.jobs[id].Record})...); err != nil {
+			c.log.Warn("could not release a job's record", "job", id, "error", err)
+		}
 		delete(c.jobs, id)
 		delete(c.changed, id)
 		delete(c.events, id)
@@ -494,12 +511,13 @@ func (c *Coordinator) Close() {
 
 // Submit validates and splits a job, queues it and returns its initial state.
 func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, error) {
-	return c.submit(ctx, spec, "", "")
+	return c.submit(ctx, spec, "", "", access.Caller(ctx))
 }
 
 // submit takes a job in. parent and step are set for a job that carries
-// out a step of another.
-func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step string) (*pb.Job, error) {
+// out a step of another, and submitter is the node the job came from, if
+// it came from one.
+func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step, submitter string) (*pb.Job, error) {
 	workload, err := c.workloads.Get(spec.GetWorkload())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -541,8 +559,13 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if of, is := c.jobs[parent]; is && of.Terminal() {
+		// It ended while this step was being split. A step begun now
+		// would be nobody's to stop, and no part of the job's record.
+		return nil, status.Errorf(codes.Aborted, "job %q, which this would be a step of, is over", parent)
+	}
 	job := jobmodel.New(newID(), workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
-	job.Key = spec.GetKey()
+	job.Key, job.Private, job.Submitter = spec.GetKey(), len(spec.GetKey()) > 0, submitter
 	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
 	job.Needs = c.workloads.Needs(job.Workload, job.Params)
@@ -938,6 +961,7 @@ func (c *Coordinator) settleLocked(job *jobmodel.Job) {
 	if err := c.store.Unpin(owner(job), decode(job.IntermediateBlobs())...); err != nil {
 		c.log.Warn("could not release a job's intermediate blobs", "job", job.ID, "error", err)
 	}
+	c.recordJobLocked(job)
 }
 
 // pin pins blobs on a job's behalf. Keeping data is best effort: a job is

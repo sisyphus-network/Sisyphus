@@ -3,10 +3,12 @@
 # coordinator and two workers, each a separate process with its own key and
 # data. Stop it with Ctrl-C.
 #
-#   examples/local-pool.sh [--kubo] [--containers]
+#   examples/local-pool.sh [--kubo] [--cluster] [--containers]
 #
 # With --kubo every node runs Kubo beside itself and the three form a
-# private IPFS network; the ipfs program must be installed. With
+# private IPFS network; the ipfs program must be installed. With --cluster
+# they run IPFS Cluster peers as well, and whatever the coordinator pins is
+# held by two of the three; that needs ipfs-cluster-service too. With
 # --containers the workers run container jobs; Docker must be installed.
 #
 # The pool's files go in a directory of their own (POOL_DIR, default
@@ -16,10 +18,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 kubo=()
+cluster=()
 containers=()
 for option in "$@"; do
 	case $option in
 	--kubo) kubo=(--kubo) ;;
+	--cluster)
+		kubo=(--kubo)
+		cluster=(--cluster)
+		;;
 	--containers) containers=(--containers) ;;
 	*)
 		echo "unknown option $option" >&2
@@ -37,7 +44,7 @@ BIN=bin/sisyphusd
 pids=()
 trap 'echo; echo "stopping the pool"; kill "${pids[@]}" 2>/dev/null || true; wait 2>/dev/null || true' EXIT
 
-"$BIN" run --role coordinator --listen "$ADDR" --data-dir "$POOL_DIR/alpha" --name alpha "${kubo[@]}" \
+"$BIN" run --role coordinator --listen "$ADDR" --data-dir "$POOL_DIR/alpha" --name alpha "${kubo[@]}" "${cluster[@]}" \
 	>"$POOL_DIR/alpha.log" 2>&1 &
 pids+=($!)
 alpha() { "$BIN" "$@" --addr "$ADDR" --data-dir "$POOL_DIR/alpha"; }
@@ -53,7 +60,7 @@ for worker in beta gamma; do
 		join=(--join "$(alpha pool invite)")
 	fi
 	"$BIN" run --role worker --coordinator "$ADDR" "${join[@]}" --data-dir "$POOL_DIR/$worker" \
-		--name "$worker" --slots 4 "${kubo[@]:0:1}" "${containers[@]}" >"$POOL_DIR/$worker.log" 2>&1 &
+		--name "$worker" --slots 4 "${kubo[@]:0:1}" "${cluster[@]}" "${containers[@]}" >"$POOL_DIR/$worker.log" 2>&1 &
 	pids+=($!)
 done
 for _ in $(seq 300); do
@@ -75,6 +82,7 @@ or drive it directly:
 
   bin/sisyphusd nodes --addr \$ADDR --data-dir \$DATA_DIR
   bin/sisyphusd blob pins --addr \$ADDR --data-dir \$DATA_DIR
+  bin/sisyphusd pool cluster --addr \$ADDR --data-dir \$DATA_DIR    # if started with --cluster
 
 Logs are in $POOL_DIR/*.log. Ctrl-C here stops the pool.
 TEXT

@@ -6,6 +6,8 @@ You need Go 1.27 or newer. To change the protocol you also need `protoc` (the ge
 
 Some tests run a real IPFS daemon and need the `ipfs` program ([Kubo](https://github.com/ipfs/kubo/releases)) on the PATH; CI uses the version pinned in `.github/workflows/ci.yml`. Without it those tests are skipped and `make cover` fails, since the code they exercise goes unrun. Each test daemon gets a repository of its own in a temporary directory and never touches `~/.ipfs` or a daemon already running on the machine.
 
+The same goes for the tests of `--cluster`, which run real cluster peers and need `ipfs-cluster-service` ([IPFS Cluster](https://github.com/ipfs-cluster/ipfs-cluster/releases)) on the PATH as well, at the version pinned in the same file. `ipfs-cluster-ctl` is not needed. Setting `SISYPHUS_REQUIRE_KUBO` or `SISYPHUS_REQUIRE_CLUSTER`, as CI does, makes a test that finds its program missing fail instead of being skipped.
+
 ```sh
 make build   # bin/sisyphusd
 make test    # go vet, then the tests under the race detector
@@ -28,19 +30,21 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `packages/geo` | Which country an address is registered in, from a table carried in the program. |
 | `packages/hardware` | What a machine has: processor, memory, graphics cards. Reads Linux's `/proc` and asks `nvidia-smi`; unknown elsewhere. |
 | `packages/identity` | A node's key pair and the ID derived from it; signing and verifying; the TLS settings nodes connect with. |
+| `packages/ipfscluster` | Starting and stopping an IPFS Cluster peer beside the node's Kubo, and calling its REST API. |
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
 | `packages/names` | The signed records behind names, which are IPNS records: making one with a node's key, checking one against the name, and telling which of two is newer. No network. |
 | `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
+| `packages/jobrecord` | A finished job as linked data: the record's layout, building it from a job, reading it back. No I/O in the building, so the same job always gives the same CID. |
 | `packages/nodedb` | The node's SQLite database, where a coordinator keeps its jobs, its members, the invitations it has issued, the requests made of it as a pinning service and the records of the names it answers for. Schema changes are new numbered files in `migrations/`, never edits to old ones. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
 | `packages/s3` | A bucket in an S3-style object store, for a store that keeps its blocks there. Its tests run against a real one, SeaweedFS in a container. |
 | `packages/sealed` | Encrypting a private job's blobs: the format, sealing and seekable unsealing. |
-| `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. |
+| `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. Also holds nodes of linked data (DAG-CBOR), which a pin keeps without keeping the blobs they link. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. |
 | `apps/sisyphusd/worker` | Connecting to a coordinator, running tasks, the blob cache. |
 | `apps/sisyphusd/api` | The gRPC server and the client-facing services. |
 | `apps/sisyphusd/access` | Which nodes have been admitted and in what role, invitations, and the check made on every call. |
-| `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream, which is how a worker's Kubo reaches its coordinator's without a port being opened for it. |
+| `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream, which is how a worker's Kubo, and its cluster peer, reach their coordinator's without a port being opened for them. |
 | `apps/sisyphusd/p2p` | The node's libp2p host. It shares the node's one port with gRPC, relays between members on a coordinator, and reaches a member by its ID. The Go counterpart of the Rust daemon's `networking` module. |
 | `apps/sisyphusd/mcpserver` | The node as a Model Context Protocol server: ten tools over the local API, for agents other than the node's own. Tested against a real node and against one that fails. |
 | `apps/sisyphusd/planner` | The planner's loop: the model is asked, the tools it asks for are run, and it is asked again with what they returned. Tested against a scripted model. |
@@ -83,6 +87,17 @@ A store keeps its blocks in one of several places behind the same interface: fil
 Blobs move between nodes in one of two ways. Without Kubo, a worker downloads over Sisyphus's own protocol, from another worker if the coordinator knows of one that holds the blob and serves it (`--serve`), otherwise from the coordinator, and uploads results to the coordinator the same way. With Kubo on both, the pool's daemons form a private IPFS network, closed to anyone without its swarm key, and a worker's store simply asks its Kubo for a block: Kubo fetches it from whichever member has it. Uploading results to the coordinator still uses Sisyphus's protocol in both cases. Nodes never join the public IPFS network.
 
 Tests that involve a swarm start several real Kubo daemons each and take a few seconds apiece; `packages/kubo` is the slowest package to test for that reason.
+
+### IPFS Cluster
+
+With `--cluster` a node runs `ipfs-cluster-service` beside its Kubo (`packages/ipfscluster`), as the same peer once more, and `apps/sisyphusd/cluster.go` ties it to the rest:
+
+- **One cluster per pool, with nothing new handed out.** The cluster's secret is a hash of the swarm key, so a member that has been given the one can work out the other, and a change of key restarts both programs (`poolSwarm.recluster`). A worker learns from `PoolService.Swarm` whether its coordinator runs a peer, and reaches it through `TunnelService.Open` with the target `TUNNEL_TARGET_CLUSTER`.
+- **Who decides.** The cluster uses its CRDT consensus, which suits members that come and go. Every peer's `trusted_peers` holds the coordinator's ID alone, and a worker's peer runs with `follower_mode`, so it refuses changes over its own API as well.
+- **Pins.** `clusterPins` mirrors the store: `Store.OnPinChange` nudges it, it compares `Store.Kept` with what it knows the cluster to pin and makes the calls that differ, and every minute it asks the cluster afresh. Its pins are named `sisyphus`; any other is not its to touch. A pin asks for the coordinator and `--replicas` others as its holders at most and, at least, that many or as many members as there are, since the cluster refuses a pin whose least it cannot meet.
+- **The peer's API** is on a loopback port picked before it starts, with a password made for that run and written to its `service.json`. The program cannot say which port it chose for itself, which is why one is chosen for it.
+
+The tests of all this that run real programs are few and slow: one in `packages/ipfscluster` forms a cluster of three, loses a holder and sees it replaced; two in `apps/sisyphusd` run pools of two and three nodes. The rest use a stand-in for the peer's API. In tests the members' heartbeat is a second rather than fifteen (`clusterHeartbeat`).
 
 ## Branches and pull requests
 

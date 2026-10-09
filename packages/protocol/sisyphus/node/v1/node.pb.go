@@ -1481,8 +1481,11 @@ type Job struct {
 	Private            bool   `protobuf:"varint,17,opt,name=private,proto3" json:"private,omitempty"`
 	// Set on a job that is a step of another, a graph: the job it is a step
 	// of, and the step's name. A graph's own tasks are its steps, in order.
-	ParentJobId   string `protobuf:"bytes,18,opt,name=parent_job_id,json=parentJobId,proto3" json:"parent_job_id,omitempty"`
-	Step          string `protobuf:"bytes,19,opt,name=step,proto3" json:"step,omitempty"`
+	ParentJobId string `protobuf:"bytes,18,opt,name=parent_job_id,json=parentJobId,proto3" json:"parent_job_id,omitempty"`
+	Step        string `protobuf:"bytes,19,opt,name=step,proto3" json:"step,omitempty"`
+	// Set once the job is over: the CID of its record, which names the
+	// job's whole history. Empty until then.
+	RecordCid     string `protobuf:"bytes,20,opt,name=record_cid,json=recordCid,proto3" json:"record_cid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1646,6 +1649,13 @@ func (x *Job) GetParentJobId() string {
 func (x *Job) GetStep() string {
 	if x != nil {
 		return x.Step
+	}
+	return ""
+}
+
+func (x *Job) GetRecordCid() string {
+	if x != nil {
+		return x.RecordCid
 	}
 	return ""
 }
@@ -4615,7 +4625,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x06models\x18\x10 \x03(\tR\x06models\"B\n" +
 	"\tWorkerGpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\x83\x05\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xa2\x05\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1a\n" +
 	"\bworkload\x18\x02 \x01(\tR\bworkload\x12\x16\n" +
@@ -4637,7 +4647,9 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\bmin_gpus\x18\x10 \x01(\rR\aminGpus\x12\x18\n" +
 	"\aprivate\x18\x11 \x01(\bR\aprivate\x12\"\n" +
 	"\rparent_job_id\x18\x12 \x01(\tR\vparentJobId\x12\x12\n" +
-	"\x04step\x18\x13 \x01(\tR\x04step\"\xd7\x01\n" +
+	"\x04step\x18\x13 \x01(\tR\x04step\x12\x1d\n" +
+	"\n" +
+	"record_cid\x18\x14 \x01(\tR\trecordCid\"\xd7\x01\n" +
 	"\aJobTask\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x120\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1a.sisyphus.node.v1.JobStateR\x05state\x12\x18\n" +

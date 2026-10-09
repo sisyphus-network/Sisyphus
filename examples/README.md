@@ -4,7 +4,7 @@ Things to run against a pool, and a pool to run them against.
 
 | File | What it is |
 | --- | --- |
-| `local-pool.sh` | Starts a coordinator and two workers on this machine and leaves them running. `--kubo` gives each node Kubo and the pool a private IPFS network; `--containers` lets the workers run container jobs. |
+| `local-pool.sh` | Starts a coordinator and two workers on this machine and leaves them running. `--kubo` gives each node Kubo and the pool a private IPFS network; `--cluster` adds an IPFS Cluster peer to each, so that what the coordinator pins is held by two nodes; `--containers` lets the workers run container jobs. |
 | `tmux-pool.sh` | The same in one terminal: the pool in one tmux pane, a shell ready to use it in another. |
 | `wordcount.sh` | Stores a file on the pool, counts its words across the workers, and prints the most frequent. |
 | `private-wordcount.sh` | The same, sealed: the file and the result are encrypted with a key that only you and the job's workers hold. |

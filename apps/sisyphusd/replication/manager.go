@@ -184,6 +184,12 @@ func (m *Manager) pinned(now time.Time) (until map[string]time.Time, order []str
 		if pin.Owner == storage.GraceOwner || (!pin.Expires.IsZero() && pin.Expires.Before(now)) {
 			continue
 		}
+		// Followers hold files. What else a node pins, such as the record
+		// of a job, which is linked data and not a file, is not something
+		// they can fetch as one, and stays with the coordinator.
+		if kind := pin.CID.Type(); kind != cid.Raw && kind != cid.DagProtobuf {
+			continue
+		}
 		id := pin.CID.String()
 		kept, listed := until[id]
 		if !listed {

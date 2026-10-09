@@ -61,6 +61,9 @@ type Task struct {
 	Output   []byte
 	// Err is the reason for the most recent failed attempt.
 	Err string
+	// History is every attempt at the task so far, in order, each as it
+	// stood when the task moved on from it.
+	History []Attempt
 	// Progress is how far along the current attempt says it is, from 0 to
 	// 1, and StartedAt when that attempt was handed out. Neither is kept
 	// across a restart: an attempt in progress then is lost anyway.
@@ -76,6 +79,14 @@ type Job struct {
 	// Key, if set, is the key the job's blobs are sealed with. It is a
 	// secret and is not part of the job's public state.
 	Key []byte
+	// Private says the job was submitted with a key. It outlasts the key,
+	// which is dropped when the job ends.
+	Private bool
+	// Commitments are keyed hashes of the values a private job's record
+	// leaves out, by where in the record each is. They are worked out when
+	// the job ends, while it still has its key, and kept with it; see
+	// packages/jobrecord.
+	Commitments map[string][]byte
 	// MaxTasks is the split the submitter asked for; zero means unspecified.
 	MaxTasks int
 	// TaskTimeout, if not zero, is how long one attempt at a task may run.
@@ -87,6 +98,13 @@ type Job struct {
 	// Parent and Step are set on a job that is a step of another: the ID
 	// of the job it is a step of, and the step's name.
 	Parent, Step string
+	// Submitter is the ID of the node whose key the job was submitted
+	// with. It is empty for a job the node gave itself, through its local
+	// API or its planner.
+	Submitter string
+	// Record is the CID of the job's record, set once the job is over and
+	// its record has been worked out; see packages/jobrecord.
+	Record string
 	// Needs is what else a worker must have, as labels. It follows from
 	// the workload and the parameters and is worked out by whoever holds
 	// the job, not saved with it.
@@ -185,12 +203,13 @@ func (j *Job) Succeed(t *Task, output []byte) (allDone bool) {
 func (j *Job) Fail(t *Task, reason string, maxAttempts int, now time.Time) {
 	t.Err = reason
 	t.Failures++
-	j.touch(t)
 	if t.Failures < maxAttempts {
 		t.State = Pending
+		j.touch(t)
 		return
 	}
 	t.State = Failed
+	j.touch(t)
 	j.Finish(nil, fmt.Errorf("task %d failed after %d attempts: %s", t.Index, t.Failures, reason), now)
 }
 
@@ -243,6 +262,20 @@ func (j *Job) Outputs() [][]byte {
 		outputs[i] = t.Output
 	}
 	return outputs
+}
+
+// Attempt is one time a task was handed to a worker.
+type Attempt struct {
+	TaskIndex int
+	// Number counts a task's attempts from one.
+	Number   int
+	NodeID   string
+	NodeName string
+	// State is how the attempt stands: running, succeeded, pending if it
+	// was lost or failed and the task went back to wait for another, failed
+	// if it was the task's last, or cancelled if the job ended without it.
+	State State
+	Err   string
 }
 
 // Event is one thing that happened to a job: a step in its life, or a line
