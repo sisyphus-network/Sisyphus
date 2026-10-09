@@ -3,17 +3,30 @@ package runtime
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 )
 
 // heard collects what a task reports.
+// A task may report from several places at once, as a container's two
+// streams do, so it is kept under a lock, as a worker's own reporter is.
 type heard struct {
+	mu       sync.Mutex
 	progress []float64
 	lines    []string
 }
 
-func (h *heard) Progress(done float64) { h.progress = append(h.progress, done) }
-func (h *heard) Log(line string)       { h.lines = append(h.lines, line) }
+func (h *heard) Progress(done float64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.progress = append(h.progress, done)
+}
+
+func (h *heard) Log(line string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.lines = append(h.lines, line)
+}
 
 func TestWorkloadsReportOnThemselves(t *testing.T) {
 	// With nobody listening, reporting is free and harmless.
