@@ -15,6 +15,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/ai"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
 
 // assistant is a node's planner as its owner uses it: the model it is
@@ -27,7 +28,8 @@ type assistant struct {
 	pool      planner.Pool
 	workloads *runtime.Registry
 	// offered says whether the pool has a worker that runs a workload now.
-	offered func(workload string) bool
+	offered    func(workload string) bool
+	sealingKey func() (sealed.Key, error)
 }
 
 // assistantStore is where the configuration and conversations are kept. A
@@ -206,7 +208,7 @@ func (a *assistant) Ask(ctx context.Context, chatID, text string, report func(ch
 		return "", err
 	}
 	question := ai.Message{Role: ai.User, Content: text}
-	p := &planner.Planner{Model: model, ModelName: cfg.Model, Pool: a.pool, Workloads: a.described()}
+	p := &planner.Planner{Model: model, ModelName: cfg.Model, Pool: a.pool, Workloads: a.described(), SealingKey: a.sealingKey}
 	said, planErr := p.Run(ctx, append(history, question), func(e planner.Event) { report(chatID, e) })
 
 	record := make([]string, 0, len(said)+1)
