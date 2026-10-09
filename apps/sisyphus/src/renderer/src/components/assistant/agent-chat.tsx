@@ -12,6 +12,7 @@ import { SisyphusPrompt, type ChatAttachment } from '@/components/assistant/sisy
 import { DeleteChatConfirmation } from '@/components/assistant/delete-chat-confirmation'
 import { getMessageDirection } from '@/lib/text-direction'
 import { getJobHref } from '@/lib/job-navigation'
+import { needsPlannerSetup } from '@/lib/grpc-status'
 import ShinyText from '@/components/ui/shiny-text'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
@@ -278,12 +279,12 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
           streamCancel.current = null
           void refreshChats()
         }
-      }, (error) => {
+      }, (error, code) => {
         setAsking(false)
         streamCancel.current = null
         updateAssistant(answerId, (item) => ({ ...item, activities: (item.activities ?? []).map((action) => action.state === 'working' ? { ...action, state: 'failed' } : action) }))
         const detail = error
-        if (/model|planner|language model/i.test(detail) && /not|set|configured|pool/i.test(detail)) {
+        if (needsPlannerSetup(code)) {
           toast.error(messages.modelSetupRequired, { description: detail, action: { label: messages.openSettings, onClick: onOpenSettings } })
         } else toast.error(messages.agentRequestFailed, { description: detail })
       }, () => {

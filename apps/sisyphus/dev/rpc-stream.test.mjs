@@ -22,6 +22,14 @@ function harness(start = Promise.resolve(), stop = Promise.resolve()) {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
+test('forwards structured gRPC status without parsing the error message', () => {
+  const h = harness(), failures = []
+  createRpcStream(h.ipc, 'ask', {}, () => {}, (message, code) => failures.push({ message, code }))
+  h.emit({ error: 'המודל אינו מוגדר', errorCode: 9 })
+  assert.deepEqual(failures, [{ message: 'המודל אינו מוגדר', code: 9 }])
+  assert.equal(h.listeners.size, 0)
+})
+
 test('delivers data and releases the listener exactly once on end', () => {
   const h = harness(), data = [], errors = []
   let ended = 0

@@ -292,9 +292,9 @@ app.whenReady().then(() => {
     activeStreams.set(id, stream)
     const channel = `node:rpc-stream:${id}`
     stream.on('data', (data) => { if (!event.sender.isDestroyed()) event.sender.send(channel, { data }) })
-    stream.on('error', (error: Error) => {
+    stream.on('error', (error: grpc.ServiceError) => {
       activeStreams.delete(id)
-      if (!event.sender.isDestroyed()) event.sender.send(channel, { error: error.message })
+      if (!event.sender.isDestroyed()) event.sender.send(channel, { error: error.message, errorCode: error.code })
     })
     stream.on('end', () => {
       activeStreams.delete(id)
