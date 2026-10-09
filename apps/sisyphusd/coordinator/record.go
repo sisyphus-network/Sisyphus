@@ -36,7 +36,14 @@ func recordOwner(jobID string) string {
 // the job its CID, and sets about storing it. Working it out touches
 // nothing but the job; storing it may take a while, a block at a time, so
 // that is done without the lock.
+//
+// A private job is first given its commitments to what its record leaves
+// out. This is the last moment its key is in hand: the key is not saved
+// with a job that is over, and the record is worked out again without it.
 func (c *Coordinator) recordJobLocked(job *jobmodel.Job) {
+	if len(job.Key) > 0 {
+		job.Commitments = jobrecord.Commit(job, job.Key)
+	}
 	record := c.buildRecordLocked(job)
 	job.Record = record.Root.String()
 	c.aggregating.Add(1)
@@ -98,8 +105,10 @@ func (c *Coordinator) keepRecord(ctx context.Context, job *jobmodel.Job, record 
 
 // Record returns the record of a job that is over, as the store holds it.
 // With verify it also works the record out again from the job as it stands
-// and says whether that is the record the job names.
-func (c *Coordinator) Record(ctx context.Context, jobID string, verify bool) (*pb.JobRecord, error) {
+// and says whether that is the record the job names. With a key it also
+// says of each commitment the job carries whether that key and the job's
+// values as they stand give it; the key is used for that and not kept.
+func (c *Coordinator) Record(ctx context.Context, jobID string, verify bool, key []byte) (*pb.JobRecord, error) {
 	c.mu.Lock()
 	job, ok := c.jobs[jobID]
 	if !ok {
@@ -116,6 +125,10 @@ func (c *Coordinator) Record(ctx context.Context, jobID string, verify bool) (*p
 		return nil, status.Errorf(codes.FailedPrecondition, "job %q has no record: it ended before records were kept", jobID)
 	}
 	fresh := c.buildRecordLocked(job)
+	var checks []jobrecord.Check
+	if len(key) > 0 {
+		checks = jobrecord.CheckCommitments(job, key)
+	}
 	c.mu.Unlock()
 
 	nodes, err := jobrecord.Read(ctx, c.store, root)
@@ -130,6 +143,9 @@ func (c *Coordinator) Record(ctx context.Context, jobID string, verify bool) (*p
 	out := &pb.JobRecord{JobId: jobID, RootCid: root.String()}
 	for _, node := range nodes {
 		out.Nodes = append(out.Nodes, &pb.RecordNode{Cid: node.CID.String(), Data: node.Data, Json: node.JSON()})
+	}
+	for _, check := range checks {
+		out.Commitments = append(out.Commitments, &pb.CommitmentCheck{Name: check.Name, Matches: check.Matches})
 	}
 	if verify {
 		out.RecomputedCid, out.Matches = fresh.Root.String(), fresh.Root.Equals(root)

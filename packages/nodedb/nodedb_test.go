@@ -400,6 +400,7 @@ func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 		{"jobs", jobColumns, "load jobs"},
 		{"tasks", taskColumns, "load tasks"},
 		{"job_blobs", "job_id, role, cid", "load job blobs"},
+		{"job_commitments", "job_id DEFAULT 'j1', name, commitment", "load job commitments"},
 		// A row for the one task there is, with nothing else in it.
 		{"task_attempts", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, state, error", "load attempts"},
 	} {
@@ -503,12 +504,13 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	save(t, db, sealedJob)
 	save(t, db, jobmodel.New("open", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted))
 	// Put the database back as it was before the migration that added the
-	// column, and open it again.
+	// column, and so before those that came after it, and open it again.
 	for _, statement := range []string{
+		`DROP TABLE job_commitments`,
 		`ALTER TABLE jobs DROP COLUMN record_cid`,
 		`ALTER TABLE jobs DROP COLUMN submitter_id`,
 		`ALTER TABLE jobs DROP COLUMN private`,
-		`DELETE FROM schema_migrations WHERE version = 13`,
+		`DELETE FROM schema_migrations WHERE version >= 13`,
 	} {
 		if _, err := db.sql.Exec(statement); err != nil {
 			t.Fatalf("%s: %v", statement, err)
@@ -517,5 +519,38 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	jobs := load(t, reopen(t, db, file))
 	if !jobs[0].Private || jobs[1].Private {
 		t.Errorf("after the migration the job with a key is private: %v, and the one without: %v", jobs[0].Private, jobs[1].Private)
+	}
+}
+
+func TestAJobsCommitmentsAreKeptWithItAndGoWhenItDoes(t *testing.T) {
+	db, file := newDB(t)
+	job := jobmodel.New("j1", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted)
+	job.Key, job.Private = []byte("0123456789abcdef0123456789abcdef"), true
+	save(t, db, job)
+	save(t, db, jobmodel.New("open", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted))
+	job.Finish([]byte("result"), nil, submitted.Add(time.Second))
+	job.Commitments = map[string][]byte{
+		"manifest/params_commitment": []byte("a keyed hash of the parameters"),
+		"result/result_commitment":   []byte("a keyed hash of the result"),
+	}
+	save(t, db, job)
+	// Saved again, as a finished job is when it is next touched.
+	save(t, db, job)
+
+	db = reopen(t, db, file)
+	loaded := load(t, db)
+	if loaded[0].Key != nil || !reflect.DeepEqual(loaded[0].Commitments, job.Commitments) {
+		t.Errorf("loaded with key %x and commitments %q, saved with %q", loaded[0].Key, loaded[0].Commitments, job.Commitments)
+	}
+	if loaded[1].Commitments != nil {
+		t.Errorf("a job saved with no commitments was loaded with %q", loaded[1].Commitments)
+	}
+
+	if err := db.DeleteJobs([]string{"j1"}); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := db.sql.QueryRow(`SELECT count(*) FROM job_commitments`).Scan(&left); err != nil || left != 0 {
+		t.Errorf("%d commitments left after their job was deleted, %v", left, err)
 	}
 }

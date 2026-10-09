@@ -32,6 +32,10 @@ message GetJobRecordRequest {
   // Also work the record out again from the job and say whether the two
   // agree.
   bool verify = 2;
+  // If set, the sealing key of a private job. The record's commitments are
+  // then checked against the values the coordinator holds; see
+  // JobRecord.commitments. The coordinator does not keep the key.
+  bytes key = 3;
 }
 
 message CancelJobRequest {

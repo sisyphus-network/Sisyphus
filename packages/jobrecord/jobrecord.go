@@ -19,7 +19,9 @@
 // A private job's record leaves out everything that was not sealed: its
 // parameters, its result, what its tasks returned, and every error message,
 // since a message may quote data. It says the job is private, and still
-// links the job's sealed inputs and outputs.
+// links the job's sealed inputs and outputs. In place of each value left
+// out it holds a commitment to it, which only the job's key can check; see
+// Commit.
 //
 // A record is not signed. Signing the root with the coordinator's node key
 // is future work.
@@ -28,6 +30,10 @@ package jobrecord
 import (
 	"bytes"
 	"context"
+	"crypto/hkdf"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"sort"
 	"time"
@@ -92,11 +98,110 @@ type Record struct {
 
 var nodeBuilder = cid.V1Builder{Codec: cid.DagCBOR, MhType: multihash.SHA2_256}
 
+// commitmentLabel is the label under which the key for commitments is
+// derived from a job's sealing key, so that the two are not the same key.
+const commitmentLabel = "sisyphus job record: commitments"
+
+// The names of a record's commitments. A name is the path from the record's
+// root to where the commitment is.
+const (
+	paramsCommitment = "manifest/params_commitment"
+	resultCommitment = "result/result_commitment"
+	errorCommitment  = "result/error_commitment"
+)
+
+func outputCommitment(task int) string {
+	return fmt.Sprintf("receipts/%d/output_commitment", task)
+}
+
+func attemptErrorCommitment(task, attempt int) string {
+	return fmt.Sprintf("receipts/%d/attempts/%d/error_commitment", task, attempt)
+}
+
+// committed is a value a private job's record leaves out and commits to
+// instead, with the name of its commitment.
+type committed struct {
+	name  string
+	value []byte
+}
+
+// committedValues returns the values a private job's record commits to, in
+// the order the record has them.
+func committedValues(job *jobmodel.Job) []committed {
+	values := []committed{{paramsCommitment, job.Params}}
+	for i, task := range job.Tasks {
+		values = append(values, committed{outputCommitment(i), task.Output})
+		for n, attempt := range task.History {
+			values = append(values, committed{attemptErrorCommitment(i, n), []byte(attempt.Err)})
+		}
+	}
+	return append(values, committed{resultCommitment, job.Result}, committed{errorCommitment, []byte(job.Err)})
+}
+
+// Commit returns a commitment to each value the record of a private job
+// leaves out, by name: the job's parameters, its result and its error, each
+// task's output, and the error of each attempt. A value that is empty is
+// committed to like any other, so a commitment does not say whether there
+// was one.
+//
+// A commitment is the HMAC-SHA-256 of the job's ID, the commitment's name
+// and the value, the first two each preceded by its length as eight bytes,
+// big-endian. The key is 32 bytes derived from the job's sealing key by
+// HKDF-SHA-256 with no salt and the label "sisyphus job record:
+// commitments". Without the sealing key a commitment says nothing of its
+// value, not even whether a guess at it is right. Because the job's ID and
+// the name go in, equal values in two jobs, or in two places in one job,
+// give different commitments.
+//
+// key is the job's sealing key. A job is given its commitments when it
+// ends, while it still has its key, and keeps them: Build uses them, and
+// never the key.
+func Commit(job *jobmodel.Job, key []byte) map[string][]byte {
+	// Deriving 32 bytes with SHA-256 cannot fail.
+	derived, _ := hkdf.Key(sha256.New, key, nil, commitmentLabel, sha256.Size)
+	commitments := make(map[string][]byte)
+	for _, v := range committedValues(job) {
+		mac := hmac.New(sha256.New, derived)
+		for _, part := range []string{job.ID, v.name} {
+			mac.Write(binary.BigEndian.AppendUint64(nil, uint64(len(part))))
+			mac.Write([]byte(part))
+		}
+		mac.Write(v.value)
+		commitments[v.name] = mac.Sum(nil)
+	}
+	return commitments
+}
+
+// Check is whether one of a job's commitments is the one a key gives for
+// the value the job has now.
+type Check struct {
+	// Name is the path from the record's root to the commitment.
+	Name    string
+	Matches bool
+}
+
+// CheckCommitments works out a job's commitments again from its values as
+// they stand and the given key, and says of each, in the order the record
+// has them, whether it is the one the job carries. A job that carries none,
+// such as one that is not private, has nothing to check. With a key that is
+// not the job's, none match.
+func CheckCommitments(job *jobmodel.Job, key []byte) []Check {
+	if len(job.Commitments) == 0 {
+		return nil
+	}
+	again := Commit(job, key)
+	var checks []Check
+	for _, v := range committedValues(job) {
+		checks = append(checks, Check{Name: v.name, Matches: hmac.Equal(again[v.name], job.Commitments[v.name])})
+	}
+	return checks
+}
+
 // Build returns the record of a job that is over. steps are the jobs that
 // carried out its steps, if it had any, in the order they were submitted.
 // name gives the CID a value would have as a stored blob.
 func Build(job *jobmodel.Job, steps []Step, name func(data []byte) cid.Cid) *Record {
-	b := &builder{private: job.Private, name: name}
+	b := &builder{private: job.Private, commitments: job.Commitments, name: name}
 
 	root := fluent.MustBuildMap(basicnode.Prototype.Map, -1, func(m fluent.MapAssembler) {
 		m.AssembleEntry("kind").AssignString(Kind)
@@ -113,8 +218,8 @@ func Build(job *jobmodel.Job, steps []Step, name func(data []byte) cid.Cid) *Rec
 		}
 		m.AssembleEntry("manifest").AssignLink(b.add(b.manifest(job)))
 		m.AssembleEntry("receipts").CreateList(-1, func(l fluent.ListAssembler) {
-			for _, task := range job.Tasks {
-				l.AssembleValue().AssignLink(b.add(b.receipt(task)))
+			for i, task := range job.Tasks {
+				l.AssembleValue().AssignLink(b.add(b.receipt(i, task)))
 			}
 		})
 		m.AssembleEntry("result").AssignLink(b.add(b.result(job)))
@@ -136,9 +241,11 @@ func Build(job *jobmodel.Job, steps []Step, name func(data []byte) cid.Cid) *Rec
 
 type builder struct {
 	private bool
-	name    func([]byte) cid.Cid
-	nodes   map[cid.Cid][]byte
-	blobs   []Blob
+	// commitments are the job's, by name; see Commit.
+	commitments map[string][]byte
+	name        func([]byte) cid.Cid
+	nodes       map[cid.Cid][]byte
+	blobs       []Blob
 }
 
 // add encodes a node, keeps it, and returns a link to it.
@@ -154,10 +261,13 @@ func (b *builder) add(node datamodel.Node) datamodel.Link {
 
 // value puts bytes that are not secret in a node under key: themselves if
 // they are few, a link to them as a blob if they are many, and nothing at
-// all if there are none or the job is private.
-func (b *builder) value(m fluent.MapAssembler, key string, data []byte) {
+// all if there are none. For a private job it puts the commitment of the
+// given name instead; see commit.
+func (b *builder) value(m fluent.MapAssembler, key string, data []byte, commitment string) {
 	switch {
-	case b.private || len(data) == 0:
+	case b.private:
+		b.commit(m, key, commitment)
+	case len(data) == 0:
 	case len(data) <= InlineLimit:
 		m.AssembleEntry(key).AssignBytes(data)
 	default:
@@ -167,18 +277,30 @@ func (b *builder) value(m fluent.MapAssembler, key string, data []byte) {
 	}
 }
 
-// message puts an error message in a node under key, unless there is none
-// or the job is private.
-func (b *builder) message(m fluent.MapAssembler, key, text string) {
-	if text != "" && !b.private {
+// message puts an error message in a node under key, unless there is none.
+// For a private job it puts the commitment of the given name instead.
+func (b *builder) message(m fluent.MapAssembler, key, text, commitment string) {
+	switch {
+	case b.private:
+		b.commit(m, key, commitment)
+	case text != "":
 		m.AssembleEntry(key).AssignString(text)
+	}
+}
+
+// commit puts the commitment of the given name in a node, under key with
+// "_commitment" after it. A private job that ended before commitments were
+// made has none, and its record is as it was then.
+func (b *builder) commit(m fluent.MapAssembler, key, name string) {
+	if commitment, has := b.commitments[name]; has {
+		m.AssembleEntry(key + "_commitment").AssignBytes(commitment)
 	}
 }
 
 func (b *builder) manifest(job *jobmodel.Job) datamodel.Node {
 	return fluent.MustBuildMap(basicnode.Prototype.Map, -1, func(m fluent.MapAssembler) {
 		m.AssembleEntry("workload").AssignString(job.Workload)
-		b.value(m, "params", job.Params)
+		b.value(m, "params", job.Params, paramsCommitment)
 		mode := "distributed"
 		if job.Mode == jobmodel.FullWorker {
 			mode = "full-worker"
@@ -198,22 +320,23 @@ func (b *builder) manifest(job *jobmodel.Job) datamodel.Node {
 	})
 }
 
-func (b *builder) receipt(task *jobmodel.Task) datamodel.Node {
+// receipt is the node for the task at index in the job's tasks.
+func (b *builder) receipt(index int, task *jobmodel.Task) datamodel.Node {
 	return fluent.MustBuildMap(basicnode.Prototype.Map, -1, func(m fluent.MapAssembler) {
 		m.AssembleEntry("task").AssignInt(int64(task.Index))
 		m.AssembleEntry("state").AssignString(task.State.String())
 		m.AssembleEntry("failures").AssignInt(int64(task.Failures))
-		b.value(m, "output", task.Output)
+		b.value(m, "output", task.Output, outputCommitment(index))
 		// Every time the task was handed to a worker, in order. The last
 		// is the one that settled it.
 		m.AssembleEntry("attempts").CreateList(-1, func(l fluent.ListAssembler) {
-			for _, attempt := range task.History {
+			for n, attempt := range task.History {
 				l.AssembleValue().CreateMap(-1, func(m fluent.MapAssembler) {
 					m.AssembleEntry("attempt").AssignInt(int64(attempt.Number))
 					m.AssembleEntry("node").AssignString(attempt.NodeID)
 					m.AssembleEntry("name").AssignString(attempt.NodeName)
 					m.AssembleEntry("state").AssignString(attempt.State.String())
-					b.message(m, "error", attempt.Err)
+					b.message(m, "error", attempt.Err, attemptErrorCommitment(index, n))
 				})
 			}
 		})
@@ -223,8 +346,8 @@ func (b *builder) receipt(task *jobmodel.Task) datamodel.Node {
 func (b *builder) result(job *jobmodel.Job) datamodel.Node {
 	return fluent.MustBuildMap(basicnode.Prototype.Map, -1, func(m fluent.MapAssembler) {
 		m.AssembleEntry("state").AssignString(job.State.String())
-		b.value(m, "result", job.Result)
-		b.message(m, "error", job.Err)
+		b.value(m, "result", job.Result, resultCommitment)
+		b.message(m, "error", job.Err, errorCommitment)
 		blobs(m, "outputs", job.OutputBlobs())
 		// What only passed between the job's tasks. The store lets these
 		// go when the job ends; the record still names them.

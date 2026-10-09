@@ -132,7 +132,7 @@ func (s *nodeService) WatchJobEvents(req *pb.WatchJobEventsRequest, stream grpc.
 }
 
 func (s *nodeService) GetJobRecord(ctx context.Context, req *pb.GetJobRecordRequest) (*pb.JobRecord, error) {
-	return s.coordinator.Record(ctx, req.GetJobId(), req.GetVerify())
+	return s.coordinator.Record(ctx, req.GetJobId(), req.GetVerify(), req.GetKey())
 }
 
 func (s *nodeService) ListNodes(context.Context, *pb.ListNodesRequest) (*pb.ListNodesResponse, error) {

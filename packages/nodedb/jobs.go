@@ -49,6 +49,10 @@ func (db *DB) SaveJob(job *jobmodel.Job) error {
 					job.ID, a.TaskIndex, a.Number, a.NodeID, a.NodeName, int(a.State), a.Err)
 			}
 		}
+		// A job's commitments are made once, when it ends, and do not change.
+		for name, commitment := range job.Commitments {
+			b.exec(`INSERT OR IGNORE INTO job_commitments (job_id, name, commitment) VALUES (?, ?, ?)`, job.ID, name, commitment)
+		}
 		for role, cids := range map[int][]string{blobRead: changes.Read, blobTaskOutput: changes.TaskOutputs, blobResult: changes.Results} {
 			for _, c := range cids {
 				b.exec(`INSERT OR IGNORE INTO job_blobs (job_id, role, cid) VALUES (?, ?, ?)`, job.ID, role, c)
@@ -139,6 +143,23 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 		return nil, fmt.Errorf("load job blobs: %w", err)
 	}
 
+	err = db.read(func(rows *sql.Rows) error {
+		var jobID, name string
+		var commitment []byte
+		if err := rows.Scan(&jobID, &name, &commitment); err != nil {
+			return err
+		}
+		job := byID[jobID]
+		if job.Commitments == nil {
+			job.Commitments = make(map[string][]byte)
+		}
+		job.Commitments[name] = commitment
+		return nil
+	}, `SELECT job_id, name, commitment FROM job_commitments WHERE job_id IN (SELECT job_id FROM jobs)`)
+	if err != nil {
+		return nil, fmt.Errorf("load job commitments: %w", err)
+	}
+
 	jobs := make([]*jobmodel.Job, 0, len(saved))
 	for _, job := range saved {
 		touched := blobs[job.ID]
@@ -179,8 +200,8 @@ func (db *DB) LoadEvents(jobID string) ([]jobmodel.Event, error) {
 	return events, nil
 }
 
-// DeleteJobs forgets jobs, with their tasks, the attempts at them and the
-// record of the blobs they touched.
+// DeleteJobs forgets jobs, with their tasks, the attempts at them, the
+// record of the blobs they touched and their commitments.
 func (db *DB) DeleteJobs(ids []string) error {
 	err := db.write(func(b *batch) {
 		for _, id := range ids {

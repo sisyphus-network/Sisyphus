@@ -3,8 +3,13 @@ package jobrecord
 import (
 	"bytes"
 	"context"
+	"crypto/hkdf"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -190,23 +195,102 @@ func TestTheSameJobAlwaysGivesTheSameRecordAndAnyChangeGivesAnother(t *testing.T
 	}
 }
 
-func TestAPrivateJobsRecordLeavesOutWhatWasNotSealed(t *testing.T) {
+// jobKey and otherKey are sealing keys.
+var (
+	jobKey   = []byte("0123456789abcdef0123456789abcdef")
+	otherKey = []byte("fedcba9876543210fedcba9876543210")
+)
+
+// secret returns a private job that has ended, with a secret in every value
+// its record leaves out, and its commitments not yet made.
+func secret() *jobmodel.Job {
 	job := finished()
 	job.Private = true
 	job.Params, job.Result = []byte("SECRET parameters"), []byte("SECRET result")
 	job.Tasks[0].Output, job.Tasks[0].History[0].Err = []byte("SECRET output"), "SECRET in an error"
 	job.Tasks[1].Output = bytes.Repeat([]byte("SECRET "), InlineLimit)
 	job.State, job.Err = jobmodel.Failed, "SECRET in the job's error"
+	return job
+}
 
-	record := Build(job, nil, named)
-	if len(record.Blobs) != 0 {
-		t.Errorf("a private job's record stores %d values beside it", len(record.Blobs))
+// commitmentIn returns the commitment a parsed node holds under a field.
+func commitmentIn(t *testing.T, node map[string]any, field string) []byte {
+	t.Helper()
+	held, _ := node[field].(map[string]any)["/"].(map[string]any)
+	text, _ := held["bytes"].(string)
+	data, err := base64.RawStdEncoding.DecodeString(text)
+	if err != nil || len(data) != sha256.Size {
+		t.Fatalf("%s is %v, want the 32 bytes of a commitment: %v", field, node[field], err)
 	}
-	for _, node := range record.Nodes {
-		if bytes.Contains(node.Data, []byte("SECRET")) || strings.Contains(node.JSON(), "U0VDUkVU") {
-			t.Errorf("node %s of a private job's record holds plaintext: %s", node.CID, node.JSON())
+	return data
+}
+
+func TestAPrivateJobsRecordLeavesOutWhatWasNotSealed(t *testing.T) {
+	// As a private job that ended before commitments were made, and as one
+	// that has them.
+	without, with := secret(), secret()
+	with.Commitments = Commit(with, jobKey)
+	for _, job := range []*jobmodel.Job{without, with} {
+		record := Build(job, nil, named)
+		if len(record.Blobs) != 0 {
+			t.Errorf("a private job's record stores %d values beside it", len(record.Blobs))
+		}
+		for _, node := range record.Nodes {
+			if bytes.Contains(node.Data, []byte("SECRET")) || strings.Contains(node.JSON(), "U0VDUkVU") || bytes.Contains(node.Data, jobKey) {
+				t.Errorf("node %s of a private job's record holds plaintext: %s", node.CID, node.JSON())
+			}
+		}
+		nodes := parsed(t, record)
+		for name, fields := range map[string][]string{"manifest": {"params"}, "result": {"result", "error"}, "receipt 0": {"output"}, "receipt 1": {"output"}} {
+			for _, field := range fields {
+				if _, has := nodes[name][field]; has {
+					t.Errorf("the %s of a private job's record has %s: %v", name, field, nodes[name])
+				}
+				if _, has := nodes[name][field+"_commitment"]; has != (job == with) {
+					t.Errorf("the %s of the record of a private job with %d commitments has %s_commitment: %v", name, len(job.Commitments), field, has)
+				}
+			}
+		}
+		for _, attempt := range nodes["receipt 0"]["attempts"].([]any) {
+			if _, has := attempt.(map[string]any)["error"]; has {
+				t.Errorf("an attempt in a private job's record has its error: %v", attempt)
+			}
+			if _, has := attempt.(map[string]any)["error_commitment"]; has != (job == with) {
+				t.Errorf("an attempt in the record of a private job with %d commitments has error_commitment: %v", len(job.Commitments), has)
+			}
 		}
 	}
+
+	// Each commitment is in the record where its name says.
+	committed := parsed(t, Build(with, nil, named))
+	attempts := committed["receipt 0"]["attempts"].([]any)
+	for name, got := range map[string][]byte{
+		"manifest/params_commitment":             commitmentIn(t, committed["manifest"], "params_commitment"),
+		"receipts/0/output_commitment":           commitmentIn(t, committed["receipt 0"], "output_commitment"),
+		"receipts/0/attempts/0/error_commitment": commitmentIn(t, attempts[0].(map[string]any), "error_commitment"),
+		"receipts/0/attempts/1/error_commitment": commitmentIn(t, attempts[1].(map[string]any), "error_commitment"),
+		"receipts/1/output_commitment":           commitmentIn(t, committed["receipt 1"], "output_commitment"),
+		"result/result_commitment":               commitmentIn(t, committed["result"], "result_commitment"),
+		"result/error_commitment":                commitmentIn(t, committed["result"], "error_commitment"),
+	} {
+		if !bytes.Equal(got, with.Commitments[name]) {
+			t.Errorf("the record holds %x where the job's commitment %s is %x", got, name, with.Commitments[name])
+		}
+	}
+	// The record is the job's with its commitments, whether or not the job
+	// still has its key, and another with other commitments.
+	with.Key = jobKey
+	keyed := Build(with, nil, named)
+	with.Key = nil
+	if again := Build(with, nil, named); !again.Root.Equals(keyed.Root) {
+		t.Error("a private job gave another record once its key was gone")
+	}
+	with.Commitments = Commit(with, otherKey)
+	if other := Build(with, nil, named); other.Root.Equals(keyed.Root) {
+		t.Error("other commitments left a private job's record as it was")
+	}
+
+	record := Build(without, nil, named)
 	nodes := parsed(t, record)
 	if nodes["root"]["private"] != true {
 		t.Errorf("the root of a private job's record: %v", nodes["root"])
@@ -308,5 +392,136 @@ func TestReadReturnsTheRootAndTheNodesItLinksAndNoFurther(t *testing.T) {
 	}
 	if text := (Node{Data: []byte("\xff not a node")}).JSON(); text != "null" {
 		t.Errorf("bytes that are no node, as JSON: %q", text)
+	}
+}
+
+func TestCommitmentsAreTheSameEveryTimeAndDifferWithTheKeyTheValueAndTheJob(t *testing.T) {
+	first, second := Commit(secret(), jobKey), Commit(secret(), jobKey)
+	// Parameters, a result and an error, two outputs, and three attempts.
+	if len(first) != 8 {
+		t.Fatalf("a job of two tasks and three attempts has %d commitments, want 8: %v", len(first), first)
+	}
+	for name, commitment := range first {
+		if len(commitment) != sha256.Size || !bytes.Equal(commitment, second[name]) {
+			t.Errorf("%s was %x and then %x", name, commitment, second[name])
+		}
+	}
+
+	// A commitment is an HMAC-SHA-256 under a key derived from the job's,
+	// of the job's ID, the commitment's name and the value.
+	derived, err := hkdf.Key(sha256.New, jobKey, nil, "sisyphus job record: commitments", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mac := hmac.New(sha256.New, derived)
+	mac.Write([]byte("\x00\x00\x00\x00\x00\x00\x00\x02j1" + "\x00\x00\x00\x00\x00\x00\x00\x18result/result_commitment" + "SECRET result"))
+	if want := mac.Sum(nil); !bytes.Equal(first["result/result_commitment"], want) {
+		t.Errorf("the commitment to the result is %x, want %x", first["result/result_commitment"], want)
+	}
+	// Not one under the sealing key itself, nor a plain hash.
+	direct := hmac.New(sha256.New, jobKey)
+	direct.Write([]byte("SECRET result"))
+	plain := sha256.Sum256([]byte("SECRET result"))
+	for name, commitment := range first {
+		if bytes.Equal(commitment, direct.Sum(nil)) || bytes.Equal(commitment, plain[:]) {
+			t.Errorf("%s can be had without deriving a key: %x", name, commitment)
+		}
+	}
+
+	// Another key changes every commitment, and so does another job, even
+	// one with the same values.
+	otherJob := secret()
+	otherJob.ID = "j2"
+	for what, other := range map[string]map[string][]byte{"another key": Commit(secret(), otherKey), "another job": Commit(otherJob, jobKey)} {
+		for name, commitment := range first {
+			if bytes.Equal(commitment, other[name]) {
+				t.Errorf("with %s, %s is still %x", what, name, commitment)
+			}
+		}
+	}
+	// Another value changes its own commitment and no other.
+	changes := map[string]func(*jobmodel.Job){
+		"manifest/params_commitment":             func(j *jobmodel.Job) { j.Params = []byte("SECRET parameterz") },
+		"receipts/0/output_commitment":           func(j *jobmodel.Job) { j.Tasks[0].Output = nil },
+		"receipts/0/attempts/0/error_commitment": func(j *jobmodel.Job) { j.Tasks[0].History[0].Err = "" },
+		"receipts/0/attempts/1/error_commitment": func(j *jobmodel.Job) { j.Tasks[0].History[1].Err = "late" },
+		"receipts/1/output_commitment":           func(j *jobmodel.Job) { j.Tasks[1].Output = []byte("SECRET") },
+		"receipts/1/attempts/0/error_commitment": func(j *jobmodel.Job) { j.Tasks[1].History[0].Err = "late" },
+		"result/result_commitment":               func(j *jobmodel.Job) { j.Result = []byte(`{"count":25}`) },
+		"result/error_commitment":                func(j *jobmodel.Job) { j.Err = "" },
+	}
+	for changed, change := range changes {
+		job := secret()
+		change(job)
+		for name, commitment := range Commit(job, jobKey) {
+			if same := bytes.Equal(commitment, first[name]); same == (name == changed) {
+				t.Errorf("with another value at %s, the commitment %s is the same: %v", changed, name, same)
+			}
+		}
+	}
+	// Equal values in two places of one job do not give equal commitments,
+	// and no two commitments of a job are equal.
+	twins := secret()
+	twins.Tasks[0].Output, twins.Tasks[1].Output = []byte("the same"), []byte("the same")
+	twins.Result, twins.Params = []byte("the same"), []byte("the same")
+	seen := make(map[string]string)
+	for name, commitment := range Commit(twins, jobKey) {
+		if other, dup := seen[string(commitment)]; dup {
+			t.Errorf("%s and %s have the same commitment", name, other)
+		}
+		seen[string(commitment)] = name
+	}
+}
+
+func TestOnlyTheJobsKeyGivesItsCommitments(t *testing.T) {
+	job := secret()
+	job.Commitments = Commit(job, jobKey)
+	names := []string{
+		"manifest/params_commitment",
+		"receipts/0/output_commitment", "receipts/0/attempts/0/error_commitment", "receipts/0/attempts/1/error_commitment",
+		"receipts/1/output_commitment", "receipts/1/attempts/0/error_commitment",
+		"result/result_commitment", "result/error_commitment",
+	}
+	matching := func(checks []Check) (matched []string) {
+		t.Helper()
+		if len(checks) != len(names) {
+			t.Fatalf("%d checks, want one for each of the %d commitments: %v", len(checks), len(names), checks)
+		}
+		for i, check := range checks {
+			if check.Name != names[i] {
+				t.Errorf("check %d is of %s, want %s: the order the record has them", i, check.Name, names[i])
+			}
+			if check.Matches {
+				matched = append(matched, check.Name)
+			}
+		}
+		return matched
+	}
+	if matched := matching(CheckCommitments(job, jobKey)); len(matched) != len(names) {
+		t.Errorf("with the job's key only %v match", matched)
+	}
+	if matched := matching(CheckCommitments(job, otherKey)); len(matched) != 0 {
+		t.Errorf("with another key %v match", matched)
+	}
+	// A value changed since the job ended is found, and it alone.
+	job.Result = []byte("SECRET result, improved")
+	if matched := matching(CheckCommitments(job, jobKey)); len(matched) != len(names)-1 || slices.Contains(matched, "result/result_commitment") {
+		t.Errorf("with the result changed, %v match", matched)
+	}
+	// So is a commitment that has gone.
+	job = secret()
+	job.Commitments = Commit(job, jobKey)
+	delete(job.Commitments, "receipts/1/output_commitment")
+	if matched := matching(CheckCommitments(job, jobKey)); len(matched) != len(names)-1 || slices.Contains(matched, "receipts/1/output_commitment") {
+		t.Errorf("with a commitment missing, %v match", matched)
+	}
+
+	// A job that is not private carries none, and neither does a private
+	// one from before they were made.
+	if checks := CheckCommitments(finished(), jobKey); checks != nil {
+		t.Errorf("a job that is not private has commitments to check: %v", checks)
+	}
+	if checks := CheckCommitments(secret(), jobKey); checks != nil {
+		t.Errorf("a private job with no commitments has some to check: %v", checks)
 	}
 }

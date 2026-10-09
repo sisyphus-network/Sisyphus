@@ -22,7 +22,7 @@ const usage = `Usage:
   sisyphusd job get <job-id>       show a job
   sisyphusd job logs <job-id>      print what has happened to a job, and follow it until it is over
   sisyphusd job cancel <job-id>    stop a job that has not finished
-  sisyphusd job record <job-id>    print a finished job's record, its history as linked data (--verify to check it against the job)
+  sisyphusd job record <job-id>    print a finished job's record, its history as linked data (--verify to check it against the job, and --key-file to check a private job's commitments)
   sisyphusd nodes                  list the workers connected to a coordinator
   sisyphusd blob put <file>        store a file on a node and print its CID
   sisyphusd blob get <cid>         fetch a blob, checking it against its CID

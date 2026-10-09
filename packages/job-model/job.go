@@ -82,6 +82,11 @@ type Job struct {
 	// Private says the job was submitted with a key. It outlasts the key,
 	// which is dropped when the job ends.
 	Private bool
+	// Commitments are keyed hashes of the values a private job's record
+	// leaves out, by where in the record each is. They are worked out when
+	// the job ends, while it still has its key, and kept with it; see
+	// packages/jobrecord.
+	Commitments map[string][]byte
 	// MaxTasks is the split the submitter asked for; zero means unspecified.
 	MaxTasks int
 	// TaskTimeout, if not zero, is how long one attempt at a task may run.

@@ -212,18 +212,31 @@ func jobRecord(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd job record", flag.ContinueOnError)
 	node := targetFlags(fs)
 	verify := fs.Bool("verify", false, "work the record out again from the job, and fail if it is not the record the job names")
+	keyFile := fs.String("key-file", "", "a private job's key: verify the record, and also check its commitments against the values the node holds")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
 		return errors.New("expected exactly one job ID")
 	}
+	request := &pb.GetJobRecordRequest{JobId: fs.Arg(0), Verify: *verify}
+	if *keyFile != "" {
+		// The commitments checked are the job's. Only a record that has
+		// been checked against the job is known to hold the same ones, so
+		// a key asks for that check too.
+		*verify, request.Verify = true, true
+		key, err := readKey(*keyFile)
+		if err != nil {
+			return err
+		}
+		request.Key = key[:]
+	}
 	client, closeConn, err := dial(node)
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	record, err := client.GetJobRecord(ctx, &pb.GetJobRecordRequest{JobId: fs.Arg(0), Verify: *verify})
+	record, err := client.GetJobRecord(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -250,6 +263,36 @@ func jobRecord(ctx context.Context, args []string) error {
 	if *verify {
 		fmt.Fprintln(stdout, "verified: the job as the node holds it gives this record")
 	}
+	if *keyFile != "" {
+		return reportCommitments(record, *keyFile)
+	}
+	return nil
+}
+
+// reportCommitments prints, for each commitment in a private job's record,
+// whether the key in keyFile and the value the node holds give it, and
+// fails if any does not. That is no fault in the record: the key may simply
+// not be the job's.
+func reportCommitments(record *pb.JobRecord, keyFile string) error {
+	checks := record.GetCommitments()
+	if len(checks) == 0 {
+		fmt.Fprintln(stdout, "nothing to check with a key: this record holds no commitments, as only the record of a private job does")
+		return nil
+	}
+	missed := 0
+	for _, check := range checks {
+		outcome := "matches"
+		if !check.GetMatches() {
+			outcome = "does not match"
+			missed++
+		}
+		fmt.Fprintf(stdout, "%s: %s\n", check.GetName(), outcome)
+	}
+	if missed > 0 {
+		return fmt.Errorf("%d of the %d commitments in the record of job %s do not match: %s is not the job's key, or the node no longer holds the values the job ended with",
+			missed, len(checks), record.GetJobId(), keyFile)
+	}
+	fmt.Fprintf(stdout, "checked: the key and the values the node holds give all %d commitments\n", len(checks))
 	return nil
 }
 

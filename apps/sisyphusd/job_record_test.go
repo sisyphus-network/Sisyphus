@@ -401,7 +401,7 @@ func TestCheckingARecordFindsAJobThatHasChangedSinceItWasWritten(t *testing.T) {
 	if _, err := first.Cancel(job.GetJobId()); err != nil {
 		t.Fatal(err)
 	}
-	written, err := first.Record(ctx, job.GetJobId(), true)
+	written, err := first.Record(ctx, job.GetJobId(), true, nil)
 	if err != nil || !written.GetMatches() {
 		t.Fatalf("the record as first written: %v, %v", written, err)
 	}
@@ -410,7 +410,7 @@ func TestCheckingARecordFindsAJobThatHasChangedSinceItWasWritten(t *testing.T) {
 	// A restart changes nothing: the job comes back from the database and
 	// gives the record it gave before, which the store still holds.
 	same := restarted(t, store, journal)
-	if again, err := same.Record(ctx, job.GetJobId(), true); err != nil || !again.GetMatches() || again.GetRootCid() != written.GetRootCid() {
+	if again, err := same.Record(ctx, job.GetJobId(), true, nil); err != nil || !again.GetMatches() || again.GetRootCid() != written.GetRootCid() {
 		t.Errorf("the record after a restart: %v, %v", again, err)
 	}
 	same.Close()
@@ -418,7 +418,7 @@ func TestCheckingARecordFindsAJobThatHasChangedSinceItWasWritten(t *testing.T) {
 	// The job's error rewritten behind the coordinator's back.
 	tampered := rewriting{journal, func(j *jobmodel.Job) { j.Err = "nothing to see here" }}
 	changed := restarted(t, store, tampered)
-	checked, err := changed.Record(ctx, job.GetJobId(), true)
+	checked, err := changed.Record(ctx, job.GetJobId(), true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +432,7 @@ func TestCheckingARecordFindsAJobThatHasChangedSinceItWasWritten(t *testing.T) {
 		t.Errorf("the stored record's result: %v", result)
 	}
 	// Not asked to check, it does not say.
-	if plain, err := changed.Record(ctx, job.GetJobId(), false); err != nil || plain.GetMatches() || plain.GetRecomputedCid() != "" {
+	if plain, err := changed.Record(ctx, job.GetJobId(), false, nil); err != nil || plain.GetMatches() || plain.GetRecomputedCid() != "" {
 		t.Errorf("a record nobody asked to have checked: %v, %v", plain, err)
 	}
 	changed.Close()
@@ -441,7 +441,7 @@ func TestCheckingARecordFindsAJobThatHasChangedSinceItWasWritten(t *testing.T) {
 	// job still gives that record.
 	empty := storage.NewMemory()
 	healed := restarted(t, empty, journal)
-	if again, err := healed.Record(ctx, job.GetJobId(), true); err != nil || !again.GetMatches() || len(again.GetNodes()) != len(written.GetNodes()) {
+	if again, err := healed.Record(ctx, job.GetJobId(), true, nil); err != nil || !again.GetMatches() || len(again.GetNodes()) != len(written.GetNodes()) {
 		t.Errorf("the record from a store that had lost it: %v, %v", again, err)
 	}
 	if _, err := empty.GetNode(ctx, cid.MustParse(written.GetRootCid())); err != nil || len(jobRecordPins(empty, job.GetJobId())) != 1 {
@@ -450,14 +450,14 @@ func TestCheckingARecordFindsAJobThatHasChangedSinceItWasWritten(t *testing.T) {
 	healed.Close()
 	// And if the job has changed as well, the record is gone for good.
 	lost := restarted(t, storage.NewMemory(), tampered)
-	if _, err := lost.Record(ctx, job.GetJobId(), true); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "not found") {
+	if _, err := lost.Record(ctx, job.GetJobId(), true, nil); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("a record that is in no store and that its job no longer gives: %v", err)
 	}
 	lost.Close()
 
 	// A job that ended before records were kept names none.
 	before := restarted(t, store, rewriting{journal, func(j *jobmodel.Job) { j.Record = "" }})
-	if _, err := before.Record(ctx, job.GetJobId(), false); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "has no record") {
+	if _, err := before.Record(ctx, job.GetJobId(), false, nil); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "has no record") {
 		t.Errorf("the record of a job from before records were kept: %v", err)
 	}
 }
@@ -493,7 +493,7 @@ func TestARecordIsKeptAsLongAsItsJobAndAStepAsLongAsItsGraph(t *testing.T) {
 		graph, _ = coord.Get(graph.GetJobId())
 		return graph.GetState() == pb.JobState_JOB_STATE_FAILED
 	})
-	record, err := coord.Record(ctx, graph.GetJobId(), true)
+	record, err := coord.Record(ctx, graph.GetJobId(), true, nil)
 	if err != nil || !record.GetMatches() {
 		t.Fatalf("the failed graph's record: %v, %v", record, err)
 	}
@@ -575,7 +575,7 @@ func TestAStepIsNotBegunOnceItsGraphIsOver(t *testing.T) {
 	if _, err := coord.Cancel(graph.GetJobId()); err != nil {
 		t.Fatal(err)
 	}
-	written, err := coord.Record(ctx, graph.GetJobId(), true)
+	written, err := coord.Record(ctx, graph.GetJobId(), true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +586,7 @@ func TestAStepIsNotBegunOnceItsGraphIsOver(t *testing.T) {
 		t.Errorf("there are %d jobs, want only the graph: a step was begun for a graph that was over", len(jobs))
 	}
 	// So the graph's record is still the graph's whole story.
-	if again, err := coord.Record(ctx, graph.GetJobId(), true); err != nil || !again.GetMatches() || again.GetRootCid() != written.GetRootCid() {
+	if again, err := coord.Record(ctx, graph.GetJobId(), true, nil); err != nil || !again.GetMatches() || again.GetRootCid() != written.GetRootCid() {
 		t.Errorf("the cancelled graph's record: %v, %v", again, err)
 	}
 }
@@ -718,4 +718,194 @@ func TestANodeWithKuboKeepsRecordsWhereTheIPFSCommandCanReadThem(t *testing.T) {
 	if again := mustCLI(t, "job", "record", "--addr", addr, found[1]); !strings.HasPrefix(printed, again) {
 		t.Errorf("after a collection the record reads:\n%s\nbefore it:\n%s", again, printed)
 	}
+}
+
+// commitmentChecks returns what a node says of a job's commitments when
+// given a key: how many it checked, and the names of those the key gave.
+func (p *pool) commitmentChecks(jobID string, key []byte) (checked int, matched []string, record *pb.JobRecord) {
+	p.t.Helper()
+	record, err := p.client.GetJobRecord(p.ctx, &pb.GetJobRecordRequest{JobId: jobID, Verify: true, Key: key})
+	if err != nil {
+		p.t.Fatalf("the record of job %s, checked with a key: %v", jobID, err)
+	}
+	for _, check := range record.GetCommitments() {
+		if check.GetMatches() {
+			matched = append(matched, check.GetName())
+		}
+	}
+	return len(record.GetCommitments()), matched, record
+}
+
+func TestAPrivateJobsRecordCommitsToWhatItLeavesOutAndIsTheSameAfterARestart(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "node.db")
+	db := journalIn(t, file)
+	before := startPoolWith(t, runtime.Builtin(), sameStore, db)
+	stopWorker := before.startWorker("a", 2)
+	before.waitForWorkers(1)
+	key, other := sealed.NewKey(), sealed.NewKey()
+	job := before.privateWordcount(sampleText(), key, 2)
+	if job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || !job.GetPrivate() {
+		t.Fatalf("job %v, private %v: %s", job.GetState(), job.GetPrivate(), job.GetError())
+	}
+	open := before.wait(before.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER, 0)).GetJobId())
+
+	// In place of each value it leaves out, the record has 32 bytes.
+	written := before.recordOf(job.GetJobId())
+	if !written.GetMatches() || len(written.GetCommitments()) != 0 {
+		t.Fatalf("the record matches the job: %v; asked with no key it checked %d commitments", written.GetMatches(), len(written.GetCommitments()))
+	}
+	nodes := recordNodes(t, written)
+	root := nodes[written.GetRootCid()]
+	manifest, result := nodes[linkOf(root["manifest"])], nodes[linkOf(root["result"])]
+	held := [][]byte{bytesOf(t, manifest["params_commitment"]), bytesOf(t, result["result_commitment"]), bytesOf(t, result["error_commitment"])}
+	for _, link := range root["receipts"].([]any) {
+		receipt := nodes[linkOf(link)]
+		held = append(held, bytesOf(t, receipt["output_commitment"]))
+		for _, attempt := range receipt["attempts"].([]any) {
+			held = append(held, bytesOf(t, attempt.(map[string]any)["error_commitment"]))
+		}
+	}
+	seen := make(map[string]bool)
+	for _, commitment := range held {
+		if len(commitment) != 32 || seen[string(commitment)] {
+			t.Errorf("a commitment in the record is %x, want 32 bytes found nowhere else in it", commitment)
+		}
+		seen[string(commitment)] = true
+	}
+	// Two tasks, each done at the first attempt.
+	if len(held) != 7 {
+		t.Errorf("the record holds %d commitments, want 7", len(held))
+	}
+
+	// The job's key gives every one of them. Another key gives none, and
+	// that says nothing against the record.
+	if checked, matched, _ := before.commitmentChecks(job.GetJobId(), key[:]); checked != 7 || len(matched) != 7 {
+		t.Errorf("with the job's key, %d of %d commitments match: %v", len(matched), checked, matched)
+	}
+	if checked, matched, record := before.commitmentChecks(job.GetJobId(), other[:]); checked != 7 || len(matched) != 0 || !record.GetMatches() {
+		t.Errorf("with another key, %d of %d commitments match, and the record matches the job: %v", len(matched), checked, record.GetMatches())
+	}
+	// A job that is not private has none to check.
+	if checked, _, record := before.commitmentChecks(open.GetJobId(), key[:]); checked != 0 || !record.GetMatches() {
+		t.Errorf("a job that is not private had %d commitments checked", checked)
+	}
+
+	before.stopAndForget()
+	stopWorker()
+	db.Close()
+
+	// The key is gone from the database, and the commitments are there.
+	db = journalIn(t, file)
+	saved, err := db.LoadJobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved) != 2 || saved[0].Key != nil || len(saved[0].Commitments) != 7 || len(saved[1].Commitments) != 0 {
+		t.Fatalf("saved: %d jobs, the private one with key %x and %d commitments", len(saved), saved[0].Key, len(saved[0].Commitments))
+	}
+	// A coordinator started on it, over a store that has never held the
+	// record, works the same record out from the job without the key.
+	after := startPoolWith(t, runtime.Builtin(), sameStore, db)
+	again := after.recordOf(job.GetJobId())
+	if !again.GetMatches() || again.GetRootCid() != written.GetRootCid() || after.job(job.GetJobId()).GetRecordCid() != written.GetRootCid() {
+		t.Fatalf("after a restart the record is %s and matches the job: %v; it was %s", again.GetRootCid(), again.GetMatches(), written.GetRootCid())
+	}
+	for i, node := range again.GetNodes() {
+		if !bytes.Equal(node.GetData(), written.GetNodes()[i].GetData()) {
+			t.Errorf("node %d of the record differs after a restart", i)
+		}
+	}
+	// Whoever still has the key can check it as before.
+	if checked, matched, _ := after.commitmentChecks(job.GetJobId(), key[:]); checked != 7 || len(matched) != 7 {
+		t.Errorf("after a restart, with the job's key, %d of %d commitments match: %v", len(matched), checked, matched)
+	}
+	if _, matched, _ := after.commitmentChecks(job.GetJobId(), other[:]); len(matched) != 0 {
+		t.Errorf("after a restart, with another key, these match: %v", matched)
+	}
+	after.stopAndForget()
+
+	// A result rewritten behind the coordinator's back leaves the record
+	// as it was, since the record never held the result. The key finds it.
+	tampered := restarted(t, storage.NewMemory(), rewriting{db, func(j *jobmodel.Job) { j.Result = []byte(`{"words":1}`) }})
+	checked, err := tampered.Record(context.Background(), job.GetJobId(), true, key[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missed []string
+	for _, check := range checked.GetCommitments() {
+		if !check.GetMatches() {
+			missed = append(missed, check.GetName())
+		}
+	}
+	if !checked.GetMatches() || len(missed) != 1 || missed[0] != "result/result_commitment" {
+		t.Errorf("with the result changed the record matches the job: %v, and these commitments do not match: %v", checked.GetMatches(), missed)
+	}
+}
+
+func TestCLIChecksAPrivateJobsCommitmentsWithItsKey(t *testing.T) {
+	dataDir := t.TempDir()
+	addr, stop := startNode(t, "--data-dir", dataDir)
+	keyFile, otherKeyFile := newKeyFile(t), newKeyFile(t)
+	finishedJob := regexp.MustCompile(`job ([0-9a-f]+) succeeded`)
+	found := finishedJob.FindStringSubmatch(mustCLI(t, "job", "submit", "--addr", addr, "--key-file", keyFile, "--params", `{"from":0,"to":1000}`))
+	if found == nil {
+		t.Fatal("the private job did not finish")
+	}
+	id := found[1]
+
+	// Without the key the record is printed and checked against the job as
+	// any other is.
+	printed := mustCLI(t, "job", "record", "--verify", "--addr", addr, id)
+	if !strings.Contains(printed, `"params_commitment"`) || !strings.Contains(printed, "verified:") || strings.Contains(printed, "matches") {
+		t.Errorf("job record --verify of a private job printed:\n%s", printed)
+	}
+	// With it, each commitment is checked: those of the parameters, the one
+	// task's output and its one attempt's error, the result and the error.
+	checkedWithKey := func(addr string) {
+		t.Helper()
+		out := mustCLI(t, "job", "record", "--key-file", keyFile, "--addr", addr, id)
+		if !strings.HasPrefix(out, printed) || !strings.Contains(out, "checked: the key and the values the node holds give all 5 commitments") {
+			t.Errorf("job record --key-file printed:\n%s", out)
+		}
+		for _, name := range []string{"manifest/params_commitment", "receipts/0/output_commitment", "receipts/0/attempts/0/error_commitment", "result/result_commitment", "result/error_commitment"} {
+			if !strings.Contains(out, "\n"+name+": matches\n") {
+				t.Errorf("job record --key-file does not say that %s matches:\n%s", name, out)
+			}
+		}
+	}
+	checkedWithKey(addr)
+
+	// A key that is not the job's is said not to match. The record is still
+	// verified: nothing is wrong with it.
+	out, err := cli(t, "job", "record", "--key-file", otherKeyFile, "--addr", addr, id)
+	if err == nil || !strings.Contains(err.Error(), "5 of the 5 commitments in the record of job "+id+" do not match") || !strings.Contains(err.Error(), otherKeyFile) ||
+		strings.Contains(err.Error(), "does not match its record") {
+		t.Errorf("job record with another key: %v", err)
+	}
+	if !strings.HasPrefix(out, printed) || strings.Count(out, ": does not match\n") != 5 || strings.Contains(out, "checked:") {
+		t.Errorf("job record with another key printed:\n%s", out)
+	}
+
+	// A job that is not private has nothing for a key to check.
+	found = finishedJob.FindStringSubmatch(mustCLI(t, "job", "submit", "--addr", addr, "--params", `{"from":0,"to":1000}`))
+	if found == nil {
+		t.Fatal("the job that is not private did not finish")
+	}
+	if out := mustCLI(t, "job", "record", "--key-file", keyFile, "--addr", addr, found[1]); !strings.Contains(out, "verified:") || !strings.Contains(out, "nothing to check with a key") {
+		t.Errorf("job record --key-file of a job that is not private printed:\n%s", out)
+	}
+	if _, err := cli(t, "job", "record", "--key-file", filepath.Join(dataDir, "no-such.key"), "--addr", addr, id); err == nil || !strings.Contains(err.Error(), "read key") {
+		t.Errorf("job record with a key file that is not there: %v", err)
+	}
+	stop()
+
+	// The node, started again, no longer has the key. It gives the same
+	// record, and the key still checks it.
+	again := freeAddr(t)
+	startDaemon(t, "--listen", again, "--slots", "1", "--data-dir", dataDir)
+	waitForOutput(t, "primes", "nodes", "--addr", again)
+	if after := mustCLI(t, "job", "record", "--verify", "--addr", again, id); after != printed {
+		t.Errorf("after a restart job record --verify printed:\n%s\nbefore it:\n%s", after, printed)
+	}
+	checkedWithKey(again)
 }

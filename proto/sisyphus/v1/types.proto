@@ -164,6 +164,21 @@ message JobRecord {
   // is the record's.
   string recomputed_cid = 4;
   bool matches = 5;
+  // Set if a key was sent: each commitment of a private job's record, in
+  // the order the record has them, and whether the key gives it. Empty for
+  // a record that holds no commitments.
+  repeated CommitmentCheck commitments = 6;
+}
+
+// CommitmentCheck is whether a key and a value the coordinator holds give
+// one of the commitments in a private job's record.
+message CommitmentCheck {
+  // The path from the record's root to the commitment, such as
+  // "receipts/0/output_commitment".
+  string name = 1;
+  // False if the key is not the job's, or the value has changed since the
+  // job ended. The two cannot be told apart.
+  bool matches = 2;
 }
 
 // RecordNode is one node of a record.

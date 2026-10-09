@@ -26,7 +26,11 @@ type GetJobRecordRequest struct {
 	JobId string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	// Also work the record out again from the job and say whether the two
 	// agree.
-	Verify        bool `protobuf:"varint,2,opt,name=verify,proto3" json:"verify,omitempty"`
+	Verify bool `protobuf:"varint,2,opt,name=verify,proto3" json:"verify,omitempty"`
+	// If set, the sealing key of a private job. The record's commitments are
+	// then checked against the values the coordinator holds; see
+	// JobRecord.commitments. The coordinator does not keep the key.
+	Key           []byte `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -73,6 +77,13 @@ func (x *GetJobRecordRequest) GetVerify() bool {
 		return x.Verify
 	}
 	return false
+}
+
+func (x *GetJobRecordRequest) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
 }
 
 type CancelJobRequest struct {
@@ -564,10 +575,11 @@ var File_sisyphus_v1_node_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x16sisyphus/v1/node.proto\x12\vsisyphus.v1\x1a\x17sisyphus/v1/types.proto\"D\n" +
+	"\x16sisyphus/v1/node.proto\x12\vsisyphus.v1\x1a\x17sisyphus/v1/types.proto\"V\n" +
 	"\x13GetJobRecordRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x16\n" +
-	"\x06verify\x18\x02 \x01(\bR\x06verify\")\n" +
+	"\x06verify\x18\x02 \x01(\bR\x06verify\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\fR\x03key\")\n" +
 	"\x10CancelJobRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"7\n" +
 	"\x11CancelJobResponse\x12\"\n" +

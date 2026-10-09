@@ -577,6 +577,7 @@ When a job is over, whether it succeeded, failed or was cancelled, its coordinat
 ```sh
 bin/sisyphusd job record <job-id>            # the root's ID on a line, then the record's nodes as one JSON object, by ID
 bin/sisyphusd job record --verify <job-id>   # also work it out again from the job, and fail if the two differ
+bin/sisyphusd job record --key-file job.key <job-id>   # a private job: verify, then check its commitments with the job's key
 ```
 
 A record is made of these nodes:
@@ -599,7 +600,24 @@ A record is made of these nodes:
 
 **What a record reveals.** A record sits in the coordinator's store, and on a node with `--kubo` in the pool's private network, where any member that knows or guesses its ID can fetch it. An ID cannot be guessed, and is told to clients of the coordinator with the job. Whoever has it reads everything in the table above: the workload, the parameters, the result, each task's output, the error messages, the node IDs and names of the submitter and of every worker that was handed a task, the times, and the IDs of the job's data.
 
-For a **private job** the record says so and leaves out everything that was not sealed: the parameters, the result, each task's output, and every error message, since a message may quote data. It keeps the workload's name, the requirements, who ran what and how it went, the times, and the IDs of the sealed inputs and outputs, which are of no use without the key. Nothing in it is derived from the key.
+For a **private job** the record says so and leaves out everything that was not sealed: the parameters, the result, each task's output, and every error message, since a message may quote data. It keeps the workload's name, the requirements, who ran what and how it went, the times, and the IDs of the sealed inputs and outputs, which are of no use without the key.
+
+In place of each value left out, the record of a private job holds a **commitment** to it: 32 bytes that fix the value without showing it. So the record still commits to the job's result, and whoever holds the key can later show that a given result is the one the job produced.
+
+| Where | What it commits to |
+| --- | --- |
+| manifest, `params_commitment` | The parameters. |
+| each receipt, `output_commitment` | The task's output. |
+| each attempt in a receipt, `error_commitment` | Why the attempt failed. |
+| result, `result_commitment` and `error_commitment` | The job's result, and its error. |
+
+- **What a commitment is.** HMAC-SHA-256 of the job's ID, the commitment's path in the record (such as `receipts/0/output_commitment`) and the value. The ID and the path are each preceded by their length, as eight bytes, big-endian. The HMAC key is 32 bytes derived from the job's sealing key by HKDF-SHA-256 with no salt and the label `sisyphus job record: commitments`, so it is not the key the data is sealed with.
+- **Without the key it reveals nothing about the value**: not the value, and not whether a guess at it is right. A plain hash would let anyone confirm a guess at a small result such as `{"count":25}`. It does not hide that there is a value to commit to: every private record has every commitment in the table, and an empty value, such as the error of an attempt that succeeded, is committed to like any other.
+- **Equal values do not give equal commitments.** The job's ID and the path go into each, so the same result in two jobs under one key, or the same output from two tasks of one job, gives commitments that cannot be told to be of equal values.
+- **They are made when the job ends**, while the coordinator still has the key, and saved with the job. The key is not saved with a finished job. The record is worked out again from the saved commitments, so `--verify` works on a private job without the key, before and after a restart.
+- **`--verify` without the key does not check the values.** The record holds the commitments and not the values, so a result changed in the coordinator's database after the job ended leaves the record as it was. Only the key finds that.
+- **`--key-file` checks them.** It takes the job's key, the file `job submit --key-file` was given, or the node's `private.key` for a job made private in the desktop app. It verifies the record, then sends the key to the coordinator, which works each commitment out again from the parameters, result, outputs and errors it holds and says of each whether it `matches` or `does not match`. The coordinator uses the key for that and does not keep it. The command fails if any does not match. That happens when the key is not the job's, in which case none match, or when a value has changed since the job ended. It says nothing against the record itself, which was verified first.
+- **A record with no commitments has nothing to check**, and `--key-file` says so: the record of a job that is not private, or of a private job that ended before commitments were made, whose record is as it was.
 
 ## Restarting a coordinator
 
