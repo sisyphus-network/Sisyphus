@@ -36,7 +36,7 @@ export type NodeRpcMethod =
   | 'submitJob' | 'getJob' | 'listJobs' | 'cancelJob'
   | 'getModelConfig' | 'setModelConfig' | 'listProviders' | 'listModels' | 'removeModel'
   | 'listChats' | 'getChat' | 'deleteChat'
-  | 'storeFile' | 'fetchFile' | 'listFiles' | 'removeFile'
+  | 'listFiles' | 'removeFile'
   | 'createInvitation' | 'listMembers' | 'removeMember' | 'joinPool'
 
 export type NodeStreamMethod = 'watchJobs' | 'watchJobEvents' | 'ask' | 'pullModel'
@@ -48,7 +48,7 @@ const api = {
   setPeerComputeTrust: (peerId: string, trusted: boolean): Promise<void> => ipcRenderer.invoke('node:set-peer-compute-trust', { peerId, trusted }),
   setPeerComputePermissions: (peerId: string, givesWork: boolean, takesWork: boolean): Promise<void> => ipcRenderer.invoke('node:set-peer-compute-permissions', { peerId, givesWork, takesWork }),
   call: <T = Record<string, unknown>>(method: NodeRpcMethod, request: Record<string, unknown> = {}): Promise<T> => ipcRenderer.invoke('node:rpc', { method, request }),
-  stream: <T = Record<string, unknown>>(method: NodeStreamMethod, request: Record<string, unknown>, callback: (event: T) => void, onError?: (error: string) => void, onEnd?: () => void) => {
+  stream: <T = Record<string, unknown>>(method: NodeStreamMethod, request: Record<string, unknown>, callback: (event: T) => void, onError?: (error: string, code?: number) => void, onEnd?: () => void) => {
     return createRpcStream(ipcRenderer, method, request, callback, onError, onEnd)
   },
   storeFile: (file: { name: string; data: Uint8Array; private: boolean }): Promise<Record<string, unknown>> => ipcRenderer.invoke('node:store-file', file),

@@ -1,4 +1,4 @@
-type StreamPayload<T> = { data?: T; error?: string; end?: boolean }
+type StreamPayload<T> = { data?: T; error?: string; errorCode?: number; end?: boolean }
 type StreamListener<T> = (event: unknown, payload: StreamPayload<T>) => void
 
 type StreamIpc<T> = {
@@ -11,7 +11,7 @@ type StreamIpc<T> = {
 // In particular, a pending start rejection must not call an unmounted client.
 export function createRpcStream<T>(
   ipc: StreamIpc<T>, method: string, request: Record<string, unknown>,
-  callback: (event: T) => void, onError?: (error: string) => void, onEnd?: () => void,
+  callback: (event: T) => void, onError?: (error: string, code?: number) => void, onEnd?: () => void,
 ): () => void {
   const id = crypto.randomUUID()
   const channel = `node:rpc-stream:${id}`
@@ -25,7 +25,7 @@ export function createRpcStream<T>(
   const listener: StreamListener<T> = (_event, payload) => {
     if (!active) return
     if (payload.error !== undefined) {
-      if (cleanup()) onError?.(payload.error)
+      if (cleanup()) onError?.(payload.error, payload.errorCode)
     } else if (payload.end) {
       if (cleanup()) onEnd?.()
     } else if (payload.data !== undefined) {
