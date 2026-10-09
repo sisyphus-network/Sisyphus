@@ -100,3 +100,47 @@ func TestRestoreRebuildsAJobWithNothingUnsaved(t *testing.T) {
 		t.Errorf("TaskID = %q", TaskID("j", 7))
 	}
 }
+
+func TestATaskKeepsEveryAttemptAtItAsItStoodWhenTheTaskMovedOn(t *testing.T) {
+	j := New("j", "primes", nil, Distributed, 2, [][]byte{nil, nil}, time.Now())
+	first, second := j.Tasks[0], j.Tasks[1]
+	if len(first.History) != 0 {
+		t.Fatalf("a task never handed out has a history: %+v", first.History)
+	}
+	j.Start(first, "node-a", "alpha", time.Now())
+	j.Fail(first, "disk full", 3, time.Now())
+	j.Start(first, "node-b", "beta", time.Now())
+	j.Requeue(first, "the coordinator stopped")
+	j.Start(first, "node-b", "beta", time.Now())
+	j.Succeed(first, []byte("done"))
+	j.Start(second, "node-a", "alpha", time.Now())
+	j.Cancel(time.Now())
+
+	want := []Attempt{
+		{TaskIndex: 0, Number: 1, NodeID: "node-a", NodeName: "alpha", State: Pending, Err: "disk full"},
+		{TaskIndex: 0, Number: 2, NodeID: "node-b", NodeName: "beta", State: Pending, Err: "the coordinator stopped"},
+		{TaskIndex: 0, Number: 3, NodeID: "node-b", NodeName: "beta", State: Succeeded},
+	}
+	if !reflect.DeepEqual(first.History, want) {
+		t.Errorf("the first task's history:\n%+v\nwant:\n%+v", first.History, want)
+	}
+	if want := []Attempt{{TaskIndex: 1, Number: 1, NodeID: "node-a", NodeName: "alpha", State: Cancelled}}; !reflect.DeepEqual(second.History, want) {
+		t.Errorf("the history of a task its job ended without: %+v", second.History)
+	}
+
+	// The attempt that fails a task for good is kept as failed.
+	k := New("k", "primes", nil, Distributed, 1, [][]byte{nil}, time.Now())
+	k.Start(k.Tasks[0], "node-a", "alpha", time.Now())
+	k.Fail(k.Tasks[0], "boom", 1, time.Now())
+	if h := k.Tasks[0].History; len(h) != 1 || h[0].State != Failed || h[0].Err != "boom" {
+		t.Errorf("the history of a task that failed for good: %+v", h)
+	}
+
+	// A task restored at its third attempt with only one on record has
+	// the gap filled, so that each attempt sits at its own number.
+	restored := Restore(Job{ID: "r", State: Running, Tasks: []*Task{{Index: 0, Attempt: 3, State: Running, NodeID: "node-c", History: []Attempt{{Number: 1}}}}}, nil, nil, nil)
+	restored.Requeue(restored.Tasks[0], "lost")
+	if h := restored.Tasks[0].History; len(h) != 3 || h[1].Number != 2 || h[2].NodeID != "node-c" || h[2].Err != "lost" {
+		t.Errorf("the history of a task restored with attempts missing: %+v", h)
+	}
+}

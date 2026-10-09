@@ -167,7 +167,7 @@ func (c *Client) Peers(ctx context.Context) ([]string, error) {
 }
 
 // BlockPut stores one block and returns the CID Kubo gave it. codec is the
-// block's format, "raw" or "dag-pb"; the CID is version 1 with a SHA-256
+// block's format, "raw", "dag-pb" or "dag-cbor"; the CID is version 1 with a SHA-256
 // hash.
 func (c *Client) BlockPut(ctx context.Context, codec string, data []byte) (string, error) {
 	var form bytes.Buffer

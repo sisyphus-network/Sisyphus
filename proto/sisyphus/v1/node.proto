@@ -22,6 +22,16 @@ service NodeService {
   // the one named, and goes on sending as more happens until the job has
   // finished.
   rpc WatchJobEvents(WatchJobEventsRequest) returns (stream JobEvent);
+  // GetJobRecord returns the record of a job that is over, read from the
+  // coordinator's store.
+  rpc GetJobRecord(GetJobRecordRequest) returns (JobRecord);
+}
+
+message GetJobRecordRequest {
+  string job_id = 1;
+  // Also work the record out again from the job and say whether the two
+  // agree.
+  bool verify = 2;
 }
 
 message CancelJobRequest {

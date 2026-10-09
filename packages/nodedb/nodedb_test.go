@@ -391,7 +391,7 @@ func loosen(t *testing.T, db *DB, table, columns string) {
 
 func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	const (
-		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step"
+		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private"
 		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error"
 	)
 	for _, tt := range []struct {
@@ -400,6 +400,8 @@ func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 		{"jobs", jobColumns, "load jobs"},
 		{"tasks", taskColumns, "load tasks"},
 		{"job_blobs", "job_id, role, cid", "load job blobs"},
+		// A row for the one task there is, with nothing else in it.
+		{"task_attempts", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, state, error", "load attempts"},
 	} {
 		db, _ := newDB(t)
 		save(t, db, jobmodel.New("j1", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted))
@@ -467,5 +469,53 @@ func TestAJobsEventsAndItsLimitAreKept(t *testing.T) {
 	loosen(t, db, "job_events", "job_id DEFAULT 'j1', seq, at_ns, kind, task_index, node_name, text")
 	if _, err := db.LoadEvents("j1"); err == nil || !strings.Contains(err.Error(), "load job events") {
 		t.Errorf("with a damaged events table: %v", err)
+	}
+}
+
+func TestAJobsRecordSubmitterPrivacyAndAttemptsAreKept(t *testing.T) {
+	db, file := newDB(t)
+	job := jobmodel.New("j1", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted)
+	job.Key, job.Private, job.Submitter = []byte("0123456789abcdef0123456789abcdef"), true, "12D3KooWsubmitter"
+	save(t, db, job)
+	job.Start(job.Tasks[0], "node-a", "alpha", time.Now())
+	job.Fail(job.Tasks[0], "disk full", 3, submitted)
+	// Not saved in between: the attempt that failed is written with the next.
+	job.Start(job.Tasks[0], "node-b", "beta", time.Now())
+	job.Succeed(job.Tasks[0], []byte("done"))
+	job.Finish([]byte("result"), nil, submitted.Add(time.Second))
+	job.Record = "bafyreib2rxk3rybk3aobmv5cjuql3bm2twh4jo5uxgf5kpqcsgz7soitae"
+	save(t, db, job)
+
+	loaded := load(t, reopen(t, db, file))[0]
+	// The key went when the job ended; that it was private did not.
+	if loaded.Key != nil || !loaded.Private || loaded.Submitter != job.Submitter || loaded.Record != job.Record {
+		t.Errorf("loaded with key %x, private %v, submitter %q and record %q", loaded.Key, loaded.Private, loaded.Submitter, loaded.Record)
+	}
+	if !reflect.DeepEqual(loaded.Tasks[0].History, job.Tasks[0].History) || len(loaded.Tasks[0].History) != 2 {
+		t.Errorf("attempts as loaded:\n%+v\nas saved:\n%+v", loaded.Tasks[0].History, job.Tasks[0].History)
+	}
+}
+
+func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *testing.T) {
+	db, file := newDB(t)
+	sealedJob := jobmodel.New("sealed", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted)
+	sealedJob.Key = []byte("0123456789abcdef0123456789abcdef")
+	save(t, db, sealedJob)
+	save(t, db, jobmodel.New("open", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted))
+	// Put the database back as it was before the migration that added the
+	// column, and open it again.
+	for _, statement := range []string{
+		`ALTER TABLE jobs DROP COLUMN record_cid`,
+		`ALTER TABLE jobs DROP COLUMN submitter_id`,
+		`ALTER TABLE jobs DROP COLUMN private`,
+		`DELETE FROM schema_migrations WHERE version = 11`,
+	} {
+		if _, err := db.sql.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	jobs := load(t, reopen(t, db, file))
+	if !jobs[0].Private || jobs[1].Private {
+		t.Errorf("after the migration the job with a key is private: %v, and the one without: %v", jobs[0].Private, jobs[1].Private)
 	}
 }

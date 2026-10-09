@@ -230,7 +230,7 @@ func (f *fakeKubo) BlockPut(_ context.Context, codec string, data []byte) (strin
 	if f.putAs != "" {
 		return f.putAs, nil
 	}
-	kind := map[string]uint64{"raw": cid.Raw, "dag-pb": cid.DagProtobuf}[codec]
+	kind := map[string]uint64{"raw": cid.Raw, "dag-pb": cid.DagProtobuf, "dag-cbor": cid.DagCBOR}[codec]
 	c, _ := cid.V1Builder{Codec: kind, MhType: multihash.SHA2_256}.Sum(data)
 	if f.blocks == nil {
 		f.blocks = make(map[string][]byte)
@@ -322,9 +322,9 @@ func TestKuboStoreReportsADaemonThatFailsOrLies(t *testing.T) {
 
 func TestKuboBlocksRejectFormatsTheStoreDoesNotWrite(t *testing.T) {
 	adapter := kuboBlocks{&fakeKubo{}}
-	c, _ := cid.V1Builder{Codec: cid.DagCBOR, MhType: multihash.SHA2_256}.Sum([]byte("cbor"))
-	block, _ := blocks.NewBlockWithCid([]byte("cbor"), c)
-	if err := adapter.PutMany(ctx, []blocks.Block{block}); err == nil || !strings.Contains(err.Error(), "neither raw nor dag-pb") {
+	c, _ := cid.V1Builder{Codec: cid.DagJSON, MhType: multihash.SHA2_256}.Sum([]byte("{}"))
+	block, _ := blocks.NewBlockWithCid([]byte("{}"), c)
+	if err := adapter.PutMany(ctx, []blocks.Block{block}); err == nil || !strings.Contains(err.Error(), "not raw, dag-pb or dag-cbor") {
 		t.Errorf("error %v, want the format refused", err)
 	}
 	raw, _ := cid.V1Builder{Codec: cid.Raw, MhType: multihash.SHA2_256}.Sum([]byte("raw"))

@@ -208,6 +208,7 @@ bin/sisyphusd blob get --key-file job.key <output CID>          # unsealed after
 - **Where the key is kept.** In the coordinator's database, readable by its owner only, and only until the job finishes: an unfinished job could not be taken up after a restart without it. When the job finishes the key is erased from the database's files. That is as much as software can promise; a disk may keep traces of what it once held.
 - **What still shows.** The size of each blob, and that the job happened. The job's parameters and the small result it reports (for `wordcount`, the counts of words and of distinct words) are not sealed; they travel over the pool's encrypted connections but are visible to clients of the coordinator.
 - **Same result every time.** Sealing with the same key always gives the same bytes, so a private job's result has the same CID however the job is split, like any other. The other side of that: someone who can see two sealed blobs can tell whether they, or same-sized pieces at the same position in them, are identical under one key. Use a new key for data where that matters.
+- **Its record leaves the unsealed parts out.** A finished job's [record](#a-jobs-record) goes into the shared store, so a private job's holds no parameters, results or error messages.
 - **Lose the key and the data is gone.** `key new` will not overwrite a key file for that reason.
 - **A job with a key can still read unsealed inputs**, so public data and private can be mixed.
 
@@ -221,6 +222,7 @@ A node keeps a blob for as long as something pins it, and deletes what nothing p
 | --- | --- | --- |
 | `user` | `blob put` and `blob pin` | Until `blob unpin`, or for `--ttl` |
 | `job:<id>` | The coordinator, on a job's inputs and results | While the job runs, then for `--retain` (default 7 days) |
+| `record:<id>` | The coordinator, on a finished job's [record](#a-jobs-record) | Until the job is forgotten (`--keep-jobs`) |
 | `recent` | Every upload | One hour, so there is time to pin it properly |
 
 Blobs that only pass between a job's tasks are released as soon as the job ends. Several pins can hold one blob; it goes when the last has lapsed.
@@ -413,6 +415,37 @@ bin/sisyphusd job submit --timeout 10m ...      # stop and retry any attempt at 
 - **Timeouts.** With `--timeout`, an attempt at a task that runs longer is stopped and counts as a failure, so it is tried again up to the usual three times.
 - **A job that fails stops its other tasks** the same way, rather than leaving them to finish for nothing.
 
+## A job's record
+
+When a job is over, whether it succeeded, failed or was cancelled, its coordinator writes its history as linked data: a few small nodes that name each other, and the job's stored data, by content ID. The ID of the root names the whole of it. Change anything in the history and the root's ID changes. That one ID is what a chain would commit to (issue #20).
+
+```sh
+bin/sisyphusd job record <job-id>            # the root's ID on a line, then the record's nodes as one JSON object, by ID
+bin/sisyphusd job record --verify <job-id>   # also work it out again from the job, and fail if the two differ
+```
+
+A record is made of these nodes:
+
+| Node | What it holds |
+| --- | --- |
+| root | `kind` (`sisyphus-job-record`), `version` (1), the job's ID, whether it is `private`, and links to the others. A step of a graph has `parent`: the graph's job ID and the step's name. |
+| manifest | What was asked: `workload`, `params`, `mode`, `requirements` (tasks asked for, task timeout, memory, graphics cards), links to the `inputs` it read, the node ID of the `submitter` (absent for a job the node gave itself, from the desktop app or the planner), `created_at`. |
+| a receipt for each task | The task's number, how it ended, its `output`, how many attempts failed, and every attempt in order: which worker (node ID and name), how it went, and why it failed if it did. |
+| result | How the job ended, its `result` or `error`, links to the `outputs` it stored and to the `intermediate` data that passed between its tasks, `finished_at`. |
+| graph | Only for a job made of jobs: each step's name, its job's ID, and a link to that job's record. |
+
+- **It is ordinary IPLD.** Each node is DAG-CBOR and its ID is a version 1 CID of it with SHA-256. On a node started with `--kubo`, `ipfs dag get <root>/manifest/workload` reads it, following the links by name. The JSON printed is DAG-JSON: a link is `{"/": "<cid>"}` and bytes are `{"/": {"bytes": "<base64>"}}`.
+- **The same job always gives the same record.** It is worked out from the job and nothing else, so the ID is known the moment the job ends: `job get` prints it, and the job carries it as `record_cid`. Storing the nodes follows at once; if that fails, or the store has lost them, they are stored again when the record is asked for. A restart changes nothing.
+- **`--verify` checks the record against the job** as the coordinator holds it now, and each node read is checked against its ID. It finds a job whose row in the database, or whose record in the store, was changed after the job ended. It proves nothing to someone who does not trust this coordinator: a record is not signed. Signing the root with the node's key is future work.
+- **Parameters, a result or a task's output longer than 16 KiB** are not held in the node but linked, by the CID they have as a stored blob, and stored beside the record for the retention period.
+- **A record outlives the job's data.** It is kept for as long as the job is on record (`--keep-jobs`), while the data it links is kept for `--retain`. After that the links name data the node no longer holds. A graph's steps stay on record for as long as the graph does.
+- **Times that are not kept across a restart are left out**: when each attempt began and ended. So is which task read or stored which blob; the record has that for the job as a whole.
+- **A job from before records were kept has none.** `record_cid` is empty for it.
+
+**What a record reveals.** A record sits in the coordinator's store, and on a node with `--kubo` in the pool's private network, where any member that knows or guesses its ID can fetch it. An ID cannot be guessed, and is told to clients of the coordinator with the job. Whoever has it reads everything in the table above: the workload, the parameters, the result, each task's output, the error messages, the node IDs and names of the submitter and of every worker that was handed a task, the times, and the IDs of the job's data.
+
+For a **private job** the record says so and leaves out everything that was not sealed: the parameters, the result, each task's output, and every error message, since a message may quote data. It keeps the workload's name, the requirements, who ran what and how it went, the times, and the IDs of the sealed inputs and outputs, which are of no use without the key. Nothing in it is derived from the key.
+
 ## Restarting a coordinator
 
 A coordinator keeps its jobs in `node.db`, a SQLite database in its data directory, so stopping it loses nothing:
@@ -430,7 +463,7 @@ A finished job can be asked after for 30 days, or whatever `--keep-jobs` says; `
 
 A node's own record of the coordinators it has joined, `known.json`, stays a file. Every command reads it, on machines that run no coordinator and have no database, and it is small enough to mend by hand when a coordinator's address changes.
 
-The database also records every attempt at every task: which node, and how it went. Nothing reads that yet. It is there for accounting later, and goes when the job does.
+The database also records every attempt at every task: which node, and how it went. A finished job's [record](#a-jobs-record) is written from it. It goes when the job does.
 
 ## The desktop app
 
@@ -593,6 +626,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 | `proto/sisyphus/node/v1` | The local API the desktop app uses. |
 | `packages/protocol` | Go code generated from `proto/`. Do not edit by hand. |
 | `packages/job-model` | Job and task state machines. No I/O. |
+| `packages/jobrecord` | A finished job as linked data: building the record and reading it back. |
 | `packages/runtime` | The `Workload` interface and built-in workloads. |
 | `packages/storage` | Content-addressed blob store with IPFS-compatible CIDs. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections. |
@@ -623,6 +657,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 - A removed node keeps whatever it had already fetched from the pool's private network. Changing the key stops it fetching anything more.
 - Run `ipfs` commands against a node's repository only while the node is up. With its Kubo down, including for the few seconds of a key change, the `ipfs` command takes the repository's lock and the node cannot start Kubo until the command ends.
 - Whatever is on the pool's private network can be fetched by every member of it. The network keeps outsiders out; it is private jobs, which seal their data, that keep members from reading each other's.
+- A job's record is not signed, and its root links every receipt, so a job of ten thousand tasks has a root of about 400 KiB. It is not served by the gateway, which serves files only.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - A worker downloads a whole input even when its tasks need only part of it.
 - Two workers that cannot reach each other exchange data through the coordinator, which is no faster than fetching from it.

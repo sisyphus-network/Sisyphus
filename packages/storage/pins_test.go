@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ipfs/boxo/blockstore"
+	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 )
 
@@ -404,7 +405,7 @@ func TestGCStopsBeforeDeletingIfAPinnedBlobIsBroken(t *testing.T) {
 // that has gone bad would make them.
 type failingBlocks struct {
 	blockstore.Blockstore
-	failHas, failList bool
+	failHas, failList, failGet bool
 }
 
 var errBadDisk = errors.New("bad disk")
@@ -414,6 +415,13 @@ func (f failingBlocks) Has(ctx context.Context, c cid.Cid) (bool, error) {
 		return false, errBadDisk
 	}
 	return f.Blockstore.Has(ctx, c)
+}
+
+func (f failingBlocks) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	if f.failGet {
+		return nil, errBadDisk
+	}
+	return f.Blockstore.Get(ctx, c)
 }
 
 func (f failingBlocks) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
