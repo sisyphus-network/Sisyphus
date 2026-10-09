@@ -111,7 +111,7 @@ func TestBlobCommandErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"blob"}, "expected blob put, get, stat, pin, unpin, pins, gc, replicas or restore"},
+		{[]string{"blob"}, "expected blob put, get, stat, pin, unpin, pins, gc, replicas, restore, pin-remote, unpin-remote or pins-remote"},
 		{[]string{"blob", "put"}, "expected one file"},
 		{[]string{"blob", "put", "--addr", addr, filepath.Join(t.TempDir(), "absent")}, "no such file"},
 		{[]string{"blob", "get"}, "expected exactly one CID"},

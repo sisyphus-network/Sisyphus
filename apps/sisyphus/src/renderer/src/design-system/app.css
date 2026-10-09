@@ -691,6 +691,20 @@ body::before {
   text-shadow: 0 1px 0 color-mix(in srgb, var(--app-card) 75%, transparent), 0 6px 18px color-mix(in srgb, var(--app-ink) 12%, transparent);
 }
 
+.sisyphus-assistant-mark { isolation: isolate; }
+.sisyphus-assistant-mark.is-small { width: 28px; height: 28px; }
+.sisyphus-assistant-mark.is-large { width: 76px; height: 76px; }
+.sisyphus-assistant-mark__halo { position: absolute; inset: -16%; z-index: 0; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--app-accent) 24%, transparent), transparent 68%); opacity: .76; filter: blur(8px); }
+.sisyphus-assistant-mark.is-working .sisyphus-assistant-mark__halo { animation: sisyphus-agent-pulse 1.8s ease-in-out infinite; }
+.sisyphus-edge-fade { background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--app-bg) 82%, transparent) 44%, color-mix(in srgb, var(--app-bg) 98%, transparent)); }
+.sisyphus-composer { max-width: 48rem; box-shadow: none; transition: border-color 220ms cubic-bezier(0.22, 1, 0.36, 1), background-color 220ms ease; }
+.sisyphus-composer:focus-within { border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-line)); box-shadow: none; }
+.sisyphus-chat-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--app-muted) 45%, transparent) transparent; }
+.sisyphus-chat-scroll::-webkit-scrollbar { width: 7px; }
+.sisyphus-chat-scroll::-webkit-scrollbar-thumb { border-radius: 99px; background: color-mix(in srgb, var(--app-muted) 38%, transparent); }
+.sisyphus-agent-chat > .sisyphus-chat-toolbar { background: transparent; }
+@keyframes sisyphus-agent-pulse { 0%, 100% { opacity: .48; transform: scale(.92); } 50% { opacity: .95; transform: scale(1.12); } }
+
 :root[data-theme="light"] .auth-orb-monochrome {
   filter: invert(1);
 }
