@@ -190,6 +190,8 @@
     "jobResult": "Wynik zadania",
     "binaryResult": "Wynik binarny — pobierz, aby sprawdzić.",
     "resultTruncated": "Podgląd skrócony. Pobierz pełny wynik.",
+    "noJobEvents": "Brak zapisanych zdarzeń.",
+    "waitingJobEvents": "Oczekiwanie na zdarzenia zadania…",
     "openingJob": "Otwieranie zadania…",
     "loadJobFailed": "Nie udało się otworzyć zadania",
     "jobNotFound": "Nie znaleziono zadania.",

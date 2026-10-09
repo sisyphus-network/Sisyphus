@@ -190,6 +190,8 @@
     "jobResult": "Resultado de la tarea",
     "binaryResult": "Resultado binario — descárgalo para verlo.",
     "resultTruncated": "Vista previa abreviada. Descarga el resultado completo.",
+    "noJobEvents": "No hay eventos registrados.",
+    "waitingJobEvents": "Esperando eventos del trabajo…",
     "openingJob": "Abriendo tarea…",
     "loadJobFailed": "No se pudo abrir la tarea",
     "jobNotFound": "No se encontró la tarea.",

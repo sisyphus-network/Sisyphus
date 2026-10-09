@@ -190,6 +190,8 @@
     "jobResult": "نتيجة المهمة",
     "binaryResult": "نتيجة ثنائية — نزّلها للفحص.",
     "resultTruncated": "المعاينة مختصرة. نزّل النتيجة الكاملة.",
+    "noJobEvents": "لا توجد أحداث مسجلة.",
+    "waitingJobEvents": "في انتظار أحداث المهمة…",
     "openingJob": "جارٍ فتح المهمة…",
     "loadJobFailed": "تعذر فتح المهمة",
     "jobNotFound": "لم يتم العثور على المهمة.",

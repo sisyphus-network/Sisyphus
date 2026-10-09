@@ -190,6 +190,8 @@
     "jobResult": "Job result",
     "binaryResult": "Binary result — download to inspect.",
     "resultTruncated": "Preview shortened. Download for the full result.",
+    "noJobEvents": "No recorded events.",
+    "waitingJobEvents": "Waiting for job events…",
     "openingJob": "Opening job…",
     "loadJobFailed": "Could not open job",
     "jobNotFound": "The job was not found.",
