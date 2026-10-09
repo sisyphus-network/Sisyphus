@@ -126,7 +126,7 @@ func TestAnAgentReadsThePoolAndTheSkillAndIsPrompted(t *testing.T) {
 	}
 
 	prompts, err := session.ListPrompts(ctx, nil)
-	if err != nil || len(prompts.Prompts) != 2 {
+	if err != nil || len(prompts.Prompts) != 3 {
 		t.Fatalf("prompts = %v, %v", prompts, err)
 	}
 	run, err := session.GetPrompt(ctx, &mcp.GetPromptParams{Name: "run-on-pool", Arguments: map[string]string{"task": "count the words of war-and-peace.txt"}})
