@@ -1,6 +1,6 @@
 {
   "privateFileWarning": "Private files are sealed with private.key. Losing this key permanently loses access. Only private jobs can read them; their workers receive the decryption key. Use trusted workers.",
-  "chatAttachmentPrivacyNotice": "Attachments are currently stored unencrypted in the pool. Deleting a chat does not remove its files; manage them in Operations → Files.",
+  "chatAttachmentPrivacyNotice": "Attachments are encrypted with the node’s private.key. Losing it permanently loses access. Jobs in this conversation are private; their workers receive the key, so use trusted workers. Deleting the chat does not remove files; manage them in Operations → Files.",
   "modelSettings": {
     "localAi": "LOCAL AI",
     "title": "Model provider",

@@ -1,6 +1,6 @@
 {
   "privateFileWarning": "Pliki prywatne są szyfrowane kluczem private.key. Jego utrata oznacza trwałą utratę dostępu. Mogą je czytać tylko prywatne zadania, których wykonawcy otrzymują klucz deszyfrowania. Korzystaj z zaufanych wykonawców.",
-  "chatAttachmentPrivacyNotice": "Załączniki są obecnie zapisywane w puli bez szyfrowania. Usunięcie czatu nie usuwa jego plików; zarządzaj nimi w Operacje → Pliki.",
+  "chatAttachmentPrivacyNotice": "Załączniki są szyfrowane kluczem węzła private.key. Jego utrata oznacza trwałą utratę dostępu. Zadania tej rozmowy są prywatne; wykonawcy otrzymują klucz, więc używaj zaufanych wykonawców. Usunięcie czatu nie usuwa plików; zarządzaj nimi w Operacje → Pliki.",
   "modelSettings": {
     "localAi": "LOKALNA AI",
     "title": "Dostawca modeli",
