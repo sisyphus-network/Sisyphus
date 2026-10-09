@@ -115,13 +115,19 @@ func (s *Store) Pins() []Pin {
 
 // Kept lists the blobs that something has pinned, each once, in order of
 // CID. A blob that only the grace period after Put is keeping is not among
-// them: nobody has asked for it to be kept.
+// them: nobody has asked for it to be kept. Nor is anything pinned that is
+// not a blob, such as the record of a job: that is linked data, whose pin
+// keeps it and not the blobs it names, which a pin made of it elsewhere
+// would not know to leave out.
 func (s *Store) Kept() []cid.Cid {
 	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
 	seen := make(map[cid.Cid]struct{})
 	var kept []cid.Cid
 	for key := range s.pins {
+		if kind := key.cid.Type(); kind != cid.Raw && kind != cid.DagProtobuf {
+			continue
+		}
 		if _, dup := seen[key.cid]; key.owner == GraceOwner || dup {
 			continue
 		}

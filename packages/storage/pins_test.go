@@ -548,6 +548,14 @@ func TestKeptListsEachPinnedBlobOnceAndNotWhatOnlyTheGracePeriodKeeps(t *testing
 	if want[0].String() > want[1].String() {
 		want[0], want[1] = want[1], want[0]
 	}
+	// The record of a job is pinned too, and is not a blob.
+	record, err := s.PutNodes(ctx, []byte{0xa0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Pin(ctx, "record:1", time.Time{}, record); err != nil {
+		t.Fatal(err)
+	}
 	if kept := s.Kept(); len(kept) != 2 || kept[0] != want[0] || kept[1] != want[1] {
 		t.Errorf("Kept = %v, want %v", kept, want)
 	}
