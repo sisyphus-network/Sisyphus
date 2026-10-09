@@ -37,9 +37,10 @@ test('jobs, files and events preserve bytes, enums and uint64 values', () => {
 })
 test('grpc-js serves a unary call and a token stream with this definition', async () => {
   const server = new grpc.Server()
+  let receivedAttachments
   server.addService(service, {
     getNodeInfo: (_, callback) => callback(null, { peerId: 'test-peer' }),
-    ask: (call) => { call.write({ chatId: 'chat', kind: 'text', text: 'שלום' }); call.write({ chatId: 'chat', kind: 'done' }); call.end() },
+    ask: (call) => { receivedAttachments = call.request.attachmentCids; call.write({ chatId: 'chat', kind: 'text', text: 'שלום' }); call.write({ chatId: 'chat', kind: 'done' }); call.end() },
   })
   const port = await new Promise((resolve, reject) => server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (error, port) => error ? reject(error) : resolve(port)))
   const loaded = grpc.loadPackageDefinition(definition)
@@ -49,12 +50,13 @@ test('grpc-js serves a unary call and a token stream with this definition', asyn
     assert.equal(info.peerId, 'test-peer')
     const events = await new Promise((resolve, reject) => {
       const events = []
-      const stream = client.ask({ text: 'test' }, { deadline: Date.now() + 5000 })
+      const stream = client.ask({ text: 'test', attachmentCids: ['uploaded-one', 'uploaded-two'] }, { deadline: Date.now() + 5000 })
       stream.on('data', (event) => events.push(event))
       stream.on('error', reject)
       stream.on('end', () => resolve(events))
     })
     assert.deepEqual(events.map((event) => event.kind), ['text', 'done'])
     assert.equal(events[0].text, 'שלום')
+    assert.deepEqual(receivedAttachments, ['uploaded-one', 'uploaded-two'])
   } finally { client.close(); server.forceShutdown() }
 })

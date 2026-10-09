@@ -9,10 +9,18 @@ import (
 // The caller supplies authenticated upload metadata, never parsed model text.
 // Checking the chat and recording ownership share a transaction with deletion.
 func (db *DB) RetainChatFile(chatID, cid string) error {
+	return db.RetainChatFiles(chatID, []string{cid})
+}
+
+// RetainChatFiles assigns a turn's attachments all-or-none. A bad CID
+// cannot leave the preceding files attached to a rejected turn.
+func (db *DB) RetainChatFiles(chatID string, cids []string) error {
 	return db.durably("retain chat file", func(b *batch) {
 		var exists int
 		b.err = b.tx.QueryRow(`SELECT 1 FROM chats WHERE chat_id = ?`, chatID).Scan(&exists)
-		b.exec(`INSERT INTO file_references(owner, cid) VALUES (?, ?) ON CONFLICT(owner, cid) DO NOTHING`, chatFileOwner(chatID), cid)
+		for _, cid := range cids {
+			b.exec(`INSERT INTO file_references(owner, cid) VALUES (?, ?) ON CONFLICT(owner, cid) DO NOTHING`, chatFileOwner(chatID), cid)
+		}
 	})
 }
 

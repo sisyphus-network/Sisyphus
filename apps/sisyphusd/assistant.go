@@ -42,6 +42,7 @@ type assistantStore interface {
 	DeleteChat(id string) error
 	AppendChatMessages(chatID string, messages []string, now time.Time) error
 	ChatMessages(chatID string) ([]string, error)
+	RetainChatFiles(chatID string, cids []string) error
 }
 
 func (a *assistant) ModelConfig() (nodedb.ModelConfig, bool, error) { return a.store.ModelConfig() }
@@ -181,6 +182,12 @@ const titleLength = 60
 // fails part way, so that the conversation as recorded is the conversation
 // as it happened.
 func (a *assistant) Ask(ctx context.Context, chatID, text string, report func(chatID string, e planner.Event)) (string, error) {
+	return a.AskWithFiles(ctx, chatID, text, nil, report)
+}
+
+// AskWithFiles binds explicit uploaded CIDs before any model/tool execution.
+// Retention survives a failed answer; deleting the chat releases its owners.
+func (a *assistant) AskWithFiles(ctx context.Context, chatID, text string, cids []string, report func(chatID string, e planner.Event)) (string, error) {
 	if a.pool == nil {
 		return "", status.Error(codes.FailedPrecondition, "this node coordinates no pool, so its planner has nothing to compute on")
 	}
@@ -206,6 +213,11 @@ func (a *assistant) Ask(ctx context.Context, chatID, text string, report func(ch
 	history, err := a.Chat(chatID)
 	if err != nil {
 		return "", err
+	}
+	if len(cids) > 0 {
+		if err := a.store.RetainChatFiles(chatID, cids); err != nil {
+			return chatID, status.Errorf(codes.FailedPrecondition, "cannot retain chat attachments: %v", err)
+		}
 	}
 	question := ai.Message{Role: ai.User, Content: text}
 	p := &planner.Planner{Model: model, ModelName: cfg.Model, Pool: a.pool, Workloads: a.described(), SealingKey: a.sealingKey}

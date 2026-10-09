@@ -39,6 +39,15 @@ func TestChatFileOwnershipSurvivesRestartAndReleasesOnlyDeletedChat(t *testing.T
 	if err := db.RetainChatFile("second", "absent"); err == nil {
 		t.Fatal("retained an unknown file")
 	}
+	if err := db.AddFile(File{CID: "unclaimed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RetainChatFiles("second", []string{"unclaimed", "absent"}); err == nil {
+		t.Fatal("partially invalid attachment list succeeded")
+	}
+	if owners, err := db.FileReferences("unclaimed"); err != nil || len(owners) != 0 {
+		t.Fatalf("failed turn retained a partial attachment set: %v, %v", owners, err)
+	}
 	if err := db.DeleteChat("second"); err != nil {
 		t.Fatal(err)
 	}

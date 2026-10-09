@@ -959,3 +959,23 @@ type askStream struct {
 
 func (a *askStream) Context() context.Context  { return a.ctx }
 func (*askStream) Send(*nodepb.AskEvent) error { return nil }
+
+func TestAskRejectsUnsupportedAndExcessiveAttachments(t *testing.T) {
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	s := &localService{cfg: LocalConfig{Token: "the-token", Assistant: absent{}}}
+	for _, tt := range []struct {
+		name string
+		cids []string
+		code codes.Code
+	}{
+		{"unsupported planner", []string{"file"}, codes.Unimplemented},
+		{"too many attachments", make([]string, 129), codes.InvalidArgument},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := s.Ask(&nodepb.AskRequest{Text: "Question", AttachmentCids: tt.cids}, &askStream{ctx: ctx})
+			if status.Code(err) != tt.code {
+				t.Fatalf("Ask returned %v, want %v", err, tt.code)
+			}
+		})
+	}
+}

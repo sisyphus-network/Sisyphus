@@ -3181,10 +3181,14 @@ func (*RemoveModelResponse) Descriptor() ([]byte, []int) {
 type AskRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The conversation to continue, or empty to start one.
-	ChatId        string `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
-	Text          string `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ChatId string `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	Text   string `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	// Files uploaded by the owner and retained by this conversation. These
+	// are explicit references, not parsed from model/user message text.
+	// Omit on later turns when the conversation already retains them.
+	AttachmentCids []string `protobuf:"bytes,3,rep,name=attachment_cids,json=attachmentCids,proto3" json:"attachment_cids,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *AskRequest) Reset() {
@@ -3229,6 +3233,13 @@ func (x *AskRequest) GetText() string {
 		return x.Text
 	}
 	return ""
+}
+
+func (x *AskRequest) GetAttachmentCids() []string {
+	if x != nil {
+		return x.AttachmentCids
+	}
+	return nil
 }
 
 type AskEvent struct {
@@ -4775,11 +4786,12 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x12RemoveModelRequest\x128\n" +
 	"\aservice\x18\x01 \x01(\v2\x1e.sisyphus.node.v1.ModelServiceR\aservice\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\"\x15\n" +
-	"\x13RemoveModelResponse\"9\n" +
+	"\x13RemoveModelResponse\"b\n" +
 	"\n" +
 	"AskRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12\x12\n" +
-	"\x04text\x18\x02 \x01(\tR\x04text\"v\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\x12'\n" +
+	"\x0fattachment_cids\x18\x03 \x03(\tR\x0eattachmentCids\"v\n" +
 	"\bAskEvent\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x12\n" +

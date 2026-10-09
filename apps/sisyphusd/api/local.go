@@ -572,11 +572,27 @@ func (s *localService) Ask(req *nodepb.AskRequest, stream grpc.ServerStreamingSe
 	if s.cfg.Assistant == nil {
 		return errNoPlanner
 	}
-	chatID, err := s.cfg.Assistant.Ask(stream.Context(), req.GetChatId(), req.GetText(), func(chatID string, e planner.Event) {
+	report := func(chatID string, e planner.Event) {
 		// A caller that has gone is found out when the planner next looks
 		// at its context.
 		stream.Send(&nodepb.AskEvent{ChatId: chatID, Kind: e.Kind, Text: e.Text, JobId: e.JobID, Tool: e.Tool})
-	})
+	}
+	var chatID string
+	var err error
+	if len(req.GetAttachmentCids()) > 0 {
+		if len(req.GetAttachmentCids()) > 128 {
+			return status.Error(codes.InvalidArgument, "at most 128 attachments may be retained per turn")
+		}
+		withFiles, ok := s.cfg.Assistant.(interface {
+			AskWithFiles(context.Context, string, string, []string, func(string, planner.Event)) (string, error)
+		})
+		if !ok {
+			return status.Error(codes.Unimplemented, "planner attachment ownership is unavailable")
+		}
+		chatID, err = withFiles.AskWithFiles(stream.Context(), req.GetChatId(), req.GetText(), req.GetAttachmentCids(), report)
+	} else {
+		chatID, err = s.cfg.Assistant.Ask(stream.Context(), req.GetChatId(), req.GetText(), report)
+	}
 	if err != nil {
 		return asError(err)
 	}

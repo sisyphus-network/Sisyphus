@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
@@ -53,8 +56,12 @@ func TestPrivateChatAttachmentRunsEncryptedWorkAcrossTurns(t *testing.T) {
 
 	chatID := ""
 	question := fmt.Sprintf("Count these words.\n\n[Sisyphus attachments]\n- \"secret.txt\" | cid:%s | image:false | private:true", file.GetCid())
-	for _, question := range []string{question, "Count them again."} {
-		stream, err := client.Ask(ctx, &nodepb.AskRequest{ChatId: chatID, Text: question})
+	for turn, question := range []string{question, "Count them again."} {
+		req := &nodepb.AskRequest{ChatId: chatID, Text: question}
+		if turn == 0 {
+			req.AttachmentCids = []string{file.GetCid()}
+		}
+		stream, err := client.Ask(ctx, req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -98,4 +105,13 @@ func TestPrivateChatAttachmentRunsEncryptedWorkAcrossTurns(t *testing.T) {
 		checkSealed(cid, counts)
 	}
 	checkSealed(file.GetCid(), text)
+	if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: file.GetCid()}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("chat attachment removal should be protected: %v", err)
+	}
+	if _, err := client.DeleteChat(ctx, &nodepb.DeleteChatRequest{ChatId: chatID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: file.GetCid()}); err != nil {
+		t.Fatalf("deleted chat still retains its attachment: %v", err)
+	}
 }
