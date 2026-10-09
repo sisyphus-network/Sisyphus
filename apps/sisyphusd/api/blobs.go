@@ -223,10 +223,18 @@ func (s *blobService) Unpin(_ context.Context, req *pb.UnpinBlobRequest) (*pb.Un
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", req.GetCid(), err)
 	}
-	if err := s.store.Unpin(userOwner, c); err != nil {
+	if err := unpinForUser(s.store, c); err != nil {
 		return nil, status.Errorf(codes.Internal, "unpin blob: %v", err)
 	}
 	return &pb.UnpinBlobResponse{}, nil
+}
+
+// unpinForUser releases the pins that are the node's user's to release: the
+// user's own, and the one on a blob the node took back from its followers
+// after losing its store, which stands in for whatever pins the lost store
+// had on it.
+func unpinForUser(store FileStore, c cid.Cid) error {
+	return errors.Join(store.Unpin(userOwner, c), store.Unpin(replication.RestoredOwner, c))
 }
 
 func (s *blobService) ListPins(context.Context, *pb.ListPinsRequest) (*pb.ListPinsResponse, error) {
@@ -254,8 +262,7 @@ func (s *blobService) CollectGarbage(ctx context.Context, _ *pb.CollectGarbageRe
 }
 
 func (s *blobService) Replicate(ctx context.Context, req *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
-	hold, store := s.replication.Replicate(access.Caller(ctx), req.GetStore(), req.GetHolding())
-	return &pb.ReplicateResponse{Hold: hold, Store: store}, nil
+	return s.replication.Replicate(ctx, access.Caller(ctx), req), nil
 }
 
 func (s *blobService) Replicas(_ context.Context, req *pb.ReplicasRequest) (*pb.ReplicasResponse, error) {

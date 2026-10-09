@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -36,6 +37,10 @@ type Follower struct {
 	// for nothing else: whatever is in it that the coordinator has not
 	// listed is deleted.
 	Store FollowerStore
+	// ListFile is where the last list the coordinator signed is kept. It
+	// should be beside the copies and as durable: it is what a coordinator
+	// that has lost its store takes them back on the strength of.
+	ListFile string
 	// Coordinator is the blob service of the node followed.
 	Coordinator pb.BlobServiceClient
 	Log         *slog.Logger
@@ -86,16 +91,40 @@ func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
 		held[pin.CID] = append(held[pin.CID], pin.Owner)
 		store = name
 	}
-	told, err := f.Coordinator.Replicate(ctx, &pb.ReplicateRequest{Holding: holding, Store: store})
+	asked := &pb.ReplicateRequest{Holding: holding, Store: store, KeepsLists: true}
+	told, err := f.Coordinator.Replicate(ctx, asked)
+	if err == nil && told.GetShowList() {
+		// The coordinator has another store than the one these copies are
+		// of. Shown the list it signed for that one, it can take them back.
+		list, unread := loadList(f.ListFile)
+		if unread != nil {
+			f.Log.Warn("could not read the list this node's coordinator signed of what to hold; without it the coordinator takes nothing back by itself", "error", unread)
+		}
+		if list != nil {
+			asked.List = list
+			told, err = f.Coordinator.Replicate(ctx, asked)
+		}
+	}
 	if err != nil {
 		return false, err
 	}
 
+	hold := told.GetHold()
+	if list := told.GetList(); list != nil {
+		// The list is kept before it is acted on, so that the one on disk
+		// never names less than what is held.
+		if err := saveList(f.ListFile, list); err != nil {
+			return false, fmt.Errorf("keep the list the coordinator signed: %w", err)
+		}
+		for _, blob := range list.GetBlobs() {
+			hold = append(hold, blob.GetCid())
+		}
+	}
 	owner := ownerPrefix + told.GetStore()
 	wanted := make(map[cid.Cid]bool)
 	var pin []cid.Cid
 	failed := false
-	for _, id := range told.GetHold() {
+	for _, id := range hold {
 		c, err := cid.Decode(id)
 		if err == nil && held[c] == nil {
 			// Whatever arrives is checked against its CID as it is stored.

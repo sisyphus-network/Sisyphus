@@ -222,6 +222,7 @@ A node keeps a blob for as long as something pins it, and deletes what nothing p
 | Pin held for | Placed by | Lasts |
 | --- | --- | --- |
 | `user` | `blob put` and `blob pin` | Until `blob unpin`, or for `--ttl` |
+| `restored` | A coordinator that lost its store, on what it took back from its followers | Until `blob unpin`, or until the time the lost store kept it to; see [Copies on other nodes](#copies-on-other-nodes) |
 | `job:<id>` | The coordinator, on a job's inputs and results | While the job runs, then for `--retain` (default 7 days) |
 | `recent` | Every upload | One hour, so there is time to pin it properly |
 | `pool:<store>` | A storage follower, in its own store, on what its coordinator has it hold | Until the coordinator stops listing it; see [Copies on other nodes](#copies-on-other-nodes) |
@@ -331,6 +332,7 @@ bin/sisyphusd blob replicas <cid>
 
 - **What is copied** is every blob the coordinator has pinned for longer than the hour a new upload gets: what `blob put` and `blob pin` keep, and what jobs keep. When the last such pin on a blob is released or lapses, the followers delete their copies.
 - **A follower decides nothing.** Once a minute it asks the coordinator what to hold and says what it holds. It fetches what it lacks from the coordinator, checked against its CID, and deletes what is no longer listed. No other node can hand it anything to keep, and nothing it says changes what the coordinator keeps.
+- **The coordinator signs each list**, and the follower keeps the last one beside its copies. That is what lets a coordinator that has lost its store take its data back without trusting anyone; see [below](#when-the-coordinators-store-is-lost).
 - **The copies are in a store of their own**, in `--replica-dir`, written through to the disk like a coordinator's and apart from the worker's cache. Use the directory for nothing else: whatever is in it that the coordinator has not listed is deleted. It is always on the follower's disk, whether or not the pool uses `--kubo` or a bucket.
 - **Which followers hold a blob** is settled by hashing each follower's ID with the blob's, so every blob ranks the followers in an order of its own and the first few hold it. Data therefore spreads evenly, and a follower that joins takes a share from each of the others while nothing moves between them.
 - **A copy that is to move stays where it is** until the follower taking it over says it has it. Changing the followers never leaves fewer copies than there were.
@@ -356,30 +358,51 @@ bin/sisyphusd blob replicas <cid>
 
 #### When the coordinator's store is lost
 
-A coordinator knows its store by a name kept beside the store's pins. If it comes back with its key and an empty store, because the disk was replaced, the name is new, and the followers are not told to delete what they hold for the old one.
+Start the coordinator again with the same key. It takes back what its followers hold, by itself.
 
 ```sh
-bin/sisyphusd blob replicas         # says how many blobs the followers hold from the store that was lost
-bin/sisyphusd blob get <cid>        # a blob that is asked for is fetched back from a follower then and there
-bin/sisyphusd blob restore          # fetch all of it back, and pin it
+bin/sisyphusd run --name alpha --replicas 2    # the same data directory, with node.key in it and a new, empty blobs/
+bin/sisyphusd blob replicas                    # says what has come back, and what has yet to
+bin/sisyphusd blob pins                        # what came back is held for "restored"
 ```
 
-- `blob restore` pins what it fetches for `user`, until unpinned. Who had pinned it before, and for how long, was known only to the store that was lost.
-- It acts on its owner's word because it takes the followers' word for what the lost store had pinned.
-- Once everything a follower holds is pinned again, the follower carries on as before, for the new store.
+- **The coordinator signs what it tells each follower to hold.** Each answer to a follower is a list: the blobs, until when each is kept, the name of the store, and a number that only goes up, signed with the node's key. The follower keeps the last list in `kept.list` in its `--replica-dir`, beside the copies.
+- **A store has a name**, kept beside its pins. A coordinator that comes back with its key and an empty store, because the disk was replaced, has a new name. A follower that holds copies for the old one is not told to delete them. It is asked for its list.
+- **The coordinator checks its own signature**, and takes the follower's word for nothing. If the list is its own, it fetches each blob named from that follower, checks it against its CID, and pins it. A list that was changed, or that another key signed, is ignored and logged, and nothing is taken back from it.
+- **What comes back is pinned for `restored`**, until the time the list gave: the latest of the pins the lost store had on the blob. What had no expiry has none. What has since run out is not taken back, and the follower deletes it. Who had pinned each blob is not in the list. `blob unpin` releases a restored blob as it does one pinned by hand.
+- **Several followers each show a list.** Each is taken. A blob that two lists name is kept until the later of the two times.
+- **It starts when the follower next asks**, within a minute of the follower finding the coordinator again, and is done when everything named has been fetched. What cannot be fetched is tried again each minute. `blob replicas` says how many blobs have come back and how many are still to come.
+- **A blob that is asked for** before then is fetched back from a follower there and then, as it always was.
 - To give the old data up instead, stop each follower and empty its `--replica-dir`.
-- For some seconds after the coordinator starts, its followers are not yet reachable from it, and a `blob get` may still say the blob is not found.
+
+##### When `blob restore` is needed
+
+`sisyphusd blob restore` fetches back everything the followers hold from an earlier store, on the followers' word, and pins it for `user` until unpinned. With the key, it is not needed. It is for what the coordinator cannot check:
+
+- **The key was lost too.** A new key makes a new node, and a list signed with the old key cannot be told from a forgery. Start the new coordinator with `--formerly <the old node ID>`, so that it keeps what followers hold for the old node instead of having them delete it. On each follower's machine run `sisyphusd pool join --addr <coordinator> <invitation>` with an invitation from the new coordinator, and start the follower again with the same `--replica-dir`. Then run `blob restore`. The old ID is in `pins.json` in each follower's `--replica-dir`: every pin there is owned by `pool:<the old node ID>/<the old store's name>`.
+- **A follower has no list**: it last heard from a coordinator older than signed lists, or its `kept.list` is gone or damaged.
+- **A follower holds blobs its list does not name.** While a follower is still holding for an earlier store, because something of it has yet to come back, it is given no new list, and what it is handed in that time is on none. If the store is lost again before that is over, those blobs are kept on the follower and not taken back.
+
+`blob replicas` says which case applies: blobs "that it has yet to take back" need nothing, and blobs "that no list signed by this node names" need `blob restore`. Run when there is nothing of the kind, it says so and does nothing.
+
+##### What a follower can still do
+
+- **It cannot add to what is kept.** Only what the coordinator pinned is ever in a list it signed. Blobs from an earlier store that no signed list names are never in one.
+- **It can show an old list.** A follower that kept a list from before a pin was released can show it to a coordinator that has lost its store, and the blob comes back, until the expiry that list gave it, or until unpinned if it had none. That brings back only what the coordinator once chose to keep, and it needs the coordinator to have lost its store: a list of the store it has now brings nothing back.
+- **A blob taken back and then released stays released** while the coordinator runs. A coordinator that is started again while a follower still shows a list of the lost store takes it back once more.
 
 #### What this does not protect
 
-- **The coordinator's database and key.** `node.db` holds the jobs, the members and the invitations, and `node.key` is who the node is: followers know their coordinator by it. Neither is copied anywhere. Back them up; without the key a new coordinator is a different node, which the followers will not answer.
-- **Who pinned what, and until when.** Followers hold blobs, not the pins on them.
+- **The coordinator's database and key.** `node.db` holds the jobs, the members and the invitations, and `node.key` is who the node is: followers know their coordinator by it, and it is what makes a list the coordinator's own. Neither is copied anywhere. Back them up. Without the key, getting the data back takes `--formerly`, a new invitation for every follower, and `blob restore`, and the expiries are lost.
+- **Who pinned what.** Followers hold blobs and, in the list, until when each is kept. A blob a job was holding while it ran comes back with no expiry, and stays until `blob unpin`.
 - **What is not pinned**, and what was pinned in the last minute or so, before a follower had asked and fetched it.
 - **A follower is taken at its word** for what it holds. Nothing checks later that the copy is still there and sound; a damaged one is found out only when it is fetched and fails its check.
 - **A follower can read what it holds**, as any worker can fetch any blob. Private jobs seal their data, and the copies are of the sealed form.
 - There is one number of copies for the whole pool, not one per pin, and copies are whole: no erasure coding.
 - The intervals are fixed: a minute between asks, ten minutes before a follower is given up on.
-- The list of what to hold travels whole each time, which bounds a pool at about sixty thousand pinned blobs.
+- The list of what to hold travels whole each time, which bounds a pool at about sixty thousand pinned blobs. A follower that shows its list sends it along with what it holds, so a follower that holds more than about thirty thousand blobs of a lost store cannot show its list: it keeps what it has, and `blob restore` takes it back.
+- A coordinator takes a list back while it answers the follower that showed it. That follower hears nothing new until it is done.
+
 ### Pinning services
 
 The [IPFS Pinning Service API](https://ipfs.github.io/pinning-services-api-spec/) is how one machine asks another, over HTTP, to keep data by its CID. A node speaks it both ways: it can be the service, and it can ask one.
@@ -576,7 +599,7 @@ A coordinator keeps its jobs in `node.db`, a SQLite database in its data directo
 - **Unfinished jobs** are taken up where they were. Tasks that had finished stay finished. Tasks that were running go back to wait for a worker, and that is not counted against them, however often it happens. If every task had finished and only combining their outputs was cut short, the combining is done again, with no worker needed.
 - **A job's data** stays pinned across the restart for as long as the job takes.
 - **Workers** reconnect by themselves once the coordinator is back.
-- **Storage followers** go on holding what they held. See [Copies on other nodes](#copies-on-other-nodes) for a coordinator that comes back without its stored data.
+- **Storage followers** go on holding what they held. A coordinator that comes back without its stored data takes it back from them; see [Copies on other nodes](#copies-on-other-nodes).
 
 A job's arrival and its finish are written through to the disk before anyone is told of them. The steps in between are not, so a power cut can lose the last few; the tasks concerned run again. A coordinator started without a workload that an unfinished job needs fails that job, and says why.
 
@@ -785,7 +808,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 - A node has one name, its ID, and a record published by hand is not renewed: it stops resolving when its lifetime is over.
 - The records of names reach the pool's private IPFS network only when they are published; a record that has gone from there is not put back until its node publishes again.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
-- Without `--replicas` and at least one follower, a pool's stored data is on its coordinator's disk and nowhere else. With them, the coordinator's database and key are still on that disk alone.
+- Without `--replicas` and at least one follower, a pool's stored data is on its coordinator's disk and nowhere else. With them, the coordinator's database and key are still on that disk alone, and without the key the data comes back only by hand and without its expiries.
 - The pinning service has one key and speaks plain HTTP. Whoever holds the key can fill the store up to `--max-store-bytes`, and a single fetch can go past it.
 - A pool's data can be kept by an outside pinning service only if that service is on the pool's private IPFS network, or has the data from somewhere else.
 - A worker downloads a whole input even when its tasks need only part of it.

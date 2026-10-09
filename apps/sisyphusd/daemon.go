@@ -96,6 +96,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	useKubo := fs.Bool("kubo", false, "keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself, on a private network with the rest of its pool; needs the ipfs program installed, and for a worker, a coordinator that uses it too")
 	swarmPort := fs.Int("swarm-port", 0, "coordinator role with --kubo: TCP port to open so that members' Kubo daemons can connect to this node's directly, which is faster; 0 opens none, and they reach it through --listen")
 	replicas := fs.Int("replicas", 0, "coordinator role: have this many of the pool's storage followers each hold a copy of everything this node has pinned; 0 asks none to")
+	formerly := fs.String("formerly", "", "coordinator role: the ID this node had before it lost its key; what storage followers hold for that node is kept until \"sisyphusd blob restore\" takes it back")
 	replicaDir := fs.String("replica-dir", "", "worker-only node: be a storage follower, keeping in this directory, which must be used for nothing else, copies of whatever stored data its coordinator says to")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
 	verbose := fs.Bool("v", false, "log per-task detail")
@@ -168,6 +169,14 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if *replicas < 0 || (*replicas > 0 && !isCoordinator) {
 		return errors.New("--replicas is a number of copies, for a node that coordinates a pool; a worker-only node offers to hold copies with --replica-dir")
+	}
+	if *formerly != "" {
+		if !isCoordinator {
+			return errors.New("--formerly is for a node that coordinates a pool: it names the node its storage followers held copies for before")
+		}
+		if _, err := identity.Verify(*formerly, nil, nil); err != nil {
+			return fmt.Errorf("--formerly: %w", err)
+		}
 	}
 	if isCoordinator && *replicaDir != "" {
 		return errors.New("--replica-dir is for worker-only nodes; a coordinator holds its pool's data already")
@@ -372,7 +381,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		var coord *coordinator.Coordinator
 		replicated := replication.New(replication.Config{
-			ID: ident.ID(), Store: store, StoreID: storeID, Replicas: *replicas, Log: log,
+			Identity: ident, Store: store, StoreID: storeID, Formerly: *formerly, Replicas: *replicas, Log: log,
 			Address: func(id string) string { return coord.ServeAddress(id) },
 			// A follower is reached as one worker reaches another: at the
 			// address it gave, or by name through the node's libp2p host.
@@ -522,7 +531,10 @@ func runDaemon(ctx context.Context, args []string) error {
 			}
 			defer copies.Close()
 			served = api.Stores(copies, store)
-			follower := &replication.Follower{Store: copies, Coordinator: pb.NewBlobServiceClient(remote.Conn()), Log: log}
+			// The list the coordinator signed of what to hold is kept with
+			// the copies: it is of no use without them, nor they without it
+			// to a coordinator that has lost its store.
+			follower := &replication.Follower{Store: copies, ListFile: filepath.Join(*replicaDir, "kept.list"), Coordinator: pb.NewBlobServiceClient(remote.Conn()), Log: log}
 			following := make(chan struct{})
 			// The store of copies must outlive whatever fills it.
 			defer func() {

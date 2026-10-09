@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/ipfs/go-cid"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
@@ -69,6 +71,16 @@ func keep(t *testing.T, store *storage.Store, text string) string {
 	return id
 }
 
+// newIdentity makes a node key that lasts for the test.
+func newIdentity(t *testing.T) *identity.Identity {
+	t.Helper()
+	ident, _, err := identity.LoadOrCreate(filepath.Join(t.TempDir(), "node.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ident
+}
+
 // rig is a manager over a store of its own, and the stores of followers it
 // can fetch from by name.
 type rig struct {
@@ -77,18 +89,31 @@ type rig struct {
 	logs  *logged
 	// followers are the stores of the followers that serve blobs, by ID.
 	followers map[string]*storage.Store
+	// ident is the node's key, now the name of the store it has, and old
+	// that of one it had before.
+	ident    *identity.Identity
+	now, old string
+	// fetching, if set, is called as each fetch from a follower begins.
+	fetching func()
 }
 
 // newRig returns a manager, wanting so many copies, of a store that already
 // has each of the given texts pinned.
 func newRig(t *testing.T, replicas int, pinned ...string) *rig {
 	t.Helper()
-	r := &rig{store: storage.NewMemory(), logs: new(logged), followers: make(map[string]*storage.Store)}
+	r := &rig{store: storage.NewMemory(), logs: new(logged), followers: make(map[string]*storage.Store), ident: newIdentity(t)}
+	r.now, r.old = r.ident.ID()+"/new", r.ident.ID()+"/old"
 	for _, text := range pinned {
 		keep(t, r.store, text)
 	}
-	r.Manager = New(Config{
-		ID: "node", Store: r.store, StoreID: "new", Replicas: replicas, Log: r.logs.logger(),
+	r.Manager = New(r.config(replicas))
+	return r
+}
+
+// config returns what the rig's manager is made with.
+func (r *rig) config(replicas int) Config {
+	return Config{
+		Identity: r.ident, Store: r.store, StoreID: "new", Replicas: replicas, Log: r.logs.logger(),
 		Address: func(id string) string {
 			if r.followers[id] == nil {
 				return ""
@@ -96,6 +121,9 @@ func newRig(t *testing.T, replicas int, pinned ...string) *rig {
 			return id + ":7701"
 		},
 		Fetch: func(ctx context.Context, from *pb.BlobHolder, c cid.Cid, into blobclient.Putter) error {
+			if r.fetching != nil {
+				r.fetching()
+			}
 			blob, err := r.followers[from.GetNodeId()].Open(ctx, c)
 			if err != nil {
 				return err
@@ -104,14 +132,20 @@ func newRig(t *testing.T, replicas int, pinned ...string) *rig {
 			_, err = into.Put(ctx, blob)
 			return err
 		},
-	})
-	return r
+	}
+}
+
+// ask has a follower that keeps no lists say what it holds, and for which
+// store, and returns what it is told to hold and for which.
+func (r *rig) ask(id, store string, holding []string) (hold []string, name string) {
+	told := r.Replicate(ctx, id, &pb.ReplicateRequest{Store: store, Holding: holding})
+	return told.GetHold(), told.GetStore()
 }
 
 // obey has a follower ask what to hold, saying it holds what it was last
 // told to, and returns what it is told now.
 func (r *rig) obey(id string, holding []string) []string {
-	hold, _ := r.Replicate(id, "node/new", holding)
+	hold, _ := r.ask(id, r.now, holding)
 	return hold
 }
 
@@ -361,12 +395,12 @@ func TestCopiesOfAStoreThatWasLostAreKeptUntilRestored(t *testing.T) {
 	holding := []string{servable, unservable, pinned, "not-a-cid"}
 	slices.Sort(holding)
 
-	hold, store := r.Replicate("a", "node/old", holding)
+	hold, store := r.ask("a", r.old, holding)
 	slices.Sort(hold)
-	if !slices.Equal(hold, holding) || store != "node/old" {
+	if !slices.Equal(hold, holding) || store != r.old {
 		t.Fatalf("a follower with copies of a lost store is to hold %v for %q, want everything it has, for the old store still", hold, store)
 	}
-	r.Replicate("a", "node/old", holding)
+	r.ask("a", r.old, holding)
 	if r.logs.count("holds blobs from a store this node had before") != 1 {
 		t.Error("finding copies of a lost store was not logged, once")
 	}
@@ -392,7 +426,7 @@ func TestCopiesOfAStoreThatWasLostAreKeptUntilRestored(t *testing.T) {
 	}
 	// While anything is left, the follower goes on holding for the old
 	// store.
-	if _, store := r.Replicate("a", "node/old", holding); store != "node/old" {
+	if _, store := r.ask("a", r.old, holding); store != r.old {
 		t.Errorf("with blobs still to restore the follower is told its store is %q", store)
 	}
 
@@ -400,12 +434,12 @@ func TestCopiesOfAStoreThatWasLostAreKeptUntilRestored(t *testing.T) {
 	// and the follower moves on to the new store.
 	put(t, theirs, "held by the follower, it says")
 	holding = slices.DeleteFunc(holding, func(id string) bool { return id == "not-a-cid" })
-	r.Replicate("a", "node/old", holding)
+	r.ask("a", r.old, holding)
 	if restored, failed := r.Restore(ctx, "user"); restored != 1 || len(failed) != 0 {
 		t.Errorf("restoring again took back %d blobs and failed on %v, want 1 and none", restored, failed)
 	}
-	hold, store = r.Replicate("a", "node/old", holding)
-	if store != "node/new" || !slices.Equal(hold, holding) {
+	hold, store = r.ask("a", r.old, holding)
+	if store != r.now || !slices.Equal(hold, holding) {
 		t.Errorf("after everything was restored the follower is to hold %v for %q, want all three for the new store", hold, store)
 	}
 	if status := r.Status(""); status.GetFromEarlierStore() != 0 || len(status.GetBlobs()) != 3 {
@@ -418,9 +452,9 @@ func TestCopiesOfAnotherNodesStoreAreNotKept(t *testing.T) {
 	r := newRig(t, 1)
 	pinned := keep(t, r.store, "pinned")
 	foreign := put(t, storage.NewMemory(), "held for a pool this follower was in before")
-	for _, store := range []string{"other-node/old", "", "node/new"} {
-		hold, now := r.Replicate("a", store, []string{foreign})
-		if !slices.Equal(hold, []string{pinned}) || now != "node/new" {
+	for _, store := range []string{"other-node/old", "", r.now} {
+		hold, now := r.ask("a", store, []string{foreign})
+		if !slices.Equal(hold, []string{pinned}) || now != r.now {
 			t.Errorf("a follower holding a blob for store %q is to hold %v for %q, want only what this node has pinned", store, hold, now)
 		}
 	}
@@ -445,7 +479,7 @@ func TestALostBlobIsFetchedBackFromAFollowerThatCanSupplyIt(t *testing.T) {
 	// and the third does.
 	r.followers["b"], r.followers["c"] = storage.NewMemory(), storage.NewMemory()
 	for _, id := range []string{"a", "b", "c"} {
-		r.Replicate(id, "node/new", []string{lost})
+		r.ask(id, r.now, []string{lost})
 	}
 	if _, err := kept.Open(ctx, c); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("opening a blob no follower can supply: %v", err)
@@ -479,9 +513,11 @@ func TestANodeThatAsksNothingOfFollowersGivesThemNothingToHold(t *testing.T) {
 	store := storage.NewMemory()
 	pinned := keep(t, store, "pinned on a node that keeps no copies")
 	off := Off(store)
-	hold, name := off.Replicate("a", "", []string{pinned})
-	if len(hold) != 0 || name != "/" {
-		t.Errorf("a follower of a node that keeps no copies is to hold %v for %q", hold, name)
+	// It has no key to sign with, so even a follower that keeps lists is
+	// given none, and a list shown to it counts for nothing.
+	told := off.Replicate(ctx, "a", &pb.ReplicateRequest{Holding: []string{pinned}, KeepsLists: true, List: &pb.KeepList{Store: "/earlier"}})
+	if len(told.GetHold()) != 0 || told.GetStore() != "/" || told.GetList() != nil || told.GetShowList() {
+		t.Errorf("a follower of a node that keeps no copies is told %v", told)
 	}
 	if holders := off.Holders(pinned, ""); len(holders) != 0 {
 		t.Errorf("the blob's holders are said to be %v", holders)

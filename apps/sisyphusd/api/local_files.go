@@ -175,7 +175,7 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 	if err := s.cfg.Files.RemoveFile(c.String()); err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
-	if err := s.cfg.Store.Unpin(userOwner, c); err != nil {
+	if err := unpinForUser(s.cfg.Store, c); err != nil {
 		return nil, status.Errorf(codes.Internal, "stop keeping file: %v", err)
 	}
 	return &nodepb.RemoveFileResponse{}, nil

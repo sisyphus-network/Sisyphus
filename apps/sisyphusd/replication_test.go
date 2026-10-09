@@ -389,7 +389,7 @@ func TestACoordinatorFetchesBackABlobItsStoreHasLost(t *testing.T) {
 
 // These run real nodes, started as the command line starts them.
 
-func TestACoordinatorThatLostItsStoreRestoresItFromAFollower(t *testing.T) {
+func TestACoordinatorThatLostItsStoreTakesItBackFromAFollower(t *testing.T) {
 	replicateQuickly(t, time.Minute)
 	addr, coordinatorDir, copies := freeAddr(t), t.TempDir(), filepath.Join(t.TempDir(), "copies")
 	stop := startDaemon(t, "--listen", addr, "--data-dir", coordinatorDir, "--replicas", "1", "--slots", "1")
@@ -397,11 +397,23 @@ func TestACoordinatorThatLostItsStoreRestoresItFromAFollower(t *testing.T) {
 	startDaemon(t, "--role", "worker", "--coordinator", addr, "--replica-dir", copies, "--name", "follower", "--slots", "1")
 	waitForOutput(t, "follower", "nodes", "--addr", addr)
 
-	const text = "the only thing this pool was ever asked to keep"
+	const text, passing = "the one thing this pool was asked to keep for good", "and the one it was asked to keep for three days"
 	id := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, text)))
-	waitForOutput(t, "  1/1  ", "blob", "replicas", "--addr", addr)
-	if out := mustCLI(t, "blob", "replicas", "--addr", addr); strings.Contains(out, "too few") || strings.Contains(out, "fewer copies") {
+	timed := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, "--ttl", "72h", writeFile(t, passing)))
+	waitFor(t, func() bool { return strings.Count(mustCLI(t, "blob", "replicas", "--addr", addr), "  1/1  ") == 2 })
+	if out := mustCLI(t, "blob", "replicas", "--addr", addr); strings.Contains(out, "too few") || strings.Contains(out, "fewer copies") || strings.Contains(out, "took back") {
 		t.Errorf("with one copy wanted and one held, blob replicas says:\n%s", out)
+	}
+	// The pin on the second, as "blob pins" prints it: for the user, until
+	// a time three days off.
+	until := slices.DeleteFunc(pinLines(t, addr, timed), func(line string) bool { return !strings.HasPrefix(line, "user 2") })
+	if len(until) != 1 {
+		t.Fatalf("the blob stored for three days has pins %v", pinLines(t, addr, timed))
+	}
+	// The follower has on its disk, beside the copies, what the coordinator
+	// signed.
+	if _, err := os.Stat(filepath.Join(copies, "kept.list")); err != nil {
+		t.Errorf("the follower keeps no signed list: %v", err)
 	}
 
 	// The coordinator comes back with the same key and none of its stored
@@ -412,38 +424,98 @@ func TestACoordinatorThatLostItsStoreRestoresItFromAFollower(t *testing.T) {
 	}
 	startDaemon(t, "--listen", addr, "--data-dir", coordinatorDir, "--replicas", "1", "--slots", "1")
 
-	// The follower is not told to drop what the lost store had pinned, and
-	// the coordinator says what it finds.
-	out := waitForOutput(t, "from a store this node had before", "blob", "replicas", "--addr", addr)
-	if !strings.Contains(out, "followers hold 1 blob(s)") || !strings.Contains(out, "nothing is pinned") {
-		t.Errorf("after losing its store the coordinator reports:\n%s", out)
+	// Nobody runs anything. Once the follower has found its way to the
+	// restarted node again, which is looked to every ten seconds, the node
+	// takes back what it had signed for, each blob until when it was kept.
+	waitFor(t, func() bool {
+		out, err := cli(t, "blob", "pins", "--addr", addr)
+		return err == nil && strings.Count(out, "  restored  ") == 2
+	})
+	if !has(pinLines(t, addr, id), "restored released") || !has(pinLines(t, addr, timed), strings.Replace(until[0], "user", "restored", 1)) {
+		t.Errorf("what came back has pins %v and %v, want one until released and one until when it was kept before, %v", pinLines(t, addr, id), pinLines(t, addr, timed), until)
+	}
+	for blob, want := range map[string]string{id: text, timed: passing} {
+		if out := mustCLI(t, "blob", "get", "--addr", addr, blob); out != want {
+			t.Errorf("the blob taken back reads %q, want %q", out, want)
+		}
+		if lines := pinLines(t, addr, blob); slices.ContainsFunc(lines, func(line string) bool { return strings.HasPrefix(line, "user") }) {
+			t.Errorf("the blob taken back has pins %v, want none for the user: who had pinned it was not in the list", lines)
+		}
+	}
+	// The follower then holds them for the new store, as it did for the old.
+	var out string
+	waitFor(t, func() bool {
+		out = mustCLI(t, "blob", "replicas", "--addr", addr)
+		return strings.Count(out, "  1/1  ") == 2 && !strings.Contains(out, "from a store this node had before")
+	})
+	if !strings.Contains(out, `2 blob(s) are kept that this node took back from its followers after losing its store`) {
+		t.Errorf("after taking its data back the coordinator reports:\n%s", out)
+	}
+	// There is nothing left for the command to do, and it says why.
+	out = mustCLI(t, "blob", "restore", "--addr", addr)
+	if !strings.HasPrefix(out, "restored 0 blob(s), pinned until unpinned\nfollowers hold nothing from an earlier store") || !strings.Contains(out, "takes back by itself what it had signed for") {
+		t.Errorf("blob restore with nothing left to restore printed %q", out)
+	}
+
+	// What came back is the owner's to let go of.
+	mustCLI(t, "blob", "unpin", "--addr", addr, id)
+	if lines := pinLines(t, addr, id); has(lines, "restored released") {
+		t.Errorf("after blob unpin the blob taken back still has pins %v", lines)
+	}
+	waitFor(t, func() bool {
+		out := mustCLI(t, "blob", "replicas", "--addr", addr)
+		return strings.Count(out, "  1/1  ") == 1 && strings.Contains(out, "1 blob(s) are kept that this node took back")
+	})
+}
+
+func TestACoordinatorWithANewKeyRestoresOnItsOwnersWordWhatAFollowerHoldsForItsOldOne(t *testing.T) {
+	replicateQuickly(t, time.Minute)
+	addr, lostDir, followerDir, copies := freeAddr(t), t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "copies")
+	stop := startDaemon(t, "--listen", addr, "--data-dir", lostDir, "--replicas", "1", "--slots", "1")
+	stopFollower := startDaemon(t, "--role", "worker", "--coordinator", addr, "--data-dir", followerDir, "--replica-dir", copies, "--name", "follower", "--slots", "1")
+	waitForOutput(t, "follower", "nodes", "--addr", addr)
+	const text = "kept by a coordinator whose whole disk was then lost"
+	id := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, "--ttl", "72h", writeFile(t, text)))
+	waitForOutput(t, "  1/1  ", "blob", "replicas", "--addr", addr)
+	was, err := loadIdentity(lostDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The coordinator's disk is gone, key and all. Its owner starts another
+	// in its place, tells it the ID the first had, and has the follower join
+	// it: to the follower it is another node at the address of the one it
+	// knew.
+	stopFollower()
+	stop()
+	startDaemon(t, "--listen", addr, "--replicas", "1", "--slots", "1", "--formerly", was.ID())
+	mustCLI(t, "pool", "join", "--addr", addr, "--data-dir", followerDir, invite(t, addr, "worker"))
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--data-dir", followerDir, "--replica-dir", copies, "--name", "follower", "--slots", "1")
+
+	// The follower's list is signed with a key the new node does not have,
+	// so nothing comes back by itself, and the node says what would.
+	out := waitForOutput(t, "that no list signed by this node names", "blob", "replicas", "--addr", addr)
+	if !strings.Contains(out, "followers hold 1 blob(s)") || !strings.Contains(out, `"sisyphusd blob restore" does`) || !strings.Contains(out, "nothing is pinned") {
+		t.Errorf("a coordinator with a new key reports:\n%s", out)
 	}
 	if out := mustCLI(t, "blob", "pins", "--addr", addr); !strings.Contains(out, "nothing is pinned") {
-		t.Fatalf("the coordinator's new store already has pins:\n%s", out)
+		t.Fatalf("the new coordinator already has pins:\n%s", out)
 	}
-	// Asked for the blob, it fetches it back, once the follower has found
-	// its way to the restarted node again: that is looked to every ten
-	// seconds.
-	waitFor(t, func() bool {
-		out, err := cli(t, "blob", "get", "--addr", addr, id)
-		return err == nil && out == text
-	})
 
-	// And on its owner's word it takes back everything the follower holds.
-	if out := mustCLI(t, "blob", "restore", "--addr", addr); out != "restored 1 blob(s), pinned until unpinned\n" {
-		t.Errorf("blob restore printed %q", out)
-	}
+	// On its owner's word it takes back everything the follower holds, for
+	// the user and until unpinned: the three days are not believed.
+	waitForOutput(t, "restored 1 blob(s), pinned until unpinned\n", "blob", "restore", "--addr", addr)
 	if lines := pinLines(t, addr, id); !has(lines, "user released") {
 		t.Errorf("the restored blob has pins %v, want one held for the user until released", lines)
 	}
-	// The follower then holds it for the new store, as it did for the old.
+	if out := mustCLI(t, "blob", "get", "--addr", addr, id); out != text {
+		t.Errorf("the restored blob reads %q", out)
+	}
+	// The follower then holds it for the new node.
 	waitFor(t, func() bool {
 		out := mustCLI(t, "blob", "replicas", "--addr", addr)
 		return strings.Contains(out, "  1/1  ") && !strings.Contains(out, "from a store this node had before")
 	})
-	if out := mustCLI(t, "blob", "restore", "--addr", addr); out != "restored 0 blob(s), pinned until unpinned\n" {
-		t.Errorf("blob restore with nothing left to restore printed %q", out)
-	}
 }
 
 func TestReplicationFlagsAreChecked(t *testing.T) {
@@ -471,6 +543,8 @@ func TestReplicationFlagsAreChecked(t *testing.T) {
 		{[]string{"--replicas", "-1"}, "--replicas is a number of copies"},
 		{[]string{"--coordinator", addr, "--role", "worker", "--replicas", "2"}, "a worker-only node offers to hold copies with --replica-dir"},
 		{[]string{"--replica-dir", t.TempDir()}, "--replica-dir is for worker-only nodes"},
+		{[]string{"--formerly", "not-a-node-id"}, `--formerly: node ID "not-a-node-id"`},
+		{[]string{"--coordinator", addr, "--role", "worker", "--formerly", newIdentity(t).ID()}, "--formerly is for a node that coordinates a pool"},
 		{[]string{"--coordinator", addr, "--role", "worker", "--join", invite(t, addr, "worker"), "--replica-dir", writeFile(t, "not a directory")}, "--replica-dir: open blob store"},
 		{[]string{"--listen", freeAddr(t), "--data-dir", nameIsDir}, "read the store's name"},
 		{[]string{"--listen", freeAddr(t), "--data-dir", nameCannotBeSaved}, "save the store's name"},
@@ -512,9 +586,21 @@ func TestBlobReplicasPrintsWhatTheNodeReports(t *testing.T) {
 	}{
 		{"a node that keeps no copies", &pb.ReplicasResponse{Blobs: []*pb.ReplicatedBlob{{Cid: helloCID}}},
 			"this node asks no followers to hold copies of its data: it was started without --replicas\n"},
-		{"one that keeps none, and whose followers hold what it lost", &pb.ReplicasResponse{FromEarlierStore: 2},
-			"followers hold 2 blob(s) from a store this node had before, which it no longer has pinned: \"sisyphusd blob restore\" fetches them back\n" +
+		{"one that keeps none, and whose followers hold what it lost and signed for nothing of", &pb.ReplicasResponse{FromEarlierStore: 2, UnsignedFromEarlierStore: 2},
+			"followers hold 2 blob(s) from a store this node had before that no list signed by this node names: it does not take those back by itself, and \"sisyphusd blob restore\" does\n" +
 				"this node asks no followers to hold copies of its data: it was started without --replicas\n"},
+		{"one that is taking back what it lost", &pb.ReplicasResponse{Wanted: 1, Followers: []string{"a"}, Restoring: true, Restored: 4, FromEarlierStore: 7, UnsignedFromEarlierStore: 7},
+			"this node is taking back what a follower holds from a store it had before: 4 blob(s) are back so far\n" +
+				"followers hold 7 blob(s) from a store this node had before that no list signed by this node names: it does not take those back by itself, and \"sisyphusd blob restore\" does\n" +
+				"1 follower(s) connected; each pinned blob is to be held by 1\n" +
+				"nothing is pinned\n"},
+		{"one that has taken most of it back, and has some to come and some it will not take", &pb.ReplicasResponse{Wanted: 1, Followers: []string{"a"}, Restored: 4, FromEarlierStore: 3, UnsignedFromEarlierStore: 1, Blobs: []*pb.ReplicatedBlob{{Cid: "back", Holders: []string{"a"}}}},
+			"4 blob(s) are kept that this node took back from its followers after losing its store: \"sisyphusd blob pins\" lists them as held for \"restored\"\n" +
+				"followers hold 2 blob(s) from a store this node had before that it has yet to take back: it tries again each time a follower asks what to hold, and there is nothing to run\n" +
+				"followers hold 1 blob(s) from a store this node had before that no list signed by this node names: it does not take those back by itself, and \"sisyphusd blob restore\" does\n" +
+				"1 follower(s) connected; each pinned blob is to be held by 1\n" +
+				"CID   COPIES  HELD BY\n" +
+				"back  1/1     a\n"},
 		{"one that has just started, with nothing pinned", &pb.ReplicasResponse{Wanted: 2, Followers: []string{"a", "b"}, Settling: true},
 			"2 follower(s) connected; each pinned blob is to be held by 2\n" +
 				"the node started a short while ago: followers that hold copies from before are given time to say so before any are handed what it already had\n" +

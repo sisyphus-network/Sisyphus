@@ -38,13 +38,20 @@ service BlobService {
   // and is told what it should: it fetches what it lacks with Get and drops
   // the rest. Asking is also how the node knows the follower is there, so a
   // follower asks again every so often.
+  //
+  // What the node tells a follower to hold it signs, and the follower keeps
+  // the signed list. A node that has lost its store asks to be shown the
+  // list, checks that the signature is its own, and takes back what the
+  // list names. A follower's word alone brings nothing back.
   rpc Replicate(ReplicateRequest) returns (ReplicateResponse);
   // Replicas reports which followers hold each blob the node has pinned,
   // against how many should.
   rpc Replicas(ReplicasRequest) returns (ReplicasResponse);
-  // Restore is for a node whose store was lost and replaced. It fetches
-  // back what its followers still hold from the store it had before and
-  // pins it on behalf of the node's user.
+  // Restore is for a node whose store was lost and replaced, and which
+  // cannot take back by itself what its followers hold from the store it
+  // had before: because it has lost its key too, or because a follower has
+  // no list it signed. It fetches those blobs back on the followers' word
+  // and pins them on behalf of the node's user.
   rpc Restore(RestoreRequest) returns (RestoreResponse);
 }
 
@@ -111,7 +118,8 @@ message Pin {
   string cid = 1;
   // Who holds the pin: "user", "job:<id>", or "recent" for the short pin
   // every newly stored blob gets. In a follower's store of copies it is
-  // "pool:" and the ID of the store they are copies of.
+  // "pool:" and the ID of the store they are copies of. "restored" is on
+  // what a node that lost its store took back from its followers.
   string owner = 2;
   // Unset for a pin that holds until released.
   google.protobuf.Timestamp expires_at = 3;
@@ -131,13 +139,54 @@ message ReplicateRequest {
   // The store those are copies of, as the node named it in its last answer.
   // Empty for a follower that holds nothing.
   string store = 2;
+  // The last list the node signed for this follower, handed back when the
+  // node asked to be shown it.
+  KeepList list = 3;
+  // Set by a follower that keeps the node's signed lists. It is then told
+  // what to hold in a list alone, and hold is left empty.
+  bool keeps_lists = 4;
 }
 
 message ReplicateResponse {
   // Everything the follower should hold from now on, and nothing else.
+  // Empty if list is set: the list then says the same.
   repeated string hold = 1;
   // What to give as the store next time.
   string store = 2;
+  // What the follower should hold, signed, for it to keep in place of the
+  // list it had. Unset while the follower holds blobs from an earlier store
+  // that the node has not taken back: the list it has is then the only
+  // proof of what that store kept.
+  KeepList list = 3;
+  // Set when the follower holds blobs from a store other than the node's
+  // present one and gave no list. It should ask again at once, with the
+  // list it has.
+  bool show_list = 4;
+}
+
+// KeepList is a node's statement of what one follower is to hold, signed so
+// that the node can later tell it for its own.
+message KeepList {
+  // The store the list is of: the node's ID, "/", and the store's name.
+  string store = 1;
+  // When the node signed the list, in nanoseconds since 1970, or one more
+  // than its last if its clock had not moved on. It only goes up.
+  uint64 sequence = 2;
+  repeated KeptBlob blobs = 3;
+  // The node's signature, with its node key, of this encoding of the fields
+  // above, in which every number is eight bytes, most significant first:
+  // the text "sisyphus keep list v1" and a newline; the length of store and
+  // store; the sequence; the number of blobs; and for each blob the length
+  // of its CID, the CID, and either a zero byte, if it has no keep_until,
+  // or a one byte and keep_until in nanoseconds since 1970.
+  bytes signature = 4;
+}
+
+message KeptBlob {
+  string cid = 1;
+  // The latest expiry of the node's pins on the blob. Unset if one of them
+  // holds until released.
+  google.protobuf.Timestamp keep_until = 2;
 }
 
 message ReplicasRequest {
@@ -156,8 +205,16 @@ message ReplicasResponse {
   // before are given time to say so first.
   bool settling = 4;
   // How many blobs followers hold from a store the node had before and
-  // has not pinned in the one it has now. Restore takes them back.
+  // has not pinned in the one it has now.
   uint32 from_earlier_store = 5;
+  // Set while the node is taking back what a list it signed names.
+  bool restoring = 6;
+  // How many blobs the node has pinned as "restored": those it took back
+  // by itself and is still keeping.
+  uint32 restored = 7;
+  // How many of from_earlier_store no list signed by the node covers. The
+  // node does not take these back by itself; Restore does.
+  uint32 unsigned_from_earlier_store = 8;
 }
 
 message ReplicatedBlob {
