@@ -323,7 +323,10 @@ type GetNodeInfoResponse struct {
 	ListenAddresses []string               `protobuf:"bytes,3,rep,name=listen_addresses,json=listenAddresses,proto3" json:"listen_addresses,omitempty"`
 	CountryCode     string                 `protobuf:"bytes,4,opt,name=country_code,json=countryCode,proto3" json:"country_code,omitempty"`
 	// The names of the workloads this node can run or coordinate.
-	Workloads     []string `protobuf:"bytes,5,rep,name=workloads,proto3" json:"workloads,omitempty"`
+	Workloads []string `protobuf:"bytes,5,rep,name=workloads,proto3" json:"workloads,omitempty"`
+	// Explicit API capabilities. Missing entries mean unsupported, including
+	// when talking to an older daemon that ignores newer request fields.
+	Capabilities  []string `protobuf:"bytes,6,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -389,6 +392,13 @@ func (x *GetNodeInfoResponse) GetCountryCode() string {
 func (x *GetNodeInfoResponse) GetWorkloads() []string {
 	if x != nil {
 		return x.Workloads
+	}
+	return nil
+}
+
+func (x *GetNodeInfoResponse) GetCapabilities() []string {
+	if x != nil {
+		return x.Capabilities
 	}
 	return nil
 }
@@ -4584,13 +4594,14 @@ var File_sisyphus_node_v1_node_proto protoreflect.FileDescriptor
 const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\n" +
 	"\x1bsisyphus/node/v1/node.proto\x12\x10sisyphus.node.v1\"\x14\n" +
-	"\x12GetNodeInfoRequest\"\xc1\x01\n" +
+	"\x12GetNodeInfoRequest\"\xe5\x01\n" +
 	"\x13GetNodeInfoResponse\x12\x17\n" +
 	"\apeer_id\x18\x01 \x01(\tR\x06peerId\x12%\n" +
 	"\x0edaemon_version\x18\x02 \x01(\tR\rdaemonVersion\x12)\n" +
 	"\x10listen_addresses\x18\x03 \x03(\tR\x0flistenAddresses\x12!\n" +
 	"\fcountry_code\x18\x04 \x01(\tR\vcountryCode\x12\x1c\n" +
-	"\tworkloads\x18\x05 \x03(\tR\tworkloads\"\x12\n" +
+	"\tworkloads\x18\x05 \x03(\tR\tworkloads\x12\"\n" +
+	"\fcapabilities\x18\x06 \x03(\tR\fcapabilities\"\x12\n" +
 	"\x10ListPeersRequest\"\x13\n" +
 	"\x11WatchPeersRequest\"\x1a\n" +
 	"\x18GetBootstrapPeersRequest\"R\n" +

@@ -27,6 +27,17 @@ func TestPrivateChatAttachmentRunsEncryptedWorkAcrossTurns(t *testing.T) {
 	poolAsSeenBy(t, client)
 	ctx, cancel := context.WithTimeout(tokenOf(t, dataDir), 20*time.Second)
 	defer cancel()
+	info, err := client.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	supportsAttachments := false
+	for _, capability := range info.GetCapabilities() {
+		supportsAttachments = supportsAttachments || capability == "chat-file-references-v1"
+	}
+	if !supportsAttachments {
+		t.Fatal("daemon does not advertise its attachment ownership support")
+	}
 	const text = "the quick brown fox jumps over the lazy dog and the fox sleeps"
 	file := storeThroughDesktop(t, ctx, client, "secret.txt", text, true)
 	key, err := sealingKey(filepath.Join(dataDir, "private.key"))

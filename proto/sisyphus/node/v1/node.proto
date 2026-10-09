@@ -106,6 +106,9 @@ message GetNodeInfoResponse {
   string country_code = 4;
   // The names of the workloads this node can run or coordinate.
   repeated string workloads = 5;
+  // Explicit API capabilities. Missing entries mean unsupported, including
+  // when talking to an older daemon that ignores newer request fields.
+  repeated string capabilities = 6;
 }
 
 message ListPeersRequest {}

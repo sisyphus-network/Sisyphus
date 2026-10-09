@@ -1,4 +1,5 @@
 {
+  "chatAttachmentsNeedNodeUpdate": "Mettez le nœud à jour avant d’envoyer des pièces jointes. Ce daemon ne prend pas en charge la gestion sûre des fichiers du chat.",
   "privateFileWarning": "Les fichiers privés sont chiffrés avec private.key. Perdre cette clé supprime définitivement l’accès. Seuls les travaux privés peuvent les lire ; leurs exécutants reçoivent la clé de déchiffrement. Utilisez des exécutants de confiance.",
   "chatAttachmentPrivacyNotice": "Les pièces jointes sont chiffrées avec private.key du nœud. Sa perte supprime définitivement l’accès. Les travaux de cette conversation sont privés ; leurs exécutants reçoivent la clé, utilisez donc des exécutants de confiance. Supprimer le chat ne supprime pas les fichiers ; gérez-les dans Opérations → Fichiers.",
   "modelSettings": {
