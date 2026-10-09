@@ -3,17 +3,29 @@ package runtime
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 )
 
-// heard collects what a task reports.
+// heard collects what a task reports. A task may report from more than one
+// goroutine at once: a container's two streams are read side by side.
 type heard struct {
+	mu       sync.Mutex
 	progress []float64
 	lines    []string
 }
 
-func (h *heard) Progress(done float64) { h.progress = append(h.progress, done) }
-func (h *heard) Log(line string)       { h.lines = append(h.lines, line) }
+func (h *heard) Progress(done float64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.progress = append(h.progress, done)
+}
+
+func (h *heard) Log(line string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.lines = append(h.lines, line)
+}
 
 func TestWorkloadsReportOnThemselves(t *testing.T) {
 	// With nobody listening, reporting is free and harmless.

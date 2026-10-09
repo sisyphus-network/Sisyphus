@@ -284,6 +284,9 @@ func requireDocker(t *testing.T) {
 
 func TestARealContainerRuns(t *testing.T) {
 	requireDocker(t)
+	// A temporary directory of this test's own, so that the tasks of other
+	// tests running on this machine are not taken for what this one left.
+	t.Setenv("TMPDIR", t.TempDir())
 	store := storage.NewMemory()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
