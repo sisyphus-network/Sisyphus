@@ -644,7 +644,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	if isWorker {
 		w := &worker.Worker{
 			Name: *name, Coordinator: *join, Credentials: creds,
-			Slots: *slots, Workloads: runs, Blobs: blobs, Log: log,
+			Slots: *slots, Workloads: runsAs(*name, runs), Blobs: blobs, Log: log,
 			ServeAddress: *advertise,
 			// What the machine has, as far as its owner offers it.
 			Hardware: hardware.Detect(ctx).Offer(*maxMemory<<20, *maxGPUs),
@@ -1590,6 +1590,11 @@ func loopback(addr net.Addr) string {
 	}
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(tcp.Port))
 }
+
+// runsAs gives what the node with the given name runs as a worker, which is
+// what it was started to run. Tests replace it to have a worker that does
+// not do the work it is given.
+var runsAs = func(_ string, runs *runtime.Registry) *runtime.Registry { return runs }
 
 // hostname is os.Hostname; tests replace it.
 var hostname = os.Hostname

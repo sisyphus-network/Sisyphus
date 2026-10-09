@@ -33,20 +33,20 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `packages/ipfscluster` | Starting and stopping an IPFS Cluster peer beside the node's Kubo, and calling its REST API. |
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
 | `packages/names` | The signed records behind names, which are IPNS records: making one with a node's key, checking one against the name, and telling which of two is newer. No network. |
-| `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
+| `packages/job-model` | Job and task state machines, which blobs a job consumed and produced, and for a job that is verified, the results its workers returned and whether enough of them agree. No I/O, no locks. |
 | `packages/jobrecord` | A finished job as linked data: the record's layout, building it from a job, reading it back. No I/O in the building, so the same job always gives the same CID. |
 | `packages/nodedb` | The node's SQLite database, where a coordinator keeps its jobs, its members, the invitations it has issued, the requests made of it as a pinning service and the records of the names it answers for. Schema changes are new numbered files in `migrations/`, never edits to old ones. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
 | `packages/s3` | A bucket in an S3-style object store, for a store that keeps its blocks there. Its tests run against a real one, SeaweedFS in a container. |
 | `packages/sealed` | Encrypting a private job's blobs: the format, sealing and seekable unsealing. |
 | `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. Also holds nodes of linked data (DAG-CBOR), which a pin keeps without keeping the blobs they link. |
-| `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. |
+| `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. `verify.go` has the rules of verification by replication. |
 | `apps/sisyphusd/worker` | Connecting to a coordinator, running tasks, the blob cache. |
 | `apps/sisyphusd/api` | The gRPC server and the client-facing services. |
 | `apps/sisyphusd/access` | Which nodes have been admitted and in what role, invitations, and the check made on every call. |
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream, which is how a worker's Kubo, and its cluster peer, reach their coordinator's without a port being opened for them. |
 | `apps/sisyphusd/p2p` | The node's libp2p host. It shares the node's one port with gRPC, relays between members on a coordinator, and reaches a member by its ID. The Go counterpart of the Rust daemon's `networking` module. |
-| `apps/sisyphusd/mcpserver` | The node as a Model Context Protocol server: ten tools over the local API, for agents other than the node's own. Tested against a real node and against one that fails. |
+| `apps/sisyphusd/mcpserver` | The node as a Model Context Protocol server: 42 tools in three tiers (18 that look, 14 more that use the pool, 10 more with `--admin`) over the local API and, for what the node keeps, its names and its jobs' records, over its main address, for agents other than the node's own. Tested against a real node and against one that fails. |
 | `apps/sisyphusd/planner` | The planner's loop: the model is asked, the tools it asks for are run, and it is asked again with what they returned. Tested against a scripted model. |
 | `apps/sisyphusd/blobclient` | Uploading and downloading blobs, checked against their CIDs. |
 | `apps/sisyphusd/replication` | Copies of a pool's stored data on its storage followers. The coordinator's side says which followers hold each pinned blob, by rendezvous hashing, signs what it tells each to hold, fetches a blob back, and takes back what a list it signed names when it has lost its store; the follower's side holds what it is told and keeps the last signed list. Tested without a network, and in `apps/sisyphusd` with real nodes. |

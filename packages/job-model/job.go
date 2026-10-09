@@ -64,6 +64,10 @@ type Task struct {
 	// History is every attempt at the task so far, in order, each as it
 	// stood when the task moved on from it.
 	History []Attempt
+	// Results are what workers have returned for the task so far, in the
+	// order of their attempts, if its job is verified; see Job.Verify. The
+	// task's output is the one enough of them agree on.
+	Results []Result
 	// Progress is how far along the current attempt says it is, from 0 to
 	// 1, and StartedAt when that attempt was handed out. Neither is kept
 	// across a restart: an attempt in progress then is lost anyway.
@@ -91,6 +95,12 @@ type Job struct {
 	MaxTasks int
 	// TaskTimeout, if not zero, is how long one attempt at a task may run.
 	TaskTimeout time.Duration
+	// Verify, if two or more, is how many different workers must return
+	// the same result for each task before the task has succeeded. Each
+	// task is then handed to that many at once, and to more if they
+	// differ; see verify.go. A job whose tasks are jobs hands it on to
+	// them instead.
+	Verify int
 	// MinMemory and MinGPUs are what a worker must have to be given the
 	// job's tasks: bytes of memory, and graphics cards. Zero asks nothing.
 	MinMemory uint64
@@ -235,10 +245,17 @@ func (j *Job) Cancel(now time.Time) bool {
 // abandon gives up the tasks of a job that has ended without them.
 func (j *Job) abandon() {
 	for _, t := range j.Tasks {
-		if t.State == Pending || t.State == Running {
-			t.State = Cancelled
-			j.touch(t)
+		if t.State != Pending && t.State != Running {
+			continue
 		}
+		t.State = Cancelled
+		if j.Verify >= 2 {
+			// Each of its copies that is out, not only the latest.
+			t.drop()
+			j.mark(t)
+			continue
+		}
+		j.touch(t)
 	}
 }
 
