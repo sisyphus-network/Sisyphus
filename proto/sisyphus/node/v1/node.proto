@@ -264,6 +264,9 @@ message Job {
   // of, and the step's name. A graph's own tasks are its steps, in order.
   string parent_job_id = 18;
   string step = 19;
+  // Set once the job is over: the CID of its record, which names the
+  // job's whole history. Empty until then.
+  string record_cid = 20;
 }
 
 message JobTask {

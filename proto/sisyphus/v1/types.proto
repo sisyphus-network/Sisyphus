@@ -141,6 +141,54 @@ message Job {
   // of, and the step's name.
   string parent_job_id = 13;
   string step = 14;
+  // Set once the job is over: the CID of its record, the root of a small
+  // graph of linked data that holds what was asked, who did what, and what
+  // came of it. See NodeService.GetJobRecord.
+  string record_cid = 15;
+  // The node whose key the job was submitted with. Empty for a job the
+  // coordinator's node gave itself, through its local API or its planner.
+  string submitter_id = 16;
+}
+
+// JobRecord is a finished job's record as its coordinator's store holds it:
+// the root node and the nodes it links to.
+message JobRecord {
+  string job_id = 1;
+  // The CID of the root node, which names the whole record.
+  string root_cid = 2;
+  // The root first, then the nodes it links to, in the order it links to
+  // them.
+  repeated RecordNode nodes = 3;
+  // Set if the record was asked to be checked: the root CID worked out
+  // afresh from the job as the coordinator holds it now, and whether that
+  // is the record's.
+  string recomputed_cid = 4;
+  bool matches = 5;
+  // Set if a key was sent: each commitment of a private job's record, in
+  // the order the record has them, and whether the key gives it. Empty for
+  // a record that holds no commitments.
+  repeated CommitmentCheck commitments = 6;
+}
+
+// CommitmentCheck is whether a key and a value the coordinator holds give
+// one of the commitments in a private job's record.
+message CommitmentCheck {
+  // The path from the record's root to the commitment, such as
+  // "receipts/0/output_commitment".
+  string name = 1;
+  // False if the key is not the job's, or the value has changed since the
+  // job ended. The two cannot be told apart.
+  bool matches = 2;
+}
+
+// RecordNode is one node of a record.
+message RecordNode {
+  string cid = 1;
+  // The node as stored, in DAG-CBOR, which is what its CID is the hash of.
+  bytes data = 2;
+  // The same node in DAG-JSON, for reading: a link is {"/": "<cid>"} and
+  // bytes are {"/": {"bytes": "<base64>"}}.
+  string json = 3;
 }
 
 // JobEvent is one thing that happened to a job: a step in its life, or a

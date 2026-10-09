@@ -22,6 +22,20 @@ service NodeService {
   // the one named, and goes on sending as more happens until the job has
   // finished.
   rpc WatchJobEvents(WatchJobEventsRequest) returns (stream JobEvent);
+  // GetJobRecord returns the record of a job that is over, read from the
+  // coordinator's store.
+  rpc GetJobRecord(GetJobRecordRequest) returns (JobRecord);
+}
+
+message GetJobRecordRequest {
+  string job_id = 1;
+  // Also work the record out again from the job and say whether the two
+  // agree.
+  bool verify = 2;
+  // If set, the sealing key of a private job. The record's commitments are
+  // then checked against the values the coordinator holds; see
+  // JobRecord.commitments. The coordinator does not keep the key.
+  bytes key = 3;
 }
 
 message CancelJobRequest {

@@ -28,10 +28,12 @@ func (j *Job) ToProto() *pb.Job {
 		CreatedAt:   timestamp(j.CreatedAt),
 		FinishedAt:  timestamp(j.FinishedAt),
 		InputBlobs:  j.InputBlobs(),
-		Private:     len(j.Key) > 0,
+		Private:     j.Private,
 		ParentJobId: j.Parent,
 		Step:        j.Step,
 		OutputBlobs: j.OutputBlobs(),
+		RecordCid:   j.Record,
+		SubmitterId: j.Submitter,
 	}
 	if j.Mode == FullWorker {
 		out.Spec.Mode = pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER

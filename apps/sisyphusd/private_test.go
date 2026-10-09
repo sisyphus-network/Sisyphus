@@ -74,6 +74,9 @@ func TestPrivateJobLeavesOnlySealedDataInThePool(t *testing.T) {
 	checked := 0
 	for name, store := range stores {
 		for _, pin := range store.Pins() {
+			if pin.CID.Type() == cid.DagCBOR {
+				continue // the job's record, which is no blob and has a test of its own
+			}
 			data := stored(t, store, pin.CID)
 			if !sealed.IsSealed(data) {
 				t.Errorf("%s holds a blob that is not sealed: %s", name, pin.CID)

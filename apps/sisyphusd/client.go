@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -141,6 +143,9 @@ func jobGet(ctx context.Context, args []string) error {
 	for _, task := range job.GetTasks() {
 		fmt.Fprintln(stdout, "  "+describeTask(task))
 	}
+	if job.GetRecordCid() != "" {
+		fmt.Fprintln(stdout, "  record "+job.GetRecordCid())
+	}
 	if job.GetFinishedAt() != nil {
 		return reportOutcome(job)
 	}
@@ -199,6 +204,96 @@ func jobLogs(ctx context.Context, args []string) error {
 		}
 		fmt.Fprintln(stdout, describeEvent(event))
 	}
+}
+
+// jobRecord prints the record of a job that is over: the CID that names it,
+// and its nodes as JSON.
+func jobRecord(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sisyphusd job record", flag.ContinueOnError)
+	node := targetFlags(fs)
+	verify := fs.Bool("verify", false, "work the record out again from the job, and fail if it is not the record the job names")
+	keyFile := fs.String("key-file", "", "a private job's key: verify the record, and also check its commitments against the values the node holds")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("expected exactly one job ID")
+	}
+	request := &pb.GetJobRecordRequest{JobId: fs.Arg(0), Verify: *verify}
+	if *keyFile != "" {
+		// The commitments checked are the job's. Only a record that has
+		// been checked against the job is known to hold the same ones, so
+		// a key asks for that check too.
+		*verify, request.Verify = true, true
+		key, err := readKey(*keyFile)
+		if err != nil {
+			return err
+		}
+		request.Key = key[:]
+	}
+	client, closeConn, err := dial(node)
+	if err != nil {
+		return err
+	}
+	defer closeConn()
+	record, err := client.GetJobRecord(ctx, request)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, record.GetRootCid())
+	// The nodes by CID, each as the coordinator rendered it. They are put
+	// together by hand so that each stays exactly as it was sent.
+	var doc strings.Builder
+	doc.WriteString("{")
+	for i, n := range record.GetNodes() {
+		if i > 0 {
+			doc.WriteString(",")
+		}
+		fmt.Fprintf(&doc, "%q:%s", n.GetCid(), n.GetJson())
+	}
+	doc.WriteString("}")
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, []byte(doc.String()), "", "  "); err != nil {
+		return fmt.Errorf("the record came back as something that is not JSON: %w", err)
+	}
+	fmt.Fprintln(stdout, pretty.String())
+	if *verify && !record.GetMatches() {
+		return fmt.Errorf("job %s does not match its record: worked out again, the record would be %s", record.GetJobId(), record.GetRecomputedCid())
+	}
+	if *verify {
+		fmt.Fprintln(stdout, "verified: the job as the node holds it gives this record")
+	}
+	if *keyFile != "" {
+		return reportCommitments(record, *keyFile)
+	}
+	return nil
+}
+
+// reportCommitments prints, for each commitment in a private job's record,
+// whether the key in keyFile and the value the node holds give it, and
+// fails if any does not. That is no fault in the record: the key may simply
+// not be the job's.
+func reportCommitments(record *pb.JobRecord, keyFile string) error {
+	checks := record.GetCommitments()
+	if len(checks) == 0 {
+		fmt.Fprintln(stdout, "nothing to check with a key: this record holds no commitments, as only the record of a private job does")
+		return nil
+	}
+	missed := 0
+	for _, check := range checks {
+		outcome := "matches"
+		if !check.GetMatches() {
+			outcome = "does not match"
+			missed++
+		}
+		fmt.Fprintf(stdout, "%s: %s\n", check.GetName(), outcome)
+	}
+	if missed > 0 {
+		return fmt.Errorf("%d of the %d commitments in the record of job %s do not match: %s is not the job's key, or the node no longer holds the values the job ended with",
+			missed, len(checks), record.GetJobId(), keyFile)
+	}
+	fmt.Fprintf(stdout, "checked: the key and the values the node holds give all %d commitments\n", len(checks))
+	return nil
 }
 
 // describeEvent writes one thing that happened to a job as a line.
