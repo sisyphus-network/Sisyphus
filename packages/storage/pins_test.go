@@ -226,7 +226,7 @@ func TestPinsAreListedInOrder(t *testing.T) {
 
 	var got []string
 	for _, pin := range s.Pins() {
-		if pin.Owner == graceOwner {
+		if pin.Owner == GraceOwner {
 			continue
 		}
 		entry := pin.CID.String() + " " + pin.Owner

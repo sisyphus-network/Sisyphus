@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -163,5 +164,56 @@ func TestAWorkerRefusesACallerItCannotIdentify(t *testing.T) {
 	})
 	if _, err := p.dial(foreign).Stat(ctx, &pb.StatBlobRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("error %v, want Unauthenticated", err)
+	}
+}
+
+func TestAFollowerServesItsCopiesAndItsCacheAsOneStore(t *testing.T) {
+	ctx := context.Background()
+	copies, cache := storage.NewMemory(), storage.NewMemory()
+	held, err := copies.Put(ctx, strings.NewReader("held for the pool"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached, err := cache.Put(ctx, strings.NewReader("used by a task"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	absent, err := storage.CID(ctx, strings.NewReader("in neither"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	both := Stores(copies, cache)
+	for c, want := range map[cid.Cid]string{held: "held for the pool", cached: "used by a task"} {
+		blob, err := both.Open(ctx, c)
+		if err != nil {
+			t.Fatalf("opening %q: %v", want, err)
+		}
+		got, err := io.ReadAll(blob)
+		blob.Close()
+		if err != nil || string(got) != want {
+			t.Errorf("read %q, error %v, want %q", got, err, want)
+		}
+	}
+	if _, err := both.Open(ctx, absent); !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("opening a blob neither store holds: %v", err)
+	}
+	if _, err := Stores().Open(ctx, held); !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("opening a blob from no stores at all: %v", err)
+	}
+	// A store that fails is not passed over as if it merely lacked the blob.
+	if _, err := Stores(brokenStore{Store: copies, failOpen: true}, cache).Open(ctx, cached); !errors.Is(err, errDisk) {
+		t.Errorf("opening a blob when the first store fails: %v", err)
+	}
+}
+
+func TestANodeHoldingABlobTwoWaysIsNamedOnce(t *testing.T) {
+	a, b, c := &pb.BlobHolder{NodeId: "a", Address: "a:1"}, &pb.BlobHolder{NodeId: "b", Address: "b:1"}, &pb.BlobHolder{NodeId: "c", Address: "c:1"}
+	merged := mergeHolders([]*pb.BlobHolder{a, c}, []*pb.BlobHolder{b, c})
+	if len(merged) != 3 || merged[0] != a || merged[1] != b || merged[2].GetNodeId() != "c" {
+		t.Errorf("merged into %v, want a, b and c once each, in order", merged)
+	}
+	if merged := mergeHolders(nil, nil); len(merged) != 0 {
+		t.Errorf("two empty lists merged into %v", merged)
 	}
 }

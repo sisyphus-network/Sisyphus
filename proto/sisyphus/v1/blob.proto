@@ -30,6 +30,22 @@ service BlobService {
   // CollectGarbage drops pins that have expired and deletes every block no
   // remaining pin reaches.
   rpc CollectGarbage(CollectGarbageRequest) returns (CollectGarbageResponse);
+
+  // A node that coordinates a pool can have other members, its storage
+  // followers, each keep a copy of what it has pinned.
+
+  // Replicate is how a follower learns what to hold. It says what it holds
+  // and is told what it should: it fetches what it lacks with Get and drops
+  // the rest. Asking is also how the node knows the follower is there, so a
+  // follower asks again every so often.
+  rpc Replicate(ReplicateRequest) returns (ReplicateResponse);
+  // Replicas reports which followers hold each blob the node has pinned,
+  // against how many should.
+  rpc Replicas(ReplicasRequest) returns (ReplicasResponse);
+  // Restore is for a node whose store was lost and replaced. It fetches
+  // back what its followers still hold from the store it had before and
+  // pins it on behalf of the node's user.
+  rpc Restore(RestoreRequest) returns (RestoreResponse);
 }
 
 message PutBlobRequest {
@@ -94,7 +110,8 @@ message ListPinsResponse {
 message Pin {
   string cid = 1;
   // Who holds the pin: "user", "job:<id>", or "recent" for the short pin
-  // every newly stored blob gets.
+  // every newly stored blob gets. In a follower's store of copies it is
+  // "pool:" and the ID of the store they are copies of.
   string owner = 2;
   // Unset for a pin that holds until released.
   google.protobuf.Timestamp expires_at = 3;
@@ -106,4 +123,54 @@ message CollectGarbageResponse {
   uint32 expired_pins = 1;
   uint64 blocks_removed = 2;
   uint64 bytes_freed = 3;
+}
+
+message ReplicateRequest {
+  // The CIDs of the blobs the follower holds for the pool.
+  repeated string holding = 1;
+  // The store those are copies of, as the node named it in its last answer.
+  // Empty for a follower that holds nothing.
+  string store = 2;
+}
+
+message ReplicateResponse {
+  // Everything the follower should hold from now on, and nothing else.
+  repeated string hold = 1;
+  // What to give as the store next time.
+  string store = 2;
+}
+
+message ReplicasRequest {
+  // If set, report on this blob only.
+  string cid = 1;
+}
+
+message ReplicasResponse {
+  // How many followers should hold each blob. Zero means none are asked to.
+  uint32 wanted = 1;
+  // The IDs of the followers the node has heard from lately.
+  repeated string followers = 2;
+  repeated ReplicatedBlob blobs = 3;
+  // Set for a while after the node starts, when blobs it already had are
+  // not yet handed to followers that lack them: those that held copies
+  // before are given time to say so first.
+  bool settling = 4;
+  // How many blobs followers hold from a store the node had before and
+  // has not pinned in the one it has now. Restore takes them back.
+  uint32 from_earlier_store = 5;
+}
+
+message ReplicatedBlob {
+  string cid = 1;
+  // The IDs of the followers that say they hold it.
+  repeated string holders = 2;
+}
+
+message RestoreRequest {}
+
+message RestoreResponse {
+  // How many blobs were fetched back and pinned.
+  uint32 restored = 1;
+  // The CIDs of those that could not be.
+  repeated string failed = 2;
 }

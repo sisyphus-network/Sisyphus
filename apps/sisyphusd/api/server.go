@@ -4,6 +4,8 @@ package api
 
 import (
 	"context"
+	"slices"
+	"sort"
 	"time"
 
 	"google.golang.org/grpc"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/replication"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
@@ -36,6 +39,9 @@ type Config struct {
 	// Names is the names this node answers for, which admitted nodes
 	// publish their own among and resolve.
 	Names *Names
+	// Replication has the node's storage followers keep copies of what is
+	// in Store. Without it nothing is asked of them.
+	Replication *replication.Manager
 }
 
 // NewServer returns a gRPC server for a node running the coordinator role:
@@ -53,7 +59,19 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	)...)
 	pb.RegisterCoordinatorServiceServer(srv, cfg.Coordinator)
 	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: cfg.Coordinator})
-	pb.RegisterBlobServiceServer(srv, &blobService{store: cfg.Store, quota: cfg.MaxStoreBytes, holders: cfg.Coordinator.Holders})
+	if cfg.Replication == nil {
+		cfg.Replication = replication.Off(cfg.Store)
+	}
+	pb.RegisterBlobServiceServer(srv, &blobService{
+		// A blob the store turns out to lack is fetched back from a
+		// follower that holds a copy.
+		store: replication.Recovering{Store: cfg.Store, From: cfg.Replication}, quota: cfg.MaxStoreBytes,
+		// What a follower holds for the pool, a worker can fetch from it.
+		holders: func(blob, asker string) []*pb.BlobHolder {
+			return mergeHolders(cfg.Coordinator.Holders(blob, asker), cfg.Replication.Holders(blob, asker))
+		},
+		replication: cfg.Replication,
+	})
 	pb.RegisterPoolServiceServer(srv, &poolService{
 		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, workFor: cfg.WorkFor,
 	})
@@ -64,6 +82,14 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	}
 	pb.RegisterTunnelServiceServer(srv, tunnels)
 	return srv
+}
+
+// mergeHolders joins two lists of a blob's holders, each ordered by node
+// ID, into one, naming no node twice.
+func mergeHolders(a, b []*pb.BlobHolder) []*pb.BlobHolder {
+	merged := append(a, b...)
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].GetNodeId() < merged[j].GetNodeId() })
+	return slices.CompactFunc(merged, func(x, y *pb.BlobHolder) bool { return x.GetNodeId() == y.GetNodeId() })
 }
 
 type nodeService struct {

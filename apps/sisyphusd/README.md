@@ -8,6 +8,8 @@ This is the walking skeleton: a coordinator splits a job into tasks, workers exe
 
 Needs Go 1.27 or newer.
 
+From the repository root, `nix develop` provides the Go toolchain and development dependencies. The daemon is the Go binary at `bin/sisyphusd`.
+
 ```sh
 make build   # produces bin/sisyphusd
 make test    # go vet and the test suite with the race detector
@@ -222,6 +224,8 @@ A node keeps a blob for as long as something pins it, and deletes what nothing p
 | `user` | `blob put` and `blob pin` | Until `blob unpin`, or for `--ttl` |
 | `job:<id>` | The coordinator, on a job's inputs and results | While the job runs, then for `--retain` (default 7 days) |
 | `recent` | Every upload | One hour, so there is time to pin it properly |
+| `pool:<store>` | A storage follower, in its own store, on what its coordinator has it hold | Until the coordinator stops listing it; see [Copies on other nodes](#copies-on-other-nodes) |
+| `pinning-service:<request>` | A request made through the [pinning service](#pinning-services) | Until the request is removed |
 
 Blobs that only pass between a job's tasks are released as soon as the job ends. Several pins can hold one blob; it goes when the last has lapsed.
 
@@ -308,6 +312,114 @@ bin/sisyphusd run --s3-endpoint https://s3.eu-central-1.wasabisys.com --s3-bucke
 - **It is slower than a disk** when the bucket is far away: reading a gigabyte is four thousand requests, one after another. Nothing is cached on the coordinator. Use it for durability and room, and a bucket near the coordinator.
 - It cannot be combined with `--kubo`, which is another answer to where the data is kept.
 - Tried against SeaweedFS's S3 gateway. The others named speak the same dialect and have not been tried.
+
+### Copies on other nodes
+
+A coordinator holds the only durable copy of its pool's stored data. With `--replicas` it has other members each keep a copy of everything it has pinned, so that the data outlives the disk it is on. Those members are storage followers: worker-only nodes started with `--replica-dir`. There is nothing else to run.
+
+```sh
+# The coordinator: two copies of everything besides its own
+bin/sisyphusd run --name alpha --replicas 2
+
+# A follower, on another machine: a worker that also holds copies
+bin/sisyphusd run --role worker --coordinator <addr> --join <invitation> \
+    --replica-dir /mnt/big/sisyphus-copies
+
+bin/sisyphusd blob replicas         # each pinned blob: copies held against copies wanted, and by whom
+bin/sisyphusd blob replicas <cid>
+```
+
+- **What is copied** is every blob the coordinator has pinned for longer than the hour a new upload gets: what `blob put` and `blob pin` keep, and what jobs keep. When the last such pin on a blob is released or lapses, the followers delete their copies.
+- **A follower decides nothing.** Once a minute it asks the coordinator what to hold and says what it holds. It fetches what it lacks from the coordinator, checked against its CID, and deletes what is no longer listed. No other node can hand it anything to keep, and nothing it says changes what the coordinator keeps.
+- **The copies are in a store of their own**, in `--replica-dir`, written through to the disk like a coordinator's and apart from the worker's cache. Use the directory for nothing else: whatever is in it that the coordinator has not listed is deleted. It is always on the follower's disk, whether or not the pool uses `--kubo` or a bucket.
+- **Which followers hold a blob** is settled by hashing each follower's ID with the blob's, so every blob ranks the followers in an order of its own and the first few hold it. Data therefore spreads evenly, and a follower that joins takes a share from each of the others while nothing moves between them.
+- **A copy that is to move stays where it is** until the follower taking it over says it has it. Changing the followers never leaves fewer copies than there were.
+- **A follower that is not heard from for ten minutes** is given up on, and the others are told to hold its share. One that is back sooner, after a restart say, causes nothing to move. Its copies stay on its disk while it is away.
+- **A coordinator that has just started** waits the same ten minutes before handing blobs it already had to followers that lack them. Followers that held copies before the restart say so in that time, and nothing is copied twice. Blobs pinned after the start are handed out at once.
+- **Workers can fetch from a follower** what it holds for the pool, as they fetch from each other.
+
+#### How many followers
+
+`--replicas N` asks for N copies besides the coordinator's own. The data then survives the loss of any N nodes.
+
+| To survive losing | Run | Each follower holds |
+| --- | --- | --- |
+| Any one node | `--replicas 1` and one follower, or more | All of it, with one; half, with two |
+| Any one node, with no wait for copies to be made again | `--replicas 2` and three followers | Two thirds |
+| Any two nodes | `--replicas 2` and two followers, or more | All of it, with two |
+
+- With F followers, each holds about N/F of what is pinned. Give each room for N/(F-1) of it, which is what it holds once another has been lost.
+- With fewer followers than N, each blob is held by all there are, and `blob replicas` says how many are missing.
+- **Adding a follower:** start it. It is given its share within a minute and fetches it; the others delete what it took over once it has it.
+- **Removing one:** stop it. After ten minutes the others are told to hold its share, for which they need the room. `pool remove` then stops it coming back, and its directory can be deleted.
+- A follower has no limit of its own on the disk it uses. The coordinator's `--max-store-bytes` bounds what there is to copy.
+
+#### When the coordinator's store is lost
+
+A coordinator knows its store by a name kept beside the store's pins. If it comes back with its key and an empty store, because the disk was replaced, the name is new, and the followers are not told to delete what they hold for the old one.
+
+```sh
+bin/sisyphusd blob replicas         # says how many blobs the followers hold from the store that was lost
+bin/sisyphusd blob get <cid>        # a blob that is asked for is fetched back from a follower then and there
+bin/sisyphusd blob restore          # fetch all of it back, and pin it
+```
+
+- `blob restore` pins what it fetches for `user`, until unpinned. Who had pinned it before, and for how long, was known only to the store that was lost.
+- It acts on its owner's word because it takes the followers' word for what the lost store had pinned.
+- Once everything a follower holds is pinned again, the follower carries on as before, for the new store.
+- To give the old data up instead, stop each follower and empty its `--replica-dir`.
+- For some seconds after the coordinator starts, its followers are not yet reachable from it, and a `blob get` may still say the blob is not found.
+
+#### What this does not protect
+
+- **The coordinator's database and key.** `node.db` holds the jobs, the members and the invitations, and `node.key` is who the node is: followers know their coordinator by it. Neither is copied anywhere. Back them up; without the key a new coordinator is a different node, which the followers will not answer.
+- **Who pinned what, and until when.** Followers hold blobs, not the pins on them.
+- **What is not pinned**, and what was pinned in the last minute or so, before a follower had asked and fetched it.
+- **A follower is taken at its word** for what it holds. Nothing checks later that the copy is still there and sound; a damaged one is found out only when it is fetched and fails its check.
+- **A follower can read what it holds**, as any worker can fetch any blob. Private jobs seal their data, and the copies are of the sealed form.
+- There is one number of copies for the whole pool, not one per pin, and copies are whole: no erasure coding.
+- The intervals are fixed: a minute between asks, ten minutes before a follower is given up on.
+- The list of what to hold travels whole each time, which bounds a pool at about sixty thousand pinned blobs.
+### Pinning services
+
+The [IPFS Pinning Service API](https://ipfs.github.io/pinning-services-api-spec/) is how one machine asks another, over HTTP, to keep data by its CID. A node speaks it both ways: it can be the service, and it can ask one.
+
+**A node as the service.** A coordinator started with `--pinning-listen` serves the API, so that the `ipfs` program, or anything else that speaks it, can have the node keep data:
+
+```sh
+bin/sisyphusd run --pinning-listen 127.0.0.1:7710
+ipfs pin remote service add pool http://127.0.0.1:7710 "$(cat "$(bin/sisyphusd data-dir)/pinning.token")"
+ipfs pin remote add --service=pool --name=results.tar <cid>
+ipfs pin remote ls --service=pool
+ipfs pin remote rm --service=pool --cid=<cid>
+```
+
+- **It has a key of its own**, in `pinning.token` in the node's data directory, made the first time the service starts. It is not the node's API token. That one controls the node; this one is handed to other programs and other machines, and lets its holder do three things: ask the node to keep data, list the requests made through this API, and remove them. To change it, delete the file and restart the node.
+- **What the node holds is pinned at once.** The pin is held for `pinning-service:<request ID>` and shows in `blob pins`. It lasts until the request is removed, and then garbage collection takes the data if nothing else keeps it. Two requests for the same data are two pins.
+- **What the node does not hold, it can fetch only with `--kubo`.** Its Kubo connects to the `origins` the request names and fetches the data, and the request goes from `queued` through `pinning` to `pinned`, or to `failed` if a block cannot be found within thirty seconds. Four requests are fetched at a time. Fetches left unfinished when the node stops are taken up when it starts again. Without `--kubo` the node has nothing to fetch with, and such a request is `failed` at once, with the reason in its `info`.
+- **A node's Kubo fetches only from the pool's private network.** It can connect to a peer only if that peer holds the pool's swarm key. An `ipfs` daemon on the public IPFS network can ask this service to pin something, and will be answered, but cannot supply the data: the request fails unless the node already holds it. A daemon that is to supply data must be given the pool's `swarm.key`, which also lets it read everything on the pool's network that is not sealed.
+- **It keeps files and directories**, which are raw and dag-pb blocks. A request for any other kind of IPLD data is refused.
+- **Listing** takes the API's filters: `cid`, `name` with `match`, `status`, `before`, `after`, `limit` and `meta`. Replacing a request, with `POST /pins/<request ID>`, keeps the old data pinned until the new data is here.
+- **The only limit is the store's.** With `--max-store-bytes`, a request that needs fetching is refused once the store is that full. The check is made before a fetch, not during it, so one fetch can take the store past the limit. There is one key, and no accounting of who asked for what.
+- **It is plain HTTP.** The key crosses the network unencrypted. Listen on this machine only or on a network you trust, or put a server that does TLS in front of it.
+- `ipfs pin remote add` says only that a failed request failed. The reason is in the request's `info`, which `blob pins-remote` shows.
+
+**A node asking a service.** `blob pin-remote` asks a pinning service to keep a blob as well: another node, an IPFS Cluster of your own, or a commercial service.
+
+```sh
+bin/sisyphusd blob pin-remote --service https://pins.example.com/psa --key-file service.key --wait <cid> results.tar
+bin/sisyphusd blob pins-remote --service https://pins.example.com/psa --key-file service.key
+bin/sisyphusd blob unpin-remote --service https://pins.example.com/psa --key-file service.key <request ID>
+```
+
+- `pin-remote` prints the request's ID and its status. With `--wait` it asks every two seconds until the service says `pinned` or `failed`, and prints that. A failed request ends the command with an error and the service's reason.
+- **What the service is told:** the blob's CID; the name, if you give one; and where the pool's Kubo daemons can be reached, as the request's `origins`, so that the service knows where to fetch from. Those are the IP addresses, ports and node IDs of the coordinator's Kubo, if it was started with `--swarm-port`, and of the Kubo daemons connected to it. Like any server, it also sees the address the request came from. `--no-origins` leaves the addresses out. A node without `--kubo` has none to give.
+- **The data is not uploaded.** The service has to fetch it, and a service on the public IPFS network cannot fetch from a pool: the pool's Kubo daemons answer only holders of its swarm key. Such a service will take the request and then fail it, or leave it waiting. For it to succeed, either the data has to be public in some other way, such as added to a Kubo on the public network, or the service has to be on the pool's network.
+- **A service on the pool's network** is one whose IPFS daemon holds the pool's `swarm.key` and can reach the pool's Kubo daemons. Another coordinator becomes one if a copy of the key is put in its data directory as `swarm.key` before it is started with `--kubo --pinning-listen`; the asking coordinator needs `--swarm-port` so that its Kubo can be reached. The key is a secret: whoever holds it can read everything on the pool's network that is not sealed. `pool rekey` and `pool remove` change it, and a service outside the pool then has to be given the new one by hand.
+- The request is sent from the machine the command runs on. The key is read from a file so that it appears in no command line, and it is not given to the node.
+- `pins-remote` lists every request the service has for the key, whoever made it.
+- A sealed blob is kept as it is stored, sealed. The service never has its key.
+- Tried between two nodes, and with the `ipfs` program as the client of a node. Not tried against a commercial service or IPFS Cluster.
 
 ## What each machine has
 
@@ -464,6 +576,7 @@ A coordinator keeps its jobs in `node.db`, a SQLite database in its data directo
 - **Unfinished jobs** are taken up where they were. Tasks that had finished stay finished. Tasks that were running go back to wait for a worker, and that is not counted against them, however often it happens. If every task had finished and only combining their outputs was cut short, the combining is done again, with no worker needed.
 - **A job's data** stays pinned across the restart for as long as the job takes.
 - **Workers** reconnect by themselves once the coordinator is back.
+- **Storage followers** go on holding what they held. See [Copies on other nodes](#copies-on-other-nodes) for a coordinator that comes back without its stored data.
 
 A job's arrival and its finish are written through to the disk before anyone is told of them. The steps in between are not, so a power cut can lose the last few; the tasks concerned run again. A coordinator started without a workload that an unfinished job needs fails that job, and says why.
 
@@ -643,10 +756,12 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 | `apps/sisyphusd/api` | gRPC server wiring and the client-facing services. |
 | `apps/sisyphusd/access` | Who has been admitted and in what role; invitations; checking every call. |
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream. |
+| `apps/sisyphusd/replication` | Copies of a coordinator's pinned data on storage followers: who holds what, and fetching it back. |
 | `apps/sisyphusd/p2p` | The node's libp2p host: one port shared with gRPC, the relay, discovery, reaching a node by its ID. |
 | `apps/sisyphusd/planner` | The loop in which a model reasons, has the pool compute, and reads the result. |
 | `apps/sisyphusd/inference` | The pool's language models offered as an OpenAI-style service. |
 | `apps/sisyphusd/mcpserver` | The node offered to AI agents as a Model Context Protocol server. |
+| `apps/sisyphusd/pinning` | The IPFS Pinning Service API: the node as a service, and as a client of one. |
 | `packages/ai` | Talking to language models: Ollama, OpenAI-style services and Anthropic. |
 | `packages/hardware` | Finding out what a machine has: processor, memory, graphics cards. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
@@ -670,6 +785,9 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 - A node has one name, its ID, and a record published by hand is not renewed: it stops resolving when its lifetime is over.
 - The records of names reach the pool's private IPFS network only when they are published; a record that has gone from there is not put back until its node publishes again.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
+- Without `--replicas` and at least one follower, a pool's stored data is on its coordinator's disk and nowhere else. With them, the coordinator's database and key are still on that disk alone.
+- The pinning service has one key and speaks plain HTTP. Whoever holds the key can fill the store up to `--max-store-bytes`, and a single fetch can go past it.
+- A pool's data can be kept by an outside pinning service only if that service is on the pool's private IPFS network, or has the data from somewhere else.
 - A worker downloads a whole input even when its tasks need only part of it.
 - Two workers that cannot reach each other exchange data through the coordinator, which is no faster than fetching from it.
 - Without `--max-cache-bytes` a worker's cache grows until the disk is full. The limit is not strict: blobs that tasks have open are kept even if they alone exceed it.
