@@ -183,6 +183,9 @@
   "plannerRunsOnNode": "Votre fournisseur d’IA s’exécute localement sur ce nœud",
   "closePreview": "Fermer l’aperçu de l’image",
   "operationText": {
+    "openingJob": "Ouverture de la tâche…",
+    "loadJobFailed": "Impossible d’ouvrir la tâche",
+    "jobNotFound": "La tâche est introuvable.",
     "unspecified": "Non spécifié",
     "unknown": "Inconnu",
     "pending": "En attente",

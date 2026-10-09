@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { ArrowDown, Boxes, CheckCircle2, ChevronDown, CircleAlert, File, History, LoaderCircle, Plus, Search, Settings2, Sparkles, Trash2, Wrench, X } from 'lucide-react'
 import { Drawer } from 'vaul'
@@ -10,6 +11,7 @@ import { Message, MessageContent, MessageResponse } from '@/components/ai-elemen
 import { SisyphusPrompt, type ChatAttachment } from '@/components/assistant/sisyphus-prompt'
 import { DeleteChatConfirmation } from '@/components/assistant/delete-chat-confirmation'
 import { getMessageDirection } from '@/lib/text-direction'
+import { getJobHref } from '@/lib/job-navigation'
 import ShinyText from '@/components/ui/shiny-text'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
@@ -93,7 +95,7 @@ function ActivityTimeline({ activities, direction, messages }: { activities: Act
         return <motion.div layout="position" key={action.id} className="flex min-w-0 items-start gap-2.5 px-2 py-2 text-start">
           <span className="relative mt-0.5 grid size-6 shrink-0 place-items-center text-muted-foreground"><Icon className="size-3.5" /></span>
           <div className="min-w-0 flex-1"><div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground"><span className="truncate">{toolLabel(action.tool, messages)}</span><StateIcon className={`size-3 shrink-0 ${action.state === 'working' ? 'animate-spin' : ''}`} /></div>
-            {action.jobId && <code dir="ltr" className="mt-1 block truncate text-[10px] text-muted-foreground">{messages.jobId}: {action.jobId}</code>}
+            {action.jobId && <Link dir="ltr" to={getJobHref(action.jobId)} className="mt-1 block truncate rounded text-[10px] text-[var(--app-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--app-accent)]"><code>{messages.jobId}: {action.jobId}</code></Link>}
             <pre dir="auto" className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--app-wash)] p-2 text-[10px] text-muted-foreground">{action.result ?? detail}</pre>
           </div>
         </motion.div>

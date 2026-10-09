@@ -183,6 +183,9 @@
   "plannerRunsOnNode": "يعمل مزود الذكاء الاصطناعي محلياً على هذه العقدة",
   "closePreview": "إغلاق معاينة الصورة",
   "operationText": {
+    "openingJob": "جارٍ فتح المهمة…",
+    "loadJobFailed": "تعذر فتح المهمة",
+    "jobNotFound": "لم يتم العثور على المهمة.",
     "unspecified": "غير محدد",
     "unknown": "غير معروف",
     "pending": "قيد الانتظار",

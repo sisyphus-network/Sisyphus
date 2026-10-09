@@ -183,6 +183,9 @@
   "plannerRunsOnNode": "Your AI provider runs locally on this node",
   "closePreview": "Close image preview",
   "operationText": {
+    "openingJob": "Opening job…",
+    "loadJobFailed": "Could not open job",
+    "jobNotFound": "The job was not found.",
     "unspecified": "Unspecified",
     "unknown": "Unknown",
     "pending": "Pending",
