@@ -1,4 +1,5 @@
 {
+  "providerKeyRequired": "Este proveedor requiere una clave API. Introduce una o usa la guardada para este servicio.",
   "node": "Nodo",
   "overview": "Resumen",
   "computeNetwork": "RED DE CÓMPUTO",
