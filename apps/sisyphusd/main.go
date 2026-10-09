@@ -30,6 +30,9 @@ const usage = `Usage:
   sisyphusd blob unpin <cid>       stop keeping a blob
   sisyphusd blob pins              list what the node is keeping, and for whom
   sisyphusd blob gc                delete stored data that nothing is keeping
+  sisyphusd blob pin-remote <cid> [name]  ask a pinning service to keep a blob too (--service <url> --key-file <file>, --wait)
+  sisyphusd blob pins-remote       list what a pinning service has been asked to keep
+  sisyphusd blob unpin-remote <request-id>  have a pinning service stop keeping something
   sisyphusd key new <file>         make a key for sealing a private job's data
   sisyphusd pool invite            issue an invitation for another node to join this one
   sisyphusd pool join <invitation> join another node, to use it from this machine
