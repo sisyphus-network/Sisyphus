@@ -372,6 +372,7 @@ func TestConfigureSetsWhatAPoolNeedsAndKeepsTheRest(t *testing.T) {
 			CRDT struct {
 				ClusterName string   `json:"cluster_name"`
 				Trusted     []string `json:"trusted_peers"`
+				Rebroadcast string   `json:"rebroadcast_interval"`
 			} `json:"crdt"`
 		} `json:"consensus"`
 		API  map[string]map[string]any `json:"api"`
@@ -404,6 +405,9 @@ func TestConfigureSetsWhatAPoolNeedsAndKeepsTheRest(t *testing.T) {
 	// It listens for other members on this machine only, over TCP only.
 	if len(c.Listen) != 1 || c.Listen[0] != "/ip4/127.0.0.1/tcp/0" || len(c.Peers) != 1 || c.Peers[0] != cfg.Peers[0] {
 		t.Errorf("listens on %v and starts from %v", c.Listen, c.Peers)
+	}
+	if sent := edited.Consensus.CRDT.Rebroadcast; sent != "8s" {
+		t.Errorf("the state is sent round every %s, want every two heartbeats", sent)
 	}
 	if trusted := edited.Consensus.CRDT.Trusted; len(trusted) != 1 || trusted[0] != "12D3KooWcoordinator" {
 		t.Errorf("trusts %v, want only the coordinator", trusted)
