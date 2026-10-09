@@ -107,8 +107,11 @@ func (p *pool) waitForCopies(n int) {
 func TestPinnedDataEndsUpOnAsManyFollowersAsAsked(t *testing.T) {
 	replicateQuickly(t, time.Minute)
 	p := startReplicatedPool(t, 2, "a", "b", "c")
+	// Which two of the three hold a blob follows from its CID and their IDs,
+	// which are new each run. Six blobs all missed one follower about once
+	// in two hundred and fifty runs; thirty-two do not.
 	var kept []string
-	for i := range 6 {
+	for i := range 32 {
 		kept = append(kept, p.keep(fmt.Sprintf("blob %d of a pool that keeps two copies", i)))
 	}
 	// A blob nobody has asked to keep is not worth copying.
@@ -129,7 +132,7 @@ func TestPinnedDataEndsUpOnAsManyFollowersAsAsked(t *testing.T) {
 		}
 	}
 	if len(shares) != 3 {
-		t.Errorf("six blobs went to %v, want some to each of three followers", shares)
+		t.Errorf("the blobs went to %v, want some to each of three followers", shares)
 	}
 	if holders := p.copiesOf(loose); len(holders) != 0 {
 		t.Errorf("a blob that was never pinned is held by %v", holders)
@@ -144,8 +147,8 @@ func TestPinnedDataEndsUpOnAsManyFollowersAsAsked(t *testing.T) {
 	}
 
 	listed := p.replicas()
-	if listed.GetWanted() != 2 || len(listed.GetFollowers()) != 3 || len(listed.GetBlobs()) != 6 || listed.GetSettling() {
-		t.Errorf("the coordinator reports %v, want six blobs on two of three followers each", listed)
+	if listed.GetWanted() != 2 || len(listed.GetFollowers()) != 3 || len(listed.GetBlobs()) != len(kept) || listed.GetSettling() {
+		t.Errorf("the coordinator reports %v, want every blob kept, on two of three followers each", listed)
 	}
 	one, err := p.blobs.Replicas(p.ctx, &pb.ReplicasRequest{Cid: kept[0]})
 	if err != nil || len(one.GetBlobs()) != 1 || one.GetBlobs()[0].GetCid() != kept[0] {
