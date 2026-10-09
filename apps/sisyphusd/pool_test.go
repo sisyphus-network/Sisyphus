@@ -76,6 +76,8 @@ type pool struct {
 	workerIdents map[string]*identity.Identity
 	// rawIdents are the identities of hand-driven workers.
 	rawIdents map[*rawWorker]*identity.Identity
+	// names is where the coordinator keeps the records of names.
+	names *nameShelf
 }
 
 // newIdentity makes a node identity that lasts for the test.
@@ -168,8 +170,12 @@ func startPoolWith(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 		t.Fatal(err)
 	}
 	gets := new(atomic.Int32)
+	kept := &nameShelf{records: make(map[string][]byte)}
 	srv := api.NewServer(
-		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store},
+		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Names: api.NewNames(kept, func(id string) bool {
+			_, admitted := admitted.Role(id)
+			return admitted
+		})},
 		grpc.StreamInterceptor(countBlobGets(gets)),
 	)
 	go srv.Serve(lis)
@@ -195,6 +201,7 @@ func startPoolWith(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 		coord: coord, conn: conn, logs: logs, stop: stop,
 		ident: ident, access: admitted, workerIdents: make(map[string]*identity.Identity),
 		rawIdents: make(map[*rawWorker]*identity.Identity),
+		names:     kept,
 	}
 }
 
