@@ -40,13 +40,23 @@ var allowed = map[string][]Role{
 	pb.PoolService_IsMember_FullMethodName: {Worker},
 	// And keep a place on the members that relay.
 	pb.PoolService_Relays_FullMethodName: {Worker},
+	// A storage follower asks what to hold. Asking changes nothing that
+	// this node keeps.
+	pb.BlobService_Replicate_FullMethodName: {Worker},
 
 	pb.BlobService_Pin_FullMethodName:            {Client},
 	pb.BlobService_Unpin_FullMethodName:          {Client},
 	pb.BlobService_ListPins_FullMethodName:       {Client},
 	pb.BlobService_CollectGarbage_FullMethodName: {Client},
+	pb.BlobService_Replicas_FullMethodName:       {Client},
+	pb.BlobService_Restore_FullMethodName:        {Client},
 	// Which members hold what is pinned is part of managing stored data.
 	pb.PoolService_ClusterStatus_FullMethodName: {Client},
+
+	// A member publishes under its own name, which the service holds it to,
+	// and resolves the names of the pool.
+	pb.NameService_Publish_FullMethodName: {Worker, Client},
+	pb.NameService_Resolve_FullMethodName: {Worker, Client},
 
 	pb.NodeService_SubmitJob_FullMethodName:      {Client},
 	pb.NodeService_GetJob_FullMethodName:         {Client},

@@ -13,6 +13,10 @@ function browserBridge(): SisyphusBridge {
     connectPeer: async () => { throw new Error('Peer connections are only available in the desktop app.') },
     setPeerComputeTrust: async () => { throw new Error('Peer trust settings are only available in the desktop app.') },
     setPeerComputePermissions: async () => { throw new Error('Peer trust settings are only available in the desktop app.') },
+    call: async () => { throw new Error('Daemon commands are only available in the desktop app.') },
+    stream: () => { throw new Error('Daemon streams are only available in the desktop app.') },
+    storeFile: async () => { throw new Error('File uploads are only available in the desktop app.') },
+    fetchFile: async () => { throw new Error('File downloads are only available in the desktop app.') },
     onSnapshot: (callback) => {
       const events = new EventSource('/api/node/events')
       events.onmessage = (event) => {

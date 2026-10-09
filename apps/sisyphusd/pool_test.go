@@ -27,6 +27,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/api"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/replication"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -76,6 +77,14 @@ type pool struct {
 	workerIdents map[string]*identity.Identity
 	// rawIdents are the identities of hand-driven workers.
 	rawIdents map[*rawWorker]*identity.Identity
+	// names is where the coordinator keeps the records of names.
+	names *nameShelf
+	// copies are the stores in which the storage followers started by name
+	// keep what they hold for the pool, addresses where each serves blobs,
+	// and unfollow how to stop each following while it goes on serving.
+	copies    map[string]*storage.Store
+	addresses map[string]string
+	unfollow  map[string]func()
 }
 
 // newIdentity makes a node identity that lasts for the test.
@@ -148,6 +157,13 @@ func startPoolOver(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 // if one is given, and takes up the jobs already there.
 func startPoolWith(t *testing.T, workloads *runtime.Registry, wrap func(*storage.Store) coordinator.Store, journal coordinator.Journal) *pool {
 	t.Helper()
+	return startPoolKeeping(t, workloads, wrap, journal, 0)
+}
+
+// startPoolKeeping is startPoolWith for a pool whose coordinator has that
+// many storage followers hold a copy of whatever it has pinned.
+func startPoolKeeping(t *testing.T, workloads *runtime.Registry, wrap func(*storage.Store) coordinator.Store, journal coordinator.Journal, replicas int) *pool {
+	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -168,8 +184,21 @@ func startPoolWith(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 		t.Fatal(err)
 	}
 	gets := new(atomic.Int32)
+	kept := &nameShelf{records: make(map[string][]byte)}
+	replicated := replication.New(replication.Config{
+		ID: ident.ID(), Store: store, StoreID: "first", Replicas: replicas, Log: slog.New(slog.NewTextHandler(logs, nil)),
+		Address: coord.ServeAddress,
+		Fetch: func(ctx context.Context, from *pb.BlobHolder, c cid.Cid, into blobclient.Putter) error {
+			return worker.FetchFromPeer(ctx, from, c, into, func(nodeID string) credentials.TransportCredentials {
+				return credentials.NewTLS(ident.ClientTLS(nodeID))
+			}, nil)
+		},
+	})
 	srv := api.NewServer(
-		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store},
+		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Replication: replicated, Names: api.NewNames(kept, func(id string) bool {
+			_, admitted := admitted.Role(id)
+			return admitted
+		})},
 		grpc.StreamInterceptor(countBlobGets(gets)),
 	)
 	go srv.Serve(lis)
@@ -195,12 +224,28 @@ func startPoolWith(t *testing.T, workloads *runtime.Registry, wrap func(*storage
 		coord: coord, conn: conn, logs: logs, stop: stop,
 		ident: ident, access: admitted, workerIdents: make(map[string]*identity.Identity),
 		rawIdents: make(map[*rawWorker]*identity.Identity),
+		names:     kept,
+		copies:    make(map[string]*storage.Store), addresses: make(map[string]string), unfollow: make(map[string]func()),
 	}
 }
 
 // startWorker runs a worker until the test ends or the returned stop function
 // is called, whichever comes first. stop waits for the worker to exit.
 func (p *pool) startWorker(id string, slots int) (stop func()) {
+	p.t.Helper()
+	return p.startMember(id, slots, nil)
+}
+
+// startFollower runs a worker that is also a storage follower, as one
+// started with --replica-dir is.
+func (p *pool) startFollower(id string) (stop func()) {
+	p.t.Helper()
+	return p.startMember(id, 1, storage.NewMemory())
+}
+
+// startMember runs a worker which, given a store for them, also holds
+// copies of the pool's data as the coordinator directs.
+func (p *pool) startMember(id string, slots int, copies *storage.Store) (stop func()) {
 	p.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -220,7 +265,25 @@ func (p *pool) startWorker(id string, slots int) (stop func()) {
 	if err != nil {
 		p.t.Fatal(err)
 	}
-	peers := api.NewPeerServer(ident, local, worker.NewMembers(blobs.Conn()).IsMember)
+	var served api.Opener = local
+	following := make(chan struct{})
+	if copies == nil {
+		close(following)
+	} else {
+		p.copies[id], served = copies, api.Stores(copies, local)
+		follower := &replication.Follower{Store: copies, Coordinator: pb.NewBlobServiceClient(blobs.Conn()), Log: quiet}
+		asking, unfollow := context.WithCancel(ctx)
+		go func() {
+			defer close(following)
+			follower.Run(asking)
+		}()
+		p.unfollow[id] = func() {
+			unfollow()
+			<-following
+		}
+	}
+	p.addresses[id] = lis.Addr().String()
+	peers := api.NewPeerServer(ident, served, worker.NewMembers(blobs.Conn()).IsMember)
 	go peers.Serve(lis)
 	p.t.Cleanup(peers.Stop)
 	blobs.PeerCredentials = func(nodeID string) credentials.TransportCredentials {
@@ -240,6 +303,7 @@ func (p *pool) startWorker(id string, slots int) (stop func()) {
 	stop = func() {
 		cancel()
 		<-done
+		<-following
 	}
 	p.t.Cleanup(stop)
 	return stop

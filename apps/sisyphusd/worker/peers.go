@@ -100,14 +100,22 @@ func (b *RemoteBlobs) fetchFromPeers(ctx context.Context, c cid.Cid) bool {
 const ViaP2P = "p2p"
 
 func (b *RemoteBlobs) fetchFrom(ctx context.Context, holder *pb.BlobHolder, c cid.Cid) error {
+	return FetchFromPeer(ctx, holder, c, b.local, b.PeerCredentials, b.PeerDialer)
+}
+
+// FetchFromPeer copies blob c from the store a member of the pool serves
+// into a local one, failing if what arrives does not hash to c. The member
+// is connected to with what credentials gives for it, and through dial if
+// it gave no address of its own.
+func FetchFromPeer(ctx context.Context, holder *pb.BlobHolder, c cid.Cid, into blobclient.Putter, credentials PeerCredentialsFunc, dial func(ctx context.Context, nodeID string) (net.Conn, error)) error {
 	target := holder.GetAddress()
-	options := []grpc.DialOption{grpc.WithTransportCredentials(b.PeerCredentials(holder.GetNodeId()))}
+	options := []grpc.DialOption{grpc.WithTransportCredentials(credentials(holder.GetNodeId()))}
 	if target == ViaP2P {
 		// The connection is made by name rather than to an address. The
 		// node at the far end is checked as on any other.
 		target = "passthrough:///" + holder.GetNodeId()
 		options = append(options, grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return b.PeerDialer(ctx, holder.GetNodeId())
+			return dial(ctx, holder.GetNodeId())
 		}))
 	}
 	conn, err := grpc.NewClient(target, options...)
@@ -124,7 +132,7 @@ func (b *RemoteBlobs) fetchFrom(ctx context.Context, holder *pb.BlobHolder, c ci
 	if err != nil {
 		return err
 	}
-	return blobclient.Fetch(ctx, peer, c, b.local)
+	return blobclient.Fetch(ctx, peer, c, into)
 }
 
 // PeerCredentialsFunc returns, for a node ID, what to connect to that node

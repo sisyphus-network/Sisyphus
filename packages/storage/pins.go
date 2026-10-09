@@ -21,8 +21,8 @@ import (
 // giving whoever stored it time to pin it properly.
 const GracePeriod = time.Hour
 
-// graceOwner owns the pin Put places on every new blob.
-const graceOwner = "recent"
+// GraceOwner owns the pin Put places on every new blob.
+const GraceOwner = "recent"
 
 // Pin keeps one blob on behalf of one owner. Several owners may pin the same
 // blob; it is kept until every pin on it has been released or has expired.
@@ -122,7 +122,7 @@ func (s *Store) Kept() []cid.Cid {
 	seen := make(map[cid.Cid]struct{})
 	var kept []cid.Cid
 	for key := range s.pins {
-		if _, dup := seen[key.cid]; key.owner == graceOwner || dup {
+		if _, dup := seen[key.cid]; key.owner == GraceOwner || dup {
 			continue
 		}
 		seen[key.cid] = struct{}{}

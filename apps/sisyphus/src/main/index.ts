@@ -14,7 +14,7 @@ const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
 // The daemon lets anything on this machine read from its local API, but only
 // a holder of its token change it. The token is in the daemon's data
 // directory, readable by the user who runs the daemon.
-const tokenFile = process.env.SISYPHUS_API_TOKEN_FILE ?? join(daemonDataDir(), 'api.token')
+const tokenFile = resolveTokenFile()
 
 // Where the daemon keeps its data unless told otherwise: ~/.sisyphus if
 // that is there, as it is for nodes set up by earlier versions, and
@@ -30,6 +30,11 @@ function daemonDataDir(): string {
     return join(home, 'Library', 'Application Support', 'sisyphus')
   }
   return join(process.env.XDG_DATA_HOME || join(home, '.local', 'share'), 'sisyphus')
+}
+
+function resolveTokenFile(): string {
+  if (process.env.SISYPHUS_API_TOKEN_FILE) return process.env.SISYPHUS_API_TOKEN_FILE
+  return join(daemonDataDir(), 'api.token')
 }
 
 function authorization(): grpc.Metadata {
@@ -54,6 +59,7 @@ type Peer = {
   // The two sides of this node's trust in the peer.
   givesWork?: boolean
   takesWork?: boolean
+  countryCode?: string
 }
 
 type NodeInfo = {
@@ -79,6 +85,9 @@ type GrpcNodeService = {
   connectPeer(request: { address: string }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { peerId: string }) => void): void
   setPeerComputeTrust(request: { peerId: string; trusted: boolean }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { trusted: boolean }) => void): void
   setPeerComputePermissions(request: { peerId: string; givesWork: boolean; takesWork: boolean }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { givesWork: boolean; takesWork: boolean }) => void): void
+  storeFile(metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, response?: Record<string, unknown>) => void): grpc.ClientWritableStream<object> & { write(request: object, callback?: (error?: Error | null) => void): boolean; end(): void }
+  fetchFile(request: { cid: string }, metadata: grpc.Metadata): grpc.ClientReadableStream<{ data: Uint8Array }>
+  listFiles(request: object, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, response?: { files?: { cid?: string; name?: string }[] }) => void): void
   close(): void
 }
 
@@ -100,6 +109,24 @@ let retryDelayMs = 1_000
 let reconnecting = false
 let isQuitting = false
 let connectionGeneration = 0
+const activeStreams = new Map<string, grpc.ClientReadableStream<unknown>>()
+const unaryRpcMethods = new Set([
+  'getNodeInfo', 'listPeers', 'getBootstrapPeers', 'setBootstrapPeers', 'listWorkers', 'submitJob', 'getJob', 'listJobs', 'cancelJob',
+  'getModelConfig', 'setModelConfig', 'listProviders', 'listModels', 'removeModel', 'listChats', 'getChat', 'deleteChat',
+  'listFiles', 'removeFile', 'createInvitation', 'listMembers', 'removeMember', 'joinPool',
+])
+const streamingRpcMethods = new Set(['watchJobs', 'watchJobEvents', 'ask', 'pullModel'])
+
+function callUnary(method: string, request: Record<string, unknown>): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    if (!client) return reject(new Error('The local daemon is not connected.'))
+    const rpc = (client as unknown as Record<string, unknown>)[method]
+    if (typeof rpc !== 'function') return reject(new Error(`The daemon does not implement ${method}.`))
+    type UnaryCallback = (error: grpc.ServiceError | null, response?: unknown) => void
+    const callback: UnaryCallback = (error, response) => error ? reject(new Error(error.message)) : resolve(response ?? {})
+    ;(rpc as (request: Record<string, unknown>, metadata: grpc.Metadata, callback: UnaryCallback) => void).call(client, request, authorization(), callback)
+  })
+}
 
 function publish(next: Partial<NodeSnapshot>) {
   snapshot = { ...snapshot, ...next }
@@ -114,6 +141,8 @@ function clearConnection() {
   const previousClient = client
   peerStream = null
   client = null
+  for (const stream of activeStreams.values()) stream.cancel()
+  activeStreams.clear()
   previousStream?.cancel()
   previousClient?.close()
 }
@@ -205,6 +234,9 @@ function createWindow() {
   }
   window.webContents.once('did-finish-load', () => {
     window.webContents.send('node:snapshot', snapshot)
+    if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+      window.webContents.openDevTools({ mode: 'right' })
+    }
   })
 }
 
@@ -238,6 +270,93 @@ app.whenReady().then(() => {
     const request = payload as { peerId: string; givesWork: boolean; takesWork: boolean }
     if (!client) return reject(new Error('The local daemon is not connected.'))
     client.setPeerComputePermissions(request, authorization(), (error) => error ? reject(new Error(error.message)) : resolve())
+  }))
+  ipcMain.handle('node:rpc', (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || !('method' in payload) || !('request' in payload)) throw new Error('Invalid daemon RPC request.')
+    const { method, request } = payload as { method: unknown; request: unknown }
+    if (typeof method !== 'string' || !unaryRpcMethods.has(method)) throw new Error('This daemon operation is not available to the desktop.')
+    if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Invalid daemon RPC parameters.')
+    return callUnary(method, request as Record<string, unknown>)
+  })
+  ipcMain.handle('node:rpc-stream-start', (event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || !('id' in payload) || !('method' in payload) || !('request' in payload)) throw new Error('Invalid daemon stream request.')
+    const { id, method, request } = payload as { id: unknown; method: unknown; request: unknown }
+    if (typeof id !== 'string' || !/^[\da-f-]{36}$/i.test(id)) throw new Error('Invalid stream identifier.')
+    if (typeof method !== 'string' || !streamingRpcMethods.has(method)) throw new Error('This daemon stream is not available to the desktop.')
+    if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Invalid daemon stream parameters.')
+    if (!client) throw new Error('The local daemon is not connected.')
+    activeStreams.get(id)?.cancel()
+    const rpc = (client as unknown as Record<string, unknown>)[method]
+    if (typeof rpc !== 'function') throw new Error(`The daemon does not implement ${method}.`)
+    const stream = (rpc as (request: Record<string, unknown>, metadata: grpc.Metadata) => grpc.ClientReadableStream<unknown>).call(client, request as Record<string, unknown>, authorization())
+    activeStreams.set(id, stream)
+    const channel = `node:rpc-stream:${id}`
+    stream.on('data', (data) => { if (!event.sender.isDestroyed()) event.sender.send(channel, { data }) })
+    stream.on('error', (error: Error) => {
+      activeStreams.delete(id)
+      if (!event.sender.isDestroyed()) event.sender.send(channel, { error: error.message })
+    })
+    stream.on('end', () => {
+      activeStreams.delete(id)
+      if (!event.sender.isDestroyed()) event.sender.send(channel, { end: true })
+    })
+  })
+  ipcMain.handle('node:rpc-stream-stop', (_event, id: unknown) => {
+    if (typeof id !== 'string') return
+    activeStreams.get(id)?.cancel()
+    activeStreams.delete(id)
+  })
+  ipcMain.handle('node:store-file', (_event, payload: unknown) => new Promise((resolve, reject) => {
+    if (!client) return reject(new Error('The local daemon is not connected.'))
+    if (!payload || typeof payload !== 'object' || !('name' in payload) || !('data' in payload) || !('private' in payload)) return reject(new Error('Invalid file upload.'))
+    const file = payload as { name: unknown; data: unknown; private: unknown }
+    if (typeof file.name !== 'string' || typeof file.private !== 'boolean' || !(file.data instanceof Uint8Array)) return reject(new Error('Invalid file upload.'))
+    const data = file.data
+    if (data.byteLength > 256 * 1024 * 1024) return reject(new Error('The file exceeds this desktop client’s 256 MiB upload limit.'))
+    let settled = false
+    const stream = client.storeFile(authorization(), (error, response) => {
+      settled = true
+      if (error) reject(new Error(error.message))
+      else resolve(response ?? {})
+    })
+    const chunkSize = 256 * 1024
+    const writeChunk = (offset: number): void => {
+      if (settled) return
+      const chunk = Buffer.from(data.subarray(offset, Math.min(offset + chunkSize, data.byteLength)))
+      const request = offset === 0
+        ? { name: file.name, private: file.private, data: chunk }
+        : { data: chunk }
+      stream.write(request, (error?: Error | null) => {
+        if (error) {
+          settled = true
+          stream.cancel()
+          reject(new Error(error.message))
+          return
+        }
+        const nextOffset = offset + chunk.length
+        if (nextOffset >= data.byteLength) stream.end()
+        else writeChunk(nextOffset)
+      })
+    }
+    // Empty files still need an initial message carrying their metadata.
+    if (data.byteLength === 0) {
+      stream.write({ name: file.name, private: file.private, data: Buffer.alloc(0) }, (error?: Error | null) => {
+        if (error) {
+          settled = true
+          stream.cancel()
+          reject(new Error(error.message))
+        } else stream.end()
+      })
+    } else writeChunk(0)
+  }))
+  ipcMain.handle('node:fetch-file', (_event, cid: unknown) => new Promise<Uint8Array>((resolve, reject) => {
+    if (!client) return reject(new Error('The local daemon is not connected.'))
+    if (typeof cid !== 'string' || !cid.trim()) return reject(new Error('A file CID is required.'))
+    const chunks: Buffer[] = []
+    const stream = client.fetchFile({ cid: cid.trim() }, authorization())
+    stream.on('data', (response) => chunks.push(Buffer.from(response.data)))
+    stream.on('error', (error: Error) => reject(new Error(error.message)))
+    stream.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
   }))
   createWindow()
   connectToNode()

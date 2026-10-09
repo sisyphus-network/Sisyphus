@@ -45,6 +45,7 @@ func everyCall(c *Client) map[string]error {
 	errs["Connect"] = c.Connect(ctx, "/ip4/10.0.0.1/tcp/4101/p2p/12D3KooWexample")
 	_, errs["Peers"] = c.Peers(ctx)
 	_, errs["PeerAddresses"] = c.PeerAddresses(ctx)
+	errs["PutName"] = c.PutName(ctx, "12D3KooWexample", []byte("a record"))
 	return errs
 }
 
@@ -127,6 +128,11 @@ func TestBlockGetReportsAReplyCutShort(t *testing.T) {
 	t.Cleanup(srv.Close)
 	if _, err := NewClient(srv.Listener.Addr().String()).BlockGet(ctx, "bafkexample"); err == nil {
 		t.Error("BlockGet returned a block that arrived incomplete")
+	}
+	// Nor is a record known to have been taken if Kubo stopped part way
+	// through saying what it did with it.
+	if err := NewClient(srv.Listener.Addr().String()).PutName(ctx, "12D3KooWexample", []byte("a record")); err == nil || !strings.Contains(err.Error(), "kubo routing/put") {
+		t.Errorf("PutName with its reply cut short: %v", err)
 	}
 }
 

@@ -174,6 +174,32 @@ func (c *Client) Peers(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+// PutName hands the node a signed IPNS record for a name, which is a peer
+// ID, to keep and to pass to the peers it would look the name up among. Any
+// node may hand over any name's record: Kubo checks the signature itself,
+// and takes no record older than one it has. With no peers to pass it to,
+// the node keeps it for when it has.
+func (c *Client) PutName(ctx context.Context, name string, record []byte) error {
+	var form bytes.Buffer
+	writer := multipart.NewWriter(&form)
+	part, _ := writer.CreateFormFile("value-file", "record") // writing to a buffer cannot fail
+	part.Write(record)
+	writer.Close()
+
+	args := url.Values{"arg": {"/ipns/" + name}, "allow-offline": {"true"}}
+	body, err := c.call(ctx, "routing/put", args, &form, writer.FormDataContentType())
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	// Kubo reports each peer it tries as it goes; the call is over when it
+	// stops.
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return fmt.Errorf("kubo routing/put: %w", err)
+	}
+	return nil
+}
+
 // BlockPut stores one block and returns the CID Kubo gave it. codec is the
 // block's format, "raw" or "dag-pb"; the CID is version 1 with a SHA-256
 // hash.

@@ -36,9 +36,19 @@ func blobCommand(ctx context.Context, args []string) error {
 			return blobPins(ctx, args[1:])
 		case "gc":
 			return blobGC(ctx, args[1:])
+		case "replicas":
+			return blobReplicas(ctx, args[1:])
+		case "restore":
+			return blobRestore(ctx, args[1:])
+		case "pin-remote":
+			return blobPinRemote(ctx, args[1:])
+		case "unpin-remote":
+			return blobUnpinRemote(ctx, args[1:])
+		case "pins-remote":
+			return blobPinsRemote(ctx, args[1:])
 		}
 	}
-	return errors.New("expected blob put, get, stat, pin, unpin, pins or gc")
+	return errors.New("expected blob put, get, stat, pin, unpin, pins, gc, replicas, restore, pin-remote, unpin-remote or pins-remote")
 }
 
 func blobPut(ctx context.Context, args []string) error {
@@ -330,5 +340,93 @@ func blobGC(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintf(stdout, "dropped %d expired pin(s), removed %d block(s), freed %d bytes\n",
 		done.GetExpiredPins(), done.GetBlocksRemoved(), done.GetBytesFreed())
+	return nil
+}
+
+// blobReplicas shows how many of a node's storage followers hold each blob
+// it has pinned, against how many should.
+func blobReplicas(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sisyphusd blob replicas", flag.ContinueOnError)
+	node := targetFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 1 {
+		return errors.New("expected at most one CID")
+	}
+
+	conn, err := node.connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	listed, err := pb.NewBlobServiceClient(conn).Replicas(ctx, &pb.ReplicasRequest{Cid: fs.Arg(0)})
+	if err != nil {
+		return err
+	}
+	wanted, followers := int(listed.GetWanted()), len(listed.GetFollowers())
+	if stranded := listed.GetFromEarlierStore(); stranded > 0 {
+		fmt.Fprintf(stdout, "followers hold %d blob(s) from a store this node had before, which it no longer has pinned: \"sisyphusd blob restore\" fetches them back\n", stranded)
+	}
+	if wanted == 0 {
+		fmt.Fprintln(stdout, "this node asks no followers to hold copies of its data: it was started without --replicas")
+		return nil
+	}
+	fmt.Fprintf(stdout, "%d follower(s) connected; each pinned blob is to be held by %d\n", followers, wanted)
+	if followers < wanted {
+		fmt.Fprintf(stdout, "that is %d too few: start more worker-only nodes with --replica-dir\n", wanted-followers)
+	}
+	if listed.GetSettling() {
+		fmt.Fprintln(stdout, "the node started a short while ago: followers that hold copies from before are given time to say so before any are handed what it already had")
+	}
+	if len(listed.GetBlobs()) == 0 {
+		fmt.Fprintln(stdout, "nothing is pinned")
+		return nil
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "CID\tCOPIES\tHELD BY")
+	short := 0
+	for _, blob := range listed.GetBlobs() {
+		holders := "-"
+		if len(blob.GetHolders()) > 0 {
+			holders = strings.Join(blob.GetHolders(), ",")
+		}
+		if len(blob.GetHolders()) < wanted {
+			short++
+		}
+		fmt.Fprintf(tw, "%s\t%d/%d\t%s\n", blob.GetCid(), len(blob.GetHolders()), wanted, holders)
+	}
+	tw.Flush()
+	if short > 0 {
+		fmt.Fprintf(stdout, "%d of %d blob(s) have fewer copies than wanted\n", short, len(listed.GetBlobs()))
+	}
+	return nil
+}
+
+// blobRestore has a node whose store was lost fetch back what its storage
+// followers still hold of it.
+func blobRestore(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sisyphusd blob restore", flag.ContinueOnError)
+	node := targetFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+
+	conn, err := node.connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	done, err := pb.NewBlobServiceClient(conn).Restore(ctx, &pb.RestoreRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "restored %d blob(s), pinned until unpinned\n", done.GetRestored())
+	if failed := done.GetFailed(); len(failed) > 0 {
+		return fmt.Errorf("%d blob(s) could not be fetched back from any follower: %s", len(failed), strings.Join(failed, ", "))
+	}
 	return nil
 }

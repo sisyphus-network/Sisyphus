@@ -13,14 +13,15 @@ npm install
 npm run dev
 ```
 
-Start a daemon separately from the repository root. Either of the two in this repository serves the API the client uses:
+Start the Go daemon separately from the repository root:
 
 ```sh
-# The Go daemon, which runs pools and jobs. Its local API is off unless asked for.
-go build ./apps/sisyphusd && ./sisyphusd run --api-listen 127.0.0.1:50051
+nix develop
+make build
+bin/sisyphusd run --api-listen 127.0.0.1:50051
 ```
 
-Against the Go daemon, peers are the nodes of its pool and the nodes it has found, and trusting one for compute admits it to the pool as a worker; [its README](../sisyphusd/README.md#the-desktop-app) has the details. It asks for a token before changing anything, which the client reads from `api.token` in the daemon's default data directory (`sisyphusd data-dir` prints it). If the daemon keeps its data elsewhere, name the file with `SISYPHUS_API_TOKEN_FILE`.
+Peers are the nodes of its pool and the nodes it has found, and trusting one for compute admits it to the pool as a worker; [its README](../sisyphusd/README.md#the-desktop-app) has the details. It asks for a token before changing anything, which the client reads from `api.token` in the daemon's default data directory (`sisyphusd data-dir` prints it). If the daemon keeps its data elsewhere, name the file with `SISYPHUS_API_TOKEN_FILE`.
 
 `node dev/check-daemon.mjs [address] [token-file]` asks a running daemon the same questions the client does and prints the answers, which is a quick way to check one against the other without opening a window.
 
@@ -28,9 +29,11 @@ The desktop client connects to the local gRPC API at `127.0.0.1:50051`. Override
 
 The Electron main process is the gRPC client. It reads the shared `proto/sisyphus/node/v1/node.proto`, calls `GetNodeInfo`, and subscribes to `WatchPeers`. A narrow `contextBridge` API forwards snapshots and reconnect requests to the React renderer; the renderer has no direct Node.js or gRPC access.
 
-## Scope
+## Current capabilities and limits
 
-This is a local development client, not a packaged or remotely accessible Web UI. It demonstrates the existing node info and peer-stream APIs. Public-node browsing, remote authentication, daemon lifecycle management, jobs, chat, and production packaging are future work.
+The desktop client connects to one local daemon. It shows live node and peer status, manages peer compute permissions, and exposes the Go daemon's chat/model, job, file, and pool APIs. Chat model-provider configuration and credentials belong to the local daemon; the desktop UI does not call model providers directly. Files are limited to 256 MiB in this client and are sent to the daemon in bounded gRPC chunks.
+
+This is still a development client, not a packaged product or remotely accessible Web UI. It does not start or manage the daemon process: start `sisyphusd` separately. Public-node browsing, remote authentication, daemon lifecycle management, and production packaging remain future work.
 
 Run checks with:
 
