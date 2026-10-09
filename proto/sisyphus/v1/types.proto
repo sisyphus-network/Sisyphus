@@ -137,6 +137,10 @@ message Job {
   double progress = 11;
   // Whether the job is private: submitted with a key, which is not here.
   bool private = 12;
+  // Set on a job that is a step of another, a graph: the job it is a step
+  // of, and the step's name.
+  string parent_job_id = 13;
+  string step = 14;
 }
 
 // JobEvent is one thing that happened to a job: a step in its life, or a

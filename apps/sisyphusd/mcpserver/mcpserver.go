@@ -178,7 +178,13 @@ func (s *server) workloads(ctx context.Context) (any, error) {
 				}
 			}
 		}
-		out = append(out, map[string]any{"name": name, "description": s.Workloads.Describe(name), "workers_running_it": runBy})
+		workload := map[string]any{"name": name, "description": s.Workloads.Describe(name), "workers_running_it": runBy}
+		if s.Workloads.Composite(name) {
+			// No worker runs it and none need: its steps are jobs.
+			delete(workload, "workers_running_it")
+			workload["run_by"] = "the coordinator, as a job for each step"
+		}
+		out = append(out, workload)
 	}
 	return out, nil
 }

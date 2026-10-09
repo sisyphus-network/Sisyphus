@@ -141,15 +141,20 @@ func NewPoolAdmin(cfg Config) *PoolAdmin {
 
 // NewLocalServer returns a gRPC server for the local API.
 func NewLocalServer(cfg LocalConfig) *grpc.Server {
+	srv := grpc.NewServer()
+	nodepb.RegisterNodeServiceServer(srv, &localService{cfg: normal(cfg)})
+	return srv
+}
+
+// normal fills in what a configuration may leave out.
+func normal(cfg LocalConfig) LocalConfig {
 	if cfg.Poll == 0 {
 		cfg.Poll = time.Second
 	}
 	if cfg.Country == nil {
 		cfg.Country = func() string { return "" }
 	}
-	srv := grpc.NewServer()
-	nodepb.RegisterNodeServiceServer(srv, &localService{cfg: cfg})
-	return srv
+	return cfg
 }
 
 type localService struct {
@@ -335,7 +340,7 @@ func localJob(job *pb.Job) *nodepb.Job {
 		InputBlobs: job.GetInputBlobs(), OutputBlobs: job.GetOutputBlobs(),
 		Progress: job.GetProgress(), TaskTimeoutSeconds: job.GetSpec().GetTaskTimeoutSeconds(),
 		MinMemoryBytes: job.GetSpec().GetMinMemoryBytes(), MinGpus: job.GetSpec().GetMinGpus(),
-		Private: job.GetPrivate(),
+		Private: job.GetPrivate(), ParentJobId: job.GetParentJobId(), Step: job.GetStep(),
 	}
 	for _, task := range job.GetTasks() {
 		out.Tasks = append(out.Tasks, &nodepb.JobTask{
@@ -541,7 +546,12 @@ func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelC
 		if err != nil {
 			return nil, asError(err)
 		}
-		cfg.APIKey = current.APIKey
+		// The key is kept for the service it was given for and no other:
+		// a change of provider or address is saved without one, and the
+		// answer says so.
+		if sameService(current, cfg) {
+			cfg.APIKey = current.APIKey
+		}
 	}
 	if err := s.cfg.Assistant.SetModelConfig(cfg); err != nil {
 		return nil, asError(err)

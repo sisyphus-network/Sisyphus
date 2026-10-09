@@ -42,7 +42,7 @@ func (s *localService) modelService(ctx context.Context, named *nodepb.ModelServ
 			return nil, asError(err)
 		}
 		// The saved key goes only where it was saved for.
-		if saved.Provider == at.Provider && saved.BaseURL == at.BaseURL {
+		if sameService(saved, *at) {
 			at.APIKey = saved.APIKey
 		}
 	}
@@ -98,4 +98,10 @@ func (s *localService) RemoveModel(ctx context.Context, req *nodepb.RemoveModelR
 		return nil, asError(err)
 	}
 	return &nodepb.RemoveModelResponse{}, nil
+}
+
+// sameService reports whether two configurations are of one model service,
+// whichever model of it each names.
+func sameService(a, b nodedb.ModelConfig) bool {
+	return ai.SameService(ai.Config{Provider: a.Provider, BaseURL: a.BaseURL}, ai.Config{Provider: b.Provider, BaseURL: b.BaseURL})
 }

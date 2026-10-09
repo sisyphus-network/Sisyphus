@@ -84,6 +84,9 @@ type Job struct {
 	// job's tasks: bytes of memory, and graphics cards. Zero asks nothing.
 	MinMemory uint64
 	MinGPUs   int
+	// Parent and Step are set on a job that is a step of another: the ID
+	// of the job it is a step of, and the step's name.
+	Parent, Step string
 	// Needs is what else a worker must have, as labels. It follows from
 	// the workload and the parameters and is worked out by whoever holds
 	// the job, not saved with it.

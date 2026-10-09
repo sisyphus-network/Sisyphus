@@ -47,7 +47,7 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `CancelJob` | yes | Stop a job that has not finished. |
 | `WatchJobEvents` | | What has happened to one job, then what happens next, ending when the job does: the steps of its life and the lines its tasks log. Pass `after_seq` to pick up where you left off. |
 | `GetModelConfig` | | Which model the node plans with, and whether a key is set. Never the key. |
-| `SetModelConfig` | yes | Set it. `keep_api_key` changes the rest without sending the key again. |
+| `SetModelConfig` | yes | Set it. `keep_api_key` changes the model without sending the key again. The key is kept only for the provider and address it was saved with, where an empty address is the provider's usual one: change either and the configuration is saved with no key, which `has_api_key` in the answer shows. |
 | `ListProviders` | | The kinds of model service there are: Ollama, Anthropic, and OpenAI and whatever speaks as it does. Each with its usual address, whether it wants a key, and whether its models are fetched before use. |
 | `ListModels` | for a named service | What a service offers, each model with its size and whether it can call tools. With no `service`, the configured one; with one, the service described, before anything is saved. |
 | `PullModel` | yes | Fetch a model to the machine its service runs on (Ollama). A stream of progress, ending when the model is there. |
@@ -177,6 +177,28 @@ It needs a node that runs a worker, which is every node unless it was started wi
 - **Choosing the key** private files are sealed with, or having more than one.
 
 ## Changing the API
+
+## Graphs
+
+A job whose `workload` is `graph` is several jobs run as one (see the daemon's README, "Jobs made of jobs"). For a client it needs nothing new: its `tasks` are its steps, in order, with `worker_name` set to `coordinator`, and each step is a job of its own in `ListJobs` with `parent_job_id` naming the graph and `step` the step. A jobs view can nest those under their graph, or leave them flat.
+
+## From a web page
+
+A page in a browser cannot speak gRPC as the desktop app does. Started with `--web-listen 127.0.0.1:50052 --web-origin http://localhost:5173`, the node serves the same calls in two ways a browser can make them: **Connect** and **gRPC-Web**. `@connectrpc/connect-web` with code generated from `node.proto` speaks either; so does a plain `fetch`:
+
+```js
+const res = await fetch("http://127.0.0.1:50052/sisyphus.node.v1.NodeService/ListWorkers", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "Connect-Protocol-Version": "1", Authorization: `Bearer ${token}` },
+  body: "{}",
+})
+```
+
+- **Calls that return a stream** (`Ask`, `WatchJobs`, `WatchJobEvents`, `PullModel`, `FetchFile`) work as Connect server streams.
+- **Storing a file** is the one call a browser cannot make, since it sends a stream. Instead `PUT /files/<name>` with the file as the body, and `?private=true` to seal it; the answer is the `File` as JSON.
+- **Every call needs the token, reading included**, unlike the gRPC address. Any page the user visits can try the node's address, so nothing is answered without it. The page has to be given the token by the user: it cannot read `api.token` itself.
+- **Only pages from the origins listed with `--web-origin`** are answered, and a request that names the node by anything but `localhost` or a loopback address is refused, so a page cannot reach it under a name of its own.
+- It listens on this machine only. Using a node from a browser on another machine is not offered.
 
 `node.proto` is shared. After editing it:
 

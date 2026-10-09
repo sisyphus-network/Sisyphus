@@ -83,6 +83,13 @@ func (r *Registry) Offers(ctx context.Context) []string {
 	return labels
 }
 
+// Composite reports whether the named workload is one whose tasks the
+// coordinator carries out itself, as jobs, so that no worker runs it.
+func (r *Registry) Composite(name string) bool {
+	_, is := r.workloads[name].(Composite)
+	return is
+}
+
 // With returns a registry of these workloads and more. One of the same
 // name as one already there takes its place.
 func (r *Registry) With(more ...Workload) *Registry {
