@@ -184,6 +184,12 @@
   "plannerRunsOnNode": "Tu proveedor de IA se ejecuta localmente en este nodo",
   "closePreview": "Cerrar vista previa de imagen",
   "operationText": {
+    "taskTimeoutSeconds": "Tiempo límite por tarea (segundos)",
+    "taskTimeoutHint": "0 usa el valor del nodo. Los intentos que exceden el límite se detienen y se reintentan.",
+    "invalidTaskTimeout": "Introduce un entero entre 0 y 4294967295.",
+    "jobResult": "Resultado de la tarea",
+    "binaryResult": "Resultado binario — descárgalo para verlo.",
+    "resultTruncated": "Vista previa abreviada. Descarga el resultado completo.",
     "openingJob": "Abriendo tarea…",
     "loadJobFailed": "No se pudo abrir la tarea",
     "jobNotFound": "No se encontró la tarea.",

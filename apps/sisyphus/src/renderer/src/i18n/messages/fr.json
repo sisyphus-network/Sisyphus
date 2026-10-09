@@ -184,6 +184,12 @@
   "plannerRunsOnNode": "Votre fournisseur d’IA s’exécute localement sur ce nœud",
   "closePreview": "Fermer l’aperçu de l’image",
   "operationText": {
+    "taskTimeoutSeconds": "Délai par tâche (secondes)",
+    "taskTimeoutHint": "0 utilise le réglage du nœud. Les tentatives expirées sont arrêtées puis relancées.",
+    "invalidTaskTimeout": "Saisissez un entier de 0 à 4294967295.",
+    "jobResult": "Résultat de la tâche",
+    "binaryResult": "Résultat binaire — téléchargez-le pour l’examiner.",
+    "resultTruncated": "Aperçu abrégé. Téléchargez le résultat complet.",
     "openingJob": "Ouverture de la tâche…",
     "loadJobFailed": "Impossible d’ouvrir la tâche",
     "jobNotFound": "La tâche est introuvable.",

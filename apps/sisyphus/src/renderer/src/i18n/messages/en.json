@@ -184,6 +184,12 @@
   "plannerRunsOnNode": "Your AI provider runs locally on this node",
   "closePreview": "Close image preview",
   "operationText": {
+    "taskTimeoutSeconds": "Task timeout (seconds)",
+    "taskTimeoutHint": "0 uses the daemon default. Timed-out attempts are stopped and retried.",
+    "invalidTaskTimeout": "Use a whole number from 0 to 4294967295.",
+    "jobResult": "Job result",
+    "binaryResult": "Binary result — download to inspect.",
+    "resultTruncated": "Preview shortened. Download for the full result.",
     "openingJob": "Opening job…",
     "loadJobFailed": "Could not open job",
     "jobNotFound": "The job was not found.",

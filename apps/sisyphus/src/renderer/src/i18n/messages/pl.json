@@ -184,6 +184,12 @@
   "plannerRunsOnNode": "Dostawca AI działa lokalnie na tym węźle",
   "closePreview": "Zamknij podgląd obrazu",
   "operationText": {
+    "taskTimeoutSeconds": "Limit czasu zadania (sekundy)",
+    "taskTimeoutHint": "0 używa ustawienia węzła. Próby po przekroczeniu limitu są zatrzymywane i ponawiane.",
+    "invalidTaskTimeout": "Wpisz liczbę całkowitą od 0 do 4294967295.",
+    "jobResult": "Wynik zadania",
+    "binaryResult": "Wynik binarny — pobierz, aby sprawdzić.",
+    "resultTruncated": "Podgląd skrócony. Pobierz pełny wynik.",
     "openingJob": "Otwieranie zadania…",
     "loadJobFailed": "Nie udało się otworzyć zadania",
     "jobNotFound": "Nie znaleziono zadania.",
