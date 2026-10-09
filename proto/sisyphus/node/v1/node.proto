@@ -447,6 +447,10 @@ message AskRequest {
   // The conversation to continue, or empty to start one.
   string chat_id = 1;
   string text = 2;
+  // Files uploaded by the owner and retained by this conversation. These
+  // are explicit references, not parsed from model/user message text.
+  // Omit on later turns when the conversation already retains them.
+  repeated string attachment_cids = 3;
 }
 
 message AskEvent {

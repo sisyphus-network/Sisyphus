@@ -225,7 +225,11 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
       setItems((current) => [...current, userItem, { id: answerId, role: 'assistant', content: '', activities: [] }])
       setBusy(false)
       setAsking(true)
-      streamCancel.current = getNodeApi().stream<AskEvent>('ask', { chatId, text: fullText }, (event) => {
+      streamCancel.current = getNodeApi().stream<AskEvent>('ask', {
+        chatId,
+        text: fullText,
+        attachmentCids: storedAttachments.map((attachment) => attachment.cid),
+      }, (event) => {
         if (event.chatId && !chatId) setChatId(event.chatId)
         if (event.kind === 'text') updateAssistant(answerId, (item) => ({ ...item, content: item.content + event.text }))
         if (event.kind === 'call') updateAssistant(answerId, (item) => ({ ...item, activities: [...(item.activities ?? []), { id: newId(), tool: event.tool || messages.agentActionUnknown, arguments: event.text, state: 'working' }] }))
