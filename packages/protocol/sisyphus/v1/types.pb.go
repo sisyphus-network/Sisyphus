@@ -499,8 +499,16 @@ type JobSpec struct {
 	// much memory, and at least this many graphics cards. Zero asks nothing.
 	MinMemoryBytes uint64 `protobuf:"varint,7,opt,name=min_memory_bytes,json=minMemoryBytes,proto3" json:"min_memory_bytes,omitempty"`
 	MinGpus        uint32 `protobuf:"varint,8,opt,name=min_gpus,json=minGpus,proto3" json:"min_gpus,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Verification by replication. Two or more has each task run by that many
+	// different workers, and the task succeeds only once that many of them
+	// have returned the same result: the same output, and the same stored
+	// blobs by CID. Zero and one ask for nothing: each task is run once and
+	// what its worker returns is taken as it is. It is for workloads that
+	// give the same result every time they are run, and cannot be asked of a
+	// private job.
+	Verify        uint32 `protobuf:"varint,9,opt,name=verify,proto3" json:"verify,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *JobSpec) Reset() {
@@ -585,6 +593,13 @@ func (x *JobSpec) GetMinMemoryBytes() uint64 {
 func (x *JobSpec) GetMinGpus() uint32 {
 	if x != nil {
 		return x.MinGpus
+	}
+	return 0
+}
+
+func (x *JobSpec) GetVerify() uint32 {
+	if x != nil {
+		return x.Verify
 	}
 	return 0
 }
@@ -1099,6 +1114,8 @@ type JobEvent struct {
 	At  *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=at,proto3" json:"at,omitempty"`
 	// What happened: submitted, task-started, task-succeeded, task-failed,
 	// task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
+	// In a job that is verified, also task-result, for each result a worker
+	// returns, and task-disagreed, when the results in for a task differ.
 	Kind string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
 	// The task concerned, or -1 if the event is about the job as a whole.
 	TaskIndex int32 `protobuf:"varint,4,opt,name=task_index,json=taskIndex,proto3" json:"task_index,omitempty"`
@@ -1212,7 +1229,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x04name\x18\x06 \x01(\tR\x04name\x12'\n" +
 	"\x0frelay_addresses\x18\a \x03(\tR\x0erelayAddresses\x12/\n" +
 	"\x13relayed_connections\x18\b \x01(\x04R\x12relayedConnections\x12#\n" +
-	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\x92\x02\n" +
+	"\rrelayed_bytes\x18\t \x01(\x04R\frelayedBytes\"\xaa\x02\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
@@ -1221,7 +1238,8 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x03key\x18\x05 \x01(\fR\x03key\x120\n" +
 	"\x14task_timeout_seconds\x18\x06 \x01(\rR\x12taskTimeoutSeconds\x12(\n" +
 	"\x10min_memory_bytes\x18\a \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
-	"\bmin_gpus\x18\b \x01(\rR\aminGpus\"\xe5\x01\n" +
+	"\bmin_gpus\x18\b \x01(\rR\aminGpus\x12\x16\n" +
+	"\x06verify\x18\t \x01(\rR\x06verify\"\xe5\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\rR\x05index\x12,\n" +
