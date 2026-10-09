@@ -253,7 +253,13 @@ func configure(cfg Config, api, password string) error {
 	// When a holder is gone for good, a trusted member finds another.
 	cluster["disable_repinning"] = false
 	cluster["monitor_ping_interval"] = heartbeat
-	section("consensus", "crdt")["trusted_peers"] = append([]string{}, cfg.Trusted...)
+	crdt := section("consensus", "crdt")
+	crdt["trusted_peers"] = append([]string{}, cfg.Trusted...)
+	// A member that was out of hearing when a pin was made or let go, as
+	// one is for a moment after the coordinator restarts, learns of it when
+	// the state is next sent round. The program would do that once a
+	// minute.
+	crdt["rebroadcast_interval"] = twice
 
 	// Of the three APIs the program offers, only the one this package uses
 	// is kept.

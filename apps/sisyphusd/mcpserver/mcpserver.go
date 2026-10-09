@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -346,7 +347,9 @@ func (s *server) logs(ctx context.Context, args logArgs) (any, error) {
 			break
 		}
 		if err != nil {
-			if listening.Err() != nil && ctx.Err() == nil {
+			// The node may say the moment is over before this side's own
+			// clock does, so its word for it ends the listening as well.
+			if (listening.Err() != nil || status.Code(err) == codes.DeadlineExceeded) && ctx.Err() == nil {
 				break
 			}
 			return nil, err
