@@ -1,4 +1,6 @@
 {
+  "privateFileWarning": "Les fichiers privés sont chiffrés avec private.key. Perdre cette clé supprime définitivement l’accès. Seuls les travaux privés peuvent les lire ; leurs exécutants reçoivent la clé de déchiffrement. Utilisez des exécutants de confiance.",
+  "chatAttachmentPrivacyNotice": "Les pièces jointes sont actuellement stockées sans chiffrement dans le pool. Supprimer une conversation ne supprime pas ses fichiers ; gérez-les dans Opérations → Fichiers.",
   "modelSettings": {
     "localAi": "IA LOCALE",
     "title": "Fournisseur de modèles",

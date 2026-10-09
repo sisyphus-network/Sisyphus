@@ -1,4 +1,6 @@
 {
+  "privateFileWarning": "Los archivos privados se cifran con private.key. Perder esta clave impide acceder a ellos para siempre. Solo los trabajos privados pueden leerlos; sus trabajadores reciben la clave de descifrado. Usa trabajadores de confianza.",
+  "chatAttachmentPrivacyNotice": "Los adjuntos se guardan actualmente sin cifrar en el grupo. Eliminar un chat no elimina sus archivos; gestiónalos en Operaciones → Archivos.",
   "modelSettings": {
     "localAi": "IA LOCAL",
     "title": "Proveedor de modelos",
