@@ -271,3 +271,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/sisyphus-network/Sisyphus/issues/23).
 
 Two things in this section go beyond what the sections above describe and are still open for discussion: the choice of Go ([#1](https://github.com/sisyphus-network/Sisyphus/issues/1)), and building storage on IPFS formats while V0 lists IPFS as out of scope ([#25](https://github.com/sisyphus-network/Sisyphus/issues/25)).
+
+## License
+
+Sisyphus is licensed under the [Apache License, Version 2.0](LICENSE). Contributions are accepted under the same license.
