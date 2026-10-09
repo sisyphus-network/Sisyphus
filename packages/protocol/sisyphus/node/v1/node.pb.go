@@ -2435,7 +2435,9 @@ type SetModelConfigRequest struct {
 	BaseUrl  string                 `protobuf:"bytes,2,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
 	Model    string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
 	// The service's key, if it wants one. Leave empty and set keep_api_key to
-	// change the rest without sending the key again.
+	// change the model without sending the key again. The key is kept only
+	// for the provider and address it was saved with: change either and the
+	// configuration is saved without a key, as has_api_key in the answer says.
 	ApiKey        string `protobuf:"bytes,4,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
 	KeepApiKey    bool   `protobuf:"varint,5,opt,name=keep_api_key,json=keepApiKey,proto3" json:"keep_api_key,omitempty"`
 	unknownFields protoimpl.UnknownFields

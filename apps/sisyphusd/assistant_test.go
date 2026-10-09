@@ -234,6 +234,25 @@ func TestTheDesktopSetsTheModelAndTheKeyStaysPut(t *testing.T) {
 	if err != nil || !kept.GetHasApiKey() || kept.GetModel() != "another-model" {
 		t.Errorf("changing the model and keeping the key: %v, %v", kept, err)
 	}
+	// The key is kept for the service it was given for and no other: a
+	// change of address or of provider is saved without it.
+	elsewhere := newModel(t)
+	for name, moved := range map[string]*nodepb.SetModelConfigRequest{
+		"another address":  {Provider: "ollama", BaseUrl: elsewhere.URL, Model: "test-model", KeepApiKey: true},
+		"another provider": {Provider: "openai", BaseUrl: served.URL, Model: "test-model", KeepApiKey: true},
+	} {
+		carried, err := client.SetModelConfig(ctx, moved)
+		if err != nil || carried.GetHasApiKey() {
+			t.Errorf("the key was carried to %s: %v, %v", name, carried, err)
+		}
+		if _, err := client.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", BaseUrl: served.URL, Model: "another-model", ApiKey: "sk-secret"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The same address written with a stroke after it is the same service.
+	if same, err := client.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", BaseUrl: served.URL + "/", Model: "another-model", KeepApiKey: true}); err != nil || !same.GetHasApiKey() {
+		t.Errorf("the same service, written otherwise: %v, %v", same, err)
+	}
 	if out := mustCLI(t, "model", "show", "--data-dir", dataDir); !strings.Contains(out, "key:      set") || strings.Contains(out, "sk-secret") {
 		t.Errorf("model show with a key set:\n%s", out)
 	}
