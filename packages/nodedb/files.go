@@ -40,7 +40,8 @@ func (db *DB) Files() ([]File, error) {
 // file, under the name and time it was last stored with.
 func (db *DB) AddFile(f File) error {
 	return db.durably("save file", func(b *batch) {
-		b.exec(`INSERT OR REPLACE INTO files (cid, name, size_bytes, stored_at_ns, private) VALUES (?, ?, ?, ?, ?)`,
+		b.exec(`INSERT INTO files (cid, name, size_bytes, stored_at_ns, private) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(cid) DO UPDATE SET name=excluded.name, size_bytes=excluded.size_bytes, stored_at_ns=excluded.stored_at_ns, private=excluded.private`,
 			f.CID, f.Name, int64(f.Size), nanos(f.Stored), f.Private)
 	})
 }
