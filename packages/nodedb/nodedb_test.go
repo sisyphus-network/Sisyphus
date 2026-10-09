@@ -508,7 +508,7 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 		`ALTER TABLE jobs DROP COLUMN record_cid`,
 		`ALTER TABLE jobs DROP COLUMN submitter_id`,
 		`ALTER TABLE jobs DROP COLUMN private`,
-		`DELETE FROM schema_migrations WHERE version = 11`,
+		`DELETE FROM schema_migrations WHERE version = 13`,
 	} {
 		if _, err := db.sql.Exec(statement); err != nil {
 			t.Fatalf("%s: %v", statement, err)
