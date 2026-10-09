@@ -6,7 +6,9 @@
 // A record is made of these nodes, each encoded as DAG-CBOR:
 //
 //   - the manifest: what was submitted;
-//   - one receipt for each task: who ran it, how often, and how it ended;
+//   - one receipt for each task: who ran it, how often, and how it ended,
+//     and for a job that was verified, what each worker returned and which
+//     of them agreed;
 //   - the result: how the job ended and what it produced;
 //   - for a job with steps, the graph: the jobs that carried them out, and
 //     their records;
@@ -311,6 +313,11 @@ func (b *builder) manifest(job *jobmodel.Job) datamodel.Node {
 			m.AssembleEntry("task_timeout_seconds").AssignInt(int64(job.TaskTimeout / time.Second))
 			m.AssembleEntry("min_memory_bytes").AssignInt(int64(job.MinMemory))
 			m.AssembleEntry("min_gpus").AssignInt(int64(job.MinGPUs))
+			// Only where it was asked for, so that the record of a job
+			// that was not verified is what it always was.
+			if job.Verify >= 2 {
+				m.AssembleEntry("verify").AssignInt(int64(job.Verify))
+			}
 		})
 		blobs(m, "inputs", job.InputBlobs())
 		if job.Submitter != "" {
@@ -337,6 +344,24 @@ func (b *builder) receipt(index int, task *jobmodel.Task) datamodel.Node {
 					m.AssembleEntry("name").AssignString(attempt.NodeName)
 					m.AssembleEntry("state").AssignString(attempt.State.String())
 					b.message(m, "error", attempt.Err, attemptErrorCommitment(index, n))
+				})
+			}
+		})
+		if len(task.Results) == 0 {
+			return
+		}
+		// What each worker returned for a task that was verified, by a
+		// digest that is the same for results that are the same, and
+		// whether it is one of those the task was settled by.
+		agreed := task.Agreed()
+		m.AssembleEntry("results").CreateList(-1, func(l fluent.ListAssembler) {
+			for _, r := range task.Results {
+				l.AssembleValue().CreateMap(-1, func(m fluent.MapAssembler) {
+					m.AssembleEntry("attempt").AssignInt(int64(r.Attempt))
+					m.AssembleEntry("node").AssignString(r.NodeID)
+					m.AssembleEntry("name").AssignString(r.NodeName)
+					m.AssembleEntry("digest").AssignString(r.Digest())
+					m.AssembleEntry("agreed").AssignBool(len(agreed) > 0 && r.Digest() == agreed[0].Digest())
 				})
 			}
 		})
