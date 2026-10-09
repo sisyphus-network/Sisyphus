@@ -45,6 +45,8 @@ var allowed = map[string][]Role{
 	pb.BlobService_Unpin_FullMethodName:          {Client},
 	pb.BlobService_ListPins_FullMethodName:       {Client},
 	pb.BlobService_CollectGarbage_FullMethodName: {Client},
+	// Which members hold what is pinned is part of managing stored data.
+	pb.PoolService_ClusterStatus_FullMethodName: {Client},
 
 	pb.NodeService_SubmitJob_FullMethodName:      {Client},
 	pb.NodeService_GetJob_FullMethodName:         {Client},

@@ -27,6 +27,9 @@ type poolService struct {
 	// swarm is the pool's private IPFS network, or nil if this node does
 	// not run one.
 	swarm Swarm
+	// cluster is the pool's IPFS Cluster, or nil if this node runs no peer
+	// of it.
+	cluster Cluster
 	// workFor is the list of nodes this one takes work from, or nil if it
 	// keeps none.
 	workFor WorkFor
@@ -48,6 +51,20 @@ type Swarm interface {
 	// onto it.
 	Rekey(ctx context.Context) error
 }
+
+// Cluster is an IPFS Cluster this node runs a peer of.
+type Cluster interface {
+	// Local returns where this node's own peer accepts the other members,
+	// as a host and port that only this node need be able to reach.
+	Local(ctx context.Context) (string, error)
+	// Status says which members the cluster hears from and which of them
+	// hold each of the pool's pins.
+	Status(ctx context.Context) (*pb.ClusterStatusResponse, error)
+}
+
+// noCluster is what a node without a cluster peer answers when asked about
+// one.
+const noCluster = "this node does not run an IPFS Cluster peer; start it with --kubo --cluster"
 
 // accessList is the part of an access.List that the service uses.
 type accessList interface {
@@ -101,7 +118,18 @@ func (s *poolService) Swarm(ctx context.Context, _ *pb.SwarmRequest) (*pb.SwarmR
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "ask Kubo for its addresses: %v", err)
 	}
-	return &pb.SwarmResponse{SwarmKey: s.swarm.Key(), Addresses: addresses}, nil
+	return &pb.SwarmResponse{SwarmKey: s.swarm.Key(), Addresses: addresses, Cluster: s.cluster != nil}, nil
+}
+
+func (s *poolService) ClusterStatus(ctx context.Context, _ *pb.ClusterStatusRequest) (*pb.ClusterStatusResponse, error) {
+	if s.cluster == nil {
+		return nil, status.Error(codes.FailedPrecondition, noCluster)
+	}
+	state, err := s.cluster.Status(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "ask the cluster peer: %v", err)
+	}
+	return state, nil
 }
 
 func (s *poolService) Invite(_ context.Context, req *pb.InviteRequest) (*pb.InviteResponse, error) {

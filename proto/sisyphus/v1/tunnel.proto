@@ -20,6 +20,9 @@ enum TunnelTarget {
   // The node's Kubo daemon, as a member of the pool's private IPFS network
   // would connect to it.
   TUNNEL_TARGET_SWARM = 1;
+  // The node's IPFS Cluster peer, as another member of the pool's cluster
+  // would connect to it.
+  TUNNEL_TARGET_CLUSTER = 2;
 }
 
 message TunnelData {

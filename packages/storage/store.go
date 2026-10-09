@@ -68,6 +68,9 @@ type Store struct {
 	// pinFile is where a durable store keeps its pins; empty for stores
 	// whose pins live only in memory.
 	pinFile string
+	// pinsChanged, if set, is told whenever the blobs that pins keep may
+	// have changed.
+	pinsChanged func()
 }
 
 // OpenLocal opens, creating if needed, a durable store kept in dir on this
