@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -62,7 +63,7 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 	// The agent is told what there is: the tools, and how to begin. Those
 	// that change the node itself are not among them unless asked for.
 	tools, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 25 {
+	if err != nil || len(tools.Tools) != 32 {
 		t.Fatalf("tools = %v, %v", tools, err)
 	}
 	if !strings.Contains(session.InitializeResult().Instructions, "pool_status") {
@@ -177,6 +178,244 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 		if _, text, failed := use(t, session, tool, args); !failed || strings.Contains(text, "rpc error") {
 			t.Errorf("%s of what is not there: failed %v, %s", tool, failed, text)
 		}
+	}
+}
+
+// What the node keeps, its name and its jobs' records are at its main
+// address and not in its local API, and the agent's server reaches them
+// there as the command line does: with the node's key.
+func TestAnAgentKeepsWhatAJobMadeAndChecksItsRecord(t *testing.T) {
+	replicateQuickly(t, time.Minute)
+	dataDir, copies := t.TempDir(), filepath.Join(t.TempDir(), "copies")
+	addr, apiAddr := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--slots", "2", "--api-listen", apiAddr, "--replicas", "1")
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--replica-dir", copies, "--name", "follower", "--slots", "1")
+	waitForOutput(t, "follower", "nodes", "--addr", addr)
+	nodeID := strings.TrimSpace(mustCLI(t, "id", "--data-dir", dataDir))
+	session := agent(t, dataDir, apiAddr, "--addr", addr, "--files-under", "/", "--admin")
+
+	// A job runs, whole on one worker, and stores its result.
+	said, text, failed := use(t, session, "store_file", map[string]any{"path": writeFile(t, "the boulder the hill the boulder")})
+	if failed {
+		t.Fatalf("store_file: %s", text)
+	}
+	said, text, failed = use(t, session, "run_job", map[string]any{"workload": "wordcount", "params": map[string]any{"input": said.(map[string]any)["cid"]}, "mode": "full-worker"})
+	job := said.(map[string]any)
+	if failed || job["state"] != "succeeded" || job["tasks"] != float64(1) {
+		t.Fatalf("run_job on one worker: %s", text)
+	}
+	id, output := job["job_id"].(string), job["stored_outputs"].([]any)[0].(string)
+
+	// The job holds its output for a while. Pinned, the user holds it too,
+	// for the day asked for.
+	if _, text, _ = use(t, session, "list_pins", map[string]any{"cid": output}); !strings.Contains(text, `"held_for":"job:`+id+`"`) || strings.Contains(text, `"held_for":"user"`) {
+		t.Errorf("list_pins before pinning: %s", text)
+	}
+	if _, text, failed = use(t, session, "pin_file", map[string]any{"cid": output, "ttl_hours": 24}); failed || !strings.Contains(text, `"pinned":"`+output+`"`) || !strings.Contains(text, `"held_for":"job:`+id+`"`) || !strings.Contains(text, `"held_for":"user"`) {
+		t.Fatalf("pin_file: %s", text)
+	}
+	said, text, _ = use(t, session, "list_pins", map[string]any{"cid": output})
+	var until time.Time
+	for _, pin := range said.(map[string]any)["pins"].([]any) {
+		if pin := pin.(map[string]any); pin["held_for"] == "user" {
+			until, _ = time.Parse(time.RFC3339, pin["until"].(string))
+		}
+	}
+	if left := time.Until(until); left < 23*time.Hour || left > 24*time.Hour {
+		t.Errorf("a file pinned for a day is kept until %s: %s", until, text)
+	}
+	if _, text, failed = use(t, session, "list_pins", nil); failed || !strings.Contains(text, output) || !strings.Contains(text, `"held_for":"recent"`) {
+		t.Errorf("list_pins: %s", text)
+	}
+
+	// The follower comes to hold a copy, and the agent is told it does.
+	waitFor(t, func() bool {
+		said, text, failed = use(t, session, "storage_status", map[string]any{"cid": output})
+		return !failed && strings.Contains(text, `"copies":1`)
+	})
+	status := said.(map[string]any)
+	held := status["followers"].(map[string]any)
+	if status["kept_by"] != "followers" || held["copies_wanted"] != float64(1) || held["followers_connected"] != float64(1) || held["files_with_too_few_copies"] != float64(0) || held["too_few_followers_by"] != nil {
+		t.Errorf("storage_status: %s", text)
+	}
+
+	// The job's record is the one the command line prints, and checks out.
+	record, _, _ := strings.Cut(mustCLI(t, "job", "record", "--addr", addr, id), "\n")
+	said, text, failed = use(t, session, "get_job_record", map[string]any{"job_id": id, "verify": true})
+	if failed || said.(map[string]any)["record_cid"] != record || said.(map[string]any)["verified"] != true || !strings.Contains(text, `"workload":"wordcount"`) || !strings.Contains(text, output) || strings.Contains(text, "commitments") {
+		t.Errorf("get_job_record, verified against %s: %s", record, text)
+	}
+	// The record is kept too, with a pin of its own, once it is written.
+	waitFor(t, func() bool {
+		_, text, _ = use(t, session, "list_pins", map[string]any{"cid": record})
+		return strings.Contains(text, `"held_for":"record:`+id+`"`)
+	})
+	// The node has made no job private yet, so it has no key to check with.
+	if _, text, failed = use(t, session, "get_job_record", map[string]any{"job_id": id, "check_commitments": true}); !failed || !strings.Contains(text, "there is no private.key") {
+		t.Errorf("get_job_record with a key the node does not have: %s", text)
+	}
+
+	// The node's name is pointed at the result, and resolves to it.
+	said, text, failed = use(t, session, "publish_name", map[string]any{"cid": output})
+	if failed || said.(map[string]any)["name"] != nodeID || said.(map[string]any)["sequence"] != float64(0) {
+		t.Fatalf("publish_name: %s", text)
+	}
+	if said, text, failed = use(t, session, "resolve_name", map[string]any{"name": nodeID}); failed || said.(map[string]any)["cid"] != output {
+		t.Errorf("resolve_name: %s", text)
+	}
+	if got := strings.TrimSpace(mustCLI(t, "name", "resolve", "--addr", addr, nodeID)); got != output {
+		t.Errorf("the command line resolves the name to %q", got)
+	}
+	// Pointed elsewhere, it stands for that instead.
+	said, _, _ = use(t, session, "list_files", nil)
+	input := said.([]any)[0].(map[string]any)["cid"]
+	if said, text, failed = use(t, session, "publish_name", map[string]any{"cid": input, "lifetime_hours": 1}); failed || said.(map[string]any)["sequence"] != float64(1) {
+		t.Errorf("publish_name again: %s", text)
+	}
+	if said, text, failed = use(t, session, "resolve_name", nil); failed || said.(map[string]any)["cid"] != input {
+		t.Errorf("resolve_name of this node's own name: %s", text)
+	}
+
+	// A private job's record holds commitments, which the node's own key,
+	// made when the job was, checks.
+	said, text, failed = use(t, session, "store_file", map[string]any{"path": writeFile(t, "what only this pool may read"), "private": true})
+	if failed {
+		t.Fatalf("store_file, private: %s", text)
+	}
+	said, text, failed = use(t, session, "run_job", map[string]any{"workload": "wordcount", "params": map[string]any{"input": said.(map[string]any)["cid"]}, "private": true})
+	if failed || said.(map[string]any)["state"] != "succeeded" {
+		t.Fatalf("run_job, private: %s", text)
+	}
+	sealed := said.(map[string]any)["job_id"]
+	if _, text, failed = use(t, session, "get_job_record", map[string]any{"job_id": sealed, "verify": true}); failed || !strings.Contains(text, "not checked: this is a private job's record") {
+		t.Errorf("get_job_record of a private job: %s", text)
+	}
+	if _, text, failed = use(t, session, "get_job_record", map[string]any{"job_id": sealed, "check_commitments": true}); failed || !strings.Contains(text, "checked: this node's key and the values the node holds give all") || !strings.Contains(text, "verified") {
+		t.Errorf("get_job_record of a private job, with its key: %s", text)
+	}
+	if _, text, failed = use(t, session, "get_job_record", map[string]any{"job_id": id, "check_commitments": true}); failed || !strings.Contains(text, "none to check") {
+		t.Errorf("get_job_record of a job that is not private, with a key: %s", text)
+	}
+
+	// Released, the user's pin is gone and the job's remains.
+	if _, text, failed = use(t, session, "unpin_file", map[string]any{"cid": output}); failed {
+		t.Errorf("unpin_file: %s", text)
+	}
+	if _, text, _ = use(t, session, "list_pins", map[string]any{"cid": output}); strings.Contains(text, `"held_for":"user"`) || !strings.Contains(text, `"held_for":"job:`+id+`"`) {
+		t.Errorf("list_pins after unpinning: %s", text)
+	}
+	// The owner's errands on the store: nothing has lapsed, nothing was lost.
+	if said, text, failed = use(t, session, "collect_garbage", nil); failed || said.(map[string]any)["expired_pins_dropped"] != float64(0) {
+		t.Errorf("collect_garbage: %s", text)
+	}
+	if said, text, failed = use(t, session, "restore_files", nil); failed || said.(map[string]any)["restored"] != float64(0) || !strings.Contains(text, "followers hold nothing") {
+		t.Errorf("restore_files: %s", text)
+	}
+
+	// What the node refuses, the agent is told in the node's words.
+	for tool, args := range map[string]map[string]any{
+		"pin_file":       {"cid": "not-a-cid"},
+		"unpin_file":     {"cid": "not-a-cid"},
+		"get_job_record": {"job_id": "no-such-job"},
+		"resolve_name":   {"name": "12D3KooWGzBpMNLkZC7dKsbCJPqbd6r6vr6pJfTNgqPHZTqnuTHs"},
+		"storage_status": {"cid": "not-a-cid"},
+	} {
+		if _, text, failed := use(t, session, tool, args); !failed || strings.Contains(text, "rpc error") {
+			t.Errorf("%s of what is not there: failed %v, %s", tool, failed, text)
+		}
+	}
+
+	// An agent told to look may look at all of this and change none of it.
+	looking := agent(t, dataDir, apiAddr, "--addr", addr, "--read-only")
+	if _, text, failed = use(t, looking, "storage_status", nil); failed || !strings.Contains(text, `"kept_by":"followers"`) {
+		t.Errorf("storage_status, read-only: %s", text)
+	}
+	tools, err := looking.ListTools(context.Background(), nil)
+	if err != nil || len(tools.Tools) != 18 {
+		t.Fatalf("read-only tools = %v, %v", tools, err)
+	}
+	for _, tool := range tools.Tools {
+		if slices.Contains([]string{"pin_file", "unpin_file", "publish_name", "collect_garbage", "restore_files"}, tool.Name) {
+			t.Errorf("a read-only agent has %s", tool.Name)
+		}
+	}
+}
+
+// A pool that keeps no copies says so, and a server whose node's main
+// address is not where it was told still serves everything else.
+func TestAnAgentIsToldOfANodeThatKeepsNoCopiesAndOfOneItCannotReach(t *testing.T) {
+	dataDir := t.TempDir()
+	addr, apiAddr := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--slots", "1", "--api-listen", apiAddr)
+	waitForOutput(t, "rig", "nodes", "--addr", addr)
+
+	session := agent(t, dataDir, apiAddr, "--addr", addr)
+	if said, text, failed := use(t, session, "storage_status", nil); failed || said.(map[string]any)["kept_by"] != "this node alone" || said.(map[string]any)["note"] == nil {
+		t.Errorf("storage_status of a node alone: %s", text)
+	}
+	if _, text, failed := use(t, session, "resolve_name", nil); !failed || strings.Contains(text, "rpc error") {
+		t.Errorf("resolve_name before anything is published: %s", text)
+	}
+	session.Close()
+
+	// Nothing listens where this one is told the node is.
+	elsewhere := agent(t, dataDir, apiAddr, "--addr", freeAddr(t))
+	if _, text, failed := use(t, elsewhere, "list_pins", nil); !failed || !strings.Contains(text, "connection") {
+		t.Errorf("list_pins with nothing at the main address: %s", text)
+	}
+	if _, text, failed := use(t, elsewhere, "pool_status", nil); failed || !strings.Contains(text, `"name":"rig"`) {
+		t.Errorf("pool_status with nothing at the main address: %s", text)
+	}
+}
+
+func TestTheMainAddressIsReachedWithTheNodesKeyOrSaysWhyNot(t *testing.T) {
+	addr := "127.0.0.1:1"
+	// A key that is no key.
+	broken := t.TempDir()
+	os.WriteFile(filepath.Join(broken, "node.key"), []byte("not a key"), 0o600)
+	main := &mainAddress{node: &target{addr: &addr, dataDir: &broken}}
+	if _, err := main.reach(); err == nil {
+		t.Error("a node whose key cannot be read was reached")
+	}
+	main.close()
+
+	// A list of nodes joined that cannot be read, and then one that can:
+	// what failed once is tried again.
+	dataDir := t.TempDir()
+	known := filepath.Join(dataDir, "known.json")
+	os.WriteFile(known, []byte("{"), 0o600)
+	main = &mainAddress{node: &target{addr: &addr, dataDir: &dataDir}}
+	if _, err := main.reach(); err == nil || !strings.Contains(err.Error(), "known nodes") {
+		t.Errorf("with a list of known nodes that cannot be read: %v", err)
+	}
+	os.Remove(known)
+	reached, err := main.reach()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := main.reach(); err != nil || again != reached {
+		t.Errorf("reached a second time: %v, %v", again, err)
+	}
+	main.close()
+
+	// The node's sealing key is read if it is there, and never made.
+	if _, err := reached.SealingKey(); err == nil || !strings.Contains(err.Error(), "there is no private.key in "+dataDir) {
+		t.Errorf("the sealing key of a node with none: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "private.key")); !os.IsNotExist(err) {
+		t.Errorf("asking for a sealing key made one: %v", err)
+	}
+	os.WriteFile(filepath.Join(dataDir, "private.key"), []byte("not a key"), 0o600)
+	if _, err := reached.SealingKey(); err == nil || strings.Contains(err.Error(), "there is no private.key") {
+		t.Errorf("a sealing key that is no key: %v", err)
+	}
+	os.Remove(filepath.Join(dataDir, "private.key"))
+	made, err := sealingKey(filepath.Join(dataDir, "private.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key, err := reached.SealingKey(); err != nil || string(key) != string(made[:]) {
+		t.Errorf("the sealing key the node made: %v", err)
 	}
 }
 
