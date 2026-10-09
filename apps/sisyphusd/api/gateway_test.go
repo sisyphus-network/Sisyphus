@@ -42,7 +42,7 @@ func TestAStoredFileIsFetchedByItsContentIDWithAPlainGET(t *testing.T) {
 	key := sealed.NewKey()
 	secret, _ := store.Put(ctx, sealed.Encrypt(key, strings.NewReader("for the owner's eyes")))
 	absent, _ := storage.NewMemory().Put(ctx, strings.NewReader("held elsewhere"))
-	owners := NewGateway(store, "the-token", false)
+	owners := NewGateway(store, noNames{}, "the-token", false)
 
 	status, body, header := fetchFrom(owners, http.MethodGet, "/ipfs/"+page.String(), "Authorization", "Bearer the-token")
 	if status != http.StatusOK || !strings.Contains(body, "the boulder rolls") || !strings.HasPrefix(header.Get("Content-Type"), "text/html") ||
@@ -77,13 +77,13 @@ func TestAStoredFileIsFetchedByItsContentIDWithAPlainGET(t *testing.T) {
 			t.Errorf("asked %s: %d %q, want %d and %q", name, status, body, tt.status, tt.want)
 		}
 	}
-	if status, body, _ := fetchFrom(NewGateway(unreadable{}, "the-token", false), http.MethodGet, "/ipfs/"+page.String(), "Authorization", "Bearer the-token"); status != http.StatusInternalServerError || !strings.Contains(body, "the disk has failed") {
+	if status, body, _ := fetchFrom(NewGateway(unreadable{}, noNames{}, "the-token", false), http.MethodGet, "/ipfs/"+page.String(), "Authorization", "Bearer the-token"); status != http.StatusInternalServerError || !strings.Contains(body, "the disk has failed") {
 		t.Errorf("from a store that cannot be read: %d %q", status, body)
 	}
 
 	// Opened by its owner, a gateway gives what is not sealed to anyone
 	// who knows its ID, pages elsewhere included, and still not what is.
-	anyones := NewGateway(store, "the-token", true)
+	anyones := NewGateway(store, noNames{}, "the-token", true)
 	if status, body, header := fetchFrom(anyones, http.MethodGet, "/ipfs/"+page.String()); status != http.StatusOK || !bytes.Contains([]byte(body), []byte("boulder")) || header.Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("from an open gateway: %d %q %v", status, body, header)
 	}

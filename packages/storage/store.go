@@ -174,7 +174,7 @@ func (s *Store) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
 		return cid.Undef, err
 	}
 	s.pinMu.Lock()
-	s.pins[pinKey{root.Cid(), graceOwner}] = time.Now().Add(GracePeriod)
+	s.pins[pinKey{root.Cid(), GraceOwner}] = time.Now().Add(GracePeriod)
 	s.pinMu.Unlock()
 	return root.Cid(), nil
 }

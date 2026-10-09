@@ -799,6 +799,17 @@ func (c *Coordinator) Holders(blob, asker string) []*pb.BlobHolder {
 	return holders
 }
 
+// ServeAddress returns where the connected worker with the given ID serves
+// blobs to its fellows, or "" if it is not connected or serves none.
+func (c *Coordinator) ServeAddress(id string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if w, ok := c.workers[id]; ok {
+		return w.serveAddress
+	}
+	return ""
+}
+
 // AnnounceSwarm records the fingerprint of the key of the pool's private
 // IPFS network and tells every connected worker. Workers that connect later
 // are told as they are welcomed.

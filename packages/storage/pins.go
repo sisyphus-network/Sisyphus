@@ -21,8 +21,8 @@ import (
 // giving whoever stored it time to pin it properly.
 const GracePeriod = time.Hour
 
-// graceOwner owns the pin Put places on every new blob.
-const graceOwner = "recent"
+// GraceOwner owns the pin Put places on every new blob.
+const GraceOwner = "recent"
 
 // Pin keeps one blob on behalf of one owner. Several owners may pin the same
 // blob; it is kept until every pin on it has been released or has expired.

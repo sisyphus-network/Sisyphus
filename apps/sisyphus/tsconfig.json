@@ -11,10 +11,9 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "types": ["node"],
-    "baseUrl": ".",
     "paths": {
-      "@renderer/*": ["src/renderer/src/*"],
-      "@/*": ["src/renderer/src/*"]
+      "@renderer/*": ["./src/renderer/src/*"],
+      "@/*": ["./src/renderer/src/*"]
     }
   },
   "include": ["electron.vite.config.ts", "src", "src/preload/index.d.ts"]

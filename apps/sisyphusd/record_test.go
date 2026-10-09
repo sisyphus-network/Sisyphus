@@ -1,721 +1,262 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"os/exec"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ipfs/go-cid"
-	"github.com/multiformats/go-multihash"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
-	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
-	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
-	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
-	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/sisyphus-network/Sisyphus/packages/runtime"
-	"github.com/sisyphus-network/Sisyphus/packages/sealed"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/api"
+	"github.com/sisyphus-network/Sisyphus/packages/kubo"
+	"github.com/sisyphus-network/Sisyphus/packages/names"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
-// recordOf returns a finished job's record as the node gives it, checked
-// against the job.
-func (p *pool) recordOf(jobID string) *pb.JobRecord {
-	p.t.Helper()
-	record, err := p.client.GetJobRecord(p.ctx, &pb.GetJobRecordRequest{JobId: jobID, Verify: true})
-	if err != nil {
-		p.t.Fatalf("the record of job %s: %v", jobID, err)
-	}
-	return record
-}
-
-// recordNodes returns a record's nodes as parsed DAG-JSON, by CID, having
-// checked that each node's CID is the hash of its bytes.
-func recordNodes(t *testing.T, record *pb.JobRecord) map[string]map[string]any {
+// quickRecords has nodes started after it look at their own record every
+// few milliseconds, until the test and its nodes are over.
+func quickRecords(t *testing.T) {
 	t.Helper()
-	nodes := make(map[string]map[string]any)
-	for _, node := range record.GetNodes() {
-		if sum, _ := (cid.V1Builder{Codec: cid.DagCBOR, MhType: multihash.SHA2_256}).Sum(node.GetData()); sum.String() != node.GetCid() {
-			t.Errorf("node %s holds bytes that hash to %s", node.GetCid(), sum)
-		}
-		var fields map[string]any
-		if err := json.Unmarshal([]byte(node.GetJson()), &fields); err != nil {
-			t.Fatalf("node %s as JSON: %v\n%s", node.GetCid(), err, node.GetJson())
-		}
-		nodes[node.GetCid()] = fields
-	}
-	return nodes
+	old := recordCheck
+	recordCheck = 20 * time.Millisecond
+	t.Cleanup(func() { recordCheck = old })
 }
 
-// linkOf returns the CID a DAG-JSON link names.
-func linkOf(v any) string {
-	link, _ := v.(map[string]any)["/"].(string)
-	return link
-}
-
-// bytesOf returns the bytes a DAG-JSON value holds.
-func bytesOf(t *testing.T, v any) []byte {
+// describedAt returns the description a node's name stands for, as the node
+// at addr gives it.
+func describedAt(t *testing.T, addr, id string) (nodeRecord, string) {
 	t.Helper()
-	held, _ := v.(map[string]any)["/"].(map[string]any)
-	text, _ := held["bytes"].(string)
-	data, err := base64.RawStdEncoding.DecodeString(text)
-	if err != nil {
-		t.Fatalf("bytes in a record: %v", err)
+	at := strings.TrimSpace(waitForOutput(t, "baf", "name", "resolve", "--addr", addr, id))
+	var described nodeRecord
+	document := mustCLI(t, "blob", "get", "--addr", addr, at)
+	if err := json.Unmarshal([]byte(document), &described); err != nil {
+		t.Fatalf("the description %q: %v", document, err)
 	}
-	return data
+	return described, at
 }
 
-// recordPins returns the pins a store holds on a job's record.
-func recordPins(store *storage.Store, jobID string) []storage.Pin {
-	var pins []storage.Pin
-	for _, pin := range store.Pins() {
-		if pin.Owner == "record:"+jobID {
-			pins = append(pins, pin)
-		}
-	}
-	return pins
-}
+func TestACoordinatorAskedToKeepsADescriptionOfItselfUnderItsName(t *testing.T) {
+	quickRecords(t)
+	addr, dataDir, laptop := freeAddr(t), t.TempDir(), t.TempDir()
+	startDaemon(t, "--role", "coordinator", "--listen", addr, "--data-dir", dataDir, "--publish-record")
+	id := nodeID(t, dataDir)
 
-func TestAFinishedJobCarriesARecordOfWhatWasAskedWhoDidItAndWhatCameOfIt(t *testing.T) {
-	p := startPool(t, runtime.Builtin())
-	p.startWorker("a", 1)
-	p.startWorker("b", 1)
-	p.waitForWorkers(2)
-	done := p.wait(p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED, 2)).GetJobId())
-	if done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || done.GetRecordCid() == "" || done.GetSubmitterId() != p.ident.ID() {
-		t.Fatalf("the job %v, with record %q, submitted by %q", done.GetState(), done.GetRecordCid(), done.GetSubmitterId())
+	described, first := describedAt(t, addr, id)
+	if described.ID != id || described.Version != version || !slices.Contains(described.Workloads, "primes") || !slices.Contains(described.Workloads, "graph") || len(described.Members) != 0 {
+		t.Errorf("the description of a node with no members: %+v", described)
+	}
+	// It is kept for as long as the record that points at it.
+	if pins := mustCLI(t, "blob", "pins", "--addr", addr); !strings.Contains(pins, first) || !strings.Contains(pins, recordPins) {
+		t.Errorf("the description is not pinned:\n%s", pins)
 	}
 
-	record := p.recordOf(done.GetJobId())
-	if record.GetRootCid() != done.GetRecordCid() || !record.GetMatches() || record.GetRecomputedCid() != done.GetRecordCid() {
-		t.Fatalf("the record is %s and works out again as %s; the job names %s", record.GetRootCid(), record.GetRecomputedCid(), done.GetRecordCid())
-	}
-	if len(record.GetNodes()) != 5 || record.GetNodes()[0].GetCid() != record.GetRootCid() {
-		t.Fatalf("the record has %d nodes, want the root first, a manifest, two receipts and a result", len(record.GetNodes()))
-	}
-	nodes := recordNodes(t, record)
-	root := nodes[record.GetRootCid()]
-	if root["kind"] != "sisyphus-job-record" || root["version"] != float64(1) || root["job"] != done.GetJobId() || root["private"] != false {
-		t.Errorf("the root: %v", root)
-	}
-	manifest := nodes[linkOf(root["manifest"])]
-	if manifest["workload"] != "primes" || manifest["submitter"] != p.ident.ID() || string(bytesOf(t, manifest["params"])) != string(done.GetSpec().GetParams()) {
-		t.Errorf("the manifest: %v", manifest)
-	}
-	workers := map[string]string{p.workerIdents["a"].ID(): "a", p.workerIdents["b"].ID(): "b"}
-	for i, link := range root["receipts"].([]any) {
-		receipt := nodes[linkOf(link)]
-		attempts, _ := receipt["attempts"].([]any)
-		if receipt["task"] != float64(i) || receipt["state"] != "succeeded" || len(attempts) != 1 {
-			t.Fatalf("receipt %d: %v", i, receipt)
-		}
-		attempt := attempts[0].(map[string]any)
-		if name, known := workers[attempt["node"].(string)]; !known || attempt["name"] != name || attempt["state"] != "succeeded" {
-			t.Errorf("receipt %d says the task was run by %v", i, attempt)
-		}
-	}
-	result := nodes[linkOf(root["result"])]
-	if result["state"] != "succeeded" || string(bytesOf(t, result["result"])) != string(done.GetResult()) {
-		t.Errorf("the result: %v", result)
-	}
-
-	// The store holds the record, for as long as the job is on record:
-	// long after the job's data has gone.
-	rootCID := cid.MustParse(record.GetRootCid())
-	waitFor(t, func() bool { return len(recordPins(p.store, done.GetJobId())) == 1 })
-	if pin := recordPins(p.store, done.GetJobId())[0]; !pin.CID.Equals(rootCID) || !pin.Expires.IsZero() {
-		t.Errorf("the record is pinned as %+v", pin)
-	}
-	if _, err := p.store.GC(p.ctx, time.Now().Add(testRetain+2*time.Hour)); err != nil {
+	// A node that joins the pool appears in it, by ID and role.
+	if _, err := as(t, laptop, "pool", "join", "--addr", addr, invite(t, addr, "client")); err != nil {
 		t.Fatal(err)
 	}
-	if again := p.recordOf(done.GetJobId()); len(again.GetNodes()) != 5 || !again.GetMatches() {
-		t.Errorf("after a collection past the retention period the record has %d nodes", len(again.GetNodes()))
-	}
-	if _, err := p.store.GetNode(p.ctx, rootCID); err != nil {
-		t.Errorf("the store no longer holds the record's root: %v", err)
+	waitFor(t, func() bool {
+		described, _ = describedAt(t, addr, id)
+		return len(described.Members) == 1
+	})
+	if member := described.Members[0]; member.ID != nodeID(t, laptop) || member.Role != "client" {
+		t.Errorf("the member described: %+v", member)
 	}
 
-	// A record is for those who may see the job: a worker may not ask.
-	_, creds := p.admit(access.Worker)
-	conn, err := grpc.NewClient(p.addr, grpc.WithTransportCredentials(creds))
-	if err != nil {
-		t.Fatal(err)
+	// The node has the one name. Anything else its owner publishes under
+	// it gives way to the description again.
+	other := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, "something else")))
+	mustCLI(t, "name", "publish", "--addr", addr, other)
+	waitFor(t, func() bool { return strings.TrimSpace(mustCLI(t, "name", "resolve", "--addr", addr, id)) != other })
+	if described, _ := describedAt(t, addr, id); described.ID != id {
+		t.Errorf("the description after something else was published: %+v", described)
 	}
-	defer conn.Close()
-	if _, err := pb.NewNodeServiceClient(conn).GetJobRecord(p.ctx, &pb.GetJobRecordRequest{JobId: done.GetJobId()}); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("a worker asking for a record: %v, want PermissionDenied", err)
+
+	// Only a node with a pool has one to describe.
+	if _, err := cli(t, "run", "--data-dir", t.TempDir(), "--role", "worker", "--coordinator", "127.0.0.1:1", "--publish-record"); err == nil || !strings.Contains(err.Error(), "is for a node that coordinates a pool") {
+		t.Errorf("--publish-record on a node with no pool: %v", err)
 	}
 }
 
-func TestAJobHasNoRecordUntilItIsOverAndACancelledJobHasOne(t *testing.T) {
-	g := gated{started: make(chan struct{}, 16), release: make(chan struct{})}
-	p := startPool(t, runtime.NewRegistry(g))
-	p.startWorker("rig", 1)
-	p.waitForWorkers(1)
-	job := p.submit(&pb.JobSpec{Workload: "gated", MaxTasks: 2})
-	<-g.started
-
-	if _, err := p.client.GetJobRecord(p.ctx, &pb.GetJobRecordRequest{JobId: job.GetJobId()}); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "is not over") {
-		t.Errorf("the record of a running job: %v", err)
-	}
-	if _, err := p.client.GetJobRecord(p.ctx, &pb.GetJobRecordRequest{JobId: "no-such-job"}); status.Code(err) != codes.NotFound {
-		t.Errorf("the record of a job that is not there: %v", err)
-	}
-	if running, _ := p.coord.Get(job.GetJobId()); running.GetRecordCid() != "" {
-		t.Errorf("a running job names a record: %s", running.GetRecordCid())
-	}
-
-	cancelled, err := p.client.CancelJob(p.ctx, &pb.CancelJobRequest{JobId: job.GetJobId()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	record := p.recordOf(job.GetJobId())
-	if record.GetRootCid() != cancelled.GetJob().GetRecordCid() || !record.GetMatches() {
-		t.Fatalf("the cancelled job names record %q and has %q", cancelled.GetJob().GetRecordCid(), record.GetRootCid())
-	}
-	nodes := recordNodes(t, record)
-	root := nodes[record.GetRootCid()]
-	if result := nodes[linkOf(root["result"])]; result["state"] != "cancelled" || result["error"] != "cancelled" {
-		t.Errorf("the result of a cancelled job: %v", result)
-	}
-	// One task was running and one had never been handed out.
-	ran, waited := nodes[linkOf(root["receipts"].([]any)[0])], nodes[linkOf(root["receipts"].([]any)[1])]
-	if attempts := ran["attempts"].([]any); len(attempts) != 1 || attempts[0].(map[string]any)["state"] != "cancelled" || attempts[0].(map[string]any)["name"] != "rig" {
-		t.Errorf("the receipt of a task that was running: %v", ran)
-	}
-	if attempts := waited["attempts"].([]any); len(attempts) != 0 || waited["state"] != "cancelled" {
-		t.Errorf("the receipt of a task nobody was given: %v", waited)
-	}
+// flakyStore is a store that fails on request.
+type flakyStore struct {
+	*storage.Store
+	failPut, failPin bool
 }
 
-func TestAGraphsRecordLinksTheRecordsOfItsSteps(t *testing.T) {
-	p := startPool(t, runtime.Builtin().With(runtime.Graph{}))
-	p.startWorker("rig", 4)
-	p.waitForWorkers(1)
-	done := p.wait(p.submit(graphOf(`
-		{"name":"low","workload":"primes","params":{"from":0,"to":1000},"tasks":2},
-		{"name":"span","workload":"primes","params":{"from":0,"to":"${low.result.count}"}}`)).GetJobId())
-	if done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
-		t.Fatalf("the graph %v: %s", done.GetState(), done.GetError())
+func (f *flakyStore) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
+	if f.failPut {
+		return cid.Undef, errShelf
 	}
-	steps := p.stepsOf(done.GetJobId())
+	return f.Store.Put(ctx, r)
+}
 
-	record := p.recordOf(done.GetJobId())
-	if !record.GetMatches() || len(record.GetNodes()) != 6 {
-		t.Fatalf("the graph's record matches the graph: %v; it has %d nodes, want the usual four, two receipts and the graph", record.GetMatches(), len(record.GetNodes()))
+func (f *flakyStore) Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error {
+	if f.failPin {
+		return errShelf
 	}
-	nodes := recordNodes(t, record)
-	listed := nodes[linkOf(nodes[record.GetRootCid()]["graph"])]["steps"].([]any)
-	if len(listed) != 2 {
-		t.Fatalf("the graph's record lists %d steps", len(listed))
-	}
-	for i, name := range []string{"low", "span"} {
-		step, entry := steps[name][0], listed[i].(map[string]any)
-		if entry["step"] != name || entry["job"] != step.GetJobId() || linkOf(entry["record"]) != step.GetRecordCid() || step.GetRecordCid() == "" {
-			t.Errorf("step %s is job %s with record %q; the graph's record says %v", name, step.GetJobId(), step.GetRecordCid(), entry)
-		}
-		// The step's own record names the graph, which had no record to
-		// link when the step ended, and whoever submitted the graph.
-		own := p.recordOf(step.GetJobId())
-		stepNodes := recordNodes(t, own)
-		stepRoot := stepNodes[own.GetRootCid()]
-		if parent, _ := stepRoot["parent"].(map[string]any); !own.GetMatches() || parent["job"] != done.GetJobId() || parent["step"] != name {
-			t.Errorf("the record of step %s: %v", name, stepRoot)
-		}
-		if manifest := stepNodes[linkOf(stepRoot["manifest"])]; manifest["submitter"] != p.ident.ID() {
-			t.Errorf("step %s was submitted by %v, want the graph's submitter", name, manifest["submitter"])
-		}
-	}
-	// A pin on the graph's record holds its steps' records too.
-	waitFor(t, func() bool { return len(recordPins(p.store, done.GetJobId())) == 1 })
-	for _, step := range steps {
-		waitFor(t, func() bool { return len(recordPins(p.store, step[0].GetJobId())) == 1 })
-		if err := p.store.Unpin("record:"+step[0].GetJobId(), cid.MustParse(step[0].GetRecordCid())); err != nil {
+	return f.Store.Pin(ctx, owner, expires, cids...)
+}
+
+func TestANodesRecordIsRenewedBeforeItExpiresAndReplacedWhenTheNodeChanges(t *testing.T) {
+	ctx := context.Background()
+	ident := newIdentity(t)
+	store := &flakyStore{Store: storage.NewMemory()}
+	kept := &nameShelf{records: make(map[string][]byte)}
+	held := api.NewNames(kept, func(string) bool { return true })
+	description := "as it was"
+	keeper := &recordKeeper{ident: ident, store: store, names: held, log: quiet, describe: func() []byte { return []byte(description) }}
+	// after returns the record the name has once the keeper has looked at
+	// it, some time after the start.
+	start := time.Now()
+	after := func(passed time.Duration) *names.Record {
+		t.Helper()
+		if err := keeper.publish(ctx, start.Add(passed)); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if _, err := p.store.GC(p.ctx, time.Now().Add(testRetain+2*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.store.GetNode(p.ctx, cid.MustParse(steps["low"][0].GetRecordCid())); err != nil {
-		t.Errorf("a step's record was collected from under the graph's: %v", err)
-	}
-}
-
-func TestAPrivateJobsRecordHoldsNoPlaintext(t *testing.T) {
-	p := startPool(t, runtime.Builtin())
-	p.startWorker("a", 2)
-	p.waitForWorkers(1)
-	key := sealed.NewKey()
-	job := p.privateWordcount(sampleText(), key, 2)
-	if job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || !job.GetPrivate() {
-		t.Fatalf("job %v, private %v: %s", job.GetState(), job.GetPrivate(), job.GetError())
+		record, err := held.Held(ident.ID())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return record
 	}
 
-	record := p.recordOf(job.GetJobId())
-	if !record.GetMatches() {
-		t.Error("a private job's record does not match the job")
+	first := after(0)
+	if first.Sequence != 0 || !first.Expires.Equal(start.Add(recordLifetime)) || string(stored(t, store.Store, first.Value)) != "as it was" {
+		t.Fatalf("the first record: %+v", first)
 	}
-	// The job's parameters and result are not sealed, and the record goes
-	// where any member can fetch it: neither is in it, in any encoding.
-	secrets := [][]byte{job.GetSpec().GetParams(), job.GetResult(), []byte("boulder"), []byte("Sisyphus"), key[:]}
-	for _, node := range record.GetNodes() {
-		for _, secret := range secrets {
-			encoded := base64.RawStdEncoding.EncodeToString(secret)
-			if bytes.Contains(node.GetData(), secret) || strings.Contains(node.GetJson(), encoded) {
-				t.Errorf("node %s of a private job's record holds %q: %s", node.GetCid(), secret, node.GetJson())
-			}
+	// While it has most of its life left, and nothing has changed, it is
+	// left alone.
+	if again := after(recordLifetime / 4); again.Sequence != 0 || !again.Expires.Equal(first.Expires) {
+		t.Errorf("a quarter of its life on: %+v", again)
+	}
+	// Half way through, a new one takes its place, pointing at the same.
+	renewed := after(recordLifetime/2 + time.Minute)
+	if renewed.Sequence != 1 || renewed.Value != first.Value || !renewed.Expires.After(first.Expires) {
+		t.Errorf("past half its life: %+v", renewed)
+	}
+	// And at once when what it describes changes.
+	description = "as it is now"
+	changed := after(recordLifetime/2 + 2*time.Minute)
+	if changed.Sequence != 2 || string(stored(t, store.Store, changed.Value)) != "as it is now" {
+		t.Errorf("after a change: %+v", changed)
+	}
+	// Each description is pinned until its record would expire.
+	pinned := make(map[string]time.Time)
+	for _, pin := range store.Pins() {
+		if pin.Owner == recordPins {
+			pinned[pin.CID.String()] = pin.Expires
 		}
 	}
-	nodes := recordNodes(t, record)
-	root := nodes[record.GetRootCid()]
-	manifest, result := nodes[linkOf(root["manifest"])], nodes[linkOf(root["result"])]
-	if root["private"] != true {
-		t.Errorf("the root does not say the job is private: %v", root)
-	}
-	for field, node := range map[string]map[string]any{"params": manifest, "result": result, "error": result} {
-		if _, has := node[field]; has {
-			t.Errorf("a private job's record has %s: %v", field, node)
-		}
-	}
-	for _, link := range root["receipts"].([]any) {
-		if _, has := nodes[linkOf(link)]["output"]; has {
-			t.Errorf("a private job's receipt has the task's output: %v", nodes[linkOf(link)])
-		}
-	}
-	// It still names the sealed data, which says nothing to those without
-	// the key.
-	inputs, outputs := manifest["inputs"].([]any), result["outputs"].([]any)
-	if len(inputs) != 1 || linkOf(inputs[0]) != job.GetInputBlobs()[0] || len(outputs) != 1 || linkOf(outputs[0]) != job.GetOutputBlobs()[0] {
-		t.Errorf("the sealed data the record names: inputs %v, outputs %v", inputs, outputs)
-	}
-	for _, link := range append(inputs, outputs...) {
-		if !sealed.IsSealed(stored(t, p.store, cid.MustParse(linkOf(link)))) {
-			t.Errorf("the record links %s, which is not sealed", linkOf(link))
-		}
-	}
-}
-
-func TestParametersTooLongForARecordAreLinkedAndStoredBesideIt(t *testing.T) {
-	p := startPool(t, runtime.Builtin())
-	p.startWorker("rig", 1)
-	p.waitForWorkers(1)
-	// JSON may be padded as far as anyone likes.
-	params := []byte(`{"from":0,"to":1000}` + strings.Repeat(" ", 20_000))
-	done := p.wait(p.submit(&pb.JobSpec{Workload: "primes", Params: params, MaxTasks: 1}).GetJobId())
-	if done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
-		t.Fatalf("job %v: %s", done.GetState(), done.GetError())
-	}
-	record := p.recordOf(done.GetJobId())
-	nodes := recordNodes(t, record)
-	link := linkOf(nodes[linkOf(nodes[record.GetRootCid()]["manifest"])]["params"])
-	want, err := storage.CID(p.ctx, bytes.NewReader(params))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if link != want.String() || !record.GetMatches() {
-		t.Fatalf("the manifest links its parameters as %q, want the CID they have as a blob, %s", link, want)
-	}
-	// They are kept as the job's data is, for the retention period.
-	waitFor(t, func() bool { return len(recordPins(p.store, done.GetJobId())) == 1 })
-	if got := stored(t, p.store, want); !bytes.Equal(got, params) {
-		t.Error("the stored parameters are not the ones submitted")
-	}
-	held := false
-	for _, pin := range p.jobPins(done.GetJobId()) {
-		held = held || (pin.CID.Equals(want) && !pin.Expires.IsZero())
-	}
-	if !held {
-		t.Errorf("the job does not hold its long parameters for the retention period: %v", p.jobPins(done.GetJobId()))
-	}
-}
-
-// nodeless is a store that takes in no nodes of linked data.
-type nodeless struct{ *storage.Store }
-
-func (nodeless) PutNodes(context.Context, []byte, ...[]byte) (cid.Cid, error) {
-	return cid.Undef, errors.New("the disk is full")
-}
-
-func TestAJobEndsAsUsualWhenItsRecordCannotBeStored(t *testing.T) {
-	p := startPoolOver(t, runtime.Builtin(), func(store *storage.Store) coordinator.Store { return nodeless{store} })
-	p.startWorker("rig", 1)
-	p.waitForWorkers(1)
-	done := p.wait(p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER, 0)).GetJobId())
-	// The record's CID follows from the job alone, so the job has it.
-	if done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || done.GetRecordCid() == "" {
-		t.Fatalf("job %v with record %q: %s", done.GetState(), done.GetRecordCid(), done.GetError())
-	}
-	waitFor(t, func() bool { return strings.Contains(p.logs.String(), "could not store a job's record") })
-	// Asking for it tries again, and says why it cannot be had.
-	if _, err := p.client.GetJobRecord(p.ctx, &pb.GetJobRecordRequest{JobId: done.GetJobId()}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "the disk is full") {
-		t.Errorf("the record of a job whose record could not be stored: %v", err)
-	}
-}
-
-// rewriting is a journal that changes the jobs it hands back.
-type rewriting struct {
-	coordinator.Journal
-	change func(*jobmodel.Job)
-}
-
-func (r rewriting) LoadJobs() ([]*jobmodel.Job, error) {
-	jobs, err := r.Journal.LoadJobs()
-	for _, job := range jobs {
-		r.change(job)
-	}
-	return jobs, err
-}
-
-// restarted returns a coordinator that has taken up the jobs in a journal.
-func restarted(t *testing.T, store coordinator.Store, journal coordinator.Journal) *coordinator.Coordinator {
-	t.Helper()
-	coord := coordinator.New(coordinator.Config{Workloads: runtime.Builtin(), Store: store, Journal: journal, Log: quiet})
-	t.Cleanup(coord.Close)
-	if _, err := coord.Recover(); err != nil {
-		t.Fatal(err)
-	}
-	return coord
-}
-
-func TestCheckingARecordFindsAJobThatHasChangedSinceItWasWritten(t *testing.T) {
-	ctx := context.Background()
-	journal := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
-	store := storage.NewMemory()
-	first := restarted(t, store, journal)
-	job, err := first.Submit(ctx, &pb.JobSpec{Workload: "primes", Params: []byte(`{"from":0,"to":10}`), MaxTasks: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := first.Cancel(job.GetJobId()); err != nil {
-		t.Fatal(err)
-	}
-	written, err := first.Record(ctx, job.GetJobId(), true)
-	if err != nil || !written.GetMatches() {
-		t.Fatalf("the record as first written: %v, %v", written, err)
-	}
-	first.Close()
-
-	// A restart changes nothing: the job comes back from the database and
-	// gives the record it gave before, which the store still holds.
-	same := restarted(t, store, journal)
-	if again, err := same.Record(ctx, job.GetJobId(), true); err != nil || !again.GetMatches() || again.GetRootCid() != written.GetRootCid() {
-		t.Errorf("the record after a restart: %v, %v", again, err)
-	}
-	same.Close()
-
-	// The job's error rewritten behind the coordinator's back.
-	tampered := rewriting{journal, func(j *jobmodel.Job) { j.Err = "nothing to see here" }}
-	changed := restarted(t, store, tampered)
-	checked, err := changed.Record(ctx, job.GetJobId(), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checked.GetMatches() || checked.GetRecomputedCid() == written.GetRootCid() || checked.GetRootCid() != written.GetRootCid() {
-		t.Errorf("a changed job checked against its record: matches %v, record %s, worked out again as %s", checked.GetMatches(), checked.GetRootCid(), checked.GetRecomputedCid())
-	}
-	// What comes back is the record as it was written, not as the job
-	// would have it now.
-	nodes := recordNodes(t, checked)
-	if result := nodes[linkOf(nodes[checked.GetRootCid()]["result"])]; result["error"] != "cancelled" {
-		t.Errorf("the stored record's result: %v", result)
-	}
-	// Not asked to check, it does not say.
-	if plain, err := changed.Record(ctx, job.GetJobId(), false); err != nil || plain.GetMatches() || plain.GetRecomputedCid() != "" {
-		t.Errorf("a record nobody asked to have checked: %v, %v", plain, err)
-	}
-	changed.Close()
-
-	// A store that has lost the record gets it again from the job, if the
-	// job still gives that record.
-	empty := storage.NewMemory()
-	healed := restarted(t, empty, journal)
-	if again, err := healed.Record(ctx, job.GetJobId(), true); err != nil || !again.GetMatches() || len(again.GetNodes()) != len(written.GetNodes()) {
-		t.Errorf("the record from a store that had lost it: %v, %v", again, err)
-	}
-	if _, err := empty.GetNode(ctx, cid.MustParse(written.GetRootCid())); err != nil || len(recordPins(empty, job.GetJobId())) != 1 {
-		t.Errorf("the record was not stored and pinned again: %v", err)
-	}
-	healed.Close()
-	// And if the job has changed as well, the record is gone for good.
-	lost := restarted(t, storage.NewMemory(), tampered)
-	if _, err := lost.Record(ctx, job.GetJobId(), true); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "not found") {
-		t.Errorf("a record that is in no store and that its job no longer gives: %v", err)
-	}
-	lost.Close()
-
-	// A job that ended before records were kept names none.
-	before := restarted(t, store, rewriting{journal, func(j *jobmodel.Job) { j.Record = "" }})
-	if _, err := before.Record(ctx, job.GetJobId(), false); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "has no record") {
-		t.Errorf("the record of a job from before records were kept: %v", err)
-	}
-}
-
-func TestARecordIsKeptAsLongAsItsJobAndAStepAsLongAsItsGraph(t *testing.T) {
-	ctx := context.Background()
-	logs := new(syncBuffer)
-	store := storage.NewMemory()
-	coord := coordinator.New(coordinator.Config{
-		Workloads: runtime.Builtin().With(runtime.Graph{}), Store: unpinFails{store}, KeepJobs: time.Hour,
-		Log: slog.New(slog.NewTextHandler(logs, nil)),
-	})
-	defer coord.Close()
-	// A graph of one step, with nobody to run it.
-	graph, err := coord.Submit(ctx, graphOf(`{"name":"count","workload":"primes","params":{"from":0,"to":10}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var step *pb.Job
-	waitFor(t, func() bool {
-		for _, job := range coord.Jobs() {
-			if job.GetParentJobId() == graph.GetJobId() {
-				step = job
-			}
-		}
-		return step != nil
-	})
-	// The step is stopped, and the graph fails for it a moment later.
-	if step, err = coord.Cancel(step.GetJobId()); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool {
-		graph, _ = coord.Get(graph.GetJobId())
-		return graph.GetState() == pb.JobState_JOB_STATE_FAILED
-	})
-	record, err := coord.Record(ctx, graph.GetJobId(), true)
-	if err != nil || !record.GetMatches() {
-		t.Fatalf("the failed graph's record: %v, %v", record, err)
-	}
-	nodes := recordNodes(t, record)
-	if listed := nodes[linkOf(nodes[record.GetRootCid()]["graph"])]["steps"].([]any); len(listed) != 1 || linkOf(listed[0].(map[string]any)["record"]) != step.GetRecordCid() {
-		t.Errorf("the failed graph's record lists its steps as %v", listed)
-	}
-	waitFor(t, func() bool {
-		return len(recordPins(store, graph.GetJobId())) == 1 && len(recordPins(store, step.GetJobId())) == 1
-	})
-
-	// The step ended first. When its own time is up and the graph's is
-	// not, it stays: the graph's record links its record.
-	stepEnded, graphEnded := step.GetFinishedAt().AsTime(), graph.GetFinishedAt().AsTime()
-	between := stepEnded.Add(time.Hour).Add(graphEnded.Sub(stepEnded)/2 + 1)
-	if n, err := coord.Prune(between); n != 0 || err != nil {
-		t.Fatalf("pruned %d jobs when only the step's time was up, %v", n, err)
-	}
-	if n, err := coord.Prune(graphEnded.Add(time.Hour + time.Second)); n != 2 || err != nil {
-		t.Fatalf("pruned %d jobs once the graph's time was up, %v; want the graph and its step", n, err)
-	}
-	// This store cannot release a pin, which is logged and no more.
-	if !strings.Contains(logs.String(), "could not release a job's record") {
-		t.Errorf("the failure to release the records was not logged:\n%s", logs)
+	if len(pinned) != 2 || !pinned[first.Value.String()].Equal(renewed.Expires) || !pinned[changed.Value.String()].Equal(changed.Expires) {
+		t.Errorf("pins: %v", pinned)
 	}
 
-	// A store that can lets the record go with the job.
-	plain := storage.NewMemory()
-	other := coordinator.New(coordinator.Config{Workloads: runtime.Builtin(), Store: plain, KeepJobs: time.Hour, Log: quiet})
-	defer other.Close()
-	job, err := other.Submit(ctx, &pb.JobSpec{Workload: "primes", Params: []byte(`{"from":0,"to":10}`), MaxTasks: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if job, err = other.Cancel(job.GetJobId()); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return len(recordPins(plain, job.GetJobId())) == 1 })
-	if n, err := other.Prune(time.Now().Add(2 * time.Hour)); n != 1 || err != nil {
-		t.Fatalf("pruned %d jobs, %v", n, err)
-	}
-	if left := recordPins(plain, job.GetJobId()); len(left) != 0 {
-		t.Errorf("a forgotten job's record is still pinned: %v", left)
-	}
-	if _, err := plain.GC(ctx, time.Now().Add(2*storage.GracePeriod)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := plain.GetNode(ctx, cid.MustParse(job.GetRecordCid())); !errors.Is(err, storage.ErrNotFound) {
-		t.Errorf("a forgotten job's record after a collection: %v, want it gone", err)
-	}
-}
-
-// slowSplit is a workload whose jobs take their time being split, so a test
-// can act while one is on its way in.
-type slowSplit struct {
-	broken
-	entered, release chan struct{}
-}
-
-func (slowSplit) Name() string { return "slow-split" }
-
-func (s slowSplit) Split(context.Context, runtime.Blobs, []byte, int) ([][]byte, error) {
-	s.entered <- struct{}{}
-	<-s.release
-	return [][]byte{nil}, nil
-}
-
-func TestAStepIsNotBegunOnceItsGraphIsOver(t *testing.T) {
-	ctx := context.Background()
-	slow := slowSplit{entered: make(chan struct{}), release: make(chan struct{})}
-	coord := coordinator.New(coordinator.Config{Workloads: runtime.NewRegistry(runtime.Graph{}, slow), Store: storage.NewMemory(), Log: quiet})
-	defer coord.Close()
-	graph, err := coord.Submit(ctx, graphOf(`{"name":"late","workload":"slow-split"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The graph is cancelled while its step is on its way in.
-	<-slow.entered
-	if _, err := coord.Cancel(graph.GetJobId()); err != nil {
-		t.Fatal(err)
-	}
-	written, err := coord.Record(ctx, graph.GetJobId(), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	close(slow.release)
-	// Give the step every chance to arrive after all.
-	time.Sleep(50 * time.Millisecond)
-	if jobs := coord.Jobs(); len(jobs) != 1 {
-		t.Errorf("there are %d jobs, want only the graph: a step was begun for a graph that was over", len(jobs))
-	}
-	// So the graph's record is still the graph's whole story.
-	if again, err := coord.Record(ctx, graph.GetJobId(), true); err != nil || !again.GetMatches() || again.GetRootCid() != written.GetRootCid() {
-		t.Errorf("the cancelled graph's record: %v, %v", again, err)
-	}
-}
-
-// scriptedRecord is a node that gives every job the same record.
-type scriptedRecord struct {
-	pb.UnimplementedNodeServiceServer
-	record *pb.JobRecord
-}
-
-func (s scriptedRecord) GetJobRecord(context.Context, *pb.GetJobRecordRequest) (*pb.JobRecord, error) {
-	return s.record, nil
-}
-
-func TestCLIPrintsAJobsRecordAndItIsThereAfterARestart(t *testing.T) {
-	dataDir := t.TempDir()
-	addr, stop := startNode(t, "--data-dir", dataDir)
-	out := mustCLI(t, "job", "submit", "--addr", addr, "--params", `{"from":0,"to":1000}`)
-	found := regexp.MustCompile(`job ([0-9a-f]+) succeeded`).FindStringSubmatch(out)
-	if found == nil {
-		t.Fatalf("no finished job in:\n%s", out)
-	}
-	id := found[1]
-
-	printed := mustCLI(t, "job", "record", "--addr", addr, id)
-	first, rest, _ := strings.Cut(printed, "\n")
-	root, err := cid.Decode(first)
-	if err != nil || root.Type() != cid.DagCBOR {
-		t.Fatalf("the first line printed is %q, want the record's CID: %v", first, err)
-	}
-	var nodes map[string]map[string]any
-	if err := json.Unmarshal([]byte(rest), &nodes); err != nil {
-		t.Fatalf("what follows the CID is not JSON: %v\n%s", err, rest)
-	}
-	if len(nodes) != 4 || nodes[first]["job"] != id || nodes[linkOf(nodes[first]["manifest"])]["workload"] != "primes" {
-		t.Errorf("printed:\n%s", printed)
-	}
-	if checked := mustCLI(t, "job", "record", "--verify", "--addr", addr, id); !strings.HasPrefix(checked, printed) || !strings.Contains(checked, "verified:") {
-		t.Errorf("job record --verify printed:\n%s", checked)
-	}
-	stop()
-
-	// The record is on disk, in the node's own store, pinned.
-	store, err := storage.OpenLocal(filepath.Join(dataDir, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, missing := store.GetNode(context.Background(), root)
-	pins := recordPins(store, id)
-	store.Close()
-	if missing != nil || len(pins) != 1 {
-		t.Fatalf("with the node stopped, its store holds the record: %v, under %d pins", missing, len(pins))
-	}
-
-	// And the node, started again, gives the same record for the same job.
-	again := freeAddr(t)
-	startDaemon(t, "--listen", again, "--slots", "1", "--data-dir", dataDir)
-	waitForOutput(t, "primes", "nodes", "--addr", again)
-	if after := mustCLI(t, "job", "record", "--verify", "--addr", again, id); !strings.HasPrefix(after, printed) || !strings.Contains(after, "verified:") {
-		t.Errorf("after a restart job record --verify printed:\n%s\nbefore it:\n%s", after, printed)
-	}
-	if got := mustCLI(t, "job", "get", "--addr", again, id); !strings.Contains(got, "succeeded") || !strings.Contains(got, "\n  record "+first+"\n") {
-		t.Errorf("job get after a restart:\n%s", got)
-	}
-
-	for _, bad := range [][]string{
-		{"job", "record", "--addr", again},
-		{"job", "record", "--addr", again, "no-such-job"},
-		{"job", "record", "--no-such-flag"},
-		{"job", "record", "--data-dir", "\x00", id},
+	// Whatever goes wrong is reported, and leaves the name as it was.
+	for about, tt := range map[string]struct {
+		breakIt func()
+		want    string
+	}{
+		"the description cannot be stored": {func() { store.failPut = true }, "store the record"},
+		"the description cannot be kept":   {func() { store.failPin = true }, "keep the record"},
+		"the record cannot be saved":       {func() { kept.fail(false, true) }, errShelf.Error()},
+		"the record held cannot be read":   {func() { kept.fail(true, false) }, errShelf.Error()},
 	} {
-		if _, err := cli(t, bad...); err == nil {
-			t.Errorf("%v succeeded", bad)
+		description = "after " + about
+		tt.breakIt()
+		if err := keeper.publish(ctx, start.Add(recordLifetime)); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("when %s: %v, want %q", about, err, tt.want)
+		}
+		store.failPut, store.failPin = false, false
+		kept.fail(false, false)
+		if record, err := held.Held(ident.ID()); err != nil || record.Sequence != 2 {
+			t.Errorf("the name after a failure when %s: %+v, %v", about, record, err)
 		}
 	}
 }
 
-func TestCLIReportsARecordThatDoesNotMatchOrCannotBeRead(t *testing.T) {
-	record := &pb.JobRecord{
-		JobId: "j", RootCid: "bafyroot", RecomputedCid: "bafyother",
-		Nodes: []*pb.RecordNode{{Cid: "bafyroot", Json: `{"job":"j"}`}, {Cid: "bafymanifest", Json: `{"workload":"primes"}`}},
-	}
-	addr := serveFake(t, func(srv *grpc.Server) { pb.RegisterNodeServiceServer(srv, scriptedRecord{record: record}) })
-	// It is printed either way, and checking it says what is wrong.
-	out, err := cli(t, "job", "record", "--addr", addr, "j")
-	if err != nil || !strings.HasPrefix(out, "bafyroot\n{") || !strings.Contains(out, `"workload": "primes"`) {
-		t.Errorf("job record printed %q, %v", out, err)
-	}
-	out, err = cli(t, "job", "record", "--verify", "--addr", addr, "j")
-	if err == nil || !strings.Contains(err.Error(), "job j does not match its record") || !strings.Contains(err.Error(), "bafyother") || !strings.HasPrefix(out, "bafyroot\n") {
-		t.Errorf("job record --verify of a record that does not match printed %q, error %v", out, err)
-	}
+func TestANodeKeepsTryingToPublishItsRecord(t *testing.T) {
+	quickRecords(t)
+	ident := newIdentity(t)
+	store := &flakyStore{Store: storage.NewMemory(), failPut: true}
+	held := api.NewNames(&nameShelf{records: make(map[string][]byte)}, func(string) bool { return true })
+	logs := new(syncBuffer)
+	keeper := &recordKeeper{ident: ident, store: store, names: held, log: slog.New(slog.NewTextHandler(logs, nil)), describe: func() []byte { return []byte("this node") }}
 
-	record.Nodes[1].Json = `{"workload":`
-	if _, err := cli(t, "job", "record", "--addr", addr, "j"); err == nil || !strings.Contains(err.Error(), "not JSON") {
-		t.Errorf("a record that is not JSON: %v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		keeper.run(ctx)
+	}()
+	waitFor(t, func() bool { return strings.Count(logs.String(), "could not publish this node's record") >= 2 })
+	if _, err := held.Held(ident.ID()); !errors.Is(err, api.ErrNoRecord) {
+		t.Errorf("the name while its record could not be stored: %v", err)
 	}
+	cancel()
+	<-done
 }
 
-func TestANodeWithKuboKeepsRecordsWhereTheIPFSCommandCanReadThem(t *testing.T) {
-	requireKubo(t)
-	dataDir := t.TempDir()
-	addr, _ := startNode(t, "--kubo", "--data-dir", dataDir)
-	out := mustCLI(t, "job", "submit", "--addr", addr, "--params", `{"from":0,"to":1000}`)
-	found := regexp.MustCompile(`job ([0-9a-f]+) succeeded`).FindStringSubmatch(out)
-	if found == nil {
-		t.Fatalf("no finished job in:\n%s", out)
-	}
-	printed := mustCLI(t, "job", "record", "--verify", "--addr", addr, found[1])
-	root, _, _ := strings.Cut(printed, "\n")
+// ipfsTry runs the ipfs command against the Kubo repository of the node
+// whose data is in dataDir, and returns what it printed, or nothing if it
+// failed.
+func ipfsTry(dataDir string, args ...string) string {
+	cmd := exec.Command("ipfs", args...)
+	cmd.Env = append(cmd.Environ(), "IPFS_PATH="+filepath.Join(dataDir, "ipfs"))
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
+}
 
-	// Kubo reads the root as the node of linked data it is, and follows
-	// its links by name.
-	var viaKubo map[string]any
-	if err := json.Unmarshal([]byte(ipfsIn(t, dataDir, "dag", "get", root)), &viaKubo); err != nil || viaKubo["job"] != found[1] || viaKubo["kind"] != "sisyphus-job-record" {
-		t.Errorf("ipfs dag get of the record's root: %v, %v", viaKubo, err)
+func TestAPoolWithKuboCarriesItsNamesOnItsPrivateNetwork(t *testing.T) {
+	requireKubo(t)
+	addr := freeAddr(t)
+	coordinatorDir, workerDir := t.TempDir(), t.TempDir()
+	startDaemon(t, "--role", "coordinator", "--kubo", "--listen", addr, "--data-dir", coordinatorDir)
+	coordinator := nodeID(t, coordinatorDir)
+
+	// With nobody else on the network yet, the node's Kubo keeps the
+	// record itself.
+	report := strings.TrimSpace(waitForOutput(t, "baf", "blob", "put", "--addr", addr, writeFile(t, "the pool's report")))
+	mustCLI(t, "name", "publish", "--addr", addr, report)
+	if got := ipfsTry(coordinatorDir, "name", "resolve", "/ipns/"+coordinator); got != "/ipfs/"+report {
+		t.Errorf("the coordinator's Kubo resolves its name to %q, want /ipfs/%s", got, report)
 	}
-	if got := strings.TrimSpace(ipfsIn(t, dataDir, "dag", "get", root+"/manifest/workload")); got != `"primes"` {
-		t.Errorf("ipfs dag get of the manifest's workload through the root: %s", got)
+
+	startDaemon(t, "--role", "worker", "--kubo", "--coordinator", addr, "--data-dir", workerDir, "--name", "hand")
+	waitForOutput(t, "hand", "nodes", "--addr", addr)
+	waitFor(t, func() bool { return strings.Contains(peersOf(t, workerDir), coordinator) })
+	hand := nodeID(t, workerDir)
+
+	// A record published once the network has members reaches them: the
+	// worker's Kubo resolves the coordinator's name, and reads what it
+	// stands for, with IPFS's own tools.
+	notes := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, "the pool's notes")))
+	mustCLI(t, "name", "publish", "--addr", addr, notes)
+	waitFor(t, func() bool { return ipfsTry(workerDir, "name", "resolve", "/ipns/"+coordinator) == "/ipfs/"+notes })
+	if got := ipfsTry(workerDir, "cat", "/ipns/"+coordinator); got != "the pool's notes" {
+		t.Errorf("ipfs cat of the coordinator's name on the worker: %q", got)
 	}
-	if got := strings.TrimSpace(ipfsIn(t, dataDir, "dag", "get", root+"/receipts/0/attempts/0/state")); got != `"succeeded"` {
-		t.Errorf("ipfs dag get of the first receipt's first attempt through the root: %s", got)
+	// And a record a worker hands its coordinator goes the same way.
+	if _, err := as(t, workerDir, "name", "publish", "--addr", addr, report); err != nil {
+		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(ipfsIn(t, dataDir, "dag", "get", root+"/result/state")); got != `"succeeded"` {
-		t.Errorf("ipfs dag get of the result's state through the root: %s", got)
-	}
-	// A collection leaves it where it is.
-	mustCLI(t, "blob", "gc", "--addr", addr)
-	if again := mustCLI(t, "job", "record", "--addr", addr, found[1]); !strings.HasPrefix(printed, again) {
-		t.Errorf("after a collection the record reads:\n%s\nbefore it:\n%s", again, printed)
+	waitFor(t, func() bool { return ipfsTry(coordinatorDir, "name", "resolve", "/ipns/"+hand) == "/ipfs/"+report })
+}
+
+func TestANameIsHeldEvenIfKuboWillNotTakeIt(t *testing.T) {
+	logs := new(syncBuffer)
+	// Nothing is listening where this Kubo is supposed to be.
+	daemon := &kubo.Daemon{Client: kubo.NewClient(freeAddr(t))}
+	record := names.Make(newIdentity(t), mustCID(t, megabyteCID), 1, time.Hour, time.Minute, time.Now())
+	carryName(context.Background(), daemon, record, slog.New(slog.NewTextHandler(logs, nil)))
+	if !strings.Contains(logs.String(), "could not be given to Kubo") || !strings.Contains(logs.String(), record.Name) {
+		t.Errorf("logged %q", logs.String())
 	}
 }

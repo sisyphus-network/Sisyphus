@@ -66,7 +66,7 @@ func TestNodesAreStoredUnderTheHashOfTheirBytesAndReadBack(t *testing.T) {
 		}
 	}
 	// Only the root is held for the grace period: it holds the rest.
-	if pins := s.Pins(); len(pins) != 1 || !pins[0].CID.Equals(rootCID) || pins[0].Owner != graceOwner {
+	if pins := s.Pins(); len(pins) != 1 || !pins[0].CID.Equals(rootCID) || pins[0].Owner != GraceOwner {
 		t.Errorf("pins after storing two nodes: %v", pins)
 	}
 }

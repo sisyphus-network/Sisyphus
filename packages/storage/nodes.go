@@ -51,7 +51,7 @@ func (s *Store) PutNodes(ctx context.Context, root []byte, linked ...[]byte) (ci
 		}
 	}
 	s.pinMu.Lock()
-	s.pins[pinKey{name, graceOwner}] = time.Now().Add(GracePeriod)
+	s.pins[pinKey{name, GraceOwner}] = time.Now().Add(GracePeriod)
 	s.pinMu.Unlock()
 	return name, nil
 }
