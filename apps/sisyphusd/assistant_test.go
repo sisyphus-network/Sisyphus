@@ -521,6 +521,30 @@ func TestAnAssistantWhoseStateCannotBeKeptSaysSo(t *testing.T) {
 	}
 }
 
+func TestAttachmentRetentionFailureDoesNotCallTheModel(t *testing.T) {
+	served := newModel(t)
+	db := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
+	p := startPool(t, runtime.Builtin())
+	a := &assistant{store: db, pool: p.coord, workloads: runtime.Builtin(), offered: func(string) bool { return true }}
+	if err := a.SetModelConfig(nodedb.ModelConfig{Provider: ai.Ollama, BaseURL: served.URL, Model: "test-model"}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := a.AskWithFiles(context.Background(), "", "Question", []string{"missing"}, func(string, planner.Event) {
+		t.Error("a rejected attachment turn emitted planner events")
+	})
+	if id == "" || status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("AskWithFiles: %q, %v", id, err)
+	}
+	served.mu.Lock()
+	defer served.mu.Unlock()
+	if len(served.asked) != 0 {
+		t.Fatal("model was called before attachment ownership succeeded")
+	}
+	if messages, err := db.ChatMessages(id); err != nil || len(messages) != 0 {
+		t.Fatalf("rejected question was saved: %v, %v", messages, err)
+	}
+}
+
 func TestTheDesktopChoosesAServiceAndFetchesAModelForIt(t *testing.T) {
 	saved, other := newModel(t), newModel(t)
 	dataDir := t.TempDir()
