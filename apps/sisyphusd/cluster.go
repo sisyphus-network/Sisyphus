@@ -213,10 +213,10 @@ func (p *clusterPins) sync(ctx context.Context) error {
 }
 
 // joinCluster starts a cluster peer for a worker whose Kubo has joined the
-// pool's private network, in dir, as a follower of the pool's cluster: it
-// keeps what the coordinator's peer allocates to it and can change nothing.
-// It reaches the coordinator's peer through the coordinator's own port. The
-// peer runs until leave is called, which must be before the swarm is left.
+// pool's private network, as a follower of the pool's cluster: it keeps what
+// the coordinator's peer allocates to it and can change nothing. It reaches
+// the coordinator's peer through the coordinator's own port. The peer runs
+// until leave is called, which must be before the swarm is left.
 func joinCluster(ctx context.Context, swarm *poolSwarm, cfg ipfscluster.Config) (leave func(), err error) {
 	if !swarm.clustered {
 		return nil, errors.New("the coordinator does not run an IPFS Cluster for its pool: start it with --cluster, or this node without")
@@ -291,8 +291,16 @@ func showCluster(ctx context.Context, args []string) error {
 				waiting = append(waiting, fmt.Sprintf("%s (%s)", name, copied.GetStatus()))
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%d/%d\t%s\t%s\n", pin.GetCid(), len(holders), state.GetReplicas(), strings.Join(holders, ", "), strings.Join(waiting, ", "))
+		fmt.Fprintf(tw, "%s\t%d/%d\t%s\t%s\n", pin.GetCid(), len(holders), state.GetReplicas(), orDash(holders), orDash(waiting))
 	}
 	tw.Flush()
 	return nil
+}
+
+// orDash lists names for a table, in which a dash stands for none.
+func orDash(names []string) string {
+	if len(names) == 0 {
+		return "-"
+	}
+	return strings.Join(names, ", ")
 }

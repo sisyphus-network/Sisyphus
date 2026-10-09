@@ -522,6 +522,64 @@ func TestGCReportsABlockItCannotDelete(t *testing.T) {
 	}
 }
 
+func TestKeptListsEachPinnedBlobOnceAndNotWhatOnlyTheGracePeriodKeeps(t *testing.T) {
+	s := NewMemory()
+	twice := put(t, s, []byte("pinned by two owners"))
+	once := put(t, s, []byte("pinned by one, for a while"))
+	put(t, s, []byte("stored and pinned by nobody"))
+	if kept := s.Kept(); len(kept) != 0 {
+		t.Errorf("before anything is pinned, Kept = %v", kept)
+	}
+	if err := s.Pin(ctx, "alice", time.Time{}, twice, once); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Pin(ctx, "bob", time.Now().Add(time.Hour), twice); err != nil {
+		t.Fatal(err)
+	}
+	want := []cid.Cid{twice, once}
+	if want[0].String() > want[1].String() {
+		want[0], want[1] = want[1], want[0]
+	}
+	if kept := s.Kept(); len(kept) != 2 || kept[0] != want[0] || kept[1] != want[1] {
+		t.Errorf("Kept = %v, want %v", kept, want)
+	}
+}
+
+func TestAChangeOfPinsIsToldToWhoeverAskedToHear(t *testing.T) {
+	s := NewMemory()
+	c := put(t, s, []byte("data"))
+	told := 0
+	s.OnPinChange(func() { told++ })
+
+	// Storing something pins it for nobody, and is no news.
+	put(t, s, []byte("more data"))
+	if told != 0 {
+		t.Errorf("told %d times of a blob being stored", told)
+	}
+	if err := s.Pin(ctx, "alice", time.Now().Add(time.Minute), c); err != nil || told != 1 {
+		t.Errorf("after a pin: told %d times, %v", told, err)
+	}
+	// A collection that drops no pin changes nothing that is kept.
+	if gc(t, s, time.Now()); told != 1 {
+		t.Errorf("after a collection that dropped no pin: told %d times", told)
+	}
+	if done := gc(t, s, afterGrace()); done.ExpiredPins == 0 || told != 2 {
+		t.Errorf("after a collection that dropped %d pins: told %d times", done.ExpiredPins, told)
+	}
+	c = put(t, s, []byte("data"))
+	if err := s.Pin(ctx, "alice", time.Time{}, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Unpin("alice", c); err != nil || told != 4 {
+		t.Errorf("after pinning again and unpinning: told %d times, %v", told, err)
+	}
+	// And whoever stops listening hears no more.
+	s.OnPinChange(nil)
+	if err := s.Pin(ctx, "alice", time.Time{}, c); err != nil || told != 4 {
+		t.Errorf("after no longer listening: told %d times, %v", told, err)
+	}
+}
+
 func TestPinningOrUnpinningNothingDoesNothing(t *testing.T) {
 	dir := t.TempDir()
 	s := openLocal(t, dir)
