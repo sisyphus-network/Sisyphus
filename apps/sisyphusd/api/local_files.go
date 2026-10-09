@@ -47,16 +47,8 @@ func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreF
 	if ended != nil && !errors.Is(ended, io.EOF) {
 		return ended
 	}
-	name, private, start, started := first.GetName(), first.GetPrivate(), first.GetData(), false
-	as := plain
-	if private {
-		key, err := s.sealingKey()
-		if err != nil {
-			return err
-		}
-		as = func(sent io.Reader) io.Reader { return sealed.Encrypt(key, sent) }
-	}
-	c, size, err := storeUpload(ctx, s.cfg.Store, s.cfg.MaxStoreBytes, as, func() ([]byte, error) {
+	start, started := first.GetData(), false
+	file, err := s.keep(ctx, first.GetName(), first.GetPrivate(), func() ([]byte, error) {
 		if !started {
 			started = true
 			return start, ended
@@ -67,15 +59,34 @@ func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreF
 	if err != nil {
 		return err
 	}
+	return stream.SendAndClose(file)
+}
+
+// keep stores a file that arrives in pieces, sealed if it is private, and
+// puts it on record as one of the user's. recv gives each piece and then
+// io.EOF.
+func (s *localService) keep(ctx context.Context, name string, private bool, recv func() ([]byte, error)) (*nodepb.File, error) {
+	as := plain
+	if private {
+		key, err := s.sealingKey()
+		if err != nil {
+			return nil, err
+		}
+		as = func(sent io.Reader) io.Reader { return sealed.Encrypt(key, sent) }
+	}
+	c, size, err := storeUpload(ctx, s.cfg.Store, s.cfg.MaxStoreBytes, as, recv)
+	if err != nil {
+		return nil, err
+	}
 	// Held for the user, as `blob pin` holds it, until it is removed.
 	if err := s.cfg.Store.Pin(ctx, userOwner, time.Time{}, c); err != nil {
-		return status.Errorf(codes.Internal, "keep file: %v", err)
+		return nil, status.Errorf(codes.Internal, "keep file: %v", err)
 	}
 	file := nodedb.File{CID: c.String(), Name: name, Size: size, Stored: time.Now(), Private: private}
 	if err := s.cfg.Files.AddFile(file); err != nil {
-		return status.Errorf(codes.Internal, "%v", err)
+		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
-	return stream.SendAndClose(localFile(file))
+	return localFile(file), nil
 }
 
 // errNoKey is the answer to a call for something private on a node that
