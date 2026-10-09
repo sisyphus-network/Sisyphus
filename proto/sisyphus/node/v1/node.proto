@@ -260,6 +260,10 @@ message Job {
   uint64 min_memory_bytes = 15;
   uint32 min_gpus = 16;
   bool private = 17;
+  // Set on a job that is a step of another, a graph: the job it is a step
+  // of, and the step's name. A graph's own tasks are its steps, in order.
+  string parent_job_id = 18;
+  string step = 19;
 }
 
 message JobTask {

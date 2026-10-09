@@ -340,7 +340,7 @@ func localJob(job *pb.Job) *nodepb.Job {
 		InputBlobs: job.GetInputBlobs(), OutputBlobs: job.GetOutputBlobs(),
 		Progress: job.GetProgress(), TaskTimeoutSeconds: job.GetSpec().GetTaskTimeoutSeconds(),
 		MinMemoryBytes: job.GetSpec().GetMinMemoryBytes(), MinGpus: job.GetSpec().GetMinGpus(),
-		Private: job.GetPrivate(),
+		Private: job.GetPrivate(), ParentJobId: job.GetParentJobId(), Step: job.GetStep(),
 	}
 	for _, task := range job.GetTasks() {
 		out.Tasks = append(out.Tasks, &nodepb.JobTask{
