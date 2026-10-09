@@ -33,10 +33,10 @@ type node struct {
 	// broken has a stream fail part way.
 	content []string
 	broken  bool
-	// eventsEnd is what a job's events end with, when not their plain end.
-	eventsEnd error
-	stored    []*nodepb.StoreFileRequest
-	token     string
+	// watched is the context a job's events were last asked for with.
+	watched context.Context
+	stored  []*nodepb.StoreFileRequest
+	token   string
 }
 
 var errDown = status.Error(codes.Unavailable, "the node is down")
@@ -80,17 +80,12 @@ type eventStream struct {
 	grpc.ClientStream
 	left   []*nodepb.JobEvent
 	broken bool
-	// ends is what the stream ends with in place of its plain end.
-	ends error
 }
 
 func (e *eventStream) Recv() (*nodepb.JobEvent, error) {
 	if len(e.left) == 0 {
 		if e.broken {
 			return nil, errDown
-		}
-		if e.ends != nil {
-			return nil, e.ends
 		}
 		return nil, io.EOF
 	}
@@ -99,11 +94,12 @@ func (e *eventStream) Recv() (*nodepb.JobEvent, error) {
 	return next, nil
 }
 
-func (n *node) WatchJobEvents(context.Context, *nodepb.WatchJobEventsRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[nodepb.JobEvent], error) {
+func (n *node) WatchJobEvents(ctx context.Context, _ *nodepb.WatchJobEventsRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[nodepb.JobEvent], error) {
+	n.watched = ctx
 	if err := n.fail("WatchJobEvents"); err != nil {
 		return nil, err
 	}
-	return &eventStream{left: n.events, broken: n.broken, ends: n.eventsEnd}, nil
+	return &eventStream{left: n.events, broken: n.broken}, nil
 }
 
 type fileStream struct {
@@ -308,22 +304,15 @@ func TestWhatAToolReturnsIsWrittenToBeRead(t *testing.T) {
 	}
 }
 
-// A node that is listened to for a moment may be the first to say the moment
-// is over; the agent is then given what came, as when this side's clock says
-// so, and is not told of a failure.
-func TestLogsOfARunningJobEndWhenTheNodeSaysTheMomentIsOver(t *testing.T) {
-	n := &node{events: []*nodepb.JobEvent{{Seq: 1, Kind: "submitted", TaskIndex: -1}}, eventsEnd: status.Error(codes.DeadlineExceeded, "context deadline exceeded")}
-	said, err := serving(n).logs(context.Background(), logArgs{JobID: "job-1"})
-	if err != nil {
-		t.Fatalf("the logs of a running job: %v", err)
+// A running job is listened to for a moment that is timed on this side
+// alone: the node is given no deadline, so it cannot be first to end the
+// stream and have that taken for a failure.
+func TestLogsOfARunningJobGiveTheNodeNoDeadline(t *testing.T) {
+	n := &node{events: []*nodepb.JobEvent{{Seq: 1, Kind: "submitted", TaskIndex: -1}}}
+	if _, err := serving(n).logs(context.Background(), logArgs{JobID: "job-1"}); err != nil {
+		t.Fatal(err)
 	}
-	if got := said.(map[string]any); got["job_finished"] != false || got["last_seq"] != uint64(1) || len(got["events"].([]map[string]any)) != 1 {
-		t.Errorf("the logs of a running job: %v", got)
-	}
-	// An agent that stopped waiting is told so, whatever the node said.
-	stopped, stop := context.WithCancel(context.Background())
-	stop()
-	if _, err := serving(n).logs(stopped, logArgs{JobID: "job-1"}); err == nil {
-		t.Error("an agent that stopped waiting was given logs")
+	if _, timed := n.watched.Deadline(); timed {
+		t.Error("the node was told when the listening would end")
 	}
 }
