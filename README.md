@@ -249,6 +249,9 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Pins, retention periods, garbage collection and disk limits, so a node keeps data only as long as something needs it.
 - Optionally, a Kubo (IPFS) daemon run beside each node, as the same peer as the node. A pool's daemons form a private IPFS network that only its members can join, and workers fetch job data over it from whichever member has it.
 - Optionally again, an IPFS Cluster peer beside each Kubo. Whatever the coordinator pins is then held by several of the pool's nodes, and moved to another when one of them goes. Only the coordinator can change what is pinned.
+- Or the store kept in an S3-compatible bucket in place of a directory.
+- Copies on other nodes without Kubo: storage followers each hold what the coordinator has pinned, and a coordinator that loses its disk and keeps its key takes its data back from them by itself, on the strength of lists it signed.
+- The IPFS Pinning Service API, served by a node and used by one, and a read-only HTTP gateway for what a node stores.
 - Names for what changes: a node's ID stands for whichever stored file the node last pointed it at, in a signed IPNS record that a coordinator keeps for itself and its members and that anyone can check.
 - One open port per pool, on the coordinator. Workers connect outwards only, so they run behind home routers and firewalls as they are. Every node is a libp2p host under its own ID; the coordinator relays between workers that cannot reach each other, as does any worker that opens a port for it, and those that can connect directly do.
 - Private jobs, whose inputs, intermediate data and results are sealed with a key held only by the submitter and the nodes working on the job.
@@ -257,9 +260,11 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Jobs kept in a SQLite database, so a coordinator that is restarted takes up its unfinished jobs where they were.
 - A planner: ask a node a question in plain words, and a language model (from Ollama, Anthropic, OpenAI or anything that speaks as OpenAI does) decides what to compute, has the pool compute it, and answers from the result.
 - Thinking on the pool: workers with Ollama offer their models, and the coordinator offers them all as one OpenAI-style service, which the planner or any agent can use.
-- An MCP server and a skill, so that Claude Code and other agents can run jobs on a pool.
 - An MCP server and an agent skill: `sisyphusd mcp` offers the pool to any AI agent that speaks the Model Context Protocol, and `skills/sisyphus` teaches one to use it.
 - Jobs that can be followed as they run, with progress, logs and a record of what happened to them, and cancelled or given a time limit.
+- A finished job's record: its history as linked data under one CID, which anyone can check against the job. A private job's record commits to its results without naming them.
+- Jobs made of steps, each a job of its own that can use the results of those before it.
+- The node's local API over Connect and gRPC-Web as well as gRPC, so that a page in a browser can use it.
 - A desktop client that shows a node and its pool, and admits or removes workers.
 - A first real workload, `transcode`: a video is cut into stretches, encoded by ffmpeg on different workers, and joined.
 - Container images as jobs: a worker whose owner allows it runs any image, one copy for each task, with its output stored and its log followed live.
