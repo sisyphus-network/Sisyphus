@@ -5,35 +5,159 @@
     radial-gradient(ellipse at 0% 100%, color-mix(in srgb, var(--app-accent) 3%, transparent), transparent 38%);
 }
 .app-shell--workspace { height: 100dvh; min-height: 0; overflow: hidden; }
-.app-shell--workspace .app-main { height: 100%; overflow: hidden; padding: 0; }
+.app-shell--workspace .app-main { position: relative; height: 100%; overflow: hidden; padding: 0; }
+.app-shell--advanced .app-main { position: relative; }
+/* Keep the mounted workspace at viewport size even behind the advanced shell.
+   Otherwise its narrower content column triggers panel resize transitions. */
+.workspace-persistent { position: fixed; inset: 0; min-width: 0; min-height: 0; }
 .route-transition { min-width: 0; transform-origin: center top; }
 .app-shell--workspace .route-transition { height: 100%; }
 .workspace-shell { position: relative; box-sizing: border-box; height: 100%; min-height: 0; padding: 10px; overflow: hidden; }
-.workspace-panels { gap: 0; }
-.workspace-panel { min-width: 0; min-height: 0; padding: 6px; }
+.workspace-desktop-stage { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+.workspace-history-slot { box-sizing: border-box; flex: 0 0 0; min-width: 0; overflow: hidden; transition: flex-basis 360ms cubic-bezier(0.22, 1, 0.36, 1); }
+.workspace-history-slot[data-resizing="true"] { transition: none; }
+.workspace-history-host { box-sizing: border-box; width: 100%; height: 100%; padding: 6px; }
+.sisyphus-history-desktop { width: 100%; height: 100%; min-width: 0; overflow: hidden; opacity: 0; pointer-events: none; transition: opacity 160ms ease; }
+.sisyphus-history-desktop header h2,
+.sisyphus-history-desktop header p,
+.sisyphus-history-drawer h2,
+.sisyphus-history-drawer p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sisyphus-history-desktop:not([inert]) { opacity: 1; pointer-events: auto; transition-delay: 100ms; }
+.workspace-history-resize-handle { position: relative; z-index: 8; display: grid; width: 16px; flex: 0 0 16px; place-items: center; border: 0; background: transparent; cursor: col-resize; opacity: 1; pointer-events: auto; touch-action: none; }
+.workspace-history-resize-handle::before { width: 4px; height: 32px; border-radius: 99px; background: color-mix(in srgb, var(--app-muted) 48%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-line) 75%, transparent); content: ""; transition: height 180ms ease, background 180ms ease, box-shadow 180ms ease; }
+.workspace-history-resize-handle:hover::before,
+.workspace-history-resize-handle:focus-visible::before,
+.workspace-history-resize-handle:active::before { height: 46px; background: var(--app-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-accent) 14%, transparent); }
+.workspace-history-resize-handle:focus-visible { outline: none; }
+.workspace-chat-desktop-pane { box-sizing: border-box; flex: 1 1 0; width: 0; min-width: 280px; min-height: 0; padding: 6px; }
+.workspace-topology-slot { box-sizing: border-box; flex: 0 0 0; min-width: 0; min-height: 0; overflow: hidden; padding: 0; transition: flex-basis 360ms cubic-bezier(0.22, 1, 0.36, 1), padding 360ms cubic-bezier(0.22, 1, 0.36, 1); }
+.workspace-topology-slot[data-open="true"] { padding: 6px; }
+.workspace-topology-slot[data-resizing="true"] { transition: none; }
+.workspace-topology-resize-handle { position: relative; z-index: 8; display: grid; width: 18px; flex: 0 0 18px; place-items: center; border: 0; background: transparent; cursor: col-resize; outline: none; touch-action: none; }
+.workspace-topology-resize-handle > span { width: 4px; height: 30px; border-radius: 99px; background: color-mix(in srgb, var(--app-muted) 45%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-line) 65%, transparent); transition: height .18s ease, background .18s ease, box-shadow .18s ease; }
+.workspace-topology-resize-handle:hover > span, .workspace-topology-resize-handle:focus-visible > span, .workspace-topology-resize-handle:active > span { height: 46px; background: var(--app-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-accent) 12%, transparent); }
+.workspace-topology-resize-handle:focus-visible { outline: none; }
 .workspace-glass { isolation: isolate; overflow: hidden; }
 .workspace-chat { z-index: 2; }
-.workspace-network { background: color-mix(in srgb, var(--app-wash) 44%, var(--app-card)); }
-.workspace-resize-handle { position: relative; z-index: 5; width: 18px; flex: 0 0 18px; border: 0; background: transparent; cursor: col-resize; outline: none; }
-.workspace-resize-handle > div { width: 4px; height: 30px; border-radius: 99px; background: color-mix(in srgb, var(--app-muted) 45%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-line) 65%, transparent); transition: height .18s ease, background .18s ease, box-shadow .18s ease; }
-.workspace-resize-handle:hover > div, .workspace-resize-handle:focus-visible > div, .workspace-resize-handle[data-separator="active"] > div { height: 46px; background: var(--app-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-accent) 12%, transparent); }
+.workspace-chat-surface { min-height: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .workspace-chat textarea::placeholder { color: var(--app-muted); }
+@media (min-width: 901px) {
+  .workspace-chat { padding: 18px 20px 22px; }
+  .workspace-chat .sisyphus-chat-toolbar { border-bottom: 0; }
+  .workspace-chat .sisyphus-conversation-title { position: absolute; left: 50%; width: calc(100% - 240px); transform: translateX(-50%); text-align: center; font-size: 14px; font-weight: 500; color: var(--app-ink); }
+}
 @media (max-width: 900px) {
-  .workspace-shell--compact { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 10px 10px 84px; }
+  .workspace-shell--compact { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 0 0 96px; transition: padding-bottom 280ms cubic-bezier(0.22, 1, 0.36, 1); }
   .workspace-mobile-stage { position: relative; flex: 1 1 auto; width: 100%; min-height: 0; overflow: hidden; isolation: isolate; }
   .workspace-mobile-pane { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; overflow: hidden; border-radius: 22px; will-change: transform, opacity; backface-visibility: hidden; }
   .workspace-mobile-pane > section { box-shadow: 0 16px 48px color-mix(in srgb, var(--app-ink) 10%, transparent); }
-  .workspace-mobile-dock { position: fixed; z-index: 20; left: 50%; bottom: max(8px, env(safe-area-inset-bottom)); transform: translateX(-50%); }
-  .workspace-mobile-dock .liquid-dock-wrap { width: 200px; margin: 0; }
-  .workspace-mobile-dock .liquid-dock { width: 200px; height: 70px; padding: 8px 12px 10px; }
+  .workspace-mobile-pane > .workspace-network { box-shadow: none; }
+  .workspace-mobile-dock { position: fixed; z-index: 20; inset-inline: 0; bottom: max(8px, env(safe-area-inset-bottom)); display: flex; justify-content: center; box-sizing: border-box; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); pointer-events: none; }
+  .workspace-mobile-dock .liquid-dock-wrap { width: min(244px, 100%); margin: 0; pointer-events: auto; }
+  .workspace-mobile-dock .liquid-dock { width: 100%; height: 70px; padding: 8px 12px 10px; }
   .workspace-mobile-dock .liquid-dock__option { flex: 1 1 0; width: auto; padding-inline: 0; }
-  .workspace-mobile-dock .liquid-dock__active { right: 12px; width: 84px; transform: translateX(calc(var(--liquid-index) * -92px)); }
-  .workspace-mobile-dock .liquid-dock[data-active="false"] .liquid-dock__active { transform: translateX(calc(var(--liquid-index) * -92px)) scale(.82,.9); }
+  .workspace-mobile-dock .liquid-dock__active { right: 12px; width: calc((100% - 32px) / 2); transform: translateX(calc(var(--liquid-index) * -1 * (100% + 8px))); }
+  .workspace-mobile-dock .liquid-dock[data-active="false"] .liquid-dock__active { transform: translateX(calc(var(--liquid-index) * -1 * (100% + 8px))) scale(.82,.9); }
   .workspace-chat { min-height: 0; padding-inline: 1rem; }
-  .workspace-chat textarea { min-height: 5rem; }
   .workspace-shell--compact { touch-action: pan-y; }
   html:has(.app-shell--workspace),
   body:has(.app-shell--workspace) { overflow: hidden; }
+}
+
+@media (max-width: 600px) {
+  .workspace-shell--compact { padding: 0 0 96px; }
+  .workspace-shell--compact .workspace-mobile-stage,
+  .workspace-shell--compact .workspace-mobile-pane { border-radius: 0; }
+  .workspace-shell--compact .workspace-mobile-pane > section { box-shadow: none; }
+  .workspace-shell--compact .workspace-chat { padding: max(10px, env(safe-area-inset-top)) 18px 6px; }
+  .workspace-shell--compact .workspace-chat > .flex:first-child { min-height: 42px; }
+  .workspace-shell--compact .workspace-chat > div:nth-child(2) { max-width: none; }
+  .workspace-shell--compact .workspace-chat-surface { flex: 1 1 auto; }
+}
+
+/* Tablet/phone chat is a full-bleed conversation surface, like Startly: no app card,
+   no workspace framing, and no duplicate page/node chrome above the conversation. */
+@media (max-width: 900px) {
+  .app-shell--workspace { background: transparent !important; background-image: none !important; }
+  .app-shell--workspace .app-main,
+  .app-shell--workspace .route-transition,
+  .app-shell--workspace .route-transition > *,
+  .workspace-shell--compact,
+  .workspace-mobile-stage,
+  .workspace-mobile-pane,
+  .workspace-mobile-pane > .workspace-chat,
+  .workspace-mobile-pane > .workspace-network {
+    background: transparent !important;
+    background-image: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .workspace-shell--compact { padding: 0 0 96px; }
+  .workspace-shell--compact .workspace-chat { padding: max(8px, env(safe-area-inset-top)) 18px 4px; }
+  .workspace-shell--compact .workspace-chat-header,
+  .workspace-shell--compact .workspace-chat-intro { display: none !important; }
+  .workspace-shell--compact .workspace-chat-content,
+  .workspace-shell--compact .workspace-chat-surface { width: 100%; max-width: none; flex: 1 1 auto; }
+  .workspace-shell--compact .workspace-chat-toolbar { display: flex !important; }
+  .workspace-shell--compact .sisyphus-chat-scroll { top: 40px !important; padding-inline: 0; }
+  .workspace-shell--compact .sisyphus-chat-scroll > div { max-width: 44rem; padding-inline: 12px; }
+  .workspace-shell--compact .sisyphus-agent-chat.is-browser > [role="status"] { margin: 8px 12px 0; }
+  .workspace-shell--compact .sisyphus-agent-chat.is-browser .sisyphus-chat-scroll { top: 78px !important; }
+  .workspace-mobile-dock {
+    height: 80px;
+    overflow: hidden;
+    transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: height, opacity, transform;
+  }
+  .workspace-shell--compact .sisyphus-composer-suggestions {
+    max-height: 3rem;
+    transition: max-height 240ms cubic-bezier(0.22, 1, 0.36, 1), margin 240ms ease, opacity 160ms ease, transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: max-height, opacity, transform;
+  }
+  body:has(.workspace-shell--compact textarea:focus) .workspace-mobile-dock,
+  body:has(.workspace-shell--compact .sisyphus-agent-chat[data-chat-loading]) .workspace-mobile-dock {
+    height: 0;
+    pointer-events: none;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(110%);
+  }
+  body:has(.workspace-shell--compact textarea:focus) .workspace-shell--compact,
+  body:has(.workspace-shell--compact .sisyphus-agent-chat[data-chat-loading]) .workspace-shell--compact { padding-bottom: 0; }
+  body:has(.workspace-shell--compact textarea:focus) .workspace-mobile-dock .liquid-dock-wrap,
+  body:has(.workspace-shell--compact .sisyphus-agent-chat[data-chat-loading]) .workspace-mobile-dock .liquid-dock-wrap { height: 0; margin: 0; }
+  body:has(.workspace-shell--compact textarea:focus) .workspace-shell--compact .sisyphus-composer-suggestions {
+    max-height: 0;
+    margin-bottom: 0;
+    pointer-events: none;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  .workspace-shell--compact .sisyphus-composer-footer {
+    max-height: 1rem;
+    overflow: hidden;
+    transition: max-height 240ms cubic-bezier(0.22, 1, 0.36, 1), margin 240ms ease, opacity 160ms ease;
+  }
+  body:has(.workspace-shell--compact textarea:focus) .sisyphus-composer-footer,
+  body:has(.workspace-shell--compact .sisyphus-agent-chat[data-chat-loading]) .sisyphus-composer-footer { max-height: 0; margin-top: 0; opacity: 0; }
+  .workspace-shell--compact .sisyphus-composer-suggestions { max-width: 100%; }
+  .workspace-shell--compact .sisyphus-composer { max-width: 100%; }
+}
+
+@media (max-width: 900px) {
+  .workspace-desktop-stage,
+  .workspace-history-slot,
+  .workspace-chat-desktop-pane,
+  .workspace-topology-slot,
+  .workspace-history-resize-handle,
+  .workspace-topology-resize-handle { display: none; }
+}
+
+@media (max-width: 600px) {
+  .workspace-shell--compact .workspace-chat { padding-inline: 14px; }
+  .workspace-shell--compact .sisyphus-chat-scroll > div { padding-inline: 8px; }
 }
 
 .app-shell--advanced { min-height: 100dvh; }
@@ -62,8 +186,12 @@
   .app-global-header { position: relative; z-index: 4; flex: 0 0 58px; background: color-mix(in srgb, var(--app-bg) 88%, transparent); backdrop-filter: blur(14px); }
   .app-shell--advanced .app-main { display: flex; flex: 1 1 auto; flex-direction: column; height: 100%; min-height: 0; overflow: auto; padding-bottom: 96px; }
   .app-shell--advanced .route-transition { flex: 1 0 auto; min-height: 100%; }
-  .app-mobile-dock { position: fixed; z-index: 10; inset-inline: 0; bottom: max(8px, env(safe-area-inset-bottom)); display: flex; justify-content: center; pointer-events: none; }
-  .app-mobile-dock .liquid-dock-wrap { width: min(244px, calc(100vw - 32px)); margin: 0; pointer-events: auto; }
+  .app-mobile-dock { position: fixed; z-index: 10; inset-inline: 0; bottom: max(8px, env(safe-area-inset-bottom)); display: flex; justify-content: center; box-sizing: border-box; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); pointer-events: none; }
+  .app-mobile-dock .liquid-dock-wrap { width: min(280px, 100%); margin: 0; pointer-events: auto; }
+  .app-mobile-dock .liquid-dock { width: 100%; }
+  .app-mobile-dock .liquid-dock__option { flex: 1 1 0; min-width: 0; width: auto; padding-inline: 0; }
+  .app-mobile-dock .liquid-dock__active { right: 12px; width: calc((100% - 48px) / 4); transform: translateX(calc(var(--liquid-index) * -1 * (100% + 8px))); }
+  .app-mobile-dock .liquid-dock[data-active="false"] .liquid-dock__active { transform: translateX(calc(var(--liquid-index) * -1 * (100% + 8px))) scale(.82,.9); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -72,11 +200,11 @@
 
 .network-visual {
   isolation: isolate;
-  background: radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--app-accent) 9%, transparent), transparent 62%);
+  background: transparent;
 }
 
-.network-globe-canvas { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; }
-.network-globe-stage { position: relative; flex: 0 0 auto; max-width: 100%; max-height: 100%; aspect-ratio: 1; overflow: hidden; }
+.network-globe-canvas { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; container-type: size; }
+.network-globe-stage { position: relative; flex: 0 0 auto; width: min(90cqw, 90cqh) !important; height: min(90cqw, 90cqh) !important; max-width: none; max-height: none; aspect-ratio: 1; overflow: hidden; }
 .network-globe-stage > div { width: 100% !important; height: 100% !important; outline: none; }
 .network-globe-stage canvas { display: block; max-width: 100%; max-height: 100%; }
 
