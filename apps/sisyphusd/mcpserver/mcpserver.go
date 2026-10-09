@@ -23,7 +23,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -332,8 +331,12 @@ func (s *server) jobLogs(ctx context.Context, _ *mcp.CallToolRequest, args logAr
 func (s *server) logs(ctx context.Context, args logArgs) (any, error) {
 	// A finished job's events end by themselves; a running job's go on, so
 	// they are listened to for a moment and what came is returned.
-	listening, done := context.WithTimeout(ctx, listenFor)
+	// The moment is timed here and the node is not told of it: a node that
+	// knows the deadline may be first to end the stream, and its word for
+	// why cannot be told from a failure.
+	listening, done := context.WithCancel(ctx)
 	defer done()
+	defer time.AfterFunc(listenFor, done).Stop()
 	events, err := s.Node.WatchJobEvents(listening, &nodepb.WatchJobEventsRequest{JobId: args.JobID, AfterSeq: args.AfterSeq})
 	if err != nil {
 		return nil, err
@@ -347,9 +350,7 @@ func (s *server) logs(ctx context.Context, args logArgs) (any, error) {
 			break
 		}
 		if err != nil {
-			// The node may say the moment is over before this side's own
-			// clock does, so its word for it ends the listening as well.
-			if (listening.Err() != nil || status.Code(err) == codes.DeadlineExceeded) && ctx.Err() == nil {
+			if listening.Err() != nil && ctx.Err() == nil {
 				break
 			}
 			return nil, err
