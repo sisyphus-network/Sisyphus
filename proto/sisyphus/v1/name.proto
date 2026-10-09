@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package sisyphus.v1;
+
+option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
+
+// NameService keeps what nodes have published under their names. A name is
+// a node's ID, and stands for the content its node last pointed it at, in a
+// record signed with the node's key. The records are IPNS records.
+service NameService {
+  // Publish hands this node the caller's latest record, which it keeps and
+  // from then on gives to whoever resolves the caller's name. A node may
+  // publish only under its own name. A record older than the one held is
+  // refused.
+  rpc Publish(PublishNameRequest) returns (PublishNameResponse);
+
+  // Resolve returns the latest record this node holds for a name: its own,
+  // or that of a node it has admitted. The record is returned as it was
+  // signed, expired or not, and it is for the caller to check it.
+  rpc Resolve(ResolveNameRequest) returns (ResolveNameResponse);
+}
+
+message PublishNameRequest {
+  // A signed IPNS record whose value is /ipfs/<cid>.
+  bytes record = 1;
+}
+
+message PublishNameResponse {}
+
+message ResolveNameRequest {
+  // The node ID, as the node prints it or as IPFS programs do.
+  string name = 1;
+}
+
+message ResolveNameResponse {
+  bytes record = 1;
+}

@@ -45,6 +45,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	"github.com/sisyphus-network/Sisyphus/packages/kubo"
+	"github.com/sisyphus-network/Sisyphus/packages/names"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -64,9 +65,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	advertise := fs.String("advertise", "", "worker-only node: the address other workers should use to reach --serve, if not the same")
 	modelsFrom := fs.String("models-from", "", "worker role: offer the language models of the Ollama at this address, such as http://127.0.0.1:11434, to the pool's jobs. Whoever may submit jobs can then use them, and this machine sees what they ask")
 	inferenceListen := fs.String("inference-listen", "", "coordinator: loopback address to offer the pool's language models on, as a service speaking OpenAI's dialect whose key is the node's API token; off if empty")
-	gatewayListen := fs.String("gateway-listen", "", "address to serve stored files on by content ID, read-only, as GET /ipfs/<cid>, to whoever shows the node's API token; off if empty")
+	gatewayListen := fs.String("gateway-listen", "", "address to serve stored files on, read-only, by content ID as GET /ipfs/<cid> and by the names this node answers for as GET /ipns/<node ID>, to whoever shows the node's API token; off if empty")
 	pinningListen := fs.String("pinning-listen", "", "coordinator: address to serve the IPFS Pinning Service API on, so that ipfs pin remote and other standard tools can have this node keep data; its key is in the file pinning.token in the data directory; off if empty")
 	gatewayOpen := fs.Bool("gateway-open", false, "let anyone who can reach --gateway-listen and knows a file's content ID fetch it, without the token. Sealed files are never served")
+	publishRecord := fs.Bool("publish-record", false, "coordinator role: keep a description of this node published under its name, which is its ID: its version, the workloads it takes and its pool's members by ID and role. Whoever may resolve the name can read it")
 	webListen := fs.String("web-listen", "", "loopback address to serve the local API on to web pages, as gRPC-Web and Connect, with every call needing the node's API token; off if empty")
 	webOrigins := fs.String("web-origin", "", "the origins of the web pages that may use --web-listen, separated by commas, such as http://localhost:5173; pages from anywhere else are refused")
 	apiListen := fs.String("api-listen", "", "loopback address to serve the local API on, for the desktop client on this machine (it expects 127.0.0.1:50051); off if empty")
@@ -154,6 +156,9 @@ func runDaemon(ctx context.Context, args []string) error {
 		case *s3Bucket == "":
 			return errors.New("--s3-endpoint needs --s3-bucket, the bucket to keep stored data in")
 		}
+	}
+	if *publishRecord && !isCoordinator {
+		return errors.New("--publish-record is for a node that coordinates a pool: it is the pool it describes")
 	}
 	if isCoordinator && *invitation != "" {
 		return errors.New("--join is for worker-only nodes")
@@ -338,6 +343,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// held is the names this node answers for. A node that coordinates no
+	// pool is handed no records, and so answers for none.
+	held := api.NewNames(db, func(string) bool { return false })
 
 	if isCoordinator {
 		admitted, err := access.Open(db, ident.ID())
@@ -421,7 +429,17 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		defer host.Close()
 		lis, _ := host.TLSListener() // fails only if asked for twice
-		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore, WorkFor: takes, Replication: replicated}
+		// A coordinator answers for its own name and for those of the nodes
+		// it has admitted. With Kubo, what it is handed goes on to the
+		// pool's private network as well.
+		held = api.NewNames(db, func(id string) bool {
+			_, admitted := admitted.Role(id)
+			return admitted
+		})
+		if sidecar != nil {
+			held.OnPublish(func(record *names.Record) { carryName(ctx, sidecar, record, log) })
+		}
+		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore, WorkFor: takes, Names: held, Replication: replicated}
 		if swarm != nil {
 			config.Swarm = swarm
 			coord.AnnounceSwarm(swarm.Fingerprint())
@@ -447,6 +465,21 @@ func runDaemon(ctx context.Context, args []string) error {
 		}()
 		log.Info("coordinator listening", "addr", lis.Addr().String(), "name", *name)
 		go func() { stopped <- srv.Serve(lis) }()
+		if *publishRecord {
+			keeper := &recordKeeper{ident: ident, store: store, names: held, log: log, describe: func() []byte {
+				return describeNode(ident.ID(), version, workloads.Names(), admitted.Members())
+			}}
+			described := make(chan struct{})
+			// The store and the database must outlive the keeper.
+			defer func() {
+				cancel()
+				<-described
+			}()
+			go func() {
+				defer close(described)
+				keeper.run(ctx)
+			}()
+		}
 		// The node's own worker connects to it as any other would, and
 		// expects to find the node itself at the other end.
 		*join = loopback(lis.Addr())
@@ -738,7 +771,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			lis.Close()
 			return err
 		}
-		gateway := &http.Server{Handler: api.NewGateway(readable, token, *gatewayOpen)}
+		gateway := &http.Server{Handler: api.NewGateway(readable, held, token, *gatewayOpen)}
 		defer gateway.Close()
 		log.Info("gateway listening", "addr", lis.Addr().String(), "open", *gatewayOpen)
 		go gateway.Serve(lis)
@@ -1307,6 +1340,22 @@ func (s *poolSwarm) adopt(ctx context.Context, coordinator string, creds credent
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// kuboHandover is how long a node gives its Kubo to take a name's record
+// and pass it to the peers that should hold it.
+var kuboHandover = 30 * time.Second
+
+// carryName gives a name's record to the node's Kubo, which keeps it and
+// passes it to the other members' daemons, so that the pool's private
+// network can resolve the name as well as the node can. The node holds the
+// record whether or not this works.
+func carryName(ctx context.Context, daemon *kubo.Daemon, record *names.Record, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(ctx, kuboHandover)
+	defer cancel()
+	if err := daemon.PutName(ctx, record.Name, record.Bytes()); err != nil {
+		log.Warn("a name's record is held but could not be given to Kubo, so the pool's private IPFS network does not carry it", "name", record.Name, "error", err)
 	}
 }
 

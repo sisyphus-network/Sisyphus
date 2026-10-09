@@ -30,6 +30,8 @@ const usage = `Usage:
   sisyphusd blob unpin <cid>       stop keeping a blob
   sisyphusd blob pins              list what the node is keeping, and for whom
   sisyphusd blob gc                delete stored data that nothing is keeping
+  sisyphusd name publish <cid>     point this node's name, which is its ID, at a stored file (--lifetime, --ttl)
+  sisyphusd name resolve <node-id> ask a node what a name stands for, check the answer and print the CID
   sisyphusd blob replicas [<cid>]  show which storage followers hold copies of what the node has pinned
   sisyphusd blob restore           fetch back what followers hold from a store this node has lost
   sisyphusd blob pin-remote <cid> [name]  ask a pinning service to keep a blob too (--service <url> --key-file <file>, --wait)
@@ -102,6 +104,8 @@ func run(ctx context.Context, args []string) error {
 		return listNodes(ctx, args[1:])
 	case "blob":
 		return blobCommand(ctx, args[1:])
+	case "name":
+		return nameCommand(ctx, args[1:])
 	case "key":
 		return keyCommand(args[1:])
 	case "pool":

@@ -77,6 +77,8 @@ type pool struct {
 	workerIdents map[string]*identity.Identity
 	// rawIdents are the identities of hand-driven workers.
 	rawIdents map[*rawWorker]*identity.Identity
+	// names is where the coordinator keeps the records of names.
+	names *nameShelf
 	// copies are the stores in which the storage followers started by name
 	// keep what they hold for the pool, addresses where each serves blobs,
 	// and unfollow how to stop each following while it goes on serving.
@@ -182,6 +184,7 @@ func startPoolKeeping(t *testing.T, workloads *runtime.Registry, wrap func(*stor
 		t.Fatal(err)
 	}
 	gets := new(atomic.Int32)
+	kept := &nameShelf{records: make(map[string][]byte)}
 	replicated := replication.New(replication.Config{
 		ID: ident.ID(), Store: store, StoreID: "first", Replicas: replicas, Log: slog.New(slog.NewTextHandler(logs, nil)),
 		Address: coord.ServeAddress,
@@ -192,7 +195,10 @@ func startPoolKeeping(t *testing.T, workloads *runtime.Registry, wrap func(*stor
 		},
 	})
 	srv := api.NewServer(
-		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Replication: replicated},
+		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Replication: replicated, Names: api.NewNames(kept, func(id string) bool {
+			_, admitted := admitted.Role(id)
+			return admitted
+		})},
 		grpc.StreamInterceptor(countBlobGets(gets)),
 	)
 	go srv.Serve(lis)
@@ -218,6 +224,7 @@ func startPoolKeeping(t *testing.T, workloads *runtime.Registry, wrap func(*stor
 		coord: coord, conn: conn, logs: logs, stop: stop,
 		ident: ident, access: admitted, workerIdents: make(map[string]*identity.Identity),
 		rawIdents: make(map[*rawWorker]*identity.Identity),
+		names:     kept,
 		copies:    make(map[string]*storage.Store), addresses: make(map[string]string), unfollow: make(map[string]func()),
 	}
 }

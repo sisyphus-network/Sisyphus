@@ -29,8 +29,9 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `packages/hardware` | What a machine has: processor, memory, graphics cards. Reads Linux's `/proc` and asks `nvidia-smi`; unknown elsewhere. |
 | `packages/identity` | A node's key pair and the ID derived from it; signing and verifying; the TLS settings nodes connect with. |
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
+| `packages/names` | The signed records behind names, which are IPNS records: making one with a node's key, checking one against the name, and telling which of two is newer. No network. |
 | `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
-| `packages/nodedb` | The node's SQLite database, where a coordinator keeps its jobs, its members, the invitations it has issued and the requests made of it as a pinning service. Schema changes are new numbered files in `migrations/`, never edits to old ones. |
+| `packages/nodedb` | The node's SQLite database, where a coordinator keeps its jobs, its members, the invitations it has issued, the requests made of it as a pinning service and the records of the names it answers for. Schema changes are new numbered files in `migrations/`, never edits to old ones. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
 | `packages/s3` | A bucket in an S3-style object store, for a store that keeps its blocks there. Its tests run against a real one, SeaweedFS in a container. |
 | `packages/sealed` | Encrypting a private job's blobs: the format, sealing and seekable unsealing. |

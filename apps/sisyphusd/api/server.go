@@ -36,6 +36,9 @@ type Config struct {
 	// WorkFor is the list of nodes this one takes work from, if it keeps
 	// one.
 	WorkFor WorkFor
+	// Names is the names this node answers for, which admitted nodes
+	// publish their own among and resolve.
+	Names *Names
 	// Replication has the node's storage followers keep copies of what is
 	// in Store. Without it nothing is asked of them.
 	Replication *replication.Manager
@@ -43,9 +46,9 @@ type Config struct {
 
 // NewServer returns a gRPC server for a node running the coordinator role:
 // the job and worker services for its coordinator, blob transfer and pinning
-// for its store, and management of who may connect. Every connection is TLS
-// with both ends identified by their node keys, and every call is checked
-// against the caller's role.
+// for its store, the names it answers for, and management of who may
+// connect. Every connection is TLS with both ends identified by their node
+// keys, and every call is checked against the caller's role.
 func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	opts = append(opts, grpc.Creds(credentials.NewTLS(cfg.Identity.ServerTLS())))
 	opts = append(opts, cfg.Access.ServerOptions()...)
@@ -72,6 +75,7 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 	pb.RegisterPoolServiceServer(srv, &poolService{
 		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, workFor: cfg.WorkFor,
 	})
+	pb.RegisterNameServiceServer(srv, &nameService{names: cfg.Names})
 	tunnels := &tunnelService{}
 	if cfg.Swarm != nil {
 		tunnels.swarm = cfg.Swarm.Local

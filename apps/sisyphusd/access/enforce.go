@@ -51,6 +51,11 @@ var allowed = map[string][]Role{
 	pb.BlobService_Replicas_FullMethodName:       {Client},
 	pb.BlobService_Restore_FullMethodName:        {Client},
 
+	// A member publishes under its own name, which the service holds it to,
+	// and resolves the names of the pool.
+	pb.NameService_Publish_FullMethodName: {Worker, Client},
+	pb.NameService_Resolve_FullMethodName: {Worker, Client},
+
 	pb.NodeService_SubmitJob_FullMethodName:      {Client},
 	pb.NodeService_GetJob_FullMethodName:         {Client},
 	pb.NodeService_WatchJob_FullMethodName:       {Client},

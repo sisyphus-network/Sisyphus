@@ -254,6 +254,49 @@ curl -H "Authorization: Bearer $(cat "$(bin/sisyphusd data-dir)/api.token")" htt
 - `?filename=report.pdf` names the file for the browser and decides what kind it is taken for; without it the kind is told from how the file begins. Part of a file may be asked for, so video can be played and seeked from it.
 - It serves single files only. A directory, or a path inside one, is not something a node stores.
 
+### Names for what changes
+
+A content ID names bytes that never change. A node's **name** is its ID, and stands for whichever file the node last pointed it at:
+
+```sh
+CID=$(bin/sisyphusd blob put report.txt)
+bin/sisyphusd name publish "$CID"       # prints the name: this node's ID
+bin/sisyphusd name resolve <node-id>    # prints the content ID the name now stands for
+curl -H "Authorization: Bearer $(cat "$(bin/sisyphusd data-dir)/api.token")" http://127.0.0.1:8080/ipns/<node-id>
+```
+
+- **What is published is a signed record**: the content ID, a sequence number that only goes up, and the time until which the record is good, signed with the node's key. It is an IPNS record, the kind Kubo makes, so other IPFS programs can read and check it. `name publish` signs it on the machine it is run on, with the key in `--data-dir`, and hands it to the node at `--addr`, which keeps it in its database, across restarts, and answers with it from then on.
+- **A node publishes under its own name only.** A coordinator takes a record from its owner's command line and from each node it has admitted, worker or client, and each record must be signed by the node that hands it over. So a worker's name is answered for by its coordinator once `sisyphusd name publish --addr <coordinator> <cid>` has been run on the worker's machine. A record that another node signed is refused, whoever signed it, and so is one no newer than the record held. A node removed from the pool is no longer answered for.
+- **Whoever resolves a name checks the answer.** `name resolve` asks the node at `--addr`, which must be this machine's own node or one it has joined, then checks the record's signature against the name and refuses a record that has expired. The node asked is not taken at its word.
+- **Through the gateway**, `/ipns/<node ID>` serves the file the name stands for, under the rules `/ipfs/<cid>` has: the token unless `--gateway-open`, and never a sealed file. The name may be spelled as the node prints it (`12D3KooW...`) or as IPFS programs do (`k51...`). Asked with `Accept: application/vnd.ipfs.ipns-record`, or with `?format=ipns-record`, the gateway returns the signed record itself instead, as the IPFS gateway specification describes, for a reader who would rather check it than trust the gateway. Neither answer is marked as keepable for good: a browser or cache may keep it for the record's `--ttl`, or for what is left of the record's life if that is less.
+- **A record runs out.** It is good for `--lifetime`, 48 hours unless told otherwise. After that the gateway answers 404 and `name resolve` refuses it, until the node publishes again. Nothing republishes a record that was published by hand.
+- **A node has one name.** Publishing again replaces what the name stood for. There is no way yet to have several names, or to unpublish one other than letting its record run out.
+- **Naming a file does not keep it.** A name can point at a file the node does not hold, or stops holding; the gateway then answers 404. `blob put` pins what it stores, and `blob pin` pins anything else.
+- **With `--kubo`**, a coordinator also gives each record it takes to its Kubo, which puts it on the pool's private network, so that `ipfs name resolve /ipns/<node ID>` and `ipfs cat /ipns/<node ID>` work against any member's Kubo. That happens when a record is published and not again: Kubo lets go of a record it has not been given afresh for 48 hours, and a member's Kubo that is asked later than that will not find it. If Kubo will not take a record the node says so in its log and holds the record all the same.
+- Names are slow to change by design: whoever has an answer may go on using it for the TTL. They are not for anything that must be seen to change within seconds.
+- Not built: DNSLink (a domain name standing for a name), publishing to the public IPFS network, and telling readers of a change as it happens (IPNS over pubsub).
+
+#### A coordinator's description of itself
+
+Started with `--publish-record`, a coordinator keeps a small JSON document about itself stored, and its name pointed at it:
+
+```json
+{
+  "id": "12D3KooW...",
+  "version": "dev",
+  "workloads": ["chat", "container", "..."],
+  "members": [
+    {"id": "12D3KooW...", "role": "worker"}
+  ]
+}
+```
+
+- **What it reveals** is exactly that: the node's ID, the version of `sisyphusd` it runs, the names of the workloads it takes jobs for, and the ID and role of every node admitted to its pool. It does not hold addresses, the labels given with `--name`, hardware, which members are connected, or anything about jobs.
+- **Who can read it** is whoever can resolve the name and fetch the file: every member of the pool; anyone with the node's API token, through its gateway; anyone at all who can reach the gateway, if it was started with `--gateway-open`; and, with `--kubo`, every member's Kubo. A list of members is its owner's to give out, which is why this is off unless asked for.
+- The node looks every 30 seconds for a change, and publishes a new record when the document differs. Each record is good for 48 hours and is replaced after 24. The document is pinned for as long as a record points at it.
+- It uses the node's one name. Anything else published under that name is replaced by the description within 30 seconds.
+- Only a coordinator has it. A worker-only node publishes no description of itself.
+
 ### In a bucket
 
 A coordinator can keep the pool's stored data in a bucket of an object store that speaks S3, instead of on its own disk: Ceph, MinIO, SeaweedFS, Storj, Wasabi, AWS.
@@ -722,6 +765,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 | `packages/ai` | Talking to language models: Ollama, OpenAI-style services and Anthropic. |
 | `packages/hardware` | Finding out what a machine has: processor, memory, graphics cards. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
+| `packages/names` | The signed records behind names: making, checking and comparing them. |
 | `packages/nodedb` | The node's SQLite database: jobs, tasks, attempts, members and invitations. |
 | `packages/storage` | Content-addressed blob store, pins, garbage collection. |
 
@@ -738,6 +782,8 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 - A removed node keeps whatever it had already fetched from the pool's private network. Changing the key stops it fetching anything more.
 - Run `ipfs` commands against a node's repository only while the node is up. With its Kubo down, including for the few seconds of a key change, the `ipfs` command takes the repository's lock and the node cannot start Kubo until the command ends.
 - Whatever is on the pool's private network can be fetched by every member of it. The network keeps outsiders out; it is private jobs, which seal their data, that keep members from reading each other's.
+- A node has one name, its ID, and a record published by hand is not renewed: it stops resolving when its lifetime is over.
+- The records of names reach the pool's private IPFS network only when they are published; a record that has gone from there is not put back until its node publishes again.
 - Without `--max-store-bytes` there is no limit on what a worker or client can upload.
 - Without `--replicas` and at least one follower, a pool's stored data is on its coordinator's disk and nowhere else. With them, the coordinator's database and key are still on that disk alone.
 - The pinning service has one key and speaks plain HTTP. Whoever holds the key can fill the store up to `--max-store-bytes`, and a single fetch can go past it.
