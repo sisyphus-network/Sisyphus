@@ -245,13 +245,13 @@ func TestAServerOffersOnlyTheToolsItsOwnerAllows(t *testing.T) {
 		return strings.Join(listed, " ")
 	}
 	usual, looking, trusted := names(Config{}), names(Config{ReadOnly: true, Admin: true}), names(Config{Admin: true})
-	if n := len(strings.Fields(usual)); n != 25 || strings.Contains(usual, "set_model") || !strings.Contains(usual, "ask_model") {
+	if n := len(strings.Fields(usual)); n != 32 || strings.Contains(usual, "set_model") || !strings.Contains(usual, "ask_model") {
 		t.Errorf("as usual, %d tools: %s", n, usual)
 	}
-	if n := len(strings.Fields(looking)); n != 14 || strings.Contains(looking, "run_job") || strings.Contains(looking, "join_pool") {
+	if n := len(strings.Fields(looking)); n != 18 || strings.Contains(looking, "run_job") || strings.Contains(looking, "join_pool") {
 		t.Errorf("read-only, %d tools: %s", n, looking)
 	}
-	if n := len(strings.Fields(trusted)); n != 33 || !strings.Contains(trusted, "set_peer_trust") {
+	if n := len(strings.Fields(trusted)); n != 42 || !strings.Contains(trusted, "set_peer_trust") {
 		t.Errorf("with admin, %d tools: %s", n, trusted)
 	}
 }

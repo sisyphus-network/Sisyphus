@@ -4,9 +4,10 @@
 // see what the pool is, run a job on it, follow the job, move files in and
 // out.
 //
-// It is a client of the node's local API and nothing more. Whatever an
-// agent does through it, the node's owner could do from the command line
-// with the same token, and it can do nothing else.
+// It is a client of the node's local API and, for what the node keeps, of
+// its main address as its owner. Whatever an agent does through it, the
+// node's owner could do from the command line with the same token and key,
+// and it can do nothing else.
 package mcpserver
 
 import (
@@ -50,6 +51,11 @@ type Config struct {
 	Admin bool
 	// Images, if not empty, are the only container images it will run.
 	Images []string
+
+	// Main reaches the node at its main address, as its owner, when a tool
+	// needs what the local API does not have. It is asked each time, so
+	// that a node not yet there fails one call and not the server.
+	Main func() (*Main, error)
 }
 
 type server struct{ Config }
@@ -57,6 +63,8 @@ type server struct{ Config }
 const instructions = `Sisyphus is a pool of computers that run jobs. A job is one workload run over an input, split into tasks that the pool's machines run at once.
 
 Start with pool_status to see which machines there are, and list_workloads to see what they can run and what parameters each workload takes. Run something with run_job, which waits for the result. Inputs and outputs that are files are named by content ID: store_file puts a local file in the pool and returns its ID, and fetch_file brings one back.
+
+What a job stores is dropped seven days after it ends, or whatever time the node's owner set, unless pinned: pin_file keeps a file and list_pins shows what is kept and until when, storage_status says which other nodes hold copies, get_job_record gives a finished job's record and checks it, and publish_name and resolve_name give a result that changes one name to be found by.
 
 Workers may serve language models: ask_model has one answer a prompt, and ask_planner hands a whole question to the node's own planner. Which tools there are depends on how the server was started: it may be read-only, may keep to one directory for files, and offers the tools that change the node itself only if its owner allowed them.`
 
@@ -68,7 +76,7 @@ func New(cfg Config) *mcp.Server {
 	add(s, out, reads, &mcp.Tool{Name: "pool_status", Annotations: seen,
 		Description: "Says what the pool is now: this node, and each worker with its cores, memory, graphics cards, the language models it serves, how many tasks it can run at once and how many it is running."}, s.poolStatus)
 	add(s, out, reads, &mcp.Tool{Name: "list_workloads", Annotations: seen,
-		Description: "Lists the workloads the pool can run, each with what it does and the parameters it takes. Read this before run_job."}, s.listWorkloads)
+		Description: "Lists the workloads the pool can run, each with what it does and the parameters it takes. workers_running_it is how many of the connected workers offer the workload, busy or not. Read this before run_job."}, s.listWorkloads)
 	add(s, out, uses, &mcp.Tool{Name: "run_job",
 		Description: "Runs a job on the pool and waits for it to finish, returning its result. A job still running when the wait is over is returned as it stands, to be followed with get_job."}, s.runJob)
 	add(s, out, reads, &mcp.Tool{Name: "get_job", Annotations: seen,
@@ -87,6 +95,7 @@ func New(cfg Config) *mcp.Server {
 		Description: "Lists the files kept in the pool's store, with their content IDs."}, s.listFiles)
 	s.more(out)
 	s.extras(out)
+	s.storage(out)
 	return out
 }
 
@@ -193,6 +202,7 @@ type runJobArgs struct {
 	Workload    string         `json:"workload" jsonschema:"the name of the workload to run, from list_workloads"`
 	Params      map[string]any `json:"params,omitempty" jsonschema:"the workload's parameters, as its description gives them"`
 	Tasks       uint32         `json:"tasks,omitempty" jsonschema:"how many tasks to split the job into; leave out for one per free worker slot"`
+	Mode        string         `json:"mode,omitempty" jsonschema:"distributed, to split the job into tasks spread across the workers, or full-worker, to send it whole to one; distributed if left out"`
 	Private     bool           `json:"private,omitempty" jsonschema:"seal everything the job stores with this node's key, so that only it and the workers running the job can read it"`
 	MinMemoryMB uint32         `json:"min_memory_mb,omitempty" jsonschema:"give its tasks only to workers with at least this much memory, in mebibytes"`
 	MinGPUs     uint32         `json:"min_gpus,omitempty" jsonschema:"give its tasks only to workers with at least this many graphics cards"`
@@ -217,8 +227,12 @@ func (s *server) run(ctx context.Context, args runJobArgs) (any, error) {
 	if args.Params == nil {
 		params = nil
 	}
+	mode, err := jobMode(args.Mode)
+	if err != nil {
+		return nil, err
+	}
 	submitted, err := s.Node.SubmitJob(ctx, &nodepb.SubmitJobRequest{
-		Workload: args.Workload, Params: params, MaxTasks: args.Tasks, Private: args.Private,
+		Workload: args.Workload, Params: params, MaxTasks: args.Tasks, Private: args.Private, Mode: mode,
 		MinGpus: args.MinGPUs, MinMemoryBytes: uint64(args.MinMemoryMB) << 20, TaskTimeoutSeconds: args.TaskTimeout,
 		Verify: args.Verify,
 	})

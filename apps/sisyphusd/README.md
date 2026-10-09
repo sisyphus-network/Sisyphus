@@ -605,22 +605,28 @@ claude mcp add sisyphus -- /path/to/sisyphusd mcp     # Claude Code; other agent
 { "mcpServers": { "sisyphus": { "command": "/path/to/sisyphusd", "args": ["mcp"] } } }
 ```
 
-The second form is what Claude Desktop (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`) and most others take. The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir` and `--api` if the node's are not the usual ones.
+The second form is what Claude Desktop (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`) and most others take. The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir`, `--api` and `--addr` if the node's data directory, `--api-listen` and `--listen` are not the usual ones.
+
+There are 42 tools: 18 that only look, 14 more that use the pool, and 10 more with `--admin`.
 
 | Tool | What it does |
 | --- | --- |
 | `pool_status` | The workers connected, with their cores, memory, graphics cards, the models they serve and how busy they are. |
 | `list_workloads` | What the pool can run, the parameters each workload takes, and how many connected workers run it. |
-| `run_job` | Runs a job and waits for its result, or returns at once with `detach`. |
+| `run_job` | Runs a job and waits for its result, or returns at once with `detach`. It takes what `job submit` takes: `tasks`, `mode`, `private`, `min_memory_mb`, `min_gpus` and `task_timeout_seconds`. |
 | `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `wait_for_job` | Look at a job, list them, stop one, read what it logged, wait for one to finish. |
 | `store_file`, `fetch_file`, `list_files`, `remove_file`, `fetch_outputs`, `save_result` | Put a file from this machine in the pool's store, bring one back, list them, stop keeping one, bring back everything a job stored, write a job's whole result to a file. |
+| `list_pins`, `pin_file`, `unpin_file` | What the node keeps, for whom and until when ([How long data is kept](#how-long-data-is-kept)); keep a file, such as a job's output, for good or for so many hours; release it. |
+| `storage_status` | Which other nodes hold copies of what is pinned, against how many should: the storage followers of [Copies on other nodes](#copies-on-other-nodes), or the members of the pool's [IPFS Cluster](#ipfs-cluster-pins-held-by-several-nodes), whichever the pool uses, and it says so plainly of a pool that uses neither. |
+| `get_job_record` | A finished job's [record](#a-jobs-record): its ID and its nodes as JSON. With `verify` it is checked against the job as `job record --verify` checks it, and with `check_commitments` a private job's commitments are checked with the node's own `private.key`. |
+| `resolve_name`, `publish_name` | What a node's [name](#names-for-what-changes) stands for, checked against the name as `name resolve` checks it; point this node's name at a file. |
 | `ask_model`, `compare_texts` | Has a model served by one of the pool's workers answer a prompt; says which texts mean most alike, by an embedding model the pool serves. |
 | `ask_planner`, `list_chats`, `get_chat`, `delete_chat` | Hand a whole question to the node's own planner, and read or forget its conversations. |
 | `list_peers`, `list_members` | The nodes this node knows of, with their countries and which way work flows; who is in its pool. |
 | `get_model`, `list_models`, `list_model_providers` | What the planner plans with, what its service offers, and the kinds of service there are. |
-| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model`, `remove_model` | Change the node itself: who is in its pool, which nodes it trusts, what it plans with. |
+| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model`, `remove_model`, `collect_garbage`, `restore_files` | Change the node itself: who is in its pool, which nodes it trusts, what it plans with; clear its store of what nothing pins now, and take back from its followers what a lost store held (`blob gc`, `blob restore`). |
 
-Besides tools, the server gives an agent things to read (`sisyphus://pool`, `sisyphus://workloads`, and the skill itself as `sisyphus://skill/SKILL.md` and `sisyphus://skill/recipes.md`), two prompts (`run-on-pool`, `pool-report`), and, while `run_job` or `wait_for_job` waits, word of each task as it finishes.
+Besides tools, the server gives an agent things to read (`sisyphus://pool`, `sisyphus://workloads`, and the skill itself as `sisyphus://skill/SKILL.md` and `sisyphus://skill/recipes.md`), three prompts (`run-on-pool`, `pool-report`, `keep-result`), and, while `run_job` or `wait_for_job` waits, word of each task as it finishes.
 
 What the agent may do is yours to set, when you give its settings the command:
 
@@ -632,10 +638,13 @@ What the agent may do is yours to set, when you give its settings the command:
 | `--admin` | Adds the tools that change the node itself. Without it there are none. |
 
 - **It is a client of the local API** and holds the node's token, which it reads from the data directory.
+- **Pins, copies, names and records are not in the local API**, so for those tools it reaches the node's main address, `--addr`, as the command line does: with the node's key in `--data-dir`. That connection is made the first time one of them is called. If it cannot be made, or the node is not at `--addr`, those tools fail saying why and every other tool goes on working. The token is not sent there.
+- **`publish_name` signs with the node's key**, as `name publish` does, and `get_job_record` with `check_commitments` sends the node its own `private.key`, as `job record --key-file` would. It reads that key and never makes one, and no tool hands either key to the agent.
+- **Pinning services are not offered.** `blob pin-remote` and its fellows need another service's key, and an agent is given no key to pass on.
 - **With no flags it can use the pool and not reconfigure it.** It can spend the pool's time, run container images on workers that allow containers, and read and write files in the directory it was started in. It will not write over a file that is there unless told to in so many words.
 - **`--admin` is the node's keys.** An agent with it can invite anyone into the pool and join the node to others. It is never given a model service's key: `set_model` keeps the one already set.
 - **A skill comes with it**, carried in the daemon. `sisyphusd skill install` puts it where Claude Code keeps skills (`~/.claude/skills`), `--dir` puts it elsewhere, and `sisyphusd skill show` prints it. It tells an agent how to use a pool well: look before submitting, how to split work with a container, how to have the pool's models think, what goes wrong; `recipes.md` beside it has worked shapes for common jobs. It works with the tools or, without them, with the command line. Its source is [`skills/sisyphus`](../../skills/sisyphus/SKILL.md).
-- **It has been tried from Claude Code**, with the skill installed and the server kept to one directory: asked to describe the pool, upper-case a file across three tasks and have one of the pool's models answer a question, it read the skill, ran a `container` job and `ask_model`, and wrote the right file. A second run, on Opus, labelled eight reviews with one `prompts` job and found the two most alike with `embed`; what it stumbled on (a result of vectors too long to hand back) is why `save_result` and `compare_texts` exist. Other agents have not been tried.
+- **It has been tried from Claude Code**, with the skill installed and the server kept to one directory: asked to describe the pool, upper-case a file across three tasks and have one of the pool's models answer a question, it read the skill, ran a `container` job and `ask_model`, and wrote the right file. A second run, on Opus, labelled eight reviews with one `prompts` job and found the two most alike with `embed`; what it stumbled on (a result of vectors too long to hand back) is why `save_result` and `compare_texts` exist. A third, with the tools for what the node keeps and no skill, counted a file's words, pinned the result for a day, verified the job's record, found from `storage_status` that no other node held a copy, and published and resolved the node's name. It had to find out from `list_pins` that the job's own pin outlasts a day's pin, which is why `pin_file` now answers with every pin on the file. Other agents have not been tried.
 
 ## Following and stopping a job
 
