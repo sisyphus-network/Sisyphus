@@ -174,7 +174,7 @@ func TestReferencedFilesStayPinnedUntilEveryOwnerReleasesThem(t *testing.T) {
 	}
 	assertRetained := func() {
 		t.Helper()
-		if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: file.GetCid()}); status.Code(err) != codes.Internal {
+		if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: file.GetCid()}); status.Code(err) != codes.FailedPrecondition {
 			t.Fatalf("removing a referenced file: %v, want rejection", err)
 		}
 		listed, err := client.ListFiles(ctx, &nodepb.ListFilesRequest{})

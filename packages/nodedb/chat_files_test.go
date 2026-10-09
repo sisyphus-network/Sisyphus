@@ -1,6 +1,7 @@
 package nodedb
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func TestChatFileOwnershipSurvivesRestartAndReleasesOnlyDeletedChat(t *testing.T
 	if err := db.DeleteChat("second"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.RemoveFile("shared"); err == nil {
+	if err := db.RemoveFile("shared"); !errors.Is(err, ErrFileReferenced) {
 		t.Fatal("chat deletion discarded an independent user owner")
 	}
 	if err := db.RemoveFileReference("shared", "user:explicit"); err != nil {
