@@ -293,6 +293,26 @@ What to know before relying on it:
 - **One question at a time per conversation.** Two asked at once in the same conversation are recorded in whichever order they finish.
 - **It gives up after eight rounds** of asking for more without answering.
 
+## Jobs made of jobs
+
+A `graph` job runs several jobs as one. Each step is a job of some workload; a step may use what an earlier one produced, and waits for it.
+
+```sh
+bin/sisyphusd job submit --workload graph --params '{"steps":[
+  {"name":"count","workload":"wordcount","params":{"input":"<cid>"}},
+  {"name":"again","workload":"wordcount","params":{"input":"${count.result.output}"}},
+  {"name":"low","workload":"primes","params":{"from":0,"to":1000000},"tasks":2},
+  {"name":"span","workload":"primes","params":{"from":0,"to":"${low.result.count}"},"after":["again"]}]}'
+```
+
+- **References.** In a step's parameters, `${name.result}` is an earlier step's result, `${name.result.field}` a field of it, `${name.outputs.0}` the first file it stored and `${name.job_id}` its job. A string that is nothing but one reference becomes the value itself, so a number stays a number.
+- **Order.** A step waits for every step it refers to and any it names under `"after"`. Steps that wait for nothing run side by side. A graph in which a step waits, however indirectly, for itself is refused when submitted.
+- **Each step is an ordinary job**, with `parent_job_id` and `step` saying what it is a step of. `job get` and `job logs` work on it, and its tasks go to workers as any job's do. The graph's own tasks are its steps, carried out by the coordinator; no worker needs to know of graphs.
+- **Failure and stopping.** A step that fails, or whose job is cancelled, fails the graph, and steps not yet begun are not run. Cancelling the graph cancels the jobs its steps are running as.
+- **A restart** of the coordinator takes a graph up where it was: steps that had finished are not run again, and one that was running goes on as the job it was.
+- **A private graph** gives its key to every step.
+- Up to 64 steps. There are no loops or conditions: a step runs or the graph fails.
+
 ## Thinking on the pool
 
 A pool can serve language models as well as run jobs. A worker whose owner runs Ollama offers its models; the coordinator offers all of them at one address, speaking OpenAI's dialect, so that whatever can talk to such a service can think on the pool.

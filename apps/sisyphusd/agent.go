@@ -60,7 +60,7 @@ func serveAgent(ctx context.Context, args []string) error {
 		Node: nodepb.NewNodeServiceClient(conn), Token: token,
 		FilesUnder: under, ReadOnly: *readOnly, Admin: *administer, Images: listed,
 		// Every workload there is, so that whichever the node has can be described.
-		Workloads: runtime.WithContainers(), Version: version,
+		Workloads: runtime.WithContainers().With(runtime.Graph{}), Version: version,
 	})
 	return server.Run(ctx, agentTransport)
 }
