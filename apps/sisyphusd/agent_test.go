@@ -527,9 +527,10 @@ func TestAnAgentIsKeptToWhatItsOwnerAllows(t *testing.T) {
 	if _, text, failed := use(t, kept, "remove_file", map[string]any{"cid": cid}); failed {
 		t.Errorf("remove_file: %s", text)
 	}
-	// With no model set, the planner says what to do about it.
-	if _, text, failed := use(t, kept, "ask_planner", map[string]any{"question": "How many primes below 100?"}); !failed || !strings.Contains(text, "has not been told which language model") {
-		t.Errorf("ask_planner with no model: %s", text)
+	// The planner picks what to run itself, so a server held to listed
+	// images does not ask it.
+	if _, text, failed := use(t, kept, "ask_planner", map[string]any{"question": "How many primes below 100?"}); !failed || !strings.Contains(text, "chooses for itself what to run") {
+		t.Errorf("ask_planner through a server held to listed images: %s", text)
 	}
 }
 
