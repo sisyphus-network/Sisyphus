@@ -60,6 +60,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	advertise := fs.String("advertise", "", "worker-only node: the address other workers should use to reach --serve, if not the same")
 	modelsFrom := fs.String("models-from", "", "worker role: offer the language models of the Ollama at this address, such as http://127.0.0.1:11434, to the pool's jobs. Whoever may submit jobs can then use them, and this machine sees what they ask")
 	inferenceListen := fs.String("inference-listen", "", "coordinator: loopback address to offer the pool's language models on, as a service speaking OpenAI's dialect whose key is the node's API token; off if empty")
+	gatewayListen := fs.String("gateway-listen", "", "address to serve stored files on by content ID, read-only, as GET /ipfs/<cid>, to whoever shows the node's API token; off if empty")
+	gatewayOpen := fs.Bool("gateway-open", false, "let anyone who can reach --gateway-listen and knows a file's content ID fetch it, without the token. Sealed files are never served")
 	webListen := fs.String("web-listen", "", "loopback address to serve the local API on to web pages, as gRPC-Web and Connect, with every call needing the node's API token; off if empty")
 	webOrigins := fs.String("web-origin", "", "the origins of the web pages that may use --web-listen, separated by commas, such as http://localhost:5173; pages from anywhere else are refused")
 	apiListen := fs.String("api-listen", "", "loopback address to serve the local API on, for the desktop client on this machine (it expects 127.0.0.1:50051); off if empty")
@@ -624,6 +626,22 @@ func runDaemon(ctx context.Context, args []string) error {
 		defer desktop.Stop()
 		log.Info("local API listening", "addr", lis.Addr().String())
 		go desktop.Serve(lis)
+	}
+
+	if *gatewayListen != "" {
+		lis, err := net.Listen("tcp", *gatewayListen)
+		if err != nil {
+			return err
+		}
+		token, err := apiToken(filepath.Join(*dataDir, "api.token"))
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		gateway := &http.Server{Handler: api.NewGateway(store, token, *gatewayOpen)}
+		defer gateway.Close()
+		log.Info("gateway listening", "addr", lis.Addr().String(), "open", *gatewayOpen)
+		go gateway.Serve(lis)
 	}
 
 	if *webListen != "" {
