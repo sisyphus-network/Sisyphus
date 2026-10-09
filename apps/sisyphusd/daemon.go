@@ -159,6 +159,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	if *modelsFrom != "" {
 		runs = runs.With(runtime.WithModels(*modelsFrom)...)
 	}
+	// A graph is a job of jobs, which a coordinator carries out itself: no
+	// worker runs one, so only what takes jobs in knows of it.
+	workloads = workloads.With(runtime.Graph{})
 
 	// The node's key lives beside its data and is created on first run.
 	ident, err := loadIdentity(*dataDir)

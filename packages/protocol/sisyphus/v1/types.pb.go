@@ -715,7 +715,11 @@ type Job struct {
 	// The mean of its tasks' progress, from 0 to 1.
 	Progress float64 `protobuf:"fixed64,11,opt,name=progress,proto3" json:"progress,omitempty"`
 	// Whether the job is private: submitted with a key, which is not here.
-	Private       bool `protobuf:"varint,12,opt,name=private,proto3" json:"private,omitempty"`
+	Private bool `protobuf:"varint,12,opt,name=private,proto3" json:"private,omitempty"`
+	// Set on a job that is a step of another, a graph: the job it is a step
+	// of, and the step's name.
+	ParentJobId   string `protobuf:"bytes,13,opt,name=parent_job_id,json=parentJobId,proto3" json:"parent_job_id,omitempty"`
+	Step          string `protobuf:"bytes,14,opt,name=step,proto3" json:"step,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -832,6 +836,20 @@ func (x *Job) GetPrivate() bool {
 		return x.Private
 	}
 	return false
+}
+
+func (x *Job) GetParentJobId() string {
+	if x != nil {
+		return x.ParentJobId
+	}
+	return ""
+}
+
+func (x *Job) GetStep() string {
+	if x != nil {
+		return x.Step
+	}
+	return ""
 }
 
 // JobEvent is one thing that happened to a job: a step in its life, or a
@@ -974,7 +992,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1b\n" +
 	"\tnode_name\x18\a \x01(\tR\bnodeName\x12\x1a\n" +
-	"\bprogress\x18\b \x01(\x01R\bprogress\"\xbc\x03\n" +
+	"\bprogress\x18\b \x01(\x01R\bprogress\"\xf4\x03\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12(\n" +
 	"\x04spec\x18\x02 \x01(\v2\x14.sisyphus.v1.JobSpecR\x04spec\x12+\n" +
@@ -991,7 +1009,9 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\foutput_blobs\x18\n" +
 	" \x03(\tR\voutputBlobs\x12\x1a\n" +
 	"\bprogress\x18\v \x01(\x01R\bprogress\x12\x18\n" +
-	"\aprivate\x18\f \x01(\bR\aprivate\"\xac\x01\n" +
+	"\aprivate\x18\f \x01(\bR\aprivate\x12\"\n" +
+	"\rparent_job_id\x18\r \x01(\tR\vparentJobId\x12\x12\n" +
+	"\x04step\x18\x0e \x01(\tR\x04step\"\xac\x01\n" +
 	"\bJobEvent\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x12\n" +

@@ -435,6 +435,8 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 			go c.aggregate(job)
 		}
 	}
+	// A job whose tasks are jobs waits for no worker to take it up again.
+	c.scheduleLocked()
 	return unfinished, nil
 }
 
@@ -492,6 +494,12 @@ func (c *Coordinator) Close() {
 
 // Submit validates and splits a job, queues it and returns its initial state.
 func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, error) {
+	return c.submit(ctx, spec, "", "")
+}
+
+// submit takes a job in. parent and step are set for a job that carries
+// out a step of another.
+func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step string) (*pb.Job, error) {
 	workload, err := c.workloads.Get(spec.GetWorkload())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -538,6 +546,7 @@ func (c *Coordinator) Submit(ctx context.Context, spec *pb.JobSpec) (*pb.Job, er
 	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
 	job.Needs = c.workloads.Needs(job.Workload, job.Params)
+	job.Parent, job.Step = parent, step
 	job.NoteRead(touched.Read()...)
 	// A job is accepted only once it is on record: its submitter is about
 	// to be given an ID to ask after.
@@ -911,6 +920,7 @@ func (c *Coordinator) settleLocked(job *jobmodel.Job) {
 	}
 	// Whatever of it is still running is of no use to anyone now.
 	c.stopTasksLocked(job)
+	c.stopStepsLocked(job)
 	c.recordLocked(job, job.State.String(), whole, "", job.Err)
 	keep := append(job.InputBlobs(), job.OutputBlobs()...)
 	c.pin(job, job.FinishedAt.Add(c.retain), keep)
@@ -968,6 +978,11 @@ func decode(cids []string) []cid.Cid {
 func (c *Coordinator) scheduleLocked() {
 	c.active = slices.DeleteFunc(c.active, func(job *jobmodel.Job) bool { return job.Terminal() })
 	for _, job := range c.active {
+		if composite, is := c.composite(job); is {
+			// Its tasks are jobs, which the coordinator submits itself.
+			c.stepsLocked(job, composite)
+			continue
+		}
 		for _, task := range job.Assignable() {
 			w := c.pickWorkerLocked(job)
 			if w == nil {

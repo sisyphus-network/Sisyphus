@@ -178,6 +178,10 @@ It needs a node that runs a worker, which is every node unless it was started wi
 
 ## Changing the API
 
+## Graphs
+
+A job whose `workload` is `graph` is several jobs run as one (see the daemon's README, "Jobs made of jobs"). For a client it needs nothing new: its `tasks` are its steps, in order, with `worker_name` set to `coordinator`, and each step is a job of its own in `ListJobs` with `parent_job_id` naming the graph and `step` the step. A jobs view can nest those under their graph, or leave them flat.
+
 ## From a web page
 
 A page in a browser cannot speak gRPC as the desktop app does. Started with `--web-listen 127.0.0.1:50052 --web-origin http://localhost:5173`, the node serves the same calls in two ways a browser can make them: **Connect** and **gRPC-Web**. `@connectrpc/connect-web` with code generated from `node.proto` speaks either; so does a plain `fetch`:
