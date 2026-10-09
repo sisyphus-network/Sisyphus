@@ -77,6 +77,7 @@ func (db *DB) CreateChat(c Chat) error {
 // still own them; the storage lifecycle must coordinate that separately.
 func (db *DB) DeleteChat(id string) error {
 	return db.durably("delete chat", func(b *batch) {
+		b.exec(`INSERT INTO file_pin_operations(owner, cid, keep) SELECT owner, cid, 0 FROM file_references WHERE owner = ?`, chatFileOwner(id))
 		b.exec(`DELETE FROM file_references WHERE owner = ?`, chatFileOwner(id))
 		b.exec(`DELETE FROM chats WHERE chat_id = ?`, id)
 	})
