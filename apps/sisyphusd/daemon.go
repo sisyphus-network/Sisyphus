@@ -60,6 +60,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	advertise := fs.String("advertise", "", "worker-only node: the address other workers should use to reach --serve, if not the same")
 	modelsFrom := fs.String("models-from", "", "worker role: offer the language models of the Ollama at this address, such as http://127.0.0.1:11434, to the pool's jobs. Whoever may submit jobs can then use them, and this machine sees what they ask")
 	inferenceListen := fs.String("inference-listen", "", "coordinator: loopback address to offer the pool's language models on, as a service speaking OpenAI's dialect whose key is the node's API token; off if empty")
+	webListen := fs.String("web-listen", "", "loopback address to serve the local API on to web pages, as gRPC-Web and Connect, with every call needing the node's API token; off if empty")
+	webOrigins := fs.String("web-origin", "", "the origins of the web pages that may use --web-listen, separated by commas, such as http://localhost:5173; pages from anywhere else are refused")
 	apiListen := fs.String("api-listen", "", "loopback address to serve the local API on, for the desktop client on this machine (it expects 127.0.0.1:50051); off if empty")
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
@@ -122,6 +124,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if *inferenceListen != "" && !isCoordinator {
 		return errors.New("--inference-listen is for a node that coordinates a pool: it is that pool's models it offers")
+	}
+	if host, _, err := net.SplitHostPort(*webListen); *webListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
+		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052: the local API is for this machine only, its web pages included")
 	}
 	if isCoordinator && *invitation != "" {
 		return errors.New("--join is for worker-only nodes")
@@ -616,6 +621,27 @@ func runDaemon(ctx context.Context, args []string) error {
 		defer desktop.Stop()
 		log.Info("local API listening", "addr", lis.Addr().String())
 		go desktop.Serve(lis)
+	}
+
+	if *webListen != "" {
+		lis, err := net.Listen("tcp", *webListen)
+		if err != nil {
+			return err
+		}
+		if local.Token, err = apiToken(filepath.Join(*dataDir, "api.token")); err != nil {
+			lis.Close()
+			return err
+		}
+		var origins []string
+		for _, origin := range strings.Split(*webOrigins, ",") {
+			if origin = strings.TrimSpace(origin); origin != "" {
+				origins = append(origins, strings.TrimRight(origin, "/"))
+			}
+		}
+		pages := &http.Server{Handler: api.NewWebHandler(local, origins)}
+		defer pages.Close()
+		log.Info("local API listening for web pages", "addr", lis.Addr().String(), "origins", origins)
+		go pages.Serve(lis)
 	}
 
 	select {

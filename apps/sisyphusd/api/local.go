@@ -141,15 +141,20 @@ func NewPoolAdmin(cfg Config) *PoolAdmin {
 
 // NewLocalServer returns a gRPC server for the local API.
 func NewLocalServer(cfg LocalConfig) *grpc.Server {
+	srv := grpc.NewServer()
+	nodepb.RegisterNodeServiceServer(srv, &localService{cfg: normal(cfg)})
+	return srv
+}
+
+// normal fills in what a configuration may leave out.
+func normal(cfg LocalConfig) LocalConfig {
 	if cfg.Poll == 0 {
 		cfg.Poll = time.Second
 	}
 	if cfg.Country == nil {
 		cfg.Country = func() string { return "" }
 	}
-	srv := grpc.NewServer()
-	nodepb.RegisterNodeServiceServer(srv, &localService{cfg: cfg})
-	return srv
+	return cfg
 }
 
 type localService struct {
