@@ -504,7 +504,8 @@ func TestAVerifiedGraphHasEachOfItsStepsVerified(t *testing.T) {
 		{"name":"span","workload":"primes","params":{"from":0,"to":"${low.result.count}"},"tasks":1}`
 	verified := func() *pb.JobSpec {
 		spec := graphOf(steps)
-		spec.Verify = 2
+		// Half of a step that is one task is that task.
+		spec.Verify, spec.VerifyShare = 2, 0.5
 		return spec
 	}
 
@@ -526,16 +527,20 @@ func TestAVerifiedGraphHasEachOfItsStepsVerified(t *testing.T) {
 		t.Fatalf("the graph %v: %s, %s", done.GetState(), done.GetResult(), done.GetError())
 	}
 	for name, jobs := range p.stepsOf(done.GetJobId()) {
-		if len(jobs) != 1 || jobs[0].GetSpec().GetVerify() != 2 || jobs[0].GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		if len(jobs) != 1 || jobs[0].GetSpec().GetVerify() != 2 || jobs[0].GetSpec().GetVerifyShare() != 0.5 || jobs[0].GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
 			t.Fatalf("step %s was carried out by %v", name, jobs)
 		}
 		if events := p.events(jobs[0].GetJobId(), 0); count(events, "task-result") != 2 || count(events, "task-succeeded") != 1 {
 			t.Errorf("the events of step %s:\n%s", name, story(events))
 		}
 	}
-	// The graph's own tasks are its steps, each carried out once.
+	if told := story(p.events(done.GetJobId(), 0)); !strings.Contains(told, "a share of 0.5 of the tasks of each to be verified by 2 workers") {
+		t.Errorf("the graph's events:\n%s", told)
+	}
+	// The graph's own tasks are its steps, each carried out once, and
+	// held to nothing themselves.
 	for _, task := range done.GetTasks() {
-		if task.GetNodeName() != "coordinator" || task.GetAttempt() != 1 {
+		if task.GetNodeName() != "coordinator" || task.GetAttempt() != 1 || task.GetVerify() != 0 {
 			t.Errorf("the graph's task %d: %v", task.GetIndex(), task)
 		}
 	}

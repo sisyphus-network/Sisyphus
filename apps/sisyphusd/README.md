@@ -654,7 +654,7 @@ bin/sisyphusd job cancel <job-id>               # stop it
 bin/sisyphusd job submit --timeout 10m ...      # stop and retry any attempt at a task that runs longer
 ```
 
-- **Events.** A coordinator records what happens to each job: submitted, each task started, succeeded, failed, lost with its worker or timed out, and how the job ended. A [verified](#verifying-results) job also has each result a worker returned, and each time the results for a task differed. `job logs` prints them and follows a running job to its end. They are kept in the database with the job.
+- **Events.** A coordinator records what happens to each job: submitted, each task started, succeeded, failed, lost with its worker or timed out, and how the job ended. A [verified](#verifying-results) job also has each result a worker returned, each time the results for a task differed, and each task that was verified after all because of a [spot check](#spot-checks). `job logs` prints them and follows a running job to its end. They are kept in the database with the job.
 - **Logs.** A task can log lines as it runs, and those appear among the job's events with the task and worker they came from. The two built-in workloads log one line each.
 - **Progress.** A task can say how far along it is. `job get` and the desktop's API give it for each task, from 0 to 1, and for the job as the mean of its tasks. It is as true as the workload makes it, and is not kept across a restart.
 - **Cancelling** stops the job at once: its running tasks are told to stop, their slots are free again, and nothing more of it is handed out. A cancelled job is over, like one that succeeded or failed, and stays on record.
@@ -680,9 +680,29 @@ bin/sisyphusd job logs <job-id>                                            # who
 - **With no `--tasks`**, a job is split into one task for every `N` free slots, since each task takes a slot on `N` workers. `--mode full-worker` runs the whole job as one task on `N` workers.
 - **A restart loses nothing.** The results in are kept in the database. A coordinator that is restarted asks only the workers that had not answered.
 - **Logs and progress.** Every copy of a task logs its own lines, each shown with the worker it came from. A task's progress counts the results it has and the furthest of its running copies.
-- **A graph hands it on.** A job made of jobs that is verified has each of its steps verified, by as many workers. The graph itself is taken in whoever is connected; a step that cannot be verified when it begins fails the graph and says why.
+- **A graph hands it on.** A job made of jobs that is verified has each of its steps verified, by as many workers, and with the same share of each step's tasks if it asked for [spot checks](#spot-checks). The graph itself is taken in whoever is connected; a step that cannot be verified when it begins fails the graph and says why.
 
 **What it costs.** `N` times the work, and more when workers differ. A task is as slow as the slowest of the workers it needs.
+
+### Spot checks
+
+Verifying every task multiplies the work. With `--verify-share`, a job has only a share of its tasks verified and the rest run once:
+
+```sh
+bin/sisyphusd job submit --verify 2 --verify-share 0.25 --tasks 16 --params '{"from":0,"to":100000000}'   # four tasks on two workers each, twelve on one
+```
+
+- **Which tasks is not known beforehand.** That share of the tasks, rounded up to a whole task so that at least one always is, is drawn at random when the job is submitted. A task that is verified and one that is not reach a worker looking the same.
+- **A worker that is caught is no longer taken at its word.** When a verified task is settled against what a worker returned, every task of the job that worker ran unverified, or is running, is verified after all: what it returned stands as one result, and the task goes to as many more workers as it now lacks. A task that had succeeded on that worker's word is no longer succeeded, and the job does not finish until it is settled. Whatever of the job that worker is handed afterwards is verified too. `job logs` shows each such task as `task-rechecked`.
+- **`job get` and the job's record say which tasks were verified.** `job get` marks each task `verified by N workers` or `not verified`, and each receipt in the record has `verify`: how many workers the task was held to, `1` for one that was run once.
+- **What it costs** is about `1 + share × (N - 1)` times the work while nobody is caught: a quarter more for `--verify 2 --verify-share 0.25`.
+
+What a spot check does not do:
+
+- **It does not catch every wrong result.** A worker that returns a wrong result for one task in a hundred is caught only if that task is one of those verified. A share of `s` catches a single wrong result with probability `s`, and a worker that is wrong on `k` of the tasks it ran with probability `1 - (1 - s)^k`, less whatever it gets right. What is not caught is in the job's result.
+- **Nothing is held against a worker beyond the job.** It is not scored, charged or kept out of the next job, and it is still given tasks in this one.
+- **A member that is both a worker and a client of the pool can tell.** Whoever may read a job can see which of its tasks went to two workers. Workers that are only workers cannot read jobs.
+- **Workers that agree to lie** are no more caught by a spot check than by verifying everything.
 
 **What it is for, and what it is not.**
 

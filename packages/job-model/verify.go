@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 )
@@ -54,12 +55,88 @@ func (r Result) Digest() string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+// Check has the job verified: each of its tasks succeeds only once that
+// many different workers have returned the same result for it. With a share
+// between zero and one, only that share of the tasks is held to it, rounded
+// up to a whole task, and the rest need one result: they are run once. The
+// tasks held to it are the first so many of order, which lists the indexes
+// of the job's tasks, each once, and which its caller shuffles so that
+// nobody can tell beforehand which they will be. A job whose tasks are jobs
+// gives no order: it hands what it was asked on to them, and its own tasks
+// are held to nothing.
+func (j *Job) Check(verify int, share float64, order []int) {
+	j.Verify = verify
+	checked := len(j.Tasks)
+	if share > 0 && share < 1 {
+		j.VerifyShare = share
+		checked = int(math.Ceil(share * float64(len(j.Tasks))))
+	}
+	for at, index := range order {
+		j.Tasks[index].Verify = 1
+		if at < checked {
+			j.Tasks[index].Verify = verify
+		}
+	}
+}
+
+// Outvoted reports whether a worker has returned, for a task of the job
+// that has succeeded, a result other than the one the task succeeded with.
+func (j *Job) Outvoted(nodeID string) bool {
+	if j.outvoted == nil {
+		j.outvoted = make(map[string]bool)
+		for _, t := range j.Tasks {
+			j.noteOutvoted(t)
+		}
+	}
+	return j.outvoted[nodeID]
+}
+
+// noteOutvoted adds the workers whose results a task succeeded without to
+// those the job knows to have been outvoted.
+func (j *Job) noteOutvoted(t *Task) {
+	if j.outvoted == nil || t.State != Succeeded {
+		return
+	}
+	for _, side := range t.Sides()[min(1, len(t.Results)):] {
+		for _, r := range side {
+			j.outvoted[r.NodeID] = true
+		}
+	}
+}
+
+// Recheck has verified after all every task the job's spot checks passed
+// over that the given worker has a copy of or has returned a result for,
+// and returns those tasks. One of them that had succeeded on that worker's
+// word alone has not any more: its result stands as one of those that must
+// agree, and the task waits for the rest. Recheck is for a worker that has
+// been outvoted, and does nothing to a job that is over.
+func (j *Job) Recheck(nodeID string) []*Task {
+	var again []*Task
+	if j.Terminal() {
+		return nil
+	}
+	for _, t := range j.Tasks {
+		if t.Verify >= j.Verify || !t.Asked(nodeID) {
+			continue
+		}
+		t.Verify = j.Verify
+		if t.State == Succeeded {
+			t.Output = nil
+			t.rest()
+		}
+		t.Progress = float64(t.lead()) / float64(t.Verify)
+		j.mark(t)
+		again = append(again, t)
+	}
+	return again
+}
+
 // MaxResults is how many results a task of a verified job takes in before
 // it is given up as one its workers cannot agree on: one fewer than twice
 // the number that must agree, which is as many as two different answers can
 // draw out before one of them has enough.
-func (j *Job) MaxResults() int {
-	return 2*j.Verify - 1
+func (t *Task) MaxResults() int {
+	return 2*t.Verify - 1
 }
 
 // Sides returns a task's results sorted into sides: the results that are
@@ -133,7 +210,7 @@ func (j *Job) Wanted(t *Task) int {
 	if j.Terminal() || (t.State != Pending && t.State != Running) {
 		return 0
 	}
-	return j.Verify - t.lead() - t.out()
+	return t.Verify - t.lead() - t.out()
 }
 
 // Asked reports whether a worker has a copy of the task or has returned a
@@ -172,7 +249,7 @@ func (j *Job) StartCopy(t *Task, nodeID, nodeName string, now time.Time) int {
 // copies make it: a copy counts for as much as one of the results that
 // must agree.
 func (j *Job) ReportCopy(t *Task, progress float64) {
-	t.Progress = max(t.Progress, (float64(t.lead())+progress)/float64(j.Verify))
+	t.Progress = max(t.Progress, (float64(t.lead())+progress)/float64(t.Verify))
 }
 
 // ReturnCopy takes in what the copy handed out as the given attempt
@@ -189,13 +266,14 @@ func (j *Job) ReturnCopy(t *Task, attempt int, output []byte, blobs []string) (a
 	j.mark(t)
 
 	agreed := t.Sides()[0]
-	if len(agreed) < j.Verify {
+	if len(agreed) < t.Verify {
 		t.rest()
-		t.Progress = float64(len(agreed)) / float64(j.Verify)
+		t.Progress = float64(len(agreed)) / float64(t.Verify)
 		return false
 	}
 	t.State, t.Progress, t.Output, t.Err = Succeeded, 1, agreed[0].Output, ""
 	t.NodeID, t.NodeName = agreed[0].NodeID, agreed[0].NodeName
+	j.noteOutvoted(t)
 	for _, other := range j.Tasks {
 		if other.State != Succeeded {
 			return false

@@ -273,6 +273,9 @@ message Job {
   // How many different workers must return the same result for each task;
   // see SubmitJobRequest. Zero or one for a job that is not verified.
   uint32 verify = 21;
+  // The share of its tasks that are verified, if not all of them; see
+  // SubmitJobRequest.
+  double verify_share = 22;
 }
 
 message JobTask {
@@ -287,6 +290,9 @@ message JobTask {
   string error = 6;
   // From 0 to 1, as far as the task itself says.
   double progress = 7;
+  // In a job that is verified, how many different workers must return the
+  // same result for this task: one for a task its spot checks passed over.
+  uint32 verify = 8;
 }
 
 message SubmitJobRequest {
@@ -314,6 +320,12 @@ message SubmitJobRequest {
   // private job. It is refused if fewer workers that could take the job
   // are connected.
   uint32 verify = 9;
+  // Spot checks: with verify, a share between 0 and 1 has only that share
+  // of the tasks verified, chosen at random and rounded up to a whole task,
+  // and the rest run once. A worker whose result for a verified task loses
+  // to the one the others agree on has the tasks it ran unverified in the
+  // job verified after all. Zero, and one, verify every task.
+  double verify_share = 10;
 }
 
 message SubmitJobResponse { Job job = 1; }
@@ -336,7 +348,9 @@ message JobEvent {
   // What happened: submitted, task-started, task-succeeded, task-failed,
   // task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
   // In a job that is verified, also task-result, for each result a worker
-  // returns, and task-disagreed, when the results in for a task differ.
+  // returns, task-disagreed, when the results in for a task differ, and
+  // task-rechecked, when a task that spot checks had passed over is to be
+  // verified after all.
   string kind = 3;
   // The task concerned, or -1 if the event is about the job as a whole.
   int32 task_index = 4;

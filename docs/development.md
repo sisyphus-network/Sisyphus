@@ -40,7 +40,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `packages/s3` | A bucket in an S3-style object store, for a store that keeps its blocks there. Its tests run against a real one, SeaweedFS in a container. |
 | `packages/sealed` | Encrypting a private job's blobs: the format, sealing and seekable unsealing. |
 | `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. Also holds nodes of linked data (DAG-CBOR), which a pin keeps without keeping the blobs they link. |
-| `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. `verify.go` has the rules of verification by replication. |
+| `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. `verify.go` has the rules of verification by replication and of spot checks. |
 | `apps/sisyphusd/worker` | Connecting to a coordinator, running tasks, the blob cache. |
 | `apps/sisyphusd/api` | The gRPC server and the client-facing services. |
 | `apps/sisyphusd/access` | Which nodes have been admitted and in what role, invitations, and the check made on every call. |
@@ -99,12 +99,6 @@ With `--cluster` a node runs `ipfs-cluster-service` beside its Kubo (`packages/i
 
 The tests of all this that run real programs are few and slow: one in `packages/ipfscluster` forms a cluster of three, loses a holder and sees it replaced; two in `apps/sisyphusd` run pools of two and three nodes. The rest use a stand-in for the peer's API. In tests the members' heartbeat is a second rather than fifteen (`clusterHeartbeat`).
 
-## Branches and pull requests
-
-`dev` is the main branch. Work goes on a branch and reaches `dev` through a pull request.
-
-When one piece of work builds on another that has not merged yet, its branch is cut from the earlier branch and its pull request targets that branch, not `dev`. This keeps each pull request small enough to review on its own, at the cost of a chain that has to merge in order. Once the bottom of a chain merges, point the next pull request at `dev`. A branch can be deleted as soon as its pull request has merged.
-
 ## Releases
 
 Push a tag such as `v0.1.0`. The release workflow builds every supported platform with `scripts/build-release.sh` and publishes the binaries and a `SHA256SUMS` file. Only Linux on x86-64 is covered by the tests.
@@ -115,3 +109,4 @@ Push a tag such as `v0.1.0`. The release workflow builds every supported platfor
 - A pull request merges once its checks are green, by **squash**, so that `dev` gets one commit for each pull request and every commit on it has passed. The branch is deleted on merging. (The first forty or so pull requests were merged with merge commits, which is why some early commits on `dev` carry a failed check: they are intermediate commits that a later commit in the same pull request put right.)
 - `integration` is kept identical to `dev`, as a fixed name to build the desktop app against.
 - Before pushing, run `gofmt -l apps packages skills` (nothing should be listed), `make cover`, and `go test -race -count=3` on any package with new tests: the coverage run checks neither formatting nor tests that depend on timing or order.
+- When one piece of work builds on another that has not merged yet, its branch is cut from the earlier branch and its pull request targets that branch. Once the bottom of such a chain merges, point the next pull request at `dev`.

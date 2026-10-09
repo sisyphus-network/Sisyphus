@@ -278,6 +278,7 @@ const (
 	// and the results in for a task are not all the same.
 	eventTaskResult    = "task-result"
 	eventTaskDisagreed = "task-disagreed"
+	eventTaskRechecked = "task-rechecked"
 	eventLog           = "log"
 	whole              = -1 // the task index of an event about the job itself
 )
@@ -557,6 +558,13 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	if verify > maxVerify {
 		return nil, status.Errorf(codes.InvalidArgument, "verify exceeds %d", maxVerify)
 	}
+	share := spec.GetVerifyShare()
+	if share < 0 || share > 1 || share != share {
+		return nil, status.Error(codes.InvalidArgument, "verify_share is the share of a job's tasks to verify, from 0 to 1")
+	}
+	if share > 0 && verify < 2 {
+		return nil, status.Error(codes.InvalidArgument, "verify_share says how many of a job's tasks to verify, and needs verify to say by how many workers")
+	}
 	if verify >= 2 && len(spec.GetKey()) > 0 {
 		return nil, status.Error(codes.InvalidArgument, "a private job cannot be verified: each worker seals what it stores afresh, so the results of two that did the same work never compare as the same")
 	}
@@ -600,7 +608,13 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job", verify, able)
 	}
 	job := jobmodel.New(newID(), workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
-	job.Verify = verify
+	switch {
+	case verify >= 2 && steps:
+		// Its tasks are jobs, which pick their own tasks to verify.
+		job.Check(verify, share, nil)
+	case verify >= 2:
+		job.Check(verify, share, shuffled(len(job.Tasks)))
+	}
 	job.Key, job.Private, job.Submitter = spec.GetKey(), len(spec.GetKey()) > 0, submitter
 	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
@@ -619,7 +633,12 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	c.pin(job, time.Time{}, touched.Read())
 	c.log.Info("job submitted", "job", job.ID, "workload", job.Workload, "tasks", len(job.Tasks))
 	asked := fmt.Sprintf("%s, in %d tasks", job.Workload, len(job.Tasks))
-	if verify >= 2 {
+	switch {
+	case job.VerifyShare > 0 && steps:
+		asked += fmt.Sprintf(", a share of %.3g of the tasks of each to be verified by %d workers", job.VerifyShare, verify)
+	case job.VerifyShare > 0:
+		asked += fmt.Sprintf(", a share of %.3g of them, picked at random, to be verified by %d workers", job.VerifyShare, verify)
+	case verify >= 2:
 		asked += fmt.Sprintf(", each to be verified by %d workers", verify)
 	}
 	c.recordLocked(job, eventSubmitted, whole, "", asked)

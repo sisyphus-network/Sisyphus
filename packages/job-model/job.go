@@ -68,6 +68,11 @@ type Task struct {
 	// order of their attempts, if its job is verified; see Job.Verify. The
 	// task's output is the one enough of them agree on.
 	Results []Result
+	// Verify is how many of those results must be the same for the task to
+	// have succeeded: as many as its job asks for, or one for a task the
+	// job's spot checks passed over; see Job.Check. It is zero in a job
+	// that is not verified.
+	Verify int
 	// Progress is how far along the current attempt says it is, from 0 to
 	// 1, and StartedAt when that attempt was handed out. Neither is kept
 	// across a restart: an attempt in progress then is lost anyway.
@@ -101,6 +106,15 @@ type Job struct {
 	// differ; see verify.go. A job whose tasks are jobs hands it on to
 	// them instead.
 	Verify int
+	// VerifyShare, if between zero and one, is the share of the job's tasks
+	// that were picked to be verified when it was submitted. The others are
+	// run once, unless what a worker returns elsewhere gives cause to
+	// verify them after all; see Check and Recheck.
+	VerifyShare float64
+	// outvoted is the workers that have returned, for a task of the job
+	// that has succeeded, a result other than the one it succeeded with. It
+	// is worked out from the tasks when first asked for.
+	outvoted map[string]bool
 	// MinMemory and MinGPUs are what a worker must have to be given the
 	// job's tasks: bytes of memory, and graphics cards. Zero asks nothing.
 	MinMemory uint64

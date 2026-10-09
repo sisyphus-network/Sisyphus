@@ -529,7 +529,7 @@ func TestOnlyTheJobsKeyGivesItsCommitments(t *testing.T) {
 func TestTheRecordOfAVerifiedJobSaysWhoReturnedWhatAndWhoAgreed(t *testing.T) {
 	plain := finished()
 	job := jobmodel.New("verified", "primes", []byte(`{"to":10}`), jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
-	job.Verify = 2
+	job.Check(2, 0, []int{0, 1})
 	settled, disputed := job.Tasks[0], job.Tasks[1]
 	for _, node := range []string{"a", "b", "c"} {
 		job.StartCopy(settled, "node-"+node, "worker-"+node, submitted)

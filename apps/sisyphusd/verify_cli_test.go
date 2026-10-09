@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
@@ -79,6 +80,44 @@ func TestCLIVerifiedJobSucceedsThoughOneOfItsThreeWorkersLies(t *testing.T) {
 	if !strings.Contains(record, `"agreed": false`) || !strings.Contains(record, `"agreed": true`) || !strings.Contains(record, `"verify": 2`) ||
 		!strings.Contains(record, "verified: the job as the node holds it gives this record") {
 		t.Errorf("job record printed:\n%s", record)
+	}
+
+	// With a share, only so many of the tasks are verified, and the job
+	// says how many that came to. (What it counts is not looked at here:
+	// the task that is run once may be the liar's.)
+	out = mustCLI(t, "job", "submit", "--addr", addr, "--verify", "2", "--verify-share", "0.5", "--tasks", "2", "--params", `{"from":0,"to":1000000}`)
+	if !strings.Contains(out, "2 task(s), 1 of them verified by 2 workers") || !strings.Contains(out, "succeeded in") {
+		t.Errorf("submit output of a job with half its tasks verified:\n%s", out)
+	}
+	// Each task is shown with whether it was one of them. Both are, if the
+	// liar was caught on one and had run the other.
+	got := mustCLI(t, "job", "get", "--addr", addr, strings.TrimSuffix(strings.Fields(out)[1], ":"))
+	if !strings.Contains(got, "1 of them verified by 2 workers") && !strings.Contains(got, "2 of them verified by 2 workers") ||
+		strings.Count(got, ", verified by 2 workers")+strings.Count(got, ", not verified") != 2 || !strings.Contains(got, ", verified by 2 workers") {
+		t.Errorf("job get printed:\n%s", got)
+	}
+}
+
+func TestATaskIsShownWithWhetherItWasVerifiedOnlyInAJobThatVerifiesSome(t *testing.T) {
+	spot := &pb.Job{Spec: &pb.JobSpec{Verify: 3, VerifyShare: 0.5}}
+	for want, tt := range map[string]struct {
+		job  *pb.Job
+		task *pb.Task
+	}{
+		", verified by 3 workers": {spot, &pb.Task{Verify: 3}},
+		", not verified":          {spot, &pb.Task{Verify: 1}},
+		"":                        {&pb.Job{Spec: &pb.JobSpec{Verify: 3}}, &pb.Task{Verify: 3}},
+	} {
+		tt.job.Tasks = []*pb.Task{tt.task}
+		if got := heldTo(tt.job, tt.task); got != want {
+			t.Errorf("a task held to %d in a job with a share of %v is shown as %q, want %q", tt.task.GetVerify(), tt.job.GetSpec().GetVerifyShare(), got, want)
+		}
+	}
+	// A job whose tasks are jobs says what it hands on, and nothing of
+	// its steps one by one.
+	graph := &pb.Job{Spec: &pb.JobSpec{Verify: 2, VerifyShare: 0.25}, Tasks: []*pb.Task{{}}}
+	if got := verified(graph) + heldTo(graph, graph.GetTasks()[0]); got != ", a share of 0.25 of the tasks of each verified by 2 workers" {
+		t.Errorf("a graph a quarter of whose steps' tasks are verified is shown as %q", got)
 	}
 }
 

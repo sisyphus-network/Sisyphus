@@ -2,7 +2,9 @@ package coordinator
 
 import (
 	"cmp"
+	crand "crypto/rand"
 	"fmt"
+	mrand "math/rand/v2"
 	"slices"
 	"strings"
 	"time"
@@ -32,8 +34,23 @@ import (
 //     connected, and whose results so far do not differ, waits for one, as
 //     a task of any job waits for a worker.
 //
-// Nothing here judges a worker: no worker is scored, charged or shut out
-// for what it returned.
+// Spot checks: a job can ask that only a share of its tasks be verified.
+// Then:
+//
+//   - That share of the tasks, rounded up to a whole task, is picked at
+//     random when the job is submitted. The others need one result: each is
+//     run once and what its worker returns is taken. Nothing a worker is
+//     sent says which kind of task it has been handed.
+//   - A worker is outvoted when a task succeeds with a result other than
+//     the one it returned. Every task of the job that such a worker ran
+//     unverified, or is running, is then verified after all: what the
+//     worker returned for it stands as one result, and the task goes to as
+//     many more workers as it now lacks. So does any task of the job that
+//     is handed to that worker afterwards.
+//
+// Beyond that, nothing here judges a worker: no worker is scored, charged
+// or shut out for what it returned, and what one job found out about a
+// worker is not carried over to the next.
 
 // replicated reports whether a job's tasks are each handed to several
 // workers: it asked to be verified, and its tasks are not jobs, which are
@@ -47,7 +64,7 @@ func (c *Coordinator) replicated(job *jobmodel.Job) bool {
 // it wants now, as far as there are workers free that it has not asked.
 func (c *Coordinator) copiesLocked(job *jobmodel.Job) {
 	for _, task := range job.Tasks {
-		for wanted := job.Wanted(task); wanted > 0; wanted-- {
+		for job.Wanted(task) > 0 {
 			w := c.pickWorkerLocked(job, task)
 			if w == nil {
 				// Another task may still have a worker it can ask.
@@ -55,8 +72,31 @@ func (c *Coordinator) copiesLocked(job *jobmodel.Job) {
 			}
 			now := time.Now()
 			c.handLocked(w, assignment{job: job, task: task, attempt: job.StartCopy(task, w.id, w.name, now), started: now})
+			if job.Outvoted(w.id) {
+				// Its word alone is not taken again in this job.
+				c.recheckLocked(job, w.id, w.name)
+			}
 		}
 	}
+}
+
+// recheckLocked has the tasks a worker ran unverified, or is running so,
+// verified after all, for a worker that has been outvoted in the job.
+func (c *Coordinator) recheckLocked(job *jobmodel.Job, id, name string) (reopened bool) {
+	for _, task := range job.Recheck(id) {
+		reopened = true
+		c.recordLocked(job, eventTaskRechecked, task.Index, cmp.Or(name, id),
+			fmt.Sprintf("was outvoted elsewhere in the job, so this task is now to be verified by %d workers", task.Verify))
+	}
+	return reopened
+}
+
+// shuffled returns the numbers from 0 up to n in an order nobody could have
+// foretold: it is drawn from the system's source of randomness.
+func shuffled(n int) []int {
+	var seed [32]byte
+	crand.Read(seed[:]) // never fails; see crypto/rand
+	return mrand.New(mrand.NewChaCha8(seed)).Perm(n)
 }
 
 // failLocked counts an attempt as failed.
@@ -110,6 +150,15 @@ func (c *Coordinator) returnedLocked(w *worker, a assignment, output []byte, sto
 			said += "; " + names(other) + " returned another"
 		}
 		c.recordLocked(job, eventTaskSucceeded, task.Index, "", said)
+		for _, other := range sides[1:] {
+			for _, r := range other {
+				// What else it returned in this job is no longer taken on
+				// its word, which may undo tasks that had succeeded.
+				if c.recheckLocked(job, r.NodeID, r.NodeName) {
+					allDone = false
+				}
+			}
+		}
 	case len(sides) > 1:
 		c.log.Warn("workers returned different results for a task", "task", task.ID, "results", describe(sides))
 		c.recordLocked(job, eventTaskDisagreed, task.Index, "", describe(sides))
@@ -125,7 +174,7 @@ func (c *Coordinator) returnedLocked(w *worker, a assignment, output []byte, sto
 func (c *Coordinator) unsettledLocked(job *jobmodel.Job, task *jobmodel.Task, sides [][]jobmodel.Result) string {
 	var why string
 	switch {
-	case len(sides[0])+job.MaxResults()-len(task.Results) < job.Verify:
+	case len(sides[0])+task.MaxResults()-len(task.Results) < task.Verify:
 		why = fmt.Sprintf("after %d results", len(task.Results))
 	case c.unaskedLocked(job, task) < job.Wanted(task):
 		why = "and no other connected worker can be asked"
@@ -134,7 +183,7 @@ func (c *Coordinator) unsettledLocked(job *jobmodel.Job, task *jobmodel.Task, si
 	}
 	return fmt.Sprintf("task %d could not be verified: its workers returned different results, no %d of them the same, %s (%s). "+
 		"Verification is for work that gives the same result every time it is run: either this workload does not, or a worker returned a wrong result",
-		task.Index, job.Verify, why, describe(sides))
+		task.Index, task.Verify, why, describe(sides))
 }
 
 // unaskedLocked counts the connected workers that could be given a task of

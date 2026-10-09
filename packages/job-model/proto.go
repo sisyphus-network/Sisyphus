@@ -22,6 +22,7 @@ func (j *Job) ToProto() *pb.Job {
 			MinMemoryBytes:     j.MinMemory,
 			MinGpus:            uint32(j.MinGPUs),
 			Verify:             uint32(j.Verify),
+			VerifyShare:        j.VerifyShare,
 		},
 		State:       pb.JobState(j.State + 1),
 		Result:      append([]byte(nil), j.Result...),
@@ -49,6 +50,7 @@ func (j *Job) ToProto() *pb.Job {
 			NodeName: t.NodeName,
 			Error:    t.Err,
 			Progress: t.Progress,
+			Verify:   uint32(t.Verify),
 		})
 		// A job is as far along as its tasks are, taken together.
 		out.Progress += t.Progress / float64(len(j.Tasks))

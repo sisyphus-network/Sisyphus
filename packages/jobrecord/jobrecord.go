@@ -221,7 +221,7 @@ func Build(job *jobmodel.Job, steps []Step, name func(data []byte) cid.Cid) *Rec
 		m.AssembleEntry("manifest").AssignLink(b.add(b.manifest(job)))
 		m.AssembleEntry("receipts").CreateList(-1, func(l fluent.ListAssembler) {
 			for i, task := range job.Tasks {
-				l.AssembleValue().AssignLink(b.add(b.receipt(i, task)))
+				l.AssembleValue().AssignLink(b.add(b.receipt(i, task, job.VerifyShare > 0)))
 			}
 		})
 		m.AssembleEntry("result").AssignLink(b.add(b.result(job)))
@@ -318,6 +318,10 @@ func (b *builder) manifest(job *jobmodel.Job) datamodel.Node {
 			if job.Verify >= 2 {
 				m.AssembleEntry("verify").AssignInt(int64(job.Verify))
 			}
+			// And only where not every task was to be verified.
+			if job.VerifyShare > 0 {
+				m.AssembleEntry("verify_share").AssignFloat(job.VerifyShare)
+			}
 		})
 		blobs(m, "inputs", job.InputBlobs())
 		if job.Submitter != "" {
@@ -328,7 +332,7 @@ func (b *builder) manifest(job *jobmodel.Job) datamodel.Node {
 }
 
 // receipt is the node for the task at index in the job's tasks.
-func (b *builder) receipt(index int, task *jobmodel.Task) datamodel.Node {
+func (b *builder) receipt(index int, task *jobmodel.Task, spot bool) datamodel.Node {
 	return fluent.MustBuildMap(basicnode.Prototype.Map, -1, func(m fluent.MapAssembler) {
 		m.AssembleEntry("task").AssignInt(int64(task.Index))
 		m.AssembleEntry("state").AssignString(task.State.String())
@@ -349,6 +353,11 @@ func (b *builder) receipt(index int, task *jobmodel.Task) datamodel.Node {
 		})
 		if len(task.Results) == 0 {
 			return
+		}
+		// How many of them had to be the same, in a job that did not ask
+		// it of every task: one for a task that was run once.
+		if spot {
+			m.AssembleEntry("verify").AssignInt(int64(task.Verify))
 		}
 		// What each worker returned for a task that was verified, by a
 		// digest that is the same for results that are the same, and

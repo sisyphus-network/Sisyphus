@@ -407,8 +407,8 @@ func loosen(t *testing.T, db *DB, table, columns string) {
 
 func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	const (
-		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify"
-		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error"
+		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify, verify_share"
+		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error, verify"
 	)
 	for _, tt := range []struct {
 		table, columns, want string
@@ -523,6 +523,8 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	// Put the database back as it was before the migration that added the
 	// column, and so before those that came after it, and open it again.
 	for _, statement := range []string{
+		`ALTER TABLE tasks DROP COLUMN verify`,
+		`ALTER TABLE jobs DROP COLUMN verify_share`,
 		`DROP TABLE file_references`,
 		`DROP TABLE task_results`,
 		`ALTER TABLE jobs DROP COLUMN verify`,
@@ -578,7 +580,7 @@ func TestAJobsCommitmentsAreKeptWithItAndGoWhenItDoes(t *testing.T) {
 func TestWhatEachWorkerReturnedForAVerifiedTaskIsKeptWithItAndGoesWhenItDoes(t *testing.T) {
 	db, file := newDB(t)
 	job := jobmodel.New("j1", "wordcount", nil, jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
-	job.Verify = 2
+	job.Check(2, 0, []int{0, 1})
 	save(t, db, job)
 	task := job.Tasks[0]
 	first := job.StartCopy(task, "node-a", "alpha", submitted)
@@ -623,5 +625,65 @@ func TestWhatEachWorkerReturnedForAVerifiedTaskIsKeptWithItAndGoesWhenItDoes(t *
 	var left int
 	if err := db.sql.QueryRow(`SELECT count(*) FROM task_results`).Scan(&left); err != nil || left != 0 {
 		t.Errorf("%d results left after their job was deleted, %v", left, err)
+	}
+}
+
+func TestWhichTasksOfAJobAreVerifiedIsKeptAndChangesWithThem(t *testing.T) {
+	db, file := newDB(t)
+	job := jobmodel.New("spot", "primes", nil, jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
+	job.Check(2, 0.5, []int{1, 0})
+	save(t, db, job)
+	loaded := load(t, reopen(t, db, file))[0]
+	if loaded.Verify != 2 || loaded.VerifyShare != 0.5 || loaded.Tasks[0].Verify != 1 || loaded.Tasks[1].Verify != 2 {
+		t.Fatalf("as loaded: verified by %d, a share of %v, its tasks by %d and %d", loaded.Verify, loaded.VerifyShare, loaded.Tasks[0].Verify, loaded.Tasks[1].Verify)
+	}
+
+	// A worker settles the task that was passed over, is outvoted on the
+	// other, and so has the first verified after all.
+	db = reopen(t, db, file)
+	spared, checked := job.Tasks[0], job.Tasks[1]
+	job.ReturnCopy(spared, job.StartCopy(spared, "node-a", "alpha", submitted), []byte("wrong"), nil)
+	job.ReturnCopy(checked, job.StartCopy(checked, "node-a", "alpha", submitted), []byte("wrong"), nil)
+	job.ReturnCopy(checked, job.StartCopy(checked, "node-b", "beta", submitted), []byte("right"), nil)
+	job.ReturnCopy(checked, job.StartCopy(checked, "node-c", "gamma", submitted), []byte("right"), nil)
+	save(t, db, job)
+	if got := load(t, db)[0].Tasks[0]; got.State != jobmodel.Succeeded || got.Verify != 1 {
+		t.Errorf("the task passed over, settled by one worker: %v, verified by %d", got.State, got.Verify)
+	}
+	if again := job.Recheck("node-a"); len(again) != 1 {
+		t.Fatalf("%d tasks were checked again", len(again))
+	}
+	save(t, db, job)
+	loaded = load(t, reopen(t, db, file))[0]
+	got := loaded.Tasks[0]
+	if got.State != jobmodel.Pending || got.Verify != 2 || len(got.Results) != 1 || loaded.Wanted(got) != 1 || !got.Asked("node-a") || !loaded.Outvoted("node-a") || loaded.Outvoted("node-b") {
+		t.Errorf("the task as loaded: %v, verified by %d, with %d results, wanting %d more", got.State, got.Verify, len(got.Results), loaded.Wanted(got))
+	}
+}
+
+func TestTheTasksOfAJobFromBeforeSpotChecksAreEachVerifiedAsTheJobIs(t *testing.T) {
+	db, file := newDB(t)
+	job := jobmodel.New("old", "primes", nil, jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
+	job.Check(3, 0, []int{0, 1})
+	save(t, db, job)
+	save(t, db, jobmodel.New("plain", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted))
+	// Put the database back as it was before the migration, and open it
+	// again.
+	for _, statement := range []string{
+		`ALTER TABLE tasks DROP COLUMN verify`,
+		`ALTER TABLE jobs DROP COLUMN verify_share`,
+		`DELETE FROM schema_migrations WHERE version = 17`,
+	} {
+		if _, err := db.sql.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	jobs := load(t, reopen(t, db, file))
+	old, plain := jobs[0], jobs[1]
+	if old.VerifyShare != 0 || old.Tasks[0].Verify != 3 || old.Tasks[1].Verify != 3 || old.Wanted(old.Tasks[0]) != 3 {
+		t.Errorf("a verified job from before: a share of %v, its tasks by %d and %d", old.VerifyShare, old.Tasks[0].Verify, old.Tasks[1].Verify)
+	}
+	if plain.Verify != 0 || plain.Tasks[0].Verify != 0 {
+		t.Errorf("a job from before that was not verified: by %d, its task by %d", plain.Verify, plain.Tasks[0].Verify)
 	}
 }

@@ -24,9 +24,27 @@ func agent(t *testing.T, dataDir, apiAddr string, more ...string) *mcp.ClientSes
 	ctx, hangUp := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- run(ctx, append([]string{"mcp", "--data-dir", dataDir, "--api", apiAddr}, more...)) }()
-	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "1"}, nil).Connect(ctx, ours, nil)
-	if err != nil {
-		t.Fatal(err)
+	type connected struct {
+		session *mcp.ClientSession
+		err     error
+	}
+	connecting := make(chan connected, 1)
+	go func() {
+		session, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "1"}, nil).Connect(ctx, ours, nil)
+		connecting <- connected{session, err}
+	}()
+	var session *mcp.ClientSession
+	select {
+	case got := <-connecting:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		session = got.session
+	case err := <-served:
+		// Nobody is left to answer, and the agent's end would wait for
+		// good.
+		hangUp()
+		t.Fatalf("the server stopped before an agent had connected: %v", err)
 	}
 	t.Cleanup(func() {
 		session.Close()

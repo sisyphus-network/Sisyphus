@@ -1498,7 +1498,10 @@ type Job struct {
 	RecordCid string `protobuf:"bytes,20,opt,name=record_cid,json=recordCid,proto3" json:"record_cid,omitempty"`
 	// How many different workers must return the same result for each task;
 	// see SubmitJobRequest. Zero or one for a job that is not verified.
-	Verify        uint32 `protobuf:"varint,21,opt,name=verify,proto3" json:"verify,omitempty"`
+	Verify uint32 `protobuf:"varint,21,opt,name=verify,proto3" json:"verify,omitempty"`
+	// The share of its tasks that are verified, if not all of them; see
+	// SubmitJobRequest.
+	VerifyShare   float64 `protobuf:"fixed64,22,opt,name=verify_share,json=verifyShare,proto3" json:"verify_share,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1680,6 +1683,13 @@ func (x *Job) GetVerify() uint32 {
 	return 0
 }
 
+func (x *Job) GetVerifyShare() float64 {
+	if x != nil {
+		return x.VerifyShare
+	}
+	return 0
+}
+
 type JobTask struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Index uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
@@ -1692,7 +1702,10 @@ type JobTask struct {
 	// Why its last failed attempt failed, if one did.
 	Error string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
 	// From 0 to 1, as far as the task itself says.
-	Progress      float64 `protobuf:"fixed64,7,opt,name=progress,proto3" json:"progress,omitempty"`
+	Progress float64 `protobuf:"fixed64,7,opt,name=progress,proto3" json:"progress,omitempty"`
+	// In a job that is verified, how many different workers must return the
+	// same result for this task: one for a task its spot checks passed over.
+	Verify        uint32 `protobuf:"varint,8,opt,name=verify,proto3" json:"verify,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1776,6 +1789,13 @@ func (x *JobTask) GetProgress() float64 {
 	return 0
 }
 
+func (x *JobTask) GetVerify() uint32 {
+	if x != nil {
+		return x.Verify
+	}
+	return 0
+}
+
 type SubmitJobRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Workload string                 `protobuf:"bytes,1,opt,name=workload,proto3" json:"workload,omitempty"`
@@ -1801,7 +1821,13 @@ type SubmitJobRequest struct {
 	// Only for work that gives the same result every time, and not for a
 	// private job. It is refused if fewer workers that could take the job
 	// are connected.
-	Verify        uint32 `protobuf:"varint,9,opt,name=verify,proto3" json:"verify,omitempty"`
+	Verify uint32 `protobuf:"varint,9,opt,name=verify,proto3" json:"verify,omitempty"`
+	// Spot checks: with verify, a share between 0 and 1 has only that share
+	// of the tasks verified, chosen at random and rounded up to a whole task,
+	// and the rest run once. A worker whose result for a verified task loses
+	// to the one the others agree on has the tasks it ran unverified in the
+	// job verified after all. Zero, and one, verify every task.
+	VerifyShare   float64 `protobuf:"fixed64,10,opt,name=verify_share,json=verifyShare,proto3" json:"verify_share,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1895,6 +1921,13 @@ func (x *SubmitJobRequest) GetPrivate() bool {
 func (x *SubmitJobRequest) GetVerify() uint32 {
 	if x != nil {
 		return x.Verify
+	}
+	return 0
+}
+
+func (x *SubmitJobRequest) GetVerifyShare() float64 {
+	if x != nil {
+		return x.VerifyShare
 	}
 	return 0
 }
@@ -2093,7 +2126,9 @@ type JobEvent struct {
 	// What happened: submitted, task-started, task-succeeded, task-failed,
 	// task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
 	// In a job that is verified, also task-result, for each result a worker
-	// returns, and task-disagreed, when the results in for a task differ.
+	// returns, task-disagreed, when the results in for a task differ, and
+	// task-rechecked, when a task that spot checks had passed over is to be
+	// verified after all.
 	Kind string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
 	// The task concerned, or -1 if the event is about the job as a whole.
 	TaskIndex     int32  `protobuf:"varint,4,opt,name=task_index,json=taskIndex,proto3" json:"task_index,omitempty"`
@@ -4673,7 +4708,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x06models\x18\x10 \x03(\tR\x06models\"B\n" +
 	"\tWorkerGpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xba\x05\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xdd\x05\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1a\n" +
 	"\bworkload\x18\x02 \x01(\tR\bworkload\x12\x16\n" +
@@ -4698,7 +4733,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x04step\x18\x13 \x01(\tR\x04step\x12\x1d\n" +
 	"\n" +
 	"record_cid\x18\x14 \x01(\tR\trecordCid\x12\x16\n" +
-	"\x06verify\x18\x15 \x01(\rR\x06verify\"\xd7\x01\n" +
+	"\x06verify\x18\x15 \x01(\rR\x06verify\x12!\n" +
+	"\fverify_share\x18\x16 \x01(\x01R\vverifyShare\"\xef\x01\n" +
 	"\aJobTask\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x120\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1a.sisyphus.node.v1.JobStateR\x05state\x12\x18\n" +
@@ -4707,7 +4743,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\vworker_name\x18\x05 \x01(\tR\n" +
 	"workerName\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1a\n" +
-	"\bprogress\x18\a \x01(\x01R\bprogress\"\xbb\x02\n" +
+	"\bprogress\x18\a \x01(\x01R\bprogress\x12\x16\n" +
+	"\x06verify\x18\b \x01(\rR\x06verify\"\xde\x02\n" +
 	"\x10SubmitJobRequest\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
@@ -4717,7 +4754,9 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x10min_memory_bytes\x18\x06 \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
 	"\bmin_gpus\x18\a \x01(\rR\aminGpus\x12\x18\n" +
 	"\aprivate\x18\b \x01(\bR\aprivate\x12\x16\n" +
-	"\x06verify\x18\t \x01(\rR\x06verify\"<\n" +
+	"\x06verify\x18\t \x01(\rR\x06verify\x12!\n" +
+	"\fverify_share\x18\n" +
+	" \x01(\x01R\vverifyShare\"<\n" +
 	"\x11SubmitJobResponse\x12'\n" +
 	"\x03job\x18\x01 \x01(\v2\x15.sisyphus.node.v1.JobR\x03job\")\n" +
 	"\x10CancelJobRequest\x12\x15\n" +

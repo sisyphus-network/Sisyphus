@@ -11,8 +11,16 @@ import (
 // so many workers.
 func verified(tasks, by int) *Job {
 	j := newJob(tasks)
-	j.Verify = by
+	j.Check(by, 0, order(tasks))
 	return j
+}
+
+// order lists the indexes of so many tasks, first to last.
+func order(tasks int) (all []int) {
+	for i := range tasks {
+		all = append(all, i)
+	}
+	return all
 }
 
 // states lists the states of every attempt at a task, in order.
@@ -26,8 +34,8 @@ func states(t *Task) (all []State) {
 func TestAVerifiedTaskSucceedsOnceEnoughWorkersReturnTheSameResult(t *testing.T) {
 	j := verified(2, 2)
 	first, second := j.Tasks[0], j.Tasks[1]
-	if j.Wanted(first) != 2 || j.MaxResults() != 3 || first.Asked("node-a") || len(first.Sides()) != 0 || first.Agreed() != nil {
-		t.Fatalf("a task nobody has yet: wants %d workers, takes %d results, sides %v", j.Wanted(first), j.MaxResults(), first.Sides())
+	if j.Wanted(first) != 2 || first.MaxResults() != 3 || first.Asked("node-a") || len(first.Sides()) != 0 || first.Agreed() != nil {
+		t.Fatalf("a task nobody has yet: wants %d workers, takes %d results, sides %v", j.Wanted(first), first.MaxResults(), first.Sides())
 	}
 
 	a := j.StartCopy(first, "node-a", "alpha", now)
@@ -213,5 +221,142 @@ func TestCancellingAVerifiedJobGivesUpEveryCopyThatIsOut(t *testing.T) {
 	}
 	if got := strings.Join([]string{task.Results[0].NodeName, task.Results[0].Digest()[:4]}, " "); !strings.HasPrefix(got, "alpha ") {
 		t.Errorf("the result it had is kept: %s", got)
+	}
+}
+
+// checks lists how many workers must agree on each of a job's tasks.
+func checks(j *Job) (all []int) {
+	for _, t := range j.Tasks {
+		all = append(all, t.Verify)
+	}
+	return all
+}
+
+func TestAJobCanHaveOnlyAShareOfItsTasksVerified(t *testing.T) {
+	for _, tt := range []struct {
+		share float64
+		want  []int
+		kept  float64
+	}{
+		// Two fifths of five is two, the first two of the order given.
+		{0.4, []int{1, 1, 3, 1, 3}, 0.4},
+		// A share is rounded up to a whole task, so some task always is.
+		{0.01, []int{1, 1, 1, 1, 3}, 0.01},
+		{0.41, []int{3, 1, 3, 1, 3}, 0.41},
+		// No share, and all of them, are every task.
+		{0, []int{3, 3, 3, 3, 3}, 0},
+		{1, []int{3, 3, 3, 3, 3}, 0},
+	} {
+		j := newJob(5)
+		j.Check(3, tt.share, []int{4, 2, 0, 1, 3})
+		if got := checks(j); !reflect.DeepEqual(got, tt.want) || j.Verify != 3 || j.VerifyShare != tt.kept {
+			t.Errorf("a share of %v: tasks held to %v, want %v; the job to %d, a share of %v", tt.share, got, tt.want, j.Verify, j.VerifyShare)
+		}
+		if spec := j.ToProto(); spec.GetSpec().GetVerifyShare() != tt.kept || spec.GetTasks()[4].GetVerify() != 3 || spec.GetTasks()[1].GetVerify() != uint32(tt.want[1]) {
+			t.Errorf("a share of %v as others are told of it: %v", tt.share, spec)
+		}
+	}
+
+	// A task that was passed over is run once, and what comes back is it.
+	j := newJob(2)
+	j.Check(2, 0.5, []int{1, 0})
+	spared := j.Tasks[0]
+	if j.Wanted(spared) != 1 || spared.MaxResults() != 1 || j.Wanted(j.Tasks[1]) != 2 {
+		t.Fatalf("a task passed over wants %d workers and takes %d results; the other wants %d", j.Wanted(spared), spared.MaxResults(), j.Wanted(j.Tasks[1]))
+	}
+	only := j.StartCopy(spared, "node-a", "alpha", now)
+	j.ReportCopy(spared, 0.5)
+	if spared.Progress != 0.5 || j.Wanted(spared) != 0 {
+		t.Errorf("with its one copy half done it is %v along, wanting %d more", spared.Progress, j.Wanted(spared))
+	}
+	if j.ReturnCopy(spared, only, []byte("42"), nil) || spared.State != Succeeded || string(spared.Output) != "42" || len(spared.Agreed()) != 1 {
+		t.Errorf("after its one result the task is %v with %q", spared.State, spared.Output)
+	}
+}
+
+func TestAWorkerThatIsOutvotedHasWhatItRanUnverifiedVerifiedAfterAll(t *testing.T) {
+	// Four tasks, the first of them verified. One worker has returned a
+	// result for the second on its own, has the third, and has had nothing
+	// to do with the fourth.
+	j := newJob(4)
+	j.Check(2, 0.25, order(4))
+	checked, done, out, apart := j.Tasks[0], j.Tasks[1], j.Tasks[2], j.Tasks[3]
+	j.ReturnCopy(done, j.StartCopy(done, "node-a", "alpha", now), []byte("wrong"), nil)
+	j.StartCopy(out, "node-a", "alpha", now)
+	j.ReportCopy(out, 0.5)
+	j.ReturnCopy(apart, j.StartCopy(apart, "node-b", "beta", now), []byte("right"), nil)
+	if done.State != Succeeded || j.Outvoted("node-a") {
+		t.Fatalf("before anything is known against it: its task is %v, outvoted %v", done.State, j.Outvoted("node-a"))
+	}
+
+	// It is outvoted on the first, and from then on is known to have been.
+	a := j.StartCopy(checked, "node-a", "alpha", now)
+	b := j.StartCopy(checked, "node-b", "beta", now)
+	j.ReturnCopy(checked, a, []byte("wrong"), nil)
+	j.ReturnCopy(checked, b, []byte("right"), nil)
+	if j.Outvoted("node-a") || j.Outvoted("node-b") {
+		t.Error("a worker was held to be outvoted by a task that is not settled")
+	}
+	j.ReturnCopy(checked, j.StartCopy(checked, "node-c", "gamma", now), []byte("right"), nil)
+	if !j.Outvoted("node-a") || j.Outvoted("node-b") || j.Outvoted("node-c") {
+		t.Fatalf("after the task was settled against it: %v, %v, %v", j.Outvoted("node-a"), j.Outvoted("node-b"), j.Outvoted("node-c"))
+	}
+	j.MarkSaved()
+
+	// What it returned on its own is one result of two now, and the task
+	// it has needs another worker besides. The others are as they were.
+	again := j.Recheck("node-a")
+	if len(again) != 2 || again[0] != done || again[1] != out || !reflect.DeepEqual(checks(j), []int{2, 2, 2, 1}) {
+		t.Fatalf("checked again: %d tasks, held to %v", len(again), checks(j))
+	}
+	if done.State != Pending || done.Output != nil || done.Progress != 0.5 || j.Wanted(done) != 1 || !done.Asked("node-a") || len(done.Results) != 1 {
+		t.Errorf("the task it had settled alone: %v, %v along, wanting %d more, output %q", done.State, done.Progress, j.Wanted(done), done.Output)
+	}
+	if out.State != Running || out.Progress != 0 || j.Wanted(out) != 1 {
+		t.Errorf("the task it has: %v, %v along, wanting %d more", out.State, out.Progress, j.Wanted(out))
+	}
+	if apart.State != Succeeded || string(apart.Output) != "right" {
+		t.Errorf("a task it had no hand in: %v with %q", apart.State, apart.Output)
+	}
+	if changed := j.Unsaved().Tasks; len(changed) != 2 || changed[0] != done || changed[1] != out {
+		t.Errorf("%d tasks are to be saved again", len(changed))
+	}
+	// There is nothing more to check of it, and nothing at all of a worker
+	// that ran nothing unverified.
+	if len(j.Recheck("node-a")) != 0 || len(j.Recheck("node-c")) != 0 {
+		t.Error("tasks were checked again that had been or had no need")
+	}
+
+	// The task goes on as any verified task does, and a worker outvoted on
+	// it joins those known to have been.
+	if j.ReturnCopy(done, j.StartCopy(done, "node-b", "beta", now), []byte("right"), nil) || done.State != Pending || j.Wanted(done) != 1 {
+		t.Errorf("with two results that differ the task is %v, wanting %d more", done.State, j.Wanted(done))
+	}
+	if j.ReturnCopy(done, j.StartCopy(done, "node-c", "gamma", now), []byte("right"), nil) || done.State != Succeeded || string(done.Output) != "right" || done.NodeName != "beta" {
+		t.Errorf("settled, the task is %v with %q, as %s's", done.State, done.Output, done.NodeName)
+	}
+	last := j.StartCopy(out, "node-b", "beta", now)
+	j.ReturnCopy(out, 1, []byte("right"), nil)
+	if !j.ReturnCopy(out, last, []byte("right"), nil) {
+		t.Error("the job was not said to be done when its last task was settled")
+	}
+
+	// A job that is over is left as it ended.
+	j.Finish([]byte("sum"), nil, now)
+	if len(j.Recheck("node-b")) != 0 || apart.Verify != 1 {
+		t.Errorf("a finished job had tasks checked again: held to %v", checks(j))
+	}
+
+	// A job loaded again knows who was outvoted from what its tasks hold.
+	loaded := Restore(*j, nil, nil, nil)
+	if !loaded.Outvoted("node-a") || loaded.Outvoted("node-b") {
+		t.Errorf("as loaded: %v, %v", loaded.Outvoted("node-a"), loaded.Outvoted("node-b"))
+	}
+	// And a job that is not verified has nobody who was.
+	plain := newJob(1)
+	plain.Start(plain.Tasks[0], "node-a", "alpha", now)
+	plain.Succeed(plain.Tasks[0], nil)
+	if plain.Outvoted("node-a") || len(plain.Recheck("node-a")) != 0 {
+		t.Error("a job that is not verified has a worker that was outvoted")
 	}
 }
