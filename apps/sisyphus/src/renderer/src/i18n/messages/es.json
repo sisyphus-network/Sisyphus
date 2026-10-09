@@ -1,4 +1,5 @@
 {
+  "chatAttachmentsNeedNodeUpdate": "Actualiza el nodo antes de enviar adjuntos. Este daemon no admite la gestión segura de archivos del chat.",
   "privateFileWarning": "Los archivos privados se cifran con private.key. Perder esta clave impide acceder a ellos para siempre. Solo los trabajos privados pueden leerlos; sus trabajadores reciben la clave de descifrado. Usa trabajadores de confianza.",
   "chatAttachmentPrivacyNotice": "Los adjuntos se cifran con private.key del nodo. Perderla impide acceder para siempre. Los trabajos de esta conversación son privados; sus trabajadores reciben la clave, así que usa trabajadores de confianza. Eliminar el chat no elimina archivos; gestiónalos en Operaciones → Archivos.",
   "modelSettings": {

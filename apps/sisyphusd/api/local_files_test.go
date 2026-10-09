@@ -235,6 +235,27 @@ func TestFilesNeedTheTokenAndAStore(t *testing.T) {
 	}
 }
 
+func TestAttachmentOwnershipIsNotAdvertisedByAnUnsupportedPlanner(t *testing.T) {
+	for _, cfg := range []LocalConfig{
+		{},
+		{Store: storage.NewMemory(), Files: newFileList(t)},
+		{Store: storage.NewMemory(), Files: newFileList(t), Assistant: absent{}},
+	} {
+		cfg.Listen = func() []string { return nil }
+		cfg.Country = func() string { return "" }
+		client := serveLocal(t, cfg)
+		info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, capability := range info.GetCapabilities() {
+			if capability == "chat-file-references-v1" {
+				t.Fatal("unsupported planner advertised safe attachment ownership")
+			}
+		}
+	}
+}
+
 // brokenFiles is a list of files that cannot be read or written.
 type brokenFiles struct{}
 

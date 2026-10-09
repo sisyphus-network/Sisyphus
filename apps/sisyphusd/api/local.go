@@ -162,10 +162,18 @@ type localService struct {
 	cfg LocalConfig
 }
 
+type attachmentAssistant interface {
+	AskWithFiles(context.Context, string, string, []string, func(string, planner.Event)) (string, error)
+}
+
 func (s *localService) GetNodeInfo(context.Context, *nodepb.GetNodeInfoRequest) (*nodepb.GetNodeInfoResponse, error) {
-	return &nodepb.GetNodeInfoResponse{
+	info := &nodepb.GetNodeInfoResponse{
 		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, ListenAddresses: s.cfg.Listen(), CountryCode: s.cfg.Country(), Workloads: s.cfg.Workloads,
-	}, nil
+	}
+	if _, ok := s.cfg.Assistant.(attachmentAssistant); ok && s.cfg.Store != nil && s.cfg.Files != nil {
+		info.Capabilities = append(info.Capabilities, "chat-file-references-v1")
+	}
+	return info, nil
 }
 
 func (s *localService) ListPeers(context.Context, *nodepb.ListPeersRequest) (*nodepb.ListPeersResponse, error) {
@@ -582,9 +590,7 @@ func (s *localService) Ask(req *nodepb.AskRequest, stream grpc.ServerStreamingSe
 		if len(req.GetAttachmentCids()) > 128 {
 			return status.Error(codes.InvalidArgument, "at most 128 attachments may be retained per turn")
 		}
-		withFiles, ok := s.cfg.Assistant.(interface {
-			AskWithFiles(context.Context, string, string, []string, func(string, planner.Event)) (string, error)
-		})
+		withFiles, ok := s.cfg.Assistant.(attachmentAssistant)
 		if !ok {
 			return status.Error(codes.Unimplemented, "planner attachment ownership is unavailable")
 		}

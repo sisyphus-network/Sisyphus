@@ -13,6 +13,7 @@ import { DeleteChatConfirmation } from '@/components/assistant/delete-chat-confi
 import { getMessageDirection } from '@/lib/text-direction'
 import { getJobHref } from '@/lib/job-navigation'
 import { needsPlannerSetup } from '@/lib/grpc-status'
+import { supportsChatFileReferences } from '@/lib/node-capabilities'
 import { loadMessages, type Activity, type AttachedFile, type ChatItem, type StoredChatMessage } from '@/lib/chat-history'
 import ShinyText from '@/components/ui/shiny-text'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
@@ -207,6 +208,10 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
     setBusy(true)
     const pendingFiles = [...attachments]
     try {
+      if (pendingFiles.length) {
+        const info = await getNodeApi().call<{ capabilities?: string[] }>('getNodeInfo')
+        if (!supportsChatFileReferences(info)) throw new Error(messages.chatAttachmentsNeedNodeUpdate)
+      }
       const storedAttachments = await Promise.all(pendingFiles.map(async ({ file }) => {
         const result = await getNodeApi().storeFile({ name: file.name, data: new Uint8Array(await file.arrayBuffer()), private: true }) as { cid?: string }
         if (!result.cid) throw new Error(messages.fileUploadMissingCid)
