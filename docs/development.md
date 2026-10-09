@@ -32,6 +32,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `packages/job-model` | Job and task state machines, and which blobs a job consumed and produced. No I/O, no locks. |
 | `packages/nodedb` | The node's SQLite database, where a coordinator keeps its jobs, its members and the invitations it has issued. Schema changes are new numbered files in `migrations/`, never edits to old ones. |
 | `packages/runtime` | The `Workload` interface, the built-in workloads, and the recorder that notes what a workload reads and writes. |
+| `packages/s3` | A bucket in an S3-style object store, for a store that keeps its blocks there. Its tests run against a real one, SeaweedFS in a container. |
 | `packages/sealed` | Encrypting a private job's blobs: the format, sealing and seekable unsealing. |
 | `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. |

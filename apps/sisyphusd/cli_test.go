@@ -29,9 +29,16 @@ func TestMain(m *testing.M) {
 	// Nothing a test does may land in the real user's data directory.
 	os.Unsetenv("XDG_DATA_HOME")
 	code := m.Run()
+	for _, stop := range stopAtExit {
+		stop()
+	}
 	os.RemoveAll(home)
 	os.Exit(code)
 }
+
+// stopAtExit is what to stop when the tests are over: whatever a test
+// started that outlives it, such as a container shared between tests.
+var stopAtExit []func()
 
 // dataDirs records, for each address a test node listens on, the data
 // directory holding that node's key. Commands sent to the address are run

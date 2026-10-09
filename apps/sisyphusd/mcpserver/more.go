@@ -79,7 +79,7 @@ func (s *server) more(out *mcp.Server) {
 		Description: "Lists the models the planner's configured service offers, and whether each can call tools, which a planner's model must."}, doing(s, s.listModels))
 
 	add(s, out, admin, &mcp.Tool{Name: "set_model",
-		Description: "Sets which language model the node's planner plans with. The key of the service already set is kept."}, doing(s, s.setModel))
+		Description: "Sets which language model the node's planner plans with. The key already saved is kept if the provider and address stay the same, and otherwise the service is saved without one: the answer's has_key says which."}, doing(s, s.setModel))
 	add(s, out, admin, &mcp.Tool{Name: "pull_model",
 		Description: "Fetches a model into the Ollama the planner is set to use, which can take minutes and gigabytes. Returns when it is there."}, doing(s, s.pullModel))
 	add(s, out, admin, &mcp.Tool{Name: "create_invitation",

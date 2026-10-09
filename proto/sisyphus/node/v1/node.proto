@@ -260,6 +260,10 @@ message Job {
   uint64 min_memory_bytes = 15;
   uint32 min_gpus = 16;
   bool private = 17;
+  // Set on a job that is a step of another, a graph: the job it is a step
+  // of, and the step's name. A graph's own tasks are its steps, in order.
+  string parent_job_id = 18;
+  string step = 19;
 }
 
 message JobTask {
@@ -351,7 +355,9 @@ message SetModelConfigRequest {
   string base_url = 2;
   string model = 3;
   // The service's key, if it wants one. Leave empty and set keep_api_key to
-  // change the rest without sending the key again.
+  // change the model without sending the key again. The key is kept only
+  // for the provider and address it was saved with: change either and the
+  // configuration is saved without a key, as has_api_key in the answer says.
   string api_key = 4;
   bool keep_api_key = 5;
 }

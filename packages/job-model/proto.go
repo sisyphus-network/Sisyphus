@@ -29,6 +29,8 @@ func (j *Job) ToProto() *pb.Job {
 		FinishedAt:  timestamp(j.FinishedAt),
 		InputBlobs:  j.InputBlobs(),
 		Private:     len(j.Key) > 0,
+		ParentJobId: j.Parent,
+		Step:        j.Step,
 		OutputBlobs: j.OutputBlobs(),
 	}
 	if j.Mode == FullWorker {

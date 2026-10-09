@@ -238,6 +238,36 @@ A coordinator also collects every `--gc-interval` (default one hour), and with `
 
 A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
 
+### Fetching a file with a browser
+
+A node can serve what it holds over plain HTTP, read-only, by content ID, as any IPFS gateway does:
+
+```sh
+bin/sisyphusd run --gateway-listen 127.0.0.1:8080
+curl -H "Authorization: Bearer $(cat "$(bin/sisyphusd data-dir)/api.token")" http://127.0.0.1:8080/ipfs/<cid>
+```
+
+- **It is its owner's unless opened.** A request must show the node's API token, as a bearer token or as `?token=` in the address. Started with `--gateway-open`, anyone who can reach the address and knows a file's content ID can fetch it, which is how a link to a result is shared; a content ID cannot be guessed, but anyone given one can pass it on.
+- **A sealed file is never served**, with or without the token: what the gateway holds of it is what was sealed. Private data is fetched through the node, by whoever has its key.
+- `?filename=report.pdf` names the file for the browser and decides what kind it is taken for; without it the kind is told from how the file begins. Part of a file may be asked for, so video can be played and seeked from it.
+- It serves single files only. A directory, or a path inside one, is not something a node stores.
+
+### In a bucket
+
+A coordinator can keep the pool's stored data in a bucket of an object store that speaks S3, instead of on its own disk: Ceph, MinIO, SeaweedFS, Storj, Wasabi, AWS.
+
+```sh
+printf '%s\n%s\n' "$ACCESS_KEY" "$SECRET_KEY" > s3.keys && chmod 600 s3.keys
+bin/sisyphusd run --s3-endpoint https://s3.eu-central-1.wasabisys.com --s3-bucket my-pool --s3-credentials s3.keys
+```
+
+- **The bucket must exist**; the node checks that it can reach it and stops if not. `--s3-prefix` puts the pool's objects under a name of their own, to share a bucket; `--s3-region` is for stores that have regions.
+- **Nothing else changes.** A file has the same CID wherever its bytes are, so jobs, workers and clients need know nothing of it. Workers still fetch from the coordinator and each other; only the coordinator talks to the bucket, and the credentials never leave it.
+- **Each block is an object**, of up to 256 KiB, under `blocks/`. What is kept and for how long is still the node's to decide: pins are in its data directory, and `blob gc` deletes from the bucket what nothing is keeping.
+- **It is slower than a disk** when the bucket is far away: reading a gigabyte is four thousand requests, one after another. Nothing is cached on the coordinator. Use it for durability and room, and a bucket near the coordinator.
+- It cannot be combined with `--kubo`, which is another answer to where the data is kept.
+- Tried against SeaweedFS's S3 gateway. The others named speak the same dialect and have not been tried.
+
 ## What each machine has
 
 A worker looks at the machine it runs on and tells its coordinator what it finds: the processor, how much memory, and any NVIDIA graphics cards. `sisyphusd nodes` shows it.
@@ -278,6 +308,26 @@ What to know before relying on it:
 - **The key is kept in the node's database**, which only its owner can read, not in the operating system's keychain.
 - **One question at a time per conversation.** Two asked at once in the same conversation are recorded in whichever order they finish.
 - **It gives up after eight rounds** of asking for more without answering.
+
+## Jobs made of jobs
+
+A `graph` job runs several jobs as one. Each step is a job of some workload; a step may use what an earlier one produced, and waits for it.
+
+```sh
+bin/sisyphusd job submit --workload graph --params '{"steps":[
+  {"name":"count","workload":"wordcount","params":{"input":"<cid>"}},
+  {"name":"again","workload":"wordcount","params":{"input":"${count.result.output}"}},
+  {"name":"low","workload":"primes","params":{"from":0,"to":1000000},"tasks":2},
+  {"name":"span","workload":"primes","params":{"from":0,"to":"${low.result.count}"},"after":["again"]}]}'
+```
+
+- **References.** In a step's parameters, `${name.result}` is an earlier step's result, `${name.result.field}` a field of it, `${name.outputs.0}` the first file it stored and `${name.job_id}` its job. A string that is nothing but one reference becomes the value itself, so a number stays a number.
+- **Order.** A step waits for every step it refers to and any it names under `"after"`. Steps that wait for nothing run side by side. A graph in which a step waits, however indirectly, for itself is refused when submitted.
+- **Each step is an ordinary job**, with `parent_job_id` and `step` saying what it is a step of. `job get` and `job logs` work on it, and its tasks go to workers as any job's do. The graph's own tasks are its steps, carried out by the coordinator; no worker needs to know of graphs.
+- **Failure and stopping.** A step that fails, or whose job is cancelled, fails the graph, and steps not yet begun are not run. Cancelling the graph cancels the jobs its steps are running as.
+- **A restart** of the coordinator takes a graph up where it was: steps that had finished are not run again, and one that was running goes on as the job it was.
+- **A private graph** gives its key to every step.
+- Up to 64 steps. There are no loops or conditions: a step runs or the graph fails.
 
 ## Thinking on the pool
 
@@ -410,6 +460,8 @@ What it shows, in this daemon's terms:
 | private | A file or job sealed with the key the node keeps in `private.key` in its data directory, made the first time one is asked for. The same as `--key-file` with that file. Lose the file and what it sealed is lost. |
 | join a pool | `pool join` and a restart with `--join`, without the restart: the node redeems an invitation, says it takes that node's work, and starts on it. |
 | country | Where the node's address is registered, and each peer's, from a table the daemon carries (`packages/geo`, made from the regional Internet registries' published allocations). Nothing is asked of anyone. It is empty for a node that knows itself only by a home-network address, until other nodes have told it the address they see it at; `--locate-country` then asks ipapi.co instead, which thereby learns the address, so that is not done unasked. The country is the one of registration, which now and then is not where the machine is. `scripts/update-geo.sh` remakes the table. |
+
+With `--web-listen` and `--web-origin`, the same API is served to web pages from the origins listed, as Connect and gRPC-Web; there every call needs the token. [`docs/desktop-backend.md`](../../docs/desktop-backend.md#from-a-web-page) has the details.
 
 Anything on the machine can read from the local API. Changing something needs the token in `api.token` in the data directory, which the daemon makes on first use and only its own user can read. The desktop app looks for it in the daemon's default data directory, or in the file named by `SISYPHUS_API_TOKEN_FILE`.
 

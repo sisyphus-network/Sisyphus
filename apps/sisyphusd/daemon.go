@@ -46,6 +46,7 @@ import (
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/s3"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
@@ -60,6 +61,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	advertise := fs.String("advertise", "", "worker-only node: the address other workers should use to reach --serve, if not the same")
 	modelsFrom := fs.String("models-from", "", "worker role: offer the language models of the Ollama at this address, such as http://127.0.0.1:11434, to the pool's jobs. Whoever may submit jobs can then use them, and this machine sees what they ask")
 	inferenceListen := fs.String("inference-listen", "", "coordinator: loopback address to offer the pool's language models on, as a service speaking OpenAI's dialect whose key is the node's API token; off if empty")
+	gatewayListen := fs.String("gateway-listen", "", "address to serve stored files on by content ID, read-only, as GET /ipfs/<cid>, to whoever shows the node's API token; off if empty")
+	gatewayOpen := fs.Bool("gateway-open", false, "let anyone who can reach --gateway-listen and knows a file's content ID fetch it, without the token. Sealed files are never served")
+	webListen := fs.String("web-listen", "", "loopback address to serve the local API on to web pages, as gRPC-Web and Connect, with every call needing the node's API token; off if empty")
+	webOrigins := fs.String("web-origin", "", "the origins of the web pages that may use --web-listen, separated by commas, such as http://localhost:5173; pages from anywhere else are refused")
 	apiListen := fs.String("api-listen", "", "loopback address to serve the local API on, for the desktop client on this machine (it expects 127.0.0.1:50051); off if empty")
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
@@ -77,6 +82,11 @@ func runDaemon(ctx context.Context, args []string) error {
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
 	maxCache := fs.Uint64("max-cache-bytes", 0, "worker-only node: evict the least recently used cached blobs once the cache uses this much disk; 0 means no limit")
+	s3Endpoint := fs.String("s3-endpoint", "", "coordinator: keep stored data in a bucket of the S3-style object store at this address, such as https://s3.wasabisys.com or http://127.0.0.1:9000, instead of on this machine's disk")
+	s3Bucket := fs.String("s3-bucket", "", "the bucket, which must exist")
+	s3Prefix := fs.String("s3-prefix", "", "put this before the name of every object, to share the bucket with other things")
+	s3Region := fs.String("s3-region", "", "the bucket's region, for stores that have them")
+	s3Credentials := fs.String("s3-credentials", "", "a file with the access key on its first line and the secret key on its second; they stay on this node")
 	useKubo := fs.Bool("kubo", false, "keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself, on a private network with the rest of its pool; needs the ipfs program installed, and for a worker, a coordinator that uses it too")
 	swarmPort := fs.Int("swarm-port", 0, "coordinator role with --kubo: TCP port to open so that members' Kubo daemons can connect to this node's directly, which is faster; 0 opens none, and they reach it through --listen")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
@@ -123,6 +133,19 @@ func runDaemon(ctx context.Context, args []string) error {
 	if *inferenceListen != "" && !isCoordinator {
 		return errors.New("--inference-listen is for a node that coordinates a pool: it is that pool's models it offers")
 	}
+	if host, _, err := net.SplitHostPort(*webListen); *webListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
+		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052: the local API is for this machine only, its web pages included")
+	}
+	if *s3Endpoint != "" {
+		switch {
+		case !isCoordinator:
+			return errors.New("--s3-endpoint is for a node that coordinates a pool: it is the pool's stored data that is kept there")
+		case *useKubo:
+			return errors.New("--s3-endpoint and --kubo each say where stored data is kept: choose one")
+		case *s3Bucket == "":
+			return errors.New("--s3-endpoint needs --s3-bucket, the bucket to keep stored data in")
+		}
+	}
 	if isCoordinator && *invitation != "" {
 		return errors.New("--join is for worker-only nodes")
 	}
@@ -154,6 +177,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	if *modelsFrom != "" {
 		runs = runs.With(runtime.WithModels(*modelsFrom)...)
 	}
+	// A graph is a job of jobs, which a coordinator carries out itself: no
+	// worker runs one, so only what takes jobs in knows of it.
+	workloads = workloads.With(runtime.Graph{})
 
 	// The node's key lives beside its data and is created on first run.
 	ident, err := loadIdentity(*dataDir)
@@ -235,6 +261,15 @@ func runDaemon(ctx context.Context, args []string) error {
 	// stopped.
 	var store *storage.Store
 	switch {
+	case *s3Endpoint != "":
+		bucket, err := openBucket(ctx, *s3Endpoint, *s3Bucket, *s3Prefix, *s3Region, *s3Credentials)
+		if err != nil {
+			return err
+		}
+		log.Info("stored data is kept in a bucket", "endpoint", *s3Endpoint, "bucket", *s3Bucket)
+		if store, err = storage.OpenBucket(bucket, filepath.Join(*dataDir, "s3-pins")); err != nil {
+			return fmt.Errorf("%w (nodes sharing a machine each need their own --data-dir)", err)
+		}
 	case isCoordinator && *useKubo:
 		store, err = storage.OpenKubo(sidecar, filepath.Join(*dataDir, "kubo-pins"))
 	case isCoordinator:
@@ -618,6 +653,43 @@ func runDaemon(ctx context.Context, args []string) error {
 		go desktop.Serve(lis)
 	}
 
+	if *gatewayListen != "" {
+		lis, err := net.Listen("tcp", *gatewayListen)
+		if err != nil {
+			return err
+		}
+		token, err := apiToken(filepath.Join(*dataDir, "api.token"))
+		if err != nil {
+			lis.Close()
+			return err
+		}
+		gateway := &http.Server{Handler: api.NewGateway(store, token, *gatewayOpen)}
+		defer gateway.Close()
+		log.Info("gateway listening", "addr", lis.Addr().String(), "open", *gatewayOpen)
+		go gateway.Serve(lis)
+	}
+
+	if *webListen != "" {
+		lis, err := net.Listen("tcp", *webListen)
+		if err != nil {
+			return err
+		}
+		if local.Token, err = apiToken(filepath.Join(*dataDir, "api.token")); err != nil {
+			lis.Close()
+			return err
+		}
+		var origins []string
+		for _, origin := range strings.Split(*webOrigins, ",") {
+			if origin = strings.TrimSpace(origin); origin != "" {
+				origins = append(origins, strings.TrimRight(origin, "/"))
+			}
+		}
+		pages := &http.Server{Handler: api.NewWebHandler(local, origins)}
+		defer pages.Close()
+		log.Info("local API listening for web pages", "addr", lis.Addr().String(), "origins", origins)
+		go pages.Serve(lis)
+	}
+
 	select {
 	case err := <-stopped:
 		return err
@@ -725,6 +797,25 @@ func withTrust(peers []*nodepb.Peer, takes []string, worksFor func(id string) bo
 	}
 	sort.Slice(peers, func(a, b int) bool { return peers[a].GetPeerId() < peers[b].GetPeerId() })
 	return peers
+}
+
+// openBucket opens the bucket a node keeps its stored data in, with the
+// credentials in a file: the access key on the first line and the secret
+// key on the second.
+func openBucket(ctx context.Context, endpoint, bucket, prefix, region, credentialsFile string) (*s3.Client, error) {
+	cfg := s3.Config{Endpoint: endpoint, Bucket: bucket, Prefix: prefix, Region: region}
+	if credentialsFile != "" {
+		keys, err := os.ReadFile(credentialsFile)
+		if err != nil {
+			return nil, fmt.Errorf("read the bucket's credentials: %w", err)
+		}
+		lines := strings.Fields(string(keys))
+		if len(lines) != 2 {
+			return nil, fmt.Errorf("%s should hold the access key on its first line and the secret key on its second", credentialsFile)
+		}
+		cfg.AccessKey, cfg.SecretKey = lines[0], lines[1]
+	}
+	return s3.Open(ctx, cfg)
 }
 
 // countryOf says which country an address is registered in. It is the

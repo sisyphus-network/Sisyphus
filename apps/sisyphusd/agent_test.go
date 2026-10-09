@@ -85,6 +85,13 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 		if slices.Contains([]any{"container", "transcode", "chat", "prompts", "embed"}, w["name"]) {
 			want = 0
 		}
+		if w["name"] == "graph" {
+			// A graph's steps are jobs, which no worker need know of.
+			if w["workers_running_it"] != nil || !strings.Contains(w["run_by"].(string), "coordinator") {
+				t.Errorf("a graph is said to be run by %v", w)
+			}
+			continue
+		}
 		if w["workers_running_it"] != want {
 			t.Errorf("%v is run by %v workers", w["name"], w["workers_running_it"])
 		}

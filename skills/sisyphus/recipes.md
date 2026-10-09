@@ -84,6 +84,22 @@ Write `"model": "llama3.1:8b@<worker's name>"` to keep the prompts on one machin
 
 `embed` turns texts into vectors with an embedding model the pool serves (look for `embed` in the names `pool_status` lists): `{"model": "nomic-embed-text:latest", "input": ["...", "..."]}`, at most 128 texts to a job. Texts whose vectors point the same way mean alike; compare them by cosine similarity.
 
+## One job's output into the next
+
+A `graph` job runs the steps in order for you, so you need not wait on each and pass its result along by hand.
+
+```json
+{ "workload": "graph",
+  "params": { "steps": [
+    { "name": "encode", "workload": "transcode", "params": {"input": "<content ID>", "height": 480} },
+    { "name": "probe", "workload": "container",
+      "params": { "image": "alpine:3.20", "input": "${encode.result.output}",
+                  "command": ["sh", "-c", "wc -c < /input/data"] } }
+  ] } }
+```
+
+`${encode.result.output}` is filled in with that field of the `encode` step's result once it has finished, and `probe` waits for it because it refers to it. Steps that refer to nothing run at the same time; list a step's name under another's `"after"` to make it wait without using anything from it. The graph's result lists each step with the ID of the job that carried it out, and each of those is an ordinary job: `get_job` and `job_logs` work on it. Look at one step's result by itself before building a chain on it, since a reference to a field that is not there fails the step.
+
 ## Private data
 
 Pass `private: true` to `store_file` and to `run_job`. The file is sealed before it leaves the machine, and only the workers that run the job are given the key. A private file can be read only by a private job. The key is in `private.key` in the node's data directory: if it is lost, so is everything sealed with it, so tell the user where it is the first time private data is used.

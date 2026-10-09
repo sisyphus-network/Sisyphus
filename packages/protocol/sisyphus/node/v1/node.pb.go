@@ -1479,8 +1479,12 @@ type Job struct {
 	MinMemoryBytes     uint64 `protobuf:"varint,15,opt,name=min_memory_bytes,json=minMemoryBytes,proto3" json:"min_memory_bytes,omitempty"`
 	MinGpus            uint32 `protobuf:"varint,16,opt,name=min_gpus,json=minGpus,proto3" json:"min_gpus,omitempty"`
 	Private            bool   `protobuf:"varint,17,opt,name=private,proto3" json:"private,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Set on a job that is a step of another, a graph: the job it is a step
+	// of, and the step's name. A graph's own tasks are its steps, in order.
+	ParentJobId   string `protobuf:"bytes,18,opt,name=parent_job_id,json=parentJobId,proto3" json:"parent_job_id,omitempty"`
+	Step          string `protobuf:"bytes,19,opt,name=step,proto3" json:"step,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Job) Reset() {
@@ -1630,6 +1634,20 @@ func (x *Job) GetPrivate() bool {
 		return x.Private
 	}
 	return false
+}
+
+func (x *Job) GetParentJobId() string {
+	if x != nil {
+		return x.ParentJobId
+	}
+	return ""
+}
+
+func (x *Job) GetStep() string {
+	if x != nil {
+		return x.Step
+	}
+	return ""
 }
 
 type JobTask struct {
@@ -2435,7 +2453,9 @@ type SetModelConfigRequest struct {
 	BaseUrl  string                 `protobuf:"bytes,2,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
 	Model    string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
 	// The service's key, if it wants one. Leave empty and set keep_api_key to
-	// change the rest without sending the key again.
+	// change the model without sending the key again. The key is kept only
+	// for the provider and address it was saved with: change either and the
+	// configuration is saved without a key, as has_api_key in the answer says.
 	ApiKey        string `protobuf:"bytes,4,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
 	KeepApiKey    bool   `protobuf:"varint,5,opt,name=keep_api_key,json=keepApiKey,proto3" json:"keep_api_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -4595,7 +4615,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x06models\x18\x10 \x03(\tR\x06models\"B\n" +
 	"\tWorkerGpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xcb\x04\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\x83\x05\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1a\n" +
 	"\bworkload\x18\x02 \x01(\tR\bworkload\x12\x16\n" +
@@ -4615,7 +4635,9 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x14task_timeout_seconds\x18\x0e \x01(\rR\x12taskTimeoutSeconds\x12(\n" +
 	"\x10min_memory_bytes\x18\x0f \x01(\x04R\x0eminMemoryBytes\x12\x19\n" +
 	"\bmin_gpus\x18\x10 \x01(\rR\aminGpus\x12\x18\n" +
-	"\aprivate\x18\x11 \x01(\bR\aprivate\"\xd7\x01\n" +
+	"\aprivate\x18\x11 \x01(\bR\aprivate\x12\"\n" +
+	"\rparent_job_id\x18\x12 \x01(\tR\vparentJobId\x12\x12\n" +
+	"\x04step\x18\x13 \x01(\tR\x04step\"\xd7\x01\n" +
 	"\aJobTask\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x120\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1a.sisyphus.node.v1.JobStateR\x05state\x12\x18\n" +
