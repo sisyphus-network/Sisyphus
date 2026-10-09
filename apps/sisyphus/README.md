@@ -33,7 +33,7 @@ The Electron main process is the gRPC client. It reads the shared `proto/sisyphu
 
 The desktop client connects to one local daemon. It shows live node and peer status, manages peer compute permissions, and exposes the Go daemon's chat/model, job, file, and pool APIs. Chat model-provider configuration and credentials belong to the local daemon; the desktop UI does not call model providers directly. Files are limited to 256 MiB in this client and are sent to the daemon in bounded gRPC chunks.
 
-This is still a development client, not a packaged product or remotely accessible Web UI. It does not start or manage the daemon process: start `sisyphusd` separately. Public-node browsing, remote authentication, daemon lifecycle management, and production packaging remain future work. The Rust libp2p daemon does not implement the Go daemon's job, chat, file, and pool API surface.
+This is still a development client, not a packaged product or remotely accessible Web UI. It does not start or manage the daemon process: start `sisyphusd` separately. Public-node browsing, remote authentication, daemon lifecycle management, and production packaging remain future work.
 
 Run checks with:
 

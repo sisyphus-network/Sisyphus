@@ -31,7 +31,13 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
   const [pulling, setPulling] = useState(false)
   const pullCancel = useRef<(() => void) | null>(null)
   const currentProvider = providers.find((item) => item.id === provider)
-  const keepApiKey = !apiKey && hasApiKey && provider === currentProvider?.id
+  // The node keeps a key for one service: the provider and address it was
+  // saved with. Pointed anywhere else, this page must neither claim a key
+  // is saved nor ask the node to reuse it.
+  const [savedService, setSavedService] = useState({ provider: '', baseUrl: '' })
+  const sameAddress = (a: string, b: string, fallback: string) => (a || fallback).replace(/\/+$/, '') === (b || fallback).replace(/\/+$/, '')
+  const keyIsForThisService = hasApiKey && provider === savedService.provider && sameAddress(baseUrl, savedService.baseUrl, currentProvider?.defaultUrl ?? '')
+  const keepApiKey = !apiKey && keyIsForThisService
 
   useEffect(() => {
     let active = true
@@ -47,6 +53,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
       setBaseUrl(config.baseUrl || selectedProvider?.defaultUrl || '')
       setModel(config.model ?? '')
       setHasApiKey(Boolean(config.hasApiKey))
+      setSavedService({ provider: config.provider ?? '', baseUrl: config.baseUrl ?? '' })
     }).catch(() => { /* The local daemon may not be running yet. */ })
     return () => { active = false; pullCancel.current?.() }
   }, [])
@@ -55,7 +62,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
     if (!provider) return
     setLoadingModels(true)
     try {
-      const result = await getNodeApi().call<{ models?: string[]; details?: typeof models }>('listModels', { service: { provider, baseUrl, apiKey, keepApiKey: !apiKey && hasApiKey } })
+      const result = await getNodeApi().call<{ models?: string[]; details?: typeof models }>('listModels', { service: { provider, baseUrl, apiKey, keepApiKey } })
       const details = result.details ?? (result.models ?? []).map((name) => ({ name, label: '', sizeBytes: 0, tools: 0 }))
       setModels(details)
       if (details.some((item) => item.name === model)) return
@@ -67,8 +74,11 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
   async function saveModel() {
     setSavingModel(true)
     try {
-      const result = await getNodeApi().call<{ hasApiKey?: boolean }>('setModelConfig', { provider, baseUrl, model, apiKey, keepApiKey: !apiKey && hasApiKey })
-      setHasApiKey(Boolean(result.hasApiKey ?? (apiKey || hasApiKey)))
+      const result = await getNodeApi().call<{ hasApiKey?: boolean }>('setModelConfig', { provider, baseUrl, model, apiKey, keepApiKey })
+      // The node says whether a key is now saved: it drops the old one
+      // when the service changed and no new one was given.
+      setHasApiKey(Boolean(result.hasApiKey))
+      setSavedService({ provider, baseUrl })
       setApiKey('')
       toast.success('Model configuration saved')
     } catch (error) {
@@ -80,7 +90,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
     setPullStatus('Starting download…')
     setPullProgress(0)
     setPulling(true)
-    pullCancel.current = getNodeApi().stream<{ status: string; completedBytes?: string | number; totalBytes?: string | number }>('pullModel', { service: { provider, baseUrl, apiKey, keepApiKey: !apiKey && hasApiKey }, model: downloadModel.trim() }, (event) => {
+    pullCancel.current = getNodeApi().stream<{ status: string; completedBytes?: string | number; totalBytes?: string | number }>('pullModel', { service: { provider, baseUrl, apiKey, keepApiKey }, model: downloadModel.trim() }, (event) => {
       setPullStatus(event.status)
       const total = Number(event.totalBytes ?? 0)
       const complete = Number(event.completedBytes ?? 0)
@@ -106,7 +116,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
   }
   async function removeModel(name: string) {
     try {
-      await getNodeApi().call('removeModel', { service: { provider, baseUrl, apiKey, keepApiKey: !apiKey && hasApiKey }, model: name })
+      await getNodeApi().call('removeModel', { service: { provider, baseUrl, apiKey, keepApiKey }, model: name })
       setModels((current) => current.filter((item) => item.name !== name))
       toast.success('Model removed')
     } catch (error) { toast.error('Could not remove model', { description: error instanceof Error ? error.message : String(error) }) }
@@ -145,7 +155,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
       <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><ServerCog className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">LOCAL AI</div><CardTitle className="mt-0.5 text-sm">Model provider</CardTitle></div><Badge variant="outline" className="ms-auto">Stored on node</Badge></CardHeader><CardContent className="space-y-4 pt-4">
         <p className="text-xs text-muted-foreground">Choose the model provider used by the planner. API keys are sent directly to the local daemon and are never displayed again.</p>
         <div className="grid gap-3 sm:grid-cols-2"><label className="space-y-1.5 text-xs"><span>Provider</span><select value={provider} onChange={(event) => { const next = providers.find((item) => item.id === event.target.value); setProvider(event.target.value); if (next) setBaseUrl(next.defaultUrl); setModels([]) }} className="h-10 w-full rounded-xl border border-[var(--app-line)] bg-background px-3 text-sm">{providers.length === 0 && <option value="">Daemon unavailable</option>}{providers.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label className="space-y-1.5 text-xs"><span>Service URL</span><Input dir="ltr" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={currentProvider?.defaultUrl || 'http://localhost:11434'} /></label></div>
-        {currentProvider?.needsKey !== 2 && currentProvider?.needsKey !== 'SUPPORT_NO' && <label className="block space-y-1.5 text-xs"><span>API key {hasApiKey && !apiKey ? '· saved on node' : ''}</span><Input dir="ltr" type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={hasApiKey ? 'Leave empty to keep saved key' : 'Enter provider API key'} /></label>}
+        {currentProvider?.needsKey !== 2 && currentProvider?.needsKey !== 'SUPPORT_NO' && <label className="block space-y-1.5 text-xs"><span>API key {keyIsForThisService && !apiKey ? '· saved on node' : ''}</span><Input dir="ltr" type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={keyIsForThisService ? 'Leave empty to keep saved key' : 'Enter provider API key'} /></label>}
         <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" disabled={!provider || loadingModels} onClick={() => void refreshModels()} className="gap-2">{loadingModels ? <LoaderCircle className="size-4 animate-spin" /> : null}Load models</Button><select aria-label="Model" value={model} onChange={(event) => setModel(event.target.value)} className="h-10 min-w-48 flex-1 rounded-xl border border-[var(--app-line)] bg-background px-3 text-sm"><option value="">Choose model</option>{models.map((item) => <option key={item.name} value={item.name} disabled={item.tools === 'SUPPORT_NO' || item.tools === 2}>{item.label || item.name}{Number(item.sizeBytes) > 0 ? ` · ${(Number(item.sizeBytes) / 1024 ** 3).toFixed(1)} GB` : ''}</option>)}</select><Button type="button" disabled={!provider || !model || savingModel} onClick={() => void saveModel()}>{savingModel ? 'Saving…' : 'Save model'}</Button></div>
         {models.length > 0 && <div className="space-y-1 rounded-xl border border-[var(--app-line)] px-3 py-2">{models.map((item) => <div key={item.name} className="flex items-center gap-2 py-1 text-xs"><span className="min-w-0 flex-1 truncate">{item.label || item.name}</span>{item.tools === 'SUPPORT_NO' || item.tools === 2 ? <Badge variant="outline">No tools</Badge> : null}{currentProvider?.fetchesModels && <Button type="button" size="icon" variant="ghost" className="size-7" aria-label={`Remove ${item.name}`} onClick={() => void removeModel(item.name)}><Trash2 className="size-3.5" /></Button>}</div>)}</div>}
         {currentProvider?.fetchesModels && <div className="flex flex-wrap items-center gap-2 border-t border-[var(--app-line)] pt-3"><Input value={downloadModel} onChange={(event) => setDownloadModel(event.target.value)} placeholder="Model name to download (e.g. llama3.1:8b)" className="min-w-48 flex-1" /><Button type="button" variant="outline" disabled={pulling || !downloadModel.trim()} onClick={startModelPull} className="gap-2"><Download className="size-4" />Download</Button>{pulling && <Button type="button" variant="ghost" onClick={cancelModelPull}>Cancel</Button>}</div>}

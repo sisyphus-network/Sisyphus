@@ -8,7 +8,7 @@ This is the walking skeleton: a coordinator splits a job into tasks, workers exe
 
 Needs Go 1.27 or newer.
 
-From the repository root, `nix develop` provides the Go toolchain and development dependencies. The active daemon is the Go binary at `bin/sisyphusd`; the earlier Rust binary under `target/debug` is not used for development.
+From the repository root, `nix develop` provides the Go toolchain and development dependencies. The daemon is the Go binary at `bin/sisyphusd`.
 
 ```sh
 make build   # produces bin/sisyphusd
