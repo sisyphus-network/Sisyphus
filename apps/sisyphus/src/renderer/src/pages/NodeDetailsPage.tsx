@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode, type FormEvent } from 'react'
-import { Activity, ArrowUpRight, Cpu, Globe2, HardDrive, Link2, RefreshCw, Server, Signal, type LucideIcon } from 'lucide-react'
+import { useEffect, useMemo, useState, type ReactNode, type FormEvent } from 'react'
+import { Cpu, Globe2, HardDrive, Link2, LoaderCircle, RefreshCw, Server, Signal, type LucideIcon } from 'lucide-react'
 import type { NodeSnapshot, Peer } from '../../../preload'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,18 +9,34 @@ import { Input } from '@/components/ui/input'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { toast } from 'sonner'
+import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 
 type Messages = ReturnType<typeof getMessages>
-function shortId(id: string) { return id.length < 22 ? `${id.slice(0, 12)}…${id.slice(-8)}` : id }
+function shortId(id: string) { return id.length > 22 ? `${id.slice(0, 12)}…${id.slice(-8)}` : id }
 function peerIsConnected(peer: Peer) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
+function formatBytes(value: string | number) {
+  const bytes = Number(value)
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const power = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  return `${(bytes / 1024 ** power).toFixed(power ? 1 : 0)} ${units[power]}`
+}
 
 export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot; messages: Messages }) {
   const [refreshing, setRefreshing] = useState(false)
   const [peerAddress, setPeerAddress] = useState('')
   const [peerBusy, setPeerBusy] = useState(false)
+  const [workersState, setWorkersState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [workers, setWorkers] = useState<{ peerId: string; name: string; hostname: string; os: string; arch: string; cpuCores: number; cpuModel: string; memoryBytes: string | number; taskSlots: number; runningTasks: number; workloads: string[]; models: string[]; gpus: { name: string; memoryBytes: string | number }[] }[]>([])
   const desktopApp = isDesktopApp()
   const connectedPeers = useMemo(() => snapshot.peers.filter(peerIsConnected).length, [snapshot.peers])
   const statusLabel = snapshot.status === 'connected' ? messages.connected : snapshot.status === 'connecting' ? messages.connecting : messages.offline
+  useEffect(() => {
+    if (snapshot.status !== 'connected') { setWorkers([]); return }
+    let active = true
+    void getNodeApi().call<{ workers?: typeof workers }>('listWorkers').then((result) => { if (active) { setWorkers(result.workers ?? []); setWorkersState('ready') } }).catch(() => { if (active) { setWorkers([]); setWorkersState('error') } })
+    return () => { active = false }
+  }, [snapshot.status, snapshot.revision])
   async function reconnect() {
     setRefreshing(true)
     try {
@@ -54,18 +70,55 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
     finally { setPeerBusy(false) }
   }
 
-  return <>
-    <section className="flex items-end justify-between gap-4 py-8 max-[600px]:items-start max-[600px]:flex-col"><div><div className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">{messages.machineStatus}</div><h1 className="mt-2 text-3xl font-semibold tracking-tight">{messages.nodeOverview}</h1><p className="mt-2 text-sm text-muted-foreground">{messages.liveDescription}</p></div>{desktopApp && <Button variant="outline" disabled={refreshing} onClick={() => void reconnect()} className="gap-2"><RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? messages.connecting : messages.reconnect}</Button>}</section>
-    {snapshot.status !== 'connected' && <div role="status" className={`mb-4 flex items-start gap-3 rounded-xl border px-4 py-3 ${snapshot.status === 'connecting' ? 'border-amber-500/20 bg-amber-500/5' : 'border-destructive/20 bg-destructive/5'}`}><Activity className={`mt-0.5 size-4 shrink-0 ${snapshot.status === 'connecting' ? 'text-amber-600' : 'text-destructive'}`} /><div><div className="text-sm font-medium">{snapshot.status === 'connecting' ? messages.connectingDaemon : messages.daemonUnavailable}</div><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{snapshot.error ?? formatMessage(messages.waitingForDaemon, { endpoint: snapshot.endpoint })}</p></div></div>}
-    <section aria-label={messages.nodeOverview} className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[600px]:grid-cols-1">
+  const labels = messages.nodeOverviewText
+  return <div className="pb-7">
+    <PageHeading title={messages.nodeOverview} description={messages.liveDescription} actions={desktopApp && <Button variant="outline" disabled={refreshing} onClick={() => void reconnect()} className="gap-2"><RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? messages.connecting : messages.reconnect}</Button>} />
+    <section aria-label={messages.nodeOverview} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <MetricCard label={messages.nodeIdentity} icon={Server} value={snapshot.info ? shortId(snapshot.info.peerId) : '—'} detail={snapshot.info ? `${messages.daemonVersion} v${snapshot.info.daemonVersion}` : messages.waitingHandshake} mono />
       <MetricCard label={messages.connectedPeers} icon={Globe2} value={<>{connectedPeers}<span className="text-lg font-normal text-muted-foreground"> / {snapshot.peers.length}</span></>} detail={messages.activeKnownPeers} />
-      <MetricCard label={messages.peerRevision} icon={Signal} value={snapshot.revision} detail={snapshot.lastUpdated ? formatMessage(messages.updated, { time: new Date(snapshot.lastUpdated).toLocaleTimeString() }) : messages.listeningSnapshot} mono className="max-[900px]:col-span-2 max-[600px]:col-span-1" />
+      <MetricCard label={messages.peerRevision} icon={Signal} value={snapshot.revision} detail={snapshot.lastUpdated ? formatMessage(messages.updated, { time: new Date(snapshot.lastUpdated).toLocaleTimeString(document.documentElement.lang) }) : messages.listeningSnapshot} mono className="sm:col-span-2 lg:col-span-1" />
     </section>
-    <Card className="mt-4"><CardHeader className="flex min-h-16 flex-row items-center justify-between border-b border-[var(--app-line)] py-3"><div className="flex items-center gap-3"><div className="grid size-8 place-items-center rounded-lg bg-[var(--app-wash)]"><HardDrive className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.14em] text-muted-foreground">{messages.daemon}</div><CardTitle className="mt-0.5 text-sm">{messages.nodeDetails}</CardTitle></div></div><Badge variant="secondary" className="gap-1.5 capitalize"><span className={`size-1.5 rounded-full ${snapshot.status === 'connected' ? 'bg-emerald-500' : snapshot.status === 'connecting' ? 'bg-amber-500' : 'bg-muted-foreground'}`} />{statusLabel}</Badge></CardHeader><CardContent className="grid grid-cols-2 gap-x-8 max-[600px]:grid-cols-1"><Detail label={messages.peerId} value={snapshot.info?.peerId ?? '—'} code wide /><Detail label={messages.daemonVersion} value={snapshot.info?.daemonVersion ?? '—'} /><Detail label={messages.geoCountry} value={snapshot.info?.countryCode || messages.geoUnavailable} /><Detail label={messages.listenAddresses} wide>{snapshot.info?.listenAddresses.length ? <div className="flex flex-col gap-1.5">{snapshot.info.listenAddresses.slice(0, 3).map((address) => <code key={address} dir="ltr" className="break-all text-xs">{address}</code>)}{snapshot.info.listenAddresses.length > 3 && <span className="text-xs text-muted-foreground">{formatMessage(messages.moreAddresses, { count: snapshot.info.listenAddresses.length - 3 })}</span>}</div> : <span className="text-xs text-muted-foreground">{messages.noAddresses}</span>}</Detail></CardContent></Card>
-    <Card className="mt-4"><CardHeader className="flex min-h-16 flex-row items-center justify-between py-3"><div className="flex items-center gap-3"><div className="grid size-8 place-items-center rounded-lg bg-[var(--app-wash)]"><Cpu className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.14em] text-muted-foreground">{messages.p2pNetwork}</div><CardTitle className="mt-0.5 text-sm">{messages.knownPeers} <span className="ms-1 font-mono text-xs text-muted-foreground">{snapshot.peers.length}</span></CardTitle></div></div><div className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className={`size-1.5 rounded-full ${snapshot.status === 'connected' ? 'animate-pulse bg-emerald-500' : 'bg-muted-foreground'}`} />{snapshot.status === 'connected' ? messages.streaming : messages.streamPaused}</div></CardHeader><Separator /><div className="px-5 py-4"><form onSubmit={(event) => void connectPeer(event)} className="flex gap-2 max-[600px]:flex-col"><Input dir="ltr" value={peerAddress} onChange={(event) => setPeerAddress(event.target.value)} placeholder="/ip4/host/tcp/port/p2p/…" aria-label={messages.peerMultiaddress} disabled={peerBusy || snapshot.status !== 'connected'} /><Button type="submit" disabled={peerBusy || snapshot.status !== 'connected' || !peerAddress.trim()} className="gap-2"><Link2 className="size-4" />{peerBusy ? messages.connecting : messages.connectPeer}</Button></form><p className="mt-2 text-xs text-muted-foreground">{messages.peerConnectionHint}</p></div><Separator />{snapshot.peers.length === 0 ? <div className="flex min-h-32 flex-col items-center justify-center px-6 py-8 text-center"><div className="mb-3 grid size-10 place-items-center rounded-full border border-[var(--app-line)] bg-[var(--app-wash)]"><Globe2 className="size-4 text-muted-foreground" /></div><div className="text-sm font-medium">{snapshot.status === 'connected' ? messages.noPeersYet : messages.peerListHere}</div><p className="mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">{snapshot.status === 'connected' ? messages.onlineListening : messages.connectDaemon}</p></div> : <div className="px-5">{snapshot.peers.map((peer) => <PeerRow key={peer.peerId} peer={peer} messages={messages} busy={peerBusy} onSetPermissions={(gives, takes) => void setComputePermissions(peer, gives, takes)} />)}</div>}</Card>
-    {/* <footer className="flex items-center justify-between gap-4 px-1 pt-5 text-[9px] font-medium tracking-[0.1em] text-muted-foreground max-[600px]:flex-col max-[600px]:items-start"></footer> */}
-  </>
+    <div className="mt-4 grid gap-4">
+      <NodeSection icon={Cpu} title={labels.workers} count={workers.length} aside={<span className="text-xs text-muted-foreground">{labels.hardwareModels}</span>}>
+        {workers.length === 0 ? <EmptyState icon={workersState === 'loading' ? LoaderCircle : Server} loading={workersState === 'loading'} title={workersState === 'loading' ? labels.workersLoading : workersState === 'error' ? labels.workersUnavailable : labels.noWorkers} description={workersState === 'ready' ? labels.noWorkersDescription : undefined} /> : <div className="divide-y divide-[var(--app-line)] px-5">
+          {workers.map((worker) => <article key={worker.peerId} className="flex flex-wrap items-start gap-3 py-5">
+            <div className="grid size-9 shrink-0 place-items-center rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]"><Server className="size-4 text-muted-foreground" /></div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{worker.name || worker.hostname || worker.peerId.slice(0, 14)}</div>
+              <div className="mt-1 text-xs leading-5 text-muted-foreground">{worker.os} · {worker.arch} · {worker.cpuCores} {labels.cores} · {worker.cpuModel || labels.cpuUnknown}</div>
+              <div className="mt-2 flex flex-wrap gap-1.5">{worker.gpus?.map((gpu) => <Badge key={gpu.name} variant="secondary">{gpu.name}{Number(gpu.memoryBytes) > 0 ? ` · ${formatBytes(gpu.memoryBytes)}` : ''}</Badge>)}{worker.models?.map((model) => <Badge key={model} variant="outline">{model}</Badge>)}{worker.workloads?.map((workload) => <Badge key={workload} variant="outline" className="text-muted-foreground">{workload}</Badge>)}</div>
+            </div>
+            <div className="text-end text-xs leading-5 text-muted-foreground">{formatBytes(worker.memoryBytes)}<div>{worker.runningTasks}/{worker.taskSlots} {messages.operationText.tasks}</div></div>
+          </article>)}
+        </div>}
+      </NodeSection>
+      <NodeSection icon={HardDrive} title={messages.nodeDetails} aside={<Badge variant="secondary" className="gap-1.5"><span className="size-1.5 rounded-full bg-emerald-500" />{statusLabel}</Badge>}>
+        {snapshot.info ? <CardContent className="grid grid-cols-2 gap-x-8 max-[600px]:grid-cols-1">
+          <Detail label={messages.peerId} value={snapshot.info.peerId} code wide />
+          <Detail label={messages.daemonVersion} value={snapshot.info.daemonVersion} />
+          <Detail label={messages.geoCountry} value={snapshot.info.countryCode || messages.geoUnavailable} />
+          <Detail label={messages.listenAddresses} wide>{snapshot.info.listenAddresses.length ? <div className="flex flex-col gap-1.5">{snapshot.info.listenAddresses.slice(0, 3).map((address) => <code key={address} dir="ltr" className="break-all text-xs">{address}</code>)}{snapshot.info.listenAddresses.length > 3 && <span className="text-xs text-muted-foreground">{formatMessage(messages.moreAddresses, { count: snapshot.info.listenAddresses.length - 3 })}</span>}</div> : <EmptyState icon={Signal} title={messages.noAddresses} />}</Detail>
+        </CardContent> : <EmptyState icon={HardDrive} title={labels.noNodeDetails} description={labels.nodeDetailsPending} />}
+      </NodeSection>
+      <NodeSection icon={Globe2} title={messages.knownPeers} count={snapshot.peers.length} aside={<span className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="size-1.5 rounded-full bg-emerald-500" />{messages.streaming}</span>}>
+        <div className="px-5 py-4">
+          <form onSubmit={(event) => void connectPeer(event)} className="flex gap-2 max-[600px]:flex-col">
+            <Input dir="ltr" value={peerAddress} onChange={(event) => setPeerAddress(event.target.value)} placeholder="/ip4/host/tcp/port/p2p/…" aria-label={messages.peerMultiaddress} disabled={peerBusy} />
+            <Button type="submit" variant="outline" disabled={peerBusy || !peerAddress.trim()} className="gap-2"><Link2 className="size-4" />{peerBusy ? messages.connecting : messages.connectPeer}</Button>
+          </form>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">{messages.peerConnectionHint}</p>
+        </div>
+        <Separator />
+        {snapshot.peers.length === 0 ? <EmptyState icon={Globe2} title={messages.noPeersYet} description={messages.onlineListening} /> : <div className="px-5">{snapshot.peers.map((peer) => <PeerRow key={peer.peerId} peer={peer} messages={messages} busy={peerBusy} onSetPermissions={(gives, takes) => void setComputePermissions(peer, gives, takes)} />)}</div>}
+      </NodeSection>
+    </div>
+  </div>
+}
+
+function NodeSection({ icon: Icon, title, count, aside, children }: { icon: LucideIcon; title: string; count?: number; aside?: ReactNode; children: ReactNode }) {
+  return <Card><CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 border-b border-[var(--app-line)] py-4">
+    <div className="flex min-w-0 items-center gap-3"><span className="grid size-8 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><Icon className="size-4 text-muted-foreground" /></span><CardTitle className="text-sm font-medium">{title}{count !== undefined && <span className="ms-2 text-xs font-normal tabular-nums text-muted-foreground">{count}</span>}</CardTitle></div>{aside}
+  </CardHeader>{children}</Card>
 }
 
 function MetricCard({ label, icon: Icon, value, detail, mono = false, className = '' }: { label: string; icon: LucideIcon; value: ReactNode; detail: string; mono?: boolean; className?: string }) {
