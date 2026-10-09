@@ -743,7 +743,31 @@ func runDaemon(ctx context.Context, args []string) error {
 	// The node's planner is there whatever its role, so that its model can
 	// be set and its conversations read; it has something to compute on
 	// only where the node coordinates a pool.
-	local.Assistant = &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey}
+	planning := &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey, filePins: local.Store}
+	local.Assistant = planning
+	if err := planning.replayFilePins(ctx); err != nil {
+		log.Warn("attachment pins will be retried", "error", err)
+	}
+	pinCtx, stopPins := context.WithCancel(ctx)
+	pinDone := make(chan struct{})
+	defer func() { stopPins(); <-pinDone }()
+	go func() {
+		defer close(pinDone)
+		tick := time.NewTicker(2 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-pinCtx.Done():
+				return
+			case <-tick.C:
+				attempt, cancel := context.WithTimeout(pinCtx, 10*time.Second)
+				if err := planning.replayFilePins(attempt); err != nil {
+					log.Warn("attachment pins will be retried", "error", err)
+				}
+				cancel()
+			}
+		}
+	}()
 
 	// Whatever its role, the node is connected to the nodes in its address
 	// book and those named on the command line, and through them finds

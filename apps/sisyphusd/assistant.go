@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
+
+	"github.com/ipfs/go-cid"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,6 +33,53 @@ type assistant struct {
 	// offered says whether the pool has a worker that runs a workload now.
 	offered    func(workload string) bool
 	sealingKey func() (sealed.Key, error)
+	filePins   attachmentPinStore
+	filePinMu  sync.Mutex
+}
+
+type attachmentPinStore interface {
+	Pin(context.Context, string, time.Time, ...cid.Cid) error
+	Unpin(string, ...cid.Cid) error
+}
+
+// flushFilePins is called under filePinMu. A crash after storage success
+// but before acknowledgement replays the same idempotent operation.
+func (a *assistant) flushFilePins(ctx context.Context) error {
+	if a.filePins == nil {
+		return nil
+	}
+	for {
+		ops, err := a.store.PendingFilePins()
+		if err != nil {
+			return err
+		}
+		if len(ops) == 0 {
+			return nil
+		}
+		for _, op := range ops {
+			c, err := cid.Decode(op.CID)
+			if err != nil {
+				return err
+			}
+			if op.Keep {
+				err = a.filePins.Pin(ctx, op.Owner, time.Time{}, c)
+			} else {
+				err = a.filePins.Unpin(op.Owner, c)
+			}
+			if err != nil {
+				return err
+			}
+			if err := a.store.CompleteFilePin(op.Seq); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (a *assistant) replayFilePins(ctx context.Context) error {
+	a.filePinMu.Lock()
+	defer a.filePinMu.Unlock()
+	return a.flushFilePins(ctx)
 }
 
 // assistantStore is where the configuration and conversations are kept. A
@@ -43,6 +93,8 @@ type assistantStore interface {
 	AppendChatMessages(chatID string, messages []string, now time.Time) error
 	ChatMessages(chatID string) ([]string, error)
 	RetainChatFiles(chatID string, cids []string) error
+	PendingFilePins() ([]nodedb.FilePinOperation, error)
+	CompleteFilePin(seq int64) error
 }
 
 func (a *assistant) ModelConfig() (nodedb.ModelConfig, bool, error) { return a.store.ModelConfig() }
@@ -138,7 +190,16 @@ func (a *assistant) RemoveModel(ctx context.Context, at *nodedb.ModelConfig, mod
 
 func (a *assistant) Chats() ([]nodedb.Chat, error) { return a.store.Chats() }
 
-func (a *assistant) DeleteChat(id string) error { return a.store.DeleteChat(id) }
+func (a *assistant) DeleteChat(id string) error {
+	a.filePinMu.Lock()
+	defer a.filePinMu.Unlock()
+	if err := a.store.DeleteChat(id); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return a.flushFilePins(ctx)
+}
 
 // Chat returns what has been said in a conversation.
 func (a *assistant) Chat(id string) ([]ai.Message, error) {
@@ -215,7 +276,13 @@ func (a *assistant) AskWithFiles(ctx context.Context, chatID, text string, cids 
 		return "", err
 	}
 	if len(cids) > 0 {
-		if err := a.store.RetainChatFiles(chatID, cids); err != nil {
+		a.filePinMu.Lock()
+		err := a.store.RetainChatFiles(chatID, cids)
+		if err == nil {
+			err = a.flushFilePins(ctx)
+		}
+		a.filePinMu.Unlock()
+		if err != nil {
 			return chatID, status.Errorf(codes.FailedPrecondition, "cannot retain chat attachments: %v", err)
 		}
 	}
