@@ -35,6 +35,7 @@ export function OperationsPage({ messages }: { messages: Messages }) {
   const [tab, setTab] = useState<'jobs' | 'files' | 'pool'>('jobs')
   const [jobs, setJobs] = useState<Job[]>([])
   const [jobEvents, setJobEvents] = useState<Record<string, { kind: string; text: string; workerName: string }[]>>({})
+  const lastEventSeq = useRef<Record<string, number>>({})
   const [files, setFiles] = useState<StoredFile[]>([])
   const [members, setMembers] = useState<Member[]>([])
   const [workload, setWorkload] = useState('primes')
@@ -120,7 +121,14 @@ export function OperationsPage({ messages }: { messages: Messages }) {
   const liveJobIds = displayedJobs.filter((job) => ['JOB_STATE_PENDING', 'JOB_STATE_RUNNING', 1, 2].includes(job.state)).map((job) => job.jobId).join(',')
   useEffect(() => {
     const ids = liveJobIds ? liveJobIds.split(',') : []
-    const stops = ids.map((jobId) => getNodeApi().stream<{ kind: string; text: string; workerName: string }>('watchJobEvents', { jobId }, (event) => setJobEvents((current) => ({ ...current, [jobId]: [...(current[jobId] ?? []).slice(-19), event] })), () => {}))
+    // Each stream picks up after the last event already shown, so that
+    // reopening them when the set of live jobs changes repeats nothing.
+    const stops = ids.map((jobId) => getNodeApi().stream<{ seq?: string | number; kind: string; text: string; workerName: string }>('watchJobEvents', { jobId, afterSeq: lastEventSeq.current[jobId] ?? 0 }, (event) => {
+      const seq = Number(event.seq ?? 0)
+      if (seq && seq <= (lastEventSeq.current[jobId] ?? 0)) return
+      if (seq) lastEventSeq.current[jobId] = seq
+      setJobEvents((current) => ({ ...current, [jobId]: [...(current[jobId] ?? []).slice(-19), event] }))
+    }, () => {}))
     return () => stops.forEach((stop) => stop())
   }, [liveJobIds])
   async function uploadFile(file?: File) {
