@@ -32,11 +32,13 @@ import (
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/api"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/inference"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/p2p"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/pinning"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/replication"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/tunnel"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
 	"github.com/sisyphus-network/Sisyphus/packages/geo"
@@ -91,6 +93,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	s3Credentials := fs.String("s3-credentials", "", "a file with the access key on its first line and the secret key on its second; they stay on this node")
 	useKubo := fs.Bool("kubo", false, "keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself, on a private network with the rest of its pool; needs the ipfs program installed, and for a worker, a coordinator that uses it too")
 	swarmPort := fs.Int("swarm-port", 0, "coordinator role with --kubo: TCP port to open so that members' Kubo daemons can connect to this node's directly, which is faster; 0 opens none, and they reach it through --listen")
+	replicas := fs.Int("replicas", 0, "coordinator role: have this many of the pool's storage followers each hold a copy of everything this node has pinned; 0 asks none to")
+	replicaDir := fs.String("replica-dir", "", "worker-only node: be a storage follower, keeping in this directory, which must be used for nothing else, copies of whatever stored data its coordinator says to")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
 	verbose := fs.Bool("v", false, "log per-task detail")
 	if err := fs.Parse(args); err != nil {
@@ -156,6 +160,12 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if isCoordinator && *serve != "" {
 		return errors.New("--serve is for worker-only nodes; a coordinator serves its data already")
+	}
+	if *replicas < 0 || (*replicas > 0 && !isCoordinator) {
+		return errors.New("--replicas is a number of copies, for a node that coordinates a pool; a worker-only node offers to hold copies with --replica-dir")
+	}
+	if isCoordinator && *replicaDir != "" {
+		return errors.New("--replica-dir is for worker-only nodes; a coordinator holds its pool's data already")
 	}
 	if *advertise == "" {
 		*advertise = *serve
@@ -265,6 +275,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	// first-out, so the store closes only after everything using it has
 	// stopped.
 	var store *storage.Store
+	// pinsDir is where a coordinator's store keeps its pins.
+	pinsDir := filepath.Join(*dataDir, "blobs")
 	switch {
 	case *s3Endpoint != "":
 		bucket, err := openBucket(ctx, *s3Endpoint, *s3Bucket, *s3Prefix, *s3Region, *s3Credentials)
@@ -272,13 +284,15 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		log.Info("stored data is kept in a bucket", "endpoint", *s3Endpoint, "bucket", *s3Bucket)
-		if store, err = storage.OpenBucket(bucket, filepath.Join(*dataDir, "s3-pins")); err != nil {
+		pinsDir = filepath.Join(*dataDir, "s3-pins")
+		if store, err = storage.OpenBucket(bucket, pinsDir); err != nil {
 			return fmt.Errorf("%w (nodes sharing a machine each need their own --data-dir)", err)
 		}
 	case isCoordinator && *useKubo:
-		store, err = storage.OpenKubo(sidecar, filepath.Join(*dataDir, "kubo-pins"))
+		pinsDir = filepath.Join(*dataDir, "kubo-pins")
+		store, err = storage.OpenKubo(sidecar, pinsDir)
 	case isCoordinator:
-		store, err = storage.OpenLocal(filepath.Join(*dataDir, "blobs"))
+		store, err = storage.OpenLocal(pinsDir)
 	case *useKubo:
 		store = storage.OpenKuboCache(sidecar)
 	default:
@@ -291,6 +305,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	// A node that is its own coordinator reads and writes the one store
 	// directly; a worker-only node fetches into its cache.
 	var blobs runtime.Blobs = store
+	// readable is the store as the node's gateway reads it.
+	var readable api.Opener = store
 
 	// What a node must not forget is kept in its database: the addresses
 	// it starts from and, on a coordinator, who has been admitted, the
@@ -338,8 +354,39 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err := importRustState(*dataDir, db, admitted, takes, log); err != nil {
 			return err
 		}
-		coord := coordinator.New(coordinator.Config{
-			ID: ident.ID(), Workloads: workloads, Store: store, Journal: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+		// Storage followers hold copies of what the store has pinned, and
+		// know it by a name kept beside its pins. A store that has lost its
+		// pins has thereby lost its name, which is how the followers' copies
+		// of what it held are told from blobs that were merely released.
+		storeID, err := storeName(pinsDir)
+		if err != nil {
+			return err
+		}
+		var coord *coordinator.Coordinator
+		replicated := replication.New(replication.Config{
+			ID: ident.ID(), Store: store, StoreID: storeID, Replicas: *replicas, Log: log,
+			Address: func(id string) string { return coord.ServeAddress(id) },
+			// A follower is reached as one worker reaches another: at the
+			// address it gave, or by name through the node's libp2p host.
+			Fetch: func(ctx context.Context, from *pb.BlobHolder, c cid.Cid, into blobclient.Putter) error {
+				return worker.FetchFromPeer(ctx, from, c, into,
+					func(nodeID string) credentials.TransportCredentials {
+						return credentials.NewTLS(ident.ClientTLS(nodeID))
+					},
+					func(ctx context.Context, nodeID string) (net.Conn, error) {
+						return host.Dial(ctx, nodeID, blobProtocol)
+					})
+			},
+		})
+		if *replicas > 0 {
+			log.Info("storage followers are to hold copies of what this node has pinned", "copies", *replicas)
+		}
+		// Everything else reads the store through this: a blob it turns out
+		// to lack is first fetched back from a follower.
+		kept := replication.Recovering{Store: store, From: replicated}
+		blobs, readable = kept, kept
+		coord = coordinator.New(coordinator.Config{
+			ID: ident.ID(), Workloads: workloads, Store: kept, Journal: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
 		unfinished, err := coord.Recover()
@@ -374,7 +421,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		defer host.Close()
 		lis, _ := host.TLSListener() // fails only if asked for twice
-		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore, WorkFor: takes}
+		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore, WorkFor: takes, Replication: replicated}
 		if swarm != nil {
 			config.Swarm = swarm
 			coord.AnnounceSwarm(swarm.Fingerprint())
@@ -382,7 +429,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		srv := api.NewServer(config)
 		local.Pool = api.NewPoolAdmin(config)
 		local.Jobs = coord
-		local.Store, local.Files, local.MaxStoreBytes = store, db, *maxStore
+		local.Store, local.Files, local.MaxStoreBytes = kept, db, *maxStore
 		local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
 		planningPool, thinkingPool = coord, coord
 		offered = func(workload string) bool {
@@ -432,7 +479,30 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		blobs = remote
 		members := worker.NewMembers(remote.Conn())
-		peers := api.NewPeerServer(ident, store, members.IsMember)
+		// A storage follower keeps a second store, a durable one, for the
+		// copies its coordinator has it hold, and serves what is in either.
+		var served api.Opener = store
+		if *replicaDir != "" {
+			copies, err := storage.OpenLocal(*replicaDir)
+			if err != nil {
+				return fmt.Errorf("--replica-dir: %w", err)
+			}
+			defer copies.Close()
+			served = api.Stores(copies, store)
+			follower := &replication.Follower{Store: copies, Coordinator: pb.NewBlobServiceClient(remote.Conn()), Log: log}
+			following := make(chan struct{})
+			// The store of copies must outlive whatever fills it.
+			defer func() {
+				cancel()
+				<-following
+			}()
+			go func() {
+				defer close(following)
+				follower.Run(ctx)
+			}()
+			log.Info("holding copies of the pool's stored data, as its coordinator directs", "dir", *replicaDir)
+		}
+		peers := api.NewPeerServer(ident, served, members.IsMember)
 		defer peers.Stop()
 		if *serve != "" {
 			lis, err := net.Listen("tcp", *serve)
@@ -668,7 +738,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			lis.Close()
 			return err
 		}
-		gateway := &http.Server{Handler: api.NewGateway(store, token, *gatewayOpen)}
+		gateway := &http.Server{Handler: api.NewGateway(readable, token, *gatewayOpen)}
 		defer gateway.Close()
 		log.Info("gateway listening", "addr", lis.Addr().String(), "open", *gatewayOpen)
 		go gateway.Serve(lis)
@@ -1264,6 +1334,27 @@ func swarmKey(file string) (string, error) {
 		return "", fmt.Errorf("save swarm key: %w", err)
 	}
 	return key, nil
+}
+
+// storeName returns the name a coordinator's store is known by to its
+// storage followers, kept in a file beside the store's pins and made the
+// first time.
+func storeName(pinsDir string) (string, error) {
+	file := filepath.Join(pinsDir, "store.id")
+	data, err := os.ReadFile(file)
+	if err == nil {
+		return strings.TrimSpace(string(data)), nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read the store's name: %w", err)
+	}
+	var random [8]byte
+	rand.Read(random[:]) // never fails; see crypto/rand
+	name := hex.EncodeToString(random[:])
+	if err := os.WriteFile(file, []byte(name+"\n"), 0o600); err != nil {
+		return "", fmt.Errorf("save the store's name: %w", err)
+	}
+	return name, nil
 }
 
 // fetchSwarm asks the coordinator at addr how to join its pool's private
