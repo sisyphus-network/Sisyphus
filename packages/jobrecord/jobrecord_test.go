@@ -525,3 +525,76 @@ func TestOnlyTheJobsKeyGivesItsCommitments(t *testing.T) {
 		t.Errorf("a private job with no commitments has some to check: %v", checks)
 	}
 }
+
+func TestTheRecordOfAVerifiedJobSaysWhoReturnedWhatAndWhoAgreed(t *testing.T) {
+	plain := finished()
+	job := jobmodel.New("verified", "primes", []byte(`{"to":10}`), jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
+	job.Verify = 2
+	settled, disputed := job.Tasks[0], job.Tasks[1]
+	for _, node := range []string{"a", "b", "c"} {
+		job.StartCopy(settled, "node-"+node, "worker-"+node, submitted)
+	}
+	job.ReturnCopy(settled, 1, []byte("4"), nil)
+	job.ReturnCopy(settled, 2, []byte("5"), nil)
+	job.ReturnCopy(settled, 3, []byte("4"), nil)
+	job.StartCopy(disputed, "node-a", "worker-a", submitted)
+	job.StartCopy(disputed, "node-b", "worker-b", submitted)
+	job.ReturnCopy(disputed, 1, []byte("x"), nil)
+	job.ReturnCopy(disputed, 2, []byte("y"), nil)
+	job.Dispute(disputed, "task 1 could not be verified", submitted.Add(time.Minute))
+
+	record := Build(job, nil, named)
+	nodes := parsed(t, record)
+	manifest, first, second := nodes["manifest"], nodes["receipt 0"], nodes["receipt 1"]
+	if got := manifest["requirements"].(map[string]any)["verify"]; got != float64(2) {
+		t.Errorf("the manifest says the job was verified by %v", got)
+	}
+	// Each result by who returned it, with a digest the same for results
+	// that are the same, and whether the task was settled by it.
+	results := first["results"].([]any)
+	if len(results) != 3 {
+		t.Fatalf("the settled task's results: %v", results)
+	}
+	var digests []string
+	for i, want := range []struct {
+		node   string
+		agreed bool
+	}{{"node-a", true}, {"node-b", false}, {"node-c", true}} {
+		r := results[i].(map[string]any)
+		if r["attempt"] != float64(i+1) || r["node"] != want.node || r["name"] != "worker-"+want.node[5:] || r["agreed"] != want.agreed {
+			t.Errorf("result %d: %v", i, r)
+		}
+		digests = append(digests, r["digest"].(string))
+	}
+	if digests[0] != digests[2] || digests[0] == digests[1] || digests[0] != settled.Results[0].Digest() {
+		t.Errorf("digests of the results: %v", digests)
+	}
+	// A task nobody agreed on has its results, and none that settled it.
+	for _, r := range second["results"].([]any) {
+		if r.(map[string]any)["agreed"] != false {
+			t.Errorf("a result of the task that was never settled: %v", r)
+		}
+	}
+	if second["state"] != "failed" || len(second["results"].([]any)) != 2 {
+		t.Errorf("the receipt of the task that was never settled: %v", second)
+	}
+
+	// The same job gives the same record, and a result changed another.
+	if again := Build(job, nil, named); !again.Root.Equals(record.Root) {
+		t.Error("the same verified job gave two records")
+	}
+	settled.Results[1].NodeID = "node-z"
+	if changed := Build(job, nil, named); changed.Root.Equals(record.Root) {
+		t.Error("changing who returned a result did not change the record")
+	}
+
+	// A job that was not verified has none of this in its record.
+	for _, node := range parsed(t, Build(plain, nil, named)) {
+		if node["results"] != nil {
+			t.Errorf("a receipt of a job that was not verified has results: %v", node)
+		}
+		if requirements, is := node["requirements"].(map[string]any); is && requirements["verify"] != nil {
+			t.Errorf("the manifest of a job that was not verified: %v", node)
+		}
+	}
+}

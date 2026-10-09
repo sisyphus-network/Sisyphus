@@ -267,6 +267,9 @@ message Job {
   // Set once the job is over: the CID of its record, which names the
   // job's whole history. Empty until then.
   string record_cid = 20;
+  // How many different workers must return the same result for each task;
+  // see SubmitJobRequest. Zero or one for a job that is not verified.
+  uint32 verify = 21;
 }
 
 message JobTask {
@@ -301,6 +304,13 @@ message SubmitJobRequest {
   // other members hold only what they cannot read; the workers that run
   // the job's tasks are given the key.
   bool private = 8;
+  // Verify the job's results by replication: two or more has each task run
+  // by that many different workers, and the task succeeds only once that
+  // many have returned the same result. Zero or one runs each task once.
+  // Only for work that gives the same result every time, and not for a
+  // private job. It is refused if fewer workers that could take the job
+  // are connected.
+  uint32 verify = 9;
 }
 
 message SubmitJobResponse { Job job = 1; }
@@ -322,6 +332,8 @@ message JobEvent {
   int64 at_ms = 2;
   // What happened: submitted, task-started, task-succeeded, task-failed,
   // task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
+  // In a job that is verified, also task-result, for each result a worker
+  // returns, and task-disagreed, when the results in for a task differ.
   string kind = 3;
   // The task concerned, or -1 if the event is about the job as a whole.
   int32 task_index = 4;

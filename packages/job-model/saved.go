@@ -40,7 +40,7 @@ func (j *Job) MarkSaved() {
 // touch notes that a task has changed, and brings the last entry of its
 // history up to date with it.
 func (j *Job) touch(t *Task) {
-	j.touched[t.Index] = struct{}{}
+	j.mark(t)
 	if t.Attempt == 0 {
 		return // never handed to anyone yet
 	}
@@ -48,6 +48,13 @@ func (j *Job) touch(t *Task) {
 		t.History = append(t.History, Attempt{TaskIndex: t.Index, Number: len(t.History) + 1})
 	}
 	t.History[t.Attempt-1] = Attempt{TaskIndex: t.Index, Number: t.Attempt, NodeID: t.NodeID, NodeName: t.NodeName, State: t.State, Err: t.Err}
+}
+
+// mark notes that a task has changed, and leaves its history as it is: the
+// history of a task that several workers have at once is kept attempt by
+// attempt; see verify.go.
+func (j *Job) mark(t *Task) {
+	j.touched[t.Index] = struct{}{}
 }
 
 // Restore rebuilds a job from its saved copy: its fields and tasks as they
