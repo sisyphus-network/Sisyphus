@@ -3,6 +3,7 @@ package nodedb
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
@@ -27,12 +28,12 @@ func (db *DB) SaveJob(job *jobmodel.Job) error {
 		key = nil
 	}
 	err := db.write(func(b *batch) {
-		b.exec(`INSERT INTO jobs (job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		b.exec(`INSERT INTO jobs (job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (job_id) DO UPDATE SET state = excluded.state, result = excluded.result, error = excluded.error,
 				sealing_key = excluded.sealing_key, finished_at_ns = excluded.finished_at_ns, record_cid = excluded.record_cid`,
 			job.ID, job.Workload, blob(job.Params), int(job.Mode), job.MaxTasks, int(job.State), blob(job.Result), job.Err,
-			key, nanos(job.CreatedAt), nanos(job.FinishedAt), int64(job.TaskTimeout), int64(job.MinMemory), job.MinGPUs, job.Parent, job.Step, job.Submitter, job.Record, job.Private)
+			key, nanos(job.CreatedAt), nanos(job.FinishedAt), int64(job.TaskTimeout), int64(job.MinMemory), job.MinGPUs, job.Parent, job.Step, job.Submitter, job.Record, job.Private, job.Verify)
 		for _, t := range changes.Tasks {
 			b.exec(`INSERT INTO tasks (job_id, task_index, payload, state, attempt, failures, node_id, node_name, output, error)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -47,6 +48,12 @@ func (db *DB) SaveJob(job *jobmodel.Job) error {
 					VALUES (?, ?, ?, ?, ?, ?, ?)
 					ON CONFLICT (job_id, task_index, attempt) DO UPDATE SET state = excluded.state, error = excluded.error`,
 					job.ID, a.TaskIndex, a.Number, a.NodeID, a.NodeName, int(a.State), a.Err)
+			}
+			// What a worker returned does not change once it is in.
+			for _, r := range t.Results {
+				b.exec(`INSERT OR IGNORE INTO task_results (job_id, task_index, attempt, node_id, node_name, output, blobs)
+					VALUES (?, ?, ?, ?, ?, ?, ?)`,
+					job.ID, r.TaskIndex, r.Attempt, r.NodeID, r.NodeName, blob(r.Output), strings.Join(r.Blobs, "\n"))
 			}
 		}
 		// A job's commitments are made once, when it ends, and do not change.
@@ -77,14 +84,14 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 		job := new(jobmodel.Job)
 		var created, finished int64
 		err := rows.Scan(&job.ID, &job.Workload, &job.Params, &job.Mode, &job.MaxTasks, &job.State, &job.Result, &job.Err,
-			&job.Key, &created, &finished, &job.TaskTimeout, &job.MinMemory, &job.MinGPUs, &job.Parent, &job.Step, &job.Submitter, &job.Record, &job.Private)
+			&job.Key, &created, &finished, &job.TaskTimeout, &job.MinMemory, &job.MinGPUs, &job.Parent, &job.Step, &job.Submitter, &job.Record, &job.Private, &job.Verify)
 		if err != nil {
 			return err
 		}
 		job.CreatedAt, job.FinishedAt = moment(created), moment(finished)
 		saved, byID[job.ID] = append(saved, job), job
 		return nil
-	}, `SELECT job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private
+	}, `SELECT job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify
 		FROM jobs ORDER BY seq`)
 	if err != nil {
 		return nil, fmt.Errorf("load jobs: %w", err)
@@ -124,6 +131,24 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 		FROM task_attempts a JOIN tasks USING (job_id, task_index) JOIN jobs USING (job_id) ORDER BY job_id, task_index, a.attempt`)
 	if err != nil {
 		return nil, fmt.Errorf("load attempts: %w", err)
+	}
+
+	err = db.read(func(rows *sql.Rows) error {
+		var jobID, stored string
+		var r jobmodel.Result
+		if err := rows.Scan(&jobID, &r.TaskIndex, &r.Attempt, &r.NodeID, &r.NodeName, &r.Output, &stored); err != nil {
+			return err
+		}
+		if stored != "" {
+			r.Blobs = strings.Split(stored, "\n")
+		}
+		t := tasks[taskKey{jobID, r.TaskIndex}]
+		t.Results = append(t.Results, r)
+		return nil
+	}, `SELECT job_id, task_index, r.attempt, r.node_id, r.node_name, r.output, r.blobs
+		FROM task_results r JOIN tasks USING (job_id, task_index) JOIN jobs USING (job_id) ORDER BY job_id, task_index, r.attempt`)
+	if err != nil {
+		return nil, fmt.Errorf("load task results: %w", err)
 	}
 
 	blobs := make(map[string]map[int][]string)
@@ -200,8 +225,9 @@ func (db *DB) LoadEvents(jobID string) ([]jobmodel.Event, error) {
 	return events, nil
 }
 
-// DeleteJobs forgets jobs, with their tasks, the attempts at them, the
-// record of the blobs they touched and their commitments.
+// DeleteJobs forgets jobs, with their tasks, the attempts at them and what
+// those returned, the record of the blobs they touched and their
+// commitments.
 func (db *DB) DeleteJobs(ids []string) error {
 	err := db.write(func(b *batch) {
 		for _, id := range ids {

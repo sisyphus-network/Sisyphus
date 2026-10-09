@@ -142,6 +142,20 @@ func (s *server) permitted(args runJobArgs) error {
 	return fmt.Errorf("this server runs only the container images its owner listed with --images: %s", strings.Join(s.Images, ", "))
 }
 
+// jobMode is how a job is to be shared out, as an agent says it. Said
+// nothing, the node is told nothing and does as it usually does.
+func jobMode(said string) (nodepb.JobMode, error) {
+	switch said {
+	case "":
+		return nodepb.JobMode_JOB_MODE_UNSPECIFIED, nil
+	case "distributed":
+		return nodepb.JobMode_JOB_MODE_DISTRIBUTED, nil
+	case "full-worker":
+		return nodepb.JobMode_JOB_MODE_FULL_WORKER, nil
+	}
+	return 0, fmt.Errorf("a mode is distributed or full-worker, not %q", said)
+}
+
 type cidArgs struct {
 	CID string `json:"cid" jsonschema:"the content ID of the file"`
 }

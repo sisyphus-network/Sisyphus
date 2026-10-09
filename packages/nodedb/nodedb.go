@@ -76,10 +76,10 @@ func (db *DB) migrate() error {
 	) STRICT`); err != nil {
 		return err
 	}
-	var applied int
+	var newest int
 	// MAX of no rows is NULL, hence the COALESCE; a query this plain cannot
 	// fail on a database the statement above just succeeded on.
-	db.sql.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&applied)
+	db.sql.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&newest)
 
 	files, _ := migrations.ReadDir("migrations") // embedded, so always readable
 	names := make([]string, 0, len(files))
@@ -88,11 +88,16 @@ func (db *DB) migrate() error {
 	}
 	sort.Strings(names)
 	latest := version(names[len(names)-1])
-	if applied > latest {
-		return fmt.Errorf("it was made by a newer sisyphusd (schema version %d; this one knows up to %d)", applied, latest)
+	if newest > latest {
+		return fmt.Errorf("it was made by a newer sisyphusd (schema version %d; this one knows up to %d)", newest, latest)
 	}
 	for _, name := range names {
-		if version(name) <= applied {
+		// Whether a database has had a migration is asked of each, and not
+		// taken from the highest it has had: two pieces of work each add
+		// the next number, and the one with the higher may arrive first.
+		var applied bool
+		db.sql.QueryRow(`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)`, version(name)).Scan(&applied)
+		if applied {
 			continue
 		}
 		script, _ := migrations.ReadFile("migrations/" + name)
