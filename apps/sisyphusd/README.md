@@ -707,7 +707,7 @@ What a spot check does not do:
 **What it is for, and what it is not.**
 
 - **It is for work that gives the same result every time it is run.** `primes`, `wordcount` and a container that is deterministic do. Work that involves a language model (`chat`, `prompts`, `embed`), `transcode`, and containers that use the time, random numbers or the network may not: two honest workers then differ, and the job fails saying so. Nothing here makes such work comparable.
-- **It cannot be asked of a private job**, and such a job is refused. Each worker seals what it stores afresh, so two that did the same work stored blobs with different CIDs.
+- **A private job is verified like any other.** Sealing gives the same blob for the same key and data, so workers that did the same work stored blobs with the same CIDs. Every worker asked is given the job's key, as every worker of a private job is: asking more workers shows the job's data to more of them. In the job's record, what each worker returned is not given by its digest but by a commitment only the job's key can check (`receipts/N/results/M/digest_commitment`), since a digest would tell someone who guessed a task's output that they were right; which workers agreed is still there to read.
 - **It does not protect against workers that agree to lie.** `N` workers that return the same wrong result are believed. Nor does it protect against one operator running several nodes: different node IDs are not different people.
 - **It does not judge workers.** A worker that was outvoted is named in the events and the record, and nothing else happens to it: no score, no stake and no ban. Removing it is up to the pool's owner (`pool remove`).
 - **It checks what workers return, not how the coordinator combines it.** The coordinator still splits the job and aggregates the outputs itself.
@@ -751,6 +751,7 @@ In place of each value left out, the record of a private job holds a **commitmen
 | manifest, `params_commitment` | The parameters. |
 | each receipt, `output_commitment` | The task's output. |
 | each attempt in a receipt, `error_commitment` | Why the attempt failed. |
+| each result in a receipt of a verified job, `digest_commitment` | The digest of what the worker returned. Results that were the same do not have the same commitment; `agreed` says which side each was on. |
 | result, `result_commitment` and `error_commitment` | The job's result, and its error. |
 
 - **What a commitment is.** HMAC-SHA-256 of the job's ID, the commitment's path in the record (such as `receipts/0/output_commitment`) and the value. The ID and the path are each preceded by their length, as eight bytes, big-endian. The HMAC key is 32 bytes derived from the job's sealing key by HKDF-SHA-256 with no salt and the label `sisyphus job record: commitments`, so it is not the key the data is sealed with.

@@ -13,7 +13,6 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
-	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
 
 // These tests are about verification by replication: a job that asks for
@@ -466,16 +465,12 @@ func TestAVerifiedJobOnWorkersThatDoTheWorkGivesWhatTheyAgreeOn(t *testing.T) {
 
 func TestAJobThatCannotBeVerifiedIsRefused(t *testing.T) {
 	p := startPool(t, runtime.Builtin().With(runtime.Graph{}))
-	key := sealed.Key{1}
-	private := verifiedPrimes(1, 2)
-	private.Key = key[:]
 	for name, tt := range map[string]struct {
 		spec *pb.JobSpec
 		code codes.Code
 		want string
 	}{
 		"by too many":    {verifiedPrimes(1, 11), codes.InvalidArgument, "verify exceeds 10"},
-		"a private job":  {private, codes.InvalidArgument, "a private job cannot be verified: each worker seals what it stores afresh"},
 		"with no worker": {verifiedPrimes(1, 2), codes.FailedPrecondition, "verify asks for 2 different workers to run each task, and 0 connected now could take this job"},
 	} {
 		if _, err := p.client.SubmitJob(p.ctx, &pb.SubmitJobRequest{Spec: tt.spec}); status.Code(err) != tt.code || !strings.Contains(status.Convert(err).Message(), tt.want) {

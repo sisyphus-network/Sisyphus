@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -526,8 +527,9 @@ func TestOnlyTheJobsKeyGivesItsCommitments(t *testing.T) {
 	}
 }
 
-func TestTheRecordOfAVerifiedJobSaysWhoReturnedWhatAndWhoAgreed(t *testing.T) {
-	plain := finished()
+// verified returns a job each of whose two tasks was to be verified by two
+// workers: the first settled by two of three, the second never settled.
+func verified() *jobmodel.Job {
 	job := jobmodel.New("verified", "primes", []byte(`{"to":10}`), jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
 	job.Check(2, 0, []int{0, 1})
 	settled, disputed := job.Tasks[0], job.Tasks[1]
@@ -542,6 +544,13 @@ func TestTheRecordOfAVerifiedJobSaysWhoReturnedWhatAndWhoAgreed(t *testing.T) {
 	job.ReturnCopy(disputed, 1, []byte("x"), nil)
 	job.ReturnCopy(disputed, 2, []byte("y"), nil)
 	job.Dispute(disputed, "task 1 could not be verified", submitted.Add(time.Minute))
+	return job
+}
+
+func TestTheRecordOfAVerifiedJobSaysWhoReturnedWhatAndWhoAgreed(t *testing.T) {
+	plain := finished()
+	job := verified()
+	settled := job.Tasks[0]
 
 	record := Build(job, nil, named)
 	nodes := parsed(t, record)
@@ -595,6 +604,52 @@ func TestTheRecordOfAVerifiedJobSaysWhoReturnedWhatAndWhoAgreed(t *testing.T) {
 		}
 		if requirements, is := node["requirements"].(map[string]any); is && requirements["verify"] != nil {
 			t.Errorf("the manifest of a job that was not verified: %v", node)
+		}
+	}
+}
+
+func TestTheRecordOfAPrivateJobThatWasVerifiedCommitsToWhatEachWorkerReturned(t *testing.T) {
+	job := verified()
+	job.Private = true
+	job.Commitments = Commit(job, jobKey)
+	first := parsed(t, Build(job, nil, named))["receipt 0"]
+	results := first["results"].([]any)
+	if len(results) != 3 {
+		t.Fatalf("the settled task's results: %v", results)
+	}
+	// No digest, which anyone could work out from a guess at the output,
+	// and a commitment in its place that differs even for results that
+	// were the same. Who agreed is still said.
+	seen := make(map[string]bool)
+	for i, agreed := range []bool{true, false, true} {
+		r := results[i].(map[string]any)
+		if r["digest"] != nil || r["agreed"] != agreed {
+			t.Errorf("result %d of a private job: %v", i, r)
+		}
+		held := commitmentIn(t, r, "digest_commitment")
+		if name := fmt.Sprintf("receipts/0/results/%d/digest_commitment", i); !bytes.Equal(held, job.Commitments[name]) || seen[string(held)] {
+			t.Errorf("result %d holds %x, and the job's commitment %s is %x", i, held, name, job.Commitments[name])
+		}
+		seen[string(held)] = true
+	}
+
+	// The key gives each of them from the results the job holds, and no
+	// longer once what a worker returned has changed.
+	checks := CheckCommitments(job, jobKey)
+	// The parameters, the result and the error; an output for each task;
+	// an error for each of five attempts; a digest for each of five results.
+	if len(checks) != 3+2+5+5 {
+		t.Fatalf("%d commitments checked: %v", len(checks), checks)
+	}
+	for _, check := range checks {
+		if !check.Matches {
+			t.Errorf("%s does not match", check.Name)
+		}
+	}
+	job.Tasks[0].Results[1].Output = []byte("6")
+	for _, check := range CheckCommitments(job, jobKey) {
+		if check.Matches != (check.Name != "receipts/0/results/1/digest_commitment") {
+			t.Errorf("after a result changed, %s matches: %v", check.Name, check.Matches)
 		}
 	}
 }
