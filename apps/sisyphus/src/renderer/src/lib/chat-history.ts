@@ -1,6 +1,6 @@
 export type StoredCall = { name: string; arguments: string }
 export type Activity = { id: string; tool: string; arguments: string; result?: string; jobId?: string; state: 'working' | 'complete' | 'failed' | 'interrupted' }
-export type AttachedFile = { name: string; cid: string; image: boolean }
+export type AttachedFile = { name: string; cid: string; image: boolean; private?: boolean }
 export type ChatItem = { id: string; role: 'user' | 'assistant' | 'tool'; content: string; tool?: string; calls?: StoredCall[]; activities?: Activity[]; attachments?: AttachedFile[] }
 export type StoredChatMessage = { role: string; content: string; tool?: string; calls?: StoredCall[] }
 
@@ -13,11 +13,11 @@ function readAttachments(content: string): { content: string; attachments: Attac
   const index = content.lastIndexOf(marker)
   if (index < 0) return { content, attachments: [] }
   const attachments = content.slice(index + marker.length).split('\n').flatMap((line) => {
-    const match = /^- (.*) \| cid:([^|]+) \| image:(true|false)$/.exec(line)
+    const match = /^- (.*) \| cid:([^|]+) \| image:(true|false)(?: \| private:(true|false))?$/.exec(line)
     if (!match) return []
     try {
       const name: unknown = JSON.parse(match[1])
-      return typeof name === 'string' ? [{ name, cid: match[2], image: match[3] === 'true' }] : []
+      return typeof name === 'string' ? [{ name, cid: match[2], image: match[3] === 'true', ...(match[4] ? { private: match[4] === 'true' } : {}) }] : []
     } catch { return [] }
   })
   return attachments.length ? { content: content.slice(0, index), attachments } : { content, attachments: [] }

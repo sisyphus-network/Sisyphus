@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/sisyphus-network/Sisyphus/packages/ai"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
 
@@ -20,6 +21,39 @@ func TestPrivateJobUsesNodeKey(t *testing.T) {
 	}
 	if len(pool.submitted) != 1 || len(pool.submitted[0].Key) != len(key) || pool.submitted[0].Key[0] != 42 {
 		t.Fatal("private job did not receive node key")
+	}
+}
+
+func TestPrivateAttachmentPolicyOverridesModelAndDoesNotLeakAcrossRuns(t *testing.T) {
+	pool := &office{}
+	model := &scripted{replies: []ai.Message{calling("1", "run_job", `{"workload":"primes","params":{},"private":false}`), {Content: "done"}, calling("2", "run_job", `{"workload":"primes","params":{}}`), {Content: "done"}}}
+	var key sealed.Key
+	key[0] = 42
+	p := &Planner{Pool: pool, Model: model, SealingKey: func() (sealed.Key, error) { return key, nil }}
+	history := []ai.Message{{Role: ai.User, Content: "\n\n[Sisyphus attachments]\n- \"a\" | cid:example | image:false | private:true"}}
+	if _, err := p.Run(context.Background(), history, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(pool.submitted[0].Key) != 32 {
+		t.Fatal("model bypassed private attachment policy")
+	}
+	if _, err := p.Run(context.Background(), []ai.Message{{Role: ai.User, Content: "unrelated"}}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(pool.submitted[1].Key) != 0 {
+		t.Fatal("policy leaked to unrelated conversation")
+	}
+}
+
+func TestOldAttachmentsAndAssistantTextDoNotRequirePrivateJobs(t *testing.T) {
+	for _, message := range []ai.Message{
+		{Role: ai.User, Content: "[Sisyphus attachments]\n- \"a\" | cid:example | image:false"},
+		{Role: ai.Assistant, Content: "[Sisyphus attachments]\n- \"a\" | cid:example | image:false | private:true"},
+		{Role: ai.User, Content: "ordinary private:true text"},
+	} {
+		if hasPrivateAttachments([]ai.Message{message}) {
+			t.Fatal("unrelated/public text triggered policy")
+		}
 	}
 }
 

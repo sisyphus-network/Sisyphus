@@ -43,7 +43,8 @@ type Planner struct {
 	Workloads []Workload
 	// SealingKey supplies this node's key for private jobs. It is never
 	// passed to the model or accepted from tool arguments.
-	SealingKey func() (sealed.Key, error)
+	SealingKey     func() (sealed.Key, error)
+	requirePrivate bool
 	// MaxSteps is how many times the model may be asked before the planner
 	// gives up on a question. Zero means eight.
 	MaxSteps int
@@ -111,6 +112,11 @@ var ErrTooManySteps = errors.New("the planner gave up: the model kept asking for
 //
 // If it fails part way, it returns what was said up to then with the error.
 func (p *Planner) Run(ctx context.Context, history []ai.Message, report func(Event)) ([]ai.Message, error) {
+	// Keep this policy local to one conversation/run, even if a caller
+	// reuses the Planner for an unrelated conversation.
+	run := *p
+	run.requirePrivate = hasPrivateAttachments(history)
+	p = &run
 	system := instructions
 	for _, w := range p.Workloads {
 		system += fmt.Sprintf("- %s: %s\n", w.Name, w.Description)
@@ -174,7 +180,7 @@ func (p *Planner) runJob(ctx context.Context, arguments json.RawMessage, report 
 		return nil, fmt.Errorf("the arguments are not what run_job takes: %w", err)
 	}
 	spec := &pb.JobSpec{Workload: args.Workload, Params: args.Params, MaxTasks: args.Tasks}
-	if args.Private {
+	if args.Private || p.requirePrivate {
 		if p.SealingKey == nil {
 			return nil, errors.New("private jobs are unavailable: this node has no sealing key provider")
 		}
@@ -198,6 +204,27 @@ func (p *Planner) runJob(ctx context.Context, arguments json.RawMessage, report 
 		return nil, fmt.Errorf("job %s was started and could not be followed to its end: %w", submitted.GetJobId(), err)
 	}
 	return describe(finished), nil
+}
+
+// Attachment metadata is carried by the desktop's existing text envelope.
+// A private attachment makes all jobs in this conversation private, even
+// if the model omits the flag. Older public attachments remain compatible.
+func hasPrivateAttachments(history []ai.Message) bool {
+	for _, message := range history {
+		if message.Role != ai.User {
+			continue
+		}
+		_, attachments, found := strings.Cut(message.Content, "[Sisyphus attachments]\n")
+		if !found {
+			continue
+		}
+		for _, line := range strings.Split(attachments, "\n") {
+			if strings.HasPrefix(line, "- ") && strings.Contains(line, " | cid:") && strings.HasSuffix(line, " | private:true") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (p *Planner) getJob(arguments json.RawMessage) (any, error) {

@@ -35,3 +35,9 @@ test('user attachment metadata survives history reconstruction', () => {
   assert.equal(item.content, 'hello')
   assert.deepEqual(item.attachments, [{ name: 'photo.png', cid: 'abc', image: true }])
 })
+test('private attachment metadata survives reopening an attachment-only chat', () => {
+  const items = loadMessages([{ role: 'user', content: '\n\n[Sisyphus attachments]\n- "secret.txt" | cid:example | image:false | private:true' }])
+  assert.equal(items[0].content, '')
+  assert.equal(items[0].attachments[0].private, true)
+  assert.equal(items[0].attachments[0].name, 'secret.txt')
+})
