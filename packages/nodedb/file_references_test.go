@@ -67,3 +67,16 @@ func TestClosedFileReferenceDatabaseReportsErrors(t *testing.T) {
 		t.Fatal("closed lookup succeeded")
 	}
 }
+
+func TestFileReferencesRejectUnreadableOwner(t *testing.T) {
+	db, _ := newDB(t)
+	// Simulate a damaged/legacy schema returning NULL where an owner string
+	// is required. The lookup must report the scan failure, not omit a row.
+	if _, err := db.sql.Exec(`ALTER TABLE file_references RENAME TO saved_file_references;
+		CREATE VIEW file_references AS SELECT NULL AS owner, 'broken' AS cid`); err != nil {
+		t.Fatal(err)
+	}
+	if owners, err := db.FileReferences("broken"); err == nil || owners != nil {
+		t.Fatalf("unreadable owners: %v, %v", owners, err)
+	}
+}
