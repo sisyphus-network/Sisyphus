@@ -72,9 +72,12 @@ func (db *DB) CreateChat(c Chat) error {
 	})
 }
 
-// DeleteChat forgets a conversation and everything said in it.
+// DeleteChat forgets a conversation, its messages and its file references
+// atomically. It does not unpin blobs: other chats, user pins and jobs may
+// still own them; the storage lifecycle must coordinate that separately.
 func (db *DB) DeleteChat(id string) error {
 	return db.durably("delete chat", func(b *batch) {
+		b.exec(`DELETE FROM file_references WHERE owner = ?`, chatFileOwner(id))
 		b.exec(`DELETE FROM chats WHERE chat_id = ?`, id)
 	})
 }
