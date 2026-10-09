@@ -13,6 +13,7 @@ import { DeleteChatConfirmation } from '@/components/assistant/delete-chat-confi
 import { getMessageDirection } from '@/lib/text-direction'
 import { getJobHref } from '@/lib/job-navigation'
 import { needsPlannerSetup } from '@/lib/grpc-status'
+import { loadMessages, type Activity, type AttachedFile, type ChatItem, type StoredChatMessage } from '@/lib/chat-history'
 import ShinyText from '@/components/ui/shiny-text'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
@@ -20,12 +21,7 @@ import { type getMessages } from '@/i18n/messages'
 
 type Messages = ReturnType<typeof getMessages>
 type ChatSummary = { chatId: string; title: string; createdAtMs: string | number }
-type StoredCall = { name: string; arguments: string }
-type Activity = { id: string; tool: string; arguments: string; result?: string; jobId?: string; state: 'working' | 'complete' | 'failed' }
-type AttachedFile = { name: string; cid: string; image: boolean }
-type ChatItem = { id: string; role: 'user' | 'assistant' | 'tool'; content: string; tool?: string; calls?: StoredCall[]; activities?: Activity[]; attachments?: AttachedFile[] }
 type AskEvent = { chatId: string; kind: string; text: string; jobId?: string; tool?: string }
-type StoredChatMessage = { role: string; content: string; tool?: string; calls?: StoredCall[] }
 
 function newId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` }
 function findLast<T>(items: T[], predicate: (item: T) => boolean) {
@@ -37,36 +33,6 @@ function findLastIndex<T>(items: T[], predicate: (item: T) => boolean) {
   return -1
 }
 
-function readAttachments(content: string): { content: string; attachments: AttachedFile[] } {
-  const marker = '\n\n[Sisyphus attachments]\n'
-  const index = content.lastIndexOf(marker)
-  if (index < 0) return { content, attachments: [] }
-  const attachments = content.slice(index + marker.length).split('\n').flatMap((line) => {
-    const match = /^- (.*) \| cid:([^|]+) \| image:(true|false)$/.exec(line)
-    if (!match) return []
-    try { return [{ name: JSON.parse(match[1]) as string, cid: match[2], image: match[3] === 'true' }] } catch { return [] }
-  })
-  return attachments.length ? { content: content.slice(0, index), attachments } : { content, attachments: [] }
-}
-
-function loadMessages(messages: StoredChatMessage[]): ChatItem[] {
-  const output: ChatItem[] = []
-  for (const stored of messages) {
-    if (stored.role === 'user') {
-      const parsed = readAttachments(stored.content)
-      output.push({ id: newId(), role: 'user', ...parsed })
-    } else if (stored.role === 'assistant') {
-      const activities = (stored.calls ?? []).map((call) => ({ id: newId(), tool: call.name, arguments: call.arguments, state: 'working' as const }))
-      output.push({ id: newId(), role: 'assistant', content: stored.content, calls: stored.calls ?? [], activities })
-    } else if (stored.role === 'tool') {
-      const assistant = [...output].reverse().find((item) => item.role === 'assistant' && item.activities?.some((activity) => activity.tool === (stored.tool ?? '') && activity.state === 'working'))
-      const activity = assistant?.activities && findLast(assistant.activities, (item) => item.tool === (stored.tool ?? '') && item.state === 'working')
-      if (activity) { activity.result = stored.content; activity.state = 'complete' }
-      else output.push({ id: newId(), role: 'tool', content: stored.content, tool: stored.tool })
-    }
-  }
-  return output
-}
 
 function toolLabel(tool: string, messages: Messages) {
   if (tool === 'run_job') return messages.agentActionRunJob
@@ -78,9 +44,10 @@ function ActivityTimeline({ activities, direction, messages }: { activities: Act
   const [expanded, setExpanded] = useState(false)
   if (!activities.length) return null
   const working = activities.some((action) => action.state === 'working')
+  const incomplete = activities.some((action) => action.state === 'interrupted' || action.state === 'failed')
   const current = findLast(activities, (action) => action.state === 'working') ?? activities[activities.length - 1]
   const CurrentIcon = current.tool === 'run_job' ? Boxes : current.tool === 'get_job' ? Search : Wrench
-  const summary = working ? toolLabel(current.tool, messages) : activities.length === 1 ? messages.agentActionComplete : `${messages.agentActions} · ${activities.length}`
+  const summary = working ? toolLabel(current.tool, messages) : incomplete ? messages.agentActionIncomplete : activities.length === 1 ? messages.agentActionComplete : `${messages.agentActions} · ${activities.length}`
   return <div dir={direction} className="sisyphus-agent-actions mx-auto w-full max-w-2xl text-start">
     <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className="group flex min-h-9 w-full items-center justify-center gap-2 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-[var(--app-wash)]">
       <AnimatePresence initial={false} mode="wait"><motion.span key={working ? current.id : `done-${current.id}`} initial={{ opacity: 0, scale: .85 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: .85 }} className="grid size-6 shrink-0 place-items-center">{working ? <LoaderCircle className="size-4 animate-spin" /> : <CurrentIcon className="size-4" />}</motion.span></AnimatePresence>
@@ -90,7 +57,7 @@ function ActivityTimeline({ activities, direction, messages }: { activities: Act
     <motion.div initial={false} animate={{ height: expanded ? 'auto' : 0, opacity: expanded ? 1 : 0 }} transition={{ duration: .24, ease: [.22, 1, .36, 1] }} aria-hidden={!expanded} className="overflow-hidden" style={{ pointerEvents: expanded ? 'auto' : 'none' }}>
       {activities.map((action) => {
         const Icon = action.tool === 'run_job' ? Boxes : action.tool === 'get_job' ? Search : Wrench
-        const StateIcon = action.state === 'working' ? LoaderCircle : action.state === 'failed' ? CircleAlert : CheckCircle2
+        const StateIcon = action.state === 'working' ? LoaderCircle : action.state === 'failed' || action.state === 'interrupted' ? CircleAlert : CheckCircle2
         let detail = action.arguments
         try { detail = JSON.stringify(JSON.parse(action.arguments), null, 2) } catch { /* Keep original tool arguments. */ }
         return <motion.div layout="position" key={action.id} className="flex min-w-0 items-start gap-2.5 px-2 py-2 text-start">

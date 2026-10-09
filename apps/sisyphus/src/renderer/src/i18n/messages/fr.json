@@ -151,6 +151,7 @@
   "agentActionRunJob": "Planification d’une tâche de calcul",
   "agentActionGetJob": "Vérification de l’état de la tâche",
   "agentActionComplete": "Planification terminée",
+  "agentActionIncomplete": "Certaines actions n’ont pas été terminées",
   "agentActions": "Activité de l’agent",
   "jobId": "Tâche",
   "openConversationFailed": "Impossible d’ouvrir la conversation",
