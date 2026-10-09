@@ -46,6 +46,7 @@ import (
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/s3"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
@@ -81,6 +82,11 @@ func runDaemon(ctx context.Context, args []string) error {
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
 	maxCache := fs.Uint64("max-cache-bytes", 0, "worker-only node: evict the least recently used cached blobs once the cache uses this much disk; 0 means no limit")
+	s3Endpoint := fs.String("s3-endpoint", "", "coordinator: keep stored data in a bucket of the S3-style object store at this address, such as https://s3.wasabisys.com or http://127.0.0.1:9000, instead of on this machine's disk")
+	s3Bucket := fs.String("s3-bucket", "", "the bucket, which must exist")
+	s3Prefix := fs.String("s3-prefix", "", "put this before the name of every object, to share the bucket with other things")
+	s3Region := fs.String("s3-region", "", "the bucket's region, for stores that have them")
+	s3Credentials := fs.String("s3-credentials", "", "a file with the access key on its first line and the secret key on its second; they stay on this node")
 	useKubo := fs.Bool("kubo", false, "keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself, on a private network with the rest of its pool; needs the ipfs program installed, and for a worker, a coordinator that uses it too")
 	swarmPort := fs.Int("swarm-port", 0, "coordinator role with --kubo: TCP port to open so that members' Kubo daemons can connect to this node's directly, which is faster; 0 opens none, and they reach it through --listen")
 	syncCache := fs.Bool("sync-cache", false, "worker-only node: wait for the disk when caching a blob; slower, but the cache then survives a power cut without downloading again")
@@ -129,6 +135,16 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if host, _, err := net.SplitHostPort(*webListen); *webListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
 		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052: the local API is for this machine only, its web pages included")
+	}
+	if *s3Endpoint != "" {
+		switch {
+		case !isCoordinator:
+			return errors.New("--s3-endpoint is for a node that coordinates a pool: it is the pool's stored data that is kept there")
+		case *useKubo:
+			return errors.New("--s3-endpoint and --kubo each say where stored data is kept: choose one")
+		case *s3Bucket == "":
+			return errors.New("--s3-endpoint needs --s3-bucket, the bucket to keep stored data in")
+		}
 	}
 	if isCoordinator && *invitation != "" {
 		return errors.New("--join is for worker-only nodes")
@@ -245,6 +261,15 @@ func runDaemon(ctx context.Context, args []string) error {
 	// stopped.
 	var store *storage.Store
 	switch {
+	case *s3Endpoint != "":
+		bucket, err := openBucket(ctx, *s3Endpoint, *s3Bucket, *s3Prefix, *s3Region, *s3Credentials)
+		if err != nil {
+			return err
+		}
+		log.Info("stored data is kept in a bucket", "endpoint", *s3Endpoint, "bucket", *s3Bucket)
+		if store, err = storage.OpenBucket(bucket, filepath.Join(*dataDir, "s3-pins")); err != nil {
+			return fmt.Errorf("%w (nodes sharing a machine each need their own --data-dir)", err)
+		}
 	case isCoordinator && *useKubo:
 		store, err = storage.OpenKubo(sidecar, filepath.Join(*dataDir, "kubo-pins"))
 	case isCoordinator:
@@ -772,6 +797,25 @@ func withTrust(peers []*nodepb.Peer, takes []string, worksFor func(id string) bo
 	}
 	sort.Slice(peers, func(a, b int) bool { return peers[a].GetPeerId() < peers[b].GetPeerId() })
 	return peers
+}
+
+// openBucket opens the bucket a node keeps its stored data in, with the
+// credentials in a file: the access key on the first line and the secret
+// key on the second.
+func openBucket(ctx context.Context, endpoint, bucket, prefix, region, credentialsFile string) (*s3.Client, error) {
+	cfg := s3.Config{Endpoint: endpoint, Bucket: bucket, Prefix: prefix, Region: region}
+	if credentialsFile != "" {
+		keys, err := os.ReadFile(credentialsFile)
+		if err != nil {
+			return nil, fmt.Errorf("read the bucket's credentials: %w", err)
+		}
+		lines := strings.Fields(string(keys))
+		if len(lines) != 2 {
+			return nil, fmt.Errorf("%s should hold the access key on its first line and the secret key on its second", credentialsFile)
+		}
+		cfg.AccessKey, cfg.SecretKey = lines[0], lines[1]
+	}
+	return s3.Open(ctx, cfg)
 }
 
 // countryOf says which country an address is registered in. It is the

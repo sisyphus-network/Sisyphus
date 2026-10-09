@@ -250,6 +250,22 @@ curl -H "Authorization: Bearer $(cat "$(bin/sisyphusd data-dir)/api.token")" htt
 - `?filename=report.pdf` names the file for the browser and decides what kind it is taken for; without it the kind is told from how the file begins. Part of a file may be asked for, so video can be played and seeked from it.
 - It serves single files only. A directory, or a path inside one, is not something a node stores.
 
+### In a bucket
+
+A coordinator can keep the pool's stored data in a bucket of an object store that speaks S3, instead of on its own disk: Ceph, MinIO, SeaweedFS, Storj, Wasabi, AWS.
+
+```sh
+printf '%s\n%s\n' "$ACCESS_KEY" "$SECRET_KEY" > s3.keys && chmod 600 s3.keys
+bin/sisyphusd run --s3-endpoint https://s3.eu-central-1.wasabisys.com --s3-bucket my-pool --s3-credentials s3.keys
+```
+
+- **The bucket must exist**; the node checks that it can reach it and stops if not. `--s3-prefix` puts the pool's objects under a name of their own, to share a bucket; `--s3-region` is for stores that have regions.
+- **Nothing else changes.** A file has the same CID wherever its bytes are, so jobs, workers and clients need know nothing of it. Workers still fetch from the coordinator and each other; only the coordinator talks to the bucket, and the credentials never leave it.
+- **Each block is an object**, of up to 256 KiB, under `blocks/`. What is kept and for how long is still the node's to decide: pins are in its data directory, and `blob gc` deletes from the bucket what nothing is keeping.
+- **It is slower than a disk** when the bucket is far away: reading a gigabyte is four thousand requests, one after another. Nothing is cached on the coordinator. Use it for durability and room, and a bucket near the coordinator.
+- It cannot be combined with `--kubo`, which is another answer to where the data is kept.
+- Tried against SeaweedFS's S3 gateway. The others named speak the same dialect and have not been tried.
+
 ## What each machine has
 
 A worker looks at the machine it runs on and tells its coordinator what it finds: the processor, how much memory, and any NVIDIA graphics cards. `sisyphusd nodes` shows it.
