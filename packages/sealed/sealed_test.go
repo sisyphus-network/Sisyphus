@@ -441,11 +441,38 @@ func TestAFilesKeyComesOfHowItBegins(t *testing.T) {
 	if _, err := openAll(ring, another); !errors.Is(err, ErrNoKey) {
 		t.Errorf("another file's key: %v, want ErrNoKey", err)
 	}
-	// Two long files with the same first chunk share a key, which is the
-	// price of sealing a file before its end is known.
-	start := strings.Repeat("x", chunkSize)
-	if id(seal(start+"one ending")) != id(seal(start+"another")) {
-		t.Error("two files with the same first chunk have different keys")
+	// Files that differ anywhere in their first 4 MiB have keys of their
+	// own, though they begin with the same chunk or the same many chunks.
+	chunk := strings.Repeat("x", chunkSize)
+	if id(seal(chunk+"one ending")) == id(seal(chunk+"another")) {
+		t.Error("two files that differ after their first chunk share a key")
+	}
+	almost := strings.Repeat("x", keySpan-1)
+	if id(seal(almost+"a")) == id(seal(almost+"b")) {
+		t.Error("two files that differ in the last byte their keys come of share a key")
+	}
+	// Two files that are the same for all of that and differ after it
+	// share a key, which is the price of sealing a file before its end is
+	// known. Each still opens to its own content.
+	start := strings.Repeat("x", keySpan)
+	one, other := seal(start+"one ending"), seal(start+"another")
+	if id(one) != id(other) {
+		t.Error("two files with the same first 4 MiB have different keys")
+	}
+	if got, err := openAll(key, one); err != nil || got != start+"one ending" {
+		t.Errorf("a file longer than its key comes of opened to %d bytes, %v", len(got), err)
+	}
+	// A source that fails is reported, whether it fails while the start of
+	// a file is read or after, and whichever way the blob is being sealed.
+	for name, sealing := range map[string]io.Reader{
+		"a file, at once":           Encrypt(key, &failing{failRead: true}),
+		"a file, after its start":   Encrypt(key, io.MultiReader(strings.NewReader(start), &failing{failRead: true})),
+		"a job's blob, at once":     EncryptWith(key.ForJob("a job"), &failing{failRead: true}),
+		"a job's blob, after a bit": EncryptWith(key.ForJob("a job"), io.MultiReader(strings.NewReader(chunk), &failing{failRead: true})),
+	} {
+		if _, err := io.ReadAll(sealing); !errors.Is(err, errSource) {
+			t.Errorf("sealing %s from a source that fails: %v", name, err)
+		}
 	}
 	// Another sealing key gives the same file another key.
 	elsewhere, _ := io.ReadAll(Encrypt(NewKey(), strings.NewReader("one file")))

@@ -25,9 +25,10 @@
 // who can see two blobs sealed with the same derived key can tell whether
 // they, or chunks at the same position in them, are identical. Blobs of
 // different jobs have different keys and show nothing of each other. A
-// stored file's key is derived from its first chunk, so that a file can be
-// sealed as it arrives: two files that begin with the same 64 KiB share a
-// key, and the key given for one opens the other. Sizes are not hidden.
+// stored file's key is derived from its first 4 MiB, which is the whole of
+// most files, so that a file can be sealed as it arrives: two files of more
+// than that which begin alike, as two versions of a growing file do, share
+// a key, and the key given for one opens the other. Sizes are not hidden.
 //
 // This is a construction assembled from standard parts (HKDF, HMAC-SHA256
 // as a synthetic nonce, AES-256-GCM), not a reviewed standard. It should be
@@ -60,6 +61,10 @@ const (
 	chunkSize = 64 << 10
 	nonceSize = 12
 	tagSize   = 16
+	// keySpan is how much of the start of a stored file its key comes of.
+	// A file is sealed as it arrives, so its key cannot wait for its end;
+	// this much of it is held back first, which is all of most files.
+	keySpan = 4 << 20
 	// overhead is what sealing adds to each chunk: its nonce and its tag.
 	overhead   = nonceSize + tagSize
 	recordSize = chunkSize + overhead
@@ -127,7 +132,8 @@ func (k Key) ForJob(jobID string) Grant {
 }
 
 // forFile returns the key a stored file is sealed with, given how the file
-// begins: a file is sealed as it arrives, before the rest of it is known.
+// begins, up to keySpan of it: a file is sealed as it arrives, before the
+// rest of it is known.
 func (k Key) forFile(first []byte) Grant {
 	idKey, _ := hkdf.Key(sha256.New, k[:], nil, "sisyphus sealed blob: file key IDs", 32)
 	mac := hmac.New(sha256.New, idKey)
@@ -278,12 +284,19 @@ func (e *encrypter) Read(p []byte) (int, error) {
 func (e *encrypter) sealNext() error {
 	if !e.started {
 		e.started = true
+		if e.from != nil {
+			// The file's key comes of how it begins, so that much of it is
+			// read before any of it is sealed, and then sealed with the rest.
+			start, err := io.ReadAll(io.LimitReader(e.src, keySpan))
+			if err != nil {
+				return err
+			}
+			e.begin(e.from.forFile(start))
+			e.src = io.MultiReader(bytes.NewReader(start), e.src)
+		}
 		var err error
 		if e.current, err = readChunk(e.src); err != nil {
 			return err
-		}
-		if e.from != nil {
-			e.begin(e.from.forFile(e.current))
 		}
 	}
 	// A short chunk is the last. A full one is the last only if nothing
