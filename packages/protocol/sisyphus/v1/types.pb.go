@@ -544,7 +544,15 @@ type JobSpec struct {
 	// task loses to the result the others agree on has every task it ran
 	// unverified in the job verified after all, and so has whatever of the
 	// job it is given afterwards. Zero, and one, verify every task.
-	VerifyShare   float64 `protobuf:"fixed64,10,opt,name=verify_share,json=verifyShare,proto3" json:"verify_share,omitempty"`
+	VerifyShare float64 `protobuf:"fixed64,10,opt,name=verify_share,json=verifyShare,proto3" json:"verify_share,omitempty"`
+	// Audits. A share between 0 and 1 of the job's tasks, each picked by
+	// chance as its result comes in, is run again by the coordinator itself
+	// before the result is taken. Where the two differ the coordinator's own
+	// is taken and the worker counted as outvoted. It needs no second
+	// worker, and a worker cannot tell which of its tasks will be run again.
+	// It is refused for a workload the coordinating node cannot run itself.
+	// It does not apply to a task that is verified by other workers.
+	AuditShare    float64 `protobuf:"fixed64,11,opt,name=audit_share,json=auditShare,proto3" json:"audit_share,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -645,6 +653,13 @@ func (x *JobSpec) GetVerify() uint32 {
 func (x *JobSpec) GetVerifyShare() float64 {
 	if x != nil {
 		return x.VerifyShare
+	}
+	return 0
+}
+
+func (x *JobSpec) GetAuditShare() float64 {
+	if x != nil {
+		return x.AuditShare
 	}
 	return 0
 }
@@ -1291,7 +1306,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x0fverified_agreed\x18\n" +
 	" \x01(\x04R\x0everifiedAgreed\x12+\n" +
 	"\x11verified_outvoted\x18\v \x01(\x04R\x10verifiedOutvoted\x12\x1c\n" +
-	"\tprobation\x18\f \x01(\rR\tprobation\"\xcd\x02\n" +
+	"\tprobation\x18\f \x01(\rR\tprobation\"\xee\x02\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
@@ -1303,7 +1318,9 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\bmin_gpus\x18\b \x01(\rR\aminGpus\x12\x16\n" +
 	"\x06verify\x18\t \x01(\rR\x06verify\x12!\n" +
 	"\fverify_share\x18\n" +
-	" \x01(\x01R\vverifyShare\"\xfd\x01\n" +
+	" \x01(\x01R\vverifyShare\x12\x1f\n" +
+	"\vaudit_share\x18\v \x01(\x01R\n" +
+	"auditShare\"\xfd\x01\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\rR\x05index\x12,\n" +

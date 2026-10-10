@@ -215,6 +215,7 @@ type runJobArgs struct {
 	TaskTimeout uint32         `json:"task_timeout_seconds,omitempty" jsonschema:"stop and retry any attempt at a task that runs longer than this"`
 	Verify      uint32         `json:"verify,omitempty" jsonschema:"have each task run by this many different workers and take its result only once that many have returned the same one; only for work that gives the same result every time it is run, and it multiplies the work by that many"`
 	VerifyShare float64        `json:"verify_share,omitempty" jsonschema:"with verify, verify only this share of the tasks, from 0 to 1, picked at random, and run the rest once: it costs less, and a worker caught returning a different result has its other tasks in the job verified after all. Every task is verified if left out"`
+	AuditShare  float64        `json:"audit_share,omitempty" jsonschema:"have the coordinating node run this share of the tasks again itself, from 0 to 1, picked by chance, and take its own result where a worker's differs. It needs no second worker, so it is the check a pool with one worker has; it costs that node the work of each task it checks. Only for work that gives the same result every time, of a kind that node runs itself, and not with verify"`
 	WaitSeconds uint32         `json:"wait_seconds,omitempty" jsonschema:"how long to wait for the job to finish before returning it as it stands; 300 if left out, 0 with detach"`
 	Detach      bool           `json:"detach,omitempty" jsonschema:"return at once with the job's ID instead of waiting"`
 }
@@ -241,7 +242,7 @@ func (s *server) run(ctx context.Context, args runJobArgs) (any, error) {
 	submitted, err := s.Node.SubmitJob(ctx, &nodepb.SubmitJobRequest{
 		Workload: args.Workload, Params: params, MaxTasks: args.Tasks, Private: args.Private, Mode: mode,
 		MinGpus: args.MinGPUs, MinMemoryBytes: uint64(args.MinMemoryMB) << 20, TaskTimeoutSeconds: args.TaskTimeout,
-		Verify: args.Verify, VerifyShare: args.VerifyShare,
+		Verify: args.Verify, VerifyShare: args.VerifyShare, AuditShare: args.AuditShare,
 	})
 	if err != nil {
 		return nil, err
@@ -274,6 +275,11 @@ func jobView(job *nodepb.Job, result bool) map[string]any {
 	}
 	if job.GetError() != "" {
 		out["error"] = job.GetError()
+	}
+	if job.GetAuditShare() > 0 {
+		// The share of its tasks the coordinating node ran again itself;
+		// job_logs says which, and how each came out.
+		out["audit_share"] = job.GetAuditShare()
 	}
 	if job.GetVerify() >= 2 {
 		// How many different workers had to return the same result for

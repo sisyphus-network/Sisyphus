@@ -728,7 +728,7 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 		t.Fatalf("the first list of jobs: %v, %v", first, err)
 	}
 
-	request := &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":100}`), Mode: nodepb.JobMode_JOB_MODE_FULL_WORKER, MaxTasks: 3, Verify: 2, VerifyShare: 0.5}
+	request := &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":100}`), Mode: nodepb.JobMode_JOB_MODE_FULL_WORKER, MaxTasks: 3, Verify: 2, VerifyShare: 0.5, AuditShare: 0.25}
 	// It spends the pool's time, so it needs the token.
 	if _, err := client.SubmitJob(context.Background(), request); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("submitting without the token: %v", err)
@@ -743,7 +743,7 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 		job.GetCreatedAtMs() != 1_700_000_000_000 || job.GetFinishedAtMs() != 0 || job.GetVerify() != 2 {
 		t.Errorf("the job as submitted: %v", job)
 	}
-	if spec := pool.submitted[0]; spec.GetMode() != pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER || spec.GetMaxTasks() != 3 || spec.GetVerify() != 2 || spec.GetVerifyShare() != 0.5 {
+	if spec := pool.submitted[0]; spec.GetMode() != pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER || spec.GetMaxTasks() != 3 || spec.GetVerify() != 2 || spec.GetVerifyShare() != 0.5 || spec.GetAuditShare() != 0.25 {
 		t.Errorf("the pool was given %v", spec)
 	}
 	if second, err := stream.Recv(); err != nil || second.GetRevision() != 2 || len(second.GetJobs()) != 1 {

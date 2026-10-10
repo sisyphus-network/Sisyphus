@@ -1531,7 +1531,10 @@ type Job struct {
 	Verify uint32 `protobuf:"varint,21,opt,name=verify,proto3" json:"verify,omitempty"`
 	// The share of its tasks that are verified, if not all of them; see
 	// SubmitJobRequest.
-	VerifyShare   float64 `protobuf:"fixed64,22,opt,name=verify_share,json=verifyShare,proto3" json:"verify_share,omitempty"`
+	VerifyShare float64 `protobuf:"fixed64,22,opt,name=verify_share,json=verifyShare,proto3" json:"verify_share,omitempty"`
+	// The share of its tasks the coordinator runs again itself; see
+	// SubmitJobRequest.
+	AuditShare    float64 `protobuf:"fixed64,23,opt,name=audit_share,json=auditShare,proto3" json:"audit_share,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1720,6 +1723,13 @@ func (x *Job) GetVerifyShare() float64 {
 	return 0
 }
 
+func (x *Job) GetAuditShare() float64 {
+	if x != nil {
+		return x.AuditShare
+	}
+	return 0
+}
+
 type JobTask struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Index uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
@@ -1857,7 +1867,12 @@ type SubmitJobRequest struct {
 	// and the rest run once. A worker whose result for a verified task loses
 	// to the one the others agree on has the tasks it ran unverified in the
 	// job verified after all. Zero, and one, verify every task.
-	VerifyShare   float64 `protobuf:"fixed64,10,opt,name=verify_share,json=verifyShare,proto3" json:"verify_share,omitempty"`
+	VerifyShare float64 `protobuf:"fixed64,10,opt,name=verify_share,json=verifyShare,proto3" json:"verify_share,omitempty"`
+	// A share between 0 and 1 of the job's tasks, picked by chance as their
+	// results come in, that the coordinating node runs again itself before
+	// taking the result. Where the two differ its own is taken. Refused for
+	// a workload that node cannot run itself.
+	AuditShare    float64 `protobuf:"fixed64,11,opt,name=audit_share,json=auditShare,proto3" json:"audit_share,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1958,6 +1973,13 @@ func (x *SubmitJobRequest) GetVerify() uint32 {
 func (x *SubmitJobRequest) GetVerifyShare() float64 {
 	if x != nil {
 		return x.VerifyShare
+	}
+	return 0
+}
+
+func (x *SubmitJobRequest) GetAuditShare() float64 {
+	if x != nil {
+		return x.AuditShare
 	}
 	return 0
 }
@@ -4752,7 +4774,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\tprobation\x18\x13 \x01(\rR\tprobation\"B\n" +
 	"\tWorkerGpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xdd\x05\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xfe\x05\n" +
 	"\x03Job\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1a\n" +
 	"\bworkload\x18\x02 \x01(\tR\bworkload\x12\x16\n" +
@@ -4778,7 +4800,9 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\n" +
 	"record_cid\x18\x14 \x01(\tR\trecordCid\x12\x16\n" +
 	"\x06verify\x18\x15 \x01(\rR\x06verify\x12!\n" +
-	"\fverify_share\x18\x16 \x01(\x01R\vverifyShare\"\xef\x01\n" +
+	"\fverify_share\x18\x16 \x01(\x01R\vverifyShare\x12\x1f\n" +
+	"\vaudit_share\x18\x17 \x01(\x01R\n" +
+	"auditShare\"\xef\x01\n" +
 	"\aJobTask\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x120\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1a.sisyphus.node.v1.JobStateR\x05state\x12\x18\n" +
@@ -4788,7 +4812,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"workerName\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x12\x1a\n" +
 	"\bprogress\x18\a \x01(\x01R\bprogress\x12\x16\n" +
-	"\x06verify\x18\b \x01(\rR\x06verify\"\xde\x02\n" +
+	"\x06verify\x18\b \x01(\rR\x06verify\"\xff\x02\n" +
 	"\x10SubmitJobRequest\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
@@ -4800,7 +4824,9 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\aprivate\x18\b \x01(\bR\aprivate\x12\x16\n" +
 	"\x06verify\x18\t \x01(\rR\x06verify\x12!\n" +
 	"\fverify_share\x18\n" +
-	" \x01(\x01R\vverifyShare\"<\n" +
+	" \x01(\x01R\vverifyShare\x12\x1f\n" +
+	"\vaudit_share\x18\v \x01(\x01R\n" +
+	"auditShare\"<\n" +
 	"\x11SubmitJobResponse\x12'\n" +
 	"\x03job\x18\x01 \x01(\v2\x15.sisyphus.node.v1.JobR\x03job\")\n" +
 	"\x10CancelJobRequest\x12\x15\n" +

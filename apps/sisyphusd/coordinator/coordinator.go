@@ -104,7 +104,10 @@ type Config struct {
 	// ID names this coordinator to its workers.
 	ID        string
 	Workloads *runtime.Registry
-	Store     Store
+	// Audits is the workloads this node can run itself, and so can audit:
+	// run a task again to check what a worker returned for it. Nil is none.
+	Audits *runtime.Registry
+	Store  Store
 	// Journal, if set, is where jobs are kept across restarts; see Recover.
 	Journal Journal
 	// Standings, if set, is where the standing of workers is kept across
@@ -124,6 +127,7 @@ type Coordinator struct {
 
 	id        string
 	workloads *runtime.Registry
+	audits    *runtime.Registry
 	store     Store
 	journal   Journal
 	standings Standings
@@ -268,6 +272,7 @@ func New(cfg Config) *Coordinator {
 	c := &Coordinator{
 		id:        cfg.ID,
 		workloads: cfg.Workloads,
+		audits:    cfg.Audits,
 		store:     cfg.Store,
 		journal:   cfg.Journal,
 		standings: cfg.Standings,
@@ -656,6 +661,15 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	if share > 0 && verify < 2 {
 		return nil, status.Error(codes.InvalidArgument, "verify_share says how many of a job's tasks to verify, and needs verify to say by how many workers")
 	}
+	audit := spec.GetAuditShare()
+	switch _, composite := workload.(runtime.Composite); {
+	case audit < 0 || audit > 1 || audit != audit:
+		return nil, status.Error(codes.InvalidArgument, "audit_share is the share of a job's tasks for the coordinator to run again itself, from 0 to 1")
+	case audit > 0 && verify >= 2:
+		return nil, status.Error(codes.InvalidArgument, "audit_share has the coordinator check tasks by running them itself, and verify has other workers check them: a job asks for one or the other")
+	case audit > 0 && !composite && !c.runsItself(workload.Name()):
+		return nil, status.Errorf(codes.FailedPrecondition, "audit_share has this node run tasks of the job again itself, and it cannot run %s: it is not a worker for that workload", workload.Name())
+	}
 	needs := c.needs(workload.Name(), spec.GetParams(), len(spec.GetKey()) > 0)
 
 	parts := 1
@@ -708,6 +722,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		job.Check(verify, share, shuffled(len(job.Tasks)))
 	}
 	job.Key, job.Private, job.Submitter = spec.GetKey(), len(spec.GetKey()) > 0, submitter
+	job.AuditShare = audit
 	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
 	job.Needs = needs
@@ -1060,6 +1075,12 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 			// One result among several, which settles the task only if
 			// enough of them are the same.
 			done = c.returnedLocked(w, a, outcome.Output, written)
+		} else if c.pickedLocked(a.job) {
+			// Not taken yet: this node runs the task itself first, and
+			// the task is over when it has.
+			c.recordLocked(a.job, eventTaskResult, a.task.Index, w.name, "returned a result, which the coordinator checks by running the task itself")
+			c.aggregating.Add(1)
+			go c.audit(w.id, w.name, a, outcome.Output, written)
 		} else {
 			c.recordLocked(a.job, eventTaskSucceeded, a.task.Index, w.name, "")
 			done = a.job.Succeed(a.task, outcome.Output)

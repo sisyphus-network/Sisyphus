@@ -256,6 +256,16 @@ func TestAJobCanBeAskedToBeVerifiedAndIsShownToHaveBeen(t *testing.T) {
 	if _, err := serving(n).run(context.Background(), runJobArgs{Workload: "primes", Verify: 2, VerifyShare: 0.25, Detach: true}); err != nil || n.submitted.GetVerifyShare() != 0.25 {
 		t.Fatalf("the node was asked for %v, %v", n.submitted, err)
 	}
+	// An audit by the coordinating node is asked for and shown the same way.
+	if _, err := serving(n).run(context.Background(), runJobArgs{Workload: "primes", AuditShare: 0.5, Detach: true}); err != nil || n.submitted.GetAuditShare() != 0.5 {
+		t.Errorf("a job with a share audited: %v, asked for as %v", err, n.submitted)
+	}
+	if audited := jobView(&nodepb.Job{JobId: "j", AuditShare: 0.5}, true); audited["audit_share"] != 0.5 {
+		t.Errorf("an audited job is shown as %v", audited)
+	}
+	if plain := jobView(&nodepb.Job{JobId: "j"}, true); plain["audit_share"] != nil {
+		t.Errorf("a job that is not audited is shown as %v", plain)
+	}
 	spot := jobView(&nodepb.Job{JobId: "j", Verify: 2, VerifyShare: 0.25, Tasks: []*nodepb.JobTask{{Index: 0, Verify: 1}, {Index: 1, Verify: 2}, {Index: 2, Verify: 1}}}, true)
 	if got, _ := json.Marshal(spot["verified_tasks"]); string(got) != "[1]" || spot["verified_by"] != uint32(2) {
 		t.Errorf("a job one task of which was verified: %v", spot)

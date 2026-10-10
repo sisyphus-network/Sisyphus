@@ -523,6 +523,7 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	// Put the database back as it was before the migration that added the
 	// column, and so before those that came after it, and open it again.
 	for _, statement := range []string{
+		`ALTER TABLE jobs DROP COLUMN audit_share`,
 		`DROP TABLE worker_standing`,
 		`DROP TABLE file_pin_operations`,
 		`ALTER TABLE tasks DROP COLUMN verify`,
@@ -634,8 +635,12 @@ func TestWhichTasksOfAJobAreVerifiedIsKeptAndChangesWithThem(t *testing.T) {
 	db, file := newDB(t)
 	job := jobmodel.New("spot", "primes", nil, jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
 	job.Check(2, 0.5, []int{1, 0})
+	job.AuditShare = 0.25
 	save(t, db, job)
 	loaded := load(t, reopen(t, db, file))[0]
+	if loaded.AuditShare != 0.25 {
+		t.Errorf("as loaded, a share of %v of its tasks is audited", loaded.AuditShare)
+	}
 	if loaded.Verify != 2 || loaded.VerifyShare != 0.5 || loaded.Tasks[0].Verify != 1 || loaded.Tasks[1].Verify != 2 {
 		t.Fatalf("as loaded: verified by %d, a share of %v, its tasks by %d and %d", loaded.Verify, loaded.VerifyShare, loaded.Tasks[0].Verify, loaded.Tasks[1].Verify)
 	}

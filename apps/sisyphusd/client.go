@@ -48,6 +48,7 @@ func jobSubmit(ctx context.Context, args []string) error {
 	keyFile := fs.String("key-file", "", "make the job private: seal everything it stores with this key, and open sealed inputs with it")
 	verify := fs.Uint("verify", 0, "have each task run by this many different workers, and take its result only once that many have returned the same one; for work that gives the same result every time, and not with --key-file. 0 or 1 runs each task once")
 	share := fs.Float64("verify-share", 0, "with --verify, verify only this share of the tasks, from 0 to 1, picked at random, and run the rest once; a worker caught returning a different result has its other tasks in the job verified after all. 0 or 1 verifies every task")
+	audit := fs.Float64("audit-share", 0, "have the coordinating node run this share of the tasks again itself, from 0 to 1, each picked by chance as its result comes in, and take its own result where a worker's differs; needs no second worker, and not with --verify. For work that gives the same result every time, of a kind that node runs itself")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -56,7 +57,7 @@ func jobSubmit(ctx context.Context, args []string) error {
 	}
 
 	spec := &pb.JobSpec{Workload: *workload, Params: []byte(*params), MaxTasks: uint32(*tasks), TaskTimeoutSeconds: uint32(*timeout / time.Second),
-		MinMemoryBytes: *minMemory << 20, MinGpus: uint32(*minGPUs), Verify: uint32(*verify), VerifyShare: *share}
+		MinMemoryBytes: *minMemory << 20, MinGpus: uint32(*minGPUs), Verify: uint32(*verify), VerifyShare: *share, AuditShare: *audit}
 	switch *mode {
 	case "distributed":
 		spec.Mode = pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
 // Verification by replication: a job that asks for it has each of its tasks
@@ -302,4 +303,95 @@ func describe(sides [][]jobmodel.Result) string {
 		said = append(said, names(side)+" returned "+short(side[0]))
 	}
 	return strings.Join(said, "; ")
+}
+
+// Audits. A job may ask that a share of its tasks be checked by the
+// coordinator running them again itself. Which tasks is decided by chance
+// as each result comes in, so no worker knows beforehand, and the result is
+// not taken until the coordinator has its own to set beside it. Where they
+// are the same the worker's standing gains by it. Where they differ the
+// coordinator's own is the task's result and the worker is counted as
+// outvoted, as it would be by other workers.
+//
+// It needs no second worker, so it is what a pool with one worker has, and
+// it is not fooled by workers that agree with each other. It costs the
+// coordinating machine the work of each task it checks, and like every
+// comparison here it is for work that gives the same result each time.
+
+// runsItself reports whether this node can run a workload's tasks itself.
+func (c *Coordinator) runsItself(workload string) bool {
+	if c.audits == nil {
+		return false
+	}
+	_, err := c.audits.Get(workload)
+	return err == nil
+}
+
+// pickedLocked decides, by chance, whether a result that has just come in
+// for one of a job's tasks is to be checked.
+func (c *Coordinator) pickedLocked(job *jobmodel.Job) bool {
+	return job.AuditShare > 0 && c.runsItself(job.Workload) && mrand.Float64() < job.AuditShare
+}
+
+// audit runs a task again here and settles it: with what the worker
+// returned if that is what this node got too, or could not get anything to
+// compare, and with this node's own result if it got another. Running a
+// task may read and write stored data and takes as long as it takes, so it
+// is done without the lock.
+func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte, stored []string) {
+	defer c.aggregating.Done()
+	job, task := a.job, a.task
+	c.mu.Lock()
+	key, id, name, payload := job.Key, job.ID, job.Workload, task.Payload
+	c.mu.Unlock()
+
+	workload, _ := c.audits.Get(name) // picked only for a workload this node runs
+	touched := runtime.Record(c.store)
+	own, err := workload.Execute(c.ctx, withKey(touched, key, id), payload)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ctx.Err() != nil || job.Terminal() || task.State != jobmodel.Running || task.Attempt != a.attempt {
+		// Stopped, cancelled, or handed out again meanwhile: the task is
+		// no longer this result's to settle.
+		return
+	}
+	sorted := func(blobs []string) []string { return slices.Compact(slices.Sorted(slices.Values(blobs))) }
+	theirs := jobmodel.Result{Output: output, Blobs: sorted(stored)}
+	mine := jobmodel.Result{Output: own, Blobs: sorted(touched.Written())}
+	who := cmp.Or(nodeName, nodeID)
+	standing := c.standing[nodeID]
+	standing.NodeID = nodeID
+	taken := output
+	switch {
+	case err != nil:
+		// Nothing to compare with. The worker did not fail, so its result
+		// stands as it would have with no audit.
+		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, fmt.Sprintf("the coordinator could not run the task itself to check it (%v), so the result is taken unchecked", err))
+	case mine.Digest() == theirs.Digest():
+		standing.Agree()
+		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, "the coordinator ran the task itself and got the same result")
+	default:
+		standing.Outvote()
+		taken = own
+		job.NoteRead(touched.Read()...)
+		job.NoteTaskOutput(touched.Written()...)
+		c.pin(job, time.Time{}, touched.Written())
+		c.log.Warn("a worker returned another result for a task than this node got by running it itself", "task", task.ID, "node", nodeID, "returned", short(theirs), "got", short(mine))
+		c.recordLocked(job, eventTaskDisagreed, task.Index, "", fmt.Sprintf("%s returned %s; the coordinator ran the task itself and got %s", who, short(theirs), short(mine)))
+		c.recordLocked(job, eventTaskSucceeded, task.Index, "", "the coordinator's own result is taken, and not "+who+"'s")
+	}
+	if err == nil {
+		c.standing[nodeID] = standing
+		if err := c.standings.SaveStanding(standing); err != nil {
+			c.log.Warn("could not save a worker's standing; it will be lost if the coordinator stops now", "node", nodeID, "error", err)
+		}
+	}
+	if job.Succeed(task, taken) {
+		c.aggregating.Add(1)
+		go c.aggregate(job)
+	}
+	c.settleLocked(job)
+	c.notifyLocked(job)
+	c.scheduleLocked()
 }
