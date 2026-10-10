@@ -162,8 +162,11 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 		t.Errorf("list_files: %s", text)
 	}
 
-	// A job set going and left is listed, and can be stopped.
-	said, text, failed = use(t, session, "run_job", map[string]any{"workload": "primes", "params": map[string]any{"from": 0, "to": 4000000000}, "detach": true})
+	// A job set going and left is listed, and can be stopped. It asks for
+	// more memory than any machine has, so that it is still there to stop
+	// however fast the machine: left to run, a quick one finished it first.
+	const beyond = 4000000000
+	said, text, failed = use(t, session, "run_job", map[string]any{"workload": "primes", "params": map[string]any{"from": 0, "to": 100}, "min_memory_mb": beyond, "detach": true})
 	left := said.(map[string]any)
 	if failed || left["state"] == "succeeded" || left["note"] == nil {
 		t.Fatalf("run_job, detached: %s", text)
@@ -177,7 +180,7 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 		t.Errorf("job_logs of a running job: %s", text)
 	}
 	// A wait that runs out returns the job as it stands.
-	if _, text, failed = use(t, session, "run_job", map[string]any{"workload": "primes", "params": map[string]any{"from": 0, "to": 4000000000}, "wait_seconds": 1}); failed || !strings.Contains(text, "has not finished") {
+	if _, text, failed = use(t, session, "run_job", map[string]any{"workload": "primes", "params": map[string]any{"from": 0, "to": 100}, "min_memory_mb": beyond, "wait_seconds": 1}); failed || !strings.Contains(text, "has not finished") {
 		t.Errorf("run_job with a short wait: %s", text)
 	}
 	if _, text, failed = use(t, session, "cancel_job", map[string]any{"job_id": left["job_id"]}); failed || !strings.Contains(text, `"state":"cancelled"`) {
