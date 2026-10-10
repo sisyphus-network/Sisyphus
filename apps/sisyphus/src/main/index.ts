@@ -7,6 +7,7 @@ import { WindowStreams } from './window-streams'
 import { DesktopDaemon } from './daemon-process'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
+import { firstUploadMessage } from './file-upload'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
@@ -356,8 +357,11 @@ app.whenReady().then(() => {
   handleNode('node:store-file', (event, payload: unknown) => new Promise((resolve, reject) => {
     if (!client) return reject(new Error('The local daemon is not connected.'))
     if (!payload || typeof payload !== 'object' || !('name' in payload) || !('data' in payload) || !('private' in payload)) return reject(new Error('Invalid file upload.'))
-    const file = payload as { name: unknown; data: unknown; private: unknown }
+    const file = payload as { name: unknown; data: unknown; private: unknown; chatAttachment?: unknown }
     if (typeof file.name !== 'string' || typeof file.private !== 'boolean' || !(file.data instanceof Uint8Array)) return reject(new Error('Invalid file upload.'))
+    if (file.chatAttachment !== undefined && typeof file.chatAttachment !== 'boolean') return reject(new Error('Invalid attachment upload.'))
+    if (file.chatAttachment && !file.private) return reject(new Error('Chat attachments must be private.'))
+    const metadata = { name: file.name, private: file.private, chatAttachment: file.chatAttachment === true }
     const data = file.data
     if (data.byteLength > 256 * 1024 * 1024) return reject(new Error('The file exceeds this desktop client’s 256 MiB upload limit.'))
     let settled = false
@@ -382,7 +386,7 @@ app.whenReady().then(() => {
       if (settled) return
       const chunk = Buffer.from(data.subarray(offset, Math.min(offset + chunkSize, data.byteLength)))
       const request = offset === 0
-        ? { name: file.name, private: file.private, data: chunk }
+        ? firstUploadMessage(metadata, chunk)
         : { data: chunk }
       stream.write(request, (error?: Error | null) => {
         if (settled) return
@@ -400,7 +404,7 @@ app.whenReady().then(() => {
     }
     // Empty files still need an initial message carrying their metadata.
     if (data.byteLength === 0) {
-      stream.write({ name: file.name, private: file.private, data: Buffer.alloc(0) }, (error?: Error | null) => {
+      stream.write(firstUploadMessage(metadata, Buffer.alloc(0)), (error?: Error | null) => {
         if (settled) return
         if (error) {
           activeStreams.release(owner, transferId, transfer)

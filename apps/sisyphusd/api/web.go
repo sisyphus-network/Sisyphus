@@ -44,7 +44,7 @@ func NewWebHandler(cfg LocalConfig, origins []string) http.Handler {
 			return
 		}
 		buf := make([]byte, 256<<10)
-		file, err := service.keep(r.Context(), r.PathValue("name"), r.URL.Query().Get("private") == "true", func() ([]byte, error) {
+		file, err := service.keep(r.Context(), r.PathValue("name"), r.URL.Query().Get("private") == "true", false, func() ([]byte, error) {
 			n, err := r.Body.Read(buf)
 			if n > 0 {
 				return buf[:n], nil

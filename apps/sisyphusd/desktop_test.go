@@ -20,13 +20,13 @@ import (
 )
 
 // storeThroughDesktop stores a file through a node's local API.
-func storeThroughDesktop(t *testing.T, ctx context.Context, client nodepb.NodeServiceClient, name, content string, private bool) *nodepb.File {
+func storeThroughDesktop(t *testing.T, ctx context.Context, client nodepb.NodeServiceClient, name, content string, private bool, attachment ...bool) *nodepb.File {
 	t.Helper()
 	upload, err := client.StoreFile(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := upload.Send(&nodepb.StoreFileRequest{Name: name, Private: private, Data: []byte(content[:len(content)/2])}); err != nil {
+	if err := upload.Send(&nodepb.StoreFileRequest{Name: name, Private: private, ChatAttachment: len(attachment) > 0 && attachment[0], Data: []byte(content[:len(content)/2])}); err != nil {
 		t.Fatal(err)
 	}
 	if err := upload.Send(&nodepb.StoreFileRequest{Data: []byte(content[len(content)/2:])}); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -16,6 +17,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // FileList is where a node keeps the names of the files stored through
@@ -29,6 +31,9 @@ type FileList interface {
 // errNoStore is the answer to a call about files on a node that keeps no
 // store for a pool.
 var errNoStore = status.Error(codes.FailedPrecondition, "this node coordinates no pool, so it has no store of files")
+
+const chatDraftOwner = "chat-draft"
+const chatDraftRetention = 24 * time.Hour
 
 // StoreFile puts what the caller sends in the store, sealed first if it is
 // to be private, keeps it there, and lists it under the name given.
@@ -48,7 +53,10 @@ func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreF
 		return ended
 	}
 	start, started := first.GetData(), false
-	file, err := s.keep(ctx, first.GetName(), first.GetPrivate(), func() ([]byte, error) {
+	if first.GetChatAttachment() && !first.GetPrivate() {
+		return status.Error(codes.InvalidArgument, "chat attachments must be private")
+	}
+	file, err := s.keep(ctx, first.GetName(), first.GetPrivate(), first.GetChatAttachment(), func() ([]byte, error) {
 		if !started {
 			started = true
 			return start, ended
@@ -65,7 +73,7 @@ func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreF
 // keep stores a file that arrives in pieces, sealed if it is private, and
 // puts it on record as one of the user's. recv gives each piece and then
 // io.EOF.
-func (s *localService) keep(ctx context.Context, name string, private bool, recv func() ([]byte, error)) (*nodepb.File, error) {
+func (s *localService) keep(ctx context.Context, name string, private, attachment bool, recv func() ([]byte, error)) (*nodepb.File, error) {
 	as := plain
 	if private {
 		key, err := s.sealingKey()
@@ -78,8 +86,14 @@ func (s *localService) keep(ctx context.Context, name string, private bool, recv
 	if err != nil {
 		return nil, err
 	}
-	// Held for the user, as `blob pin` holds it, until it is removed.
-	if err := s.cfg.Store.Pin(ctx, userOwner, time.Time{}, c); err != nil {
+	// Drafts never receive a permanent user pin. Identical concurrent draft
+	// uploads share a bounded grace pin; do not roll it back by CID, because
+	// another upload may still be using it. Each chat gains its own pin at Ask.
+	owner, expires := userOwner, time.Time{}
+	if attachment {
+		owner, expires = chatDraftOwner, time.Now().Add(chatDraftRetention)
+	}
+	if err := s.cfg.Store.Pin(ctx, owner, expires, c); err != nil {
 		return nil, status.Errorf(codes.Internal, "keep file: %v", err)
 	}
 	file := nodedb.File{CID: c.String(), Name: name, Size: size, Stored: time.Now(), Private: private}
@@ -144,7 +158,7 @@ func (s *localService) FetchFile(req *nodepb.FetchFileRequest, stream grpc.Serve
 	return sendAll(opened, send)
 }
 
-func (s *localService) ListFiles(context.Context, *nodepb.ListFilesRequest) (*nodepb.ListFilesResponse, error) {
+func (s *localService) ListFiles(ctx context.Context, _ *nodepb.ListFilesRequest) (*nodepb.ListFilesResponse, error) {
 	if s.cfg.Store == nil {
 		return nil, errNoStore
 	}
@@ -153,7 +167,38 @@ func (s *localService) ListFiles(context.Context, *nodepb.ListFilesRequest) (*no
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 	var res nodepb.ListFilesResponse
+	// Pins are local metadata even for remote stores. Only unprotected rows
+	// need a storage read to distinguish a collected draft from a live file.
+	kept := make(map[string]bool)
+	if pins, ok := s.cfg.Store.(interface{ Pins() []storage.Pin }); ok {
+		now := time.Now()
+		for _, pin := range pins.Pins() {
+			if pin.Expires.IsZero() || pin.Expires.After(now) {
+				kept[pin.CID.String()] = true
+			}
+		}
+	}
 	for _, file := range files {
+		c, err := cid.Decode(file.CID)
+		if err != nil {
+			slog.Warn("skipping invalid file catalogue CID", "error", err)
+			continue
+		}
+		if kept[c.String()] {
+			res.Files = append(res.Files, localFile(file))
+			continue
+		}
+		// Collection can remove an abandoned upload while its metadata remains.
+		// Do not delete that metadata from a read: a concurrent upload/restore
+		// may be using it, and chat references must remain intact.
+		blob, err := s.cfg.Store.Open(ctx, c)
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "check listed file: %v", err)
+		}
+		blob.Close()
 		res.Files = append(res.Files, localFile(file))
 	}
 	return &res, nil

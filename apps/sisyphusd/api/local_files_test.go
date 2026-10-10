@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"path/filepath"
@@ -208,6 +209,141 @@ func TestReferencedFilesStayPinnedUntilEveryOwnerReleasesThem(t *testing.T) {
 		if pin.CID.String() == file.GetCid() && pin.Owner == userOwner {
 			t.Fatal("unreferenced file remains pinned after explicit removal")
 		}
+	}
+}
+
+func TestChatDraftsExpireWithoutReleasingExplicitUserFiles(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+			store := storage.NewMemory()
+			key := sealed.NewKey()
+			client := serveLocal(t, LocalConfig{Store: store, Files: newFileList(t), SealingKey: func() (sealed.Key, error) { return key, nil }})
+			ctx := withToken("the-token")
+			upload := func(attachment, private bool) (*nodepb.File, error) {
+				stream, err := client.StoreFile(ctx)
+				if err != nil {
+					return nil, err
+				}
+				stream.Send(&nodepb.StoreFileRequest{Name: "same.txt", Data: []byte("identical content"), Private: private, ChatAttachment: attachment})
+				return stream.CloseAndRecv()
+			}
+			if _, err := upload(true, false); status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("public draft accepted: %v", err)
+			}
+			file, err := upload(true, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, pin := range store.Pins() {
+				if pin.Owner == userOwner {
+					t.Fatal("chat draft gained permanent user ownership")
+				}
+				if pin.Owner == chatDraftOwner && pin.Expires.IsZero() {
+					t.Fatal("draft pin never expires")
+				}
+			}
+			if explicit {
+				manual, err := upload(false, true)
+				if err != nil || manual.GetCid() != file.GetCid() {
+					t.Fatalf("identical manual upload: %v, %v", manual, err)
+				}
+			}
+			if _, err := store.GC(ctx, time.Now().Add(chatDraftRetention+time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			got, err := fetchFile(ctx, client, file.GetCid())
+			listed, listErr := client.ListFiles(ctx, &nodepb.ListFilesRequest{})
+			if listErr != nil || len(listed.GetFiles()) != map[bool]int{false: 0, true: 1}[explicit] {
+				t.Fatalf("collected draft remains visible or saved file missing: %v, %v", listed, listErr)
+			}
+			if explicit {
+				if err != nil || string(got) != "identical content" {
+					t.Fatalf("explicit user file lost with expired draft: %q, %v", got, err)
+				}
+			} else if status.Code(err) != codes.NotFound {
+				t.Fatalf("expired unattached draft not collected: %v", err)
+			}
+		})
+	}
+}
+
+func TestFileListingUsesActivePinsAndSkipsMalformedRows(t *testing.T) {
+	ctx := context.Background()
+	for _, expiry := range []time.Time{{}, time.Now().Add(time.Hour), time.Now().Add(-time.Hour)} {
+		store, db := storage.NewMemory(), newFileList(t)
+		c, err := store.Put(ctx, strings.NewReader("a pinned file"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Unpin(storage.GraceOwner, c); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Pin(ctx, "owner", expiry, c); err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range []nodedb.File{{CID: "invalid CID"}, {CID: c.String(), Name: "healthy"}} {
+			if err := db.AddFile(row); err != nil {
+				t.Fatal(err)
+			}
+		}
+		service := &localService{cfg: LocalConfig{Store: brokenStore{Store: store, failOpen: true}, Files: db}}
+		listed, err := service.ListFiles(ctx, &nodepb.ListFilesRequest{})
+		if expiry.IsZero() || expiry.After(time.Now()) {
+			if err != nil || len(listed.GetFiles()) != 1 || listed.Files[0].Name != "healthy" {
+				t.Fatalf("protected file required a storage request or bad row hid it: %v, %v", listed, err)
+			}
+		} else if status.Code(err) != codes.Internal {
+			t.Fatalf("expired pin bypassed storage check: %v", err)
+		}
+		if rows, err := db.Files(); err != nil || len(rows) != 2 {
+			t.Fatalf("listing changed catalogue: %v, %v", rows, err)
+		}
+	}
+}
+
+func TestFileListingPreservesMetadataAndReportsStoreFailures(t *testing.T) {
+	ctx := context.Background()
+	for _, damaged := range []bool{false, true} {
+		db := newFileList(t)
+		name := notStored(t)
+		if damaged {
+			name = "invalid CID"
+		}
+		if err := db.AddFile(nodedb.File{CID: name, Name: "kept metadata"}); err != nil {
+			t.Fatal(err)
+		}
+		s := &localService{cfg: LocalConfig{Store: brokenStore{Store: storage.NewMemory(), failOpen: true}, Files: db}}
+		_, err := s.ListFiles(ctx, &nodepb.ListFilesRequest{})
+		if (!damaged && status.Code(err) != codes.Internal) || (damaged && err != nil) {
+			t.Fatalf("damaged=%v: %v", damaged, err)
+		}
+		if files, err := db.Files(); err != nil || len(files) != 1 {
+			t.Fatalf("listing changed durable metadata: %v, %v", files, err)
+		}
+	}
+	// A missing blob can be restored/reuploaded after a read hides it.
+	store, db := storage.NewMemory(), newFileList(t)
+	c, err := storage.NewMemory().Put(ctx, strings.NewReader("restorable"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AddFile(nodedb.File{CID: c.String()}); err != nil {
+		t.Fatal(err)
+	}
+	s := &localService{cfg: LocalConfig{Store: store, Files: db}}
+	if listed, err := s.ListFiles(ctx, &nodepb.ListFilesRequest{}); err != nil || len(listed.GetFiles()) != 0 {
+		t.Fatalf("missing blob listed: %v, %v", listed, err)
+	}
+	if _, err := store.Put(ctx, strings.NewReader("restorable")); err != nil {
+		t.Fatal(err)
+	}
+	// Restored content may have no active owner yet. It must still appear
+	// after the availability read, rather than only through the pin shortcut.
+	if err := store.Unpin(storage.GraceOwner, c); err != nil {
+		t.Fatal(err)
+	}
+	if listed, err := s.ListFiles(ctx, &nodepb.ListFilesRequest{}); err != nil || len(listed.GetFiles()) != 1 {
+		t.Fatalf("restored blob not visible: %v, %v", listed, err)
 	}
 }
 

@@ -46,6 +46,12 @@ func TestFailedAttachmentReleaseIsRetriedAfterChatDeletion(t *testing.T) {
 	if err := db.RetainChatFile("owner", c.String()); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.CreateChat(nodedb.Chat{ID: "other", Created: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RetainChatFile("other", c.String()); err != nil {
+		t.Fatal(err)
+	}
 	a := &assistant{store: db, filePins: store}
 	if err := a.replayFilePins(context.Background()); err != nil {
 		t.Fatal(err)
@@ -60,7 +66,7 @@ func TestFailedAttachmentReleaseIsRetriedAfterChatDeletion(t *testing.T) {
 	if err := a.DeleteChat("owner"); err != nil {
 		t.Fatalf("a deletion that was made was reported as failing: %v", err)
 	}
-	if chats, err := db.Chats(); err != nil || len(chats) != 0 {
+	if chats, err := db.Chats(); err != nil || len(chats) != 1 || chats[0].ID != "other" {
 		t.Fatalf("chat deletion not committed: %v, %v", chats, err)
 	}
 	if ops, err := db.PendingFilePins(); err != nil || len(ops) != 1 || ops[0].Keep {
@@ -75,15 +81,39 @@ func TestFailedAttachmentReleaseIsRetriedAfterChatDeletion(t *testing.T) {
 	if ops, err := db.PendingFilePins(); err != nil || len(ops) != 0 {
 		t.Fatalf("replayed release not acknowledged: %v, %v", ops, err)
 	}
-	userHeld := false
+	userHeld, otherHeld := false, false
 	for _, pin := range store.Pins() {
 		if pin.Owner == "chat:owner" {
 			t.Fatal("deleted chat still pins content")
 		}
 		userHeld = userHeld || pin.Owner == "user"
+		otherHeld = otherHeld || pin.Owner == "chat:other"
 	}
 	if !userHeld {
 		t.Fatal("cleanup released independent user pin")
+	}
+	if !otherHeld {
+		t.Fatal("cleanup released another chat's pin")
+	}
+	if _, err := store.GC(context.Background(), time.Now().Add(25*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := store.Open(context.Background(), c)
+	if err != nil {
+		t.Fatal("shared blob was collected while another owner needs it")
+	}
+	blob.Close()
+	if err := a.DeleteChat("other"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Unpin("user", c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GC(context.Background(), time.Now().Add(25*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Open(context.Background(), c); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("unowned blob not collected: %v", err)
 	}
 }
 

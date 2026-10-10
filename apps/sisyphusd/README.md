@@ -287,11 +287,16 @@ A node keeps a blob for as long as something pins it, and deletes what nothing p
 | `job:<id>` | The coordinator, on a job's inputs and results | While the job runs, then for `--retain` (default 7 days) |
 | `record:<id>` | The coordinator, on a finished job's [record](#a-jobs-record) | Until the job is forgotten (`--keep-jobs`) |
 | `chat:<id>` | The node, on a file attached to a conversation with its planner | Until the conversation is deleted. The change is queued in the node's database with the conversation and applied to the store after, so one that fails, or that a stop cut short, is tried again every two seconds and when the node next starts. A pin of a file the node no longer holds can never be made, so it is reported to whoever attached it and dropped, and does not hold up the changes behind it |
+| `chat-draft` | New private chat uploads through `StoreFile` with `chat_attachment` | 24 hours from the upload; another upload of the same content renews this grace period. Sending the message adds an independent `chat:<id>` pin |
 | `recent` | Every upload | One hour, so there is time to pin it properly |
 | `pool:<store>` | A storage follower, in its own store, on what its coordinator has it hold | Until the coordinator stops listing it; see [Copies on other nodes](#copies-on-other-nodes) |
 | `pinning-service:<request>` | A request made through the [pinning service](#pinning-services) | Until the request is removed |
 
 Blobs that only pass between a job's tasks are released as soon as the job ends. Several pins can hold one blob; it goes when the last has lapsed.
+
+New chat attachments do not receive the permanent `user` pin used by ordinary file uploads. Deleting a conversation releases only that conversation's ownership; another conversation, a job or an explicit user pin can still keep the same content. Abandoned uploads, including completed uploads from a partially failed send, become eligible for collection after the 24-hour draft grace period. Deletion is not immediate: collection must run and every other pin must have expired or been released. Disabling automatic collection with `--gc-interval 0` requires manual `blob gc`.
+
+The desktop checks both `chat-file-references-v1` and `chat-attachment-retention-v1` before uploading chat attachments. Older daemons cannot safely ignore the new upload flag. Existing permanently pinned uploads are not retroactively unpinned. The file list hides content that the store no longer holds, and reports storage failures rather than treating them as absence. Listing does not delete catalogue metadata or ownership: a concurrent upload or a later restore can make the content available again. Metadata compaction and paginated listing remain separate follow-ups.
 
 ```sh
 bin/sisyphusd blob pins             # what is being kept, for whom, until when

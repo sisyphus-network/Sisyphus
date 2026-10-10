@@ -31,15 +31,16 @@ func TestPrivateChatAttachmentRunsEncryptedWorkAcrossTurns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	supportsAttachments := false
+	supportsAttachments, supportsRetention := false, false
 	for _, capability := range info.GetCapabilities() {
 		supportsAttachments = supportsAttachments || capability == "chat-file-references-v1"
+		supportsRetention = supportsRetention || capability == "chat-attachment-retention-v1"
 	}
-	if !supportsAttachments {
-		t.Fatal("daemon does not advertise its attachment ownership support")
+	if !supportsAttachments || !supportsRetention {
+		t.Fatal("daemon does not advertise attachment ownership and managed retention")
 	}
 	const text = "the quick brown fox jumps over the lazy dog and the fox sleeps"
-	file := storeThroughDesktop(t, ctx, client, "secret.txt", text, true)
+	file := storeThroughDesktop(t, ctx, client, "secret.txt", text, true, true)
 	key, err := sealingKey(filepath.Join(dataDir, "private.key"))
 	if err != nil {
 		t.Fatal(err)

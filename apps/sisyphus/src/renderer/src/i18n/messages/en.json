@@ -1,7 +1,7 @@
 {
   "chatAttachmentsNeedNodeUpdate": "Update the node before sending chat attachments. This daemon does not support safe chat file ownership.",
   "privateFileWarning": "Private files are sealed with private.key. Losing this key permanently loses access. Only private jobs can read them; their workers receive the decryption key. Use trusted workers.",
-  "chatAttachmentPrivacyNotice": "Attachments are encrypted with the node’s private.key. Losing it permanently loses access. Jobs in this conversation are private; their workers receive the key, so use trusted workers. Deleting the chat does not remove files; manage them in Operations → Files.",
+  "chatAttachmentPrivacyNotice": "Attachments are encrypted with private.key; losing it permanently loses access. Private jobs share the key with trusted workers. Chat deletion releases its ownership. Unattached files may be collected after 24 hours; manual uploads and files needed by other chats or jobs remain retained.",
   "modelSettings": {
     "localAi": "LOCAL AI",
     "title": "Model provider",

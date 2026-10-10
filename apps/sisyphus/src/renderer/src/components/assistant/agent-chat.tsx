@@ -213,7 +213,7 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
         if (!supportsChatFileReferences(info)) throw new Error(messages.chatAttachmentsNeedNodeUpdate)
       }
       const storedAttachments = await Promise.all(pendingFiles.map(async ({ file }) => {
-        const result = await getNodeApi().storeFile({ name: file.name, data: new Uint8Array(await file.arrayBuffer()), private: true }) as { cid?: string }
+        const result = await getNodeApi().storeFile({ name: file.name, data: new Uint8Array(await file.arrayBuffer()), private: true, chatAttachment: true }) as { cid?: string }
         if (!result.cid) throw new Error(messages.fileUploadMissingCid)
         return { name: file.name, cid: result.cid, image: file.type.startsWith('image/'), private: true }
       }))
