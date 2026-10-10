@@ -30,7 +30,7 @@ CI runs formatting, `go vet`, staticcheck, the tests under the race detector, `m
 | Integration tests | The same tool. `apps/sisyphusd`'s tests start real nodes in the test process, and where a test needs them, the real `ipfs`, `ipfs-cluster-service` and Docker | `make test` |
 | Coverage | Every statement of hand-written Go must be run by some test, with Kubo, Docker and the cluster required so nothing is skipped | `make cover` |
 | The race detector | Every test is run with it | `make test` |
-| Across machines | `examples/rehearsal.sh`: each node in a container with its own address and disk, 25 checks; CI runs it on every pull request | `examples/rehearsal.sh` |
+| Across machines | `examples/rehearsal.sh`: each node in a container with its own address and disk, 26 checks; CI runs it on every pull request | `examples/rehearsal.sh` |
 | Desktop unit tests | Node's own test runner over the app's modules | `npm test` in `apps/sisyphus` |
 | Desktop end to end | Playwright driving the built Electron app against a node of its own | `npm run test:e2e` in `apps/sisyphus` |
 | Agents | A live trial of the MCP server from Claude Code, by hand, recorded on [#88](https://github.com/sisyphus-network/Sisyphus/issues/88) | by hand |

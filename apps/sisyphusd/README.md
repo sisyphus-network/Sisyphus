@@ -753,7 +753,7 @@ What it does not do:
 Two workers on one machine agree with each other because one person runs both. A coordinator started with `--verify-distinct-addresses` hands a verified task's copies only to workers that connected from different network addresses.
 
 ```sh
-bin/sisyphusd --role coordinator --verify-distinct-addresses
+bin/sisyphusd run --role coordinator --verify-distinct-addresses
 ```
 
 - **What counts as one address.** An IPv4 address as it is; an IPv6 address by its `/64`, which is what one site is usually given. It is the address the worker's connection to the coordinator comes from, so it is the coordinator that says where a worker is, not the worker.
