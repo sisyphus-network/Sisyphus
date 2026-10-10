@@ -594,3 +594,29 @@ test('a question with a file attached is planned, computed on the pool and answe
     await model.close()
   }
 })
+
+test('reloading the Electron renderer cancels an in-flight planner stream', async () => {
+  const model = await standInModel({ defer: true, content: 'This late answer must not reach the reloaded window.' })
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Hold this response while I reload.')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await model.waitForRequests(1)
+
+    // A full-frame navigation exercises the actual Electron teardown path:
+    // the renderer-owned stream must be cancelled through IPC and gRPC.
+    await page.reload()
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    await model.waitForAbort()
+    model.releasePending()
+    await page.waitForTimeout(250)
+    assert.equal(await page.getByText('This late answer must not reach the reloaded window.').count(), 0)
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
