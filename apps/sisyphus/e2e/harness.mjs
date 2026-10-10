@@ -11,6 +11,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron as electron } from 'playwright-core'
 
+
 const here = dirname(fileURLToPath(import.meta.url))
 const desktop = resolve(here, '..')
 const daemon = process.env.SISYPHUS_DAEMON_PATH ?? resolve(desktop, '../../bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')
@@ -126,6 +127,33 @@ export async function standInModel(...replies) {
   model.url = `http://127.0.0.1:${server.address().port}`
   model.close = () => new Promise((done) => server.close(done))
   return model
+}
+
+/** A small OpenAI-compatible service that records the key and requests it receives. */
+export async function standInOpenAI(reply) {
+  const service = { asked: [], authorizations: [], url: '' }
+  const server = createHttpServer((request, response) => {
+    let body = ''
+    request.on('data', (piece) => { body += piece })
+    request.on('end', () => {
+      service.authorizations.push(request.headers.authorization ?? '')
+      if (request.url === '/v1/models' && request.method === 'GET') {
+        response.setHeader('content-type', 'application/json')
+        return response.end(JSON.stringify({ data: [{ id: 'test-openai-model' }] }))
+      }
+      if (request.url !== '/v1/chat/completions' || request.method !== 'POST') {
+        response.statusCode = 404
+        return response.end('not found')
+      }
+      service.asked.push(JSON.parse(body || '{}'))
+      response.setHeader('content-type', 'text/event-stream')
+      response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: reply } }] })}\n\ndata: [DONE]\n\n`)
+    })
+  })
+  await new Promise((done) => server.listen(0, '127.0.0.1', done))
+  service.url = `http://127.0.0.1:${server.address().port}/v1`
+  service.close = () => new Promise((done) => server.close(done))
+  return service
 }
 
 /** Has a node's planner plan with a model, as its owner would from the command line. */
