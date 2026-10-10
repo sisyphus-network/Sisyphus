@@ -111,9 +111,26 @@ func (d *Daemon) Restart(ctx context.Context, secret, kuboAPI string, peers []st
 // listen opens a loopback port for the system to pick.
 var listen = func() (net.Listener, error) { return net.Listen("tcp", "127.0.0.1:0") }
 
-// launch writes the peer's settings from d.cfg, starts it and waits until it
-// answers, then points the client at it.
+// portAttempts is how many times a peer is started before a port that
+// keeps being taken is given up on.
+const portAttempts = 3
+
+// launch starts the peer, and starts it again if the port picked for its
+// API was taken by something else between being found free and the peer
+// asking for it, which on a busy machine does happen.
 func (d *Daemon) launch(ctx context.Context) error {
+	var err error
+	for range portAttempts {
+		if err = d.launchOnce(ctx); err == nil || !strings.Contains(err.Error(), "address already in use") {
+			break
+		}
+	}
+	return err
+}
+
+// launchOnce writes the peer's settings from d.cfg, starts it and waits
+// until it answers, then points the client at it.
+func (d *Daemon) launchOnce(ctx context.Context) error {
 	cfg := d.cfg
 	run := func(args ...string) *exec.Cmd {
 		cmd := exec.Command(d.binary, args...)
