@@ -848,6 +848,9 @@ func runDaemon(ctx context.Context, args []string) error {
 		gateway := &http.Server{Handler: api.NewGateway(readable, held, token, *gatewayOpen)}
 		defer gateway.Close()
 		log.Info("gateway listening", "addr", lis.Addr().String(), "open", *gatewayOpen)
+		if !*gatewayOpen {
+			warnOfKeyInTheClear(log, lis.Addr(), "the gateway", "the node's API token")
+		}
 		go gateway.Serve(lis)
 	}
 
@@ -879,6 +882,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		defer service.Close()
 		defer pins.Close()
 		log.Info("pinning service listening", "addr", lis.Addr().String(), "fetches", sidecar != nil)
+		warnOfKeyInTheClear(log, lis.Addr(), "the pinning service", "its key")
 		go pins.Serve(lis)
 	}
 
@@ -1563,6 +1567,18 @@ func showIdentity(args []string) error {
 	}
 	fmt.Fprintln(stdout, ident.ID())
 	return nil
+}
+
+// warnOfKeyInTheClear says, of a service that listens over plain HTTP at an
+// address other machines can reach, that the key it is used with crosses
+// the network unencrypted. A service kept to this machine is said nothing
+// of.
+func warnOfKeyInTheClear(log *slog.Logger, addr net.Addr, service, key string) {
+	if tcp, ok := addr.(*net.TCPAddr); ok && tcp.IP.IsLoopback() {
+		return
+	}
+	log.Warn(service+" can be reached from other machines, over plain HTTP: "+key+" crosses the network unencrypted with every request. Put a proxy that speaks TLS in front of it, or keep it to a loopback address",
+		"addr", addr.String())
 }
 
 // filePinInterval is how often queued attachment pin changes are tried

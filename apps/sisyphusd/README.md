@@ -313,6 +313,7 @@ curl -H "Authorization: Bearer $(cat "$(bin/sisyphusd data-dir)/api.token")" htt
 ```
 
 - **It is its owner's unless opened.** A request must show the node's API token, as a bearer token or as `?token=` in the address. Started with `--gateway-open`, anyone who can reach the address and knows a file's content ID can fetch it, which is how a link to a result is shared; a content ID cannot be guessed, but anyone given one can pass it on.
+- **It speaks plain HTTP.** At a loopback address that is this machine talking to itself. At an address other machines can reach, the token crosses the network unencrypted with each request, and the node says so in its log when it starts: put a proxy that speaks TLS in front of it, or open it with `--gateway-open` and serve only what may be public. A token in `?token=` also ends up in browser histories and proxy logs.
 - **A sealed file is never served**, with or without the token: what the gateway holds of it is what was sealed. Private data is fetched through the node, by whoever has its key.
 - `?filename=report.pdf` names the file for the browser and decides what kind it is taken for; without it the kind is told from how the file begins. Part of a file may be asked for, so video can be played and seeked from it.
 - It serves single files only. A directory, or a path inside one, is not something a node stores.

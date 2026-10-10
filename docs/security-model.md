@@ -107,7 +107,7 @@ A `chat`, `prompts` or `embed` job carries its prompts in its parameters, or in 
 
 ### On the wire
 
-TLS and libp2p hide content from outsiders. They do not hide that nodes are talking, to whom, how much or when. The pinning service (`--pinning-listen`) is plain HTTP and its key crosses the network unencrypted. Neither it nor the gateway is held to a loopback address.
+TLS and libp2p hide content from outsiders. They do not hide that nodes are talking, to whom, how much or when. The pinning service (`--pinning-listen`) and the gateway (`--gateway-listen`) are plain HTTP, and neither is held to a loopback address, since both are for other machines to use. Reached from another machine, the pinning service's key, or the node's API token where the gateway is not `--gateway-open`, crosses the network unencrypted. The node says so in its log when it starts either at such an address (`daemon.go`, `warnOfKeyInTheClear`); it does not refuse, and TLS is left to a proxy in front.
 
 ## Result integrity
 
