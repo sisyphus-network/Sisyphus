@@ -38,7 +38,7 @@ func (Chat) Name() string { return "chat" }
 func (Chat) Describe() string {
 	return `Has a language model served by one of the pool's workers continue a conversation. ` +
 		`Parameters: a chat request as OpenAI defined it: {"model": "<a model a worker serves, exactly as the worker names it>", "messages": [{"role": "user", "content": "..."}], "tools": [optional]}. ` +
-		`Write the model as "<model>@<worker's name>" to have that worker and no other run it. ` +
+		`Write the model as "<model>@<worker's name>", or "<model>@<worker's node ID>", to have that worker and no other run it. ` +
 		`The result is the reply in the same form. The worker running it sees the conversation.`
 }
 

@@ -76,7 +76,7 @@ For more prompts than fit comfortably in a request, write them to a file one to 
 
 Try the system instruction on three or four prompts first. A model answering alone, many times over, repeats whatever it gets wrong.
 
-Write `"model": "llama3.1:8b@<worker's name>"` to keep the prompts on one machine, such as the user's own, when what is in them should not go to another.
+Write `"model": "llama3.1:8b@<worker's name>"`, or `@<its peer_id>` where other people's workers are in the pool, to keep the prompts on one machine, such as the user's own, when what is in them should not go to another.
 
 ## Finding texts that mean alike
 

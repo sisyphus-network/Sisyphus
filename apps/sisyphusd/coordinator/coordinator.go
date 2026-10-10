@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -795,6 +796,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	if capabilities.GetTaskSlots() > maxTasksPerJob {
 		return status.Errorf(codes.InvalidArgument, "task_slots exceeds %d", maxTasksPerJob)
 	}
+	capabilities.Labels = labelsOf(id, hello.GetName(), capabilities.GetLabels())
 
 	now := time.Now()
 	w := &worker{
@@ -854,7 +856,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 				w.relayedConnections, w.relayedBytes = kind.Heartbeat.GetRelayedConnections(), kind.Heartbeat.GetRelayedBytes()
 				if changed := kind.Heartbeat.GetLabels(); changed != nil {
 					// What it has now may be what a waiting job needs.
-					w.capabilities.Labels = changed.GetLabels()
+					w.capabilities.Labels = labelsOf(w.id, w.name, changed.GetLabels())
 					c.scheduleLocked()
 				}
 				c.mu.Unlock()
@@ -1186,6 +1188,26 @@ func (c *Coordinator) slotsLocked(workload string, minMemory uint64, minGPUs int
 		}
 	}
 	return total
+}
+
+// labelsOf is what a worker is labelled with: what it says it offers, and
+// who it is. Who it is the coordinator says for itself, whatever the worker
+// said: its node ID, which is that of the key it connected with, and the
+// name it gave. So a job that asks for a worker by ID is given to that node
+// and no other, where one that asks by name is given to whichever worker
+// has taken the name. A name that is itself a node ID labels nothing, or a
+// worker could pass for the node it names.
+func labelsOf(id, name string, said []string) []string {
+	labels := []string{runtime.WorkerLabel + id}
+	if _, err := peer.Decode(name); err != nil && name != "" {
+		labels = append(labels, runtime.WorkerLabel+name)
+	}
+	for _, label := range said {
+		if !strings.HasPrefix(label, runtime.WorkerLabel) {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 // suits reports whether a worker with the given capabilities can be given

@@ -62,16 +62,16 @@ try {
     console.log(' ', worker.name, worker.peerId, `${worker.runningTasks}/${worker.taskSlots} tasks`, worker.workloads.join(','))
   }
   const describe = (job) => `${job.jobId} ${job.workload} ${job.state}${job.result?.length ? ' ' + Buffer.from(job.result).toString() : ''}`
-  const { jobs } = await call('listJobs', {})
-  console.log(`jobs on record: ${jobs.length}`)
-  for (const job of jobs.slice(0, 5)) console.log(' ', describe(job))
-
-  // With the token, submit a job and watch the list until it has finished.
+  // Jobs are read with the token, as they are changed with it: submit one
+  // and watch the list until it has finished.
   if (tokenFile) {
+    const { jobs } = await call('listJobs', {}, authorization)
+    console.log(`jobs on record: ${jobs.length}`)
+    for (const job of jobs.slice(0, 5)) console.log(' ', describe(job))
     const { job } = await call('submitJob', { workload: 'primes', params: Buffer.from('{"from":0,"to":1000000}'), maxTasks: 2 }, authorization)
     console.log('submitted', describe(job))
     const done = await new Promise((resolve, reject) => {
-      const stream = client.watchJobs({})
+      const stream = client.watchJobs({}, authorization)
       stream.on('data', (update) => {
         const mine = update.jobs.find((other) => other.jobId === job.jobId)
         if (mine && (mine.state === 'JOB_STATE_SUCCEEDED' || mine.state === 'JOB_STATE_FAILED')) { resolve(mine); stream.cancel() }
@@ -81,7 +81,7 @@ try {
     console.log('finished ', describe(done), 'on', [...new Set(done.tasks.map((task) => task.workerName))].join(', '))
     // What happened to it along the way. The stream ends by itself because the job is over.
     await new Promise((resolve, reject) => {
-      const stream = client.watchJobEvents({ jobId: job.jobId })
+      const stream = client.watchJobEvents({ jobId: job.jobId }, authorization)
       stream.on('data', (event) => console.log('   ', event.seq, event.kind, event.taskIndex >= 0 ? `task ${event.taskIndex}` : '', event.workerName, event.text))
       stream.on('end', resolve)
       stream.on('error', reject)
