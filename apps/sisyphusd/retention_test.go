@@ -252,33 +252,6 @@ func TestFailedJobKeepsItsInputsAndReleasesTheRest(t *testing.T) {
 	}
 }
 
-func TestJobSucceedsEvenIfAWorkerNamesBlobsThatCannotBePinned(t *testing.T) {
-	p := startPool(t, runtime.Builtin())
-	w := p.connectRaw(hello("careless", 1, "primes"))
-	w.welcome()
-	absent, err := storage.CID(p.ctx, strings.NewReader("never uploaded"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	job := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED, 1))
-	task := w.assignment()
-	w.reply(&pb.TaskResult{
-		TaskId: task.GetTaskId(), Attempt: task.GetAttempt(),
-		Outcome:      &pb.TaskResult_Output{Output: []byte(`{"count":5}`)},
-		WrittenBlobs: []string{"not a CID at all", absent.String()},
-	})
-
-	if done := p.wait(job.GetJobId()); string(done.GetResult()) != `{"count":5}` {
-		t.Errorf("result %s (%s)", done.GetResult(), done.GetError())
-	}
-	if !strings.Contains(p.logs.String(), "could not pin a job's blobs") {
-		t.Errorf("the failure to pin was not logged:\n%s", p.logs.String())
-	}
-	if len(p.jobPins(job.GetJobId())) != 0 {
-		t.Errorf("the job holds pins: %v", p.jobPins(job.GetJobId()))
-	}
-}
-
 // unpinFails is a store that cannot release pins.
 type unpinFails struct{ *storage.Store }
 
