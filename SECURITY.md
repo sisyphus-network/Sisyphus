@@ -2,6 +2,8 @@
 
 Sisyphus is an early prototype. It has not had an independent security review, and the way private jobs are sealed in particular is waiting for one ([#91](https://github.com/sisyphus-network/Sisyphus/issues/91)). Do not rely on it yet to protect data that matters.
 
+[`docs/security-model.md`](docs/security-model.md) states what the system protects today and what it does not: who the parties are, what each is trusted with, and the exact construction a reviewer of the sealing would be checking.
+
 ## Reporting a vulnerability
 
 Report it privately through GitHub: on the repository's **Security** tab, choose **Report a vulnerability**. Please do not open a public issue or pull request for it.

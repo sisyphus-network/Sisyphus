@@ -218,7 +218,7 @@ sisyphus/
 ├── proto/                # versioned Protocol Buffer API definitions
 ├── examples/             # sample input and scripts to run against a pool
 ├── scripts/              # demo, release build, coverage check
-├── docs/                 # developer guide; multi-machine test guide
+├── docs/                 # developer guide; security model; multi-machine test guide
 └── README.md
 ```
 
@@ -274,7 +274,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 
 **Not built yet**: more real workloads than the first (`transcode`). Unless a job asks for its tasks to be run by several workers and compared, a coordinator accepts whatever result a worker returns; and that comparison is the first step only ([#19](https://github.com/sisyphus-network/Sisyphus/issues/19)): it works for deterministic jobs that are not private, believes workers that agree, and costs a worker that is caught lying nothing but a probation, during which jobs that verify only some of their tasks verify all of its. So a pool is still only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
 
-Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. The plan, in order, is in the [roadmap issue](https://github.com/sisyphus-network/Sisyphus/issues/23).
+Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. [`docs/security-model.md`](docs/security-model.md) says what is protected today, what is not, and whom each party has to trust. The plan, in order, is in the [roadmap issue](https://github.com/sisyphus-network/Sisyphus/issues/23).
 
 Two things in this section go beyond what the sections above describe and are still open for discussion: the choice of Go ([#1](https://github.com/sisyphus-network/Sisyphus/issues/1)), and building storage on IPFS formats while V0 lists IPFS as out of scope ([#25](https://github.com/sisyphus-network/Sisyphus/issues/25)).
 
