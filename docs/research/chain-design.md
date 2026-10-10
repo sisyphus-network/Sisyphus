@@ -27,6 +27,14 @@ A design note for [#20](https://github.com/sisyphus-network/Sisyphus/issues/20).
 - **Evrmore** is a fork of Ravencoin's code and coin balances with a new first block in late October 2022; assets were not carried over ([repository](https://github.com/EvrmoreOrg/Evrmore)). It mines with EvrProgPow and, unlike Ravencoin, requires a tenth of every block reward to go to a development fund ([miner fund](https://raw.githubusercontent.com/EvrmoreOrg/Evrmore/master/src/minerdevfund.cpp)). Its asset layer on mainnet is Ravencoin's. Tolls on transfers, burning and reminting, and metadata that cannot be changed are in a test release and not on mainnet ([releases](https://github.com/EvrmoreOrg/Evrmore/releases)). Its maximum supply and the terms of its airdrop are *unconfirmed*.
 - **Licence.** MIT.
 
+### What a network already on Evrmore found
+
+[Satori](verification-prior-art.md#satori-network-on-evrmore) pays its nodes in an Evrmore asset, and its experience bears on three of the proposals below.
+
+- An asset carries payment and no rules. Satori's supply, stakes and rewards are all enforced by its own server, because the asset layer has no lock, no penalty and no cap on a reissuable asset. Anything Sisyphus wants enforced, collateral that can be taken above all, has to be in consensus.
+- Every holder of an asset also needs the chain's coin for fees.
+- A custodian's bridge to another chain was where it was exploited.
+
 ## The proposals in the issue, taken one at a time
 
 ### What secures the order of blocks

@@ -4,7 +4,7 @@ Notes for the questions the roadmap leaves open beyond V0. They are proposals an
 
 | Note | For | What it is |
 | --- | --- | --- |
-| [How other networks check untrusted workers](verification-prior-art.md) | [#19](https://github.com/sisyphus-network/Sisyphus/issues/19) | A survey of BOINC, Golem, Truebit, iExec, Render, Akash, Bittensor, Primecoin, Gridcoin and others, with what each claim was checked against |
+| [How other networks check untrusted workers](verification-prior-art.md) | [#19](https://github.com/sisyphus-network/Sisyphus/issues/19) | A survey of BOINC, Golem, Truebit, iExec, Render, Akash, Bittensor, Primecoin, Gridcoin, Satori (which runs on Evrmore) and others, with what each claim was checked against |
 | [Verification: what to build next](verification-next.md) | [#19](https://github.com/sisyphus-network/Sisyphus/issues/19) | What the survey suggests, in order, and which of it needs no chain |
 | [The chain: what Dash and Evrmore each bring](chain-design.md) | [#20](https://github.com/sisyphus-network/Sisyphus/issues/20) | What each chain has, the issue's proposals taken one at a time, and what is still open |
 | [SISY: the questions a token design has to answer](token-economics.md) | [#21](https://github.com/sisyphus-network/Sisyphus/issues/21) | The decisions, what others chose, and no numbers |
