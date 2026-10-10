@@ -485,6 +485,10 @@ test('model settings download a local model and report completion', async () => 
     await page.getByText('Model configuration saved').waitFor()
     await page.getByRole('textbox', { name: /Model name to download/ }).fill('downloaded-test-model')
     await page.getByRole('button', { name: 'Download' }).click()
+    const progress = page.getByRole('progressbar')
+    await progress.waitFor()
+    await page.waitForFunction(() => Number(document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')) > 0)
+    assert.ok(Number(await progress.getAttribute('aria-valuenow')) < 100, 'the download progress should remain visible before completion')
     await page.getByText('Model downloaded', { exact: true }).waitFor({ timeout: 30000 })
     assert.deepEqual(model.pulled, ['downloaded-test-model'])
 

@@ -118,12 +118,20 @@ export async function standInModel(...replies) {
       if (request.url === '/api/pull') {
         model.pulled.push(asked.model)
         response.setHeader('content-type', 'application/x-ndjson')
-        return response.end([
+        const events = [
           { status: 'pulling manifest' },
           { status: 'pulling layer', total: 200, completed: 50 },
           { status: 'pulling layer', total: 200, completed: 200 },
           { status: 'success' },
-        ].map((event) => JSON.stringify(event)).join('\n') + '\n')
+        ]
+        void (async () => {
+          for (const [index, event] of events.entries()) {
+            if (index > 0) await new Promise((done) => setTimeout(done, 250))
+            response.write(`${JSON.stringify(event)}\n`)
+          }
+          response.end()
+        })()
+        return
       }
       model.asked.push(asked)
       const reply = replies[model.asked.length - 1]
