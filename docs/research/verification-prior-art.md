@@ -67,6 +67,25 @@ The work is finding chains of primes, which any node checks cheaply. Nothing to 
 
 Pays for BOINC work in its own coin and leaves checking to the BOINC projects: "Gridcoin relies on the RAC values provided by the project" (read: [FAQ](https://gridcoin.us/wiki/faq)). Which projects count is decided by vote.
 
+### Satori Network (on Evrmore)
+
+Worth a longer look than its size suggests, because it is built on the chain Sisyphus is considering. Its nodes predict the next value of data streams, mostly prices.
+
+- **How a result is checked.** It is not. Nothing verifies the computation. A prediction is scored by its distance from the real value once that arrives, and the best are paid (read: [user guide](https://github.com/SatoriNetwork/satori-lite/blob/main/docs/guides/USER_GUIDE.md), [scorer](https://github.com/SatoriNetwork/satori-lite/blob/main/neuron-lite/scoring/mae.py)). A prediction that arrives after 90 per cent of the interval is disqualified, against waiting until the answer is nearly known.
+- **Who decides.** A central server run by the Satori Association registers nodes, assigns streams, checks stakes, scores once a day and pays out. Its code is not public: "For security reasons the Satori Server code is not publicly available" (read: [Neuron README](https://github.com/SatoriNetwork/Neuron)). The transport moved to Nostr relays in 2026; scoring and payment did not.
+- **What Evrmore is used for.** Payment only. The token is an Evrmore asset, now `SATORIEVR`, and it is reissuable: the daily reward is made by issuing more, so the supply is whatever the holder of the owner token mints, not something the chain enforces (read: a live query of an Evrmore server on 10 October 2026; [tokenomics](https://satorinet.io/tokenomics)). Who holds that key is unconfirmed.
+- **Stake.** A node must hold a minimum balance, 250 at the time of reading, raised several times since launch. It is a balance checked by the server, not a lock, and nothing is ever taken (read: [tokenomics](https://satorinet.io/tokenomics)). Pools lend "virtual" stake to workers by a signature with no funds moving, and their own documents say paying stakers "relies on pool operator honesty".
+- **False identities.** The stake, and a server rule of one node per machine. No proof of work or of hardware.
+- **Who pays.** New coins, split by a vote of token holders: at the time of reading about 85 per cent to predictors and 15 to development.
+- **What went wrong.** A wrapped token on another chain was bridged by a custodian, and the roadmap speaks of a "rescue plan ... after the bridge exploit". No account of the exploit was found. The asset was later migrated from `SATORI` to `SATORIEVR`; that the two are connected is an inference. A repository for a chain of its own, a fork of Evrmore, exists and holds little; whether it runs is unconfirmed (read: [SatoriChain](https://github.com/SatoriNetwork/SatoriChain)).
+
+What it teaches a compute network thinking of Evrmore:
+
+- **An Evrmore asset pays cheaply and enforces nothing.** A supply cap, a lock on a stake or a penalty all need a server that is trusted, scripts the chain may not have, or a fork. Satori has the server and drifted towards the fork.
+- **Holders of an asset need the chain's own coin to move it.** Satori sent a little to some 40,000 addresses so that they could (read: [AirdropEVR](https://github.com/SatoriNetwork/AirdropEVR)).
+- **Evrmore's scripts are enough for payment channels.** Satori's library has two-of-two channels with timed refunds, for paying by the result (read: [scripts](https://github.com/SatoriNetwork/satorilib)). One transaction can pay about a thousand outputs.
+- **"The truth arrives later" only suits forecasting.** A count of words or a rendered frame has no later truth to be scored against, so nothing of Satori's scoring carries over to general compute.
+
 ### Three more, for work that is not the same twice
 
 - **Livepeer** (video transcoding) planned a Truebit-style game, found that "trying to force determinism with GPU video transcoding would be impractical", and turned slashing off. It moved to statistical checks: a detector of tampering, and a proposal to compare perceptual hashes of a segment from one trusted node and several untrusted ones (read: [forum post, 2021](https://forum.livepeer.org/t/transcoding-verification-improvements-fast-full-verification/1499)). Whether the proposals shipped is unconfirmed.
@@ -91,12 +110,13 @@ Proofs in zero knowledge of a model's inference exist and cost orders of magnitu
 | A person, or an approximate comparison | Render, Livepeer, BOINC's validators | Not built. The only prior art for work that differs from run to run. |
 | Equivalence classes of hardware | BOINC | Not built. Workers already report their hardware. |
 | None; reputation and the market | Akash, Golem Yagna | The baseline a job without `--verify` has. |
+| Scored against a truth that arrives later, by a trusted server | Satori | Does not apply: most work has no later truth. |
 
 ## What it says to the four open questions
 
 1. **Collusion.** Five defences were found: assign at random and size the stake against the share assumed to collude (Proof of Sampling); a game one honest party can win (Truebit, opML); rewards that shrink when identities multiply (Truebit); results committed before they are revealed, so one worker cannot copy another (iExec, Bittensor); and reference nodes that are trusted outright (Livepeer). The first, fourth and fifth need no chain.
 2. **Work that is not the same twice.** Three routes: force it to be the same (fixed-point arithmetic, WebAssembly); confine it to hardware that agrees (BOINC); or compare approximately (validators, perceptual hashes, a person). Livepeer gave up the first for GPU video.
-3. **Who pays for the extra runs.** The requester (Golem, iExec, Truebit, Render), new coins (Bittensor, Gridcoin, Primecoin), or nobody, because the capacity is given (BOINC). A private pool is in the third case today.
-4. **Stakes and reputation.** Stakes are slashed in iExec, Truebit, Proof of Sampling and Filecoin. Reputation alone is what BOINC, Render and Golem have. Livepeer turned slashing off once its checks became matters of likelihood.
+3. **Who pays for the extra runs.** The requester (Golem, iExec, Truebit, Render), new coins (Bittensor, Gridcoin, Primecoin, Satori), or nobody, because the capacity is given (BOINC). A private pool is in the third case today.
+4. **Stakes and reputation.** Stakes are slashed in iExec, Truebit, Proof of Sampling and Filecoin. Reputation alone is what BOINC, Render and Golem have. Satori's stake is a balance that is checked and never taken, which deters false identities and not wrong answers. Livepeer turned slashing off once its checks became matters of likelihood.
 
 What Sisyphus should take from this is in [verification: what to build next](verification-next.md).
