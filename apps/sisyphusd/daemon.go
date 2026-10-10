@@ -463,8 +463,14 @@ func runDaemon(ctx context.Context, args []string) error {
 		// to lack is first fetched back from a follower.
 		kept := replication.Recovering{Store: store, From: replicated}
 		blobs, readable = kept, kept
+		// A node that is its own worker can run a task again to check what
+		// another worker returned for it.
+		var audits *runtime.Registry
+		if isWorker {
+			audits = runs
+		}
 		coord = coordinator.New(coordinator.Config{
-			ID: ident.ID(), Workloads: workloads, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			ID: ident.ID(), Workloads: workloads, Audits: audits, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
 		unfinished, err := coord.Recover()

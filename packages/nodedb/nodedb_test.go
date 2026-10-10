@@ -407,7 +407,7 @@ func loosen(t *testing.T, db *DB, table, columns string) {
 
 func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	const (
-		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify, verify_share"
+		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify, verify_share, audit_share"
 		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error, verify"
 	)
 	for _, tt := range []struct {
@@ -523,6 +523,7 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	// Put the database back as it was before the migration that added the
 	// column, and so before those that came after it, and open it again.
 	for _, statement := range []string{
+		`ALTER TABLE jobs DROP COLUMN audit_share`,
 		`DROP TABLE worker_standing`,
 		`DROP TABLE file_pin_operations`,
 		`ALTER TABLE tasks DROP COLUMN verify`,
@@ -634,8 +635,12 @@ func TestWhichTasksOfAJobAreVerifiedIsKeptAndChangesWithThem(t *testing.T) {
 	db, file := newDB(t)
 	job := jobmodel.New("spot", "primes", nil, jobmodel.Distributed, 2, [][]byte{nil, nil}, submitted)
 	job.Check(2, 0.5, []int{1, 0})
+	job.AuditShare = 0.25
 	save(t, db, job)
 	loaded := load(t, reopen(t, db, file))[0]
+	if loaded.AuditShare != 0.25 {
+		t.Errorf("as loaded, a share of %v of its tasks is audited", loaded.AuditShare)
+	}
 	if loaded.Verify != 2 || loaded.VerifyShare != 0.5 || loaded.Tasks[0].Verify != 1 || loaded.Tasks[1].Verify != 2 {
 		t.Fatalf("as loaded: verified by %d, a share of %v, its tasks by %d and %d", loaded.Verify, loaded.VerifyShare, loaded.Tasks[0].Verify, loaded.Tasks[1].Verify)
 	}

@@ -285,6 +285,9 @@ message Job {
   // The share of its tasks that are verified, if not all of them; see
   // SubmitJobRequest.
   double verify_share = 22;
+  // The share of its tasks the coordinator runs again itself; see
+  // SubmitJobRequest.
+  double audit_share = 23;
 }
 
 message JobTask {
@@ -335,6 +338,11 @@ message SubmitJobRequest {
   // to the one the others agree on has the tasks it ran unverified in the
   // job verified after all. Zero, and one, verify every task.
   double verify_share = 10;
+  // A share between 0 and 1 of the job's tasks, picked by chance as their
+  // results come in, that the coordinating node runs again itself before
+  // taking the result. Where the two differ its own is taken. Refused for
+  // a workload that node cannot run itself.
+  double audit_share = 11;
 }
 
 message SubmitJobResponse { Job job = 1; }

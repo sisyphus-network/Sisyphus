@@ -24,6 +24,8 @@ It does not stop two different people who have agreed to cheat. Only cost does t
 
 ### 3. Tasks whose answer is known
 
+*Built, in a simpler form than proposed below: `--audit-share` has the coordinating node run a random share of tasks again itself and take its own result where a worker's differs. It does not yet reuse answers from earlier runs.*
+
 Truebit makes one task in a thousand wrong on purpose so that checkers have something to find. The mirror of that fits Sisyphus better: the coordinator slips in a task it already knows the answer to, because it or a trusted worker ran it before, and a worker that returns anything else is caught without a second worker being paid. For `primes` and `wordcount` the coordinator can compute a small task itself. For containers, a task seen before with the same image, command and input has a known answer if the work is deterministic.
 
 This catches a worker cheating alone or with others, since no one knows which tasks are known. It costs the tasks themselves and nothing more.

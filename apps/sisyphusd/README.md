@@ -629,7 +629,7 @@ There are 44 tools: 19 that only look, 14 more that use the pool, and 11 more wi
 | --- | --- |
 | `pool_status` | The workers connected, with their cores, memory, graphics cards, the models they serve and how busy they are. |
 | `list_workloads` | What the pool can run, the parameters each workload takes, and how many connected workers run it. |
-| `run_job` | Runs a job and waits for its result, or returns at once with `detach`. It takes what `job submit` takes: `tasks`, `mode`, `private`, `min_memory_mb`, `min_gpus`, `task_timeout_seconds`, and `verify` and `verify_share` to have [workers check each other](#verifying-results). |
+| `run_job` | Runs a job and waits for its result, or returns at once with `detach`. It takes what `job submit` takes: `tasks`, `mode`, `private`, `min_memory_mb`, `min_gpus`, `task_timeout_seconds`, `verify` and `verify_share` to have [workers check each other](#verifying-results), and `audit_share` to have [the node check them itself](#checked-by-the-coordinator-itself). |
 | `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `wait_for_job` | Look at a job, list them, stop one, read what it logged, wait for one to finish. |
 | `store_file`, `fetch_file`, `list_files`, `remove_file`, `fetch_outputs`, `save_result` | Put a file from this machine in the pool's store, bring one back, list them, stop keeping one, bring back everything a job stored, write a job's whole result to a file. |
 | `list_pins`, `pin_file`, `unpin_file` | What the node keeps, for whom and until when ([How long data is kept](#how-long-data-is-kept)); keep a file, such as a job's output, for good or for so many hours; release it. |
@@ -746,6 +746,25 @@ What it does not do:
 - **It does not protect against workers that agree to lie.** `N` workers that return the same wrong result are believed. Nor does it protect against one operator running several nodes: different node IDs are not different people.
 - **It judges workers only this far.** A worker that was outvoted is named in the events and the record, has that result counted in its [standing](#a-workers-standing), and is on probation until ten of its results have agreed. Nothing else happens to it: no score that decides who is given work, no stake and no ban. Removing it is up to the pool's owner (`pool remove`).
 - **It checks what workers return, not how the coordinator combines it.** The coordinator still splits the job and aggregates the outputs itself.
+
+
+### Checked by the coordinator itself
+
+`--verify` needs at least two workers and is fooled by two that agree to lie. `--audit-share` needs neither a second worker nor anyone's honesty but the coordinator's:
+
+```sh
+bin/sisyphusd job submit --audit-share 0.2 --params '{"from":0,"to":100000000}'   # about a task in five is run again by this node
+bin/sisyphusd job logs <job-id>                                                   # which, and how each came out
+```
+
+- **What it does.** As each task's result comes in, the coordinating node decides by chance, with the probability given, whether to check it. If so the result is not taken yet: the node runs the task itself and compares, as `--verify` compares. The same, and the worker's result is taken and counts for its [standing](#a-workers-standing). Different, and the node's own result is the task's, the worker is counted as outvoted and put on probation, and the job's events say so.
+- **No worker knows which tasks.** The choice is made after the result is in. A worker that returns one wrong result in a job audited at a share of 0.2 is caught one time in five, each time.
+- **It costs the coordinating machine the work** of every task it checks, on top of what the worker did. A share of 1 has the node do the whole job again.
+- **It is for a node that is also a worker**, and for workloads it runs: a node started with `--role coordinator`, or one asked to audit `container` jobs without `--containers`, refuses, since it cannot run the task.
+- **It is for work that gives the same result every time**, like `--verify`. A task the node fails to run is not held against the worker: its result is taken, and the events say it went unchecked.
+- **Not with `--verify`.** A job asks other workers to check, or the coordinator, not both.
+- **A private job is audited like any other**: the node has the job's key.
+- **A job made of steps** hands its audit share to each step.
 
 ## A job's record
 

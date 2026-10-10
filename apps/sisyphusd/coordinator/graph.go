@@ -67,7 +67,7 @@ func (c *Coordinator) runStep(job *jobmodel.Job, task *jobmodel.Task, composite 
 
 	c.mu.Lock()
 	child, err := composite.Child(task.Payload, job.Outputs())
-	id, key, submitter, verify, share := c.childLocked(job.ID, child.Name), job.Key, job.Submitter, uint32(job.Verify), job.VerifyShare
+	id, key, submitter, verify, share, audit := c.childLocked(job.ID, child.Name), job.Key, job.Submitter, uint32(job.Verify), job.VerifyShare, job.AuditShare
 	c.mu.Unlock()
 
 	if err == nil && id == "" {
@@ -77,7 +77,7 @@ func (c *Coordinator) runStep(job *jobmodel.Job, task *jobmodel.Task, composite 
 			TaskTimeoutSeconds: uint32(child.Timeout / time.Second),
 			// A graph that is verified has each of its steps verified, as
 			// far as it asked for itself.
-			Verify: verify, VerifyShare: share,
+			Verify: verify, VerifyShare: share, AuditShare: audit,
 		}, job.ID, child.Name, submitter)
 		id = submitted.GetJobId()
 	}
