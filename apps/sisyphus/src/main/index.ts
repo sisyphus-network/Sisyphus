@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WindowStreams } from './window-streams'
+import { DesktopDaemon } from './daemon-process'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
 import * as grpc from '@grpc/grpc-js'
@@ -18,6 +19,17 @@ const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
 // a holder of its token change it. The token is in the daemon's data
 // directory, readable by the user who runs the daemon.
 const tokenFile = resolveTokenFile()
+let daemonStartupError: string | null = null
+const desktopDaemon = new DesktopDaemon({
+  executable: process.env.SISYPHUS_DAEMON_PATH ?? (app.isPackaged
+    ? join(process.resourcesPath, 'bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')
+    : join(here, '../../../../bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')),
+  endpoint,
+  dataDir: daemonDataDir(),
+  // A custom endpoint/token belongs to its operator, not this desktop process.
+  enabled: process.env.SISYPHUS_AUTO_START_DAEMON !== '0' && !process.env.SISYPHUS_API_ADDRESS && !process.env.SISYPHUS_API_TOKEN_FILE,
+  onError: (message) => { daemonStartupError = message },
+})
 
 // Where the daemon keeps its data unless told otherwise: ~/.sisyphus if
 // that is there, as it is for nodes set up by earlier versions, and
@@ -83,7 +95,7 @@ type NodeSnapshot = {
 }
 
 type GrpcNodeService = {
-  getNodeInfo(request: object, callback: (error: grpc.ServiceError | null, value?: NodeInfo) => void): void
+  getNodeInfo(request: object, options: grpc.CallOptions, callback: (error: grpc.ServiceError | null, value?: NodeInfo) => void): void
   watchPeers(request: object): grpc.ClientReadableStream<{ peers: Peer[]; revision: string | number | { toString(): string } }>
   connectPeer(request: { address: string }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { peerId: string }) => void): void
   setPeerComputeTrust(request: { peerId: string; trusted: boolean }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { trusted: boolean }) => void): void
@@ -163,7 +175,7 @@ function clearConnection() {
 function scheduleReconnect(error: string, generation: number) {
   if (isQuitting || retryTimer || generation !== connectionGeneration) return
   clearConnection()
-  publish({ status: 'disconnected', error })
+  publish({ status: 'disconnected', error: daemonStartupError ? `${error} ${daemonStartupError}` : error })
   retryTimer = setTimeout(() => {
     retryTimer = null
     connectToNode()
@@ -191,15 +203,17 @@ function connectToNode() {
     const nextClient = new loaded.sisyphus.node.v1.NodeService(endpoint, grpc.credentials.createInsecure())
     client = nextClient
 
-    nextClient.getNodeInfo({}, (error, info) => {
+    nextClient.getNodeInfo({}, { deadline: Date.now() + 5000 }, (error, info) => {
       if (generation !== connectionGeneration) return
       reconnecting = false
       if (error || !info) {
+        if (error?.code === grpc.status.UNAVAILABLE) void desktopDaemon.ensureStarted()
         scheduleReconnect(error?.message ?? 'The daemon returned no node information.', generation)
         return
       }
 
       retryDelayMs = 1_000
+      daemonStartupError = null
       publish({ status: 'connected', info, error: null })
       const stream = nextClient.watchPeers({})
       peerStream = stream
@@ -264,6 +278,15 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit()
+    return
+  }
+  app.on('second-instance', () => {
+    const window = BrowserWindow.getAllWindows()[0]
+    if (window?.isMinimized()) window.restore()
+    window?.focus()
+  })
   handleNode('node:get-snapshot', () => snapshot)
   handleNode('node:reconnect', () => {
     if (retryTimer) clearTimeout(retryTimer)
@@ -408,10 +431,19 @@ app.whenReady().then(() => {
   app.quit()
 })
 
-app.on('before-quit', () => {
+let daemonStopped = false
+let shutdownStarted = false
+app.on('before-quit', (event) => {
   isQuitting = true
   if (retryTimer) clearTimeout(retryTimer)
   clearConnection()
+  if (!daemonStopped) {
+    event.preventDefault()
+    if (!shutdownStarted) {
+      shutdownStarted = true
+      void desktopDaemon.stop().finally(() => { daemonStopped = true; app.quit() })
+    }
+  }
 })
 
 app.on('window-all-closed', () => {

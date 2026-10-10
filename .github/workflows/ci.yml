@@ -68,6 +68,9 @@ jobs:
         working-directory: apps/sisyphus
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -76,4 +79,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Build matching daemon for desktop lifecycle acceptance
+        working-directory: .
+        run: go build -o bin/sisyphusd ./apps/sisyphusd
+      - run: npm run test:daemon
       - run: npm run build
