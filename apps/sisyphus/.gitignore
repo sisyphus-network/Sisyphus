@@ -1,6 +1,8 @@
 # JavaScript dependencies and Electron/Vite build output.
 node_modules/
 out/
+dist/
+.packaging/
 
 # Copied at build time from the shared protocol and brand asset.
 resources/

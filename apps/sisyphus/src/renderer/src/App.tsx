@@ -14,6 +14,7 @@ import { SettingsPage } from '@/pages/SettingsPage'
 import { WorkspacePage } from '@/pages/WorkspacePage'
 import { OperationsPage } from '@/pages/OperationsPage'
 import { getNodeApi } from '@/lib/node-api'
+import { logoUrl } from '@/lib/brand'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/liquid-glass-dock'
 import { initializeThemeMode } from '@/components/theme-mode-switch'
@@ -189,7 +190,7 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
       <div className={`app-shell-body flex min-h-0 min-w-0 flex-1 ${advanced ? 'app-shell-body--advanced' : ''}`}>
       {advanced && !compact && <aside className="flex w-[248px] shrink-0 flex-col border-e border-[var(--app-line)] bg-[var(--app-sidebar)] px-4 py-5 max-[1000px]:w-[205px]">
         <NavLink to="/" className="mb-12 flex items-center gap-3 px-2 no-underline">
-          <img src="/logo.png" alt="" className="size-10 rounded-xl object-cover shadow-sm" />
+          <img src={logoUrl} alt="" className="size-10 rounded-xl object-cover shadow-sm" />
           <div className="min-w-0"><div className="font-semibold tracking-tight text-foreground">Sisyphus</div><div className="mt-0.5 text-[9px] font-medium tracking-[0.16em] text-muted-foreground">{messages.computeNetwork}</div></div>
         </NavLink>
 
