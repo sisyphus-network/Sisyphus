@@ -330,15 +330,6 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const topologyWidth = topologyAvailable && topologyOpen ? Math.min(panelAreaWidth * topologyRatio, topologyMaxWidth) : 0
   const startHistoryResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
-    const previousTap = historyLastTapRef.current
-    const isDoubleTap = previousTap && Date.now() - previousTap.at < 450 && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y) < 12
-    historyLastTapRef.current = isDoubleTap ? null : { at: Date.now(), x: event.clientX, y: event.clientY }
-    if (isDoubleTap) {
-      historyDragRef.current = null
-      setHistoryResizing(false)
-      setHistoryOpen((open) => !open)
-      return
-    }
     event.currentTarget.setPointerCapture(event.pointerId)
     const startWidth = historyOpen ? visibleHistoryWidth : 0
     historyDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, startWidth, dragging: false }
@@ -387,7 +378,14 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     const wasDragging = historyDragRef.current.dragging
     historyDragRef.current = null
     setHistoryResizing(false)
-    if (!wasDragging) return
+    if (!wasDragging) {
+      const previousTap = historyLastTapRef.current
+      const isDoubleTap = previousTap && Date.now() - previousTap.at < 450 && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y) < 12
+      historyLastTapRef.current = isDoubleTap ? null : { at: Date.now(), x: event.clientX, y: event.clientY }
+      if (isDoubleTap) setHistoryOpen((open) => !open)
+    } else {
+      historyLastTapRef.current = null
+    }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
   const keyHistoryResize = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -413,15 +411,6 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   }
   const startTopologyResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
-    const previousTap = topologyLastTapRef.current
-    const isDoubleTap = previousTap && Date.now() - previousTap.at < 450 && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y) < 12
-    topologyLastTapRef.current = isDoubleTap ? null : { at: Date.now(), x: event.clientX, y: event.clientY }
-    if (isDoubleTap) {
-      topologyDragRef.current = null
-      setTopologyResizing(false)
-      setTopologyOpen((open) => !open)
-      return
-    }
     event.currentTarget.setPointerCapture(event.pointerId)
     topologyDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, startWidth: topologyWidth, startRatio: topologyRatio, startOpen: topologyOpen, dragging: false }
   }
@@ -467,9 +456,14 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     topologyDragRef.current = null
     setTopologyResizing(false)
     if (!wasDragging) {
+      const previousTap = topologyLastTapRef.current
+      const isDoubleTap = previousTap && Date.now() - previousTap.at < 450 && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y) < 12
+      topologyLastTapRef.current = isDoubleTap ? null : { at: Date.now(), x: event.clientX, y: event.clientY }
+      if (isDoubleTap) setTopologyOpen((open) => !open)
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
       return
     }
+    topologyLastTapRef.current = null
     if (topologyOpen) {
       const ratio = topologyWidth < topologyMinimumWidth && topologyWidth > 0 ? Math.min(1, topologyMinimumWidth / Math.max(1, panelAreaWidth)) : topologyRatio
       saveLayout({ chat: (1 - ratio) * 100, network: ratio * 100, topologyOpen: true })
