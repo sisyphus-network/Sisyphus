@@ -53,6 +53,7 @@ var (
 type Store interface {
 	Pins() []storage.Pin
 	Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error
+	Open(ctx context.Context, c cid.Cid) (storage.Blob, error)
 	blobclient.Putter
 }
 
@@ -117,14 +118,23 @@ type Manager struct {
 	restored map[string]time.Time
 	// restoring counts the lists being taken back at the moment.
 	restoring int
+	// unshown counts the times a follower failed to show that it held a
+	// blob it said it held.
+	unshown uint32
 }
 
 // follower is what a coordinator knows of one follower.
 type follower struct {
 	// asked is when it last asked what to hold.
 	asked time.Time
-	// held is what it then said it holds.
+	// held is what it then said it holds, less what it was asked to show
+	// it holds and did not.
 	held map[string]struct{}
+	// pending is what it was last asked to show it holds, shown what it
+	// has shown and when, and failed what it has failed to show since.
+	pending []challenge
+	shown   map[string]time.Time
+	failed  map[string]struct{}
 	// stranded lists what it holds from an earlier store of this node that
 	// the present store has not pinned, and unsigned those of them that no
 	// list it showed, signed by this node, names.
@@ -266,16 +276,68 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	now := time.Now()
 	pinned, order := m.pinned(now)
 
+	// What the follower was last asked to show it holds is checked, and
+	// what to ask it next chosen, before the lock is taken: both read the
+	// store. A follower asks again at once with its answers, and is put no
+	// new questions in the reply to those.
+	m.mu.Lock()
+	proven, failed := make(map[string]time.Time), make(map[string]struct{})
+	var pending []challenge
+	if prior := m.followers[caller]; prior != nil {
+		pending = prior.pending
+		for _, id := range holding {
+			if at, was := prior.shown[id]; was {
+				proven[id] = at
+			}
+			if _, was := prior.failed[id]; was {
+				failed[id] = struct{}{}
+			}
+		}
+	}
+	m.mu.Unlock()
+	// Questions still within their time and not yet answered are put
+	// again as they were: a follower may ask more than once before it
+	// answers, to show a list for one. Past their time they have failed.
+	waiting := len(req.GetAnswers()) == 0 && len(pending) > 0 && now.Sub(pending[0].issued) <= challengeWindow
+	var verdicts map[string]bool
+	if !waiting {
+		verdicts = m.judge(ctx, now, pending, req.GetAnswers())
+	}
+	for id, held := range verdicts {
+		delete(proven, id)
+		delete(failed, id)
+		if held {
+			proven[id] = now
+			continue
+		}
+		failed[id] = struct{}{}
+		m.log.Warn("a storage follower did not show that it holds a blob it says it holds; it is not counted as holding it until it does", "node", caller, "cid", id)
+	}
+	var ask []challenge
+	switch {
+	case waiting:
+		ask = pending
+	case req.GetAnswersChallenges() && len(req.GetAnswers()) == 0:
+		ask = m.challenges(ctx, now, holding, pinned, failed, proven)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, held := range verdicts {
+		if !held {
+			m.unshown++
+		}
+	}
 	before, known := m.followers[caller]
 	if !known {
 		m.log.Info("a storage follower is here", "node", caller, "holding", len(holding))
 		before = &follower{}
 	}
-	f := &follower{asked: now, held: make(map[string]struct{}, len(holding))}
+	f := &follower{asked: now, held: make(map[string]struct{}, len(holding)), pending: ask, shown: proven, failed: failed}
 	for _, id := range holding {
-		f.held[id] = struct{}{}
+		if _, lacks := failed[id]; !lacks {
+			f.held[id] = struct{}{}
+		}
 	}
 	m.followers[caller] = f
 	live := m.liveLocked(now)
@@ -343,12 +405,21 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 			m.log.Warn("a storage follower holds blobs from a store this node had before and no longer has pinned; it keeps them until they are restored", "node", caller, "blobs", len(f.stranded), "in_no_list_this_node_signed", len(f.unsigned))
 			f.warned = true
 		}
-		return &pb.ReplicateResponse{Hold: append(hold, f.stranded...), Store: store, ShowList: ask}
+		return &pb.ReplicateResponse{Hold: append(hold, f.stranded...), Store: store, ShowList: ask, Challenges: questions(f.pending)}
 	}
 	if lists {
-		return &pb.ReplicateResponse{Store: m.storeID, List: m.signLocked(now, hold, pinned)}
+		return &pb.ReplicateResponse{Store: m.storeID, List: m.signLocked(now, hold, pinned), Challenges: questions(f.pending)}
 	}
-	return &pb.ReplicateResponse{Hold: hold, Store: m.storeID}
+	return &pb.ReplicateResponse{Hold: hold, Store: m.storeID, Challenges: questions(f.pending)}
+}
+
+// questions puts challenges as they are sent.
+func questions(asked []challenge) []*pb.Challenge {
+	var sent []*pb.Challenge
+	for _, c := range asked {
+		sent = append(sent, &pb.Challenge{Cid: c.cid, Offset: c.offset, Length: c.length, Nonce: c.nonce})
+	}
+	return sent
 }
 
 // signLocked returns a signed list of the given blobs, each with the expiry
@@ -488,7 +559,7 @@ func (m *Manager) Status(only string) *pb.ReplicasResponse {
 	live := m.liveLocked(now)
 	res := &pb.ReplicasResponse{
 		Wanted: uint32(m.replicas), Followers: live,
-		Settling: len(m.atStart) > 0 && now.Before(m.settled),
+		Settling: len(m.atStart) > 0 && now.Before(m.settled), ChallengesFailed: m.unshown,
 	}
 	res.FromEarlierStore = uint32(len(m.strandedLocked(live, false)))
 	res.UnsignedFromEarlierStore = uint32(len(m.strandedLocked(live, true)))
@@ -506,6 +577,9 @@ func (m *Manager) Status(only string) *pb.ReplicasResponse {
 		for _, id := range live {
 			if _, has := m.followers[id].held[blob]; has {
 				listed.Holders = append(listed.Holders, id)
+			}
+			if _, has := m.followers[id].shown[blob]; has {
+				listed.Shown = append(listed.Shown, id)
 			}
 		}
 		res.Blobs = append(res.Blobs, listed)

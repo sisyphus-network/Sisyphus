@@ -145,6 +145,30 @@ message ReplicateRequest {
   // Set by a follower that keeps the node's signed lists. It is then told
   // what to hold in a list alone, and hold is left empty.
   bool keeps_lists = 4;
+  // Set by a follower that answers challenges: asked to show it holds a
+  // blob, it asks again at once with its answers.
+  bool answers_challenges = 5;
+  // Its answers to the challenges in the node's last reply.
+  repeated ChallengeAnswer answers = 6;
+}
+
+// Challenge asks a follower to show that it holds a blob now: to return a
+// digest that only a holder of the bytes named could have made.
+message Challenge {
+  string cid = 1;
+  // The part of the blob asked about: length bytes from offset.
+  uint64 offset = 2;
+  uint32 length = 3;
+  // Random, and never used twice, so that an answer cannot be kept.
+  bytes nonce = 4;
+}
+
+// ChallengeAnswer is SHA-256 of a challenge's nonce followed by the bytes
+// it named. An empty digest says the follower cannot answer.
+message ChallengeAnswer {
+  string cid = 1;
+  bytes nonce = 2;
+  bytes digest = 3;
 }
 
 message ReplicateResponse {
@@ -162,6 +186,9 @@ message ReplicateResponse {
   // present one and gave no list. It should ask again at once, with the
   // list it has.
   bool show_list = 4;
+  // Blobs the follower says it holds and is asked to show that it does. It
+  // should ask again at once, with its answers.
+  repeated Challenge challenges = 5;
 }
 
 // KeepList is a node's statement of what one follower is to hold, signed so
@@ -215,12 +242,18 @@ message ReplicasResponse {
   // How many of from_earlier_store no list signed by the node covers. The
   // node does not take these back by itself; Restore does.
   uint32 unsigned_from_earlier_store = 8;
+  // How many times, since the node started, a follower failed to show that
+  // it held a blob it said it held.
+  uint32 challenges_failed = 9;
 }
 
 message ReplicatedBlob {
   string cid = 1;
   // The IDs of the followers that say they hold it.
   repeated string holders = 2;
+  // Those of them that have shown they hold it, by answering a challenge
+  // on it since they began to.
+  repeated string shown = 3;
 }
 
 message RestoreRequest {}

@@ -264,13 +264,14 @@ func TestAPoolThatKeepsNoCopiesSaysSo(t *testing.T) {
 
 func TestCopiesOnFollowersAreCountedAgainstThoseWanted(t *testing.T) {
 	ctx := context.Background()
-	k := &kept{replicas: &pb.ReplicasResponse{Wanted: 2, Followers: []string{"follower-1"}, Settling: true, FromEarlierStore: 1, Blobs: []*pb.ReplicatedBlob{
-		{Cid: fileA, Holders: []string{"follower-1"}},
+	k := &kept{replicas: &pb.ReplicasResponse{Wanted: 2, Followers: []string{"follower-1"}, Settling: true, FromEarlierStore: 1, ChallengesFailed: 2, Blobs: []*pb.ReplicatedBlob{
+		{Cid: fileA, Holders: []string{"follower-1"}, Shown: []string{"follower-1"}},
 		{Cid: fileB},
 	}}}
 	got := told(storageStatus(ctx, reaching(t, k), copiesArgs{}))
 	has(t, "too few followers", got, `"kept_by":"followers"`, `"copies_wanted":2`, `"followers_connected":1`, `"too_few_followers_by":1`, `"settling":"the node started`,
-		`{"cid":"`+fileA+`","copies":1,"held_by":["follower-1"]}`, `{"cid":"`+fileB+`","copies":0,"held_by":[]}`, `"files_pinned":2`, `"files_with_too_few_copies":2`, `"of_those_unsigned":0`)
+		`{"cid":"`+fileA+`","copies":1,"copies_shown":1,"held_by":["follower-1"]}`, `{"cid":"`+fileB+`","copies":0,"copies_shown":0,"held_by":[]}`, `"files_pinned":2`, `"files_with_too_few_copies":2`, `"of_those_unsigned":0`,
+		`"copies_not_shown":"2 time(s) since the node started, a follower asked to show it held a file it said it held did not`)
 	if strings.Contains(got, `"cluster"`) || strings.Contains(got, `"note"`) || strings.Contains(got, "followers_not_named") {
 		t.Errorf("followers alone: %s", got)
 	}

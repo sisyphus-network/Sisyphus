@@ -256,7 +256,7 @@ func TestTooFewFollowersIsReported(t *testing.T) {
 	for _, want := range []string{
 		"1 follower(s) connected; each pinned blob is to be held by 3",
 		"that is 2 too few",
-		id + "  1/3     " + p.workerIdents["only"].ID(),
+		id + "  1/3     1      " + p.workerIdents["only"].ID(),
 		"1 of 1 blob(s) have fewer copies than wanted",
 	} {
 		if !strings.Contains(out, want) {
@@ -605,22 +605,23 @@ func TestBlobReplicasPrintsWhatTheNodeReports(t *testing.T) {
 				"followers hold 2 blob(s) from a store this node had before that it has yet to take back: it tries again each time a follower asks what to hold, and there is nothing to run\n" +
 				"followers hold 1 blob(s) from a store this node had before that no list signed by this node names: it does not take those back by itself, and \"sisyphusd blob restore\" does\n" +
 				"1 follower(s) connected; each pinned blob is to be held by 1\n" +
-				"CID   COPIES  HELD BY\n" +
-				"back  1/1     a\n"},
+				"CID   COPIES  SHOWN  HELD BY\n" +
+				"back  1/1     0      a\n"},
 		{"one that has just started, with nothing pinned", &pb.ReplicasResponse{Wanted: 2, Followers: []string{"a", "b"}, Settling: true},
 			"2 follower(s) connected; each pinned blob is to be held by 2\n" +
 				"the node started a short while ago: followers that hold copies from before are given time to say so before any are handed what it already had\n" +
 				"nothing is pinned\n"},
-		{"one with a blob nobody holds yet", &pb.ReplicasResponse{Wanted: 1, Followers: []string{"a"}, Blobs: []*pb.ReplicatedBlob{{Cid: "held", Holders: []string{"a"}}, {Cid: "unheld"}}},
+		{"one with a blob nobody holds yet, and a follower that failed to show three", &pb.ReplicasResponse{Wanted: 1, Followers: []string{"a"}, ChallengesFailed: 3, Blobs: []*pb.ReplicatedBlob{{Cid: "held", Holders: []string{"a"}, Shown: []string{"a"}}, {Cid: "unheld"}}},
 			"1 follower(s) connected; each pinned blob is to be held by 1\n" +
-				"CID     COPIES  HELD BY\n" +
-				"held    1/1     a\n" +
-				"unheld  0/1     -\n" +
-				"1 of 2 blob(s) have fewer copies than wanted\n"},
+				"CID     COPIES  SHOWN  HELD BY\n" +
+				"held    1/1     1      a\n" +
+				"unheld  0/1     0      -\n" +
+				"1 of 2 blob(s) have fewer copies than wanted\n" +
+				"3 time(s) since this node started, a follower asked to show it held a blob it said it held did not: such a copy is not counted until it is shown\n"},
 		{"one with more copies than it asked for", &pb.ReplicasResponse{Wanted: 1, Followers: []string{"a", "b"}, Blobs: []*pb.ReplicatedBlob{{Cid: "moving", Holders: []string{"a", "b"}}}},
 			"2 follower(s) connected; each pinned blob is to be held by 1\n" +
-				"CID     COPIES  HELD BY\n" +
-				"moving  2/1     a,b\n"},
+				"CID     COPIES  SHOWN  HELD BY\n" +
+				"moving  2/1     0      a,b\n"},
 	}
 	for _, tt := range tests {
 		node.replicas = tt.said
