@@ -439,6 +439,68 @@ test('a language chosen with the keyboard turns the window round, and is still c
   }
 })
 
+test('desktop Settings keeps the shell fixed and restores its own scroll position', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    await open(page, 'Settings')
+    const sidebar = page.locator('.app-shell-body--advanced > aside')
+    const header = page.locator('.app-global-header')
+    const main = page.locator('.app-shell--settings .app-main')
+    const settings = page.locator('.settings-page')
+    const settingsScroller = page.locator('.settings-page__scroll')
+    await settingsScroller.waitFor()
+
+    const layout = await page.evaluate(() => {
+      const sidebarRect = document.querySelector('.app-shell-body--advanced > aside').getBoundingClientRect()
+      const headerRect = document.querySelector('.app-global-header').getBoundingClientRect()
+      const mainElement = document.querySelector('.app-shell--settings .app-main')
+      const mainRect = mainElement.getBoundingClientRect()
+      const mainStyle = getComputedStyle(mainElement)
+      const settingsRect = document.querySelector('.settings-page').getBoundingClientRect()
+      const scroller = document.querySelector('.settings-page__scroll')
+      return {
+        sidebarRight: sidebarRect.right,
+        headerLeft: headerRect.left,
+        headerRight: headerRect.right,
+        mainLeft: mainRect.left,
+        mainRight: mainRect.right,
+        contentLeft: mainRect.left + Number.parseFloat(mainStyle.paddingLeft),
+        contentRight: mainRect.right - Number.parseFloat(mainStyle.paddingRight),
+        settingsLeft: settingsRect.left,
+        settingsRight: settingsRect.right,
+        documentHeight: document.documentElement.scrollHeight,
+        viewportHeight: window.innerHeight,
+        mainScrollHeight: document.querySelector('.app-shell--settings .app-main').scrollHeight,
+        mainClientHeight: document.querySelector('.app-shell--settings .app-main').clientHeight,
+        settingsScrollHeight: scroller.scrollHeight,
+        settingsClientHeight: scroller.clientHeight,
+      }
+    })
+    assert.ok(Math.abs(layout.headerLeft - layout.sidebarRight) <= 1, 'the global header has a gap from the sidebar')
+    assert.ok(Math.abs(layout.headerRight - layout.mainRight) <= 1, 'the header does not span the full content column')
+    assert.ok(Math.abs(layout.settingsLeft - layout.contentLeft) <= 1 && Math.abs(layout.settingsRight - layout.contentRight) <= 1, 'Settings is narrower than the full padded content width')
+    assert.ok(layout.documentHeight <= layout.viewportHeight + 2, 'the desktop document itself scrolls')
+    assert.ok(layout.mainScrollHeight <= layout.mainClientHeight + 2, 'the Settings main shell scrolls instead of its inner list')
+    assert.ok(layout.settingsScrollHeight > layout.settingsClientHeight, 'the settings list has no independent scroll area')
+
+    await settingsScroller.evaluate((element) => { element.scrollTop = Math.min(180, element.scrollHeight - element.clientHeight) })
+    await page.waitForFunction(() => Number(document.querySelector('.settings-page__scroll')?.scrollTop) > 40)
+    const savedSettingsTop = await page.locator('.settings-page__scroll').evaluate((element) => element.scrollTop)
+    await page.waitForFunction(() => Number(JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings']) > 40)
+    await page.getByRole('complementary').getByRole('link', { name: 'Node overview', exact: true }).click()
+    await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
+    await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
+    await settingsScroller.waitFor()
+    await page.waitForFunction((top) => Math.abs(Number(document.querySelector('.settings-page__scroll')?.scrollTop) - top) < 2, savedSettingsTop)
+    assert.ok(savedSettingsTop > 40, 'the Settings scroll position was not meaningfully saved')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('a node that stops is said to be gone, and the window finds it again when it returns', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
