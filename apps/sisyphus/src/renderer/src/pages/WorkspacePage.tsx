@@ -12,6 +12,7 @@ import countriesGeoJsonRaw from '../data/countries.geojson?raw'
 import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/liquid-glass-dock'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { AgentChat } from '@/components/assistant/agent-chat'
+import { visiblePanelWidth, stepPanelWidth } from '@/lib/panel-width'
 
 type Messages = ReturnType<typeof getMessages>
 function connected(peer: NodeSnapshot['peers'][number]) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
@@ -310,7 +311,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const fixedHandleWidth = 34
   const historyAvailableWidth = desktopStageWidth - fixedHandleWidth - minimumContentWidth * 2
   const historyMaxWidth = Math.min(480, Math.max(historyMinimumWidth, Math.min(desktopStageWidth * 0.4, historyAvailableWidth)))
-  const visibleHistoryWidth = Math.min(historyWidth, historyMaxWidth)
+  const visibleHistoryWidth = visiblePanelWidth(historyWidth, historyMaxWidth)
   const panelAreaWidth = Math.max(0, desktopStageWidth - (historyOpen ? visibleHistoryWidth : 0) - fixedHandleWidth)
   const topologyMaxWidth = Math.max(0, Math.min(panelAreaWidth * 0.7, panelAreaWidth - minimumContentWidth))
   const topologyMinimumWidth = Math.min(280, topologyMaxWidth)
@@ -318,7 +319,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const startHistoryResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
-    const startWidth = historyOpen ? historyWidth : 0
+    const startWidth = historyOpen ? visibleHistoryWidth : 0
     historyDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth }
     if (!historyOpen) setHistoryWidth(0)
     if (historyOpen) setHistoryOpen(true)
@@ -377,8 +378,8 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
       event.preventDefault()
       return
     }
-    if (event.key === growKey) setHistoryWidth((width) => Math.min(historyMaxWidth, width + 16))
-    else if (event.key === shrinkKey) setHistoryWidth((width) => Math.max(historyMinimumWidth, width - 16))
+    if (event.key === growKey) setHistoryWidth((width) => stepPanelWidth(width, 16, historyMinimumWidth, historyMaxWidth))
+    else if (event.key === shrinkKey) setHistoryWidth((width) => stepPanelWidth(width, -16, historyMinimumWidth, historyMaxWidth))
     else if (event.key === 'Home') setHistoryWidth(historyMinimumWidth)
     else if (event.key === 'End') setHistoryWidth(historyMaxWidth)
     else return
@@ -442,8 +443,8 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     if (!topologyOpen && event.key === growKey) {
       setTopologyRatio(Math.min(topologyMaxWidth / Math.max(1, panelAreaWidth), Math.max(topologyMinimumWidth / Math.max(1, panelAreaWidth), 0.52)))
       setTopologyOpen(true)
-    } else if (event.key === growKey) setTopologyRatio(Math.min(topologyMaxWidth / Math.max(1, panelAreaWidth), topologyRatio + 0.02))
-    else if (event.key === shrinkKey) setTopologyRatio(Math.max(topologyMinimumWidth / Math.max(1, panelAreaWidth), topologyRatio - 0.02))
+    } else if (event.key === growKey) setTopologyRatio(stepPanelWidth(topologyWidth, panelAreaWidth * 0.02, topologyMinimumWidth, topologyMaxWidth) / Math.max(1, panelAreaWidth))
+    else if (event.key === shrinkKey) setTopologyRatio(stepPanelWidth(topologyWidth, -panelAreaWidth * 0.02, topologyMinimumWidth, topologyMaxWidth) / Math.max(1, panelAreaWidth))
     else return
     event.preventDefault()
   }
