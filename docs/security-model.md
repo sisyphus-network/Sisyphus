@@ -215,6 +215,8 @@ The code is `packages/sealed/sealed.go` (about 480 lines), used through `package
 - **Opening** (`Open`, `Reader.load`). The plaintext length and chunk count are worked out from the sealed length. Any chunk is read on its own, with the position and last-chunk flag it must have. Failure is one error, `ErrCorrupt`, for a wrong key and an altered blob alike. The nonce is read from the blob and not recomputed.
 - **Commitments.** `commitKey = HKDF-SHA-256(key, salt none, info "sisyphus job record: commitments", 32)`. A commitment is `HMAC-SHA-256(commitKey, len(jobID) || jobID || len(path) || path || value)`, lengths as 8 bytes big-endian, the value last and without a length.
 
+**Worked examples.** [`packages/sealed/testdata/vectors.json`](../packages/sealed/testdata/vectors.json) has six: what a job stores (nothing, a few bytes, the same bytes for another job, two chunks and a little), and a stored file (short, and longer than the 4 MiB its key comes of). Each gives the sealing key, the key ID, the derived key, both subkeys, the first chunk's nonce, and the sealed blob whole where it is short and by length and SHA-256 where it is not. A test fails if the code stops giving them (`vectors_test.go`), so they are what the code does and not what it is meant to do. Another implementation that reproduces them has the derivation, the header and the chunking right.
+
 **What is claimed.** Confidentiality of content from anyone without the key, apart from size and the equalities above; detection of altered, reordered, truncated or extended blobs when read with the right key; the same output for the same key and plaintext. No claim is made against the coordinator or the job's workers, who hold the key.
 
 **Questions worth asking.**
