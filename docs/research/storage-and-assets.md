@@ -30,7 +30,7 @@ What it does not show, to be said wherever it is offered:
 - **That the data will be there tomorrow**, or that it will be handed over when asked.
 - **Anything, if the challenger does not hold the data.** A challenger without it needs the Merkle tree, which for IPFS-style data it can fetch once and keep: the tree is small.
 
-Who challenges: the issue suggests masternode quorums. That works if a quorum's members can each challenge and the quorum signs what they found, as in [the chain note](chain-design.md). Until there is a chain, the coordinator can challenge its followers itself. That is worth building now: today a coordinator believes a follower's report of what it holds.
+Who challenges: the issue suggests masternode quorums. That works if a quorum's members can each challenge and the quorum signs what they found, as in [the chain note](chain-design.md). Until there is a chain, the coordinator can challenge its followers itself, and now does: each time a follower says what it holds it is asked for the digest of a random stretch of up to four blobs, and a copy not shown in thirty seconds is not counted.
 
 ### Deals
 
@@ -81,6 +81,6 @@ The chain note argues that a receipt is better as the reward transaction, which 
 
 ## What can be built now
 
-1. **Challenges from a coordinator to its followers**: a random range of a random blob, answered with a keyed hash, counted in what `blob replicas` reports. No chain needed, and it replaces belief with a check.
+1. **Challenges from a coordinator to its followers.** Built since this note was first written: a random range of a random blob, answered with a digest under a fresh number, counted in what `blob replicas` reports. What it leaves for a paid network is everything in the list above: more than one real copy, the future, and retrieval.
 2. **A written format for a deal** and for a challenge, as messages, so that the chain work has something exact to carry.
 3. **A CID field's rules** written as a short specification: accepted versions and codecs, the length limit, the refusal of inline data.

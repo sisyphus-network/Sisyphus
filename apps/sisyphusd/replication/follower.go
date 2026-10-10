@@ -27,6 +27,7 @@ type FollowerStore interface {
 	Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error
 	Unpin(owner string, cids ...cid.Cid) error
 	GC(ctx context.Context, now time.Time) (storage.Collected, error)
+	Open(ctx context.Context, c cid.Cid) (storage.Blob, error)
 	blobclient.Putter
 }
 
@@ -72,6 +73,19 @@ func (f *Follower) Run(ctx context.Context) {
 	}
 }
 
+// forget lets go of a blob the store turned out not to have, as held is
+// told, so that it is fetched afresh.
+func (f *Follower) forget(held map[cid.Cid][]string, id string) {
+	c, err := cid.Decode(id)
+	if err != nil {
+		return
+	}
+	for _, owner := range held[c] {
+		f.Store.Unpin(owner, c) // a pin that will not go is fetched over all the same
+	}
+	delete(held, c)
+}
+
 // sync asks the coordinator what to hold, fetches what is missing and drops
 // the rest. It reports whether what the store holds changed.
 func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
@@ -91,7 +105,7 @@ func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
 		held[pin.CID] = append(held[pin.CID], pin.Owner)
 		store = name
 	}
-	asked := &pb.ReplicateRequest{Holding: holding, Store: store, KeepsLists: true}
+	asked := &pb.ReplicateRequest{Holding: holding, Store: store, KeepsLists: true, AnswersChallenges: true}
 	told, err := f.Coordinator.Replicate(ctx, asked)
 	if err == nil && told.GetShowList() {
 		// The coordinator has another store than the one these copies are
@@ -104,6 +118,24 @@ func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
 			asked.List = list
 			told, err = f.Coordinator.Replicate(ctx, asked)
 		}
+	}
+	if err == nil && len(told.GetChallenges()) > 0 {
+		// Asked to show that it holds what it says it holds, it answers at
+		// once. A blob it turns out not to be able to read is let go of, so
+		// that it is fetched again below and not claimed in the meantime.
+		for _, c := range told.GetChallenges() {
+			answer := &pb.ChallengeAnswer{Cid: c.GetCid(), Nonce: c.GetNonce()}
+			named, unread := read(ctx, f.Store, c.GetCid(), c.GetOffset(), c.GetLength())
+			if unread != nil {
+				f.Log.Warn("this node cannot read a blob it holds for its pool, and lets go of it to fetch it again", "cid", c.GetCid(), "error", unread)
+				f.forget(held, c.GetCid())
+				changed = true
+			} else {
+				answer.Digest = Answer(c.GetNonce(), named)
+			}
+			asked.Answers = append(asked.Answers, answer)
+		}
+		told, err = f.Coordinator.Replicate(ctx, asked)
 	}
 	if err != nil {
 		return false, err

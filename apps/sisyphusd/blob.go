@@ -396,7 +396,7 @@ func blobReplicas(ctx context.Context, args []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "CID\tCOPIES\tHELD BY")
+	fmt.Fprintln(tw, "CID\tCOPIES\tSHOWN\tHELD BY")
 	short := 0
 	for _, blob := range listed.GetBlobs() {
 		holders := "-"
@@ -406,11 +406,16 @@ func blobReplicas(ctx context.Context, args []string) error {
 		if len(blob.GetHolders()) < wanted {
 			short++
 		}
-		fmt.Fprintf(tw, "%s\t%d/%d\t%s\n", blob.GetCid(), len(blob.GetHolders()), wanted, holders)
+		fmt.Fprintf(tw, "%s\t%d/%d\t%d\t%s\n", blob.GetCid(), len(blob.GetHolders()), wanted, len(blob.GetShown()), holders)
 	}
 	tw.Flush()
 	if short > 0 {
 		fmt.Fprintf(stdout, "%d of %d blob(s) have fewer copies than wanted\n", short, len(listed.GetBlobs()))
+	}
+	// A copy is counted on its holder's word until the holder has been
+	// asked for some of its bytes and given them: SHOWN is how many have.
+	if failed := listed.GetChallengesFailed(); failed > 0 {
+		fmt.Fprintf(stdout, "%d time(s) since this node started, a follower asked to show it held a blob it said it held did not: such a copy is not counted until it is shown\n", failed)
 	}
 	return nil
 }
