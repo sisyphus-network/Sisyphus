@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WindowStreams } from './window-streams'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
+import { firstUploadMessage } from './file-upload'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
@@ -337,6 +338,7 @@ app.whenReady().then(() => {
     if (typeof file.name !== 'string' || typeof file.private !== 'boolean' || !(file.data instanceof Uint8Array)) return reject(new Error('Invalid file upload.'))
     if (file.chatAttachment !== undefined && typeof file.chatAttachment !== 'boolean') return reject(new Error('Invalid attachment upload.'))
     if (file.chatAttachment && !file.private) return reject(new Error('Chat attachments must be private.'))
+    const metadata = { name: file.name, private: file.private, chatAttachment: file.chatAttachment === true }
     const data = file.data
     if (data.byteLength > 256 * 1024 * 1024) return reject(new Error('The file exceeds this desktop client’s 256 MiB upload limit.'))
     let settled = false
@@ -361,7 +363,7 @@ app.whenReady().then(() => {
       if (settled) return
       const chunk = Buffer.from(data.subarray(offset, Math.min(offset + chunkSize, data.byteLength)))
       const request = offset === 0
-        ? { name: file.name, private: file.private, chatAttachment: file.chatAttachment ?? false, data: chunk }
+        ? firstUploadMessage(metadata, chunk)
         : { data: chunk }
       stream.write(request, (error?: Error | null) => {
         if (settled) return
@@ -379,7 +381,7 @@ app.whenReady().then(() => {
     }
     // Empty files still need an initial message carrying their metadata.
     if (data.byteLength === 0) {
-      stream.write({ name: file.name, private: file.private, data: Buffer.alloc(0) }, (error?: Error | null) => {
+      stream.write(firstUploadMessage(metadata, Buffer.alloc(0)), (error?: Error | null) => {
         if (settled) return
         if (error) {
           activeStreams.release(owner, transferId, transfer)
