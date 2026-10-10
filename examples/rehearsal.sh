@@ -83,7 +83,9 @@ start() {
 }
 
 echo "the coordinator, on both networks"
-start coordinator $P-a --role coordinator --listen 0.0.0.0:7700 --name coordinator --max-connections 2000
+# It keeps a verified task's copies to workers at different addresses, which
+# the two workers here, on two networks, are.
+start coordinator $P-a --role coordinator --listen 0.0.0.0:7700 --name coordinator --max-connections 2000 --verify-distinct-addresses
 docker network connect --alias coordinator $P-b $P-coordinator
 until_ok 30 on coordinator nodes || { bad "the coordinator started"; docker logs $P-coordinator | tail -5; exit 1; }
 ok "the coordinator started"
@@ -132,7 +134,7 @@ if echo "$out" | grep -q '"words"'; then ok "a file stored by the client was rea
 echo "a job checked by both workers"
 checked=$(on laptop job submit --addr coordinator:7700 --workload primes --params '{"from":0,"to":2000000}' --tasks 4 --verify 2 --detach | tail -1)
 finished() { on laptop job get --addr coordinator:7700 "$1" | grep -q succeeded; }
-if until_ok 60 finished "$checked" && on laptop job get --addr coordinator:7700 "$checked" | grep -q '"count":148933'; then ok "each task run by both workers, and their results the same: 148,933 primes below 2,000,000"; else bad "a verified job: $(on laptop job get --addr coordinator:7700 "$checked" 2>&1 | head -3)"; fi
+if until_ok 60 finished "$checked" && on laptop job get --addr coordinator:7700 "$checked" | grep -q '"count":148933'; then ok "each task run by both workers, which are at different addresses, and their results the same: 148,933 primes below 2,000,000"; else bad "a verified job: $(on laptop job get --addr coordinator:7700 "$checked" 2>&1 | head -3)"; fi
 if on laptop job logs --addr coordinator:7700 "$checked" 2>&1 | grep -q "returned the same result"; then ok "the job's events say which workers agreed"; else bad "the verified job's events name the workers that agreed"; fi
 
 echo "a private job: the client holds the key, and the workers are given only this job's"
@@ -168,6 +170,8 @@ for _ in $(seq 1 40); do on laptop nodes --addr coordinator:7700 >/dev/null 2>&1
 if [ "$refused" -eq 0 ]; then ok "forty commands in a row from one machine were all answered"; else bad "forty commands in a row from one machine: $refused refused"; fi
 docker kill $P-south >/dev/null
 if until_ok 180 finished "$job"; then ok "the job finished all the same, its tasks done again on the worker left"; else bad "the job finished after losing a worker: $(on laptop job get --addr coordinator:7700 "$job" | head -3)"; fi
+alone=$(on laptop job submit --addr coordinator:7700 --workload primes --params '{"from":0,"to":100}' --verify 2 2>&1) || true
+if echo "$alone" | grep -q "counting those at one address as one"; then ok "with one worker left, a job to be checked by two at different addresses is refused"; else bad "a verified job with one worker left: $(echo "$alone" | tail -1)"; fi
 
 echo "the coordinator is stopped and started again while a job runs"
 running=$(on laptop job submit --addr coordinator:7700 --workload primes --params '{"from":0,"to":3000000000}' --tasks 8 --detach | tail -1)
