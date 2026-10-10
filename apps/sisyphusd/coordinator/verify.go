@@ -2,12 +2,17 @@ package coordinator
 
 import (
 	"cmp"
+	"context"
 	crand "crypto/rand"
 	"fmt"
 	mrand "math/rand/v2"
+	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc/peer"
 
 	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
@@ -259,25 +264,108 @@ func (c *Coordinator) unsettledLocked(job *jobmodel.Job, task *jobmodel.Task, si
 // unaskedLocked counts the connected workers that could be given a task of
 // a verified job and have not been.
 func (c *Coordinator) unaskedLocked(job *jobmodel.Job, task *jobmodel.Task) int {
-	n := 0
+	var could []string
 	for _, w := range c.workers {
-		if w.capabilities.GetTaskSlots() > 0 && suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) && !task.Asked(w.id) {
-			n++
+		if w.capabilities.GetTaskSlots() > 0 && suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) && !task.Asked(w.id) && !c.besideLocked(task, w.id) {
+			could = append(could, w.id)
 		}
 	}
-	return n
+	return c.apartLocked(could)
 }
 
 // ableLocked counts the connected workers that could be given tasks of a
 // workload that ask for so much, whether or not they are busy now.
 func (c *Coordinator) ableLocked(workload string, minMemory uint64, minGPUs int, needs []string) int {
-	n := 0
+	var could []string
 	for _, w := range c.workers {
 		if w.capabilities.GetTaskSlots() > 0 && suits(w.capabilities, workload, minMemory, minGPUs, needs) {
-			n++
+			could = append(could, w.id)
 		}
 	}
+	return c.apartLocked(could)
+}
+
+// Workers that can vouch for each other.
+//
+// Two workers that return the same result are taken to have each done the
+// work. Two that are one person's, on one machine, need do it once, or not
+// at all, and agree. A coordinator cannot see who owns a worker. It can see
+// where each connects from, and its owner may ask that a verified task's
+// copies go only to workers at different addresses.
+//
+// That is off unless asked for, because it is wrong for the pool most
+// people have: one household's machines share an address, and so do the
+// workers behind any relay, and there the owner trusts them all and
+// verifies against faults, not against themselves. It is for a pool with
+// strangers in it. It raises the cost of vouching for oneself to having
+// machines at several addresses; it does not stop two people who agree to
+// lie, which nothing here does.
+
+// callersAddress is where a call comes from, as its connection has it: an
+// IPv4 address, or for IPv6 the network it is in, since one machine there
+// has as many addresses as it likes.
+func callersAddress(ctx context.Context) string {
+	from, ok := peer.FromContext(ctx)
+	if !ok {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(from.Addr.String())
+	if err != nil {
+		return ""
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return ""
+	}
+	if ip = ip.Unmap(); ip.Is6() {
+		network, _ := ip.Prefix(64) // cannot fail for a length an address has
+		return network.String()
+	}
+	return ip.String()
+}
+
+// besideLocked reports whether a worker is at the address of one already
+// asked for a task, where that matters: the coordinator was told to keep a
+// verified task's copies apart, and the task is one that is verified. A
+// worker whose address is not known is beside nobody.
+func (c *Coordinator) besideLocked(task *jobmodel.Task, id string) bool {
+	at := c.addresses[id]
+	if !c.distinct || task.Verify < 2 || at == "" {
+		return false
+	}
+	for other, where := range c.addresses {
+		if other != id && where == at && task.Asked(other) {
+			return true
+		}
+	}
+	return false
+}
+
+// apartLocked counts how many of some workers could each be given a copy of
+// one task: all of them, or, where copies are kept apart, as many as they
+// have addresses between them.
+func (c *Coordinator) apartLocked(ids []string) int {
+	if !c.distinct {
+		return len(ids)
+	}
+	seen := make(map[string]bool)
+	n := 0
+	for _, id := range ids {
+		at := c.addresses[id]
+		if at == "" || !seen[at] {
+			n++
+		}
+		seen[at] = true
+	}
 	return n
+}
+
+// apart is what is added to a count of workers where copies are kept apart.
+func (c *Coordinator) apart() string {
+	if c.distinct {
+		return ", counting those at one address as one"
+	}
+	return ""
 }
 
 // short is the beginning of a result's digest: enough to tell the results

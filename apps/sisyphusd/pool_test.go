@@ -189,6 +189,7 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 	// database can, keeps that too.
 	standings, _ := journal.(coordinator.Standings)
 	coord := coordinator.New(coordinator.Config{
+		DistinctAddresses: workersAt != nil, AddressOf: workersAt,
 		ID: ident.ID(), Workloads: workloads, Audits: workloads, Store: wrap(store), Journal: journal, Standings: standings, Retain: testRetain,
 		Log: slog.New(slog.NewTextHandler(logs, nil)),
 	})
@@ -239,6 +240,11 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 		addresses: make(map[string]string), unfollow: make(map[string]func()),
 	}
 }
+
+// workersAt, if set, has the pools a test goes on to start keep a verified
+// task's copies to workers at different addresses, and says where the
+// worker making a call is.
+var workersAt func(ctx context.Context) string
 
 // startWorker runs a worker until the test ends or the returned stop function
 // is called, whichever comes first. stop waits for the worker to exit.

@@ -743,10 +743,24 @@ What it does not do:
 
 - **It is for work that gives the same result every time it is run.** `primes`, `wordcount` and a container that is deterministic do. Work that involves a language model (`chat`, `prompts`, `embed`), `transcode`, and containers that use the time, random numbers or the network may not: two honest workers then differ, and the job fails saying so. Nothing here makes such work comparable.
 - **A private job is verified like any other.** Every worker asked is given the job's own key, and sealing gives the same blob for the same key and data, so workers that did the same work stored blobs with the same CIDs. Asking more workers shows the job's data to more of them. In the job's record, what each worker returned is not given by its digest but by a commitment only the job's key can check (`receipts/N/results/M/digest_commitment`), since a digest would tell someone who guessed a task's output that they were right; which workers agreed is still there to read.
-- **It does not protect against workers that agree to lie.** `N` workers that return the same wrong result are believed. Nor does it protect against one operator running several nodes: different node IDs are not different people.
+- **It does not protect against workers that agree to lie.** `N` workers that return the same wrong result are believed. Nor does it protect, as it is, against one operator running several nodes: different node IDs are not different people. A coordinator started with `--verify-distinct-addresses` makes that harder; see [below](#workers-at-different-addresses).
 - **It judges workers only this far.** A worker that was outvoted is named in the events and the record, has that result counted in its [standing](#a-workers-standing), and is on probation until ten of its results have agreed. Nothing else happens to it: no score that decides who is given work, no stake and no ban. Removing it is up to the pool's owner (`pool remove`).
 - **It checks what workers return, not how the coordinator combines it.** The coordinator still splits the job and aggregates the outputs itself.
 
+
+### Workers at different addresses
+
+Two workers on one machine agree with each other because one person runs both. A coordinator started with `--verify-distinct-addresses` hands a verified task's copies only to workers that connected from different network addresses.
+
+```sh
+bin/sisyphusd --role coordinator --verify-distinct-addresses
+```
+
+- **What counts as one address.** An IPv4 address as it is; an IPv6 address by its `/64`, which is what one site is usually given. It is the address the worker's connection to the coordinator comes from, so it is the coordinator that says where a worker is, not the worker.
+- **Too few is refused at once.** A job with `--verify N` is refused unless workers at `N` different addresses could take it, and the refusal says it is "counting those at one address as one". A task whose workers disagree asks one more, at an address none of the others is at, and fails if there is none.
+- **It is for a pool with strangers in it.** Workers behind one router, in one office or on one machine share an address and count as one, so in a pool of your own machines on one network it leaves nothing to verify with. That is why it is off unless asked for. Workers that reach the coordinator through one relay or one VPN exit share an address too.
+- **It does not stop someone with several addresses**, and it does not stop two people who agree to lie. It raises what cheating takes from a second process to a second place on the network. [`--audit-share`](#checked-by-the-coordinator-itself) is what catches workers that agree.
+- **Jobs that are not verified are not changed**, and nor is who a spot check or an audit picks.
 
 ### Checked by the coordinator itself
 

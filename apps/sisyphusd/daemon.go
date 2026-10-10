@@ -78,6 +78,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
 	containerRuntime := fs.String("container-runtime", "", "with --containers: have Docker run the pool's tasks with this runtime in place of its usual, such as runsc (gVisor) or kata-runtime, which keep a task further from this machine than an ordinary container does; it must be installed and known to Docker")
 	containersReadOnly := fs.Bool("containers-read-only", false, "with --containers: give a task nowhere to write but /output and /tmp, the second held in memory; an image that writes anywhere else will fail")
+	distinctAddresses := fs.Bool("verify-distinct-addresses", false, "coordinator: for jobs submitted with --verify, hand each task's copies only to workers at different network addresses, so that two workers on one machine or behind one router cannot vouch for each other. For a pool with strangers in it: in a pool whose workers share an address it leaves too few to verify with")
 	maxConnections := fs.Int("max-connections", 0, "how many connections to take at once from other nodes and their command lines, on --listen; 0 takes as many as half the files the system lets this program have open, which on most machines is far more than a pool needs. An eighth of them, and at least 256, may come from one address")
 	containers := fs.Bool("containers", false, "worker role: run container images for the pool's jobs, with Docker. This lets whoever may submit jobs to the pool run what they like on this machine")
 	maxMemory := fs.Uint64("offer-memory-mb", 0, "worker role: tell the pool this node has no more than this much memory, in mebibytes; 0 offers all it has")
@@ -470,7 +471,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			audits = runs
 		}
 		coord = coordinator.New(coordinator.Config{
-			ID: ident.ID(), Workloads: workloads, Audits: audits, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			ID: ident.ID(), Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
 		unfinished, err := coord.Recover()

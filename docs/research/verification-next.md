@@ -14,9 +14,13 @@ These are in order of value for effort. None needs a token, and each is useful i
 
 Today a worker returns its result and the coordinator compares. The coordinator is trusted, so one worker cannot see another's answer through it. That stops being true the moment workers can see each other's results by any route: a shared store, a log, a colluding operator. iExec and Bittensor both have results committed, as a hash, before any is revealed.
 
+*Checked and written down: the rule holds for everything a worker is handed and may call, and a test keeps it (`apps/sisyphusd/apart_test.go`). The blobs a worker stores are the route still open; see the security model.*
+
 In Sisyphus the coordinator already holds results apart, so the cheap form of this is a rule and a test, not a protocol: a task's result and the blobs it stored are never visible to another worker of the same task until the task is settled. The blobs are the leak today, since any member can fetch a blob by CID and a private job's workers share its key. Worth checking and writing down before building anything else.
 
 ### 2. Workers chosen so that agreement means something
+
+*Built for addresses: a coordinator started with `--verify-distinct-addresses` hands a verified task's copies only to workers at different addresses (an IPv4 address, an IPv6 `/64`). Not built: telling workers apart by owner, which needs owners to exist, or by a wider range such as a `/24`.*
 
 Two workers run by one person agree with each other by construction. The coordinator picks a task's workers by free slots. It could also refuse to count as independent any two workers that share an owner, an address, or a `/24`, and say so in the job's events when a pool is too small to find N that differ. BOINC has an option for one result per user for each job. This is what makes replication worth its cost in a pool with strangers in it, and it is a scheduling change.
 
