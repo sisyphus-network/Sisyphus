@@ -337,6 +337,11 @@ func TestFileListingPreservesMetadataAndReportsStoreFailures(t *testing.T) {
 	if _, err := store.Put(ctx, strings.NewReader("restorable")); err != nil {
 		t.Fatal(err)
 	}
+	// Restored content may have no active owner yet. It must still appear
+	// after the availability read, rather than only through the pin shortcut.
+	if err := store.Unpin(storage.GraceOwner, c); err != nil {
+		t.Fatal(err)
+	}
 	if listed, err := s.ListFiles(ctx, &nodepb.ListFilesRequest{}); err != nil || len(listed.GetFiles()) != 1 {
 		t.Fatalf("restored blob not visible: %v, %v", listed, err)
 	}
