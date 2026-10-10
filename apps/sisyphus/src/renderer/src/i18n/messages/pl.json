@@ -159,7 +159,7 @@
   "minimumMemoryBytes": "Minimalna pamięć (bajty)",
   "minimumGpus": "Minimalna liczba GPU",
   "privateJob": "Zadanie prywatne",
-  "privateJobWarning": "Prywatne zadania udostępniają klucz deszyfrujący workerom wykonującym zadania. Używaj tylko zaufanych workerów. Utrata private.key oznacza trwałą utratę dostępu do zaszyfrowanych danych.",
+  "privateJobWarning": "Wykonawcy otrzymują klucze deszyfrujące potrzebne do danych tego prywatnego zadania. Odszyfrowanie starszych danych może wymagać udostępnienia private.key ze względu na zgodność. Korzystaj wyłącznie z zaufanych wykonawców. Utrata private.key oznacza trwałą utratę dostępu do zaszyfrowanych danych.",
   "submit": "Wyślij",
   "cancel": "Anuluj",
   "noJobs": "Brak zadań.",

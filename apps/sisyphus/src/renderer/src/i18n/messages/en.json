@@ -159,7 +159,7 @@
   "minimumMemoryBytes": "Minimum memory (bytes)",
   "minimumGpus": "Minimum GPUs",
   "privateJob": "Private job",
-  "privateJobWarning": "Private jobs share the decryption key with workers running tasks. Use only trusted workers. Losing private.key permanently loses access to sealed data.",
+  "privateJobWarning": "Workers receive the decryption keys needed for this private job's data. Legacy sealed inputs may require sharing private.key for compatibility. Use only trusted workers. Losing private.key permanently loses access to sealed data.",
   "submit": "Submit",
   "cancel": "Cancel",
   "noJobs": "No jobs yet.",

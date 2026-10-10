@@ -159,7 +159,7 @@
   "minimumMemoryBytes": "Mémoire minimale (octets)",
   "minimumGpus": "Nombre minimal de GPU",
   "privateJob": "Tâche privée",
-  "privateJobWarning": "Les tâches privées partagent la clé de déchiffrement avec les workers qui les exécutent. Utilisez uniquement des workers de confiance. La perte de private.key rend les données scellées irrécupérables.",
+  "privateJobWarning": "Les exécutants reçoivent les clés de déchiffrement nécessaires aux données de cette tâche privée. Les données chiffrées avec un ancien format peuvent nécessiter le partage de private.key pour assurer la compatibilité. Utilisez uniquement des exécutants de confiance. La perte de private.key rend définitivement les données scellées irrécupérables.",
   "submit": "Soumettre",
   "cancel": "Annuler",
   "noJobs": "Aucune tâche pour le moment.",
