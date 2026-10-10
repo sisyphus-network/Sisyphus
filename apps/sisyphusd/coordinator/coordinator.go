@@ -1189,7 +1189,7 @@ func wellFormed(cids []string) []string {
 // blobs itself.
 func withKey(blobs runtime.Blobs, key []byte, jobID string) runtime.Blobs {
 	if len(key) == 0 {
-		return blobs
+		return runtime.Open(blobs)
 	}
 	// The coordinator holds the sealing key itself, which opens whatever
 	// was sealed with any key derived from it. What it stores for the job

@@ -181,3 +181,50 @@ func (u *unseekableBlob) Seek(offset int64, whence int) (int64, error) {
 	}
 	return u.Blob.Seek(offset, whence)
 }
+
+// A job that is not private has no key to a sealed blob. It is refused
+// one, where it would otherwise compute on the sealed bytes as though they
+// were the data; anything else it opens and stores as it is.
+func TestAJobThatIsNotPrivateIsRefusedASealedBlob(t *testing.T) {
+	store := storage.NewMemory()
+	key := sealed.NewKey()
+	private, err := store.Put(ctx, sealed.Encrypt(key, strings.NewReader("what only a private job may read")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := Open(store)
+	if _, err := job.Open(ctx, private); err == nil || !strings.Contains(err.Error(), "is sealed, and this job is not private") {
+		t.Errorf("a sealed blob opened by a job that is not private: %v", err)
+	}
+	public, err := job.Put(ctx, strings.NewReader("what anyone may read"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFrom(t, job, public); got != "what anyone may read" {
+		t.Errorf("a blob that is not sealed read as %q", got)
+	}
+	// One shorter than a sealed blob's head is not sealed.
+	short, _ := job.Put(ctx, strings.NewReader("hi"))
+	if got := readFrom(t, job, short); got != "hi" {
+		t.Errorf("a short blob read as %q", got)
+	}
+	absent, _ := storage.CID(ctx, strings.NewReader("never stored"))
+	if _, err := job.Open(ctx, absent); !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("a blob the store does not hold: %v", err)
+	}
+	// One that cannot be rewound cannot be handed over from its start.
+	if _, err := Open(neverSeeks{store}).Open(ctx, public); !errors.Is(err, errBlobs) {
+		t.Errorf("a blob that cannot be rewound: %v", err)
+	}
+}
+
+// neverSeeks hands out blobs that cannot be rewound at all.
+type neverSeeks struct{ *storage.Store }
+
+func (n neverSeeks) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) {
+	blob, err := n.Store.Open(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return &unseekableBlob{Blob: blob, seeks: 1}, nil
+}

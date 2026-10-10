@@ -280,7 +280,8 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 	}
 	started := time.Now()
 	touched := runtime.Record(w.Blobs)
-	var blobs runtime.Blobs = touched
+	// A job that is not private opens no sealed blob: it has no key to one.
+	blobs := runtime.Open(touched)
 	if private(a) {
 		// A private job: what the task stores is sealed with the job's own
 		// key, and sealed inputs are opened with the keys given for them.

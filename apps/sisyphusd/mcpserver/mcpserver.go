@@ -209,7 +209,7 @@ type runJobArgs struct {
 	Params      map[string]any `json:"params,omitempty" jsonschema:"the workload's parameters, as its description gives them"`
 	Tasks       uint32         `json:"tasks,omitempty" jsonschema:"how many tasks to split the job into; leave out for one per free worker slot"`
 	Mode        string         `json:"mode,omitempty" jsonschema:"distributed, to split the job into tasks spread across the workers, or full-worker, to send it whole to one; distributed if left out"`
-	Private     bool           `json:"private,omitempty" jsonschema:"seal everything the job stores with this node's key, so that only it and the workers running the job can read it"`
+	Private     bool           `json:"private,omitempty" jsonschema:"seal everything the job stores, so that only this node and the workers running the job can read it. Needed to read a file stored with private: a job that is not private has no key to one and is refused it, at once where the workload reads its input to split it, and as a failed task otherwise. The workers are given keys to this job's files and outputs only, not to the node's other private data"`
 	MinMemoryMB uint32         `json:"min_memory_mb,omitempty" jsonschema:"give its tasks only to workers with at least this much memory, in mebibytes"`
 	MinGPUs     uint32         `json:"min_gpus,omitempty" jsonschema:"give its tasks only to workers with at least this many graphics cards"`
 	TaskTimeout uint32         `json:"task_timeout_seconds,omitempty" jsonschema:"stop and retry any attempt at a task that runs longer than this"`

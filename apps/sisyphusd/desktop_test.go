@@ -114,21 +114,11 @@ func TestTheDesktopRunsAPrivateJob(t *testing.T) {
 	if out := mustCLI(t, "blob", "get", "--addr", addr, "--key-file", key, file.GetCid()); out != text {
 		t.Errorf("the file read with the node's key from the command line: %q", out)
 	}
-	// A job that is not private is given no key, and counts only the words
-	// it can see in what is sealed, which are not the file's.
+	// A job that is not private is given no key to the file, and is told so
+	// in place of an answer about the sealed bytes.
 	open, err := client.SubmitJob(ctx, &nodepb.SubmitJobRequest{Workload: "wordcount", Params: []byte(`{"input":"` + file.GetCid() + `"}`)})
-	if err != nil || open.GetJob().GetPrivate() {
-		t.Fatalf("submitting a job that is not private: %v, %v", open, err)
-	}
-	waitFor(t, func() bool {
-		got, err := client.GetJob(ctx, &nodepb.GetJobRequest{JobId: open.GetJob().GetJobId()})
-		job = got.GetJob()
-		return err == nil && job.GetFinishedAtMs() != 0
-	})
-	for _, output := range job.GetOutputBlobs() {
-		if out, _ := fetchThroughDesktop(ctx, client, output); strings.Contains(out, "\tfox\n") {
-			t.Errorf("a job that is not private read the private file: %q", out)
-		}
+	if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "is sealed, and this job is not private") {
+		t.Errorf("submitting a job that is not private over a private file: %v, %v", open, err)
 	}
 
 	// Sealed by somebody else, a blob is not this node's to open.
