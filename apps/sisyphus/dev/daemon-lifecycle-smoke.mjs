@@ -26,6 +26,7 @@ try {
   const getInfo = () => new Promise((accept, reject) => client.getNodeInfo({}, { deadline: Date.now() + 5000 }, (error, value) => error ? reject(error) : accept(value)))
   const info = await getInfo()
   assert.ok(info.peerId)
+  if (process.argv[3]) assert.equal(info.daemonVersion, process.argv[3])
   assert.ok((await readFile(join(directory, 'api.token'), 'utf8')).trim())
   // A second desktop attaching to the same live node cannot acquire ownership.
   const other = new DesktopDaemon({ executable, endpoint, dataDir: directory, enabled: true, onError: (error) => diagnostics.push(error) })
