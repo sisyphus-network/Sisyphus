@@ -166,7 +166,7 @@ These calls exist only on a node that coordinates a pool. On a worker-only node 
 
 Set `private` in the first `StoreFile` message and the file is sealed before the pool holds it. Set `private` on `SubmitJob` and everything the job stores is sealed too, and it can read private files. `FetchFile` unseals what this node sealed, so the UI treats private and ordinary files alike; `File.private` and `Job.private` are there to show a lock.
 
-What this protects: the pool's other members, and anyone who gets at the store, hold only what they cannot read. What it does not: the workers that run a private job's tasks are given the key for the length of the job, as they must be to do the work. Run private jobs on workers you trust with the data.
+What this protects: the pool's other members, and anyone who gets at the store, hold only what they cannot read. What it does not: the workers that run a private job's tasks read that job's data, as they must to do the work. They are given keys to this job's inputs and outputs only, derived from the node's key, and not the node's key itself, so they cannot open the node's other private files or other jobs' data. Run private jobs on workers you trust with the data of those jobs.
 
 The key is one the node makes the first time it is needed and keeps in `private.key` in its data directory. It is an ordinary key: `sisyphusd blob get --key-file <data dir>/private.key <cid>` reads the same files. **If that file is lost, so is everything sealed with it.** A private job cannot read a file that was not stored as private by this node, and a job that is not private cannot read one that was.
 

@@ -97,21 +97,43 @@ func TestPrivateJobLeavesOnlySealedDataInThePool(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, wantTable := wordCountLocally(t, text)
-	table := stored(t, p.store, cid.MustParse(result.Output))
-	opened, err := sealed.Open(key, bytes.NewReader(table), uint64(len(table)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := io.ReadAll(opened); err != nil || string(got) != wantTable {
-		t.Errorf("the unsealed result differs from an ordinary run's (%v)", err)
+	if got := p.unsealedTable(job, key); got != wantTable {
+		t.Error("the unsealed result differs from an ordinary run's")
 	}
 
-	// And it is the same sealed blob however the job is split, so two runs
-	// can still be compared by CID.
+	// Run again, split differently, it gives the same table, sealed with
+	// another key: each job has its own, so that what one job's workers
+	// were given opens nothing of another's, and two jobs' sealed outputs
+	// tell an onlooker nothing by being alike.
 	again := p.privateWordcount(text, key, 2)
-	if string(again.GetResult()) != string(job.GetResult()) {
+	var second runtime.WordCountResult
+	json.Unmarshal(again.GetResult(), &second)
+	if got := p.unsealedTable(again, key); got != wantTable || second.Words != result.Words || second.Distinct != result.Distinct {
 		t.Errorf("the same private job split differently gave %s, then %s", job.GetResult(), again.GetResult())
 	}
+	if second.Output == result.Output {
+		t.Error("two private jobs sealed the same output alike")
+	}
+}
+
+// unsealedTable opens, with the sealing key a private word count was
+// submitted with, the table it stored.
+func (p *pool) unsealedTable(job *pb.Job, key sealed.Key) string {
+	p.t.Helper()
+	var result runtime.WordCountResult
+	if err := json.Unmarshal(job.GetResult(), &result); err != nil {
+		p.t.Fatal(err)
+	}
+	table := stored(p.t, p.store, cid.MustParse(result.Output))
+	opened, err := sealed.Open(key, bytes.NewReader(table), uint64(len(table)))
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	got, err := io.ReadAll(opened)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	return string(got)
 }
 
 func TestPrivateJobWithTheWrongKeyFailsRatherThanComputeOnNoise(t *testing.T) {

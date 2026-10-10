@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -156,6 +157,9 @@ type Coordinator struct {
 	seqs   map[string]uint64
 	// logged is how many lines each job's tasks have logged.
 	logged map[string]int
+	// keys is what the workers of each private job are given, once it has
+	// been worked out.
+	keys map[string]*pb.TaskAssignment
 }
 
 // maxEvents is how many of a job's events are kept to hand.
@@ -279,6 +283,7 @@ func New(cfg Config) *Coordinator {
 		events:    make(map[string][]jobmodel.Event),
 		seqs:      make(map[string]uint64),
 		logged:    make(map[string]int),
+		keys:      make(map[string]*pb.TaskAssignment),
 	}
 	// Attempts that have run past their time are looked for once a second.
 	c.aggregating.Add(1)
@@ -483,13 +488,20 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 	if err != nil {
 		return 0, err
 	}
+	// A job's key is kept only while it is unfinished, so only such jobs
+	// have keys to work out again.
+	keys := make(map[string]*pb.TaskAssignment)
+	for _, job := range jobs {
+		keys[job.ID], _ = c.keysFor(job.ID, job.Key, job.Params)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, s := range standings {
 		c.standing[s.NodeID] = s
 	}
 	for _, job := range jobs {
-		job.Needs = c.workloads.Needs(job.Workload, job.Params)
+		job.Needs = c.needs(job.Workload, job.Params, len(job.Key) > 0)
+		c.keys[job.ID] = keys[job.ID]
 		// What happened to it before comes back with it. A job whose events
 		// cannot be read is still a job.
 		events, err := c.journal.LoadEvents(job.ID)
@@ -574,6 +586,7 @@ func (c *Coordinator) Prune(now time.Time) (int, error) {
 		delete(c.events, id)
 		delete(c.seqs, id)
 		delete(c.logged, id)
+		delete(c.keys, id)
 	}
 	return len(old), nil
 }
@@ -643,7 +656,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	if share > 0 && verify < 2 {
 		return nil, status.Error(codes.InvalidArgument, "verify_share says how many of a job's tasks to verify, and needs verify to say by how many workers")
 	}
-	needs := c.workloads.Needs(workload.Name(), spec.GetParams())
+	needs := c.needs(workload.Name(), spec.GetParams(), len(spec.GetKey()) > 0)
 
 	parts := 1
 	if mode == jobmodel.Distributed {
@@ -660,14 +673,18 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		return nil, status.Errorf(codes.InvalidArgument, "a job's key must be %d bytes, not %d", sealed.KeySize, n)
 	}
 	// Splitting may read stored data, so it runs without the lock.
+	// The job has its ID before it is split, since what splitting stores
+	// is sealed, if the job is private, with the job's own key.
+	id := newID()
 	touched := runtime.Record(c.store)
-	payloads, err := workload.Split(ctx, withKey(touched, spec.GetKey()), spec.GetParams(), parts)
+	payloads, err := workload.Split(ctx, withKey(touched, spec.GetKey(), id), spec.GetParams(), parts)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	if len(payloads) == 0 {
 		return nil, status.Error(codes.Internal, "workload split the job into no tasks")
 	}
+	keys, old := c.keysFor(id, spec.GetKey(), spec.GetParams())
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -682,7 +699,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	if able := c.ableLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs); verify >= 2 && !steps && able < verify {
 		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job", verify, able)
 	}
-	job := jobmodel.New(newID(), workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
+	job := jobmodel.New(id, workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
 	switch {
 	case verify >= 2 && steps:
 		// Its tasks are jobs, which pick their own tasks to verify.
@@ -717,6 +734,11 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		asked += fmt.Sprintf(", each to be verified by %d workers", verify)
 	}
 	c.recordLocked(job, eventSubmitted, whole, "", asked)
+	c.keys[job.ID] = keys
+	if old != nil {
+		c.log.Warn("a private job names an input sealed with a sealing key itself, so its workers are given that key whole", "job", job.ID, "input", old.String())
+		c.recordLocked(job, eventLog, whole, "", "input "+old.String()+" was sealed before each file had a key of its own, so this job's workers are given the whole sealing key; store the file again to give them only its own")
+	}
 
 	c.scheduleLocked()
 	return job.ToProto(), nil
@@ -1067,14 +1089,14 @@ func (c *Coordinator) aggregate(job *jobmodel.Job) {
 	defer c.aggregating.Done()
 
 	c.mu.Lock()
-	outputs, key := job.Outputs(), job.Key
+	outputs, key, id := job.Outputs(), job.Key, job.ID
 	c.mu.Unlock()
 
 	workload, err := c.workloads.Get(job.Workload)
 	var result []byte
 	touched := runtime.Record(c.store)
 	if err == nil {
-		result, err = workload.Aggregate(c.ctx, withKey(touched, key), outputs)
+		result, err = workload.Aggregate(c.ctx, withKey(touched, key, id), outputs)
 	}
 
 	c.mu.Lock()
@@ -1165,11 +1187,104 @@ func wellFormed(cids []string) []string {
 // withKey returns blobs as a private job with the given key sees them:
 // sealing what it stores and unsealing what it opens. With no key it is
 // blobs itself.
-func withKey(blobs runtime.Blobs, key []byte) runtime.Blobs {
+func withKey(blobs runtime.Blobs, key []byte, jobID string) runtime.Blobs {
 	if len(key) == 0 {
 		return blobs
 	}
-	return runtime.Sealed(blobs, sealed.Key(key))
+	// The coordinator holds the sealing key itself, which opens whatever
+	// was sealed with any key derived from it. What it stores for the job
+	// it seals as the job's workers do, with the job's own.
+	return runtime.Sealed(blobs, sealed.Key(key), sealed.Key(key).ForJob(jobID))
+}
+
+// needs is what a worker must have to be given the tasks of a job: what
+// its workload asks for, and, for a private job, that it takes keys as
+// they are now given.
+func (c *Coordinator) needs(workload string, params []byte, private bool) []string {
+	needs := c.workloads.Needs(workload, params)
+	if private {
+		needs = append(needs, runtime.SealingLabel)
+	}
+	return needs
+}
+
+// keysFor works out the keys the workers of a private job are given, as
+// the part of a task's assignment that carries them. They are the job's
+// own key, which what its tasks store is sealed with, and the key of each
+// sealed blob the job's parameters name. The sealing key the job was
+// submitted with is not among them: a worker is given what opens this
+// job's data, and with that opens nothing else the same key seals.
+//
+// An input sealed before keys were derived is opened by the sealing key
+// and nothing less. A job that names one has its workers given that key
+// whole, as every private job's once were, and the first such input is
+// returned so that it can be said.
+//
+// It reads the store, which may take its time over a blob it does not
+// hold, so it is not called with the lock held.
+func (c *Coordinator) keysFor(jobID string, sealing, params []byte) (given *pb.TaskAssignment, old *cid.Cid) {
+	if len(sealing) == 0 {
+		return nil, nil
+	}
+	key := sealed.Key(sealing)
+	own := key.ForJob(jobID)
+	given = &pb.TaskAssignment{Keys: []*pb.SealingKey{{Id: own.ID[:], Key: own.Key[:]}}}
+	held := map[sealed.KeyID]bool{own.ID: true}
+	for _, named := range namedBlobs(params) {
+		switch id, whole, is := c.sealedWith(named); {
+		case !is || held[id]:
+		case whole:
+			if old == nil {
+				given.Key, old = sealing, &named
+			}
+		default:
+			held[id] = true
+			derived := key.Grant(id)
+			given.Keys = append(given.Keys, &pb.SealingKey{Id: derived.ID[:], Key: derived.Key[:]})
+		}
+	}
+	return given, old
+}
+
+// sealedWith reads the head of a stored blob: whether it is sealed, and
+// with which key. What the store does not hold, or cannot read, is taken
+// not to be sealed: a worker that needs it will say so itself.
+func (c *Coordinator) sealedWith(named cid.Cid) (id sealed.KeyID, whole, is bool) {
+	blob, err := c.store.Open(c.ctx, named)
+	if err != nil {
+		return id, false, false
+	}
+	defer blob.Close()
+	head := make([]byte, sealed.HeaderSize)
+	n, _ := io.ReadFull(blob, head) // a short blob has a short head
+	return sealed.Header(head[:n])
+}
+
+// namedBlobs returns the blobs that a job's parameters name: every string
+// in them, however deep, that is a CID.
+func namedBlobs(params []byte) []cid.Cid {
+	var parsed any
+	json.Unmarshal(params, &parsed) // parameters that are not JSON name nothing
+	var named []cid.Cid
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case string:
+			if c, err := cid.Decode(v); err == nil {
+				named = append(named, c)
+			}
+		case []any:
+			for _, inner := range v {
+				walk(inner)
+			}
+		case map[string]any:
+			for _, inner := range v {
+				walk(inner)
+			}
+		}
+	}
+	walk(parsed)
+	return named
 }
 
 // OwnsPin reports whether owner is a name some job, past or present, holds
@@ -1228,13 +1343,15 @@ func (c *Coordinator) scheduleLocked() {
 func (c *Coordinator) handLocked(w *worker, a assignment) {
 	c.recordLocked(a.job, eventTaskStarted, a.task.Index, w.name, fmt.Sprintf("attempt %d", a.attempt))
 	w.running[a.task.ID] = a
+	keys := c.keys[a.job.ID]
 	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
 		TaskId:   a.task.ID,
 		JobId:    a.job.ID,
 		Attempt:  uint32(a.attempt),
 		Workload: a.job.Workload,
 		Payload:  a.task.Payload,
-		Key:      a.job.Key,
+		Key:      keys.GetKey(),
+		Keys:     keys.GetKeys(),
 	}}})
 	c.notifyLocked(a.job)
 }

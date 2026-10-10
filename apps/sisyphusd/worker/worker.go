@@ -5,6 +5,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -207,7 +208,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				defer stops.Delete(assigned.GetTaskId())
 				// What the task reports of itself is passed on a few times a
 				// second while it runs, and once more when it ends.
-				said := &reports{private: len(assigned.GetKey()) > 0}
+				said := &reports{private: private(assigned)}
 				pass := func() {
 					if update := said.take(assigned); update != nil {
 						send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskUpdate{TaskUpdate: update}})
@@ -280,15 +281,15 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 	started := time.Now()
 	touched := runtime.Record(w.Blobs)
 	var blobs runtime.Blobs = touched
-	switch len(a.GetKey()) {
-	case 0:
-	case sealed.KeySize:
-		// A private job: what the task stores is sealed, and sealed inputs
-		// are opened, with the job's key.
-		blobs = runtime.Sealed(touched, sealed.Key(a.GetKey()))
-	default:
-		fail(fmt.Sprintf("the task came with a key of %d bytes, which is not a key", len(a.GetKey())))
-		return result
+	if private(a) {
+		// A private job: what the task stores is sealed with the job's own
+		// key, and sealed inputs are opened with the keys given for them.
+		ring, own, err := keyring(a)
+		if err != nil {
+			fail(err)
+			return result
+		}
+		blobs = runtime.Sealed(touched, ring, own)
 	}
 	output, err := workload.Execute(ctx, blobs, a.GetPayload())
 	if err != nil {
@@ -320,12 +321,50 @@ func (w *Worker) capabilities() *pb.NodeCapabilities {
 	return capabilities
 }
 
+// private reports whether a task is of a private job: one that comes with
+// keys, of either kind.
+func private(a *pb.TaskAssignment) bool {
+	return len(a.GetKeys()) > 0 || len(a.GetKey()) > 0
+}
+
+// keyring makes of the keys a task came with what opens its sealed inputs,
+// and returns with it the job's own key, which is the first of them and
+// seals what the task stores.
+//
+// A task that comes with a sealing key whole and no others is from a
+// coordinator from before keys were derived, which expects what the task
+// stores to be sealed with that key itself. That is no longer done, so the
+// task is refused: run as though it had no key, it would store unsealed
+// what it was to seal.
+func keyring(a *pb.TaskAssignment) (*sealed.Ring, sealed.Grant, error) {
+	if len(a.GetKeys()) == 0 {
+		return nil, sealed.Grant{}, errors.New("the task came with a sealing key whole and no key of its job's own, as a coordinator from before each job had one gives it; this node does not seal with a whole key, so the coordinator must be brought up to date")
+	}
+	grants := make([]sealed.Grant, 0, len(a.GetKeys()))
+	for _, given := range a.GetKeys() {
+		if len(given.GetId()) != len(sealed.KeyID{}) || len(given.GetKey()) != sealed.KeySize {
+			return nil, sealed.Grant{}, fmt.Errorf("the task came with a key of %d bytes whose ID is of %d, which is not a key", len(given.GetKey()), len(given.GetId()))
+		}
+		grants = append(grants, sealed.Grant{ID: sealed.KeyID(given.GetId()), Key: sealed.Key(given.GetKey())})
+	}
+	ring := sealed.NewRing(grants...)
+	switch len(a.GetKey()) {
+	case 0:
+	case sealed.KeySize:
+		whole := sealed.Key(a.GetKey())
+		ring.Whole = &whole
+	default:
+		return nil, sealed.Grant{}, fmt.Errorf("the task came with a key of %d bytes, which is not a key", len(a.GetKey()))
+	}
+	return ring, grants[0], nil
+}
+
 // labels is what the worker has that a job may ask for by name: itself,
 // and whatever its workloads offer. Who it is the coordinator decides for
 // itself, from the key the worker connected with; the name is sent for a
 // coordinator from before it did.
 func (w *Worker) labels() []string {
-	return append([]string{runtime.WorkerLabel + w.Name}, w.Workloads.Offers(context.Background())...)
+	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.Workloads.Offers(context.Background())...)
 }
 
 // updateInterval is how often the coordinator is told how a running task

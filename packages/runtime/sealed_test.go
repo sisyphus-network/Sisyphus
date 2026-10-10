@@ -14,10 +14,63 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
+// sealedAs is a job's view of a store as its coordinator has it: holding
+// the sealing key itself, and sealing what it stores with the job's own.
+func sealedAs(blobs Blobs, key sealed.Key) Blobs {
+	return Sealed(blobs, key, key.ForJob("the-job"))
+}
+
+// readFrom reads a blob whole through a job's view of a store.
+func readFrom(t *testing.T, blobs Blobs, c cid.Cid) string {
+	t.Helper()
+	blob, err := blobs.Open(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blob.Close()
+	data, err := io.ReadAll(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// A worker is given the keys to its job's data and not the key they were
+// derived from: it opens what the job stored and the inputs it was given
+// keys to, and nothing else the same sealing key seals.
+func TestAJobsKeysOpenItsOwnDataAndNoOtherJobs(t *testing.T) {
+	store := storage.NewMemory()
+	key := sealed.NewKey()
+	ours, theirs := key.ForJob("ours"), key.ForJob("theirs")
+	other, err := Sealed(store, key, theirs).Put(ctx, strings.NewReader("another job's data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := Sealed(store, sealed.NewRing(ours), ours)
+	stored, err := worker.Put(ctx, strings.NewReader("this job's data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFrom(t, worker, stored); got != "this job's data" {
+		t.Errorf("a worker read back %q of what its job stored", got)
+	}
+	if _, err := worker.Open(ctx, other); !errors.Is(err, sealed.ErrNoKey) {
+		t.Errorf("a worker opening another job's data: %v, want ErrNoKey", err)
+	}
+	// Given that job's key as well, as for an input, it reads it; and the
+	// holder of the sealing key reads both.
+	if got := readFrom(t, Sealed(store, sealed.NewRing(ours, theirs), ours), other); got != "another job's data" {
+		t.Errorf("with the key to it, a worker read %q", got)
+	}
+	if got := readFrom(t, sealedAs(store, key), stored); got != "this job's data" {
+		t.Errorf("the holder of the sealing key read %q", got)
+	}
+}
+
 func TestSealedBlobsKeepPlaintextOutOfTheStore(t *testing.T) {
 	store := storage.NewMemory()
 	key := sealed.NewKey()
-	private := Sealed(store, key)
+	private := sealedAs(store, key)
 	secret := bytes.Repeat([]byte("the boulder's whereabouts are confidential. "), 5000)
 
 	c, err := private.Put(ctx, bytes.NewReader(secret))
@@ -51,7 +104,7 @@ func TestSealedBlobsKeepPlaintextOutOfTheStore(t *testing.T) {
 	}
 
 	// With another key it does not.
-	other, err := Sealed(store, sealed.NewKey()).Open(ctx, c)
+	other, err := sealedAs(store, sealed.NewKey()).Open(ctx, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +120,7 @@ func TestSealedBlobsPassUnsealedOnesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blob, err := Sealed(store, sealed.NewKey()).Open(ctx, public)
+	blob, err := sealedAs(store, sealed.NewKey()).Open(ctx, public)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,18 +142,18 @@ func TestSealedBlobsReportStorageFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Sealed(store, key).Open(ctx, absent); !errors.Is(err, storage.ErrNotFound) {
+	if _, err := sealedAs(store, key).Open(ctx, absent); !errors.Is(err, storage.ErrNotFound) {
 		t.Errorf("opening a blob the store lacks: %v", err)
 	}
-	if _, err := Sealed(failingBlobs{Store: store, failPut: true}, key).Put(ctx, strings.NewReader("x")); !errors.Is(err, errBlobs) {
+	if _, err := sealedAs(failingBlobs{Store: store, failPut: true}, key).Put(ctx, strings.NewReader("x")); !errors.Is(err, errBlobs) {
 		t.Errorf("storing when the store fails: %v", err)
 	}
 	// A blob that cannot be read is neither sealed nor passable through.
-	if _, err := Sealed(failingBlobs{Store: store, failRead: true}, key).Open(ctx, public); !errors.Is(err, errBlobs) {
+	if _, err := sealedAs(failingBlobs{Store: store, failRead: true}, key).Open(ctx, public); !errors.Is(err, errBlobs) {
 		t.Errorf("opening a blob that cannot be read: %v", err)
 	}
 	// One that reads but cannot be rewound cannot be handed over from its start.
-	if _, err := Sealed(unseekableBlobs{store}, key).Open(ctx, public); !errors.Is(err, errBlobs) {
+	if _, err := sealedAs(unseekableBlobs{store}, key).Open(ctx, public); !errors.Is(err, errBlobs) {
 		t.Errorf("opening an unsealed blob that cannot be rewound: %v", err)
 	}
 }

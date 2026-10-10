@@ -11,25 +11,33 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
+// SealingLabel is the label of a worker that takes the keys of a private
+// job as they are now given: one for the job and one for each sealed input,
+// and not a sealing key whole. A private job's tasks go only to such
+// workers, since one from before would store what it was to seal unsealed.
+const SealingLabel = "sealing:2"
+
 // Sealed returns a Blobs that keeps what a job stores from everyone without
-// the job's key. Whatever is stored through it is sealed first, so the store
-// and anyone else who can fetch from it hold only ciphertext. Whatever is
-// opened through it is unsealed if it was sealed, and passed through as it
-// is if not, so a job with a key can still read inputs that are not secret.
+// the job's key. Whatever is stored through it is sealed first, with the
+// job's own key, so the store and anyone else who can fetch from it hold
+// only ciphertext. Whatever is opened through it is unsealed if it was
+// sealed and keys has the key to it, and passed through as it is if it was
+// not sealed, so a job with keys can still read inputs that are not secret.
 //
 // The CIDs it deals in are those of the sealed blobs. A workload needs to
 // know none of this.
-func Sealed(blobs Blobs, key sealed.Key) Blobs {
-	return sealedBlobs{blobs: blobs, key: key}
+func Sealed(blobs Blobs, keys sealed.Keys, own sealed.Grant) Blobs {
+	return sealedBlobs{blobs: blobs, keys: keys, own: own}
 }
 
 type sealedBlobs struct {
 	blobs Blobs
-	key   sealed.Key
+	keys  sealed.Keys
+	own   sealed.Grant
 }
 
 func (s sealedBlobs) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
-	return s.blobs.Put(ctx, sealed.Encrypt(s.key, r))
+	return s.blobs.Put(ctx, sealed.EncryptWith(s.own, r))
 }
 
 func (s sealedBlobs) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) {
@@ -37,7 +45,7 @@ func (s sealedBlobs) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) 
 	if err != nil {
 		return nil, err
 	}
-	opened, err := sealed.Open(s.key, blob, blob.Size())
+	opened, err := sealed.Open(s.keys, blob, blob.Size())
 	if errors.Is(err, sealed.ErrNotSealed) {
 		// Not secret: hand it over from the beginning, as stored.
 		_, err = blob.Seek(0, io.SeekStart)
