@@ -13,7 +13,7 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 - **The coordinator is trusted with everything**: every job's parameters and results, every private job's key, the member list, and how each job is split and combined.
 - **A worker sees everything it is given to compute on**, private or not, and can return anything. Verification catches a worker that disagrees with others, not workers that agree to lie.
 - **A private job** keeps stored data from members that are not the coordinator or one of its workers. It does not seal the job's parameters, small result or error messages.
-- **A worker that runs containers runs whatever image and command a client names.** Docker's defaults are all that confine it; nothing here adds to them.
+- **A worker that runs containers runs whatever image and command a client names.** It is confined by Docker's defaults, with capabilities dropped and privilege gain blocked, and by no sandbox beyond that.
 
 ## Who the parties are
 
@@ -145,22 +145,22 @@ Detail: [Running containers](../apps/sisyphusd/README.md#running-containers).
 | --- | --- |
 | `--rm`, a random name | The image, pulled from wherever its name says |
 | `/input` read-only, `/output` writable, each a temporary directory | The command and environment |
-| `--user` as the node's own user and group | `--network none`, unless the job says `"network": true` |
-| | `--memory` and `--cpus`, absent unless the job sets them |
-| | `--gpus` |
+| `--user` as the node's own user and group, and with it `--cap-drop ALL` | `--network none`, unless the job says `"network": true` |
+| `--security-opt no-new-privileges` | `--memory` and `--cpus`, absent unless the job sets them |
+| `--pids-limit 4096` | `--gpus` |
 
 What that does not do:
 
 - **The image is whatever the submitter names.** The name is checked only so far that Docker cannot read it as an option: one that begins with a dash, or has a space or control character in it, is refused when the job is submitted and again by the worker (`checkImage`). Before that check a job could add Docker options of its own, mounts and `--privileged` among them; a worker on a build without it is still open to that. Naming an image by digest pins what runs only if the submitter wants it pinned.
-- **No further confinement.** No capabilities are dropped, there is no `no-new-privileges`, no process limit, no read-only root, no limit on what is written to `/output` or to the container's own layer, and no user namespace or sandboxed runtime. A node run as root runs containers as root; where the system has no user numbers, the image's user is used.
+- **No sandbox beyond that.** The root filesystem is writable, nothing limits what is written to the container's own layer or to the worker's disk through `/output` while the command runs, and there is no user namespace or sandboxed runtime: the container shares the worker's kernel. A node run as root runs containers as root, though with no capabilities; where the system has no user numbers, the image's user is used and Docker's usual capabilities are kept, since an image that installs what it needs as root would not run without them.
 - **Limits are the submitter's, not the worker's.** A worker's `--offer-memory-mb` is what it advertises and is not enforced.
-- **Output is barely bounded.** What the command prints is kept up to 16 MiB as the task's output. Each line of it is also a log line, cut at 4 KiB, and every one is saved in the coordinator's database with no limit on their number. Files left in `/output` are stored whatever their size.
+- **Output is bounded, loosely.** What the command prints is kept up to 16 MiB as the task's output. Each line of it is also a log line, cut at 4 KiB by the worker and again by the coordinator, which keeps 20,000 lines for a job and then says once that it keeps no more (`coordinator.go`, `logLocked`). Files left in `/output` are stored up to 4 GiB and 1,024 files for a task, beyond which the task fails; the limit is on what is stored, not on what the command may write while it runs.
 
 So a worker with `--containers` must trust every client of every pool it works for, and those pools' coordinators, as it would someone it lets run programs of their choosing in a Docker container with default settings, on its network if they ask. A node that takes work from several pools ([Trust](../apps/sisyphusd/README.md#trust)) keeps their stores apart, not their containers.
 
 **What a malicious job can do to a worker:** with containers, the above. Without, it can spend the worker's slots, fill its cache where `--max-cache-bytes` is not set, and feed crafted input to the built-in workloads and to ffmpeg.
 
-**What a malicious worker can do to a job:** read every input, payload and key it is handed and keep them; return a wrong result; report it stored blobs it did not; fail tasks, or hold them for as long as it likes where the job set no `--timeout`; claim hardware, models and a name it does not have to attract tasks; fetch any other blob in the pool it learns the CID of; and upload without limit unless the coordinator sets `--max-store-bytes`.
+**What a malicious worker can do to a job:** read every input, payload and key it is handed and keep them; return a wrong result; name blobs as stored that it did not store, which are no longer taken as stored unless the coordinator's store holds them, and at most 4,096 for a task; fail tasks, or hold them for as long as it likes where the job set no `--timeout`; claim hardware, models and a name it does not have to attract tasks; fetch any other blob in the pool it learns the CID of; and upload without limit unless the coordinator sets `--max-store-bytes`.
 
 ## Storage and availability
 
@@ -184,7 +184,7 @@ Detail: [How long data is kept](../apps/sisyphusd/README.md#how-long-data-is-kep
 | Clients interfering with each other | Not protected: any client reads and cancels any job and unpins any user pin. |
 | Colluding workers, or one operator with many nodes | Not protected. |
 | Wrong results from non-deterministic work | Not detectable. |
-| A client attacking a container worker's machine | Docker's defaults only. |
+| A client attacking a container worker's machine | Docker's defaults, no capabilities, no privilege gain, a process limit. No sandbox. |
 | Programs on a node's machine reading jobs and conversations | Not protected for reads of the local API; changes need the token. |
 | A stolen node key | No rotation or revocation; remove the node. |
 | Denial of service by a member | No quotas or rate limits. |
