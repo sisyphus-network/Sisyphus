@@ -20,6 +20,7 @@ func (db *DB) RetainChatFiles(chatID string, cids []string) error {
 		b.err = b.tx.QueryRow(`SELECT 1 FROM chats WHERE chat_id = ?`, chatID).Scan(&exists)
 		for _, cid := range cids {
 			b.exec(`INSERT INTO file_references(owner, cid) VALUES (?, ?) ON CONFLICT(owner, cid) DO NOTHING`, chatFileOwner(chatID), cid)
+			b.exec(`INSERT INTO file_pin_operations(owner, cid, keep) VALUES (?, ?, 1)`, chatFileOwner(chatID), cid)
 		}
 	})
 }

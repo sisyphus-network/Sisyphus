@@ -524,6 +524,7 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	// column, and so before those that came after it, and open it again.
 	for _, statement := range []string{
 		`DROP TABLE worker_standing`,
+		`DROP TABLE file_pin_operations`,
 		`ALTER TABLE tasks DROP COLUMN verify`,
 		`ALTER TABLE jobs DROP COLUMN verify_share`,
 		`DROP TABLE file_references`,
