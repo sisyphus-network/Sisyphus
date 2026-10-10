@@ -359,6 +359,44 @@ test('the workspace switches layouts live across tablet and desktop widths', asy
   }
 })
 
+test('an active conversation survives desktop and compact workspace remounts', async () => {
+  const model = await standInModel('The active conversation survived the layout change.')
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    await open(page, 'Node overview')
+    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+    await page.getByRole('complementary').getByRole('link', { name: 'Workspace', exact: true }).click()
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    const composer = page.getByRole('textbox', { name: 'Message your Sisyphus planner…' })
+    await composer.fill('Keep this conversation while resizing.')
+    const send = page.getByRole('button', { name: 'Send message' })
+    await send.waitFor({ state: 'visible' })
+    await page.waitForFunction(() => {
+      const button = [...document.querySelectorAll('button')].find((candidate) => candidate.getAttribute('aria-label') === 'Send message')
+      return button instanceof HTMLButtonElement && !button.disabled
+    })
+    await send.click()
+    await page.getByText('The active conversation survived the layout change.').waitFor({ timeout: 30000 })
+
+    await narrow(app)
+    await page.locator('.workspace-shell--compact').waitFor()
+    await page.getByRole('paragraph').filter({ hasText: 'Keep this conversation while resizing.' }).waitFor()
+    await page.getByText('The active conversation survived the layout change.').waitFor()
+
+    await wide(app, page)
+    await page.locator('.workspace-desktop-stage').waitFor()
+    await page.getByRole('paragraph').filter({ hasText: 'Keep this conversation while resizing.' }).waitFor()
+    await page.getByText('The active conversation survived the layout change.').waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
 test('a job submitted in the window runs on the pool and shows its result', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
