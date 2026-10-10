@@ -81,7 +81,7 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 	// The agent is told what there is: the tools, and how to begin. Those
 	// that change the node itself are not among them unless asked for.
 	tools, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 32 {
+	if err != nil || len(tools.Tools) != 33 {
 		t.Fatalf("tools = %v, %v", tools, err)
 	}
 	if !strings.Contains(session.InitializeResult().Instructions, "pool_status") {
@@ -349,7 +349,7 @@ func TestAnAgentKeepsWhatAJobMadeAndChecksItsRecord(t *testing.T) {
 		t.Errorf("storage_status, read-only: %s", text)
 	}
 	tools, err := looking.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 18 {
+	if err != nil || len(tools.Tools) != 19 {
 		t.Fatalf("read-only tools = %v, %v", tools, err)
 	}
 	for _, tool := range tools.Tools {

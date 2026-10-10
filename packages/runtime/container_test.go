@@ -119,7 +119,7 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 	// environment the job gave, and the task's place in the job.
 	args := strings.Join(engine.asked[0], " ")
 	for _, want := range []string{"run --rm --name sisyphus-", ":/input:ro", ":/output", "--env SISYPHUS_TASK_INDEX=1", "--env SISYPHUS_TASK_COUNT=2",
-		"--security-opt no-new-privileges", "--pids-limit 4096", "--user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + " --cap-drop ALL", "--network none", "--memory 256m", "--cpus 1.5", "--gpus 2", "--env A=1 --env B=2", "alpine:3.20 sh -c work"} {
+		"--security-opt no-new-privileges", "--pids-limit 4096", "--user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + " --cap-drop ALL --env HOME=/tmp", "--network none", "--memory 256m", "--cpus 1.5", "--gpus 2", "--env A=1 --env B=2", "alpine:3.20 sh -c work"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("the engine was asked %q, without %q", args, want)
 		}
@@ -410,6 +410,22 @@ func TestARealContainerRuns(t *testing.T) {
 	json.Unmarshal(raw, &out)
 	if got := readBlob(t, store, out.Stdout); got != "CapBnd:\t0000000000000000\nNoNewPrivs:\t1\n" {
 		t.Errorf("the container's privileges: %q", got)
+	}
+	// It has a home it can write to, which the node's user has none of in
+	// the image, unless the job gives it another.
+	for params, want := range map[string]string{
+		`{"image":"alpine:3.20","command":["sh","-c","echo kept > ~/note && echo $HOME"]}`:                          "/tmp\n",
+		`{"image":"alpine:3.20","env":{"HOME":"/output"},"command":["sh","-c","echo kept > ~/note && echo $HOME"]}`: "/output\n",
+	} {
+		homed, _ := c.Split(ctx, store, []byte(params), 1)
+		raw, err = c.Execute(ctx, store, homed[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		json.Unmarshal(raw, &out)
+		if got := readBlob(t, store, out.Stdout); got != want {
+			t.Errorf("the home of %s: %q", params, got)
+		}
 	}
 
 	// A command that fails says how, and one that cannot be started says so.
