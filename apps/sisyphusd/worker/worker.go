@@ -321,7 +321,9 @@ func (w *Worker) capabilities() *pb.NodeCapabilities {
 }
 
 // labels is what the worker has that a job may ask for by name: itself,
-// and whatever its workloads offer.
+// and whatever its workloads offer. Who it is the coordinator decides for
+// itself, from the key the worker connected with; the name is sent for a
+// coordinator from before it did.
 func (w *Worker) labels() []string {
 	return append([]string{runtime.WorkerLabel + w.Name}, w.Workloads.Offers(context.Background())...)
 }

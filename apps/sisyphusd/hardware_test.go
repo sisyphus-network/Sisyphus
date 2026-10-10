@@ -110,7 +110,7 @@ func TestANodeSaysWhatItHasAndTheOwnerCanOfferLess(t *testing.T) {
 	}
 	id := strings.TrimSpace(mustCLI(t, "job", "submit", "--addr", addr, "--detach", "--min-memory-mb", "4096", "--gpus", "1", "--params", `{"from":0,"to":100}`))
 	time.Sleep(100 * time.Millisecond)
-	submitted, err := client.GetJob(context.Background(), &nodepb.GetJobRequest{JobId: id})
+	submitted, err := client.GetJob(tokenOf(t, dataDir), &nodepb.GetJobRequest{JobId: id})
 	if err != nil || submitted.GetJob().GetState() != nodepb.JobState_JOB_STATE_PENDING || submitted.GetJob().GetMinMemoryBytes() != 4096<<20 || submitted.GetJob().GetMinGpus() != 1 {
 		t.Errorf("a job asking for more than was offered: %v, %v", submitted, err)
 	}
