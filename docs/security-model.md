@@ -203,7 +203,7 @@ Detail: [How long data is kept](../apps/sisyphusd/README.md#how-long-data-is-kep
 
 ## For a reviewer of the sealing
 
-The code is `packages/sealed/sealed.go` (about 450 lines), used through `packages/runtime/sealed.go`. Commitments are in `packages/jobrecord/jobrecord.go`, `Commit`.
+The code is `packages/sealed/sealed.go` (about 480 lines), used through `packages/runtime/sealed.go`. Commitments are in `packages/jobrecord/jobrecord.go`, `Commit`.
 
 **Construction.**
 

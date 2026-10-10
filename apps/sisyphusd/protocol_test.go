@@ -64,7 +64,7 @@ func (p *pool) connectRawAs(creds credentials.TransportCredentials, first *pb.Wo
 
 func hello(name string, slots uint32, workloads ...string) *pb.WorkerMessage {
 	return &pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
-		Name:         name,
+		Name: name,
 		// It takes a private job's keys as they are now given.
 		Capabilities: &pb.NodeCapabilities{TaskSlots: slots, Workloads: workloads, Labels: []string{runtime.SealingLabel}},
 	}}}
