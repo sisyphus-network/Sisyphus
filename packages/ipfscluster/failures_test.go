@@ -446,3 +446,27 @@ func TestConfigureSetsWhatAPoolNeedsAndKeepsTheRest(t *testing.T) {
 		t.Errorf("the peer's identity is %q, want the node's, %s", identity.ID, ident.ID())
 	}
 }
+
+// The port picked for a peer's API can be taken before the peer asks for
+// it. The peer is then started again, on another, and not for ever.
+func TestAPeerWhosePortWasTakenIsStartedAgain(t *testing.T) {
+	runs := filepath.Join(t.TempDir(), "runs")
+	started := func() int { return strings.Count(string(readFile(runs)), "x") }
+	taken := `echo "error creating REST API component: listen tcp4 127.0.0.1:37705: bind: address already in use"; exit 1`
+
+	// Taken once, and then the peer fails for a reason of its own, which is
+	// reported and not tried again.
+	once := fakeProgram(t, `printf x >> "`+runs+`"; if [ "$(wc -c < "`+runs+`")" -eq 1 ]; then `+taken+`; fi; echo "a fault of its own"; exit 1`)
+	_, err := Start(ctx, Config{Binary: once, Dir: initialised(t), Identity: newIdentity(t), KuboAPI: "127.0.0.1:5001"})
+	if err == nil || !strings.Contains(err.Error(), "a fault of its own") || started() != 2 {
+		t.Errorf("a port taken once: %v, after %d starts", err, started())
+	}
+
+	// Taken every time, it is given up on and said.
+	os.Remove(runs)
+	always := fakeProgram(t, `printf x >> "`+runs+`"; `+taken)
+	_, err = Start(ctx, Config{Binary: always, Dir: initialised(t), Identity: newIdentity(t), KuboAPI: "127.0.0.1:5001"})
+	if err == nil || !strings.Contains(err.Error(), "address already in use") || started() != portAttempts {
+		t.Errorf("a port taken every time: %v, after %d starts", err, started())
+	}
+}
