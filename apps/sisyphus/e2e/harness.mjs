@@ -107,14 +107,25 @@ export async function open(page, name) {
  * say, or { tool, arguments } to call one of the planner's tools.
  */
 export async function standInModel(...replies) {
-  const model = { asked: [], url: '' }
+  const model = { asked: [], pulled: [], url: '' }
   const server = createHttpServer((request, response) => {
     let body = ''
     request.on('data', (piece) => { body += piece })
     request.on('end', () => {
       if (request.url === '/api/tags') return response.end('{"models":[{"name":"test-model","size":4900000000}]}')
       if (request.url === '/api/show') return response.end('{"capabilities":["completion","tools"]}')
-      model.asked.push(JSON.parse(body || '{}'))
+      const asked = JSON.parse(body || '{}')
+      if (request.url === '/api/pull') {
+        model.pulled.push(asked.model)
+        response.setHeader('content-type', 'application/x-ndjson')
+        return response.end([
+          { status: 'pulling manifest' },
+          { status: 'pulling layer', total: 200, completed: 50 },
+          { status: 'pulling layer', total: 200, completed: 200 },
+          { status: 'success' },
+        ].map((event) => JSON.stringify(event)).join('\n') + '\n')
+      }
+      model.asked.push(asked)
       const reply = replies[model.asked.length - 1]
       if (reply === undefined) { response.statusCode = 500; return response.end('the model has run out of things to say') }
       const message = typeof reply === 'string'

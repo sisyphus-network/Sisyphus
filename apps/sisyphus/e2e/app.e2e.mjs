@@ -469,6 +469,36 @@ test('model settings load and save a local provider used by the planner', async 
   }
 })
 
+test('model settings download a local model and report completion', async () => {
+  const model = await standInModel('The downloaded planner replied.')
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await open(page, 'Settings')
+    await page.getByRole('combobox', { name: 'Provider' }).waitFor()
+    await page.getByRole('combobox', { name: 'Provider' }).selectOption('ollama')
+    await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
+    await page.getByRole('button', { name: 'Load models' }).click()
+    await page.waitForFunction(() => document.querySelector('select[aria-label="Model"] option[value="test-model"]') !== null)
+    await page.getByRole('combobox', { name: 'Model' }).selectOption('test-model')
+    await page.getByRole('button', { name: 'Save model' }).click()
+    await page.getByText('Model configuration saved').waitFor()
+    await page.getByRole('textbox', { name: /Model name to download/ }).fill('downloaded-test-model')
+    await page.getByRole('button', { name: 'Download' }).click()
+    await page.getByText('Model downloaded', { exact: true }).waitFor({ timeout: 30000 })
+    assert.deepEqual(model.pulled, ['downloaded-test-model'])
+
+    await open(page, 'Workspace')
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Is the planner still available after download?')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByText('The downloaded planner replied.').waitFor({ timeout: 30000 })
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
 test('model settings save an OpenAI-compatible API key on the node and use it for planner requests', async () => {
   const service = await standInOpenAI('The OpenAI-compatible planner replied.')
   const apiKey = 'sk-test-e2e-not-a-real-secret'
