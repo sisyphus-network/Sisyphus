@@ -84,3 +84,7 @@ jobs:
         run: go build -o bin/sisyphusd ./apps/sisyphusd
       - run: npm run test:daemon
       - run: npm run build
+      # The real app, built above, driven in a window nobody sees against
+      # the daemon built above, on a node and a profile of the tests' own.
+      - name: End-to-end tests of the desktop app
+        run: npm run test:e2e

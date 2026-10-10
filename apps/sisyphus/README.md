@@ -58,4 +58,22 @@ npm run build
 npm test
 # After make build: starts a separate temporary node and never uses your data.
 npm run test:daemon
+# After make build and npm run build: drives the real app against a temporary node.
+npm run test:e2e
 ```
+
+## End-to-end tests
+
+`npm run test:e2e` starts the built app with [Playwright](https://playwright.dev) and drives it as a person would, against a node of its own: the repository's `bin/sisyphusd` on ports nothing else has, with a temporary data directory, and a temporary profile for the app. Your node, your data and your app are not touched. On Linux with no display it runs under `xvfb-run`, which is how CI runs it.
+
+What they check today (`e2e/app.e2e.mjs`):
+
+- the window shows the node it is connected to, its ID and its worker;
+- a window with no WebGL still shows the workspace, without the globe;
+- a job submitted in Operations runs on the pool, and its result and events are shown;
+- a file stored as private is listed, and an invitation is issued;
+- the language picker opens from the keyboard and keeps the focus among its choices, Hebrew turns the window right-to-left without a sideways scroll, and the choice is still there at the next start;
+- a node that stops is said to be gone with the sidebar left in place, and the window finds it again when it returns;
+- a question with a file attached is planned by a stand-in model, computed on the pool and answered; the model is told of the file as private and is never sent its content; a second turn carries on, and the conversation is in the history.
+
+`e2e/harness.mjs` has what a new test needs: `testNode()`, `testProfile()`, `launch()`, `open()` for the sidebar's pages, and `standInModel()` for a planner that says what the test tells it to. Elements are found by role and name, as a screen reader finds them, so a test that cannot find a control is often a control that has no name.
