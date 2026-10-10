@@ -446,6 +446,8 @@ func TestPoolClusterCommandFailures(t *testing.T) {
 		{[]string{"pool", "cluster", "--addr", plain}, "does not run an IPFS Cluster peer; start it with --kubo --cluster"},
 		{[]string{"run", "--cluster", "--data-dir", t.TempDir()}, "--cluster needs --kubo"},
 		{[]string{"run", "--kubo-api-secret", "--data-dir", t.TempDir()}, "--kubo-api-secret needs --kubo"},
+		{[]string{"run", "--max-connections", "8", "--data-dir", t.TempDir()}, "--max-connections must be at least 64"},
+		{[]string{"run", "--max-connections", "-1", "--data-dir", t.TempDir()}, "--max-connections must be at least 64"},
 		{[]string{"run", "--kubo", "--cluster", "--kubo-api-secret", "--data-dir", t.TempDir()}, "--kubo-api-secret cannot be used with --cluster"},
 	} {
 		if _, err := cli(t, tt.args...); err == nil || !strings.Contains(err.Error(), tt.want) {

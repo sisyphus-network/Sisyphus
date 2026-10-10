@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -17,7 +18,9 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	ma "github.com/multiformats/go-multiaddr"
 
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 )
@@ -722,5 +725,85 @@ func TestACallThatFailsIsMadeAgain(t *testing.T) {
 	cancel()
 	if err := a.Connect(stopped, nobody); err == nil {
 		t.Error("a call nobody was waiting for succeeded")
+	}
+}
+
+// A host takes from one address what a pool's members make: each command
+// run on another machine is a connection, and a house's machines share an
+// address. libp2p's own limits are for strangers on a public network, and
+// refuse the seventeenth connection in a row, the ninth at once, and on a
+// small machine the sixty-fifth from anyone.
+func TestAHostTakesAsManyConnectionsAsAPoolsMembersMake(t *testing.T) {
+	// Told to take 4096 in all, whatever the machine could hold open.
+	const inAll, perAddress = 4096, 512
+	limits := resources(inAll)
+	defer limits.Close()
+	for name, address := range map[string]string{"an IPv4 address": "/ip4/192.0.2.7/tcp/40000", "an IPv6 address": "/ip6/2001:db8::7/tcp/40000"} {
+		from := ma.StringCast(address)
+		// Sixty in a row, each over before the next, as a script makes them.
+		for i := range 60 {
+			conn, err := limits.OpenConnection(network.DirInbound, true, from)
+			if err != nil {
+				t.Fatalf("connection %d in a row from %s: %v", i+1, name, err)
+			}
+			conn.Done()
+		}
+		// And three hundred at once, as a household's workers hold them.
+		var held []network.ConnManagementScope
+		for i := range 300 {
+			conn, err := limits.OpenConnection(network.DirInbound, true, from)
+			if err != nil {
+				t.Fatalf("connection %d at once from %s: %v", i+1, name, err)
+			}
+			held = append(held, conn)
+		}
+		for _, conn := range held {
+			conn.Done()
+		}
+	}
+	// It is still a limit. One address cannot take every connection there
+	// is, and all addresses together have the room that was said.
+	taken := func(from func(i int) string, tries int) (held int) {
+		var open []network.ConnManagementScope
+		for i := range tries {
+			conn, err := limits.OpenConnection(network.DirInbound, true, ma.StringCast(from(i)))
+			if err != nil {
+				break
+			}
+			open = append(open, conn)
+		}
+		for _, conn := range open {
+			conn.Done()
+		}
+		return len(open)
+	}
+	if held := taken(func(int) string { return "/ip4/192.0.2.9/tcp/40000" }, 2*inAll); held != perAddress {
+		t.Errorf("%d connections at once were taken from one address, want %d", held, perAddress)
+	}
+	if held := taken(func(i int) string { return fmt.Sprintf("/ip4/198.51.%d.%d/tcp/40000", i/250, i%250+1) }, 2*inAll); held != inAll {
+		t.Errorf("%d connections at once were taken from as many addresses, want %d", held, inAll)
+	}
+}
+
+// How many connections a host takes comes of what its machine can hold
+// open, unless its owner says: a large machine takes many, and a small one
+// still has room for a household.
+func TestAHostsRoomComesOfWhatItsMachineCanHoldOpen(t *testing.T) {
+	for name, tt := range map[string]struct{ asked, files, inAll, perAddress, perSecond int }{
+		"a machine that allows a million files": {0, 1 << 20, 1 << 19, 1 << 16, 1 << 13},
+		"one that allows 65536":                 {0, 65536, 32768, 4096, 512},
+		"one that allows 1024":                  {0, 1024, 512, 256, 32},
+		"one that allows very few":              {0, 64, 512, 256, 32},
+		"a system that does not say":            {0, 0, 8192, 1024, 128},
+		"an owner who says 20000":               {20000, 1024, 20000, 2500, 312},
+		"an owner who says very few":            {64, 1 << 20, 64, 64, 32},
+	} {
+		if inAll, perAddress, perSecond := room(tt.asked, tt.files); inAll != tt.inAll || perAddress != tt.perAddress || perSecond != tt.perSecond {
+			t.Errorf("%s: %d in all, %d from one address, %d a second; want %d, %d, %d", name, inAll, perAddress, perSecond, tt.inAll, tt.perAddress, tt.perSecond)
+		}
+	}
+	// This machine says how many it allows, and it is a number that means something.
+	if files := openFiles(); files < 64 || files > 1<<20 {
+		t.Errorf("this machine is said to allow %d open files", files)
 	}
 }

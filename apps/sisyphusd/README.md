@@ -95,6 +95,8 @@ Every connection between nodes is encrypted, and each end proves who it is.
 
 Anyone else can complete the handshake and is then refused.
 
+**How many connections.** A node takes as many connections at once as half the files its system lets a program have open, which on a server is hundreds of thousands and on a laptop is still thousands; `--max-connections` sets another number. An eighth of them, and never fewer than 256, may come from one address, since the machines of a house or an office share one, and each command run from another machine is a connection of its own. New connections from one address are slowed only after that many have come in a row. Raise the system's own limit (`ulimit -n`) to raise the node's.
+
 **Joining.** An invitation is the inviting node's ID and a one-time token. The ID is what makes joining safe: the joiner will only talk to the node named in it, so nobody in between can pose as that node. It lasts an hour unless `--ttl` says otherwise, and is still good if the inviting node restarts before it is used. Once joined, a node remembers which node it expects at that address in `known.json` and refuses any other.
 
 ```sh

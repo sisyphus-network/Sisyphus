@@ -78,6 +78,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
 	containerRuntime := fs.String("container-runtime", "", "with --containers: have Docker run the pool's tasks with this runtime in place of its usual, such as runsc (gVisor) or kata-runtime, which keep a task further from this machine than an ordinary container does; it must be installed and known to Docker")
 	containersReadOnly := fs.Bool("containers-read-only", false, "with --containers: give a task nowhere to write but /output and /tmp, the second held in memory; an image that writes anywhere else will fail")
+	maxConnections := fs.Int("max-connections", 0, "how many connections to take at once from other nodes and their command lines, on --listen; 0 takes as many as half the files the system lets this program have open, which on most machines is far more than a pool needs. An eighth of them, and at least 256, may come from one address")
 	containers := fs.Bool("containers", false, "worker role: run container images for the pool's jobs, with Docker. This lets whoever may submit jobs to the pool run what they like on this machine")
 	maxMemory := fs.Uint64("offer-memory-mb", 0, "worker role: tell the pool this node has no more than this much memory, in mebibytes; 0 offers all it has")
 	maxGPUs := fs.Int("offer-gpus", -1, "worker role: tell the pool this node has no more than this many graphics cards; -1 offers all it has")
@@ -137,6 +138,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if *discovery != "on" && *discovery != "off" {
 		return fmt.Errorf("--discovery is on or off, not %q", *discovery)
+	}
+	if *maxConnections != 0 && *maxConnections < 64 {
+		return errors.New("--max-connections must be at least 64, or 0 to take as many as the machine can hold open: a worker alone holds several")
 	}
 	if host, _, err := net.SplitHostPort(*apiListen); *apiListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
 		return errors.New("--api-listen must be a loopback address such as 127.0.0.1:50051: the local API is for programs on this machine only")
@@ -486,7 +490,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// for which it relays so that two of them with no port open can
 		// still reach each other. The nodes whose work this one takes are
 		// let in too: it is in their pools, if not they in its own.
-		host, err = p2p.New(p2p.Config{Identity: ident, Listen: *listen, Relay: true, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
+		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *listen, Relay: true, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
 			_, admitted := admitted.Role(id)
 			return admitted || slices.Contains(takes.List(), id)
 		}})
@@ -636,7 +640,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// do. Only the coordinator and the pool's members are let in.
 		// One that has a port open for the purpose relays as the coordinator
 		// does, and every worker keeps a place on each member that relays.
-		host, err = p2p.New(p2p.Config{Identity: ident, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
+		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
 			if id == coordinatorID || slices.Contains(takes.List(), id) {
 				return true
 			}

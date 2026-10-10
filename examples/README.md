@@ -12,7 +12,7 @@ Things to run against a pool, and a pool to run them against.
 | `container.sh` | Runs a container image on the pool, one copy for each task, and prints what each printed. |
 | `transcode.sh` | Re-encodes a video on the pool: stored, encoded in stretches by the workers, fetched. |
 | `render.sh` | Renders a picture in strips, a container task for each, and puts it back together. |
-| `rehearsal.sh` | A pool across machines, rehearsed on one: each node in a container of its own, the two workers on networks that cannot reach each other, a client on another. It joins them, runs jobs from the client, loses a worker mid-job, restarts the coordinator, and reports what held. Needs Docker. |
+| `rehearsal.sh` | A pool across machines, rehearsed on one: each node in a container of its own, the two workers on networks that cannot reach each other, a client on another. It joins them, runs jobs from the client, among them one that both workers check and a private one, shows a second client kept to its own jobs and pins, makes many connections from one address, loses a worker mid-job, restarts the coordinator while a job runs, and reports what held. Needs Docker. |
 | `big-file.sh` | Makes a large text file to time jobs with. |
 | `boulder.txt` | A short sample text, the default input for `wordcount.sh`. |
 | `common.sh` | Shared by the scripts; not run directly. |
@@ -69,7 +69,7 @@ sisyphusd pool join --addr 192.168.1.10:7700 <invitation>   # on your machine, o
 `examples/rehearsal.sh` is the nearest one machine gets to [`docs/multi-machine-test.md`](../docs/multi-machine-test.md). Every node runs in its own container, with its own address and disk. The two workers are on separate networks and can reach the coordinator but not each other; a fourth container is a client that has only an invitation.
 
 ```sh
-examples/rehearsal.sh                      # about two minutes; clears up after itself
+examples/rehearsal.sh                      # about three minutes; clears up after itself
 MODEL=llama3.1:8b examples/rehearsal.sh    # also: a worker serves this machine's Ollama, and the client asks that model through the pool
 KEEP=1 examples/rehearsal.sh               # leave it running to poke at; `examples/rehearsal.sh down` clears it up
 ```
