@@ -127,19 +127,42 @@ func (s *server) allowed(path string) (string, error) {
 	return full, nil
 }
 
-// image returns the container image a job would run, if it would run one.
-func image(params map[string]any) string {
-	name, _ := params["image"].(string)
-	return name
-}
-
 // permitted reports, as an error, a job that would run a container image
-// the server's owner has not listed, if any were listed.
+// the server's owner has not listed, if any were listed. A job made of jobs
+// is held to it in each of its steps, however deep, and an image a step
+// would only learn from an earlier one is not a listed image.
 func (s *server) permitted(args runJobArgs) error {
-	if len(s.Images) == 0 || args.Workload != "container" || slices.Contains(s.Images, image(args.Params)) {
+	if len(s.Images) == 0 || s.listed(args.Workload, args.Params) {
 		return nil
 	}
+	return s.unlisted()
+}
+
+// unlisted is what an agent is told of something the list of images rules
+// out.
+func (s *server) unlisted() error {
 	return fmt.Errorf("this server runs only the container images its owner listed with --images: %s", strings.Join(s.Images, ", "))
+}
+
+// listed reports whether a job of a workload with these parameters would
+// run no container image but those listed.
+func (s *server) listed(workload string, params map[string]any) bool {
+	switch workload {
+	case "container":
+		name, _ := params["image"].(string)
+		return slices.Contains(s.Images, name)
+	case "graph":
+		steps, _ := params["steps"].([]any)
+		for _, each := range steps {
+			step, _ := each.(map[string]any)
+			of, _ := step["workload"].(string)
+			its, _ := step["params"].(map[string]any)
+			if !s.listed(of, its) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // jobMode is how a job is to be shared out, as an agent says it. Said
@@ -209,6 +232,11 @@ type askPlannerArgs struct {
 }
 
 func (s *server) askPlanner(ctx context.Context, args askPlannerArgs) (any, error) {
+	if len(s.Images) > 0 {
+		// The planner picks what to run itself, and nothing here sees it
+		// before it runs.
+		return nil, fmt.Errorf("the node's planner chooses for itself what to run, so it cannot be asked through a server held to listed images: %w", s.unlisted())
+	}
 	stream, err := s.Node.Ask(ctx, &nodepb.AskRequest{ChatId: args.ChatID, Text: args.Question})
 	if err != nil {
 		return nil, err
