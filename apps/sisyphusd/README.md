@@ -608,13 +608,13 @@ claude mcp add sisyphus -- /path/to/sisyphusd mcp     # Claude Code; other agent
 
 The second form is what Claude Desktop (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`) and most others take. The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir`, `--api` and `--addr` if the node's data directory, `--api-listen` and `--listen` are not the usual ones.
 
-There are 42 tools: 18 that only look, 14 more that use the pool, and 10 more with `--admin`.
+There are 44 tools: 19 that only look, 14 more that use the pool, and 11 more with `--admin`.
 
 | Tool | What it does |
 | --- | --- |
 | `pool_status` | The workers connected, with their cores, memory, graphics cards, the models they serve and how busy they are. |
 | `list_workloads` | What the pool can run, the parameters each workload takes, and how many connected workers run it. |
-| `run_job` | Runs a job and waits for its result, or returns at once with `detach`. It takes what `job submit` takes: `tasks`, `mode`, `private`, `min_memory_mb`, `min_gpus` and `task_timeout_seconds`. |
+| `run_job` | Runs a job and waits for its result, or returns at once with `detach`. It takes what `job submit` takes: `tasks`, `mode`, `private`, `min_memory_mb`, `min_gpus`, `task_timeout_seconds`, and `verify` and `verify_share` to have [workers check each other](#verifying-results). |
 | `get_job`, `list_jobs`, `cancel_job`, `job_logs`, `wait_for_job` | Look at a job, list them, stop one, read what it logged, wait for one to finish. |
 | `store_file`, `fetch_file`, `list_files`, `remove_file`, `fetch_outputs`, `save_result` | Put a file from this machine in the pool's store, bring one back, list them, stop keeping one, bring back everything a job stored, write a job's whole result to a file. |
 | `list_pins`, `pin_file`, `unpin_file` | What the node keeps, for whom and until when ([How long data is kept](#how-long-data-is-kept)); keep a file, such as a job's output, for good or for so many hours; release it. |
@@ -622,10 +622,10 @@ There are 42 tools: 18 that only look, 14 more that use the pool, and 10 more wi
 | `get_job_record` | A finished job's [record](#a-jobs-record): its ID and its nodes as JSON. With `verify` it is checked against the job as `job record --verify` checks it, and with `check_commitments` a private job's commitments are checked with the node's own `private.key`. |
 | `resolve_name`, `publish_name` | What a node's [name](#names-for-what-changes) stands for, checked against the name as `name resolve` checks it; point this node's name at a file. |
 | `ask_model`, `compare_texts` | Has a model served by one of the pool's workers answer a prompt; says which texts mean most alike, by an embedding model the pool serves. |
-| `ask_planner`, `list_chats`, `get_chat`, `delete_chat` | Hand a whole question to the node's own planner, and read or forget its conversations. |
-| `list_peers`, `list_members` | The nodes this node knows of, with their countries and which way work flows; who is in its pool. |
+| `ask_planner`, `list_chats`, `get_chat`, `delete_chat` | Hand a whole question to the node's own planner, with `files` the content IDs of stored files it is about, which the node then keeps for as long as the conversation; read or forget its conversations. |
+| `list_peers`, `list_members`, `list_address_book` | The nodes this node knows of, with their countries and which way work flows; who is in its pool; which nodes it connects to each time it starts. |
 | `get_model`, `list_models`, `list_model_providers` | What the planner plans with, what its service offers, and the kinds of service there are. |
-| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `set_peer_trust`, `set_model`, `pull_model`, `remove_model`, `collect_garbage`, `restore_files` | Change the node itself: who is in its pool, which nodes it trusts, what it plans with; clear its store of what nothing pins now, and take back from its followers what a lost store held (`blob gc`, `blob restore`). |
+| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `forget_peer`, `set_peer_trust`, `set_model`, `pull_model`, `remove_model`, `collect_garbage`, `restore_files` | Change the node itself: who is in its pool, which nodes it trusts and connects to, what it plans with; clear its store of what nothing pins now, and take back from its followers what a lost store held (`blob gc`, `blob restore`). |
 
 Besides tools, the server gives an agent things to read (`sisyphus://pool`, `sisyphus://workloads`, and the skill itself as `sisyphus://skill/SKILL.md` and `sisyphus://skill/recipes.md`), three prompts (`run-on-pool`, `pool-report`, `keep-result`), and, while `run_job` or `wait_for_job` waits, word of each task as it finishes.
 
