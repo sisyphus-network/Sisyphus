@@ -394,3 +394,42 @@ func TestWorkerSaysSoWhenThePrivateNetworkFailsIt(t *testing.T) {
 		t.Errorf("logged:\n%s", logs.String())
 	}
 }
+
+// Asked to, a node has its Kubo's API want a secret. The node goes on
+// using it, and the ipfs command reads the node's data only when given the
+// secret, which is beside the node's other secrets.
+func TestANodeAskedToKeepsItsKubosAPIBehindASecret(t *testing.T) {
+	requireKubo(t)
+	dataDir := t.TempDir()
+	addr, _ := startNode(t, "--kubo", "--kubo-api-secret", "--data-dir", dataDir, "--slots", "2")
+
+	text := strings.Repeat("the boulder rolls down, and Sisyphus walks after it.\n", 2_000)
+	input := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, text)))
+	if out := mustCLI(t, "job", "submit", "--addr", addr, "--workload", "wordcount", "--tasks", "2", "--params", `{"input":"`+input+`"}`); !strings.Contains(out, `"output":"`) {
+		t.Fatalf("a job on a node whose Kubo wants a secret:\n%s", out)
+	}
+
+	secret, err := os.ReadFile(filepath.Join(dataDir, "kubo.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(dataDir, "kubo.token")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("the secret's file: %v, %v", info.Mode().Perm(), err)
+	}
+	plain := exec.Command("ipfs", "cat", input)
+	plain.Env = append(os.Environ(), "IPFS_PATH="+filepath.Join(dataDir, "ipfs"))
+	if out, err := plain.CombinedOutput(); err == nil || !strings.Contains(string(out), "Access Denied") {
+		t.Errorf("the ipfs command with no secret: %.200s, %v", out, err)
+	}
+	if got := ipfsIn(t, dataDir, "--api-auth", "basic:sisyphus:"+strings.TrimSpace(string(secret)), "cat", input); got != text {
+		t.Errorf("the ipfs command with the secret read %d bytes, want the %d stored", len(got), len(text))
+	}
+
+	// A secret that cannot be read is said, and the node does not start
+	// with its Kubo open in the meantime.
+	unreadable := t.TempDir()
+	os.Mkdir(filepath.Join(unreadable, "kubo.token"), 0o700)
+	if _, err := cli(t, "run", "--kubo", "--kubo-api-secret", "--data-dir", unreadable, "--listen", freeAddr(t)); err == nil || !strings.Contains(err.Error(), "read Kubo API secret") {
+		t.Errorf("a secret that cannot be read: %v", err)
+	}
+}

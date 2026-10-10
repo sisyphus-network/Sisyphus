@@ -344,9 +344,12 @@ type guestWork struct {
 	// kubo has the node join the other's private IPFS network, with a Kubo
 	// daemon of its own for the purpose, as it would as that node's worker
 	// and nothing else.
-	kubo      bool
-	syncCache bool
-	maxCache  uint64
+	kubo bool
+	// kuboSecret is what each such daemon's API wants shown, if the node's
+	// own does.
+	kuboSecret string
+	syncCache  bool
+	maxCache   uint64
 }
 
 // work runs as a worker of the node with the given ID, at addr, until ctx
@@ -372,7 +375,7 @@ func (g *guestWork) work(ctx context.Context, id, addr string) error {
 	var store *storage.Store
 	onNetwork := false
 	if g.kubo {
-		swarm, leave, err := joinSwarm(ctx, g.ident, filepath.Join(dir, "ipfs"), addr, id, creds, log)
+		swarm, leave, err := joinSwarm(ctx, g.ident, filepath.Join(dir, "ipfs"), g.kuboSecret, addr, id, creds, log)
 		if err != nil {
 			log.Info("working for a node without its private IPFS network", "node", id, "reason", err)
 		} else {

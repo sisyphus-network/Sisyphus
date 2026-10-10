@@ -29,6 +29,8 @@ type Client struct {
 	mu   sync.RWMutex
 	base string
 	http *http.Client
+	// secret is what the daemon's API wants shown, if it wants anything.
+	secret string
 	// PeerTimeout is how long BlockGet lets Kubo look among its peers for a
 	// block it does not hold before reporting it not found. Zero leaves it
 	// to the caller's context.
@@ -61,6 +63,9 @@ func (c *Client) call(ctx context.Context, command string, args url.Values, body
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if c.secret != "" {
+		req.SetBasicAuth(APIUser, c.secret)
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
