@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { launch, narrow, open, planWith, standInModel, testNode, testProfile } from './harness.mjs'
+import { hasWebgl, launch, narrow, open, planWith, standInModel, testNode, testProfile, wide } from './harness.mjs'
 
 let node
 before(async () => { node = await testNode() })
@@ -61,10 +61,19 @@ test('a window with no WebGL offers no topology, and its workspace and chat stil
   }
 })
 
-test('a window with WebGL offers the topology, wide and narrow', async () => {
+test('a window with WebGL offers the topology, wide and narrow', async (t) => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
+    // Say why, where the topology cannot be there, and not only that a
+    // handle was not found: a machine that will not draw WebGL even in
+    // software, or a screen too small for the window's wide layout.
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, even drawn in software, so there is no topology to test')
+    }
+    const width = await wide(app, page)
+    assert.ok(width > 900, `the window is ${width} pixels wide, which is its one-view layout: the screen is too small for the wide one`)
     await page.getByRole('separator', { name: 'Resize topology panel' }).waitFor()
     await page.getByRole('img', { name: /This node/ }).waitFor()
     await narrow(app)

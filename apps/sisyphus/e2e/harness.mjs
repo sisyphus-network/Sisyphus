@@ -133,6 +133,21 @@ export function planWith(node, model) {
   execFileSync(daemon, ['model', 'set', '--data-dir', node.dataDir, '--url', model.url, '--model', 'test-model'], { stdio: 'ignore' })
 }
 
+/** Whether the window can draw with WebGL, asked the way the app asks. */
+export function hasWebgl(page) {
+  return page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    return Boolean(canvas.getContext('webgl2') ?? canvas.getContext('webgl'))
+  })
+}
+
+/** Makes the window the size it opens at, and returns how wide its page then is. */
+export async function wide(app, page) {
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 800))
+  await page.waitForFunction(() => window.innerWidth > 900, null, { timeout: 5000 }).catch(() => {})
+  return page.evaluate(() => window.innerWidth)
+}
+
 /** Makes the window as narrow as it goes, which is narrow enough for its one-view layout. */
 export async function narrow(app) {
   await app.evaluate(({ BrowserWindow }) => {
