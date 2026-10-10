@@ -240,7 +240,7 @@ test('the topology canvas stays mounted and stable through repeated advanced-rou
   }
 })
 
-test('the topology canvas and camera stay fitted through live window resizes', async (t) => {
+test('the topology canvas stays fitted through live window resizes', async (t) => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
@@ -258,6 +258,7 @@ test('the topology canvas and camera stay fitted through live window resizes', a
     assert.ok(initialBox && initialBox.width > 0 && initialBox.height > 0)
     assert.ok(initial.width > 0 && initial.height > 0)
 
+    let observedBufferResize = false
     for (const [nextWidth, nextHeight] of [[1040, 720], [1280, 900], [980, 760], [1180, 800]]) {
       await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h), [nextWidth, nextHeight])
       await page.waitForFunction(([w, h]) => Math.abs(window.innerWidth - w) < 30 && Math.abs(window.innerHeight - h) < 80, [nextWidth, nextHeight])
@@ -270,13 +271,88 @@ test('the topology canvas and camera stay fitted through live window resizes', a
       })
       const box = await stage.boundingBox()
       const dimensions = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+      if (dimensions.width !== initial.width || dimensions.height !== initial.height) observedBufferResize = true
       assert.ok(box && box.width > 0 && box.height > 0, `globe stage collapsed at ${nextWidth}x${nextHeight}`)
       assert.ok(dimensions.width > 0 && dimensions.height > 0, `WebGL drawing buffer collapsed at ${nextWidth}x${nextHeight}`)
       assert.ok(Math.abs(box.width - box.height) <= 2, `globe viewport is not square at ${nextWidth}x${nextHeight}`)
     }
     const final = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
     assert.ok(final.width > 0 && final.height > 0)
-    assert.notDeepEqual(final, initial, 'the WebGL drawing buffer never responded to the window size changes')
+    assert.ok(observedBufferResize, 'the WebGL drawing buffer never responded to any intermediate window size')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('the workspace switches layouts live across tablet and desktop widths', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, so the two-view mobile layout is unavailable')
+    }
+    await wide(app, page)
+    const network = page.getByRole('img', { name: /This node/ })
+    await network.waitFor()
+
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 760))
+    await page.locator('.workspace-shell--compact').waitFor()
+    const dock = page.locator('.workspace-mobile-dock')
+    await dock.waitFor()
+    const dockButtons = dock.getByRole('button')
+    assert.equal(await dockButtons.count(), 2)
+    const dockBox = await dock.boundingBox()
+    const viewportWidth = await page.evaluate(() => window.innerWidth)
+    assert.ok(dockBox && dockBox.x >= 0 && dockBox.x + dockBox.width <= viewportWidth, 'the dock exceeds the tablet viewport')
+    assert.ok(Math.abs(dockBox.x + dockBox.width / 2 - viewportWidth / 2) <= 2, 'the dock is not centered in the tablet viewport')
+    const touch = await page.context().newCDPSession(page)
+    await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(viewportWidth * 0.72), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(viewportWidth * 0.72), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: Math.round(viewportWidth * 0.55), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).waitFor()
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(viewportWidth * 0.45), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: Math.round(viewportWidth * 0.65), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await page.locator('.workspace-mobile-pane[data-active="true"] textarea').waitFor()
+
+    const composer = page.locator('.workspace-mobile-pane[data-active="true"] textarea')
+    await composer.focus()
+    await page.waitForFunction(() => {
+      const dockElement = document.querySelector('.workspace-mobile-dock')
+      return dockElement && Number.parseFloat(getComputedStyle(dockElement).height) < 2
+    })
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 650))
+    await page.waitForFunction(() => window.innerHeight < 760)
+    const composerBox = await composer.boundingBox()
+    const viewportHeight = await page.evaluate(() => window.innerHeight)
+    assert.ok(composerBox && composerBox.y < viewportHeight && composerBox.y + composerBox.height <= viewportHeight, 'the focused composer fell below the resized viewport')
+    await composer.evaluate((element) => element.blur())
+    await page.waitForFunction(() => {
+      const dockElement = document.querySelector('.workspace-mobile-dock')
+      return dockElement && Number.parseFloat(getComputedStyle(dockElement).height) >= 70
+    })
+    await touch.detach()
+
+    await dock.getByRole('button', { name: 'Known network topology' }).click()
+    await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).waitFor()
+
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 800))
+    await page.locator('.workspace-shell:not(.workspace-shell--compact)').waitFor()
+    await page.getByRole('separator', { name: 'Resize topology panel' }).waitFor()
+
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(680, 760))
+    await page.locator('.workspace-shell--compact').waitFor()
+    await dock.waitFor()
+    await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).waitFor()
+    const narrowDock = await dock.boundingBox()
+    const narrowWidth = await page.evaluate(() => window.innerWidth)
+    assert.ok(narrowDock && narrowDock.x >= 0 && narrowDock.x + narrowDock.width <= narrowWidth, 'the dock exceeds the narrow phone viewport')
+    assert.ok(Math.abs(narrowDock.x + narrowDock.width / 2 - narrowWidth / 2) <= 2, 'the dock is not centered after the live resize')
   } finally {
     await app.close()
     profile.remove()
