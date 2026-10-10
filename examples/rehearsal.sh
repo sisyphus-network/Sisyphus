@@ -83,7 +83,7 @@ start() {
 }
 
 echo "the coordinator, on both networks"
-start coordinator $P-a --role coordinator --listen 0.0.0.0:7700 --name coordinator
+start coordinator $P-a --role coordinator --listen 0.0.0.0:7700 --name coordinator --max-connections 2000
 docker network connect --alias coordinator $P-b $P-coordinator
 until_ok 30 on coordinator nodes || { bad "the coordinator started"; docker logs $P-coordinator | tail -5; exit 1; }
 ok "the coordinator started"

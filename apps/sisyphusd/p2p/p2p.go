@@ -80,7 +80,10 @@ type Config struct {
 	// which is what lets strangers find each other. What a stranger can do
 	// once connected is for the services on the host to decide.
 	Discover bool
-	Log      *slog.Logger
+	// MaxConnections is how many connections the host takes at once, from
+	// everyone. Zero leaves it to what the machine can hold open.
+	MaxConnections int
+	Log            *slog.Logger
 }
 
 // Host is a node's libp2p host.
@@ -136,46 +139,64 @@ func (*carried) ReservationAllowed(bool)               {}
 func (*carried) ReservationClosed(int)                 {}
 func (*carried) ReservationRequestHandled(pbv2.Status) {}
 
-// What a host takes from one address: perAddress connections at once, and
-// new ones at perSecond a second once perAddress have come at a run.
+// room is how many connections a host takes: inAll at once from everyone,
+// perAddress of them from one address, and new ones from one address at
+// perSecond a second once perAddress have come at a run.
 //
-// libp2p's own limits are eight at once, and sixteen at a run and then one
-// every five seconds. They are set for a node among strangers on a public
-// network. A pool's port is shared with its gRPC server, so they count
-// every connection a member makes there, and each command a person or a
-// script runs is one: the seventeenth in a row was dropped as it was made,
-// and a script on another machine failed part way. A pool's members are
-// also often behind one address: the machines of one house or office, each
-// with a worker that holds several connections, beside a desktop, a command
-// line and an agent's server. A connection is still nothing until its
-// handshake has shown a node that was admitted.
+// libp2p's own limits are, from one address, eight at once, and sixteen at
+// a run and then one every five seconds; and of connections that have not
+// become libp2p connections to a peer, which it holds apart as passing
+// through, a few dozen at once, by the machine's memory. They are set for a
+// node among strangers on a public network. A pool's port is shared with
+// its gRPC server, so they counted every connection a member makes there,
+// none of which ever becomes a libp2p connection. Each command a person or
+// a script runs is one: the seventeenth in a row was dropped as it was
+// made. A pool's members are often behind one address: the machines of one
+// house or office, each with a worker that holds several connections,
+// beside a desktop, a command line and an agent's server. And a coordinator
+// with little memory refused its sixty-fifth connection from anyone.
 //
-// libp2p also keeps a connection apart, as passing through, until it has
-// been made a libp2p connection to a peer, and allows few of those at
-// once: 64 on a small machine. A connection to the gRPC server is never
-// made one, so that was a limit on every member's connections together.
-// They are limited as all the host's connections are, at inAll.
-const (
-	perAddress = 256
-	perSecond  = 32
-	inAll      = 4096
-)
+// What a machine can hold open is what its system lets a program have open
+// at once, so that is what the limits are taken from, unless its owner
+// says how many: half of it for connections, which leaves the other half
+// for files and for the connections the node makes itself. A connection is
+// still nothing until its handshake has shown a node that was admitted.
+func room(asked, files int) (inAll, perAddress, perSecond int) {
+	switch {
+	case asked > 0:
+		inAll = asked
+	case files > 0:
+		// However little that is, a pool has room for a household.
+		inAll = max(files/2, 512)
+	default:
+		// A system that does not say is taken to allow what most do.
+		inAll = 8192
+	}
+	perAddress = min(max(inAll/8, 256), inAll)
+	perSecond = max(perAddress/8, 32)
+	return inAll, perAddress, perSecond
+}
 
 // resources returns what limits a host's connections, streams and memory:
-// libp2p's own limits, with room for a pool's members behind one address.
-func resources() network.ResourceManager {
+// libp2p's own limits, with room for a pool's members. asked is how many
+// connections its owner said to take at once, or zero for as many as the
+// machine can hold open.
+func resources(asked int) network.ResourceManager {
+	inAll, perAddress, perSecond := room(asked, openFiles())
 	limits := rcmgr.DefaultLimits
 	libp2p.SetDefaultServiceLimits(&limits)
+	// Connections passing through are limited as all of them are, not
+	// apart: to the gRPC server that is every connection there is.
+	held := rcmgr.PartialLimitConfig{
+		System:    rcmgr.ResourceLimits{ConnsInbound: rcmgr.LimitVal(inAll), Conns: rcmgr.LimitVal(2 * inAll), FD: rcmgr.Unlimited},
+		Transient: rcmgr.ResourceLimits{ConnsInbound: rcmgr.Unlimited, Conns: rcmgr.Unlimited, FD: rcmgr.Unlimited},
+	}.Build(limits.AutoScale())
 	// The same shape as libp2p's own: one limit for an IPv4 address, and
 	// for IPv6 one for a household's prefix and a wider one beyond it. This
 	// machine's own addresses are not limited, as they are not by libp2p.
-	often := rate.Limit{RPS: perSecond, Burst: perAddress}
-	wider := rate.Limit{RPS: 8 * perSecond, Burst: 8 * perAddress}
-	room := rcmgr.PartialLimitConfig{
-		System:    rcmgr.ResourceLimits{ConnsInbound: inAll, Conns: 2 * inAll, FD: rcmgr.Unlimited},
-		Transient: rcmgr.ResourceLimits{ConnsInbound: rcmgr.Unlimited, Conns: rcmgr.Unlimited, FD: rcmgr.Unlimited},
-	}.Build(limits.AutoScale())
-	manager, _ := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(room),
+	often := rate.Limit{RPS: float64(perSecond), Burst: perAddress}
+	wider := rate.Limit{RPS: float64(8 * perSecond), Burst: 8 * perAddress}
+	manager, _ := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(held),
 		rcmgr.WithLimitPerSubnet(
 			[]rcmgr.ConnLimitPerSubnet{{PrefixLength: 32, ConnCount: perAddress}},
 			[]rcmgr.ConnLimitPerSubnet{{PrefixLength: 56, ConnCount: perAddress}, {PrefixLength: 48, ConnCount: 8 * perAddress}},
@@ -215,7 +236,7 @@ func New(cfg Config) (*Host, error) {
 
 	options := []libp2p.Option{
 		libp2p.Identity(key),
-		libp2p.ResourceManager(resources()),
+		libp2p.ResourceManager(resources(cfg.MaxConnections)),
 		// A machine without one of the two kinds of address listens on the
 		// other; only failing at both stops the host.
 		libp2p.ListenAddrStrings(listen...),

@@ -731,9 +731,12 @@ func TestACallThatFailsIsMadeAgain(t *testing.T) {
 // A host takes from one address what a pool's members make: each command
 // run on another machine is a connection, and a house's machines share an
 // address. libp2p's own limits are for strangers on a public network, and
-// refuse the seventeenth connection in a row and the ninth at once.
-func TestAHostTakesAsManyConnectionsFromOneAddressAsAPoolsMembersMake(t *testing.T) {
-	limits := resources()
+// refuse the seventeenth connection in a row, the ninth at once, and on a
+// small machine the sixty-fifth from anyone.
+func TestAHostTakesAsManyConnectionsAsAPoolsMembersMake(t *testing.T) {
+	// Told to take 4096 in all, whatever the machine could hold open.
+	const inAll, perAddress = 4096, 512
+	limits := resources(inAll)
 	defer limits.Close()
 	for name, address := range map[string]string{"an IPv4 address": "/ip4/192.0.2.7/tcp/40000", "an IPv6 address": "/ip6/2001:db8::7/tcp/40000"} {
 		from := ma.StringCast(address)
@@ -745,11 +748,9 @@ func TestAHostTakesAsManyConnectionsFromOneAddressAsAPoolsMembersMake(t *testing
 			}
 			conn.Done()
 		}
-		// And a hundred and fifty at once, as a household's workers hold
-		// them: more than libp2p lets pass through at once on a small
-		// machine, and with the sixty before, fewer than may come at a run.
+		// And three hundred at once, as a household's workers hold them.
 		var held []network.ConnManagementScope
-		for i := range 150 {
+		for i := range 300 {
 			conn, err := limits.OpenConnection(network.DirInbound, true, from)
 			if err != nil {
 				t.Fatalf("connection %d at once from %s: %v", i+1, name, err)
@@ -760,38 +761,49 @@ func TestAHostTakesAsManyConnectionsFromOneAddressAsAPoolsMembersMake(t *testing
 			conn.Done()
 		}
 	}
-	// It is still a limit: one address cannot take every connection there is.
-	from, refused := ma.StringCast("/ip4/192.0.2.9/tcp/40000"), false
-	var held []network.ConnManagementScope
-	for range 2 * perAddress {
-		conn, err := limits.OpenConnection(network.DirInbound, true, from)
-		if err != nil {
-			refused = true
-			break
+	// It is still a limit. One address cannot take every connection there
+	// is, and all addresses together have the room that was said.
+	taken := func(from func(i int) string, tries int) (held int) {
+		var open []network.ConnManagementScope
+		for i := range tries {
+			conn, err := limits.OpenConnection(network.DirInbound, true, ma.StringCast(from(i)))
+			if err != nil {
+				break
+			}
+			open = append(open, conn)
 		}
-		held = append(held, conn)
-	}
-	for _, conn := range held {
-		conn.Done()
-	}
-	if !refused {
-		t.Errorf("%d connections at once from one address were all taken", 2*perAddress)
-	}
-	// Many addresses together have room for a large pool, and not for
-	// every connection there could be.
-	held, refused = nil, false
-	for i := range 2 * inAll {
-		conn, err := limits.OpenConnection(network.DirInbound, true, ma.StringCast(fmt.Sprintf("/ip4/198.51.%d.%d/tcp/40000", i/250, i%250+1)))
-		if err != nil {
-			refused = true
-			break
+		for _, conn := range open {
+			conn.Done()
 		}
-		held = append(held, conn)
+		return len(open)
 	}
-	for _, conn := range held {
-		conn.Done()
+	if held := taken(func(int) string { return "/ip4/192.0.2.9/tcp/40000" }, 2*inAll); held != perAddress {
+		t.Errorf("%d connections at once were taken from one address, want %d", held, perAddress)
 	}
-	if len(held) < 1000 || !refused {
-		t.Errorf("%d connections at once from as many addresses were taken, refused: %v", len(held), refused)
+	if held := taken(func(i int) string { return fmt.Sprintf("/ip4/198.51.%d.%d/tcp/40000", i/250, i%250+1) }, 2*inAll); held != inAll {
+		t.Errorf("%d connections at once were taken from as many addresses, want %d", held, inAll)
+	}
+}
+
+// How many connections a host takes comes of what its machine can hold
+// open, unless its owner says: a large machine takes many, and a small one
+// still has room for a household.
+func TestAHostsRoomComesOfWhatItsMachineCanHoldOpen(t *testing.T) {
+	for name, tt := range map[string]struct{ asked, files, inAll, perAddress, perSecond int }{
+		"a machine that allows a million files": {0, 1 << 20, 1 << 19, 1 << 16, 1 << 13},
+		"one that allows 65536":                 {0, 65536, 32768, 4096, 512},
+		"one that allows 1024":                  {0, 1024, 512, 256, 32},
+		"one that allows very few":              {0, 64, 512, 256, 32},
+		"a system that does not say":            {0, 0, 8192, 1024, 128},
+		"an owner who says 20000":               {20000, 1024, 20000, 2500, 312},
+		"an owner who says very few":            {64, 1 << 20, 64, 64, 32},
+	} {
+		if inAll, perAddress, perSecond := room(tt.asked, tt.files); inAll != tt.inAll || perAddress != tt.perAddress || perSecond != tt.perSecond {
+			t.Errorf("%s: %d in all, %d from one address, %d a second; want %d, %d, %d", name, inAll, perAddress, perSecond, tt.inAll, tt.perAddress, tt.perSecond)
+		}
+	}
+	// This machine says how many it allows, and it is a number that means something.
+	if files := openFiles(); files < 64 || files > 1<<20 {
+		t.Errorf("this machine is said to allow %d open files", files)
 	}
 }
