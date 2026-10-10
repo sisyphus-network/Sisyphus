@@ -91,7 +91,7 @@ Every connection between nodes is encrypted, and each end proves who it is.
 | --- | --- | --- |
 | owner | Whoever holds the node's own key: its own worker, and commands run from its data directory | Everything, including inviting and removing others |
 | worker | A node invited with `pool invite` | Take tasks, fetch any stored blob it can name and store blobs, be given the key of the pool's private network, and publish its own name |
-| client | A node invited with `pool invite --role client` | Submit and watch jobs, list nodes, and manage stored data |
+| client | A node invited with `pool invite --role client` | Submit jobs, and watch and cancel the ones it submitted; list nodes; store data, and pin and release its own pins. One client does not see another's jobs or pins |
 
 Anyone else can complete the handshake and is then refused.
 
@@ -282,8 +282,9 @@ A node keeps a blob for as long as something pins it, and deletes what nothing p
 
 | Pin held for | Placed by | Lasts |
 | --- | --- | --- |
-| `user` | `blob put` and `blob pin` | Until `blob unpin`, or for `--ttl` |
-| `restored` | A coordinator that lost its store, on what it took back from its followers | Until `blob unpin`, or until the time the lost store kept it to; see [Copies on other nodes](#copies-on-other-nodes) |
+| `user` | `blob put` and `blob pin`, by the node's owner | Until `blob unpin`, or for `--ttl` |
+| `user:<node ID>` | `blob put` and `blob pin`, by a client of the pool | Until that client's `blob unpin`, or the owner's, or for `--ttl`. A client sees its own pins in `blob pins` and no one else's |
+| `restored` | A coordinator that lost its store, on what it took back from its followers | Until the `blob unpin` of the node's owner, not of a client, or until the time the lost store kept it to; see [Copies on other nodes](#copies-on-other-nodes) |
 | `job:<id>` | The coordinator, on a job's inputs and results | While the job runs, then for `--retain` (default 7 days) |
 | `record:<id>` | The coordinator, on a finished job's [record](#a-jobs-record) | Until the job is forgotten (`--keep-jobs`) |
 | `chat:<id>` | The node, on a file attached to a conversation with its planner | Until the conversation is deleted. The change is queued in the node's database with the conversation and applied to the store after, so one that fails, or that a stop cut short, is tried again every two seconds and when the node next starts. A pin of a file the node no longer holds can never be made, so it is reported to whoever attached it and dropped, and does not hold up the changes behind it |

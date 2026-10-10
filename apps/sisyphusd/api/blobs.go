@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -36,7 +37,23 @@ type blobService struct {
 	holders func(blob, asker string) []*pb.BlobHolder
 	// replication tells the node's storage followers what to hold.
 	replication *replication.Manager
+	// owner is the ID of the node itself, whose pins are the user's own and
+	// which may see and release everyone's.
+	owner string
 }
+
+// pinOwner is who a caller's pins are held for: the user, for the node
+// itself, and for a client the user with the client's ID, so that each
+// client's pins are its own to list and to release.
+func (s *blobService) pinOwner(ctx context.Context) string {
+	if client, is := guest(ctx, s.owner); is {
+		return clientOwner + client
+	}
+	return userOwner
+}
+
+// clientOwner begins the name a client's pins are held under.
+const clientOwner = userOwner + ":"
 
 // FileStore is the part of a storage.Store needed to put things in it,
 // read them back, and keep them there.
@@ -208,7 +225,7 @@ func (s *blobService) Pin(ctx context.Context, req *pb.PinBlobRequest) (*pb.PinB
 	if ttl := req.GetTtlSeconds(); ttl > 0 {
 		expires = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
-	err = s.store.Pin(ctx, userOwner, expires, c)
+	err = s.store.Pin(ctx, s.pinOwner(ctx), expires, c)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, status.Errorf(codes.NotFound, "blob %s not found", c)
 	}
@@ -218,12 +235,25 @@ func (s *blobService) Pin(ctx context.Context, req *pb.PinBlobRequest) (*pb.PinB
 	return &pb.PinBlobResponse{}, nil
 }
 
-func (s *blobService) Unpin(_ context.Context, req *pb.UnpinBlobRequest) (*pb.UnpinBlobResponse, error) {
+func (s *blobService) Unpin(ctx context.Context, req *pb.UnpinBlobRequest) (*pb.UnpinBlobResponse, error) {
 	c, err := cid.Decode(req.GetCid())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", req.GetCid(), err)
 	}
-	if err := unpinForUser(s.store, c); err != nil {
+	// A client releases its own pin and no other. The node itself releases
+	// the user's, and with it every client's on the same blob: the store is
+	// its own, and a client that has gone can release nothing.
+	if owner := s.pinOwner(ctx); owner != userOwner {
+		err = s.store.Unpin(owner, c)
+	} else {
+		err = unpinForUser(s.store, c)
+		for _, pin := range s.store.Pins() {
+			if pin.CID.Equals(c) && strings.HasPrefix(pin.Owner, clientOwner) {
+				err = errors.Join(err, s.store.Unpin(pin.Owner, c))
+			}
+		}
+	}
+	if err != nil {
 		return nil, status.Errorf(codes.Internal, "unpin blob: %v", err)
 	}
 	return &pb.UnpinBlobResponse{}, nil
@@ -237,9 +267,15 @@ func unpinForUser(store FileStore, c cid.Cid) error {
 	return errors.Join(store.Unpin(userOwner, c), store.Unpin(replication.RestoredOwner, c))
 }
 
-func (s *blobService) ListPins(context.Context, *pb.ListPinsRequest) (*pb.ListPinsResponse, error) {
+// ListPins lists what is kept, for whom and until when. A client is shown
+// its own pins and not what the node keeps for anyone else.
+func (s *blobService) ListPins(ctx context.Context, _ *pb.ListPinsRequest) (*pb.ListPinsResponse, error) {
 	var res pb.ListPinsResponse
+	client, limited := guest(ctx, s.owner)
 	for _, pin := range s.store.Pins() {
+		if limited && pin.Owner != clientOwner+client {
+			continue
+		}
 		listed := &pb.Pin{Cid: pin.CID.String(), Owner: pin.Owner}
 		if !pin.Expires.IsZero() {
 			listed.ExpiresAt = timestamppb.New(pin.Expires)

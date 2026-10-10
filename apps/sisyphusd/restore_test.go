@@ -155,8 +155,7 @@ func TestACoordinatorThatLostItsStoreTakesBackWhatItSignedForWithoutBeingAsked(t
 		t.Errorf("the coordinator logged:\n%s", q.logs.String())
 	}
 
-	// Its owner sees what happened, has nothing to run, and can let go of
-	// what came back.
+	// A client sees what happened and has nothing to run.
 	client := q.clientOf()
 	if out := mustCLI(t, "blob", "replicas", "--addr", q.addr, "--data-dir", client); !strings.Contains(out, "3 blob(s) are kept that this node took back from its followers after losing its store") || strings.Contains(out, "blob restore") {
 		t.Errorf("blob replicas says:\n%s", out)
@@ -164,7 +163,15 @@ func TestACoordinatorThatLostItsStoreTakesBackWhatItSignedForWithoutBeingAsked(t
 	if out := mustCLI(t, "blob", "restore", "--addr", q.addr, "--data-dir", client); !strings.HasPrefix(out, "restored 0 blob(s), pinned until unpinned\nfollowers hold nothing from an earlier store") {
 		t.Errorf("blob restore printed %q", out)
 	}
+	// What came back stands for pins the lost store held, whoever they were
+	// for, so it is the node's own to let go of and not a client's.
 	mustCLI(t, "blob", "unpin", "--addr", q.addr, "--data-dir", client, open)
+	if _, kept := keptUntil(q.store, replication.RestoredOwner)[open]; !kept {
+		t.Error("a client's blob unpin let go of a blob the node took back")
+	}
+	if _, err := q.blobs.Unpin(q.ctx, &pb.UnpinBlobRequest{Cid: open}); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { return len(q.copiesOf(open)) == 0 })
 	if _, kept := keptUntil(q.store, replication.RestoredOwner)[open]; kept {
 		t.Error("blob unpin left the pin on a blob that was taken back")

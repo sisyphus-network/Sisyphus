@@ -21,7 +21,7 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 | --- | --- | --- |
 | Owner / coordinator | Whoever holds a coordinating node's `node.key` | Everything in its pool: members, jobs in the clear, private jobs' keys, the swarm key, what is pinned, splitting and combining. Nothing checks a coordinator. |
 | Worker | A node admitted with `pool invite` | The payload, inputs and key of every task it is handed. Any blob in the pool by CID, and the swarm key. It cannot read jobs or list pins. |
-| Client | A node admitted with `pool invite --role client` | Submitting jobs, reading and cancelling every job on the coordinator, pinning, unpinning and collecting stored data, the swarm key. Clients are not separated from one another. |
+| Client | A node admitted with `pool invite --role client` | Submitting jobs, and reading and cancelling the jobs it submitted; pinning, and listing and releasing its own pins; collecting stored data nothing pins; where copies are held, of everything pinned; the swarm key, and so any blob by CID. Another client's job is, to it, a job that is not there (`api/server.go`, `own`). |
 | Storage follower | A worker started with `--replica-dir`, or a worker's IPFS Cluster peer | A copy of what the coordinator pinned, which it can read unless sealed. It cannot change what is kept. |
 | Local user | Anything running on a node's machine | Without the token: what the node is, and its files' names, members, peers and workers. With `api.token`: everything the local API does. With the data directory: the node. |
 | Desktop app | `apps/sisyphus`, a client of the local API | The token. Its window is sandboxed from its main process (`apps/sisyphus/src/main/index.ts`); the bridge between them has not been reviewed. |
@@ -166,7 +166,7 @@ So a worker with `--containers` must trust every client of every pool it works f
 
 Detail: [How long data is kept](../apps/sisyphusd/README.md#how-long-data-is-kept), [Copies on other nodes](../apps/sisyphusd/README.md#copies-on-other-nodes), [IPFS Cluster](../apps/sisyphusd/README.md#ipfs-cluster-pins-held-by-several-nodes).
 
-- **Pins decide what is kept**, and garbage collection deletes the rest, hourly and on `blob gc`. All clients share one `user` pin owner (`api/blobs.go`, `userOwner`): any client can unpin what another stored and collect it.
+- **Pins decide what is kept**, and garbage collection deletes the rest, hourly and on `blob gc`. The node's own pins are held for `user`, and each client's for `user:<its node ID>` (`api/blobs.go`, `pinOwner`): a client lists and releases its own and no other's, and the node itself sees and releases them all. A client that is removed leaves its pins behind, for the node's owner to release.
 - **Without `--replicas`**, the coordinator's disk holds the only copy anything promises to keep. A worker's cache is a cache.
 - **With followers or a cluster**, other nodes hold copies of what is pinned, in the form it is stored: sealed data sealed, the rest readable by the holder. A follower is taken at its word that it holds a copy until the copy is fetched and fails its check. The coordinator signs the lists it gives followers, which is what lets it take data back after losing its store without trusting them ([When the coordinator's store is lost](../apps/sisyphusd/README.md#when-the-coordinators-store-is-lost)).
 - **If the disk with the coordinator's data directory dies**, the pool loses `node.key`, `node.db`, `private.key` and `swarm.key`, which are copied nowhere: the identity, the jobs and members, and the key to every private file. Followers still hold blobs; getting them back without the node key is by hand, and sealed ones are of no use without their key.
@@ -181,7 +181,7 @@ Detail: [How long data is kept](../apps/sisyphusd/README.md#how-long-data-is-kep
 | A dishonest coordinator | Not protected. It reads every job, holds every private job's key, and can alter any result or record. |
 | A worker reading the data it computes on | Not protected, private jobs included. |
 | Members reading each other's unsealed data | Protected only by CIDs being unguessable. |
-| Clients interfering with each other | Not protected: any client reads and cancels any job and unpins any user pin. |
+| Clients interfering with each other | A client reads and cancels only the jobs it submitted, and releases only its own pins. Not protected: a client still fetches any blob it knows the CID of, sees which CIDs are pinned by asking where copies are held, and can start garbage collection. |
 | Colluding workers, or one operator with many nodes | Not protected. |
 | Wrong results from non-deterministic work | Not detectable. |
 | A client attacking a container worker's machine | Docker's defaults, no capabilities, no privilege gain, a process limit. No sandbox. |
