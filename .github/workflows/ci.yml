@@ -63,6 +63,19 @@ jobs:
         run: make cover
       - run: go build ./apps/sisyphusd
 
+  # A pool across machines, as near as one runner gets: each node in a
+  # container with its own address and disk. It is what finds faults that
+  # tests on one machine cannot, since those all run over loopback.
+  rehearsal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Rehearse a pool across containers
+        run: examples/rehearsal.sh
+
   desktop:
     runs-on: ubuntu-latest
     defaults:
