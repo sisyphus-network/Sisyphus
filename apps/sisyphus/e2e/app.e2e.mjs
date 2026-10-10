@@ -88,6 +88,180 @@ test('a window with WebGL offers the topology, wide and narrow', async (t) => {
   }
 })
 
+test('workspace panels retain their open state and widths after relaunch', async (t) => {
+  const profile = testProfile()
+  let app
+  try {
+    ({ app } = await launch(node, profile))
+    let page = await app.firstWindow()
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, even drawn in software, so panel persistence is not testable')
+    }
+    await wide(app, page)
+    await page.evaluate(() => localStorage.setItem('sisyphus-workspace-layout', JSON.stringify({ chat: 58, network: 42, historyOpen: false, historyWidth: 340, topologyOpen: true })))
+    await page.reload()
+    const topology = page.getByRole('separator', { name: 'Resize topology panel' })
+    const history = page.getByRole('separator', { name: 'Resize conversation history panel' })
+    await topology.waitFor()
+    await history.waitFor()
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'false')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const seeded = await page.evaluate(() => JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'))
+    assert.equal(seeded.historyOpen, false)
+    assert.equal(seeded.historyWidth, 340)
+    assert.equal(seeded.topologyOpen, true)
+    assert.equal(seeded.network, 42)
+
+    await app.close()
+    app = undefined
+    ;({ app, page } = await launch(node, profile))
+    await wide(app, page)
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'false')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const restored = await page.evaluate(() => JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'))
+    assert.equal(restored.historyOpen, false)
+    assert.equal(restored.historyWidth, 340)
+    assert.equal(restored.topologyOpen, true)
+    assert.equal(restored.network, 42)
+
+    // The collapsed history handle remains available, and can bring its pane back.
+    const restoredHistory = page.getByRole('separator', { name: 'Resize conversation history panel' })
+    await restoredHistory.dblclick()
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'true')
+  } finally {
+    await app?.close()
+    profile.remove()
+  }
+})
+
+test('a collapsed workspace panel reopens by dragging its visible handle', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, even drawn in software, so the topology handle is not available')
+    }
+    await wide(app, page)
+    const handle = page.getByRole('separator', { name: 'Resize topology panel' })
+    await handle.waitFor()
+    const slot = page.locator('.workspace-topology-slot')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const box = await handle.boundingBox()
+    assert.ok(box)
+    // Pull toward chat beyond the closing threshold. Pointer capture must keep
+    // the same drag alive even though the handle/panel geometry changes.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 430, box.y + box.height / 2, { steps: 12 })
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
+    const closedHandle = await handle.boundingBox()
+    assert.ok(closedHandle, 'the collapsed resize handle disappeared')
+    // Keep holding the original pointer and drag back across the handle to reopen.
+    await page.mouse.move(closedHandle.x + closedHandle.width / 2 - 220, closedHandle.y + closedHandle.height / 2, { steps: 10 })
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    await page.mouse.up()
+    await page.waitForTimeout(400)
+    assert.equal(await slot.getAttribute('data-open'), 'true')
+
+    // Keyboard double-click equivalent: Enter on a focused, collapsed handle
+    // opens the same pane without requiring a pointer gesture.
+    await handle.focus()
+    await handle.press('Enter')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
+    await handle.press('Enter')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('the topology canvas stays mounted and stable through repeated advanced-route transitions', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, so the topology canvas is unavailable')
+    }
+    await wide(app, page)
+    const topology = page.getByRole('separator', { name: 'Resize topology panel' })
+    await topology.waitFor()
+    const canvas = page.locator('.workspace-network canvas')
+    await canvas.waitFor()
+    const identity = await canvas.evaluate((element) => ({ tag: element.tagName, width: element.width, height: element.height }))
+    const initialBounds = await canvas.boundingBox()
+    assert.ok(initialBounds && initialBounds.width > 0 && initialBounds.height > 0)
+
+    for (const route of ['Node overview', 'Operations', 'Settings', 'Workspace', 'Operations', 'Workspace', 'Settings', 'Workspace']) {
+      if (route === 'Workspace') {
+        await page.getByRole('button', { name: 'Open advanced settings' }).click().catch(() => {})
+        const workspaceLink = page.getByRole('complementary').getByRole('link', { name: 'Workspace', exact: true })
+        if (await workspaceLink.isVisible().catch(() => false)) await workspaceLink.click()
+        else await page.getByRole('button', { name: 'Open advanced settings' }).click()
+      } else {
+        await open(page, route)
+      }
+      await page.waitForTimeout(260)
+      assert.equal(await canvas.count(), 1, `the globe canvas was removed after navigating to ${route}`)
+      const current = await canvas.evaluate((element) => ({ tag: element.tagName, width: element.width, height: element.height }))
+      assert.equal(current.tag, identity.tag)
+      assert.equal(current.width, identity.width)
+      assert.equal(current.height, identity.height)
+    }
+    const finalBounds = await canvas.boundingBox()
+    assert.ok(finalBounds && finalBounds.width > 0 && finalBounds.height > 0)
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('the topology canvas and camera stay fitted through live window resizes', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, so the topology canvas is unavailable')
+    }
+    const width = await wide(app, page)
+    assert.ok(width > 900)
+    const stage = page.locator('.network-globe-stage')
+    const canvas = stage.locator('canvas')
+    await canvas.waitFor()
+    const initialBox = await stage.boundingBox()
+    const initial = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+    assert.ok(initialBox && initialBox.width > 0 && initialBox.height > 0)
+    assert.ok(initial.width > 0 && initial.height > 0)
+
+    for (const [nextWidth, nextHeight] of [[1040, 720], [1280, 900], [980, 760], [1180, 800]]) {
+      await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h), [nextWidth, nextHeight])
+      await page.waitForFunction(([w, h]) => Math.abs(window.innerWidth - w) < 30 && Math.abs(window.innerHeight - h) < 80, [nextWidth, nextHeight])
+      await page.waitForFunction(() => {
+        const stageEl = document.querySelector('.network-globe-stage')
+        const canvasEl = stageEl?.querySelector('canvas')
+        if (!stageEl || !canvasEl) return false
+        const rect = stageEl.getBoundingClientRect()
+        return rect.width > 0 && rect.height > 0 && canvasEl.width > 0 && canvasEl.height > 0
+      })
+      const box = await stage.boundingBox()
+      const dimensions = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+      assert.ok(box && box.width > 0 && box.height > 0, `globe stage collapsed at ${nextWidth}x${nextHeight}`)
+      assert.ok(dimensions.width > 0 && dimensions.height > 0, `WebGL drawing buffer collapsed at ${nextWidth}x${nextHeight}`)
+      assert.ok(Math.abs(box.width - box.height) <= 2, `globe viewport is not square at ${nextWidth}x${nextHeight}`)
+    }
+    const final = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+    assert.ok(final.width > 0 && final.height > 0)
+    assert.notDeepEqual(final, initial, 'the WebGL drawing buffer never responded to the window size changes')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('a job submitted in the window runs on the pool and shows its result', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
