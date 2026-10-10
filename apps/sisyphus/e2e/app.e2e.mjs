@@ -463,6 +463,14 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
     await page.reload()
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.themeStyle === 'pink')
     assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), initialAccent)
+
+    await page.evaluate(() => {
+      localStorage.setItem('sisyphus-theme', 'light')
+      localStorage.setItem('sisyphus-theme-style', 'blue')
+    })
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light' && document.documentElement.dataset.themeStyle === 'blue')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), '#4f8cff')
   } finally {
     await app.close()
     profile.remove()
