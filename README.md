@@ -145,6 +145,12 @@ V0 deliberately excludes:
 
 You need Go 1.27 or newer. Everything here runs on one machine.
 
+<p align="center">
+  <img src="docs/images/workspace-steps.png" alt="The desktop app: a question answered by a job the planner ran on the pool, beside the globe of known nodes" width="760" />
+</p>
+
+**[Using Sisyphus](docs/user-guide.md)** is a walk through it with pictures: the desktop app, asking the planner a question, running jobs, storing files and adding a second machine.
+
 **The one-minute version.** Starts three nodes, runs a few jobs across them and shuts them down:
 
 ```sh
