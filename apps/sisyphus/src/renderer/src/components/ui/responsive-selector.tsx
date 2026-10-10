@@ -1,7 +1,7 @@
 "use client";
 
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { Drawer } from "vaul";
 import { AnimatePresence, motion } from "motion/react";
@@ -15,6 +15,10 @@ const subscribeToCompactViewport = (callback: () => void) => {
 };
 
 const getCompactViewport = () => window.matchMedia("(max-width: 767px)").matches;
+
+const focusableItems = (content: HTMLElement) => Array.from(content.querySelectorAll<HTMLElement>(
+  'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
+)).filter((item) => item.getClientRects().length > 0);
 
 type SelectorApi = {
   open: boolean;
@@ -33,6 +37,25 @@ export function ResponsiveSelector({ label, direction, trigger, children, classN
   const { rootRef, contentRef, open, setOpen, placement, floatingStyle } = useFloatingSelector();
   const compact = useSyncExternalStore(subscribeToCompactViewport, getCompactViewport, () => false);
   const api = { open, setOpen };
+
+  useEffect(() => {
+    // The mobile drawer manages its own focus. Desktop content lives in a portal,
+    // so ordinary Tab order would otherwise skip it for the underlying form.
+    if (!open || compact) return;
+    const content = contentRef.current;
+    if (!content) return;
+    const previousFocus = document.activeElement;
+    const frame = requestAnimationFrame(() => {
+      (focusableItems(content)[0] ?? content).focus({ preventScroll: true });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected
+        && (content.contains(document.activeElement) || document.activeElement === document.body)) {
+        previousFocus.focus({ preventScroll: true });
+      }
+    };
+  }, [open, compact, contentRef]);
 
   return (
     <div ref={rootRef} className={cn("relative", className)}>
@@ -56,7 +79,30 @@ export function ResponsiveSelector({ label, direction, trigger, children, classN
                 ref={contentRef}
                 key="responsive-selector"
                 role="dialog"
+                tabIndex={-1}
                 aria-label={label}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setOpen(false);
+                  } else if (event.key === "Tab") {
+                    const content = event.currentTarget;
+                    const items = focusableItems(content);
+                    const first = items[0];
+                    const last = items.at(-1);
+                    if (!first) {
+                      event.preventDefault();
+                      content.focus();
+                    } else if (event.shiftKey && (document.activeElement === first || document.activeElement === content)) {
+                      event.preventDefault();
+                      last?.focus();
+                    } else if (!event.shiftKey && document.activeElement === last) {
+                      event.preventDefault();
+                      first.focus();
+                    }
+                  }
+                }}
                 style={floatingStyle}
                 initial={{ opacity: 0, y: placement === "top" ? 10 : -10, scale: 0.97 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
