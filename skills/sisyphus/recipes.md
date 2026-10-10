@@ -45,6 +45,8 @@ Tasks have no network unless asked. Either use an image that already has what th
   "command": ["sh", "-c", "pip install -q numpy && python -c 'import numpy; print(numpy.__version__)'"] }
 ```
 
+The command runs as an ordinary user whose home is `/tmp`, so `pip install` puts the package there and Python finds it. What needs root, such as `apt-get install`, fails: that calls for an image with the package in it.
+
 Installing in every task is slow. For anything run more than once, ask the user for an image with the packages in it.
 
 ## Transcoding a video
@@ -103,6 +105,17 @@ A `graph` job runs the steps in order for you, so you need not wait on each and 
 ## Private data
 
 Pass `private: true` to `store_file` and to `run_job`. The file is sealed before it leaves the machine, and only the workers that run the job are given the key. A private file can be read only by a private job. The key is in `private.key` in the node's data directory: if it is lost, so is everything sealed with it, so tell the user where it is the first time private data is used.
+
+## A question about files, for the planner
+
+When the user wants the node's own planner to work something out from files:
+
+1. `store_file` each file, with `private: true` if it is sensitive, and keep the content IDs.
+2. `ask_planner` with the question and `files` set to those IDs. The planner is told of the files and runs the jobs it needs; the answer comes back with the IDs of the jobs it ran, each an ordinary job for `get_job` and `job_logs`.
+3. Ask again with the `chat_id` returned to carry on. The files stay attached: they need not be given twice.
+4. `delete_chat` when the user is done lets the node stop keeping the files for that conversation. A file the user also stored for themselves is still kept.
+
+The planner's model service reads the question, the files' names and IDs, and the results of the jobs it runs. If that service is not on a machine the user trusts, say so before asking about sensitive data; `get_model` shows which service it is.
 
 ## A long job
 

@@ -38,6 +38,10 @@ type node struct {
 	watched context.Context
 	stored  []*nodepb.StoreFileRequest
 	token   string
+	// files is what the node has stored.
+	files []*nodepb.File
+	// asked is the question the node's planner was last put.
+	asked *nodepb.AskRequest
 	// submitted is the job the node was last asked to run.
 	submitted *nodepb.SubmitJobRequest
 }
@@ -76,7 +80,7 @@ func (n *node) ListJobs(context.Context, *nodepb.ListJobsRequest, ...grpc.CallOp
 }
 
 func (n *node) ListFiles(context.Context, *nodepb.ListFilesRequest, ...grpc.CallOption) (*nodepb.ListFilesResponse, error) {
-	return nil, n.fail("ListFiles")
+	return &nodepb.ListFilesResponse{Files: n.files}, n.fail("ListFiles")
 }
 
 // eventStream gives a job's events and then ends, or breaks.

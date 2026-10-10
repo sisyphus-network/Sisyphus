@@ -66,7 +66,7 @@ Start with pool_status to see which machines there are, and list_workloads to se
 
 What a job stores is dropped seven days after it ends, or whatever time the node's owner set, unless pinned: pin_file keeps a file and list_pins shows what is kept and until when, storage_status says which other nodes hold copies, get_job_record gives a finished job's record and checks it, and publish_name and resolve_name give a result that changes one name to be found by.
 
-Workers may serve language models: ask_model has one answer a prompt, and ask_planner hands a whole question to the node's own planner. Which tools there are depends on how the server was started: it may be read-only, may keep to one directory for files, and offers the tools that change the node itself only if its owner allowed them.`
+Workers may serve language models: ask_model has one answer a prompt, and ask_planner hands a whole question to the node's own planner, with the content IDs of any stored files it is about. Which tools there are depends on how the server was started: it may be read-only, may keep to one directory for files, and offers the tools that change the node itself only if its owner allowed them.`
 
 // New returns a server offering cfg's node to an agent.
 func New(cfg Config) *mcp.Server {

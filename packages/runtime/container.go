@@ -200,8 +200,13 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	// as the image has it, which may be as root inside the container, and
 	// keeps Docker's usual capabilities: an image that installs what it
 	// needs as root would not run without them.
+	//
+	// That user has no home in the image, and a home that cannot be written
+	// to stops much that a command may do first, installing a package for
+	// itself among it. So its home is /tmp, which it can write to, unless
+	// the job's environment gives another.
 	if uid := os.Getuid(); uid >= 0 {
-		args = append(args, "--user", strconv.Itoa(uid)+":"+strconv.Itoa(os.Getgid()), "--cap-drop", "ALL")
+		args = append(args, "--user", strconv.Itoa(uid)+":"+strconv.Itoa(os.Getgid()), "--cap-drop", "ALL", "--env", "HOME=/tmp")
 	}
 	if !task.Network {
 		args = append(args, "--network", "none")
