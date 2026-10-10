@@ -108,6 +108,11 @@ type Config struct {
 	// run a task again to check what a worker returned for it. Nil is none.
 	Audits *runtime.Registry
 	Store  Store
+	// DistinctAddresses has a verified task's copies go only to workers at
+	// different network addresses; see verify.go. AddressOf says where the
+	// worker making a call is, and is the call's own address if left nil.
+	DistinctAddresses bool
+	AddressOf         func(ctx context.Context) string
 	// Journal, if set, is where jobs are kept across restarts; see Recover.
 	Journal Journal
 	// Standings, if set, is where the standing of workers is kept across
@@ -128,6 +133,12 @@ type Coordinator struct {
 	id        string
 	workloads *runtime.Registry
 	audits    *runtime.Registry
+	// distinct is whether a verified task's copies must go to workers at
+	// different addresses, addressOf how a caller's is told, and addresses
+	// where each worker that has connected was when it last did.
+	distinct  bool
+	addressOf func(ctx context.Context) string
+	addresses map[string]string
 	store     Store
 	journal   Journal
 	standings Standings
@@ -273,6 +284,9 @@ func New(cfg Config) *Coordinator {
 		id:        cfg.ID,
 		workloads: cfg.Workloads,
 		audits:    cfg.Audits,
+		distinct:  cfg.DistinctAddresses,
+		addressOf: cfg.AddressOf,
+		addresses: make(map[string]string),
 		store:     cfg.Store,
 		journal:   cfg.Journal,
 		standings: cfg.Standings,
@@ -289,6 +303,9 @@ func New(cfg Config) *Coordinator {
 		seqs:      make(map[string]uint64),
 		logged:    make(map[string]int),
 		keys:      make(map[string]*pb.TaskAssignment),
+	}
+	if c.addressOf == nil {
+		c.addressOf = callersAddress
 	}
 	// Attempts that have run past their time are looked for once a second.
 	c.aggregating.Add(1)
@@ -711,7 +728,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	// steps of a job whose tasks are jobs are held to that as each begins.
 	_, steps := workload.(runtime.Composite)
 	if able := c.ableLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs); verify >= 2 && !steps && able < verify {
-		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job", verify, able)
+		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job%s", verify, able, c.apart())
 	}
 	job := jobmodel.New(id, workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
 	switch {
@@ -873,6 +890,9 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	capabilities.Labels = labelsOf(id, hello.GetName(), capabilities.GetLabels())
 
 	now := time.Now()
+	c.mu.Lock()
+	c.addresses[id] = c.addressOf(stream.Context())
+	c.mu.Unlock()
 	w := &worker{
 		id:             id,
 		name:           hello.GetName(),
@@ -1385,7 +1405,7 @@ func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) *
 	var best *worker
 	bestFree := 0
 	for _, w := range c.workers {
-		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) {
+		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) || c.besideLocked(task, w.id) {
 			continue
 		}
 		free := int(w.capabilities.GetTaskSlots()) - len(w.running)
