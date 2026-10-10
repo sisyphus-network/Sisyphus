@@ -691,7 +691,8 @@ func TestACallThatFailsIsMadeAgain(t *testing.T) {
 	p.admit(identity.ID())
 	late := make(chan *Host, 1)
 	go func() {
-		time.Sleep(50 * time.Millisecond)
+		// It is some milliseconds in starting, and the first call is
+		// refused at once; the calls made again wait far longer in all.
 		h, err := New(Config{Identity: identity, Listen: "127.0.0.1:" + port, Allow: p.allow, Discover: true, Log: quiet})
 		if err != nil {
 			t.Error(err)
