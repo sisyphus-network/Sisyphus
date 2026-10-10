@@ -118,13 +118,14 @@ func TestAVerifiedTaskIsRunByDifferentWorkersAndSucceedsWhenTheyAgree(t *testing
 	}
 
 	// One result settles nothing.
-	alpha.returns(first, `{"count":7}`, "blob-b", "blob-a")
+	blobA, blobB := p.upload("blob-a"), p.upload("blob-b")
+	alpha.returns(first, `{"count":7}`, blobB, blobA)
 	waitFor(t, func() bool { return p.job(id).GetTasks()[0].GetProgress() == 0.5 })
 	if got := p.job(id); got.GetState() != pb.JobState_JOB_STATE_RUNNING || got.GetTasks()[0].GetState() != pb.TaskState_TASK_STATE_RUNNING {
 		t.Errorf("after one result the job is %v and its task %v", got.GetState(), got.GetTasks()[0].GetState())
 	}
 	// The same output and the same blobs, in whatever order they are named.
-	beta.returns(second, `{"count":7}`, "blob-a", "blob-b", "blob-a")
+	beta.returns(second, `{"count":7}`, blobA, blobB, blobA)
 	done := p.wait(id)
 	if done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || string(done.GetResult()) != `{"count":7}` {
 		t.Fatalf("the job %v: %s, %s", done.GetState(), done.GetResult(), done.GetError())
@@ -227,8 +228,8 @@ func TestAVerifiedJobFailsWhenItsWorkersCannotAgree(t *testing.T) {
 	crew := p.crew("alpha", "beta", "gamma")
 	id := p.submit(verifiedPrimes(1, 2)).GetJobId()
 	first, second := crew[0].assignment(), crew[1].assignment()
-	crew[0].returns(first, `{"count":7}`, "blob-a")
-	crew[1].returns(second, `{"count":7}`, "blob-b")
+	crew[0].returns(first, `{"count":7}`, p.upload("blob-a"))
+	crew[1].returns(second, `{"count":7}`, p.upload("blob-b"))
 	crew[2].returns(crew[2].assignment(), `{"count":7}`)
 	failed := p.wait(id)
 	if failed.GetState() != pb.JobState_JOB_STATE_FAILED || failed.GetTasks()[0].GetState() != pb.TaskState_TASK_STATE_FAILED {
