@@ -156,6 +156,78 @@ test('workspace panels retain their open state and widths after relaunch', async
   }
 })
 
+test('workspace panels resize and persist in RTL', async (t) => {
+  const profile = testProfile()
+  let app
+  try {
+    ({ app } = await launch(node, profile))
+    let page = await app.firstWindow()
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, so topology resizing is unavailable')
+    }
+    await wide(app, page)
+    await page.evaluate(() => {
+      localStorage.setItem('sisyphus-locale', 'he')
+      localStorage.setItem('sisyphus-workspace-layout', JSON.stringify({ chat: 48, network: 52, historyOpen: true, historyWidth: 300, topologyOpen: true }))
+    })
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dir === 'rtl')
+    const topologyHandle = page.locator('.workspace-topology-resize-handle')
+    const topologySlot = page.locator('.workspace-topology-slot')
+    const historyHandle = page.locator('.workspace-history-resize-handle')
+    const historySlot = page.locator('.workspace-history-slot')
+    await topologyHandle.waitFor()
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'true')
+
+    const initialTopology = await topologySlot.evaluate((element) => element.getBoundingClientRect().width)
+    let box = await topologyHandle.boundingBox()
+    assert.ok(box)
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 72, box.y + box.height / 2, { steps: 8 })
+    await page.mouse.up()
+    await page.waitForFunction((width) => (document.querySelector('.workspace-topology-slot')?.getBoundingClientRect().width ?? 0) > width + 24, initialTopology)
+
+    const initialHistory = await historySlot.evaluate((element) => element.getBoundingClientRect().width)
+    box = await historyHandle.boundingBox()
+    assert.ok(box)
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 - 72, box.y + box.height / 2, { steps: 8 })
+    await page.mouse.up()
+    await page.waitForFunction((width) => (document.querySelector('.workspace-history-slot')?.getBoundingClientRect().width ?? 0) > width + 24, initialHistory)
+    const resizedHistory = await historySlot.evaluate((element) => element.getBoundingClientRect().width)
+    await page.waitForFunction(() => {
+      const layout = JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}')
+      return layout.historyWidth > 300 && layout.network > 52
+    })
+    const resizedTopology = await topologySlot.evaluate((element) => element.getBoundingClientRect().width)
+
+    await app.close()
+    app = undefined
+    ;({ app, page } = await launch(node, profile))
+    await page.waitForFunction(() => document.documentElement.dir === 'rtl')
+    await page.waitForFunction(() => {
+      const layout = JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}')
+      return layout.topologyOpen === true && layout.historyOpen === true &&
+        document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true' &&
+        document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'true'
+    })
+    await page.waitForTimeout(450)
+    const restored = await page.evaluate(() => ({
+      layout: JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'),
+      topology: document.querySelector('.workspace-topology-slot')?.getBoundingClientRect().width ?? 0,
+      history: document.querySelector('.workspace-history-slot')?.getBoundingClientRect().width ?? 0,
+    }))
+    assert.ok(Math.abs(restored.topology - resizedTopology) < 24, `topology width changed after RTL relaunch: ${resizedTopology}px → ${restored.topology}px (${JSON.stringify(restored.layout)})`)
+    assert.ok(Math.abs(restored.history - resizedHistory) < 4, `history width changed after RTL relaunch: ${resizedHistory}px → ${restored.history}px (${JSON.stringify(restored.layout)})`)
+  } finally {
+    await app?.close()
+    profile.remove()
+  }
+})
+
 test('a collapsed workspace panel reopens by dragging its visible handle', async (t) => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
