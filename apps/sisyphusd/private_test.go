@@ -267,3 +267,40 @@ func TestKeyFileProblems(t *testing.T) {
 		t.Errorf("unsealing with no temporary directory: %v", err)
 	}
 }
+
+func TestWhatAPrivateJobsTasksLogIsNotPassedOn(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	p.startWorker("a", 2)
+	p.waitForWorkers(1)
+	key, text := sealed.NewKey(), sampleText()
+
+	// Counting words logs how much it was given to count, as a container
+	// would log every line its command printed.
+	logged := func(job *pb.Job) (lines []string) {
+		t.Helper()
+		if job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+			t.Fatalf("job %v: %s", job.GetState(), job.GetError())
+		}
+		for _, e := range p.events(job.GetJobId(), 0) {
+			if e.GetKind() == "log" {
+				lines = append(lines, e.GetText())
+			}
+		}
+		return lines
+	}
+	private := logged(p.privateWordcount(text, key, 2))
+	// Each task says once that it says nothing, however much it logged.
+	if len(private) != 2 {
+		t.Fatalf("the private job's log: %q", private)
+	}
+	for _, line := range private {
+		if line != "this job is private, so what its task logs is not passed on" {
+			t.Errorf("a private job logged %q", line)
+		}
+	}
+
+	open := logged(p.wait(p.submit(&pb.JobSpec{Workload: "wordcount", Params: []byte(`{"input":"` + p.upload(text) + `"}`), MaxTasks: 2}).GetJobId()))
+	if len(open) != 2 || !strings.HasPrefix(open[0], "counting words in ") {
+		t.Errorf("the log of the same job when it is not private: %q", open)
+	}
+}

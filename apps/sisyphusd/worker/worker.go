@@ -207,7 +207,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				defer stops.Delete(assigned.GetTaskId())
 				// What the task reports of itself is passed on a few times a
 				// second while it runs, and once more when it ends.
-				said := new(reports)
+				said := &reports{private: len(assigned.GetKey()) > 0}
 				pass := func() {
 					if update := said.take(assigned); update != nil {
 						send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskUpdate{TaskUpdate: update}})
@@ -340,7 +340,16 @@ type reports struct {
 	progress float64
 	lines    []string
 	fresh    bool
+	// private says the task is of a private job. What such a task logs may
+	// be the data the job seals, a container's every printed line for one,
+	// and a log is passed on and kept unsealed: so it is not passed on.
+	// withheld says that this has been said.
+	private, withheld bool
 }
+
+// withheldLine is what stands in a private job's log for what its task
+// would have logged.
+const withheldLine = "this job is private, so what its task logs is not passed on"
 
 func (r *reports) Progress(done float64) {
 	r.mu.Lock()
@@ -351,6 +360,13 @@ func (r *reports) Progress(done float64) {
 func (r *reports) Log(line string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.private {
+		if !r.withheld {
+			r.withheld, r.fresh = true, true
+			r.lines = append(r.lines, withheldLine)
+		}
+		return
+	}
 	if len(line) > maxLogLine {
 		line = line[:maxLogLine] + " [cut short]"
 	}

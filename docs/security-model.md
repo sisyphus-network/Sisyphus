@@ -12,7 +12,7 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 - **A pool does not keep its members from each other.** Any member can fetch any stored blob it can name. Any client can read, cancel and delete what any other client submitted or stored.
 - **The coordinator is trusted with everything**: every job's parameters and results, every private job's key, the member list, and how each job is split and combined.
 - **A worker sees everything it is given to compute on**, private or not, and can return anything. Verification catches a worker that disagrees with others, not workers that agree to lie.
-- **A private job** keeps stored data from members that are not the coordinator or one of its workers. It does not seal the job's parameters, small result, log lines or error messages.
+- **A private job** keeps stored data from members that are not the coordinator or one of its workers. It does not seal the job's parameters, small result or error messages.
 - **A worker that runs containers runs whatever image and command a client names.** Docker's defaults are all that confine it; nothing here adds to them.
 
 ## Who the parties are
@@ -83,7 +83,8 @@ Detail: [Private jobs](../apps/sisyphusd/README.md#private-jobs). A private job 
 
 - **Who holds the key.** The submitter; the coordinator, from submission; every worker handed one of the job's tasks, in the assignment itself (`coordinator.go`, `handLocked`). Verifying a private job hands it to more workers. A graph gives it to every step. A key once handed out cannot be taken back.
 - **Where it is kept.** In the coordinator's `node.db` while the job is unfinished, so that a restart can take the job up. A finished job is saved without it (`packages/nodedb/jobs.go`, `SaveJob`), with SQLite's `secure_delete` on and the write-ahead log truncated. The disk may still hold traces. Workers hold it in memory only.
-- **What is not sealed.** The parameters, the result the job reports, each task's inline output, error messages, and log lines. For a `container` job every line the command prints is a log line, sent to the coordinator and kept with the job's events, although the same output is sealed where it is stored. These are readable as in the table above.
+- **What is not sealed.** The parameters, the result the job reports, each task's inline output and error messages. These are readable as in the table above. A failed `container` task's error quotes the last line its command printed to standard error.
+- **Logs are withheld.** A worker does not pass on what a private job's task logs, which for a `container` is every line its command prints; it sends one line saying so (`apps/sisyphusd/worker/worker.go`, `reports.Log`). That is the worker's doing: one on a build without it, or one that chooses to, sends them, and the coordinator keeps what it is sent.
 - **What still shows of sealed data.** That it is sealed, its exact size, and equality; see determinism below.
 - **Sealing is deterministic.** The same key and data give the same bytes and so the same CID. Someone who sees two blobs sealed with one key can tell whether they are identical, and whether 64 KiB chunks at the same position in them are. A blob's CID confirms a guess at its whole content only to someone with the key.
 - **On a worker.** A `container` task's input is written unsealed to a temporary directory for as long as the job's tasks run there, and its output files sit unsealed in another until the task ends (`packages/runtime/container.go`, `Execute`, `sharedInputs`).
