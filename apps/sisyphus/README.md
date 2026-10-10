@@ -13,7 +13,7 @@ npm install
 npm run dev
 ```
 
-Start the Go daemon separately from the repository root:
+Build the Go daemon from the repository root before starting the desktop:
 
 ```sh
 nix develop
@@ -25,7 +25,9 @@ Peers are the nodes of its pool and the nodes it has found, and trusting one for
 
 `node dev/check-daemon.mjs [address] [token-file]` asks a running daemon the same questions the client does and prints the answers, which is a quick way to check one against the other without opening a window.
 
-The desktop client connects to the local gRPC API at `127.0.0.1:50051`. Override it for development with `SISYPHUS_API_ADDRESS=127.0.0.1:50052 npm run dev`. The daemon currently accepts loopback API addresses only. Without a running daemon, the UI remains useful as a connection-state view and retries with bounded exponential backoff.
+The desktop client connects to the local gRPC API at `127.0.0.1:50051`. If that API is unavailable and the port is unused, it starts the repository's `bin/sisyphusd` (or `SISYPHUS_DAEMON_PATH`) and reconnects with bounded exponential backoff. An existing daemon is reused and is never stopped by the desktop. A desktop-owned daemon is stopped when the application quits; closing a window on macOS does not quit the application.
+
+Automatic startup uses the daemon's default data directory, a loopback-only ephemeral pool listener, and disabled network discovery. It does not enable containers or remote access. A missing binary or failed startup is reported in the connection diagnostic and is not repeatedly spawned. Run `make build` first. `SISYPHUS_AUTO_START_DAEMON=0` disables startup. Setting a custom `SISYPHUS_API_ADDRESS` or `SISYPHUS_API_TOKEN_FILE` also disables it, since that node belongs to its operator. For example, `SISYPHUS_API_ADDRESS=127.0.0.1:50052 npm run dev` attaches only to that independently started node.
 
 The Electron main process is the gRPC client. It reads the shared `proto/sisyphus/node/v1/node.proto`, calls `GetNodeInfo`, and subscribes to `WatchPeers`. A narrow `contextBridge` API forwards snapshots and reconnect requests to the React renderer; the renderer has no direct Node.js or gRPC access.
 
@@ -33,11 +35,14 @@ The Electron main process is the gRPC client. It reads the shared `proto/sisyphu
 
 The desktop client connects to one local daemon. It shows live node and peer status, manages peer compute permissions, and exposes the Go daemon's chat/model, job, file, and pool APIs. Chat model-provider configuration and credentials belong to the local daemon; the desktop UI does not call model providers directly. Files are limited to 256 MiB in this client and are sent to the daemon in bounded gRPC chunks.
 
-This is still a development client, not a packaged product or remotely accessible Web UI. It does not start or manage the daemon process: start `sisyphusd` separately. Public-node browsing, remote authentication, daemon lifecycle management, and production packaging remain future work.
+This is still a development client, not a packaged product or remotely accessible Web UI. Production packaging must include the matching daemon under `resources/bin/sisyphusd` (`sisyphusd.exe` on Windows); packaging and platform acceptance remain unfinished. Public-node browsing, remote authentication and resource-policy controls remain future work. Shutdown requests SIGTERM and falls back to termination after three seconds; Windows process termination is not a promise of graceful POSIX signal handling.
 
 Run checks with:
 
 ```sh
 npm run typecheck
 npm run build
+npm test
+# After make build: starts a separate temporary node and never uses your data.
+npm run test:daemon
 ```
