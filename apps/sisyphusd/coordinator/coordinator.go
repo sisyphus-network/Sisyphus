@@ -1028,7 +1028,9 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 		read, written := wellFormed(result.GetReadBlobs()), c.keep(a.job, w, result.GetWrittenBlobs())
 		a.job.NoteRead(read...)
 		a.job.NoteTaskOutput(written...)
-		for _, held := range append(read, written...) {
+		// Who holds what is a worker's word for where a blob may be
+		// fetched, and whoever fetches checks what comes against its CID.
+		for _, held := range append(result.GetReadBlobs(), result.GetWrittenBlobs()...) {
 			w.holds[held] = struct{}{}
 		}
 		done := false
