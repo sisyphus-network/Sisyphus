@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +40,36 @@ type Container struct {
 	// MaxOutput is how many bytes of files a task may leave in /output to
 	// be stored. Zero means maxOutput.
 	MaxOutput int64
+	// Confined is how much further than the worker's usual the containers
+	// are held in.
+	Confined Confinement
+}
+
+// Confinement is what a worker's owner asks of the containers that run the
+// pool's tasks, beyond what every one of them is held to.
+type Confinement struct {
+	// Runtime is the runtime the engine is to run them with, by the name
+	// the engine knows it under, in place of its usual: a sandboxed one
+	// such as gVisor's runsc, which stands between the task and the
+	// machine's kernel, or Kata's, which gives each a small machine of its
+	// own. Empty is the engine's usual.
+	Runtime string
+	// ReadOnly gives a task nowhere to write but /output and /tmp, which
+	// is then held in memory: nothing of the image can be changed, and
+	// nothing written anywhere else.
+	ReadOnly bool
+}
+
+// args is what Confinement adds to the engine's command.
+func (c Confinement) args() []string {
+	var args []string
+	if c.Runtime != "" {
+		args = append(args, "--runtime", c.Runtime)
+	}
+	if c.ReadOnly {
+		args = append(args, "--read-only", "--tmpfs", "/tmp")
+	}
+	return args
 }
 
 // What a task leaves in /output is stored in the pool and kept by its
@@ -208,6 +239,7 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	if uid := os.Getuid(); uid >= 0 {
 		args = append(args, "--user", strconv.Itoa(uid)+":"+strconv.Itoa(os.Getgid()), "--cap-drop", "ALL", "--env", "HOME=/tmp")
 	}
+	args = append(args, c.Confined.args()...)
 	if !task.Network {
 		args = append(args, "--network", "none")
 	}
@@ -303,7 +335,7 @@ func (Container) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte
 // CheckContainers reports, as an error, a machine on which container tasks
 // cannot be run: one where Docker is not installed, not running, or not
 // this user's to use.
-func CheckContainers(ctx context.Context) error {
+func CheckContainers(ctx context.Context, confined Confinement) error {
 	var said bytes.Buffer
 	status, err := docker(ctx, []string{"version", "--format", "{{.Server.Version}}"}, io.Discard, &said)
 	if err == nil && status != 0 {
@@ -311,6 +343,24 @@ func CheckContainers(ctx context.Context) error {
 	}
 	if err != nil {
 		return fmt.Errorf("Docker cannot be used here: %w", err)
+	}
+	if confined.Runtime == "" {
+		return nil
+	}
+	// A runtime is named to the engine as an argument, and must not be
+	// read as one of its options.
+	if strings.ContainsFunc(confined.Runtime, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_')
+	}) || strings.HasPrefix(confined.Runtime, "-") {
+		return fmt.Errorf("%q is not the name of a container runtime", confined.Runtime)
+	}
+	var listed bytes.Buffer
+	if status, err := docker(ctx, []string{"info", "--format", "{{range $name, $_ := .Runtimes}}{{$name}} {{end}}"}, &listed, io.Discard); err != nil || status != 0 {
+		return fmt.Errorf("Docker did not say which runtimes it has, so %s cannot be asked for", confined.Runtime)
+	}
+	has := strings.Fields(listed.String())
+	if !slices.Contains(has, confined.Runtime) {
+		return fmt.Errorf("Docker here has no runtime called %s: it has %s. A sandboxed runtime is installed and made known to Docker before a node can use it", confined.Runtime, strings.Join(has, ", "))
 	}
 	return nil
 }

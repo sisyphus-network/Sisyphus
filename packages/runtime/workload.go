@@ -145,7 +145,13 @@ func Builtin() *Registry {
 // them: able to take such a job in and pass it on, with no models of its
 // own to run it.
 func WithContainers() *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Container{}, Transcode{}).With(WithModels("")...)
+	return ContainersConfined(Confinement{})
+}
+
+// ContainersConfined returns what WithContainers does, with the containers
+// held in as a worker's owner asked.
+func ContainersConfined(confined Confinement) *Registry {
+	return NewRegistry(Primes{}, WordCount{}, Container{Confined: confined}, Transcode{Confined: confined}).With(WithModels("")...)
 }
 
 // WithModels returns the workloads that use the language models of the

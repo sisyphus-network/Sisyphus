@@ -30,6 +30,8 @@ import (
 type Transcode struct {
 	// Engine runs the container engine, as Container's does.
 	Engine func(ctx context.Context, args []string, stdout, stderr io.Writer) (status int, err error)
+	// Confined holds its containers in as Container's does.
+	Confined Confinement
 }
 
 // TranscodeParams are a transcode job's parameters.
@@ -129,7 +131,7 @@ func (t Transcode) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	if err := haveTranscodeImage(ctx, engine); err != nil {
 		return nil, err
 	}
-	return Container{Engine: engine}.Execute(ctx, blobs, payload)
+	return Container{Engine: engine, Confined: t.Confined}.Execute(ctx, blobs, payload)
 }
 
 // buildingImage lets one task at a time see to the image, so that tasks
