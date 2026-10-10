@@ -159,7 +159,7 @@
   "minimumMemoryBytes": "Memoria mínima (bytes)",
   "minimumGpus": "GPU mínimas",
   "privateJob": "Trabajo privado",
-  "privateJobWarning": "Los trabajos privados comparten la clave de descifrado con los workers que ejecutan tareas. Usa solo workers de confianza. Perder private.key implica perder el acceso a los datos cifrados.",
+  "privateJobWarning": "Los trabajadores reciben las claves de descifrado necesarias para los datos de este trabajo privado. Los datos cifrados antiguos pueden requerir compartir private.key por compatibilidad. Usa solo trabajadores de confianza. Perder private.key implica perder permanentemente el acceso a los datos cifrados.",
   "submit": "Enviar",
   "cancel": "Cancelar",
   "noJobs": "Aún no hay trabajos.",
