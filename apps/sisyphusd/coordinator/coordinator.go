@@ -488,6 +488,12 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 	if err != nil {
 		return 0, err
 	}
+	// A job's key is kept only while it is unfinished, so only such jobs
+	// have keys to work out again.
+	keys := make(map[string]*pb.TaskAssignment)
+	for _, job := range jobs {
+		keys[job.ID], _ = c.keysFor(job.ID, job.Key, job.Params)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, s := range standings {
@@ -495,6 +501,7 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 	}
 	for _, job := range jobs {
 		job.Needs = c.needs(job.Workload, job.Params, len(job.Key) > 0)
+		c.keys[job.ID] = keys[job.ID]
 		// What happened to it before comes back with it. A job whose events
 		// cannot be read is still a job.
 		events, err := c.journal.LoadEvents(job.ID)
@@ -677,6 +684,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	if len(payloads) == 0 {
 		return nil, status.Error(codes.Internal, "workload split the job into no tasks")
 	}
+	keys, old := c.keysFor(id, spec.GetKey(), spec.GetParams())
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -726,6 +734,11 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		asked += fmt.Sprintf(", each to be verified by %d workers", verify)
 	}
 	c.recordLocked(job, eventSubmitted, whole, "", asked)
+	c.keys[job.ID] = keys
+	if old != nil {
+		c.log.Warn("a private job names an input sealed with a sealing key itself, so its workers are given that key whole", "job", job.ID, "input", old.String())
+		c.recordLocked(job, eventLog, whole, "", "input "+old.String()+" was sealed before each file had a key of its own, so this job's workers are given the whole sealing key; store the file again to give them only its own")
+	}
 
 	c.scheduleLocked()
 	return job.ToProto(), nil
@@ -1195,34 +1208,34 @@ func (c *Coordinator) needs(workload string, params []byte, private bool) []stri
 	return needs
 }
 
-// keysLocked returns the keys the workers of a private job are given, as
-// the part of a task's assignment that carries them, working them out the
-// first time. They are the job's own key, which what its tasks store is
-// sealed with, and the key of each sealed blob the job's parameters name.
-// The sealing key the job was submitted with is not among them: a worker
-// is given what opens this job's data, and with that opens nothing else
-// the same key seals.
+// keysFor works out the keys the workers of a private job are given, as
+// the part of a task's assignment that carries them. They are the job's
+// own key, which what its tasks store is sealed with, and the key of each
+// sealed blob the job's parameters name. The sealing key the job was
+// submitted with is not among them: a worker is given what opens this
+// job's data, and with that opens nothing else the same key seals.
 //
 // An input sealed before keys were derived is opened by the sealing key
 // and nothing less. A job that names one has its workers given that key
-// whole, as every private job's once were, and it is said in the job's
-// events that they were.
-func (c *Coordinator) keysLocked(job *jobmodel.Job) *pb.TaskAssignment {
-	if given, worked := c.keys[job.ID]; worked || len(job.Key) == 0 {
-		return given
+// whole, as every private job's once were, and the first such input is
+// returned so that it can be said.
+//
+// It reads the store, which may take its time over a blob it does not
+// hold, so it is not called with the lock held.
+func (c *Coordinator) keysFor(jobID string, sealing, params []byte) (given *pb.TaskAssignment, old *cid.Cid) {
+	if len(sealing) == 0 {
+		return nil, nil
 	}
-	key := sealed.Key(job.Key)
-	own := key.ForJob(job.ID)
-	given := &pb.TaskAssignment{Keys: []*pb.SealingKey{{Id: own.ID[:], Key: own.Key[:]}}}
+	key := sealed.Key(sealing)
+	own := key.ForJob(jobID)
+	given = &pb.TaskAssignment{Keys: []*pb.SealingKey{{Id: own.ID[:], Key: own.Key[:]}}}
 	held := map[sealed.KeyID]bool{own.ID: true}
-	for _, named := range namedBlobs(job.Params) {
-		switch id, old, is := c.sealedWith(named); {
+	for _, named := range namedBlobs(params) {
+		switch id, whole, is := c.sealedWith(named); {
 		case !is || held[id]:
-		case old:
-			if given.Key == nil {
-				given.Key = job.Key
-				c.log.Warn("a private job names an input sealed with a sealing key itself, so its workers are given that key whole", "job", job.ID, "input", named.String())
-				c.recordLocked(job, eventLog, whole, "", "input "+named.String()+" was sealed before each file had a key of its own, so this job's workers are given the whole sealing key; store the file again to give them only its own")
+		case whole:
+			if old == nil {
+				given.Key, old = sealing, &named
 			}
 		default:
 			held[id] = true
@@ -1230,8 +1243,7 @@ func (c *Coordinator) keysLocked(job *jobmodel.Job) *pb.TaskAssignment {
 			given.Keys = append(given.Keys, &pb.SealingKey{Id: derived.ID[:], Key: derived.Key[:]})
 		}
 	}
-	c.keys[job.ID] = given
-	return given
+	return given, old
 }
 
 // sealedWith reads the head of a stored blob: whether it is sealed, and
@@ -1331,7 +1343,7 @@ func (c *Coordinator) scheduleLocked() {
 func (c *Coordinator) handLocked(w *worker, a assignment) {
 	c.recordLocked(a.job, eventTaskStarted, a.task.Index, w.name, fmt.Sprintf("attempt %d", a.attempt))
 	w.running[a.task.ID] = a
-	keys := c.keysLocked(a.job)
+	keys := c.keys[a.job.ID]
 	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
 		TaskId:   a.task.ID,
 		JobId:    a.job.ID,

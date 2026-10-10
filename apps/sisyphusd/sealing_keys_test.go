@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ipfs/go-cid"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
@@ -207,5 +209,33 @@ func TestAPrivateJobWaitsForAWorkerThatTakesItsKeys(t *testing.T) {
 	now.reply(&pb.TaskResult{TaskId: a.GetTaskId(), Attempt: a.GetAttempt(), Outcome: &pb.TaskResult_Output{Output: []byte(`{"count":4}`)}})
 	if done := p.wait(private); done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
 		t.Errorf("the private job: %v %s", done.GetState(), done.GetError())
+	}
+}
+
+// A private job taken up after a restart is handed out with the keys it
+// was handed out with before.
+func TestAPrivateJobTakenUpAfterARestartComesWithItsKeys(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "node.db")
+	g := gated{started: make(chan struct{}, 16), release: make(chan struct{})}
+	workloads := runtime.NewRegistry(g)
+	db := journalIn(t, file)
+	before := startPoolWith(t, workloads, sameStore, db)
+	key := sealed.NewKey()
+	input := before.sealedFile(key, "what the job is to read")
+	id := before.submit(&pb.JobSpec{Workload: "gated", Params: []byte(`{"input":"` + input.String() + `"}`), MaxTasks: 1, Key: key[:]}).GetJobId()
+	before.stopAndForget()
+	db.Close()
+
+	// The node's store is on its disk and is there after the restart, as
+	// the store of the pool before is given to the pool after.
+	db = journalIn(t, file)
+	kept := before.store
+	after := startPoolWith(t, workloads, func(*storage.Store) coordinator.Store { return kept }, db)
+	w := after.connectRaw(hello("rig", 1, "gated"))
+	w.welcome()
+	a := w.assignment()
+	own := key.ForJob(id)
+	if a.GetJobId() != id || len(a.GetKeys()) != 2 || !bytes.Equal(a.GetKeys()[0].GetKey(), own.Key[:]) || a.GetKey() != nil {
+		t.Errorf("after a restart the task of job %s came with %d keys and a whole key of %d bytes", a.GetJobId(), len(a.GetKeys()), len(a.GetKey()))
 	}
 }
