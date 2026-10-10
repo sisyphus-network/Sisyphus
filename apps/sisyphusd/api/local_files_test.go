@@ -267,6 +267,40 @@ func TestChatDraftsExpireWithoutReleasingExplicitUserFiles(t *testing.T) {
 	}
 }
 
+func TestFileListingUsesActivePinsAndSkipsMalformedRows(t *testing.T) {
+	ctx := context.Background()
+	for _, expiry := range []time.Time{{}, time.Now().Add(time.Hour), time.Now().Add(-time.Hour)} {
+		store, db := storage.NewMemory(), newFileList(t)
+		c, err := store.Put(ctx, strings.NewReader("a pinned file"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Unpin(storage.GraceOwner, c); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Pin(ctx, "owner", expiry, c); err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range []nodedb.File{{CID: "invalid CID"}, {CID: c.String(), Name: "healthy"}} {
+			if err := db.AddFile(row); err != nil {
+				t.Fatal(err)
+			}
+		}
+		service := &localService{cfg: LocalConfig{Store: brokenStore{Store: store, failOpen: true}, Files: db}}
+		listed, err := service.ListFiles(ctx, &nodepb.ListFilesRequest{})
+		if expiry.IsZero() || expiry.After(time.Now()) {
+			if err != nil || len(listed.GetFiles()) != 1 || listed.Files[0].Name != "healthy" {
+				t.Fatalf("protected file required a storage request or bad row hid it: %v, %v", listed, err)
+			}
+		} else if status.Code(err) != codes.Internal {
+			t.Fatalf("expired pin bypassed storage check: %v", err)
+		}
+		if rows, err := db.Files(); err != nil || len(rows) != 2 {
+			t.Fatalf("listing changed catalogue: %v, %v", rows, err)
+		}
+	}
+}
+
 func TestFileListingPreservesMetadataAndReportsStoreFailures(t *testing.T) {
 	ctx := context.Background()
 	for _, damaged := range []bool{false, true} {
@@ -279,7 +313,8 @@ func TestFileListingPreservesMetadataAndReportsStoreFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 		s := &localService{cfg: LocalConfig{Store: brokenStore{Store: storage.NewMemory(), failOpen: true}, Files: db}}
-		if _, err := s.ListFiles(ctx, &nodepb.ListFilesRequest{}); status.Code(err) != codes.Internal {
+		_, err := s.ListFiles(ctx, &nodepb.ListFilesRequest{})
+		if (!damaged && status.Code(err) != codes.Internal) || (damaged && err != nil) {
 			t.Fatalf("damaged=%v: %v", damaged, err)
 		}
 		if files, err := db.Files(); err != nil || len(files) != 1 {

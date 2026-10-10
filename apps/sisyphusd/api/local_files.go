@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -166,10 +167,26 @@ func (s *localService) ListFiles(ctx context.Context, _ *nodepb.ListFilesRequest
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 	var res nodepb.ListFilesResponse
+	// Pins are local metadata even for remote stores. Only unprotected rows
+	// need a storage read to distinguish a collected draft from a live file.
+	kept := make(map[string]bool)
+	if pins, ok := s.cfg.Store.(interface{ Pins() []storage.Pin }); ok {
+		now := time.Now()
+		for _, pin := range pins.Pins() {
+			if pin.Expires.IsZero() || pin.Expires.After(now) {
+				kept[pin.CID.String()] = true
+			}
+		}
+	}
 	for _, file := range files {
 		c, err := cid.Decode(file.CID)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "invalid catalogue CID: %v", err)
+			slog.Warn("skipping invalid file catalogue CID", "error", err)
+			continue
+		}
+		if kept[c.String()] {
+			res.Files = append(res.Files, localFile(file))
+			continue
 		}
 		// Collection can remove an abandoned upload while its metadata remains.
 		// Do not delete that metadata from a read: a concurrent upload/restore
