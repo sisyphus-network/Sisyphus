@@ -186,6 +186,32 @@ test('a node that stops is said to be gone, and the window finds it again when i
   }
 })
 
+test('Operations recovers in place when its node disconnects and reconnects', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await open(page, 'Operations')
+    await page.getByRole('textbox', { name: 'Workload' }).waitFor()
+    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+
+    await node.stop()
+    await page.getByText('Daemon unavailable').first().waitFor({ timeout: 30000 })
+    // The shared advanced shell stays navigable while Operations is offline.
+    await page.getByRole('complementary').getByRole('link', { name: 'Operations', exact: true }).waitFor()
+
+    await node.start()
+    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor({ timeout: 60000 })
+    // Recovery returns to the same route and restores its interactive form
+    // without a reload or a manual reconnect action.
+    await page.getByRole('textbox', { name: 'Workload' }).waitFor({ timeout: 30000 })
+    await page.getByRole('button', { name: 'Submit' }).waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+    if (node.child?.exitCode !== null) await node.start()
+  }
+})
+
 test('a question with a file attached is planned, computed on the pool and answered, and the file is private', async () => {
   // The model asks for a job, reads its result and answers; then answers a second turn.
   const model = await standInModel(
