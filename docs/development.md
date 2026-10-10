@@ -12,12 +12,30 @@ The same goes for the tests of `--cluster`, which run real cluster peers and nee
 make build   # bin/sisyphusd
 make test    # go vet, then the tests under the race detector
 make cover   # fails unless the tests execute every statement of hand-written code
+make lint    # go vet and staticcheck, for mistakes the compiler lets through
 make demo    # a three-node pool and a few jobs on this machine, in one terminal
 make proto   # regenerate packages/protocol after editing proto/
 make fmt
 ```
 
-CI runs formatting, `go vet`, the tests under the race detector, `make cover` and a build on every pull request.
+CI runs formatting, `go vet`, staticcheck, the tests under the race detector, `make cover` and a build on every pull request, and for the desktop app its typecheck, unit tests, build and end-to-end tests.
+
+### What is tested how
+
+| Layer | What it is here | Run with |
+| --- | --- | --- |
+| Formatting | `gofmt`, which has one style and no options | `make fmt` |
+| Static checks | `go vet` and [staticcheck](https://staticcheck.dev), pinned in the `Makefile` | `make lint` |
+| Unit tests | Go's own `testing` package, in `_test.go` files beside the code. A package's logic is tested alone, with stand-ins for what it talks to | `go test ./packages/...` |
+| Integration tests | The same tool. `apps/sisyphusd`'s tests start real nodes in the test process, and where a test needs them, the real `ipfs`, `ipfs-cluster-service` and Docker | `make test` |
+| Coverage | Every statement of hand-written Go must be run by some test, with Kubo, Docker and the cluster required so nothing is skipped | `make cover` |
+| The race detector | Every test is run with it | `make test` |
+| Across machines | `examples/rehearsal.sh`: each node in a container with its own address and disk, 25 checks | `examples/rehearsal.sh` |
+| Desktop unit tests | Node's own test runner over the app's modules | `npm test` in `apps/sisyphus` |
+| Desktop end to end | Playwright driving the built Electron app against a node of its own | `npm run test:e2e` in `apps/sisyphus` |
+| Agents | A live trial of the MCP server from Claude Code, by hand, recorded on [#88](https://github.com/sisyphus-network/Sisyphus/issues/88) | by hand |
+
+What has no automated test: the rehearsal is not run by CI, the desktop app has no coverage measure, and nothing drives the app on Windows or macOS beyond building its package and starting its daemon.
 
 ## Where things are
 

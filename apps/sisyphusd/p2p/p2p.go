@@ -259,11 +259,12 @@ func New(cfg Config) (*Host, error) {
 				// A pool's relay carries its members' data, not strangers'
 				// handshakes, so nothing is rationed: no limit on how long
 				// or how much, and room for many nodes behind one address.
-				Limit:                  nil,
-				ReservationTTL:         time.Hour,
-				MaxReservations:        4096,
-				MaxCircuits:            256,
-				BufferSize:             64 << 10,
+				Limit:           nil,
+				ReservationTTL:  time.Hour,
+				MaxReservations: 4096,
+				MaxCircuits:     256,
+				BufferSize:      64 << 10,
+				//lint:ignore SA1019 libp2p means to drop this field, and until it does a peer that reserves again before its place has lapsed needs room for more than one
 				MaxReservationsPerPeer: 4,
 				MaxReservationsPerIP:   4096,
 				MaxReservationsPerASN:  4096,
