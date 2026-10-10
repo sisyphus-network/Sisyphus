@@ -67,7 +67,7 @@ func TestThePoolThinksOnAWorkersModelAndThePlannerPlansWithIt(t *testing.T) {
 		t.Fatalf("the planner said:\n%s", out)
 	}
 	// Each time it thought was a job, as was what it had computed.
-	jobs, err := client.ListJobs(context.Background(), &nodepb.ListJobsRequest{})
+	jobs, err := client.ListJobs(tokenOf(t, dataDir), &nodepb.ListJobsRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestThePoolThinksOnAWorkersModelAndThePlannerPlansWithIt(t *testing.T) {
 	served.fetched = "unserved-model"
 	served.mu.Unlock()
 	waitFor(t, func() bool {
-		job, err := client.GetJob(context.Background(), &nodepb.GetJobRequest{JobId: strings.TrimSpace(waiting)})
+		job, err := client.GetJob(tokenOf(t, dataDir), &nodepb.GetJobRequest{JobId: strings.TrimSpace(waiting)})
 		return err == nil && job.GetJob().GetState() == nodepb.JobState_JOB_STATE_SUCCEEDED && strings.Contains(string(job.GetJob().GetResult()), "Fetched and ready.")
 	})
 	workers, err = client.ListWorkers(context.Background(), &nodepb.ListWorkersRequest{})

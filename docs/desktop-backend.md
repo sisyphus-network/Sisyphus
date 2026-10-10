@@ -27,7 +27,7 @@ SISYPHUS_API_ADDRESS=127.0.0.1:50051 SISYPHUS_API_TOKEN_FILE=<printed path> npm 
 
 ## The token
 
-Anything on the machine can **read** from the local API. Calls that **change** something need the node's token, sent as `authorization: Bearer <token>` metadata. The app's main process already does this (`authorization()` in `src/main/index.ts`). The token is in `api.token` in the node's data directory.
+Anything on the machine can **read** what the node is, who it knows and who works for it. Calls that **change** something, and calls that read jobs, conversations or what files contain, need the node's token, sent as `authorization: Bearer <token>` metadata. The app's main process already does this (`authorization()` in `src/main/index.ts`). The token is in `api.token` in the node's data directory.
 
 ## The calls
 
@@ -42,10 +42,10 @@ Anything on the machine can **read** from the local API. Calls that **change** s
 | `SetPeerComputeTrust` | yes | Set both sides at once. Kept for clients with one switch. |
 | `ListWorkers` | | The nodes connected as this node's workers: name, slots, running tasks, and what each machine has (processor, memory, graphics cards; zero and empty where unknown), and `models`, the language models it serves to the pool. `verified_agreed` and `verified_outvoted` count the results it has returned for verified tasks that were, and were not, among those the task was settled by, in every job so far; `probation` is how many agreeing results it still owes after being outvoted, zero if it is not on probation. |
 | `SubmitJob` | yes | Give the pool a job. Returns it as it stands at once. |
-| `GetJob` | | One job, with its tasks. |
-| `ListJobs`, `WatchJobs` | | Every job on record, newest first. `WatchJobs` re-sends the whole list when any job changes, progress included. |
+| `GetJob` | yes | One job, with its tasks. It needs the token though it changes nothing, as do the three below: a job's parameters, result and log are its owner's. |
+| `ListJobs`, `WatchJobs` | yes | Every job on record, newest first. `WatchJobs` re-sends the whole list when any job changes, progress included. |
 | `CancelJob` | yes | Stop a job that has not finished. |
-| `WatchJobEvents` | | What has happened to one job, then what happens next, ending when the job does: the steps of its life and the lines its tasks log. Pass `after_seq` to pick up where you left off. |
+| `WatchJobEvents` | yes | What has happened to one job, then what happens next, ending when the job does: the steps of its life and the lines its tasks log. Pass `after_seq` to pick up where you left off. |
 | `GetModelConfig` | | Which model the node plans with, and whether a key is set. Never the key. |
 | `SetModelConfig` | yes | Set it. `keep_api_key` changes the model without sending the key again. The key is kept only for the provider and address it was saved with, where an empty address is the provider's usual one: change either and the configuration is saved with no key, which `has_api_key` in the answer shows. |
 | `ListProviders` | | The kinds of model service there are: Ollama, Anthropic, and OpenAI and whatever speaks as it does. Each with its usual address, whether it wants a key, and whether its models are fetched before use. |

@@ -13,7 +13,7 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 - **The coordinator is trusted with everything**: every job's parameters and results, every private job's key, the member list, and how each job is split and combined.
 - **A worker sees everything it is given to compute on**, private or not, and can return anything. Verification catches a worker that disagrees with others, not workers that agree to lie.
 - **A private job** keeps stored data from members that are not the coordinator or one of its workers. It does not seal the job's parameters, small result or error messages.
-- **A worker that runs containers runs whatever image and command a client names.** Docker's defaults are all that confine it; nothing here adds to them.
+- **A worker that runs containers runs whatever image and command a client names.** It is confined by Docker's defaults, with capabilities dropped and privilege gain blocked, and by no sandbox beyond that.
 
 ## Who the parties are
 
@@ -23,7 +23,7 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 | Worker | A node admitted with `pool invite` | The payload, inputs and key of every task it is handed. Any blob in the pool by CID, and the swarm key. It cannot read jobs or list pins. |
 | Client | A node admitted with `pool invite --role client` | Submitting jobs, reading and cancelling every job on the coordinator, pinning, unpinning and collecting stored data, the swarm key. Clients are not separated from one another. |
 | Storage follower | A worker started with `--replica-dir`, or a worker's IPFS Cluster peer | A copy of what the coordinator pinned, which it can read unless sealed. It cannot change what is kept. |
-| Local user | Anything running on a node's machine | Without the token: every read call of the local API. With `api.token`: everything the local API does. With the data directory: the node. |
+| Local user | Anything running on a node's machine | Without the token: what the node is, and its files' names, members, peers and workers. With `api.token`: everything the local API does. With the data directory: the node. |
 | Desktop app | `apps/sisyphus`, a client of the local API | The token. Its window is sandboxed from its main process (`apps/sisyphus/src/main/index.ts`); the bridge between them has not been reviewed. |
 | AI agent | A program driving `sisyphusd mcp` | What the flags leave it; see [below](#an-agent-on-the-mcp-server). |
 | Model service | Ollama, an OpenAI-style service or Anthropic, set with `model set` | Every planner conversation in full: the questions, the names and CIDs of attached files, each job's parameters and its result. |
@@ -33,7 +33,7 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 
 **The node's own files.** `node.key` is the identity; `node.db` holds jobs, members, hashed invitations, unfinished private jobs' keys, planner conversations and the model service's API key in the clear; `api.token`, `pinning.token`, `private.key` and `swarm.key` are secrets. All are created readable by their owner only (`0600`, the directory `0700`). Nothing is encrypted at rest, and nothing uses the operating system's keychain. With `--kubo`, the node key is also written into Kubo's own configuration (`packages/kubo/daemon.go`, `configure`).
 
-**The local API** (`apps/sisyphusd/api/local.go`) listens on a loopback address, which the daemon insists on, without TLS. Calls that change something, fetch a file's content or read planner conversations need the token (`localService.authorize`). The rest need nothing: any program on the machine, under any user, can list every job with its parameters and result (`GetJob`, `ListJobs`, `WatchJobs`), follow its log (`WatchJobEvents`), and list files, members, peers and workers. That includes the unsealed parts of private jobs, and the conversations that run as `chat` jobs. Served to web pages with `--web-listen`, every call needs the token, the page's origin must be listed, and the request must name the machine by a loopback address (`api/web.go`, `NewWebHandler`).
+**The local API** (`apps/sisyphusd/api/local.go`) listens on a loopback address, which the daemon insists on, without TLS. Calls that change something, fetch a file's content, or read jobs or planner conversations need the token (`localService.authorize`): a job's parameters, result and log (`GetJob`, `ListJobs`, `WatchJobs`, `WatchJobEvents`) are read with it, the conversations that run as `chat` jobs among them. The rest need nothing: any program on the machine, under any user, can list the node's files by name and CID, its members, peers and workers. Served to web pages with `--web-listen`, every call needs the token, the page's origin must be listed, and the request must name the machine by a loopback address (`api/web.go`, `NewWebHandler`).
 
 **With `--kubo`**, the node's Kubo daemon takes API calls on a loopback TCP port of its own, with no password (`packages/kubo/daemon.go`, `configure`). A program on the machine that finds the port can read everything the node stores that is not sealed. The cluster peer's API has a random password.
 
@@ -62,7 +62,7 @@ Detail: [Who can connect](../apps/sisyphusd/README.md#who-can-connect).
 - **Trusting a found peer.** The owner can also admit a discovered node as a worker with no invitation ([Trust](../apps/sisyphusd/README.md#trust)). Being discovered gives a node nothing else ([Finding other nodes](../apps/sisyphusd/README.md#finding-other-nodes)).
 - **Removal.** `pool remove` takes the node off the list, ends its worker connection and, with `--kubo`, changes the swarm key (`api/pool.go`, `removeMember`). A worker serving its cache with `--serve` may go on serving the removed node for up to a minute. The removed node keeps everything it had fetched and every private job key it was handed.
 - **The private swarm.** With `--kubo` the pool's Kubo daemons share a 256-bit pre-shared key, handed to every member, worker or client, that asks (`PoolService.Swarm`). Its holder can read everything on that network that is not sealed. `pool rekey` and `pool remove` replace it; the IPFS Cluster secret is SHA-256 of a label and the swarm key, so it changes with it (`apps/sisyphusd/cluster.go`, `clusterSecret`). Re-keying shuts holders of the old key out of the network. It does not take back what they had fetched.
-- **Names are labels.** A node's `--name` is whatever it says. A `chat` or `prompts` job that asks for a model on a named worker (`model@rig`) goes to a worker that calls itself `rig`, not to a particular node ID.
+- **Names are labels.** A node's `--name` is whatever it says. A `chat` or `prompts` job that asks for a model on a named worker (`model@rig`) goes to a worker that calls itself `rig`. To have a particular node run it, ask by node ID (`model@12D3KooW…`): the coordinator labels each worker with the ID of the key it connected with, and takes no worker's word for who it is (`coordinator.go`, `labelsOf`).
 
 ## Data confidentiality
 
@@ -145,22 +145,22 @@ Detail: [Running containers](../apps/sisyphusd/README.md#running-containers).
 | --- | --- |
 | `--rm`, a random name | The image, pulled from wherever its name says |
 | `/input` read-only, `/output` writable, each a temporary directory | The command and environment |
-| `--user` as the node's own user and group | `--network none`, unless the job says `"network": true` |
-| | `--memory` and `--cpus`, absent unless the job sets them |
-| | `--gpus` |
+| `--user` as the node's own user and group, and with it `--cap-drop ALL` | `--network none`, unless the job says `"network": true` |
+| `--security-opt no-new-privileges` | `--memory` and `--cpus`, absent unless the job sets them |
+| `--pids-limit 4096` | `--gpus` |
 
 What that does not do:
 
 - **The image is whatever the submitter names.** The name is checked only so far that Docker cannot read it as an option: one that begins with a dash, or has a space or control character in it, is refused when the job is submitted and again by the worker (`checkImage`). Before that check a job could add Docker options of its own, mounts and `--privileged` among them; a worker on a build without it is still open to that. Naming an image by digest pins what runs only if the submitter wants it pinned.
-- **No further confinement.** No capabilities are dropped, there is no `no-new-privileges`, no process limit, no read-only root, no limit on what is written to `/output` or to the container's own layer, and no user namespace or sandboxed runtime. A node run as root runs containers as root; where the system has no user numbers, the image's user is used.
+- **No sandbox beyond that.** The root filesystem is writable, nothing limits what is written to the container's own layer or to the worker's disk through `/output` while the command runs, and there is no user namespace or sandboxed runtime: the container shares the worker's kernel. A node run as root runs containers as root, though with no capabilities; where the system has no user numbers, the image's user is used and Docker's usual capabilities are kept, since an image that installs what it needs as root would not run without them.
 - **Limits are the submitter's, not the worker's.** A worker's `--offer-memory-mb` is what it advertises and is not enforced.
-- **Output is barely bounded.** What the command prints is kept up to 16 MiB as the task's output. Each line of it is also a log line, cut at 4 KiB, and every one is saved in the coordinator's database with no limit on their number. Files left in `/output` are stored whatever their size.
+- **Output is bounded, loosely.** What the command prints is kept up to 16 MiB as the task's output. Each line of it is also a log line, cut at 4 KiB by the worker and again by the coordinator, which keeps 20,000 lines for a job and then says once that it keeps no more (`coordinator.go`, `logLocked`). Files left in `/output` are stored up to 4 GiB and 1,024 files for a task, beyond which the task fails; the limit is on what is stored, not on what the command may write while it runs.
 
 So a worker with `--containers` must trust every client of every pool it works for, and those pools' coordinators, as it would someone it lets run programs of their choosing in a Docker container with default settings, on its network if they ask. A node that takes work from several pools ([Trust](../apps/sisyphusd/README.md#trust)) keeps their stores apart, not their containers.
 
 **What a malicious job can do to a worker:** with containers, the above. Without, it can spend the worker's slots, fill its cache where `--max-cache-bytes` is not set, and feed crafted input to the built-in workloads and to ffmpeg.
 
-**What a malicious worker can do to a job:** read every input, payload and key it is handed and keep them; return a wrong result; report it stored blobs it did not; fail tasks, or hold them for as long as it likes where the job set no `--timeout`; claim hardware, models and a name it does not have to attract tasks; fetch any other blob in the pool it learns the CID of; and upload without limit unless the coordinator sets `--max-store-bytes`.
+**What a malicious worker can do to a job:** read every input, payload and key it is handed and keep them; return a wrong result; name blobs as stored that it did not store, which are no longer taken as stored unless the coordinator's store holds them, and at most 4,096 for a task; fail tasks, or hold them for as long as it likes where the job set no `--timeout`; claim hardware, models and a name it does not have to attract tasks; fetch any other blob in the pool it learns the CID of; and upload without limit unless the coordinator sets `--max-store-bytes`.
 
 ## Storage and availability
 
@@ -184,7 +184,7 @@ Detail: [How long data is kept](../apps/sisyphusd/README.md#how-long-data-is-kep
 | Clients interfering with each other | Not protected: any client reads and cancels any job and unpins any user pin. |
 | Colluding workers, or one operator with many nodes | Not protected. |
 | Wrong results from non-deterministic work | Not detectable. |
-| A client attacking a container worker's machine | Docker's defaults only. |
+| A client attacking a container worker's machine | Docker's defaults, no capabilities, no privilege gain, a process limit. No sandbox. |
 | Programs on a node's machine reading jobs and conversations | Not protected for reads of the local API; changes need the token. |
 | A stolen node key | No rotation or revocation; remove the node. |
 | Denial of service by a member | No quotas or rate limits. |

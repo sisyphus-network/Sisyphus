@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -28,6 +29,7 @@ import (
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 const (
@@ -152,10 +154,23 @@ type Coordinator struct {
 	// long list have been let go.
 	events map[string][]jobmodel.Event
 	seqs   map[string]uint64
+	// logged is how many lines each job's tasks have logged.
+	logged map[string]int
 }
 
 // maxEvents is how many of a job's events are kept to hand.
 const maxEvents = 5000
+
+// What a worker reports is kept by the coordinator, on its disk and in its
+// memory, so there is only so much of it that a worker can have kept:
+// maxLogLines lines logged by a job's tasks, of maxLogLine bytes each, which
+// is what a worker cuts a line to itself, and maxTaskBlobs blobs named as
+// read or stored by one task.
+const (
+	maxLogLines  = 20000
+	maxLogLine   = 4<<10 + len(" [cut short]")
+	maxTaskBlobs = 4096
+)
 
 type worker struct {
 	id string
@@ -263,6 +278,7 @@ func New(cfg Config) *Coordinator {
 		changed:   make(map[string]chan struct{}),
 		events:    make(map[string][]jobmodel.Event),
 		seqs:      make(map[string]uint64),
+		logged:    make(map[string]int),
 	}
 	// Attempts that have run past their time are looked for once a second.
 	c.aggregating.Add(1)
@@ -425,9 +441,25 @@ func (c *Coordinator) handleUpdate(w *worker, update *pb.TaskUpdate) {
 		a.task.Progress = progress
 	}
 	for _, line := range update.GetLog() {
-		c.recordLocked(a.job, eventLog, a.task.Index, w.name, line)
+		c.logLocked(a.job, a.task.Index, w.name, line)
 	}
 	c.wakeLocked(a.job)
+}
+
+// logLocked keeps a line one of a job's tasks logged, cut to the length a
+// worker should have cut it to, until the job has logged as many as are
+// kept: then it says so, once, in place of the next, and keeps no more.
+func (c *Coordinator) logLocked(job *jobmodel.Job, task int, node, line string) {
+	switch logged := c.logged[job.ID]; {
+	case logged > maxLogLines:
+		return
+	case logged == maxLogLines:
+		line = fmt.Sprintf("this job's tasks have logged %d lines, and what they log from here on is not kept", maxLogLines)
+	case len(line) > maxLogLine:
+		line = strings.ToValidUTF8(line[:maxLogLine], "") + " [cut short]"
+	}
+	c.logged[job.ID]++
+	c.recordLocked(job, eventLog, task, node, line)
 }
 
 // Recover takes up the jobs in the journal where an earlier coordinator
@@ -463,6 +495,11 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 		events, err := c.journal.LoadEvents(job.ID)
 		if err != nil {
 			c.log.Warn("could not load a job's events", "job", job.ID, "error", err)
+		}
+		for _, e := range events {
+			if e.Kind == eventLog {
+				c.logged[job.ID]++
+			}
 		}
 		c.events[job.ID] = events[max(len(events)-maxEvents, 0):]
 		if len(events) > 0 {
@@ -536,6 +573,7 @@ func (c *Coordinator) Prune(now time.Time) (int, error) {
 		delete(c.changed, id)
 		delete(c.events, id)
 		delete(c.seqs, id)
+		delete(c.logged, id)
 	}
 	return len(old), nil
 }
@@ -795,6 +833,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	if capabilities.GetTaskSlots() > maxTasksPerJob {
 		return status.Errorf(codes.InvalidArgument, "task_slots exceeds %d", maxTasksPerJob)
 	}
+	capabilities.Labels = labelsOf(id, hello.GetName(), capabilities.GetLabels())
 
 	now := time.Now()
 	w := &worker{
@@ -854,7 +893,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 				w.relayedConnections, w.relayedBytes = kind.Heartbeat.GetRelayedConnections(), kind.Heartbeat.GetRelayedBytes()
 				if changed := kind.Heartbeat.GetLabels(); changed != nil {
 					// What it has now may be what a waiting job needs.
-					w.capabilities.Labels = changed.GetLabels()
+					w.capabilities.Labels = labelsOf(w.id, w.name, changed.GetLabels())
 					c.scheduleLocked()
 				}
 				c.mu.Unlock()
@@ -977,21 +1016,28 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	// A job that is over has had its tasks taken off every worker's hands,
 	// so a task found here belongs to one that is still going.
 	now := time.Now()
+	if named := len(result.GetReadBlobs()) + len(result.GetWrittenBlobs()); named > maxTaskBlobs {
+		// Every blob named is noted with the job and pinned for it.
+		result = &pb.TaskResult{Outcome: &pb.TaskResult_Error{Error: fmt.Sprintf("the worker named %d blobs as read and stored by the task, and a task may have %d", named, maxTaskBlobs)}}
+	}
 	switch outcome := result.GetOutcome().(type) {
 	case *pb.TaskResult_Output:
 		// What the task stored must outlive the hour a new blob is kept
-		// for, since the job may run longer than that.
-		a.job.NoteRead(result.GetReadBlobs()...)
-		a.job.NoteTaskOutput(result.GetWrittenBlobs()...)
+		// for, since the job may run longer than that. Only what the store
+		// holds is taken as stored: the worker's word for it is not enough.
+		read, written := wellFormed(result.GetReadBlobs()), c.keep(a.job, w, result.GetWrittenBlobs())
+		a.job.NoteRead(read...)
+		a.job.NoteTaskOutput(written...)
+		// Who holds what is a worker's word for where a blob may be
+		// fetched, and whoever fetches checks what comes against its CID.
 		for _, held := range append(result.GetReadBlobs(), result.GetWrittenBlobs()...) {
 			w.holds[held] = struct{}{}
 		}
-		c.pin(a.job, time.Time{}, result.GetWrittenBlobs())
 		done := false
 		if c.replicated(a.job) {
 			// One result among several, which settles the task only if
 			// enough of them are the same.
-			done = c.returnedLocked(w, a, outcome.Output, result.GetWrittenBlobs())
+			done = c.returnedLocked(w, a, outcome.Output, written)
 		} else {
 			c.recordLocked(a.job, eventTaskSucceeded, a.task.Index, w.name, "")
 			done = a.job.Succeed(a.task, outcome.Output)
@@ -1078,6 +1124,42 @@ func (c *Coordinator) pin(job *jobmodel.Job, expires time.Time, cids []string) {
 	if err := c.store.Pin(c.ctx, owner(job), expires, decode(cids)...); err != nil {
 		c.log.Warn("could not pin a job's blobs", "job", job.ID, "error", err)
 	}
+}
+
+// keep pins for a job the blobs a worker says one of its tasks stored, and
+// returns those that are taken to have been stored. A blob the store does
+// not hold was not stored, whatever the worker says, and what is no CID is
+// no blob: neither is noted with the job. A pin that fails for another
+// reason is the store's trouble and not the worker's, so the blob is still
+// noted, as it was before the store was asked one blob at a time.
+func (c *Coordinator) keep(job *jobmodel.Job, w *worker, cids []string) []string {
+	if all := decode(cids); len(all) == len(cids) && c.store.Pin(c.ctx, owner(job), time.Time{}, all...) == nil {
+		return cids
+	}
+	var stored []string
+	for _, named := range cids {
+		blob, err := cid.Decode(named)
+		if err == nil {
+			if err = c.store.Pin(c.ctx, owner(job), time.Time{}, blob); err != nil && !errors.Is(err, storage.ErrNotFound) {
+				c.log.Warn("could not pin a job's blobs", "job", job.ID, "error", err)
+				err = nil
+			}
+		}
+		if err != nil {
+			c.log.Warn("a worker named a blob as stored by its task that the pool does not hold", "job", job.ID, "node", w.id, "blob", named)
+			continue
+		}
+		stored = append(stored, named)
+	}
+	return stored
+}
+
+// wellFormed returns those of cids that are CIDs.
+func wellFormed(cids []string) []string {
+	return slices.DeleteFunc(slices.Clone(cids), func(named string) bool {
+		_, err := cid.Decode(named)
+		return err != nil
+	})
 }
 
 // withKey returns blobs as a private job with the given key sees them:
@@ -1186,6 +1268,26 @@ func (c *Coordinator) slotsLocked(workload string, minMemory uint64, minGPUs int
 		}
 	}
 	return total
+}
+
+// labelsOf is what a worker is labelled with: what it says it offers, and
+// who it is. Who it is the coordinator says for itself, whatever the worker
+// said: its node ID, which is that of the key it connected with, and the
+// name it gave. So a job that asks for a worker by ID is given to that node
+// and no other, where one that asks by name is given to whichever worker
+// has taken the name. A name that is itself a node ID labels nothing, or a
+// worker could pass for the node it names.
+func labelsOf(id, name string, said []string) []string {
+	labels := []string{runtime.WorkerLabel + id}
+	if _, err := peer.Decode(name); err != nil && name != "" {
+		labels = append(labels, runtime.WorkerLabel+name)
+	}
+	for _, label := range said {
+		if !strings.HasPrefix(label, runtime.WorkerLabel) {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 // suits reports whether a worker with the given capabilities can be given

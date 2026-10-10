@@ -36,7 +36,18 @@ type Container struct {
 	// prints to stdout and stderr, and returns the status it exited with.
 	// Nil means Docker.
 	Engine func(ctx context.Context, args []string, stdout, stderr io.Writer) (status int, err error)
+	// MaxOutput is how many bytes of files a task may leave in /output to
+	// be stored. Zero means maxOutput.
+	MaxOutput int64
 }
+
+// What a task leaves in /output is stored in the pool and kept by its
+// coordinator, so there is only so much of it a task may leave: maxOutput
+// bytes unless the worker's owner says otherwise, in maxOutputFiles files.
+const (
+	maxOutput      = 4 << 30
+	maxOutputFiles = 1024
+)
 
 // ContainerParams are a container job's parameters.
 type ContainerParams struct {
@@ -174,15 +185,23 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	var suffix [6]byte
 	rand.Read(suffix[:]) // never fails; see crypto/rand
 	name := "sisyphus-" + hex.EncodeToString(suffix[:])
+	// The command is somebody else's program. It can gain no privilege it
+	// did not start with, whatever the image has in it that would give one,
+	// and can start only so many processes.
 	args := []string{"run", "--rm", "--name", name,
+		"--security-opt", "no-new-privileges", "--pids-limit", "4096",
 		"--volume", input + ":/input:ro", "--volume", output + ":/output",
 		"--env", "SISYPHUS_TASK_INDEX=" + strconv.Itoa(task.Index), "--env", "SISYPHUS_TASK_COUNT=" + strconv.Itoa(task.Count),
 	}
 	// The command runs as whoever runs this node, so that what it leaves
-	// behind is this node's to read and to clear away. Where there is no
-	// such thing as a user number, it runs as the image has it.
+	// behind is this node's to read and to clear away, and with none of
+	// the capabilities Docker gives a container, which that user could not
+	// use anyway. Where there is no such thing as a user number, it runs
+	// as the image has it, which may be as root inside the container, and
+	// keeps Docker's usual capabilities: an image that installs what it
+	// needs as root would not run without them.
 	if uid := os.Getuid(); uid >= 0 {
-		args = append(args, "--user", strconv.Itoa(uid)+":"+strconv.Itoa(os.Getgid()))
+		args = append(args, "--user", strconv.Itoa(uid)+":"+strconv.Itoa(os.Getgid()), "--cap-drop", "ALL")
 	}
 	if !task.Network {
 		args = append(args, "--network", "none")
@@ -229,20 +248,35 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 		return nil, fmt.Errorf("store what the command printed: %w", err)
 	}
 	out.Stdout = stored.String()
+	limit := c.MaxOutput
+	if limit == 0 {
+		limit = maxOutput
+	}
+	room := limit
 	left, _ := os.ReadDir(output) // the directory is this task's own
 	for _, entry := range left {
 		if !entry.Type().IsRegular() {
 			continue
 		}
+		if len(out.Files) == maxOutputFiles {
+			return nil, fmt.Errorf("the task left more than %d files in /output", maxOutputFiles)
+		}
 		file, err := os.Open(filepath.Join(output, entry.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("read the task's output %s: %w", entry.Name(), err)
 		}
-		stored, err := blobs.Put(ctx, file)
+		// One byte more than there is room for is read, so that a file
+		// too long is known as such however long it is.
+		within := &io.LimitedReader{R: file, N: room + 1}
+		stored, err := blobs.Put(ctx, within)
 		file.Close()
 		if err != nil {
 			return nil, fmt.Errorf("store the task's output %s: %w", entry.Name(), err)
 		}
+		if within.N == 0 {
+			return nil, fmt.Errorf("the task left more in /output than the %d bytes a task may: %s", limit, entry.Name())
+		}
+		room = within.N - 1
 		if out.Files == nil {
 			out.Files = make(map[string]string)
 		}

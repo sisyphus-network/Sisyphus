@@ -191,7 +191,7 @@ func (s *server) removeFile(ctx context.Context, args cidArgs) (any, error) {
 }
 
 type askModelArgs struct {
-	Model       string `json:"model" jsonschema:"a model a worker serves, as pool_status names it; add @ and a worker's name to have that worker and no other answer"`
+	Model       string `json:"model" jsonschema:"a model a worker serves, as pool_status names it; add @ and a worker's name or peer_id to have that worker and no other answer"`
 	Prompt      string `json:"prompt" jsonschema:"what to ask"`
 	System      string `json:"system,omitempty" jsonschema:"instructions for the model, if any"`
 	WaitSeconds uint32 `json:"wait_seconds,omitempty" jsonschema:"how long to wait for the answer; 300 if left out"`
