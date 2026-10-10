@@ -172,3 +172,47 @@ func TestKuboIsKeptOffThePublicNetwork(t *testing.T) {
 		}
 	}
 }
+
+// Given a secret, Kubo's API answers the node, which shows it, and nobody
+// who does not: not another program on the machine that has found the
+// port, nor the ipfs command, unless it is given the secret too.
+func TestKubosAPIWantsTheSecretItWasGiven(t *testing.T) {
+	requireKubo(t)
+	repo := filepath.Join(t.TempDir(), "ipfs")
+	ident := newIdentity(t)
+	const secret = "0123456789abcdef0123456789abcdef"
+	d, err := Start(ctx, Config{Repo: repo, Identity: ident, APISecret: secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.BlockPut(ctx, "raw", []byte("kept behind a secret"))
+	if err != nil {
+		t.Fatalf("the node's own call: %v", err)
+	}
+
+	stranger := NewClient(d.Address())
+	if _, err := stranger.BlockGet(ctx, id); err == nil {
+		t.Error("a caller with no secret was given a block")
+	}
+	guesser := NewClient(d.Address())
+	guesser.secret = "a-guess"
+	if _, err := guesser.ID(ctx); err == nil {
+		t.Error("a caller with another secret was answered")
+	}
+	plain := exec.Command("ipfs", "block", "get", id)
+	plain.Env = append(os.Environ(), "IPFS_PATH="+repo)
+	if out, err := plain.CombinedOutput(); err == nil || !strings.Contains(string(out), "Access Denied") {
+		t.Errorf("the ipfs command with no secret: %s, %v", out, err)
+	}
+	if got := ipfs(t, repo, "--api-auth", "basic:"+APIUser+":"+secret, "block", "get", id); got != "kept behind a secret" {
+		t.Errorf("the ipfs command with the secret read %q", got)
+	}
+
+	// Started again with none, it answers anyone, as it did before it was
+	// ever given one: the requirement does not outlast the asking.
+	d.Stop()
+	open := startKubo(t, repo, ident)
+	if got, err := NewClient(open.Address()).BlockGet(ctx, id); err != nil || string(got) != "kept behind a secret" {
+		t.Errorf("with no secret asked for: %q, %v", got, err)
+	}
+}

@@ -35,7 +35,14 @@ type Config struct {
 	// Swarm, if set, puts the daemon on a private network with the other
 	// daemons that hold the same key. Without it the daemon runs offline.
 	Swarm *Swarm
+	// APISecret, if set, is what a caller of the daemon's API must show, as
+	// the password of the user APIUser. Without it the API answers any
+	// program on the machine that finds its port.
+	APISecret string
 }
+
+// APIUser is the name a caller of an API that wants a secret gives with it.
+const APIUser = "sisyphus"
 
 // Swarm describes a private network of Kubo daemons. Only daemons holding
 // the same key can connect to each other; to anything else, including the
@@ -88,7 +95,7 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubo: %w", err)
 	}
-	d := &Daemon{Client: &Client{http: &http.Client{}}, cfg: cfg, binary: binary}
+	d := &Daemon{Client: &Client{http: &http.Client{}, secret: cfg.APISecret}, cfg: cfg, binary: binary}
 	if d.cfg.ReadyTimeout == 0 {
 		d.cfg.ReadyTimeout = time.Minute
 	}
@@ -127,7 +134,7 @@ func (d *Daemon) launch(ctx context.Context) error {
 			return fmt.Errorf("kubo: setting up a repository in %s: %w: %s", cfg.Repo, err, lastLine(out))
 		}
 	}
-	if err := configure(configFile, cfg.Identity, cfg.Swarm); err != nil {
+	if err := configure(configFile, cfg.Identity, cfg.Swarm, cfg.APISecret); err != nil {
 		return fmt.Errorf("kubo: %w", err)
 	}
 	args := []string{"daemon", "--offline"}
@@ -179,6 +186,7 @@ func (d *Daemon) launch(ctx context.Context) error {
 				// Not listening yet; the address file appears when it is.
 				if addr, ok := apiAddress(apiFile); ok {
 					probe = NewClient(addr)
+					probe.secret = cfg.APISecret
 				}
 				continue
 			}
@@ -224,7 +232,7 @@ func (d *Daemon) stop() {
 // the public IPFS network. With a swarm it also installs the swarm's key and
 // the members to stay connected to. Settings it does not mention are left
 // alone.
-func configure(configFile string, ident *identity.Identity, swarm *Swarm) error {
+func configure(configFile string, ident *identity.Identity, swarm *Swarm, secret string) error {
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return err
@@ -244,6 +252,14 @@ func configure(configFile string, ident *identity.Identity, swarm *Swarm) error 
 	set("Identity", "PeerID", ident.ID())
 	set("Identity", "PrivKey", base64.StdEncoding.EncodeToString(ident.Libp2pKey()))
 	set("Addresses", "API", "/ip4/127.0.0.1/tcp/0")
+	// With a secret, the API answers only a caller that shows it. Without
+	// one, a requirement left by an earlier run is taken away, or the
+	// daemon would refuse the node that started it.
+	authorized := map[string]any{}
+	if secret != "" {
+		authorized[APIUser] = map[string]any{"AuthSecret": "basic:" + APIUser + ":" + secret, "AllowedPaths": []string{"/api/v0"}}
+	}
+	set("API", "Authorizations", authorized)
 	set("Addresses", "Gateway", []string{})
 	set("Addresses", "Swarm", []string{})
 	set("Discovery", "MDNS", map[string]any{"Enabled": false})
