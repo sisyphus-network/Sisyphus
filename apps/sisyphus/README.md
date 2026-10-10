@@ -35,7 +35,20 @@ The Electron main process is the gRPC client. It reads the shared `proto/sisyphu
 
 The desktop client connects to one local daemon. It shows live node and peer status, manages peer compute permissions, and exposes the Go daemon's chat/model, job, file, and pool APIs. Chat model-provider configuration and credentials belong to the local daemon; the desktop UI does not call model providers directly. Files are limited to 256 MiB in this client and are sent to the daemon in bounded gRPC chunks.
 
-This is still a development client, not a packaged product or remotely accessible Web UI. Production packaging must include the matching daemon under `resources/bin/sisyphusd` (`sisyphusd.exe` on Windows); packaging and platform acceptance remain unfinished. Public-node browsing, remote authentication and resource-policy controls remain future work. Shutdown requests SIGTERM and falls back to termination after three seconds; Windows process termination is not a promise of graceful POSIX signal handling.
+Public-node browsing, remote authentication and resource-policy controls remain future work. Shutdown requests SIGTERM and falls back to termination after three seconds; Windows process termination is not a promise of graceful POSIX signal handling.
+
+## Native packaging
+
+Build on the target operating system and CPU architecture with Go and Node installed. The packaging hook builds the matching daemon and includes it outside ASAR under `resources/bin/sisyphusd` (`sisyphusd.exe` on Windows). It refuses cross-platform/architecture builds rather than silently shipping a mismatched binary. The protocol is already embedded in the main-process bundle, so no external `.proto` is required at runtime.
+
+```sh
+npm ci
+npm run package:dir   # runnable native app directory under dist/
+npm run test:package  # inspect archive and test its actual embedded daemon
+npm run package:dist  # Linux tar.gz, Windows zip, macOS zip
+```
+
+These are unsigned development artifacts, not signed/notarized releases or installers. `--publish never` prevents release publication. The `Desktop packaging` workflow builds on Linux, Windows and macOS, verifies archive contents and exercises the embedded daemon with temporary data, then uploads seven-day CI artifacts. Green packaging/smoke tests do not prove interactive window, graphics, keyboard or operating-system security-prompt acceptance. Signing/notarization and full platform/window acceptance remain required before a production release.
 
 Run checks with:
 

@@ -1,0 +1,46 @@
+name: Desktop packaging
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/sisyphus
+    env:
+      # CI artifacts are unsigned test builds, never automatically published.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/sisyphus/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run package:dist
+      - run: npm run test:package
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sisyphus-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            apps/sisyphus/dist/*.zip
+            apps/sisyphus/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7

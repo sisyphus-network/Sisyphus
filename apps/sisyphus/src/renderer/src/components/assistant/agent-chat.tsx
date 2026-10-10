@@ -11,6 +11,7 @@ import { Message, MessageContent, MessageResponse } from '@/components/ai-elemen
 import { SisyphusPrompt, type ChatAttachment } from '@/components/assistant/sisyphus-prompt'
 import { DeleteChatConfirmation } from '@/components/assistant/delete-chat-confirmation'
 import { getMessageDirection } from '@/lib/text-direction'
+import { logoUrl } from '@/lib/brand'
 import { getJobHref } from '@/lib/job-navigation'
 import { needsPlannerSetup } from '@/lib/grpc-status'
 import { supportsChatFileReferences } from '@/lib/node-capabilities'
@@ -75,7 +76,7 @@ function ActivityTimeline({ activities, direction, messages }: { activities: Act
 
 function AssistantMark({ working = false, large = false }: { working?: boolean; large?: boolean }) {
   return <motion.span animate={working ? { rotate: [0, -4, 4, 0], scale: [1, 1.04, 1] } : { rotate: 0, scale: 1 }} transition={working ? { repeat: Infinity, duration: 2.4, ease: 'easeInOut' } : { duration: .3 }} className={`sisyphus-assistant-mark relative grid shrink-0 place-items-center ${large ? 'is-large' : 'is-small'} ${working ? 'is-working' : ''}`}>
-    <span className="sisyphus-assistant-mark__halo" aria-hidden="true" /><img src="/logo.png" alt="" className="relative z-[1] size-full rounded-[28%] object-cover" />
+    <span className="sisyphus-assistant-mark__halo" aria-hidden="true" /><img src={logoUrl} alt="" className="relative z-[1] size-full rounded-[28%] object-cover" />
   </motion.span>
 }
 
