@@ -13,6 +13,7 @@ import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/li
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { AgentChat } from '@/components/assistant/agent-chat'
 import { visiblePanelWidth, stepPanelWidth } from '@/lib/panel-width'
+import { webglAvailable } from '@/lib/webgl'
 
 type Messages = ReturnType<typeof getMessages>
 function connected(peer: NodeSnapshot['peers'][number]) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
@@ -193,7 +194,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, peers, nodeLabel,
   const rendererConfig = useMemo(() => ({ alpha: true, antialias: true, powerPreference: 'low-power' as const }), [])
   const ringMaxRadius = useCallback(() => 5, [])
   return <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel}>
-    {size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
+    {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
       <Globe
       ref={globeRef}
       width={size.width}
