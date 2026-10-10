@@ -185,7 +185,7 @@ func TestConfigureForASwarm(t *testing.T) {
 		"/ip4/192.168.1.5/tcp/4101/p2p/12D3KooWAAAA",
 		"/ip4/10.0.0.9/tcp/40000/p2p/12D3KooWBBBB",
 	}}
-	if err := configure(file, ident, swarm); err != nil {
+	if err := configure(file, ident, swarm, ""); err != nil {
 		t.Fatal(err)
 	}
 	config, _ := os.ReadFile(file)
@@ -210,7 +210,7 @@ func TestConfigureForASwarm(t *testing.T) {
 	}
 
 	// Run offline again, the daemon keeps neither the key nor the members.
-	if err := configure(file, ident, nil); err != nil {
+	if err := configure(file, ident, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "swarm.key")); !os.IsNotExist(err) {
@@ -222,14 +222,14 @@ func TestConfigureForASwarm(t *testing.T) {
 	}
 
 	for _, bad := range []string{"/ip4/10.0.0.5/tcp/4101", "/p2p/12D3KooWAAAA", "/ip4/10.0.0.5/tcp/4101/p2p/"} {
-		if err := configure(file, ident, &Swarm{Key: swarm.Key, Peers: []string{bad}}); err == nil {
+		if err := configure(file, ident, &Swarm{Key: swarm.Key, Peers: []string{bad}}, ""); err == nil {
 			t.Errorf("accepted the member address %q", bad)
 		}
 	}
 	// The key cannot be written.
 	os.Remove(filepath.Join(repo, "swarm.key"))
 	os.Mkdir(filepath.Join(repo, "swarm.key"), 0o700)
-	if err := configure(file, ident, swarm); err == nil {
+	if err := configure(file, ident, swarm, ""); err == nil {
 		t.Error("configured a swarm whose key could not be stored")
 	}
 }

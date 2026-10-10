@@ -8,7 +8,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build && node --experimental-strip-types dev/verify-locale-flags.mjs",
     "package:dir": "npm run build && electron-builder --config electron-builder.config.cjs --dir --publish never",
     "package:dist": "npm run build && electron-builder --config electron-builder.config.cjs --publish never",
     "test:package": "node dev/verify-package.mjs",
@@ -29,6 +29,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cn": "^0.4.0",
+    "flagpack-core": "2.1.0",
     "lucide-react": "^1.52.0",
     "motion": "14.0.0",
     "protobufjs": "8.8.0",

@@ -279,7 +279,7 @@ func TestConfigureKeepsSettingsItDoesNotChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	ident := newIdentity(t)
-	if err := configure(file, ident, nil); err != nil {
+	if err := configure(file, ident, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	edited, _ := os.ReadFile(file)

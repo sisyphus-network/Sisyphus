@@ -95,6 +95,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	s3Region := fs.String("s3-region", "", "the bucket's region, for stores that have them")
 	s3Credentials := fs.String("s3-credentials", "", "a file with the access key on its first line and the secret key on its second; they stay on this node")
 	useKubo := fs.Bool("kubo", false, "keep stored data in a Kubo (IPFS) daemon that this node starts and runs alongside itself, on a private network with the rest of its pool; needs the ipfs program installed, and for a worker, a coordinator that uses it too")
+	kuboAPISecret := fs.Bool("kubo-api-secret", false, "with --kubo, and not with --cluster: have Kubo's API, which listens on a loopback port, answer only a caller that shows a secret, kept in the file kubo.token in the data directory; the ipfs program then needs --api-auth basic:sisyphus:<the secret> to be used on the node's repository while the node runs")
 	useCluster := fs.Bool("cluster", false, "with --kubo: also run an IPFS Cluster peer beside Kubo, so that what the pool's coordinator pins is kept by several of the pool's nodes; needs the ipfs-cluster-service program installed, and for a worker, a coordinator that uses it too")
 	swarmPort := fs.Int("swarm-port", 0, "coordinator role with --kubo: TCP port to open so that members' Kubo daemons can connect to this node's directly, which is faster; 0 opens none, and they reach it through --listen")
 	replicas := fs.Int("replicas", 0, "coordinator role: how many copies of everything this node has pinned are to be held by other nodes of the pool, besides its own. Without --cluster they are held by storage followers, and 0 asks none to; with --cluster they are held by the cluster's peers, and 0 means 1")
@@ -159,6 +160,12 @@ func runDaemon(ctx context.Context, args []string) error {
 		case *s3Bucket == "":
 			return errors.New("--s3-endpoint needs --s3-bucket, the bucket to keep stored data in")
 		}
+	}
+	if *kuboAPISecret && !*useKubo {
+		return errors.New("--kubo-api-secret needs --kubo: it is Kubo's API that is given the secret")
+	}
+	if *kuboAPISecret && *useCluster {
+		return errors.New("--kubo-api-secret cannot be used with --cluster: an IPFS Cluster peer pins through Kubo's API and has no way to show it a secret")
 	}
 	if *useCluster && !*useKubo {
 		return errors.New("--cluster needs --kubo: it is on Kubo that a cluster peer pins")
@@ -260,6 +267,15 @@ func runDaemon(ctx context.Context, args []string) error {
 	// coordinator's starts the pool's private network; a worker's joins it.
 	var sidecar *kubo.Daemon
 	var swarm *poolSwarm
+	// Kubo's API is on a loopback port that any program on the machine can
+	// find and drive. Asked to, the node has it want a secret, which it
+	// keeps beside its other secrets and shows with every call.
+	kuboSecret := ""
+	if *kuboAPISecret {
+		if kuboSecret, err = secretIn(filepath.Join(*dataDir, "kubo.token"), "Kubo API secret"); err != nil {
+			return err
+		}
+	}
 	if *useKubo && isCoordinator {
 		// With no port of its own opened, a coordinator's Kubo listens on
 		// this machine only and members are brought to it through --listen.
@@ -269,7 +285,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		network := &kubo.Swarm{Key: key, Port: *swarmPort, Loopback: *swarmPort == 0}
-		if sidecar, err = kubo.Start(ctx, kubo.Config{Repo: filepath.Join(*dataDir, "ipfs"), Identity: ident, Swarm: network}); err != nil {
+		if sidecar, err = kubo.Start(ctx, kubo.Config{Repo: filepath.Join(*dataDir, "ipfs"), Identity: ident, Swarm: network, APISecret: kuboSecret}); err != nil {
 			return err
 		}
 		defer sidecar.Stop()
@@ -277,7 +293,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if *useKubo && !isCoordinator {
 		var leave func()
-		if swarm, leave, err = joinSwarm(ctx, ident, filepath.Join(*dataDir, "ipfs"), *join, coordinatorID, creds, log); err != nil {
+		if swarm, leave, err = joinSwarm(ctx, ident, filepath.Join(*dataDir, "ipfs"), kuboSecret, *join, coordinatorID, creds, log); err != nil {
 			return err
 		}
 		defer leave()
@@ -655,7 +671,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			// node's slots with the work it was started to do.
 			local.WorkFor = takes
 			w.Limit, w.Pool = worker.NewSlots(*slots), coordinatorID
-			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, kubo: *useKubo, syncCache: *syncCache, maxCache: *maxCache}
+			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, kubo: *useKubo, kuboSecret: kuboSecret, syncCache: *syncCache, maxCache: *maxCache}
 			mutual := newReciprocity(&reciprocity{
 				// The node it already works for, being its coordinator, is
 				// not one to work for a second time.
@@ -848,6 +864,9 @@ func runDaemon(ctx context.Context, args []string) error {
 		gateway := &http.Server{Handler: api.NewGateway(readable, held, token, *gatewayOpen)}
 		defer gateway.Close()
 		log.Info("gateway listening", "addr", lis.Addr().String(), "open", *gatewayOpen)
+		if !*gatewayOpen {
+			warnOfKeyInTheClear(log, lis.Addr(), "the gateway", "the node's API token")
+		}
 		go gateway.Serve(lis)
 	}
 
@@ -879,6 +898,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		defer service.Close()
 		defer pins.Close()
 		log.Info("pinning service listening", "addr", lis.Addr().String(), "fetches", sidecar != nil)
+		warnOfKeyInTheClear(log, lis.Addr(), "the pinning service", "its key")
 		go pins.Serve(lis)
 	}
 
@@ -1385,7 +1405,7 @@ func (s *poolSwarm) Rekey(ctx context.Context) error {
 // A worker's Kubo makes its connections outwards. Where it cannot reach the
 // coordinator's directly, it connects to a port on this machine that leads
 // there through the coordinator's own.
-func joinSwarm(ctx context.Context, ident *identity.Identity, repo, addr, coordinatorID string, creds credentials.TransportCredentials, log *slog.Logger) (swarm *poolSwarm, leave func(), err error) {
+func joinSwarm(ctx context.Context, ident *identity.Identity, repo, secret, addr, coordinatorID string, creds credentials.TransportCredentials, log *slog.Logger) (swarm *poolSwarm, leave func(), err error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, nil, err
@@ -1403,7 +1423,7 @@ func joinSwarm(ctx context.Context, ident *identity.Identity, repo, addr, coordi
 	swarm.forward(lis, pb.TunnelTarget_TUNNEL_TARGET_SWARM)
 	key, peers, err := swarm.fetch(ctx, addr, creds)
 	if err == nil {
-		swarm.daemon, err = kubo.Start(ctx, kubo.Config{Repo: repo, Identity: ident, Swarm: &kubo.Swarm{Key: key, Peers: peers}})
+		swarm.daemon, err = kubo.Start(ctx, kubo.Config{Repo: repo, Identity: ident, Swarm: &kubo.Swarm{Key: key, Peers: peers}, APISecret: secret})
 	}
 	if err != nil {
 		stop()
@@ -1563,6 +1583,18 @@ func showIdentity(args []string) error {
 	}
 	fmt.Fprintln(stdout, ident.ID())
 	return nil
+}
+
+// warnOfKeyInTheClear says, of a service that listens over plain HTTP at an
+// address other machines can reach, that the key it is used with crosses
+// the network unencrypted. A service kept to this machine is said nothing
+// of.
+func warnOfKeyInTheClear(log *slog.Logger, addr net.Addr, service, key string) {
+	if tcp, ok := addr.(*net.TCPAddr); ok && tcp.IP.IsLoopback() {
+		return
+	}
+	log.Warn(service+" can be reached from other machines, over plain HTTP: "+key+" crosses the network unencrypted with every request. Put a proxy that speaks TLS in front of it, or keep it to a loopback address",
+		"addr", addr.String())
 }
 
 // filePinInterval is how often queued attachment pin changes are tried

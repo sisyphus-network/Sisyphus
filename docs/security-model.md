@@ -31,11 +31,11 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 | Relay | The coordinator, or a worker started with `--relay` | Who connects to whom, when and how much. The connections it carries are libp2p's own encrypted ones between the two members. |
 | HTTP gateway | `--gateway-listen` on a node | Serves unsealed files by CID to holders of the API token, or to anyone with `--gateway-open`. |
 
-**The node's own files.** `node.key` is the identity; `node.db` holds jobs, members, hashed invitations, unfinished private jobs' keys, planner conversations and the model service's API key in the clear; `api.token`, `pinning.token`, `private.key` and `swarm.key` are secrets. All are created readable by their owner only (`0600`, the directory `0700`). Nothing is encrypted at rest, and nothing uses the operating system's keychain. With `--kubo`, the node key is also written into Kubo's own configuration (`packages/kubo/daemon.go`, `configure`).
+**The node's own files.** `node.key` is the identity; `node.db` holds jobs, members, hashed invitations, unfinished private jobs' keys, planner conversations and the model service's API key in the clear; `api.token`, `pinning.token`, `kubo.token`, `private.key` and `swarm.key` are secrets. All are created readable by their owner only (`0600`, the directory `0700`). Nothing is encrypted at rest, and nothing uses the operating system's keychain. With `--kubo`, the node key is also written into Kubo's own configuration (`packages/kubo/daemon.go`, `configure`).
 
 **The local API** (`apps/sisyphusd/api/local.go`) listens on a loopback address, which the daemon insists on, without TLS. Calls that change something, fetch a file's content, or read jobs or planner conversations need the token (`localService.authorize`): a job's parameters, result and log (`GetJob`, `ListJobs`, `WatchJobs`, `WatchJobEvents`) are read with it, the conversations that run as `chat` jobs among them. The rest need nothing: any program on the machine, under any user, can list the node's files by name and CID, its members, peers and workers. Served to web pages with `--web-listen`, every call needs the token, the page's origin must be listed, and the request must name the machine by a loopback address (`api/web.go`, `NewWebHandler`).
 
-**With `--kubo`**, the node's Kubo daemon takes API calls on a loopback TCP port of its own, with no password (`packages/kubo/daemon.go`, `configure`). A program on the machine that finds the port can read everything the node stores that is not sealed. The cluster peer's API has a random password.
+**With `--kubo`**, the node's Kubo daemon takes API calls on a loopback TCP port of its own, with no password unless asked for (`packages/kubo/daemon.go`, `configure`). A program on the machine that finds the port can read everything the node stores that is not sealed, and pin and unpin in it. Started with `--kubo-api-secret` as well, Kubo answers only a caller that shows a secret the node keeps in `kubo.token`, readable by its owner only; the `ipfs` command then needs `--api-auth` to be used on the repository. It is off by default because that command, used plainly, is how people look at what a node holds, and it cannot be combined with `--cluster`: an IPFS Cluster peer pins through the same API and has no setting for a secret. The cluster peer's own API has a random password.
 
 ### An agent on the MCP server
 
@@ -107,7 +107,7 @@ A `chat`, `prompts` or `embed` job carries its prompts in its parameters, or in 
 
 ### On the wire
 
-TLS and libp2p hide content from outsiders. They do not hide that nodes are talking, to whom, how much or when. The pinning service (`--pinning-listen`) is plain HTTP and its key crosses the network unencrypted. Neither it nor the gateway is held to a loopback address.
+TLS and libp2p hide content from outsiders. They do not hide that nodes are talking, to whom, how much or when. The pinning service (`--pinning-listen`) and the gateway (`--gateway-listen`) are plain HTTP, and neither is held to a loopback address, since both are for other machines to use. Reached from another machine, the pinning service's key, or the node's API token where the gateway is not `--gateway-open`, crosses the network unencrypted. The node says so in its log when it starts either at such an address (`daemon.go`, `warnOfKeyInTheClear`); it does not refuse, and TLS is left to a proxy in front.
 
 ## Result integrity
 
