@@ -29,7 +29,17 @@ export function LanguagePicker({
           label={label}
           value={selectedLabel}
           readOnly
+          role="button"
           onClick={() => setOpen((current) => !current)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " " || event.key === "ArrowDown") {
+              event.preventDefault();
+              setOpen(true);
+            } else if (event.key === "Escape" && open) {
+              event.preventDefault();
+              setOpen(false);
+            }
+          }}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-busy={loading}
