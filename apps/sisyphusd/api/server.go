@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
@@ -60,7 +62,7 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}),
 	)...)
 	pb.RegisterCoordinatorServiceServer(srv, cfg.Coordinator)
-	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: cfg.Coordinator})
+	pb.RegisterNodeServiceServer(srv, &nodeService{coordinator: cfg.Coordinator, owner: cfg.Identity.ID()})
 	if cfg.Replication == nil {
 		cfg.Replication = replication.Off(cfg.Store)
 	}
@@ -72,7 +74,7 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 		holders: func(blob, asker string) []*pb.BlobHolder {
 			return mergeHolders(cfg.Coordinator.Holders(blob, asker), cfg.Replication.Holders(blob, asker))
 		},
-		replication: cfg.Replication,
+		replication: cfg.Replication, owner: cfg.Identity.ID(),
 	})
 	pb.RegisterPoolServiceServer(srv, &poolService{
 		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, cluster: cfg.Cluster, workFor: cfg.WorkFor,
@@ -100,6 +102,34 @@ func mergeHolders(a, b []*pb.BlobHolder) []*pb.BlobHolder {
 type nodeService struct {
 	pb.UnimplementedNodeServiceServer
 	coordinator *coordinator.Coordinator
+	// owner is the ID of the node itself, which may see every job.
+	owner string
+}
+
+// guest returns the ID of whoever is calling, if it is a node admitted to
+// the pool and not the node itself: someone to be kept to what is theirs.
+// A call that did not come through the access package is the node's own.
+func guest(ctx context.Context, owner string) (id string, is bool) {
+	id = access.Caller(ctx)
+	return id, id != "" && id != owner
+}
+
+// own checks that a job is the caller's to see and to stop. A client is
+// one of several and sees the jobs it submitted; another's job is, to it,
+// a job that is not there, which is also all it is told.
+func (s *nodeService) own(ctx context.Context, jobID string) error {
+	client, is := guest(ctx, s.owner)
+	if !is {
+		return nil
+	}
+	job, err := s.coordinator.Get(jobID)
+	if err != nil {
+		return err
+	}
+	if job.GetSubmitterId() != client {
+		return status.Errorf(codes.NotFound, "job %q not found", jobID)
+	}
+	return nil
 }
 
 func (s *nodeService) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.SubmitJobResponse, error) {
@@ -110,7 +140,10 @@ func (s *nodeService) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (
 	return &pb.SubmitJobResponse{Job: job}, nil
 }
 
-func (s *nodeService) GetJob(_ context.Context, req *pb.GetJobRequest) (*pb.GetJobResponse, error) {
+func (s *nodeService) GetJob(ctx context.Context, req *pb.GetJobRequest) (*pb.GetJobResponse, error) {
+	if err := s.own(ctx, req.GetJobId()); err != nil {
+		return nil, err
+	}
 	job, err := s.coordinator.Get(req.GetJobId())
 	if err != nil {
 		return nil, err
@@ -119,12 +152,18 @@ func (s *nodeService) GetJob(_ context.Context, req *pb.GetJobRequest) (*pb.GetJ
 }
 
 func (s *nodeService) WatchJob(req *pb.WatchJobRequest, stream grpc.ServerStreamingServer[pb.WatchJobResponse]) error {
+	if err := s.own(stream.Context(), req.GetJobId()); err != nil {
+		return err
+	}
 	return s.coordinator.Watch(stream.Context(), req.GetJobId(), func(job *pb.Job) error {
 		return stream.Send(&pb.WatchJobResponse{Job: job})
 	})
 }
 
-func (s *nodeService) CancelJob(_ context.Context, req *pb.CancelJobRequest) (*pb.CancelJobResponse, error) {
+func (s *nodeService) CancelJob(ctx context.Context, req *pb.CancelJobRequest) (*pb.CancelJobResponse, error) {
+	if err := s.own(ctx, req.GetJobId()); err != nil {
+		return nil, err
+	}
 	job, err := s.coordinator.Cancel(req.GetJobId())
 	if err != nil {
 		return nil, err
@@ -133,10 +172,16 @@ func (s *nodeService) CancelJob(_ context.Context, req *pb.CancelJobRequest) (*p
 }
 
 func (s *nodeService) WatchJobEvents(req *pb.WatchJobEventsRequest, stream grpc.ServerStreamingServer[pb.JobEvent]) error {
+	if err := s.own(stream.Context(), req.GetJobId()); err != nil {
+		return err
+	}
 	return s.coordinator.WatchEvents(stream.Context(), req.GetJobId(), req.GetAfterSeq(), stream.Send)
 }
 
 func (s *nodeService) GetJobRecord(ctx context.Context, req *pb.GetJobRecordRequest) (*pb.JobRecord, error) {
+	if err := s.own(ctx, req.GetJobId()); err != nil {
+		return nil, err
+	}
 	return s.coordinator.Record(ctx, req.GetJobId(), req.GetVerify(), req.GetKey())
 }
 
