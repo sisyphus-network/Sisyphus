@@ -146,7 +146,7 @@ func TestAQuestionIsPlannedComputedAndAnswered(t *testing.T) {
 	}
 	chatID := strings.TrimSuffix(out[strings.LastIndex(out, "(chat ")+len("(chat "):], ")\n")
 	// The job it ran is a job like any other.
-	if jobs, err := client.ListJobs(context.Background(), &nodepb.ListJobsRequest{}); err != nil || len(jobs.GetJobs()) != 1 || string(jobs.GetJobs()[0].GetResult()) != `{"count":25}` {
+	if jobs, err := client.ListJobs(tokenOf(t, dataDir), &nodepb.ListJobsRequest{}); err != nil || len(jobs.GetJobs()) != 1 || string(jobs.GetJobs()[0].GetResult()) != `{"count":25}` {
 		t.Errorf("jobs after the question: %v, %v", jobs, err)
 	}
 

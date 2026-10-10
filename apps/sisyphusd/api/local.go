@@ -286,7 +286,14 @@ func (s *localService) CancelJob(ctx context.Context, req *nodepb.CancelJobReque
 
 // WatchJobEvents sends what has happened to a job, and goes on as more
 // does until the job is over.
+//
+// Reading a job needs the token, as reading a conversation does: what a
+// job was given, what it returned and what it logged are its owner's, and
+// a conversation with a model run on the pool is a job like any other.
 func (s *localService) WatchJobEvents(req *nodepb.WatchJobEventsRequest, stream grpc.ServerStreamingServer[nodepb.JobEvent]) error {
+	if err := s.authorize(stream.Context()); err != nil {
+		return err
+	}
 	if s.cfg.Jobs == nil {
 		return errNoPool
 	}
@@ -297,7 +304,10 @@ func (s *localService) WatchJobEvents(req *nodepb.WatchJobEventsRequest, stream 
 	})
 }
 
-func (s *localService) GetJob(_ context.Context, req *nodepb.GetJobRequest) (*nodepb.GetJobResponse, error) {
+func (s *localService) GetJob(ctx context.Context, req *nodepb.GetJobRequest) (*nodepb.GetJobResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
 	if s.cfg.Jobs == nil {
 		return nil, errNoPool
 	}
@@ -309,7 +319,10 @@ func (s *localService) GetJob(_ context.Context, req *nodepb.GetJobRequest) (*no
 }
 
 // ListJobs lists the jobs this node has on record, newest first.
-func (s *localService) ListJobs(context.Context, *nodepb.ListJobsRequest) (*nodepb.ListJobsResponse, error) {
+func (s *localService) ListJobs(ctx context.Context, _ *nodepb.ListJobsRequest) (*nodepb.ListJobsResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
 	if s.cfg.Jobs == nil {
 		return nil, errNoPool
 	}
@@ -319,6 +332,9 @@ func (s *localService) ListJobs(context.Context, *nodepb.ListJobsRequest) (*node
 // WatchJobs sends the jobs as they stand and again, in full, whenever any
 // of them changes.
 func (s *localService) WatchJobs(_ *nodepb.WatchJobsRequest, stream grpc.ServerStreamingServer[nodepb.ListJobsResponse]) error {
+	if err := s.authorize(stream.Context()); err != nil {
+		return err
+	}
 	if s.cfg.Jobs == nil {
 		return errNoPool
 	}
@@ -669,5 +685,5 @@ func (s *localService) authorize(ctx context.Context) error {
 			return nil
 		}
 	}
-	return status.Error(codes.PermissionDenied, "changing this node needs its API token, which is in api.token in the node's data directory")
+	return status.Error(codes.PermissionDenied, "this needs the node's API token, which is in api.token in the node's data directory")
 }

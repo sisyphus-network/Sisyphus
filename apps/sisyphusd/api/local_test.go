@@ -205,9 +205,37 @@ func TestChangesNeedTheNodesToken(t *testing.T) {
 	if _, ok := n.list.Role(peer); ok {
 		t.Error("a refused change admitted the peer")
 	}
-	// Reading needs none.
+	// Reading what the node is and who it knows needs none.
 	if _, err := n.client.ListPeers(context.Background(), &nodepb.ListPeersRequest{}); err != nil {
 		t.Errorf("reading without a token: %v", err)
+	}
+}
+
+// What a job was given, returned and logged is its owner's, so reading it
+// needs the token as changing it does.
+func TestReadingJobsNeedsTheNodesToken(t *testing.T) {
+	client := startOffice(t, &office{})
+	if _, err := client.SubmitJob(withToken("the-token"), &nodepb.SubmitJobRequest{Workload: "primes"}); err != nil {
+		t.Fatal(err)
+	}
+	for name, ctx := range map[string]context.Context{"no token": context.Background(), "another token": withToken("a-guess")} {
+		_, get := client.GetJob(ctx, &nodepb.GetJobRequest{JobId: "job-1"})
+		_, list := client.ListJobs(ctx, &nodepb.ListJobsRequest{})
+		jobs, err := client.WatchJobs(ctx, &nodepb.WatchJobsRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, watch := jobs.Recv()
+		events, err := client.WatchJobEvents(ctx, &nodepb.WatchJobEventsRequest{JobId: "job-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, event := events.Recv()
+		for call, err := range map[string]error{"GetJob": get, "ListJobs": list, "WatchJobs": watch, "WatchJobEvents": event} {
+			if status.Code(err) != codes.PermissionDenied || !strings.Contains(err.Error(), "api.token") {
+				t.Errorf("%s with %s: %v, want a refusal that says where the token is", call, name, err)
+			}
+		}
 	}
 }
 
@@ -684,7 +712,7 @@ func startOffice(t *testing.T, pool JobControl) nodepb.NodeServiceClient {
 func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 	pool := &office{}
 	client := startOffice(t, pool)
-	ctx := context.Background()
+	ctx := withToken("the-token")
 
 	info, err := client.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
 	if err != nil || !slices.Equal(info.GetWorkloads(), []string{"primes", "wordcount"}) {
@@ -702,7 +730,7 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 
 	request := &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":100}`), Mode: nodepb.JobMode_JOB_MODE_FULL_WORKER, MaxTasks: 3, Verify: 2, VerifyShare: 0.5}
 	// It spends the pool's time, so it needs the token.
-	if _, err := client.SubmitJob(ctx, request); status.Code(err) != codes.PermissionDenied {
+	if _, err := client.SubmitJob(context.Background(), request); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("submitting without the token: %v", err)
 	}
 	submitted, err := client.SubmitJob(withToken("the-token"), request)
@@ -819,7 +847,7 @@ func TestTheLocalAPICancelsJobsAndFollowsTheirEvents(t *testing.T) {
 
 	events := func(after uint64) (got []*nodepb.JobEvent) {
 		t.Helper()
-		stream, err := client.WatchJobEvents(context.Background(), &nodepb.WatchJobEventsRequest{JobId: "job-1", AfterSeq: after})
+		stream, err := client.WatchJobEvents(ctx, &nodepb.WatchJobEventsRequest{JobId: "job-1", AfterSeq: after})
 		if err != nil {
 			t.Fatal(err)
 		}

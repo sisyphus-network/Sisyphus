@@ -64,8 +64,8 @@ func (p *pool) Cancel(jobID string) (*pb.Job, error) {
 
 func (*pool) Nodes() []*pb.NodeInfo {
 	return []*pb.NodeInfo{
-		{Name: "rig", Capabilities: &pb.NodeCapabilities{Labels: []string{"model:qwen3:8b", "model:llama3.1:8b"}}},
-		{Name: "den", Capabilities: &pb.NodeCapabilities{Labels: []string{"model:llama3.1:8b", "region:eu"}}},
+		{Name: "rig", Capabilities: &pb.NodeCapabilities{Labels: []string{"worker:rig", "model:qwen3:8b", "model:llama3.1:8b"}}},
+		{Name: "den", Capabilities: &pb.NodeCapabilities{Labels: []string{"worker:den", "worker:12D3KooWden", "model:llama3.1:8b", "region:eu"}}},
 		{},
 	}
 }
@@ -114,8 +114,8 @@ func TestAReplyIsAJobGivenToAWorkerThatServesTheModel(t *testing.T) {
 		t.Errorf("the job was %v", spec)
 	}
 	// A model named loosely is asked for as the pool knows it, and one
-	// asked for on a worker by name stays on that worker.
-	for asked, want := range map[string]string{"QWEN3": `"model":"qwen3:8b"`, "qwen3@rig": `"model":"qwen3:8b@rig"`, "llama3.1@den": `"model":"llama3.1:8b@den"`} {
+	// asked for on a worker, by its name or its node ID, stays on that worker.
+	for asked, want := range map[string]string{"QWEN3": `"model":"qwen3:8b"`, "qwen3@rig": `"model":"qwen3:8b@rig"`, "llama3.1@den": `"model":"llama3.1:8b@den"`, "llama3.1@12D3KooWden": `"model":"llama3.1:8b@12D3KooWden"`} {
 		p.submitted = nil
 		if status, body, _ := ask(t, p, http.MethodPost, "/v1/chat/completions", "the-token", strings.Replace(hello, "llama3.1:8b", asked, 1)); status != http.StatusOK || !strings.Contains(string(p.submitted[0].GetParams()), want) {
 			t.Errorf("asked for %q: %d %s, the job was %s", asked, status, body, p.submitted)

@@ -65,12 +65,14 @@ func Handler(pool Pool, token string) http.Handler {
 }
 
 // served lists the models the pool's connected workers serve: all of them,
-// or those of the worker with the given name.
+// or those of the worker asked for, by its name or by its node ID, as the
+// coordinator has labelled it.
 func served(pool Pool, worker string) []string {
 	var names []string
 	for _, node := range pool.Nodes() {
-		if worker == "" || node.GetName() == worker {
-			names = append(names, runtime.Models(node.GetCapabilities().GetLabels())...)
+		labels := node.GetCapabilities().GetLabels()
+		if worker == "" || slices.Contains(labels, runtime.WorkerLabel+worker) {
+			names = append(names, runtime.Models(labels)...)
 		}
 	}
 	slices.Sort(names)
