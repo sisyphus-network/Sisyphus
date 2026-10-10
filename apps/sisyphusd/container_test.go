@@ -42,8 +42,10 @@ func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 		t.Errorf("a worker that was not told to offers containers:\n%s", nodes)
 	}
 
-	// A worker whose owner allows it takes the job.
-	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "docker-host", "--slots", "3", "--containers")
+	// A worker whose owner allows it takes the job, and holds its tasks in
+	// as its owner asked: by the runtime named, with a root they cannot
+	// write to.
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "docker-host", "--slots", "3", "--containers", "--container-runtime", "runc", "--containers-read-only")
 	waitForOutput(t, "docker-host", "nodes", "--addr", addr)
 	out := waitForOutput(t, "succeeded in", "job", "get", "--addr", addr, id)
 	if strings.Contains(out, "on plain") {
@@ -73,10 +75,28 @@ func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 
 func TestANodeToldToRunContainersChecksThatItCan(t *testing.T) {
 	old := checkContainers
-	checkContainers = func(context.Context) error { return errors.New("Docker cannot be used here: permission denied") }
+	checkContainers = func(context.Context, runtime.Confinement) error {
+		return errors.New("Docker cannot be used here: permission denied")
+	}
 	defer func() { checkContainers = old }()
 	_, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers")
 	if err == nil || !strings.Contains(err.Error(), "--containers: Docker cannot be used here") {
 		t.Errorf("error %v, want the node not started", err)
+	}
+	// What it is told of how to run them reaches the check, and means
+	// nothing on a node that runs none.
+	var asked runtime.Confinement
+	checkContainers = func(_ context.Context, confined runtime.Confinement) error {
+		asked = confined
+		return errors.New("Docker here has no runtime called runsc")
+	}
+	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--container-runtime", "runsc", "--containers-read-only")
+	if err == nil || !strings.Contains(err.Error(), "--containers: Docker here has no runtime called runsc") || asked != (runtime.Confinement{Runtime: "runsc", ReadOnly: true}) {
+		t.Errorf("error %v, asked for %+v, want the node not started for want of the runtime", err, asked)
+	}
+	for _, flags := range [][]string{{"--container-runtime", "runsc"}, {"--containers-read-only"}} {
+		if _, err := cli(t, append([]string{"run", "--data-dir", t.TempDir(), "--listen", freeAddr(t)}, flags...)...); err == nil || !strings.Contains(err.Error(), "need --containers") {
+			t.Errorf("%v without --containers: %v", flags, err)
+		}
 	}
 }

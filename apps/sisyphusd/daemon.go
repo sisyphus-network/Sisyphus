@@ -76,6 +76,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
+	containerRuntime := fs.String("container-runtime", "", "with --containers: have Docker run the pool's tasks with this runtime in place of its usual, such as runsc (gVisor) or kata-runtime, which keep a task further from this machine than an ordinary container does; it must be installed and known to Docker")
+	containersReadOnly := fs.Bool("containers-read-only", false, "with --containers: give a task nowhere to write but /output and /tmp, the second held in memory; an image that writes anywhere else will fail")
 	containers := fs.Bool("containers", false, "worker role: run container images for the pool's jobs, with Docker. This lets whoever may submit jobs to the pool run what they like on this machine")
 	maxMemory := fs.Uint64("offer-memory-mb", 0, "worker role: tell the pool this node has no more than this much memory, in mebibytes; 0 offers all it has")
 	maxGPUs := fs.Int("offer-gpus", -1, "worker role: tell the pool this node has no more than this many graphics cards; -1 offers all it has")
@@ -208,12 +210,16 @@ func runDaemon(ctx context.Context, args []string) error {
 	// A node can take in, split and combine any workload, since that needs
 	// nothing but itself. What it will run as a worker is another matter:
 	// container images only if its owner has said so.
+	confined := runtime.Confinement{Runtime: *containerRuntime, ReadOnly: *containersReadOnly}
+	if confined != (runtime.Confinement{}) && !*containers {
+		return errors.New("--container-runtime and --containers-read-only say how containers are run, and need --containers")
+	}
 	workloads, runs := runtime.WithContainers(), runtime.Builtin()
 	if *containers {
-		if err := checkContainers(ctx); err != nil {
+		if err := checkContainers(ctx, confined); err != nil {
 			return fmt.Errorf("--containers: %w", err)
 		}
-		runs = workloads
+		runs = runtime.ContainersConfined(confined)
 	}
 	if *modelsFrom != "" {
 		runs = runs.With(runtime.WithModels(*modelsFrom)...)

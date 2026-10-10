@@ -98,7 +98,7 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 		os.Mkdir(filepath.Join(out, "scratch"), 0o755)
 		return 0, nil
 	}}
-	c := Container{Engine: engine.engine}
+	c := Container{Engine: engine.engine, Confined: Confinement{Runtime: "runsc", ReadOnly: true}}
 	payloads, _ := c.Split(ctx, store, []byte(`{"image":"alpine:3.20","command":["sh","-c","work"],"input":"`+input.String()+`","env":{"B":"2","A":"1"},"memory_mb":256,"cpus":1.5,"gpus":2}`), 2)
 	raw, err := c.Execute(WithReporter(ctx, said), store, payloads[1])
 	if err != nil {
@@ -119,7 +119,7 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 	// environment the job gave, and the task's place in the job.
 	args := strings.Join(engine.asked[0], " ")
 	for _, want := range []string{"run --rm --name sisyphus-", ":/input:ro", ":/output", "--env SISYPHUS_TASK_INDEX=1", "--env SISYPHUS_TASK_COUNT=2",
-		"--security-opt no-new-privileges", "--pids-limit 4096", "--user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + " --cap-drop ALL --env HOME=/tmp", "--network none", "--memory 256m", "--cpus 1.5", "--gpus 2", "--env A=1 --env B=2", "alpine:3.20 sh -c work"} {
+		"--security-opt no-new-privileges", "--pids-limit 4096", "--user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + " --cap-drop ALL --env HOME=/tmp", "--runtime runsc --read-only --tmpfs /tmp --network none", "--memory 256m", "--cpus 1.5", "--gpus 2", "--env A=1 --env B=2", "alpine:3.20 sh -c work"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("the engine was asked %q, without %q", args, want)
 		}
@@ -400,6 +400,19 @@ func TestARealContainerRuns(t *testing.T) {
 		t.Errorf("task directories left behind: %v", left)
 	}
 
+	// Held in further at its owner's asking: run by the runtime named, with
+	// nowhere to write but /output and /tmp.
+	held := Container{Confined: Confinement{Runtime: "runc", ReadOnly: true}}
+	writes, _ := held.Split(ctx, store, []byte(`{"image":"alpine:3.20","command":["sh","-c","echo kept > /output/kept; echo scratch > /tmp/scratch && echo tmp is writable; echo no > /etc/changed 2>/dev/null || echo the image is not"]}`), 1)
+	raw, err = held.Execute(ctx, store, writes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(raw, &out)
+	if got := readBlob(t, store, out.Stdout); got != "tmp is writable\nthe image is not\n" || readBlob(t, store, out.Files["kept"]) != "kept\n" {
+		t.Errorf("a task with a read-only root printed %q and left %v", got, out.Files)
+	}
+
 	// The command can gain no privilege, and has none of a container's
 	// usual capabilities to begin with.
 	confined, _ := c.Split(ctx, store, []byte(`{"image":"alpine:3.20","command":["sh","-c","grep -E '^(CapBnd|NoNewPrivs)' /proc/self/status"]}`), 1)
@@ -441,17 +454,42 @@ func TestARealContainerRuns(t *testing.T) {
 
 func TestFindingOutWhetherContainersCanBeRun(t *testing.T) {
 	requireDocker(t)
-	if err := CheckContainers(context.Background()); err != nil {
+	if err := CheckContainers(context.Background(), Confinement{}); err != nil {
 		t.Errorf("on a machine with Docker: %v", err)
 	}
+	// A runtime Docker has may be asked for, and one it has not may not:
+	// a node told to hold its tasks in further does not run them less
+	// held in than it was told.
+	if err := CheckContainers(context.Background(), Confinement{Runtime: "runc"}); err != nil {
+		t.Errorf("asking for a runtime Docker has: %v", err)
+	}
+	if err := CheckContainers(context.Background(), Confinement{Runtime: "no-such-runtime"}); err == nil || !strings.Contains(err.Error(), "Docker here has no runtime called no-such-runtime: it has ") || !strings.Contains(err.Error(), "runc") {
+		t.Errorf("asking for a runtime Docker has not: %v", err)
+	}
+	for _, name := range []string{"--privileged", "run sc", "runsc;id", "-v"} {
+		if err := CheckContainers(context.Background(), Confinement{Runtime: name}); err == nil || !strings.Contains(err.Error(), "is not the name of a container runtime") {
+			t.Errorf("a runtime called %q: %v", name, err)
+		}
+	}
+	// A docker that answers for its version and not for its runtimes.
+	real, _ := exec.LookPath("docker")
+	partial := filepath.Join(t.TempDir(), "docker")
+	os.WriteFile(partial, []byte("#!/bin/sh\n[ \"$1\" = version ] && exec "+real+" \"$@\"\nexit 1\n"), 0o700)
+	func() {
+		t.Setenv("PATH", filepath.Dir(partial))
+		defer t.Setenv("PATH", os.Getenv("PATH"))
+		if err := CheckContainers(context.Background(), Confinement{Runtime: "runc"}); err == nil || !strings.Contains(err.Error(), "did not say which runtimes it has") {
+			t.Errorf("with a Docker that does not list its runtimes: %v", err)
+		}
+	}()
 	// Docker installed, with no daemon behind it to talk to.
 	t.Setenv("DOCKER_HOST", "tcp://127.0.0.1:1")
-	if err := CheckContainers(context.Background()); err == nil || !strings.Contains(err.Error(), "Docker cannot be used here") {
+	if err := CheckContainers(context.Background(), Confinement{}); err == nil || !strings.Contains(err.Error(), "Docker cannot be used here") {
 		t.Errorf("with no Docker daemon to reach: %v", err)
 	}
 	// No Docker at all.
 	t.Setenv("PATH", t.TempDir())
-	if err := CheckContainers(context.Background()); err == nil || !strings.Contains(err.Error(), "Docker cannot be used here") {
+	if err := CheckContainers(context.Background(), Confinement{}); err == nil || !strings.Contains(err.Error(), "Docker cannot be used here") {
 		t.Errorf("with no docker command: %v", err)
 	}
 	if got := WithContainers().Names(); !slices.Contains(got, "container") || slices.Contains(Builtin().Names(), "container") {

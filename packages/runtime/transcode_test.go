@@ -231,7 +231,9 @@ func TestARealVideoIsTranscodedInStretches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := Transcode{}
+	// Held in as far as a worker's owner can ask without another runtime:
+	// transcoding writes nowhere but /output and /tmp.
+	w := Transcode{Confined: Confinement{ReadOnly: true}}
 	payloads, err := w.Split(ctx, store, []byte(`{"input":"`+video.String()+`","height":180,"preset":"ultrafast","crf":30}`), 3)
 	if err != nil {
 		t.Fatal(err)
