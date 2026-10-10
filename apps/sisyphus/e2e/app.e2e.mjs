@@ -127,8 +127,29 @@ test('workspace panels retain their open state and widths after relaunch', async
 
     // The collapsed history handle remains available, and can bring its pane back.
     const restoredHistory = page.getByRole('separator', { name: 'Resize conversation history panel' })
-    await restoredHistory.dblclick()
+    const maxHistoryWidth = Number(await restoredHistory.getAttribute('aria-valuemax'))
+    assert.ok(maxHistoryWidth >= 280, `history panel has no available width (${maxHistoryWidth})`)
+    await page.getByRole('button', { name: 'Open conversation history' }).click()
     await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'true')
+    await page.waitForFunction((minimum) => {
+      const slot = document.querySelector('.workspace-history-slot')
+      return slot?.getAttribute('data-open') === 'true' && slot.getBoundingClientRect().width >= minimum
+    }, Math.min(280, maxHistoryWidth))
+    const restoredWidth = await page.locator('.workspace-history-slot').evaluate((slot) => slot.getBoundingClientRect().width)
+    assert.ok(restoredWidth >= 280, `history panel reopened at ${restoredWidth}px`)
+    await page.locator('button[aria-pressed="true"][aria-label="Close conversation history"]').click()
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'false')
+    const historyHandleBox = await restoredHistory.boundingBox()
+    assert.ok(historyHandleBox, 'the collapsed history handle is visible')
+    const historyHandleX = historyHandleBox.x + historyHandleBox.width / 2
+    const historyHandleY = historyHandleBox.y + historyHandleBox.height / 2
+    await page.mouse.click(historyHandleX, historyHandleY)
+    await page.waitForTimeout(80)
+    await page.mouse.click(historyHandleX, historyHandleY)
+    await page.waitForFunction(() => {
+      const slot = document.querySelector('.workspace-history-slot')
+      return slot?.getAttribute('data-open') === 'true' && slot.getBoundingClientRect().width >= 280
+    }, Math.min(280, maxHistoryWidth))
   } finally {
     await app?.close()
     profile.remove()
