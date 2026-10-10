@@ -276,6 +276,7 @@ bin/sisyphusd blob get --key-file job.key <output CID>          # unsealed after
 - **Its record leaves the unsealed parts out.** A finished job's [record](#a-jobs-record) goes into the shared store, so a private job's holds no parameters, results or error messages.
 - **Lose the key and the data is gone.** `key new` will not overwrite a key file for that reason.
 - **A job with a key can still read unsealed inputs**, so public data and private can be mixed.
+- **A job without a key is refused sealed data.** It has no key to it, and would otherwise compute on the sealed bytes as though they were the data. It is told the blob is sealed and to submit the job as private: when it is submitted, if the workload reads its input to split it, and as a failed task if not.
 
 The encryption is put together from standard parts (AES-256-GCM, HMAC-SHA256, HKDF) but the arrangement is this project's own and has not been reviewed by a cryptographer. Treat it as keeping honest pool members out, not as proof against a determined attacker, until it has been.
 

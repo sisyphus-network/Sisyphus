@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/ipfs/go-cid"
@@ -58,4 +59,32 @@ func (s sealedBlobs) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) 
 		return nil, err
 	}
 	return opened, nil
+}
+
+// Open returns a Blobs for a job that has no keys. It stores and opens
+// blobs as they are, and refuses to open one that is sealed: a job that is
+// not private has no key to it, and would otherwise compute on the sealed
+// bytes as though they were the data, and return an answer about nothing.
+func Open(blobs Blobs) Blobs {
+	return openBlobs{blobs}
+}
+
+type openBlobs struct{ Blobs }
+
+func (o openBlobs) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) {
+	blob, err := o.Blobs.Open(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	head := make([]byte, sealed.HeaderSize)
+	n, _ := io.ReadFull(blob, head) // a short blob has a short head
+	if sealed.IsSealed(head[:n]) {
+		blob.Close()
+		return nil, fmt.Errorf("blob %s is sealed, and this job is not private, so it has no key to it: submit the job as private to have it read private data", c)
+	}
+	if _, err := blob.Seek(0, io.SeekStart); err != nil {
+		blob.Close()
+		return nil, err
+	}
+	return blob, nil
 }
