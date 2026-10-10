@@ -1,6 +1,8 @@
 package planner
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -28,7 +30,9 @@ func TestACallAModelWroteOutAsTextIsMade(t *testing.T) {
 		said[1].Role != ai.ToolRole || said[1].CallID != "written-0" || said[1].Name != "run_job" || said[2].Content != "There are 25 primes below 100." {
 		t.Fatalf("said %+v", said)
 	}
-	if got := kinds(events); !strings.HasSuffix(got, "text call job result text text text text text text") {
+	// The person is not shown the call as text: the first thing they hear
+	// of it is that it is being made.
+	if got := kinds(events); got != "call job result text text text text text text" {
 		t.Errorf("events: %s", got)
 	}
 	// What the model was shown the second time has the call in it.
@@ -86,3 +90,55 @@ func TestACallThatWasMadeIsNotLookedForInTheText(t *testing.T) {
 		t.Errorf("said %+v", said[0])
 	}
 }
+
+// Text is held back only while it may be a call written out. What turns out
+// to be an answer is shown, all of it, in the order it came.
+func TestTextThatOpensLikeACallAndIsNotOneIsStillShown(t *testing.T) {
+	tests := map[string]string{
+		"an answer that is JSON":             `{"count": 25} is what you asked for.`,
+		"an answer that opens with code":     "```go\nfmt.Println(25)\n``` prints it.",
+		"an answer that opens with a space":  " There are 25.",
+		"an answer that is a brace and more": "{ " + strings.Repeat("and more ", 600),
+	}
+	for name, answer := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, events, err := run(t, &scripted{replies: []ai.Message{{Content: answer}}}, &office{}, "How many?")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var heard string
+			for _, e := range events {
+				heard += e.Text
+			}
+			if heard != answer {
+				t.Errorf("heard %q", heard)
+			}
+		})
+	}
+	// One that runs on is shown before it ends, not all at the end.
+	_, events, _ := run(t, &scripted{replies: []ai.Message{{Content: tests["an answer that is a brace and more"]}}}, &office{}, "How many?")
+	if len(events) < 2 {
+		t.Errorf("a long answer came in %d pieces", len(events))
+	}
+}
+
+// A model that fails part way through text that was being held back has
+// what it said shown, as it would have been.
+func TestHeldTextIsShownWhenTheModelFails(t *testing.T) {
+	var heard string
+	p := &Planner{Model: stopsShort{`{"name": "run_`}, Pool: &office{}}
+	_, err := p.Run(context.Background(), []ai.Message{{Role: ai.User, Content: "How many?"}}, func(e Event) { heard += e.Text })
+	if err == nil || heard != `{"name": "run_` {
+		t.Errorf("heard %q, and the error was %v", heard, err)
+	}
+}
+
+// stopsShort is a model that says something and then fails.
+type stopsShort struct{ says string }
+
+func (m stopsShort) Chat(_ context.Context, _ ai.Request, said func(string)) (ai.Message, error) {
+	said(m.says)
+	return ai.Message{}, errors.New("the model went away")
+}
+
+func (stopsShort) Models(context.Context) ([]ai.Model, error) { return nil, nil }

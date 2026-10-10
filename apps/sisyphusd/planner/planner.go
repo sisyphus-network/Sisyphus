@@ -128,20 +128,35 @@ func (p *Planner) Run(ctx context.Context, history []ai.Message, report func(Eve
 	var said []ai.Message
 	for range steps {
 		messages := append(append([]ai.Message{{Role: ai.System, Content: system}}, history...), said...)
+		// Text that may yet turn out to be a call written out is held back
+		// until it is known which it is, so that a call is not shown to
+		// the person as a line of JSON first.
+		var held strings.Builder
+		passing := false
+		pass := func() {
+			if passing = true; held.Len() > 0 {
+				report(Event{Kind: Text, Text: held.String()})
+				held.Reset()
+			}
+		}
 		reply, err := p.Model.Chat(ctx, ai.Request{Model: p.ModelName, Messages: messages, Tools: tools}, func(text string) {
-			report(Event{Kind: Text, Text: text})
+			if held.WriteString(text); passing || !mayBeWrittenOut(held.String()) {
+				pass()
+			}
 		})
 		if err != nil {
+			pass()
 			return said, err
 		}
 		if call, written := writtenOut(reply.Content); written && len(reply.Calls) == 0 {
 			// A small model sometimes writes its call out as text rather
 			// than making it. What it meant is plain, so it is taken as
-			// the call it is: otherwise its question goes unanswered and
-			// the person is shown a line of JSON.
+			// the call it is: otherwise its question goes unanswered.
 			call.ID = fmt.Sprintf("written-%d", len(said))
 			reply.Content, reply.Calls, reply.Raw = "", []ai.Call{call}, nil
+			held.Reset()
 		}
+		pass()
 		said = append(said, reply)
 		if len(reply.Calls) == 0 {
 			return said, nil
@@ -193,6 +208,26 @@ func writtenOut(text string) (ai.Call, bool) {
 		}
 	}
 	return ai.Call{}, false
+}
+
+// heldAtMost is how much text is held back while it may be a call written
+// out. A call is short; an answer that opens like one and runs on is shown.
+const heldAtMost = 4096
+
+// mayBeWrittenOut reports whether text, which is the beginning of a reply,
+// could be the beginning of a call written out: it opens as one does, or
+// has not yet said enough to tell.
+func mayBeWrittenOut(text string) bool {
+	text = strings.TrimSpace(text)
+	if len(text) > heldAtMost {
+		return false
+	}
+	for _, opens := range []string{"{", "```", "<|python_tag|>"} {
+		if strings.HasPrefix(text, opens) || strings.HasPrefix(opens, text) {
+			return true
+		}
+	}
+	return false
 }
 
 // asJSON is text with Python's True, False and None, where they stand as
