@@ -150,6 +150,22 @@ test('workspace panels retain their open state and widths after relaunch', async
       const slot = document.querySelector('.workspace-history-slot')
       return slot?.getAttribute('data-open') === 'true' && slot.getBoundingClientRect().width >= 280
     }, Math.min(280, maxHistoryWidth))
+
+    // Keyboard resizing follows the current writing direction and stays
+    // bounded by the same minimum/maximum as pointer resizing.
+    await page.evaluate(() => document.documentElement.dir = 'rtl')
+    await restoredHistory.focus()
+    await restoredHistory.press('ArrowLeft')
+    await page.waitForFunction(() => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) > 280)
+    const rtlWidth = Number(await restoredHistory.getAttribute('aria-valuenow'))
+    await restoredHistory.press('End')
+    await page.waitForFunction((maximum) => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) === maximum, maxHistoryWidth)
+    await restoredHistory.press('ArrowRight')
+    await page.waitForFunction((maximum) => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) === maximum, maxHistoryWidth)
+    await restoredHistory.press('Home')
+    await page.waitForFunction(() => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) === 280)
+    assert.ok(rtlWidth > 280 && rtlWidth <= maxHistoryWidth)
+    await page.evaluate(() => document.documentElement.dir = 'ltr')
   } finally {
     await app?.close()
     profile.remove()
@@ -433,6 +449,62 @@ test('a language chosen with the keyboard turns the window round, and is still c
     ;({ app, page } = await launch(node, profile))
     await page.waitForFunction(() => document.documentElement.dir === 'rtl')
     assert.equal(await page.locator('html').getAttribute('lang'), 'he')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('theme mode and accent survive settings/workspace navigation and renderer reload', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.evaluate(() => {
+      localStorage.setItem('sisyphus-theme', 'dark')
+      localStorage.setItem('sisyphus-theme-style', 'pink')
+    })
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.themeStyle === 'pink')
+    const initialAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim())
+    assert.equal(initialAccent, '#f59ac4')
+
+    await open(page, 'Settings')
+    await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
+    const accentPicker = page.getByRole('textbox', { name: 'Accent' })
+    await accentPicker.scrollIntoViewIfNeeded()
+    await accentPicker.click()
+    const accentMenu = page.getByRole('dialog', { name: 'Accent' })
+    await accentMenu.waitFor()
+    await page.waitForTimeout(300)
+    const menuBounds = await accentMenu.boundingBox()
+    const viewportHeight = await page.evaluate(() => window.innerHeight)
+    assert.ok(menuBounds && menuBounds.y >= 0 && menuBounds.y + menuBounds.height <= viewportHeight, `the accent popover is clipped: ${JSON.stringify({ menuBounds, viewportHeight })}`)
+    assert.equal(await accentMenu.evaluate((element) => getComputedStyle(element).position), 'fixed')
+    assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="dialog"]')?.getAttribute('aria-label'), { x: menuBounds.x + menuBounds.width / 2, y: menuBounds.y + menuBounds.height / 2 }), 'Accent', 'the popover is underneath another Settings layer')
+    await accentMenu.getByRole('button', { name: 'Blue' }).click()
+    await page.waitForFunction(() => document.documentElement.dataset.themeStyle === 'blue')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), '#83adff')
+    await accentPicker.click()
+    await page.getByRole('dialog', { name: 'Accent' }).getByRole('button', { name: 'Pink' }).click()
+    await page.waitForFunction(() => document.documentElement.dataset.themeStyle === 'pink')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), initialAccent)
+    await page.getByRole('complementary').getByRole('link', { name: 'Workspace', exact: true }).click()
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark')
+    assert.equal(await page.locator('html').getAttribute('data-theme-style'), 'pink')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), initialAccent)
+
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.themeStyle === 'pink')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), initialAccent)
+
+    await page.evaluate(() => {
+      localStorage.setItem('sisyphus-theme', 'light')
+      localStorage.setItem('sisyphus-theme-style', 'blue')
+    })
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light' && document.documentElement.dataset.themeStyle === 'blue')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), '#4f8cff')
   } finally {
     await app.close()
     profile.remove()
