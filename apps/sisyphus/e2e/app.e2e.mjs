@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { launch, open, planWith, standInModel, testNode, testProfile } from './harness.mjs'
+import { launch, narrow, open, planWith, standInModel, testNode, testProfile } from './harness.mjs'
 
 let node
 before(async () => { node = await testNode() })
@@ -26,13 +26,51 @@ test('the window shows the node it is connected to', async () => {
   }
 })
 
-test('a window with no WebGL still shows the workspace, without its globe', async () => {
+// The topology is a globe drawn with WebGL. A window that has none is not
+// offered it: no pane, no handle to open one, no entry in the dock of a
+// narrow window. What is left fills the window and works.
+test('a window with no WebGL offers no topology, and its workspace and chat still work', async () => {
+  const model = await standInModel('Still here.')
+  planWith(node, model)
   const profile = testProfile()
   const { app, page } = await launch(node, profile, { webgl: false })
   try {
     await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
-    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).waitFor()
     assert.equal(await page.locator('canvas').count(), 0, 'a globe was drawn with no WebGL to draw it')
+    assert.equal(await page.getByRole('separator', { name: 'Resize topology panel' }).count(), 0, 'a handle for the topology panel is offered')
+    assert.equal(await page.locator('.workspace-topology-slot').count(), 0, 'the topology pane is there, empty')
+    assert.equal(await page.getByRole('img', { name: /This node/ }).count(), 0)
+    // The chat has the room the topology would have had, to the window's edge.
+    const [chat, width] = [await page.locator('.workspace-chat-desktop-pane').boundingBox(), await page.evaluate(() => window.innerWidth)]
+    assert.ok(chat.x + chat.width > width - 24, `the chat ends at ${chat.x + chat.width} of ${width}`)
+    // And it answers.
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Are you there?')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByText('Still here.').waitFor({ timeout: 30000 })
+
+    // Narrow, the window has one view, so no dock to choose between views.
+    await narrow(app)
+    await page.locator('.workspace-shell--compact').waitFor()
+    assert.equal(await page.getByRole('button', { name: 'Known network topology' }).count(), 0, 'the dock offers the topology')
+    assert.equal(await page.locator('.workspace-mobile-dock').count(), 0, 'a dock is shown with one view in it')
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
+test('a window with WebGL offers the topology, wide and narrow', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.getByRole('separator', { name: 'Resize topology panel' }).waitFor()
+    await page.getByRole('img', { name: /This node/ }).waitFor()
+    await narrow(app)
+    await page.locator('.workspace-shell--compact').waitFor()
+    await page.locator('.workspace-mobile-dock').getByRole('button', { name: 'Known network topology' }).click()
+    await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).waitFor()
   } finally {
     await app.close()
     profile.remove()

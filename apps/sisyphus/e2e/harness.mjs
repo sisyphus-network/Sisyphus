@@ -132,3 +132,12 @@ export async function standInModel(...replies) {
 export function planWith(node, model) {
   execFileSync(daemon, ['model', 'set', '--data-dir', node.dataDir, '--url', model.url, '--model', 'test-model'], { stdio: 'ignore' })
 }
+
+/** Makes the window as narrow as it goes, which is narrow enough for its one-view layout. */
+export async function narrow(app) {
+  await app.evaluate(({ BrowserWindow }) => {
+    const [window] = BrowserWindow.getAllWindows()
+    const [width] = window.getMinimumSize()
+    window.setSize(width, 800)
+  })
+}

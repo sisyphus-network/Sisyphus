@@ -14,6 +14,7 @@ import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { AgentChat } from '@/components/assistant/agent-chat'
 import { visiblePanelWidth, stepPanelWidth } from '@/lib/panel-width'
 import { webglAvailable } from '@/lib/webgl'
+import { useWebgl } from '@/hooks/use-webgl'
 
 type Messages = ReturnType<typeof getMessages>
 function connected(peer: NodeSnapshot['peers'][number]) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
@@ -265,6 +266,9 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const compact = useBreakpoint('(max-width: 900px)')
   const reduceMotion = useReducedMotion()
   const [savedLayout] = useState(readLayout)
+  // The topology is a globe drawn with WebGL. Where the window has none it
+  // is not offered at all: no pane, no dock entry, and nothing to land on.
+  const topologyAvailable = useWebgl()
   const [mobileView, setMobileView] = useState<'chat' | 'network'>('chat')
   const [historyOpen, setHistoryOpen] = useState(savedLayout.historyOpen)
   const [historyWidth, setHistoryWidth] = useState(savedLayout.historyWidth)
@@ -284,8 +288,11 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const [touchStart, setTouchStart] = useState<{ x: number; y: number } | null>(null)
   useEffect(() => {
     if (compact || historyResizing || topologyResizing) return
+    // What was chosen for the topology is kept as it was while it cannot be
+    // shown, for a window that can show it again.
+    if (!topologyAvailable) { saveLayout({ historyOpen, historyWidth }); return }
     saveLayout({ historyOpen, historyWidth, topologyOpen, network: topologyRatio * 100, chat: (1 - topologyRatio) * 100 })
-  }, [compact, historyOpen, historyWidth, historyResizing, topologyOpen, topologyRatio, topologyResizing])
+  }, [compact, historyOpen, historyWidth, historyResizing, topologyOpen, topologyRatio, topologyResizing, topologyAvailable])
   useEffect(() => {
     if (!compact) { setGlobeReady(true); return }
     if (mobileView !== 'network' || globeReady) return
@@ -304,8 +311,10 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   }, [compact])
   const paneItems: LiquidDockItem[] = [
     { id: 'chat', label: messages.computeAssistant, href: '#chat', icon: <MessageSquare size={20} strokeWidth={1.8} />, active: mobileView === 'chat' },
-    { id: 'network', label: messages.networkMap, href: '#network', icon: <Eye size={20} strokeWidth={1.8} />, active: mobileView === 'network' },
+    ...(topologyAvailable ? [{ id: 'network', label: messages.networkMap, href: '#network', icon: <Eye size={20} strokeWidth={1.8} />, active: mobileView === 'network' }] : []),
   ]
+  // A view that is selected and then found not to be there gives way to the chat.
+  useEffect(() => { if (!topologyAvailable && mobileView === 'network') setMobileView('chat') }, [topologyAvailable, mobileView])
   const connectedPeers = snapshot.peers.filter(connected)
   const historyMinimumWidth = 280
   const minimumContentWidth = 280
@@ -316,7 +325,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const panelAreaWidth = Math.max(0, desktopStageWidth - (historyOpen ? visibleHistoryWidth : 0) - fixedHandleWidth)
   const topologyMaxWidth = Math.max(0, Math.min(panelAreaWidth * 0.7, panelAreaWidth - minimumContentWidth))
   const topologyMinimumWidth = Math.min(280, topologyMaxWidth)
-  const topologyWidth = topologyOpen ? Math.min(panelAreaWidth * topologyRatio, topologyMaxWidth) : 0
+  const topologyWidth = topologyAvailable && topologyOpen ? Math.min(panelAreaWidth * topologyRatio, topologyMaxWidth) : 0
   const startHistoryResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -465,7 +474,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     if (touchStart === null) return
     const deltaX = event.changedTouches[0].clientX - touchStart.x
     const deltaY = event.changedTouches[0].clientY - touchStart.y
-    if (Math.abs(deltaX) > 55 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) setMobileView(deltaX < 0 ? 'network' : 'chat')
+    if (topologyAvailable && Math.abs(deltaX) > 55 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) setMobileView(deltaX < 0 ? 'network' : 'chat')
     setTouchStart(null)
   }
   return <div className={`workspace-shell ${compact ? 'workspace-shell--compact' : ''}`} onTouchStart={(event) => setTouchStart({ x: event.touches[0].clientX, y: event.touches[0].clientY })} onTouchEnd={handleTouchEnd}>
@@ -474,17 +483,19 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
         <motion.div aria-hidden={mobileView !== 'chat'} className="workspace-mobile-pane" data-active={mobileView === 'chat'} animate={reduceMotion ? undefined : { opacity: mobileView === 'chat' ? 1 : 0, x: mobileView === 'chat' ? 0 : -24 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: mobileView === 'chat' ? 2 : 1, pointerEvents: mobileView === 'chat' ? 'auto' : 'none' }}>
           {chatPane}
         </motion.div>
-        <motion.div aria-hidden={mobileView !== 'network'} className="workspace-mobile-pane" data-active={mobileView === 'network'} animate={reduceMotion ? undefined : { opacity: mobileView === 'network' ? 1 : 0, x: mobileView === 'network' ? 0 : 24 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: mobileView === 'network' ? 2 : 1, pointerEvents: mobileView === 'network' ? 'auto' : 'none' }}>
+        {topologyAvailable && <motion.div aria-hidden={mobileView !== 'network'} className="workspace-mobile-pane" data-active={mobileView === 'network'} animate={reduceMotion ? undefined : { opacity: mobileView === 'network' ? 1 : 0, x: mobileView === 'network' ? 0 : 24 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: mobileView === 'network' ? 2 : 1, pointerEvents: mobileView === 'network' ? 'auto' : 'none' }}>
           {networkPane}
-        </motion.div>
+        </motion.div>}
       </div>
-      {visible && createPortal(<nav className="workspace-mobile-dock" aria-label={messages.workspace}><LiquidGlassDock items={paneItems} label={messages.workspace} onNavigate={(id) => setMobileView(id as 'chat' | 'network')} /></nav>, document.body)}
+      {visible && paneItems.length > 1 && createPortal(<nav className="workspace-mobile-dock" aria-label={messages.workspace}><LiquidGlassDock items={paneItems} label={messages.workspace} onNavigate={(id) => setMobileView(id as 'chat' | 'network')} /></nav>, document.body)}
     </> : <div ref={desktopStageRef} className="workspace-desktop-stage">
     <div data-open={historyOpen} data-resizing={historyResizing} aria-hidden={!historyOpen} style={{ flexBasis: historyOpen ? visibleHistoryWidth : 0 }} className="workspace-history-slot"><div ref={setHistoryPanelHost} className="workspace-history-host" /></div>
     <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeHistory} aria-valuemin={0} aria-valuemax={Math.round(historyMaxWidth)} aria-valuenow={Math.round(visibleHistoryWidth)} onPointerDown={startHistoryResize} onPointerMove={moveHistoryResize} onPointerUp={finishHistoryResize} onPointerCancel={finishHistoryResize} onKeyDown={keyHistoryResize} onDoubleClick={(event) => { event.preventDefault(); setHistoryOpen((open) => !open) }} className="workspace-history-resize-handle" />
     <div className="workspace-chat-desktop-pane">{chatPane}</div>
+    {topologyAvailable && <>
     <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeTopology} aria-valuemin={0} aria-valuemax={Math.round(topologyMaxWidth)} aria-valuenow={Math.round(topologyWidth)} onPointerDown={startTopologyResize} onPointerMove={moveTopologyResize} onPointerUp={finishTopologyResize} onPointerCancel={finishTopologyResize} onKeyDown={keyTopologyResize} onDoubleClick={(event) => { event.preventDefault(); setTopologyOpen((open) => !open) }} className="workspace-topology-resize-handle"><span /></button>
     <div data-open={topologyOpen} data-resizing={topologyResizing} aria-hidden={!topologyOpen} style={{ flexBasis: topologyWidth }} className="workspace-topology-slot">{networkPane}</div>
+    </>}
     </div>
     }
   </div>
