@@ -475,7 +475,8 @@ func (h *Host) Connect(ctx context.Context, address string) error {
 }
 
 // callAgain is how many more times a call that fails is made, and
-// callPause the longest wait before each.
+// callPause the longest wait before each; the shortest is half of it, so
+// that a node which is only just starting has time to.
 const (
 	callAgain = 3
 	callPause = 300 * time.Millisecond
@@ -495,7 +496,7 @@ func (h *Host) call(ctx context.Context, info peer.AddrInfo) error {
 			return err
 		}
 		select {
-		case <-time.After(rand.N(callPause)):
+		case <-time.After(callPause/2 + rand.N(callPause/2)):
 		case <-ctx.Done():
 			return err
 		}
