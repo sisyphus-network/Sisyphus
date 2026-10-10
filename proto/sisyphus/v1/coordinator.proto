@@ -111,6 +111,18 @@ message TaskAssignment {
   uint32 attempt = 3;
   string workload = 4;
   bytes payload = 5;
-  // The job's sealing key, if it is a private job.
+  // A sealing key whole. It was once the key of every private job. It is
+  // now given only with keys, and only when the job names an input sealed
+  // before keys were derived, which nothing less opens.
   bytes key = 6;
+  // For a private job: the keys its tasks may use, each derived from the
+  // submitter's sealing key. The first is the job's own, which what a task
+  // stores is sealed with; the rest open the sealed inputs the job names.
+  repeated SealingKey keys = 7;
+}
+
+// SealingKey is one key derived from a sealing key, and its ID.
+message SealingKey {
+  bytes id = 1;
+  bytes key = 2;
 }

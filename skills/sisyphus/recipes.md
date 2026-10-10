@@ -104,7 +104,7 @@ A `graph` job runs the steps in order for you, so you need not wait on each and 
 
 ## Private data
 
-Pass `private: true` to `store_file` and to `run_job`. The file is sealed before it leaves the machine, and only the workers that run the job are given the key. A private file can be read only by a private job. The key is in `private.key` in the node's data directory: if it is lost, so is everything sealed with it, so tell the user where it is the first time private data is used.
+Pass `private: true` to `store_file` and to `run_job`. The file is sealed before it leaves the machine, and the workers that run a job are given the keys to the sealed files that job's parameters name, and to no others. Name every private input in the parameters: a private file a task would reach only through another file is one its worker cannot open. A private file can be read only by a private job. The key is in `private.key` in the node's data directory: if it is lost, so is everything sealed with it, so tell the user where it is the first time private data is used.
 
 ## A question about files, for the planner
 

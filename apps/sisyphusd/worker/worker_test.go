@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
+	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
@@ -98,22 +100,42 @@ func TestWorkerAdvertisesItselfAndReportsAnUnknownWorkload(t *testing.T) {
 	}
 }
 
-func TestWorkerRefusesATaskWhoseKeyIsNotAKey(t *testing.T) {
-	coordinator := &scriptedCoordinator{
-		assignment: &pb.TaskAssignment{TaskId: "job/0", JobId: "job", Attempt: 1, Workload: "primes", Payload: []byte(`{"from":0,"to":10}`), Key: []byte("too short")},
-		hello:      make(chan *pb.Hello, 1),
-		result:     make(chan *pb.TaskResult, 1),
-	}
-	srv := newServer()
-	pb.RegisterCoordinatorServiceServer(srv, coordinator)
-	addr, _ := serve(t, srv)
-	runWorker(t, &worker.Worker{
-		Name: "w", Coordinator: addr, Credentials: workerCreds, Slots: 1,
-		Workloads: runtime.Builtin(), Blobs: storage.NewMemory(), Log: quiet(),
-	})
-
-	if result := <-coordinator.result; !strings.Contains(result.GetError(), "key of 9 bytes, which is not a key") {
-		t.Errorf("result %v, want the task refused for its key", result)
+// A private job's task comes with keys: its job's own and those of its
+// sealed inputs. One that comes with keys that are not keys is refused,
+// and so is one that comes with a sealing key whole and no other, as a
+// coordinator from before each job had a key gives it: run as though it
+// had none, it would store unsealed what it was to seal.
+func TestWorkerRefusesATaskWhoseKeysAreNotKeys(t *testing.T) {
+	good := &pb.SealingKey{Id: make([]byte, 16), Key: make([]byte, sealed.KeySize)}
+	for name, tt := range map[string]struct {
+		keys  []*pb.SealingKey
+		whole []byte
+		want  string
+	}{
+		"a whole key and no other": {nil, make([]byte, sealed.KeySize), "a sealing key whole and no key of its job's own"},
+		"a key that is too short":  {[]*pb.SealingKey{{Id: make([]byte, 16), Key: []byte("too short")}}, nil, "a key of 9 bytes whose ID is of 16, which is not a key"},
+		"an ID that is too short":  {[]*pb.SealingKey{good, {Id: []byte("short"), Key: make([]byte, sealed.KeySize)}}, nil, "a key of 32 bytes whose ID is of 5, which is not a key"},
+		"a whole key too short":    {[]*pb.SealingKey{good}, []byte("too short"), "key of 9 bytes, which is not a key"},
+	} {
+		coordinator := &scriptedCoordinator{
+			assignment: &pb.TaskAssignment{TaskId: "job/0", JobId: "job", Attempt: 1, Workload: "primes", Payload: []byte(`{"from":0,"to":10}`), Keys: tt.keys, Key: tt.whole},
+			hello:      make(chan *pb.Hello, 1),
+			result:     make(chan *pb.TaskResult, 1),
+		}
+		srv := newServer()
+		pb.RegisterCoordinatorServiceServer(srv, coordinator)
+		addr, _ := serve(t, srv)
+		runWorker(t, &worker.Worker{
+			Name: "w", Coordinator: addr, Credentials: workerCreds, Slots: 1,
+			Workloads: runtime.Builtin(), Blobs: storage.NewMemory(), Log: quiet(),
+		})
+		// It says, as it joins, that it takes keys as they are now given.
+		if hello := <-coordinator.hello; !slices.Contains(hello.GetCapabilities().GetLabels(), runtime.SealingLabel) {
+			t.Errorf("%s: the worker introduced itself with labels %v", name, hello.GetCapabilities().GetLabels())
+		}
+		if result := <-coordinator.result; !strings.Contains(result.GetError(), tt.want) {
+			t.Errorf("%s: result %v, want the task refused for its keys", name, result)
+		}
 	}
 }
 

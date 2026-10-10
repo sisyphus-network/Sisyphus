@@ -4,6 +4,13 @@
 // Sealing a job's data with a key given only to the nodes that work on the
 // job keeps it from the rest.
 //
+// Nothing is sealed with a sealing key itself. Each blob is sealed with a
+// key derived from it, and says in its header which: one key for each job,
+// for what the job stores, and one for each stored file. So whoever is to
+// work on a job can be given the keys to that job's data, and with them
+// opens nothing else the sealing key seals. The holder of the sealing key
+// derives any of them and opens everything.
+//
 // A sealed blob is a short header followed by the plaintext in 64 KiB
 // chunks, each encrypted and authenticated on its own with AES-256-GCM, so
 // that any part can be read without decrypting what comes before it. Each
@@ -11,13 +18,16 @@
 // cannot be reordered, dropped from the end, or moved between positions
 // without detection.
 //
-// Encryption is deterministic: the same key and plaintext always give the
-// same sealed blob, and so the same CID. That is what lets two runs of a job
-// be compared by CID, and lets storage hold one copy of a blob sealed twice.
-// The price is that someone who can see two sealed blobs can tell whether
-// they, or chunks at the same position in them, are identical under the
-// same key. They learn nothing else about the contents. Sizes are not
-// hidden.
+// Encryption is deterministic: the same derived key and plaintext always
+// give the same sealed blob, and so the same CID. That is what lets the
+// workers of one job be compared by the CIDs of what they stored, and lets
+// storage hold one copy of a file sealed twice. The price is that someone
+// who can see two blobs sealed with the same derived key can tell whether
+// they, or chunks at the same position in them, are identical. Blobs of
+// different jobs have different keys and show nothing of each other. A
+// stored file's key is derived from its first chunk, so that a file can be
+// sealed as it arrives: two files that begin with the same 64 KiB share a
+// key, and the key given for one opens the other. Sizes are not hidden.
 //
 // This is a construction assembled from standard parts (HKDF, HMAC-SHA256
 // as a synthetic nonce, AES-256-GCM), not a reviewed standard. It should be
@@ -40,8 +50,11 @@ import (
 )
 
 const (
-	// magic begins every sealed blob.
-	magic = "SISYENC1"
+	// magic begins every sealed blob, and is followed by the ID of the key
+	// it was sealed with. old began those sealed with a sealing key itself,
+	// before keys were derived, which are still opened.
+	magic = "SISYENC2"
+	old   = "SISYENC1"
 	// chunkSize is how much plaintext each encrypted chunk holds; the last
 	// may hold less.
 	chunkSize = 64 << 10
@@ -87,6 +100,90 @@ func ParseKey(text string) (Key, error) {
 // String returns the key as text. It is the secret itself: do not log it.
 func (k Key) String() string {
 	return base64.RawURLEncoding.EncodeToString(k[:])
+}
+
+// KeyID says which of the keys derived from a sealing key a blob was sealed
+// with. It is no secret: it is written at the head of the blob.
+type KeyID [16]byte
+
+// Grant is one of the keys derived from a sealing key, with its ID: what is
+// given to whoever is to open or seal the blobs it is for, and nothing more.
+type Grant struct {
+	ID  KeyID
+	Key Key
+}
+
+// Grant returns the key derived from k that has the given ID.
+func (k Key) Grant(id KeyID) Grant {
+	// Cannot fail for these sizes.
+	derived, _ := hkdf.Key(sha256.New, k[:], id[:], "sisyphus sealed blob: derived key", KeySize)
+	return Grant{ID: id, Key: Key(derived)}
+}
+
+// ForJob returns the key that what a job stores is sealed with.
+func (k Key) ForJob(jobID string) Grant {
+	sum := sha256.Sum256([]byte("sisyphus sealed blob: job " + jobID))
+	return k.Grant(KeyID(sum[:len(KeyID{})]))
+}
+
+// forFile returns the key a stored file is sealed with, given how the file
+// begins: a file is sealed as it arrives, before the rest of it is known.
+func (k Key) forFile(first []byte) Grant {
+	idKey, _ := hkdf.Key(sha256.New, k[:], nil, "sisyphus sealed blob: file key IDs", 32)
+	mac := hmac.New(sha256.New, idKey)
+	mac.Write(first)
+	return k.Grant(KeyID(mac.Sum(nil)[:len(KeyID{})]))
+}
+
+// Keys is what opens sealed blobs: a sealing key, which opens whatever was
+// sealed with any key derived from it, or a Ring of such keys, which opens
+// what was sealed with those.
+type Keys interface {
+	// keyTo returns the key to a blob sealed with the derived key that has
+	// the given ID, or, with whole set, with a sealing key itself.
+	keyTo(id KeyID, whole bool) (Key, error)
+}
+
+func (k Key) keyTo(id KeyID, whole bool) (Key, error) {
+	if whole {
+		return k, nil
+	}
+	return k.Grant(id).Key, nil
+}
+
+// ErrNoKey reports that a blob was sealed with a key that was not given.
+var ErrNoKey = errors.New("sealed blob does not open: the key it was sealed with is not among those given")
+
+// Ring is the keys given to whoever works on a job: those of the blobs the
+// job is to read and the one it seals what it stores with.
+type Ring struct {
+	grants map[KeyID]Key
+	// Whole, if set, is a sealing key itself, for a blob sealed before
+	// keys were derived, which nothing less opens.
+	Whole *Key
+}
+
+// NewRing returns a ring of the given keys.
+func NewRing(grants ...Grant) *Ring {
+	r := &Ring{grants: make(map[KeyID]Key, len(grants))}
+	for _, g := range grants {
+		r.grants[g.ID] = g.Key
+	}
+	return r
+}
+
+func (r *Ring) keyTo(id KeyID, whole bool) (Key, error) {
+	if whole {
+		if r.Whole == nil {
+			return Key{}, ErrNoKey
+		}
+		return *r.Whole, nil
+	}
+	key, held := r.grants[id]
+	if !held {
+		return Key{}, ErrNoKey
+	}
+	return key, nil
 }
 
 // sealer does the encryption for one key.
@@ -136,12 +233,24 @@ func (s *sealer) open(index uint64, final bool, record []byte) ([]byte, error) {
 	return plain, nil
 }
 
-// Encrypt returns a reader of the sealed form of everything read from r.
+// Encrypt returns a reader of everything read from r, sealed as a stored
+// file is: with a key derived from key and from how the file begins.
 func Encrypt(key Key, r io.Reader) io.Reader {
-	return &encrypter{sealer: key.sealer(), src: r, pending: *bytes.NewBufferString(magic)}
+	return &encrypter{from: &key, src: r}
+}
+
+// EncryptWith returns a reader of everything read from r, sealed with the
+// given key: as what a job stores is sealed with the job's.
+func EncryptWith(grant Grant, r io.Reader) io.Reader {
+	e := &encrypter{src: r}
+	e.begin(grant)
+	return e
 }
 
 type encrypter struct {
+	// from is the sealing key a file's own key is still to be derived
+	// from, once its first chunk has been read.
+	from   *Key
 	sealer *sealer
 	src    io.Reader
 	// current is the chunk read but not yet sealed. It is held back until it
@@ -173,6 +282,9 @@ func (e *encrypter) sealNext() error {
 		if e.current, err = readChunk(e.src); err != nil {
 			return err
 		}
+		if e.from != nil {
+			e.begin(e.from.forFile(e.current))
+		}
 	}
 	// A short chunk is the last. A full one is the last only if nothing
 	// follows it.
@@ -190,6 +302,13 @@ func (e *encrypter) sealNext() error {
 	return nil
 }
 
+// begin writes the head of a blob sealed with the given key.
+func (e *encrypter) begin(grant Grant) {
+	e.sealer = grant.Key.sealer()
+	e.pending.WriteString(magic)
+	e.pending.Write(grant.ID[:])
+}
+
 // readChunk reads up to a chunk from r. Fewer bytes than a chunk means r is
 // exhausted.
 func readChunk(r io.Reader) ([]byte, error) {
@@ -204,7 +323,23 @@ func readChunk(r io.Reader) ([]byte, error) {
 // IsSealed reports whether a blob that begins with the given bytes is a
 // sealed one. It needs the first eight.
 func IsSealed(start []byte) bool {
-	return bytes.HasPrefix(start, []byte(magic))
+	return bytes.HasPrefix(start, []byte(magic)) || bytes.HasPrefix(start, []byte(old))
+}
+
+// HeaderSize is how much of a blob Header needs to be given.
+const HeaderSize = len(magic) + len(KeyID{})
+
+// Header reads the head of a blob: whether it is sealed, and with which
+// derived key, or, if whole is set, that it was sealed with a sealing key
+// itself. It needs the first HeaderSize bytes, or all there are.
+func Header(start []byte) (id KeyID, whole, isSealed bool) {
+	switch {
+	case bytes.HasPrefix(start, []byte(old)):
+		return id, true, true
+	case bytes.HasPrefix(start, []byte(magic)) && len(start) >= HeaderSize:
+		return KeyID(start[len(magic):HeaderSize]), false, true
+	}
+	return id, false, false
 }
 
 // Reader reads the plaintext of a sealed blob, decrypting chunks as they
@@ -212,6 +347,7 @@ func IsSealed(start []byte) bool {
 type Reader struct {
 	sealer *sealer
 	src    io.ReadSeeker
+	head   uint64 // the length of the blob's header
 	size   uint64 // of the plaintext
 	chunks uint64
 	pos    uint64
@@ -223,10 +359,11 @@ type Reader struct {
 }
 
 // Open returns a reader for the sealed blob in src, which is sealedSize
-// bytes long. It fails with ErrNotSealed if src is not a sealed blob. A
-// wrong key or an altered blob is found when the affected part is read.
-func Open(key Key, src io.ReadSeeker, sealedSize uint64) (*Reader, error) {
-	header := make([]byte, len(magic))
+// bytes long. It fails with ErrNotSealed if src is not a sealed blob, and
+// with ErrNoKey if keys has no key to it. A wrong key or an altered blob is
+// found when the affected part is read.
+func Open(keys Keys, src io.ReadSeeker, sealedSize uint64) (*Reader, error) {
+	header := make([]byte, HeaderSize)
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
@@ -234,12 +371,28 @@ func Open(key Key, src io.ReadSeeker, sealedSize uint64) (*Reader, error) {
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, err
 	}
-	if !IsSealed(header[:n]) {
+	id, whole, is := Header(header[:n])
+	if !is {
+		if IsSealed(header[:n]) {
+			// It says it is sealed and stops before saying with what.
+			return nil, fmt.Errorf("%w: its length is not that of any sealed blob", ErrCorrupt)
+		}
 		return nil, ErrNotSealed
 	}
-	body := sealedSize - uint64(len(magic))
+	key, err := keys.keyTo(id, whole)
+	if err != nil {
+		return nil, err
+	}
+	head := uint64(HeaderSize)
+	if whole {
+		head = uint64(len(old))
+	}
+	if sealedSize < head {
+		return nil, fmt.Errorf("%w: its length is not that of any sealed blob", ErrCorrupt)
+	}
+	body := sealedSize - head
 	full, rest := body/recordSize, body%recordSize
-	r := &Reader{sealer: key.sealer(), src: src}
+	r := &Reader{sealer: key.sealer(), src: src, head: head}
 	switch {
 	case rest == 0 && full > 0:
 		// Every chunk is full, the last included.
@@ -285,7 +438,7 @@ func (r *Reader) load(index uint64) error {
 	if final {
 		length = r.size - index*chunkSize + overhead
 	}
-	if _, err := r.src.Seek(int64(uint64(len(magic))+index*recordSize), io.SeekStart); err != nil {
+	if _, err := r.src.Seek(int64(r.head+index*recordSize), io.SeekStart); err != nil {
 		return err
 	}
 	record := make([]byte, length)

@@ -2,10 +2,13 @@ package sealed
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/sisyphus-network/Sisyphus/packages/sealed/sealedtest"
 )
 
 // pattern returns n deterministic, non-repeating bytes.
@@ -311,5 +314,166 @@ func TestFailuresOfTheSourceArePassedOn(t *testing.T) {
 	plainSource, _ := Open(key, bytes.NewReader(sealed), uint64(len(sealed)))
 	if err := plainSource.Close(); err != nil {
 		t.Errorf("closing a reader over something that cannot be closed: %v", err)
+	}
+}
+
+// oldBlob returns a blob sealed in the form used before keys were derived,
+// and the sealing key it was sealed with.
+func oldBlob(t *testing.T) ([]byte, Key) {
+	t.Helper()
+	key, err := ParseKey(sealedtest.OldKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob, err := base64.StdEncoding.DecodeString(sealedtest.OldBlob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return blob, key
+}
+
+func openAll(keys Keys, blob []byte) (string, error) {
+	opened, err := Open(keys, bytes.NewReader(blob), uint64(len(blob)))
+	if err != nil {
+		return "", err
+	}
+	plain, err := io.ReadAll(opened)
+	return string(plain), err
+}
+
+// Each blob is sealed with a key derived from the sealing key, and says
+// which. The sealing key opens them all; a ring opens those it has the
+// keys to and no others.
+func TestABlobIsOpenedByTheKeyItNamesAndNoOther(t *testing.T) {
+	key := NewKey()
+	ours, theirs := key.ForJob("ours"), key.ForJob("theirs")
+	if ours.ID == theirs.ID || ours.Key == theirs.Key || ours.Key == key || key.ForJob("ours") != ours {
+		t.Fatal("two jobs' keys are not each their own, or a job's is not always the same")
+	}
+	seal := func(grant Grant, text string) []byte {
+		blob, err := io.ReadAll(EncryptWith(grant, strings.NewReader(text)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return blob
+	}
+	mine, other := seal(ours, "this job's"), seal(theirs, "another job's")
+
+	// Its head says it is sealed and with which key, and nothing else.
+	if id, whole, is := Header(mine); !is || whole || id != ours.ID || !IsSealed(mine) {
+		t.Errorf("the head of a sealed blob reads as key %x, whole %v, sealed %v", id, whole, is)
+	}
+	if _, _, is := Header([]byte("not sealed at all, only long enough")); is {
+		t.Error("a blob that is not sealed reads as sealed")
+	}
+	// The same key and text seal alike; another job's key does not.
+	if !bytes.Equal(mine, seal(ours, "this job's")) || bytes.Equal(mine[HeaderSize:], seal(theirs, "this job's")[HeaderSize:]) {
+		t.Error("sealing is not the same for one key, or is the same for two")
+	}
+
+	ring := NewRing(ours)
+	if got, err := openAll(ring, mine); err != nil || got != "this job's" {
+		t.Errorf("a ring with the key: %q, %v", got, err)
+	}
+	if _, err := openAll(ring, other); !errors.Is(err, ErrNoKey) {
+		t.Errorf("a ring without the key: %v, want ErrNoKey", err)
+	}
+	for _, blob := range [][]byte{mine, other} {
+		if _, err := openAll(key, blob); err != nil {
+			t.Errorf("the sealing key itself: %v", err)
+		}
+	}
+	// A key that has the right ID and is not the right key opens nothing.
+	forged := NewRing(Grant{ID: theirs.ID, Key: ours.Key})
+	if _, err := openAll(forged, other); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("a key under another's ID: %v, want ErrCorrupt", err)
+	}
+	// Another sealing key derives other keys, whatever the ID.
+	if _, err := openAll(NewKey(), mine); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("another sealing key: %v, want ErrCorrupt", err)
+	}
+
+	// A blob that says it is sealed and stops before saying with what, or
+	// is said to be shorter than its own head, is not a sealed blob.
+	if _, err := openAll(key, mine[:HeaderSize-4]); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("a blob cut off within its head: %v, want ErrCorrupt", err)
+	}
+	if _, err := openAll(key, mine[:HeaderSize+5]); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("a blob cut off within its first chunk: %v, want ErrCorrupt", err)
+	}
+	stump, _ := oldBlob(t)
+	if _, err := Open(key, bytes.NewReader(stump), 3); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("a blob said to be shorter than its head: %v, want ErrCorrupt", err)
+	}
+}
+
+// A stored file is sealed as it arrives, with a key that comes of how it
+// begins: the same file is sealed alike each time, files that begin
+// differently have keys of their own, and files that begin alike share one.
+func TestAFilesKeyComesOfHowItBegins(t *testing.T) {
+	key := NewKey()
+	seal := func(text string) []byte {
+		blob, err := io.ReadAll(Encrypt(key, strings.NewReader(text)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return blob
+	}
+	id := func(blob []byte) KeyID {
+		id, whole, is := Header(blob)
+		if whole || !is {
+			t.Fatalf("a file's head reads as whole %v, sealed %v", whole, is)
+		}
+		return id
+	}
+	first, again, another := seal("one file"), seal("one file"), seal("another file")
+	if !bytes.Equal(first, again) {
+		t.Error("the same file was sealed differently the second time")
+	}
+	if id(first) == id(another) {
+		t.Error("two files that begin differently were sealed with one key")
+	}
+	// The key given for one file opens that file and not the other.
+	ring := NewRing(key.Grant(id(first)))
+	if got, err := openAll(ring, first); err != nil || got != "one file" {
+		t.Errorf("the file's own key: %q, %v", got, err)
+	}
+	if _, err := openAll(ring, another); !errors.Is(err, ErrNoKey) {
+		t.Errorf("another file's key: %v, want ErrNoKey", err)
+	}
+	// Two long files with the same first chunk share a key, which is the
+	// price of sealing a file before its end is known.
+	start := strings.Repeat("x", chunkSize)
+	if id(seal(start+"one ending")) != id(seal(start+"another")) {
+		t.Error("two files with the same first chunk have different keys")
+	}
+	// Another sealing key gives the same file another key.
+	elsewhere, _ := io.ReadAll(Encrypt(NewKey(), strings.NewReader("one file")))
+	if id(elsewhere) == id(first) {
+		t.Error("two sealing keys gave one file the same key ID")
+	}
+}
+
+// A blob sealed before keys were derived is opened by its sealing key, and
+// by a ring only if the ring was given that key whole.
+func TestABlobSealedInTheOldFormIsStillOpened(t *testing.T) {
+	blob, key := oldBlob(t)
+	if id, whole, is := Header(blob); !is || !whole || id != (KeyID{}) || !IsSealed(blob) {
+		t.Errorf("the head of an old blob reads as key %x, whole %v, sealed %v", id, whole, is)
+	}
+	if got, err := openAll(key, blob); err != nil || got != sealedtest.OldText {
+		t.Errorf("with its sealing key: %q, %v", got, err)
+	}
+	ring := NewRing(key.ForJob("a job"))
+	if _, err := openAll(ring, blob); !errors.Is(err, ErrNoKey) {
+		t.Errorf("a ring with no whole key: %v, want ErrNoKey", err)
+	}
+	ring.Whole = &key
+	if got, err := openAll(ring, blob); err != nil || got != sealedtest.OldText {
+		t.Errorf("a ring given the key whole: %q, %v", got, err)
+	}
+	other := NewKey()
+	if _, err := openAll(other, blob); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("with another sealing key: %v, want ErrCorrupt", err)
 	}
 }

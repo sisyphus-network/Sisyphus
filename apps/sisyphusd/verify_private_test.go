@@ -38,7 +38,7 @@ func TestAPrivateJobIsVerifiedByWorkersThatSealTheSameWorkAlike(t *testing.T) {
 		t.Errorf("the job's events:\n%s", story(events))
 	}
 	// It gives what the same job gives unverified.
-	if plain := p.wait(p.submit(spec(0, 0)).GetJobId()); string(plain.GetResult()) != string(done.GetResult()) {
+	if plain := p.wait(p.submit(spec(0, 0)).GetJobId()); p.unsealedTable(plain, key) != p.unsealedTable(done, key) {
 		t.Errorf("verified it gave %s, and unverified %s", done.GetResult(), plain.GetResult())
 	}
 
@@ -68,7 +68,7 @@ func TestAPrivateJobIsVerifiedByWorkersThatSealTheSameWorkAlike(t *testing.T) {
 
 	// A share of its tasks can be verified, as of any job's.
 	spot := p.wait(p.submit(spec(2, 0.3)).GetJobId())
-	if spot.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || string(spot.GetResult()) != string(done.GetResult()) {
+	if spot.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || p.unsealedTable(spot, key) != p.unsealedTable(done, key) {
 		t.Fatalf("with a share verified, the job %v: %s, %s", spot.GetState(), spot.GetResult(), spot.GetError())
 	}
 	if events := p.events(spot.GetJobId(), 0); count(events, "task-result") != 4 {
@@ -85,17 +85,22 @@ func TestAWorkerThatReturnsAWrongResultForAPrivateJobIsOutvoted(t *testing.T) {
 	spec.Key = key[:]
 	id := p.submit(spec).GetJobId()
 
-	// Every worker asked is given the key, and what each says it stored is
-	// compared by name: a blob sealed from other data has another.
+	// Every worker asked is given the job's own key, and not the sealing
+	// key it was derived from. What each says it stored is compared by
+	// name: a blob sealed from other data has another.
+	own := key.ForJob(id)
+	given := func(a *pb.TaskAssignment) bool {
+		return len(a.GetKeys()) == 1 && bytes.Equal(a.GetKeys()[0].GetKey(), own.Key[:]) && bytes.Equal(a.GetKeys()[0].GetId(), own.ID[:]) && a.GetKey() == nil
+	}
 	first, second := liar.assignment(), beta.assignment()
-	if !bytes.Equal(first.GetKey(), key[:]) || !bytes.Equal(second.GetKey(), key[:]) {
-		t.Fatal("a worker of a private job that is verified was not given its key")
+	if !given(first) || !given(second) {
+		t.Fatal("a worker of a private job that is verified was not given the job's key and that alone")
 	}
 	same, other := p.upload("sealed from the data"), p.upload("sealed from other data")
 	liar.returns(first, `{"count":7}`, other)
 	beta.returns(second, `{"count":7}`, same)
 	third := gamma.assignment()
-	if !bytes.Equal(third.GetKey(), key[:]) {
+	if !given(third) {
 		t.Fatal("the worker asked to settle it was not given the key")
 	}
 	gamma.returns(third, `{"count":7}`, same)

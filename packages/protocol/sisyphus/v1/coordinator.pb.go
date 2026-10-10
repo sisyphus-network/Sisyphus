@@ -788,8 +788,14 @@ type TaskAssignment struct {
 	Attempt  uint32                 `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	Workload string                 `protobuf:"bytes,4,opt,name=workload,proto3" json:"workload,omitempty"`
 	Payload  []byte                 `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
-	// The job's sealing key, if it is a private job.
-	Key           []byte `protobuf:"bytes,6,opt,name=key,proto3" json:"key,omitempty"`
+	// A sealing key whole. It was once the key of every private job. It is
+	// now given only with keys, and only when the job names an input sealed
+	// before keys were derived, which nothing less opens.
+	Key []byte `protobuf:"bytes,6,opt,name=key,proto3" json:"key,omitempty"`
+	// For a private job: the keys its tasks may use, each derived from the
+	// submitter's sealing key. The first is the job's own, which what a task
+	// stores is sealed with; the rest open the sealed inputs the job names.
+	Keys          []*SealingKey `protobuf:"bytes,7,rep,name=keys,proto3" json:"keys,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -866,6 +872,66 @@ func (x *TaskAssignment) GetKey() []byte {
 	return nil
 }
 
+func (x *TaskAssignment) GetKeys() []*SealingKey {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+// SealingKey is one key derived from a sealing key, and its ID.
+type SealingKey struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Key           []byte                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SealingKey) Reset() {
+	*x = SealingKey{}
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SealingKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SealingKey) ProtoMessage() {}
+
+func (x *SealingKey) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SealingKey.ProtoReflect.Descriptor instead.
+func (*SealingKey) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *SealingKey) GetId() []byte {
+	if x != nil {
+		return x.Id
+	}
+	return nil
+}
+
+func (x *SealingKey) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
 var File_sisyphus_v1_coordinator_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
@@ -923,14 +989,19 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\x0ecoordinator_id\x18\x01 \x01(\tR\rcoordinatorId\x12+\n" +
 	"\x11swarm_fingerprint\x18\x02 \x01(\tR\x10swarmFingerprint\":\n" +
 	"\vSwarmUpdate\x12+\n" +
-	"\x11swarm_fingerprint\x18\x01 \x01(\tR\x10swarmFingerprint\"\xa2\x01\n" +
+	"\x11swarm_fingerprint\x18\x01 \x01(\tR\x10swarmFingerprint\"\xcf\x01\n" +
 	"\x0eTaskAssignment\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x15\n" +
 	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x12\x18\n" +
 	"\aattempt\x18\x03 \x01(\rR\aattempt\x12\x1a\n" +
 	"\bworkload\x18\x04 \x01(\tR\bworkload\x12\x18\n" +
 	"\apayload\x18\x05 \x01(\fR\apayload\x12\x10\n" +
-	"\x03key\x18\x06 \x01(\fR\x03key2`\n" +
+	"\x03key\x18\x06 \x01(\fR\x03key\x12+\n" +
+	"\x04keys\x18\a \x03(\v2\x17.sisyphus.v1.SealingKeyR\x04keys\".\n" +
+	"\n" +
+	"SealingKey\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\fR\x02id\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\fR\x03key2`\n" +
 	"\x12CoordinatorService\x12J\n" +
 	"\aConnect\x12\x1a.sisyphus.v1.WorkerMessage\x1a\x1f.sisyphus.v1.CoordinatorMessage(\x010\x01BOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
@@ -946,7 +1017,7 @@ func file_sisyphus_v1_coordinator_proto_rawDescGZIP() []byte {
 	return file_sisyphus_v1_coordinator_proto_rawDescData
 }
 
-var file_sisyphus_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_sisyphus_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_sisyphus_v1_coordinator_proto_goTypes = []any{
 	(*WorkerMessage)(nil),      // 0: sisyphus.v1.WorkerMessage
 	(*TaskUpdate)(nil),         // 1: sisyphus.v1.TaskUpdate
@@ -959,26 +1030,28 @@ var file_sisyphus_v1_coordinator_proto_goTypes = []any{
 	(*Welcome)(nil),            // 8: sisyphus.v1.Welcome
 	(*SwarmUpdate)(nil),        // 9: sisyphus.v1.SwarmUpdate
 	(*TaskAssignment)(nil),     // 10: sisyphus.v1.TaskAssignment
-	(*NodeCapabilities)(nil),   // 11: sisyphus.v1.NodeCapabilities
+	(*SealingKey)(nil),         // 11: sisyphus.v1.SealingKey
+	(*NodeCapabilities)(nil),   // 12: sisyphus.v1.NodeCapabilities
 }
 var file_sisyphus_v1_coordinator_proto_depIdxs = []int32{
 	2,  // 0: sisyphus.v1.WorkerMessage.hello:type_name -> sisyphus.v1.Hello
 	3,  // 1: sisyphus.v1.WorkerMessage.heartbeat:type_name -> sisyphus.v1.Heartbeat
 	5,  // 2: sisyphus.v1.WorkerMessage.task_result:type_name -> sisyphus.v1.TaskResult
 	1,  // 3: sisyphus.v1.WorkerMessage.task_update:type_name -> sisyphus.v1.TaskUpdate
-	11, // 4: sisyphus.v1.Hello.capabilities:type_name -> sisyphus.v1.NodeCapabilities
+	12, // 4: sisyphus.v1.Hello.capabilities:type_name -> sisyphus.v1.NodeCapabilities
 	4,  // 5: sisyphus.v1.Heartbeat.labels:type_name -> sisyphus.v1.Labels
 	8,  // 6: sisyphus.v1.CoordinatorMessage.welcome:type_name -> sisyphus.v1.Welcome
 	10, // 7: sisyphus.v1.CoordinatorMessage.assignment:type_name -> sisyphus.v1.TaskAssignment
 	9,  // 8: sisyphus.v1.CoordinatorMessage.swarm_update:type_name -> sisyphus.v1.SwarmUpdate
 	7,  // 9: sisyphus.v1.CoordinatorMessage.cancel:type_name -> sisyphus.v1.TaskCancel
-	0,  // 10: sisyphus.v1.CoordinatorService.Connect:input_type -> sisyphus.v1.WorkerMessage
-	6,  // 11: sisyphus.v1.CoordinatorService.Connect:output_type -> sisyphus.v1.CoordinatorMessage
-	11, // [11:12] is the sub-list for method output_type
-	10, // [10:11] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	11, // 10: sisyphus.v1.TaskAssignment.keys:type_name -> sisyphus.v1.SealingKey
+	0,  // 11: sisyphus.v1.CoordinatorService.Connect:input_type -> sisyphus.v1.WorkerMessage
+	6,  // 12: sisyphus.v1.CoordinatorService.Connect:output_type -> sisyphus.v1.CoordinatorMessage
+	12, // [12:13] is the sub-list for method output_type
+	11, // [11:12] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_coordinator_proto_init() }
@@ -1009,7 +1082,7 @@ func file_sisyphus_v1_coordinator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_coordinator_proto_rawDesc), len(file_sisyphus_v1_coordinator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
