@@ -91,13 +91,14 @@ func TestAWorkerThatReturnsAWrongResultForAPrivateJobIsOutvoted(t *testing.T) {
 	if !bytes.Equal(first.GetKey(), key[:]) || !bytes.Equal(second.GetKey(), key[:]) {
 		t.Fatal("a worker of a private job that is verified was not given its key")
 	}
-	liar.returns(first, `{"count":7}`, "bafyother")
-	beta.returns(second, `{"count":7}`, "bafysame")
+	same, other := p.upload("sealed from the data"), p.upload("sealed from other data")
+	liar.returns(first, `{"count":7}`, other)
+	beta.returns(second, `{"count":7}`, same)
 	third := gamma.assignment()
 	if !bytes.Equal(third.GetKey(), key[:]) {
 		t.Fatal("the worker asked to settle it was not given the key")
 	}
-	gamma.returns(third, `{"count":7}`, "bafysame")
+	gamma.returns(third, `{"count":7}`, same)
 
 	done := p.wait(id)
 	if done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || string(done.GetResult()) != `{"count":7}` {

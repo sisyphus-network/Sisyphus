@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -118,7 +119,7 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 	// environment the job gave, and the task's place in the job.
 	args := strings.Join(engine.asked[0], " ")
 	for _, want := range []string{"run --rm --name sisyphus-", ":/input:ro", ":/output", "--env SISYPHUS_TASK_INDEX=1", "--env SISYPHUS_TASK_COUNT=2",
-		"--network none", "--memory 256m", "--cpus 1.5", "--gpus 2", "--env A=1 --env B=2", "alpine:3.20 sh -c work"} {
+		"--security-opt no-new-privileges", "--pids-limit 4096", "--user " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + " --cap-drop ALL", "--network none", "--memory 256m", "--cpus 1.5", "--gpus 2", "--env A=1 --env B=2", "alpine:3.20 sh -c work"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("the engine was asked %q, without %q", args, want)
 		}
@@ -293,6 +294,49 @@ func TestAContainerTaskThatIsStoppedHasItsContainerKilled(t *testing.T) {
 	}
 }
 
+// What a task leaves in /output is stored and kept, so a task may leave
+// only so much.
+func TestATaskMayLeaveOnlySoMuchInItsOutput(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+	leaving := func(files map[string]int) *pretend {
+		return &pretend{do: func(args []string, _, _ io.Writer) (int, error) {
+			for name, size := range files {
+				os.WriteFile(filepath.Join(volume(args, "/output"), name), bytes.Repeat([]byte("x"), size), 0o644)
+			}
+			return 0, nil
+		}}
+	}
+	run := func(c Container) (ContainerOutput, error) {
+		payloads, _ := c.Split(ctx, store, []byte(`{"image":"alpine:3.20"}`), 1)
+		raw, err := c.Execute(ctx, store, payloads[0])
+		var out ContainerOutput
+		json.Unmarshal(raw, &out)
+		return out, err
+	}
+	// Up to the limit, between however many files.
+	if out, err := run(Container{Engine: leaving(map[string]int{"a": 60, "b": 40}).engine, MaxOutput: 100}); err != nil || len(out.Files) != 2 {
+		t.Errorf("a task that left as much as it may: %+v, %v", out, err)
+	}
+	for name, files := range map[string]map[string]int{"one file too long": {"a": 101}, "two that are together": {"a": 60, "b": 41}} {
+		if _, err := run(Container{Engine: leaving(files).engine, MaxOutput: 100}); err == nil || !strings.Contains(err.Error(), "left more in /output than the 100 bytes a task may") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// With no limit set there is the usual one, which these are well within.
+	many := map[string]int{}
+	for i := range maxOutputFiles {
+		many[strconv.Itoa(i)] = 1
+	}
+	if out, err := run(Container{Engine: leaving(many).engine}); err != nil || len(out.Files) != maxOutputFiles {
+		t.Errorf("a task that left as many files as it may: %d, %v", len(out.Files), err)
+	}
+	many["one more"] = 1
+	if _, err := run(Container{Engine: leaving(many).engine}); err == nil || !strings.Contains(err.Error(), "left more than 1024 files in /output") {
+		t.Errorf("a task that left too many files: %v", err)
+	}
+}
+
 func TestOnlySoMuchOfWhatATaskPrintsIsKept(t *testing.T) {
 	var kept capped
 	kept.Write(bytes.Repeat([]byte("x"), maxStdout-10))
@@ -354,6 +398,18 @@ func TestARealContainerRuns(t *testing.T) {
 	// Nothing of the task is left on this machine.
 	if left, _ := filepath.Glob(filepath.Join(os.TempDir(), "sisyphus-task-*")); len(left) != 0 {
 		t.Errorf("task directories left behind: %v", left)
+	}
+
+	// The command can gain no privilege, and has none of a container's
+	// usual capabilities to begin with.
+	confined, _ := c.Split(ctx, store, []byte(`{"image":"alpine:3.20","command":["sh","-c","grep -E '^(CapBnd|NoNewPrivs)' /proc/self/status"]}`), 1)
+	raw, err = c.Execute(ctx, store, confined[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(raw, &out)
+	if got := readBlob(t, store, out.Stdout); got != "CapBnd:\t0000000000000000\nNoNewPrivs:\t1\n" {
+		t.Errorf("the container's privileges: %q", got)
 	}
 
 	// A command that fails says how, and one that cannot be started says so.
