@@ -2,7 +2,7 @@
 
 Everything in the test suite runs on one machine. This is the guide for the test that cannot: a pool spread over two or three real machines, which is the exit test for V0 ([#18](https://github.com/sisyphus-network/Sisyphus/issues/18)). It takes about an hour. Work through it in order and write down what happens at each ✎.
 
-Before giving it the hour, [`examples/rehearsal.sh`](../examples/rehearsal.sh) runs the same shape of pool in containers on one machine in two minutes: separate addresses and disks, workers that cannot reach each other, a client with only an invitation. If that fails, this will. It cannot show what real machines add: address translation, real links, and timings that mean something.
+Before giving it the hour, [`examples/rehearsal.sh`](../examples/rehearsal.sh) runs the same shape of pool in containers on one machine in three minutes: separate addresses and disks, workers that cannot reach each other, clients with only an invitation, a worker lost and the coordinator restarted while jobs run. If that fails, this will. It cannot show what real machines add: address translation, real links, and timings that mean something.
 
 ## What you need
 

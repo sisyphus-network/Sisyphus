@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net"
+	"net/netip"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/core/transport"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
@@ -42,6 +44,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcpreuse"
+	"github.com/libp2p/go-libp2p/x/rate"
 	ma "github.com/multiformats/go-multiaddr"
 	"go.uber.org/fx"
 
@@ -133,6 +136,51 @@ func (*carried) ReservationAllowed(bool)               {}
 func (*carried) ReservationClosed(int)                 {}
 func (*carried) ReservationRequestHandled(pbv2.Status) {}
 
+// What a host takes from one address: perAddress connections at once, and
+// new ones at perSecond a second once perAddress have come at a run.
+//
+// libp2p's own limits are eight at once, and sixteen at a run and then one
+// every five seconds. They are set for a node among strangers on a public
+// network. A pool's port is shared with its gRPC server, so they count
+// every connection a member makes there, and each command a person or a
+// script runs is one: the seventeenth in a row was dropped as it was made,
+// and a script on another machine failed part way. A pool's members are
+// also often behind one address: the machines of one house or office, each
+// with a worker that holds several connections, beside a desktop, a command
+// line and an agent's server. A connection is still nothing until its
+// handshake has shown a node that was admitted.
+const (
+	perAddress = 256
+	perSecond  = 32
+)
+
+// resources returns what limits a host's connections, streams and memory:
+// libp2p's own limits, with room for a pool's members behind one address.
+func resources() network.ResourceManager {
+	limits := rcmgr.DefaultLimits
+	libp2p.SetDefaultServiceLimits(&limits)
+	// The same shape as libp2p's own: one limit for an IPv4 address, and
+	// for IPv6 one for a household's prefix and a wider one beyond it. This
+	// machine's own addresses are not limited, as they are not by libp2p.
+	often := rate.Limit{RPS: perSecond, Burst: perAddress}
+	wider := rate.Limit{RPS: 8 * perSecond, Burst: 8 * perAddress}
+	manager, _ := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(limits.AutoScale()),
+		rcmgr.WithLimitPerSubnet(
+			[]rcmgr.ConnLimitPerSubnet{{PrefixLength: 32, ConnCount: perAddress}},
+			[]rcmgr.ConnLimitPerSubnet{{PrefixLength: 56, ConnCount: perAddress}, {PrefixLength: 48, ConnCount: 8 * perAddress}},
+		),
+		rcmgr.WithConnRateLimiters(&rate.Limiter{
+			NetworkPrefixLimits: []rate.PrefixLimit{{Prefix: netip.MustParsePrefix("127.0.0.0/8")}, {Prefix: netip.MustParsePrefix("::1/128")}},
+			SubnetRateLimiter: rate.SubnetLimiter{
+				IPv4SubnetLimits: []rate.SubnetLimit{{PrefixLength: 32, Limit: often}},
+				IPv6SubnetLimits: []rate.SubnetLimit{{PrefixLength: 56, Limit: often}, {PrefixLength: 48, Limit: wider}},
+				GracePeriod:      time.Minute,
+			},
+		}),
+	) // fails only for an option that fails, and neither of these does
+	return manager
+}
+
 // New starts a host.
 func New(cfg Config) (*Host, error) {
 	key, _ := crypto.UnmarshalPrivateKey(cfg.Identity.Libp2pKey()) // a node's key is always one libp2p can read
@@ -156,6 +204,7 @@ func New(cfg Config) (*Host, error) {
 
 	options := []libp2p.Option{
 		libp2p.Identity(key),
+		libp2p.ResourceManager(resources()),
 		// A machine without one of the two kinds of address listens on the
 		// other; only failing at both stops the host.
 		libp2p.ListenAddrStrings(listen...),

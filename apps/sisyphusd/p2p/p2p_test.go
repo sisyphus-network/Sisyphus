@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	ma "github.com/multiformats/go-multiaddr"
 
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 )
@@ -722,5 +724,54 @@ func TestACallThatFailsIsMadeAgain(t *testing.T) {
 	cancel()
 	if err := a.Connect(stopped, nobody); err == nil {
 		t.Error("a call nobody was waiting for succeeded")
+	}
+}
+
+// A host takes from one address what a pool's members make: each command
+// run on another machine is a connection, and a house's machines share an
+// address. libp2p's own limits are for strangers on a public network, and
+// refuse the seventeenth connection in a row and the ninth at once.
+func TestAHostTakesAsManyConnectionsFromOneAddressAsAPoolsMembersMake(t *testing.T) {
+	limits := resources()
+	defer limits.Close()
+	for name, address := range map[string]string{"an IPv4 address": "/ip4/192.0.2.7/tcp/40000", "an IPv6 address": "/ip6/2001:db8::7/tcp/40000"} {
+		from := ma.StringCast(address)
+		// Sixty in a row, each over before the next, as a script makes them.
+		for i := range 60 {
+			conn, err := limits.OpenConnection(network.DirInbound, true, from)
+			if err != nil {
+				t.Fatalf("connection %d in a row from %s: %v", i+1, name, err)
+			}
+			conn.Done()
+		}
+		// And a hundred at once, as a household's workers hold them.
+		var held []network.ConnManagementScope
+		for i := range 100 {
+			conn, err := limits.OpenConnection(network.DirInbound, true, from)
+			if err != nil {
+				t.Fatalf("connection %d at once from %s: %v", i+1, name, err)
+			}
+			held = append(held, conn)
+		}
+		for _, conn := range held {
+			conn.Done()
+		}
+	}
+	// It is still a limit: one address cannot take every connection there is.
+	from, refused := ma.StringCast("/ip4/192.0.2.9/tcp/40000"), false
+	var held []network.ConnManagementScope
+	for range 2 * perAddress {
+		conn, err := limits.OpenConnection(network.DirInbound, true, from)
+		if err != nil {
+			refused = true
+			break
+		}
+		held = append(held, conn)
+	}
+	for _, conn := range held {
+		conn.Done()
+	}
+	if !refused {
+		t.Errorf("%d connections at once from one address were all taken", 2*perAddress)
 	}
 }
