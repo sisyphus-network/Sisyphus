@@ -275,7 +275,8 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const [historyResizing, setHistoryResizing] = useState(false)
   const [historyPanelHost, setHistoryPanelHost] = useState<HTMLDivElement | null>(null)
   const desktopStageRef = useRef<HTMLDivElement>(null)
-  const historyDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null)
+  const historyDragRef = useRef<{ pointerId: number; startX: number; startY: number; startWidth: number; dragging: boolean } | null>(null)
+  const historyLastTapRef = useRef<{ at: number; x: number; y: number } | null>(null)
   const [topologyOpen, setTopologyOpen] = useState(savedLayout.topologyOpen)
   const [topologyRatio, setTopologyRatio] = useState(() => {
     const savedRatio = savedLayout.network / 100
@@ -283,7 +284,8 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   })
   const [topologyResizing, setTopologyResizing] = useState(false)
   const [desktopStageWidth, setDesktopStageWidth] = useState(() => window.innerWidth)
-  const topologyDragRef = useRef<{ pointerId: number; startX: number; startWidth: number; startRatio: number; startOpen: boolean } | null>(null)
+  const topologyDragRef = useRef<{ pointerId: number; startX: number; startY: number; startWidth: number; startRatio: number; startOpen: boolean; dragging: boolean } | null>(null)
+  const topologyLastTapRef = useRef<{ at: number; x: number; y: number } | null>(null)
   const [globeReady, setGlobeReady] = useState(false)
   const [touchStart, setTouchStart] = useState<{ x: number; y: number } | null>(null)
   useEffect(() => {
@@ -330,14 +332,17 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
     const startWidth = historyOpen ? visibleHistoryWidth : 0
-    historyDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth }
-    if (!historyOpen) setHistoryWidth(0)
+    historyDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, startWidth, dragging: false }
     if (historyOpen) setHistoryOpen(true)
-    setHistoryResizing(true)
   }
   const moveHistoryResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const drag = historyDragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
+    if (!drag.dragging) {
+      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return
+      drag.dragging = true
+      setHistoryResizing(true)
+    }
     const delta = (event.clientX - drag.startX) * (direction === 'rtl' ? -1 : 1)
     const rawWidth = drag.startWidth + delta
     const minimumWidth = Math.min(historyMinimumWidth, historyMaxWidth)
@@ -370,8 +375,17 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const finishHistoryResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (historyDragRef.current?.pointerId !== event.pointerId) return
     if (historyOpen && historyWidth < historyMinimumWidth) setHistoryWidth(historyMinimumWidth)
+    const wasDragging = historyDragRef.current.dragging
     historyDragRef.current = null
     setHistoryResizing(false)
+    if (!wasDragging) {
+      const previousTap = historyLastTapRef.current
+      const isDoubleTap = previousTap && Date.now() - previousTap.at < 450 && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y) < 12
+      historyLastTapRef.current = isDoubleTap ? null : { at: Date.now(), x: event.clientX, y: event.clientY }
+      if (isDoubleTap) setHistoryOpen((open) => !open)
+    } else {
+      historyLastTapRef.current = null
+    }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
   const keyHistoryResize = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -398,12 +412,16 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const startTopologyResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
-    topologyDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: topologyWidth, startRatio: topologyRatio, startOpen: topologyOpen }
-    setTopologyResizing(true)
+    topologyDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, startWidth: topologyWidth, startRatio: topologyRatio, startOpen: topologyOpen, dragging: false }
   }
   const moveTopologyResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const drag = topologyDragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
+    if (!drag.dragging) {
+      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return
+      drag.dragging = true
+      setTopologyResizing(true)
+    }
     const delta = (event.clientX - drag.startX) * (direction === 'rtl' ? 1 : -1)
     const rawWidth = drag.startWidth + delta
     const minimumWidth = topologyMinimumWidth
@@ -433,9 +451,19 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const finishTopologyResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     const drag = topologyDragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
+    const wasDragging = drag.dragging
     if (topologyOpen && topologyWidth < topologyMinimumWidth && topologyWidth > 0) setTopologyRatio(Math.min(1, topologyMinimumWidth / Math.max(1, panelAreaWidth)))
     topologyDragRef.current = null
     setTopologyResizing(false)
+    if (!wasDragging) {
+      const previousTap = topologyLastTapRef.current
+      const isDoubleTap = previousTap && Date.now() - previousTap.at < 450 && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y) < 12
+      topologyLastTapRef.current = isDoubleTap ? null : { at: Date.now(), x: event.clientX, y: event.clientY }
+      if (isDoubleTap) setTopologyOpen((open) => !open)
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+      return
+    }
+    topologyLastTapRef.current = null
     if (topologyOpen) {
       const ratio = topologyWidth < topologyMinimumWidth && topologyWidth > 0 ? Math.min(1, topologyMinimumWidth / Math.max(1, panelAreaWidth)) : topologyRatio
       saveLayout({ chat: (1 - ratio) * 100, network: ratio * 100, topologyOpen: true })
@@ -490,10 +518,10 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
       {visible && paneItems.length > 1 && createPortal(<nav className="workspace-mobile-dock" aria-label={messages.workspace}><LiquidGlassDock items={paneItems} label={messages.workspace} onNavigate={(id) => setMobileView(id as 'chat' | 'network')} /></nav>, document.body)}
     </> : <div ref={desktopStageRef} className="workspace-desktop-stage">
     <div data-open={historyOpen} data-resizing={historyResizing} aria-hidden={!historyOpen} style={{ flexBasis: historyOpen ? visibleHistoryWidth : 0 }} className="workspace-history-slot"><div ref={setHistoryPanelHost} className="workspace-history-host" /></div>
-    <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeHistory} aria-valuemin={0} aria-valuemax={Math.round(historyMaxWidth)} aria-valuenow={Math.round(visibleHistoryWidth)} onPointerDown={startHistoryResize} onPointerMove={moveHistoryResize} onPointerUp={finishHistoryResize} onPointerCancel={finishHistoryResize} onKeyDown={keyHistoryResize} onDoubleClick={(event) => { event.preventDefault(); setHistoryOpen((open) => !open) }} className="workspace-history-resize-handle" />
+    <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeHistory} aria-valuemin={0} aria-valuemax={Math.round(historyMaxWidth)} aria-valuenow={Math.round(visibleHistoryWidth)} onPointerDown={startHistoryResize} onPointerMove={moveHistoryResize} onPointerUp={finishHistoryResize} onPointerCancel={finishHistoryResize} onKeyDown={keyHistoryResize} className="workspace-history-resize-handle" />
     <div className="workspace-chat-desktop-pane">{chatPane}</div>
     {topologyAvailable && <>
-    <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeTopology} aria-valuemin={0} aria-valuemax={Math.round(topologyMaxWidth)} aria-valuenow={Math.round(topologyWidth)} onPointerDown={startTopologyResize} onPointerMove={moveTopologyResize} onPointerUp={finishTopologyResize} onPointerCancel={finishTopologyResize} onKeyDown={keyTopologyResize} onDoubleClick={(event) => { event.preventDefault(); setTopologyOpen((open) => !open) }} className="workspace-topology-resize-handle"><span /></button>
+    <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeTopology} aria-valuemin={0} aria-valuemax={Math.round(topologyMaxWidth)} aria-valuenow={Math.round(topologyWidth)} onPointerDown={startTopologyResize} onPointerMove={moveTopologyResize} onPointerUp={finishTopologyResize} onPointerCancel={finishTopologyResize} onKeyDown={keyTopologyResize} className="workspace-topology-resize-handle"><span /></button>
     <div data-open={topologyOpen} data-resizing={topologyResizing} aria-hidden={!topologyOpen} style={{ flexBasis: topologyWidth }} className="workspace-topology-slot">{networkPane}</div>
     </>}
     </div>

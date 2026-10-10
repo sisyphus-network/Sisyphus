@@ -88,6 +88,277 @@ test('a window with WebGL offers the topology, wide and narrow', async (t) => {
   }
 })
 
+test('workspace panels retain their open state and widths after relaunch', async (t) => {
+  const profile = testProfile()
+  let app
+  try {
+    ({ app } = await launch(node, profile))
+    let page = await app.firstWindow()
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, even drawn in software, so panel persistence is not testable')
+    }
+    await wide(app, page)
+    await page.evaluate(() => localStorage.setItem('sisyphus-workspace-layout', JSON.stringify({ chat: 58, network: 42, historyOpen: false, historyWidth: 340, topologyOpen: true })))
+    await page.reload()
+    const topology = page.getByRole('separator', { name: 'Resize topology panel' })
+    const history = page.getByRole('separator', { name: 'Resize conversation history panel' })
+    await topology.waitFor()
+    await history.waitFor()
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'false')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const seeded = await page.evaluate(() => JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'))
+    assert.equal(seeded.historyOpen, false)
+    assert.equal(seeded.historyWidth, 340)
+    assert.equal(seeded.topologyOpen, true)
+    assert.equal(seeded.network, 42)
+
+    await app.close()
+    app = undefined
+    ;({ app, page } = await launch(node, profile))
+    await wide(app, page)
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'false')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const restored = await page.evaluate(() => JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'))
+    assert.equal(restored.historyOpen, false)
+    assert.equal(restored.historyWidth, 340)
+    assert.equal(restored.topologyOpen, true)
+    assert.equal(restored.network, 42)
+
+    // The collapsed history handle remains available, and can bring its pane back.
+    const restoredHistory = page.getByRole('separator', { name: 'Resize conversation history panel' })
+    const maxHistoryWidth = Number(await restoredHistory.getAttribute('aria-valuemax'))
+    assert.ok(maxHistoryWidth >= 280, `history panel has no available width (${maxHistoryWidth})`)
+    await page.getByRole('button', { name: 'Open conversation history' }).click()
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'true')
+    await page.waitForFunction((minimum) => {
+      const slot = document.querySelector('.workspace-history-slot')
+      return slot?.getAttribute('data-open') === 'true' && slot.getBoundingClientRect().width >= minimum
+    }, Math.min(280, maxHistoryWidth))
+    const restoredWidth = await page.locator('.workspace-history-slot').evaluate((slot) => slot.getBoundingClientRect().width)
+    assert.ok(restoredWidth >= 280, `history panel reopened at ${restoredWidth}px`)
+    await page.locator('button[aria-pressed="true"][aria-label="Close conversation history"]').click()
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'false')
+    const historyHandleBox = await restoredHistory.boundingBox()
+    assert.ok(historyHandleBox, 'the collapsed history handle is visible')
+    const historyHandleX = historyHandleBox.x + historyHandleBox.width / 2
+    const historyHandleY = historyHandleBox.y + historyHandleBox.height / 2
+    await page.mouse.click(historyHandleX, historyHandleY)
+    await page.waitForTimeout(80)
+    await page.mouse.click(historyHandleX, historyHandleY)
+    await page.waitForFunction(() => {
+      const slot = document.querySelector('.workspace-history-slot')
+      return slot?.getAttribute('data-open') === 'true' && slot.getBoundingClientRect().width >= 280
+    }, Math.min(280, maxHistoryWidth))
+  } finally {
+    await app?.close()
+    profile.remove()
+  }
+})
+
+test('a collapsed workspace panel reopens by dragging its visible handle', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, even drawn in software, so the topology handle is not available')
+    }
+    await wide(app, page)
+    const handle = page.getByRole('separator', { name: 'Resize topology panel' })
+    await handle.waitFor()
+    const slot = page.locator('.workspace-topology-slot')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const box = await handle.boundingBox()
+    assert.ok(box)
+    // Pull toward chat beyond the closing threshold. Pointer capture must keep
+    // the same drag alive even though the handle/panel geometry changes.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 430, box.y + box.height / 2, { steps: 12 })
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
+    const closedHandle = await handle.boundingBox()
+    assert.ok(closedHandle, 'the collapsed resize handle disappeared')
+    // Keep holding the original pointer and drag back across the handle to reopen.
+    await page.mouse.move(closedHandle.x + closedHandle.width / 2 - 220, closedHandle.y + closedHandle.height / 2, { steps: 10 })
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    await page.mouse.up()
+    await page.waitForTimeout(400)
+    assert.equal(await slot.getAttribute('data-open'), 'true')
+
+    // Keyboard double-click equivalent: Enter on a focused, collapsed handle
+    // opens the same pane without requiring a pointer gesture.
+    await handle.focus()
+    await handle.press('Enter')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
+    await handle.press('Enter')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('the topology canvas stays mounted and stable through repeated advanced-route transitions', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, so the topology canvas is unavailable')
+    }
+    await wide(app, page)
+    const topology = page.getByRole('separator', { name: 'Resize topology panel' })
+    await topology.waitFor()
+    const canvas = page.locator('.workspace-network canvas')
+    await canvas.waitFor()
+    const identity = await canvas.evaluate((element) => ({ tag: element.tagName, width: element.width, height: element.height }))
+    const initialBounds = await canvas.boundingBox()
+    assert.ok(initialBounds && initialBounds.width > 0 && initialBounds.height > 0)
+
+    for (const route of ['Node overview', 'Operations', 'Settings', 'Workspace', 'Operations', 'Workspace', 'Settings', 'Workspace']) {
+      if (route === 'Workspace') {
+        await page.getByRole('button', { name: 'Open advanced settings' }).click().catch(() => {})
+        const workspaceLink = page.getByRole('complementary').getByRole('link', { name: 'Workspace', exact: true })
+        if (await workspaceLink.isVisible().catch(() => false)) await workspaceLink.click()
+        else await page.getByRole('button', { name: 'Open advanced settings' }).click()
+      } else {
+        await open(page, route)
+      }
+      await page.waitForTimeout(260)
+      assert.equal(await canvas.count(), 1, `the globe canvas was removed after navigating to ${route}`)
+      const current = await canvas.evaluate((element) => ({ tag: element.tagName, width: element.width, height: element.height }))
+      assert.equal(current.tag, identity.tag)
+      assert.equal(current.width, identity.width)
+      assert.equal(current.height, identity.height)
+    }
+    const finalBounds = await canvas.boundingBox()
+    assert.ok(finalBounds && finalBounds.width > 0 && finalBounds.height > 0)
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('the topology canvas stays fitted through live window resizes', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, so the topology canvas is unavailable')
+    }
+    const width = await wide(app, page)
+    assert.ok(width > 900)
+    const stage = page.locator('.network-globe-stage')
+    const canvas = stage.locator('canvas')
+    await canvas.waitFor()
+    const initialBox = await stage.boundingBox()
+    const initial = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+    assert.ok(initialBox && initialBox.width > 0 && initialBox.height > 0)
+    assert.ok(initial.width > 0 && initial.height > 0)
+
+    let observedBufferResize = false
+    for (const [nextWidth, nextHeight] of [[1040, 720], [1280, 900], [980, 760], [1180, 800]]) {
+      await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h), [nextWidth, nextHeight])
+      await page.waitForFunction(([w, h]) => Math.abs(window.innerWidth - w) < 30 && Math.abs(window.innerHeight - h) < 80, [nextWidth, nextHeight])
+      await page.waitForFunction(() => {
+        const stageEl = document.querySelector('.network-globe-stage')
+        const canvasEl = stageEl?.querySelector('canvas')
+        if (!stageEl || !canvasEl) return false
+        const rect = stageEl.getBoundingClientRect()
+        return rect.width > 0 && rect.height > 0 && canvasEl.width > 0 && canvasEl.height > 0
+      })
+      const box = await stage.boundingBox()
+      const dimensions = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+      if (dimensions.width !== initial.width || dimensions.height !== initial.height) observedBufferResize = true
+      assert.ok(box && box.width > 0 && box.height > 0, `globe stage collapsed at ${nextWidth}x${nextHeight}`)
+      assert.ok(dimensions.width > 0 && dimensions.height > 0, `WebGL drawing buffer collapsed at ${nextWidth}x${nextHeight}`)
+      assert.ok(Math.abs(box.width - box.height) <= 2, `globe viewport is not square at ${nextWidth}x${nextHeight}`)
+    }
+    const final = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+    assert.ok(final.width > 0 && final.height > 0)
+    assert.ok(observedBufferResize, 'the WebGL drawing buffer never responded to any intermediate window size')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('the workspace switches layouts live across tablet and desktop widths', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, so the two-view mobile layout is unavailable')
+    }
+    await wide(app, page)
+    const network = page.getByRole('img', { name: /This node/ })
+    await network.waitFor()
+
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 760))
+    await page.locator('.workspace-shell--compact').waitFor()
+    const dock = page.locator('.workspace-mobile-dock')
+    await dock.waitFor()
+    const dockButtons = dock.getByRole('button')
+    assert.equal(await dockButtons.count(), 2)
+    const dockBox = await dock.boundingBox()
+    const viewportWidth = await page.evaluate(() => window.innerWidth)
+    assert.ok(dockBox && dockBox.x >= 0 && dockBox.x + dockBox.width <= viewportWidth, 'the dock exceeds the tablet viewport')
+    assert.ok(Math.abs(dockBox.x + dockBox.width / 2 - viewportWidth / 2) <= 2, 'the dock is not centered in the tablet viewport')
+    const touch = await page.context().newCDPSession(page)
+    await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(viewportWidth * 0.72), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(viewportWidth * 0.72), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: Math.round(viewportWidth * 0.55), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).waitFor()
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(viewportWidth * 0.45), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: Math.round(viewportWidth * 0.65), y: 360 }] })
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await page.locator('.workspace-mobile-pane[data-active="true"] textarea').waitFor()
+
+    const composer = page.locator('.workspace-mobile-pane[data-active="true"] textarea')
+    await composer.focus()
+    await page.waitForFunction(() => {
+      const dockElement = document.querySelector('.workspace-mobile-dock')
+      return dockElement && Number.parseFloat(getComputedStyle(dockElement).height) < 2
+    })
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(820, 650))
+    await page.waitForFunction(() => window.innerHeight < 760)
+    const composerBox = await composer.boundingBox()
+    const viewportHeight = await page.evaluate(() => window.innerHeight)
+    assert.ok(composerBox && composerBox.y < viewportHeight && composerBox.y + composerBox.height <= viewportHeight, 'the focused composer fell below the resized viewport')
+    await composer.evaluate((element) => element.blur())
+    await page.waitForFunction(() => {
+      const dockElement = document.querySelector('.workspace-mobile-dock')
+      return dockElement && Number.parseFloat(getComputedStyle(dockElement).height) >= 70
+    })
+    await touch.detach()
+
+    await dock.getByRole('button', { name: 'Known network topology' }).click()
+    await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).waitFor()
+
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 800))
+    await page.locator('.workspace-shell:not(.workspace-shell--compact)').waitFor()
+    await page.getByRole('separator', { name: 'Resize topology panel' }).waitFor()
+
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(680, 760))
+    await page.locator('.workspace-shell--compact').waitFor()
+    await dock.waitFor()
+    await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).waitFor()
+    const narrowDock = await dock.boundingBox()
+    const narrowWidth = await page.evaluate(() => window.innerWidth)
+    assert.ok(narrowDock && narrowDock.x >= 0 && narrowDock.x + narrowDock.width <= narrowWidth, 'the dock exceeds the narrow phone viewport')
+    assert.ok(Math.abs(narrowDock.x + narrowDock.width / 2 - narrowWidth / 2) <= 2, 'the dock is not centered after the live resize')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('a job submitted in the window runs on the pool and shows its result', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
@@ -162,6 +433,68 @@ test('a language chosen with the keyboard turns the window round, and is still c
     ;({ app, page } = await launch(node, profile))
     await page.waitForFunction(() => document.documentElement.dir === 'rtl')
     assert.equal(await page.locator('html').getAttribute('lang'), 'he')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('desktop Settings keeps the shell fixed and restores its own scroll position', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    await open(page, 'Settings')
+    const sidebar = page.locator('.app-shell-body--advanced > aside')
+    const header = page.locator('.app-global-header')
+    const main = page.locator('.app-shell--settings .app-main')
+    const settings = page.locator('.settings-page')
+    const settingsScroller = page.locator('.settings-page__scroll')
+    await settingsScroller.waitFor()
+
+    const layout = await page.evaluate(() => {
+      const sidebarRect = document.querySelector('.app-shell-body--advanced > aside').getBoundingClientRect()
+      const headerRect = document.querySelector('.app-global-header').getBoundingClientRect()
+      const mainElement = document.querySelector('.app-shell--settings .app-main')
+      const mainRect = mainElement.getBoundingClientRect()
+      const mainStyle = getComputedStyle(mainElement)
+      const settingsRect = document.querySelector('.settings-page').getBoundingClientRect()
+      const scroller = document.querySelector('.settings-page__scroll')
+      return {
+        sidebarRight: sidebarRect.right,
+        headerLeft: headerRect.left,
+        headerRight: headerRect.right,
+        mainLeft: mainRect.left,
+        mainRight: mainRect.right,
+        contentLeft: mainRect.left + Number.parseFloat(mainStyle.paddingLeft),
+        contentRight: mainRect.right - Number.parseFloat(mainStyle.paddingRight),
+        settingsLeft: settingsRect.left,
+        settingsRight: settingsRect.right,
+        documentHeight: document.documentElement.scrollHeight,
+        viewportHeight: window.innerHeight,
+        mainScrollHeight: document.querySelector('.app-shell--settings .app-main').scrollHeight,
+        mainClientHeight: document.querySelector('.app-shell--settings .app-main').clientHeight,
+        settingsScrollHeight: scroller.scrollHeight,
+        settingsClientHeight: scroller.clientHeight,
+      }
+    })
+    assert.ok(Math.abs(layout.headerLeft - layout.sidebarRight) <= 1, 'the global header has a gap from the sidebar')
+    assert.ok(Math.abs(layout.headerRight - layout.mainRight) <= 1, 'the header does not span the full content column')
+    assert.ok(Math.abs(layout.settingsLeft - layout.contentLeft) <= 1 && Math.abs(layout.settingsRight - layout.contentRight) <= 1, 'Settings is narrower than the full padded content width')
+    assert.ok(layout.documentHeight <= layout.viewportHeight + 2, 'the desktop document itself scrolls')
+    assert.ok(layout.mainScrollHeight <= layout.mainClientHeight + 2, 'the Settings main shell scrolls instead of its inner list')
+    assert.ok(layout.settingsScrollHeight > layout.settingsClientHeight, 'the settings list has no independent scroll area')
+
+    await settingsScroller.evaluate((element) => { element.scrollTop = Math.min(180, element.scrollHeight - element.clientHeight) })
+    await page.waitForFunction(() => Number(document.querySelector('.settings-page__scroll')?.scrollTop) > 40)
+    const savedSettingsTop = await page.locator('.settings-page__scroll').evaluate((element) => element.scrollTop)
+    await page.waitForFunction(() => Number(JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings']) > 40)
+    await page.getByRole('complementary').getByRole('link', { name: 'Node overview', exact: true }).click()
+    await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
+    await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
+    await settingsScroller.waitFor()
+    await page.waitForFunction((top) => Math.abs(Number(document.querySelector('.settings-page__scroll')?.scrollTop) - top) < 2, savedSettingsTop)
+    assert.ok(savedSettingsTop > 40, 'the Settings scroll position was not meaningfully saved')
   } finally {
     await app.close()
     profile.remove()

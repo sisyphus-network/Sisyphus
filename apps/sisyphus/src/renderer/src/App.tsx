@@ -113,7 +113,14 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
     const savePosition = () => {
       if (!restored) return
       scrollPositionsRef.current[location.pathname] = latestTop
-      try { window.localStorage.setItem(scrollPositionsStorageKey, JSON.stringify(scrollPositionsRef.current)) } catch { /* Storage can be unavailable in restricted browser contexts. */ }
+      try {
+        // Settings owns a separate desktop scroller but shares this storage key.
+        // Merge with the persisted map so a stale AppRoutes ref cannot erase
+        // the position Settings saved while another route is active.
+        const positions = { ...scrollPositionsRef.current, ...readScrollPositions(), [location.pathname]: latestTop }
+        scrollPositionsRef.current = positions
+        window.localStorage.setItem(scrollPositionsStorageKey, JSON.stringify(positions))
+      } catch { /* Storage can be unavailable in restricted browser contexts. */ }
     }
     const onScroll = () => {
       if (!restored || scrollPathRef.current !== location.pathname) return
