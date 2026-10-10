@@ -35,6 +35,8 @@ test('a window with no WebGL offers no topology, and its workspace and chat stil
   const profile = testProfile()
   const { app, page } = await launch(node, profile, { webgl: false })
   try {
+    const desktopWidth = await wide(app, page)
+    assert.ok(desktopWidth > 900, `the window is ${desktopWidth} pixels wide, which is its one-view layout`)
     await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
     assert.equal(await page.locator('canvas').count(), 0, 'a globe was drawn with no WebGL to draw it')
     assert.equal(await page.getByRole('separator', { name: 'Resize topology panel' }).count(), 0, 'a handle for the topology panel is offered')
@@ -249,7 +251,10 @@ test('a question with a file attached is planned, computed on the pool and answe
 
     // The conversation is kept, and is there in the history.
     await page.getByRole('button', { name: 'Open conversation history' }).click()
-    await page.getByText(/How many primes are there below 100\?/).first().waitFor()
+    await page.getByRole('navigation', { name: /conversation history/i })
+      .getByRole('button', { name: /How many primes are there below 100\?/ })
+      .first()
+      .waitFor()
   } finally {
     await app.close()
     profile.remove()
