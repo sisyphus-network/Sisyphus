@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { hasWebgl, launch, narrow, open, planWith, standInModel, testNode, testProfile, wide } from './harness.mjs'
+import { hasWebgl, launch, narrow, open, planWith, poolInvitation, poolMembers, standInModel, testNode, testProfile, wide } from './harness.mjs'
 
 let node
 before(async () => { node = await testNode() })
@@ -405,6 +405,32 @@ test('a file stored as private is listed, and an invitation is issued', async ()
   } finally {
     await app.close()
     profile.remove()
+  }
+})
+
+test('the Pool view joins a coordinator with an invitation', async () => {
+  const joiningNode = await testNode()
+  const coordinator = await testNode()
+  const invitation = poolInvitation(coordinator)
+  const profile = testProfile()
+  const { app, page } = await launch(joiningNode, profile)
+  try {
+    await open(page, 'Operations')
+    await page.getByRole('tab', { name: 'Pool', exact: true }).click()
+    await page.getByPlaceholder('Coordinator host:port').fill(coordinator.pool)
+    await page.getByPlaceholder('Invitation token').fill(invitation)
+    await page.getByRole('button', { name: 'Join another pool' }).click()
+    await page.getByText('Joined pool', { exact: true }).waitFor({ timeout: 10000 }).catch(async () => {
+      throw new Error(`pool join did not succeed: ${await page.locator('body').innerText()}`)
+    })
+    assert.equal(await page.getByPlaceholder('Coordinator host:port').inputValue(), '')
+    assert.equal(await page.getByPlaceholder('Invitation token').inputValue(), '')
+    assert.ok(poolMembers(coordinator).includes(joiningNode.id()), 'the coordinator did not record the node joined through the UI')
+  } finally {
+    await app.close()
+    profile.remove()
+    await joiningNode.remove()
+    await coordinator.remove()
   }
 })
 

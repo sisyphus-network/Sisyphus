@@ -133,6 +133,16 @@ export function planWith(node, model) {
   execFileSync(daemon, ['model', 'set', '--data-dir', node.dataDir, '--url', model.url, '--model', 'test-model'], { stdio: 'ignore' })
 }
 
+/** A one-use invitation issued by a separate test node, for exercising the UI join flow. */
+export function poolInvitation(node, role = 'worker') {
+  return execFileSync(daemon, ['pool', 'invite', '--data-dir', node.dataDir, '--addr', node.pool, '--role', role], { encoding: 'utf8' }).trim()
+}
+
+/** Lists the members recorded by a test coordinator after a joining node accepts an invitation. */
+export function poolMembers(node) {
+  return execFileSync(daemon, ['pool', 'members', '--data-dir', node.dataDir, '--addr', node.pool], { encoding: 'utf8' })
+}
+
 /** Whether the window can draw with WebGL, asked the way the app asks. */
 export function hasWebgl(page) {
   return page.evaluate(() => {
