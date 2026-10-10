@@ -71,6 +71,8 @@ func (s *server) more(out *mcp.Server) {
 		Description: "Returns a conversation with the planner in full: what was asked, what the model said, the tools it called and what they returned."}, doing(s, s.getChat))
 	add(s, out, reads, &mcp.Tool{Name: "list_peers", Annotations: seen,
 		Description: "Lists the nodes this node knows of: whether each is connected, the country its address is registered in, and which way work flows between them."}, doing(s, s.listPeers))
+	add(s, out, reads, &mcp.Tool{Name: "list_address_book", Annotations: seen,
+		Description: "Lists the nodes this node connects to each time it starts, each with its ID and address. connect_peer adds to them and forget_peer takes one away."}, doing(s, s.addressBook))
 	add(s, out, reads, &mcp.Tool{Name: "list_members", Annotations: seen,
 		Description: "Lists the nodes admitted to this node's pool by invitation, as workers or as clients. The node itself, whose pool it is, is not among them: pool_status shows it with the workers connected now."}, doing(s, s.listMembers))
 	add(s, out, reads, &mcp.Tool{Name: "get_model", Annotations: seen,
@@ -90,6 +92,8 @@ func (s *server) more(out *mcp.Server) {
 		Description: "Joins another node's pool with an invitation it issued, and starts taking its work."}, doing(s, s.joinPool))
 	add(s, out, admin, &mcp.Tool{Name: "connect_peer",
 		Description: "Connects to a node at an address, such as /ip4/203.0.113.9/tcp/7700/p2p/<its ID>, and remembers it."}, doing(s, s.connectPeer))
+	add(s, out, admin, &mcp.Tool{Name: "forget_peer", Annotations: gone,
+		Description: "Takes a node out of this node's address book, so that it is not connected to when the node next starts. It stays connected now, and in the pool if it is a member."}, doing(s, s.forgetPeer))
 	add(s, out, admin, &mcp.Tool{Name: "set_peer_trust",
 		Description: "Sets which way work may flow between this node and another: whether this node gives it work, by admitting it to the pool, and whether it takes work from it."}, doing(s, s.setTrust))
 }
@@ -227,8 +231,9 @@ func (s *server) askModel(ctx context.Context, args askModelArgs) (any, error) {
 }
 
 type askPlannerArgs struct {
-	Question string `json:"question" jsonschema:"what to ask the planner"`
-	ChatID   string `json:"chat_id,omitempty" jsonschema:"the conversation to carry on, as an earlier call returned it; leave out to start one"`
+	Question string   `json:"question" jsonschema:"what to ask the planner"`
+	ChatID   string   `json:"chat_id,omitempty" jsonschema:"the conversation to carry on, as an earlier call returned it; leave out to start one"`
+	Files    []string `json:"files,omitempty" jsonschema:"content IDs of stored files the question is about, as store_file returned them; the planner is told of them and the node keeps them for as long as the conversation. If any is private, every job the planner runs in the conversation is private"`
 }
 
 func (s *server) askPlanner(ctx context.Context, args askPlannerArgs) (any, error) {
@@ -237,7 +242,11 @@ func (s *server) askPlanner(ctx context.Context, args askPlannerArgs) (any, erro
 		// before it runs.
 		return nil, fmt.Errorf("the node's planner chooses for itself what to run, so it cannot be asked through a server held to listed images: %w", s.unlisted())
 	}
-	stream, err := s.Node.Ask(ctx, &nodepb.AskRequest{ChatId: args.ChatID, Text: args.Question})
+	question, err := s.attaching(ctx, args.Question, args.Files)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := s.Node.Ask(ctx, &nodepb.AskRequest{ChatId: args.ChatID, Text: question, AttachmentCids: args.Files})
 	if err != nil {
 		return nil, err
 	}
@@ -261,6 +270,34 @@ func (s *server) askPlanner(ctx context.Context, args askPlannerArgs) (any, erro
 		}
 	}
 	return map[string]any{"chat_id": chat, "answer": answer.String(), "jobs": jobs}, nil
+}
+
+// attaching returns a question with the files it is about listed after it,
+// in the form the planner reads them in, which is the form the desktop app
+// writes: by it the planner knows each file's name and content ID, and that
+// a conversation with a private file is to run private jobs.
+func (s *server) attaching(ctx context.Context, question string, cids []string) (string, error) {
+	if len(cids) == 0 {
+		return question, nil
+	}
+	listed, err := s.Node.ListFiles(ctx, &nodepb.ListFilesRequest{})
+	if err != nil {
+		return "", err
+	}
+	stored := map[string]*nodepb.File{}
+	for _, f := range listed.GetFiles() {
+		stored[f.GetCid()] = f
+	}
+	lines := []string{question, "", "[Sisyphus attachments]"}
+	for _, id := range cids {
+		f, ok := stored[id]
+		if !ok {
+			return "", fmt.Errorf("%s is not a file this node has stored: store it with store_file first, and list_files shows those there are", id)
+		}
+		name, _ := json.Marshal(f.GetName()) // a string always encodes
+		lines = append(lines, fmt.Sprintf("- %s | cid:%s | image:false | private:%t", name, id, f.GetPrivate()))
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func when(ms int64) string { return time.UnixMilli(ms).UTC().Format(time.RFC3339) }
@@ -442,6 +479,46 @@ func (s *server) invite(ctx context.Context, args inviteArgs) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"invitation": issued.GetInvitation(), "role": role(as), "expires": when(issued.GetExpiresAtMs())}, nil
+}
+
+func (s *server) addressBook(ctx context.Context, _ none) (any, error) {
+	kept, err := s.Node.GetBootstrapPeers(ctx, &nodepb.GetBootstrapPeersRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"peers": entries(kept.GetPeers())}, nil
+}
+
+// entries is an address book as a tool shows it.
+func entries(peers []*nodepb.BootstrapPeer) []map[string]any {
+	shown := []map[string]any{}
+	for _, p := range peers {
+		shown = append(shown, map[string]any{"peer_id": p.GetPeerId(), "address": p.GetAddress()})
+	}
+	return shown
+}
+
+// forgetPeer takes one node out of the address book. The book is set as a
+// whole, so it is read, and set again without the node.
+func (s *server) forgetPeer(ctx context.Context, args peerArgs) (any, error) {
+	kept, err := s.Node.GetBootstrapPeers(ctx, &nodepb.GetBootstrapPeersRequest{})
+	if err != nil {
+		return nil, err
+	}
+	var rest []*nodepb.BootstrapPeer
+	for _, p := range kept.GetPeers() {
+		if p.GetPeerId() != args.PeerID {
+			rest = append(rest, p)
+		}
+	}
+	if len(rest) == len(kept.GetPeers()) {
+		return nil, fmt.Errorf("the address book has no node %q; list_address_book shows those it has", args.PeerID)
+	}
+	set, err := s.Node.SetBootstrapPeers(ctx, &nodepb.SetBootstrapPeersRequest{Peers: rest})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"forgot": args.PeerID, "peers": entries(set.GetPeers())}, nil
 }
 
 type peerArgs struct {

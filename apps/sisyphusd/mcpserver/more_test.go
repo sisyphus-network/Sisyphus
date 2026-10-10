@@ -37,10 +37,22 @@ func (n *node) RemoveFile(context.Context, *nodepb.RemoveFileRequest, ...grpc.Ca
 	return &nodepb.RemoveFileResponse{}, n.fail("RemoveFile")
 }
 
+func (n *node) GetBootstrapPeers(context.Context, *nodepb.GetBootstrapPeersRequest, ...grpc.CallOption) (*nodepb.GetBootstrapPeersResponse, error) {
+	return &nodepb.GetBootstrapPeersResponse{Peers: []*nodepb.BootstrapPeer{
+		{PeerId: "peer-1", Address: "/ip4/203.0.113.9/tcp/7700/p2p/peer-1"},
+		{PeerId: "peer-2", Address: "/ip4/203.0.113.10/tcp/7700/p2p/peer-2"},
+	}}, n.fail("GetBootstrapPeers")
+}
+
+func (n *node) SetBootstrapPeers(_ context.Context, req *nodepb.SetBootstrapPeersRequest, _ ...grpc.CallOption) (*nodepb.SetBootstrapPeersResponse, error) {
+	return &nodepb.SetBootstrapPeersResponse{Peers: req.GetPeers()}, n.fail("SetBootstrapPeers")
+}
+
 func (n *node) Ask(_ context.Context, req *nodepb.AskRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[nodepb.AskEvent], error) {
 	if err := n.fail("Ask"); err != nil {
 		return nil, err
 	}
+	n.asked = req
 	return &stream[nodepb.AskEvent]{broken: n.broken, left: []*nodepb.AskEvent{
 		{ChatId: "chat-1", Kind: "call", Tool: "run_job", Text: `{"workload":"primes"}`},
 		{ChatId: "chat-1", Kind: "job", JobId: "job-7"},
@@ -123,9 +135,13 @@ var further = map[string]func(context.Context, *server) (any, error){
 	"Ask": func(ctx context.Context, s *server) (any, error) {
 		return s.askPlanner(ctx, askPlannerArgs{Question: "How many?"})
 	},
-	"ListChats":      func(ctx context.Context, s *server) (any, error) { return s.listChats(ctx, none{}) },
-	"GetChat":        func(ctx context.Context, s *server) (any, error) { return s.getChat(ctx, chatArgs{ChatID: "chat-1"}) },
-	"ListPeers":      func(ctx context.Context, s *server) (any, error) { return s.listPeers(ctx, none{}) },
+	"ListChats":         func(ctx context.Context, s *server) (any, error) { return s.listChats(ctx, none{}) },
+	"GetChat":           func(ctx context.Context, s *server) (any, error) { return s.getChat(ctx, chatArgs{ChatID: "chat-1"}) },
+	"ListPeers":         func(ctx context.Context, s *server) (any, error) { return s.listPeers(ctx, none{}) },
+	"GetBootstrapPeers": func(ctx context.Context, s *server) (any, error) { return s.addressBook(ctx, none{}) },
+	"SetBootstrapPeers": func(ctx context.Context, s *server) (any, error) {
+		return s.forgetPeer(ctx, peerArgs{PeerID: "peer-1"})
+	},
 	"ListMembers":    func(ctx context.Context, s *server) (any, error) { return s.listMembers(ctx, none{}) },
 	"GetModelConfig": func(ctx context.Context, s *server) (any, error) { return s.getModel(ctx, none{}) },
 	"ListModels":     func(ctx context.Context, s *server) (any, error) { return s.listModels(ctx, none{}) },
@@ -176,6 +192,8 @@ func TestTheFurtherToolsSayWhatTheNodeSaidAndWhenItFailsThem(t *testing.T) {
 		"GetChat":                   `{"calls":[{"arguments":"{\"workload\":\"primes\"}","name":"run_job"}],"role":"assistant"}`,
 		"ListPeers":                 `"country":"NL"`,
 		"ListMembers":               `"peer_id":"peer-3","role":"client"`,
+		"GetBootstrapPeers":         `{"address":"/ip4/203.0.113.10/tcp/7700/p2p/peer-2","peer_id":"peer-2"}`,
+		"SetBootstrapPeers":         `{"forgot":"peer-1","peers":[{"address":"/ip4/203.0.113.10/tcp/7700/p2p/peer-2","peer_id":"peer-2"}]}`,
 		"GetModelConfig":            `{"has_key":true,"model":"llama3.1:8b","provider":"ollama","url":""}`,
 		"ListModels":                `{"calls_tools":false,"name":"gemma3:4b"},{"label":"Claude Opus 5.5","name":"claude-opus-5-5"}`,
 		"SetModelConfig":            `"has_key":true,"model":"qwen3:8b"`,
@@ -193,6 +211,29 @@ func TestTheFurtherToolsSayWhatTheNodeSaidAndWhenItFailsThem(t *testing.T) {
 	}
 	if !strings.Contains(answered["ListPeers"], `"calls_tools":true`) && !strings.Contains(answered["ListModels"], `"calls_tools":true,"name":"llama3.1:8b","size_bytes":4900000000`) {
 		t.Errorf("list_models said %s", answered["ListModels"])
+	}
+
+	// The files a question is about go to the planner with it.
+	// They are listed after it as the planner reads them, which is how it
+	// knows a conversation with a private file is to run private jobs.
+	with := &node{files: []*nodepb.File{{Cid: "cid-1", Name: `the "first"`}, {Cid: "cid-2", Name: "second.txt", Private: true}, {Cid: "cid-3"}}}
+	const listed = "What is in these?\n\n[Sisyphus attachments]\n- \"the \\\"first\\\"\" | cid:cid-1 | image:false | private:false\n- \"second.txt\" | cid:cid-2 | image:false | private:true"
+	if _, err := serving(with).askPlanner(ctx, askPlannerArgs{Question: "What is in these?", ChatID: "chat-1", Files: []string{"cid-1", "cid-2"}}); err != nil || with.asked.GetChatId() != "chat-1" || strings.Join(with.asked.GetAttachmentCids(), " ") != "cid-1 cid-2" || with.asked.GetText() != listed {
+		t.Errorf("a question about files: %v, asked as %v", err, with.asked)
+	}
+	if _, err := serving(with).askPlanner(ctx, askPlannerArgs{Question: "And this?", Files: []string{"cid-9"}}); err == nil || !strings.Contains(err.Error(), "cid-9 is not a file this node has stored") {
+		t.Errorf("a question about a file that is not stored: %v", err)
+	}
+	if _, err := serving(&node{failing: "ListFiles"}).askPlanner(ctx, askPlannerArgs{Question: "And this?", Files: []string{"cid-1"}}); err == nil || !strings.Contains(err.Error(), "the node is down") {
+		t.Errorf("a question about files of a node that cannot list them: %v", err)
+	}
+	// A node that is not in the address book cannot be taken out of it, and
+	// a book that cannot be read is not set.
+	if _, err := serving(&node{}).forgetPeer(ctx, peerArgs{PeerID: "peer-9"}); err == nil || !strings.Contains(err.Error(), `the address book has no node "peer-9"`) {
+		t.Errorf("forgetting a node the book does not have: %v", err)
+	}
+	if _, err := serving(&node{failing: "GetBootstrapPeers"}).forgetPeer(ctx, peerArgs{PeerID: "peer-1"}); err == nil || !strings.Contains(err.Error(), "the node is down") {
+		t.Errorf("forgetting a node when the book cannot be read: %v", err)
 	}
 
 	// A stream that breaks part way is a failure, not an answer cut short.
@@ -245,13 +286,13 @@ func TestAServerOffersOnlyTheToolsItsOwnerAllows(t *testing.T) {
 		return strings.Join(listed, " ")
 	}
 	usual, looking, trusted := names(Config{}), names(Config{ReadOnly: true, Admin: true}), names(Config{Admin: true})
-	if n := len(strings.Fields(usual)); n != 32 || strings.Contains(usual, "set_model") || !strings.Contains(usual, "ask_model") {
+	if n := len(strings.Fields(usual)); n != 33 || strings.Contains(usual, "set_model") || !strings.Contains(usual, "ask_model") {
 		t.Errorf("as usual, %d tools: %s", n, usual)
 	}
-	if n := len(strings.Fields(looking)); n != 18 || strings.Contains(looking, "run_job") || strings.Contains(looking, "join_pool") {
+	if n := len(strings.Fields(looking)); n != 19 || strings.Contains(looking, "run_job") || strings.Contains(looking, "join_pool") {
 		t.Errorf("read-only, %d tools: %s", n, looking)
 	}
-	if n := len(strings.Fields(trusted)); n != 42 || !strings.Contains(trusted, "set_peer_trust") {
+	if n := len(strings.Fields(trusted)); n != 44 || !strings.Contains(trusted, "set_peer_trust") {
 		t.Errorf("with admin, %d tools: %s", n, trusted)
 	}
 }
