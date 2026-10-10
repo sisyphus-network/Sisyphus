@@ -295,7 +295,7 @@ Blobs that only pass between a job's tasks are released as soon as the job ends.
 
 New chat attachments do not receive the permanent `user` pin used by ordinary file uploads. Deleting a conversation releases only that conversation's ownership; another conversation, a job or an explicit user pin can still keep the same content. Abandoned uploads, including completed uploads from a partially failed send, become eligible for collection after the 24-hour draft grace period. Deletion is not immediate: collection must run and every other pin must have expired or been released. Disabling automatic collection with `--gc-interval 0` requires manual `blob gc`.
 
-The desktop checks both `chat-file-references-v1` and `chat-attachment-retention-v1` before uploading chat attachments. Older daemons cannot safely ignore the new upload flag. Existing permanently pinned uploads are not retroactively unpinned. The catalogue can still contain an entry after its unowned content has been collected; catalogue reconciliation is a separate follow-up.
+The desktop checks both `chat-file-references-v1` and `chat-attachment-retention-v1` before uploading chat attachments. Older daemons cannot safely ignore the new upload flag. Existing permanently pinned uploads are not retroactively unpinned. The file list hides content that the store no longer holds, and reports storage failures rather than treating them as absence. Listing does not delete catalogue metadata or ownership: a concurrent upload or a later restore can make the content available again. Metadata compaction and paginated listing remain separate follow-ups.
 
 ```sh
 bin/sisyphusd blob pins             # what is being kept, for whom, until when

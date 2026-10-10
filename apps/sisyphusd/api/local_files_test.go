@@ -252,6 +252,10 @@ func TestChatDraftsExpireWithoutReleasingExplicitUserFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, err := fetchFile(ctx, client, file.GetCid())
+			listed, listErr := client.ListFiles(ctx, &nodepb.ListFilesRequest{})
+			if listErr != nil || len(listed.GetFiles()) != map[bool]int{false: 0, true: 1}[explicit] {
+				t.Fatalf("collected draft remains visible or saved file missing: %v, %v", listed, listErr)
+			}
 			if explicit {
 				if err != nil || string(got) != "identical content" {
 					t.Fatalf("explicit user file lost with expired draft: %q, %v", got, err)
@@ -260,6 +264,46 @@ func TestChatDraftsExpireWithoutReleasingExplicitUserFiles(t *testing.T) {
 				t.Fatalf("expired unattached draft not collected: %v", err)
 			}
 		})
+	}
+}
+
+func TestFileListingPreservesMetadataAndReportsStoreFailures(t *testing.T) {
+	ctx := context.Background()
+	for _, damaged := range []bool{false, true} {
+		db := newFileList(t)
+		name := notStored(t)
+		if damaged {
+			name = "invalid CID"
+		}
+		if err := db.AddFile(nodedb.File{CID: name, Name: "kept metadata"}); err != nil {
+			t.Fatal(err)
+		}
+		s := &localService{cfg: LocalConfig{Store: brokenStore{Store: storage.NewMemory(), failOpen: true}, Files: db}}
+		if _, err := s.ListFiles(ctx, &nodepb.ListFilesRequest{}); status.Code(err) != codes.Internal {
+			t.Fatalf("damaged=%v: %v", damaged, err)
+		}
+		if files, err := db.Files(); err != nil || len(files) != 1 {
+			t.Fatalf("listing changed durable metadata: %v, %v", files, err)
+		}
+	}
+	// A missing blob can be restored/reuploaded after a read hides it.
+	store, db := storage.NewMemory(), newFileList(t)
+	c, err := storage.NewMemory().Put(ctx, strings.NewReader("restorable"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AddFile(nodedb.File{CID: c.String()}); err != nil {
+		t.Fatal(err)
+	}
+	s := &localService{cfg: LocalConfig{Store: store, Files: db}}
+	if listed, err := s.ListFiles(ctx, &nodepb.ListFilesRequest{}); err != nil || len(listed.GetFiles()) != 0 {
+		t.Fatalf("missing blob listed: %v, %v", listed, err)
+	}
+	if _, err := store.Put(ctx, strings.NewReader("restorable")); err != nil {
+		t.Fatal(err)
+	}
+	if listed, err := s.ListFiles(ctx, &nodepb.ListFilesRequest{}); err != nil || len(listed.GetFiles()) != 1 {
+		t.Fatalf("restored blob not visible: %v, %v", listed, err)
 	}
 }
 

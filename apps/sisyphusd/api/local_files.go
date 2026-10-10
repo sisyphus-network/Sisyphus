@@ -16,6 +16,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // FileList is where a node keeps the names of the files stored through
@@ -156,7 +157,7 @@ func (s *localService) FetchFile(req *nodepb.FetchFileRequest, stream grpc.Serve
 	return sendAll(opened, send)
 }
 
-func (s *localService) ListFiles(context.Context, *nodepb.ListFilesRequest) (*nodepb.ListFilesResponse, error) {
+func (s *localService) ListFiles(ctx context.Context, _ *nodepb.ListFilesRequest) (*nodepb.ListFilesResponse, error) {
 	if s.cfg.Store == nil {
 		return nil, errNoStore
 	}
@@ -166,6 +167,21 @@ func (s *localService) ListFiles(context.Context, *nodepb.ListFilesRequest) (*no
 	}
 	var res nodepb.ListFilesResponse
 	for _, file := range files {
+		c, err := cid.Decode(file.CID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "invalid catalogue CID: %v", err)
+		}
+		// Collection can remove an abandoned upload while its metadata remains.
+		// Do not delete that metadata from a read: a concurrent upload/restore
+		// may be using it, and chat references must remain intact.
+		blob, err := s.cfg.Store.Open(ctx, c)
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "check listed file: %v", err)
+		}
+		blob.Close()
 		res.Files = append(res.Files, localFile(file))
 	}
 	return &res, nil
