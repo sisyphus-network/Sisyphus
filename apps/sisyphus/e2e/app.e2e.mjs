@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { hasWebgl, launch, narrow, open, planWith, standInModel, testNode, testProfile, wide } from './harness.mjs'
+import { hasWebgl, launch, narrow, open, planWith, standInModel, standInOpenAI, testNode, testProfile, wide } from './harness.mjs'
 
 let node
 before(async () => { node = await testNode() })
@@ -466,6 +466,78 @@ test('model settings load and save a local provider used by the planner', async 
     await app.close()
     profile.remove()
     await model.close()
+  }
+})
+
+test('model settings download a local model and report completion', async () => {
+  const model = await standInModel('The downloaded planner replied.')
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await open(page, 'Settings')
+    await page.getByRole('combobox', { name: 'Provider' }).waitFor()
+    await page.getByRole('combobox', { name: 'Provider' }).selectOption('ollama')
+    await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
+    await page.getByRole('button', { name: 'Load models' }).click()
+    await page.waitForFunction(() => document.querySelector('select[aria-label="Model"] option[value="test-model"]') !== null)
+    await page.getByRole('combobox', { name: 'Model' }).selectOption('test-model')
+    await page.getByRole('button', { name: 'Save model' }).click()
+    await page.getByText('Model configuration saved').waitFor()
+    await page.getByRole('textbox', { name: /Model name to download/ }).fill('downloaded-test-model')
+    await page.getByRole('button', { name: 'Download' }).click()
+    const progress = page.getByRole('progressbar')
+    await progress.waitFor()
+    await page.waitForFunction(() => Number(document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')) > 0)
+    assert.ok(Number(await progress.getAttribute('aria-valuenow')) < 100, 'the download progress should remain visible before completion')
+    await page.getByText('Model downloaded', { exact: true }).waitFor({ timeout: 30000 })
+    assert.deepEqual(model.pulled, ['downloaded-test-model'])
+
+    await open(page, 'Workspace')
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Is the planner still available after download?')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByText('The downloaded planner replied.').waitFor({ timeout: 30000 })
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
+test('model settings save an OpenAI-compatible API key on the node and use it for planner requests', async () => {
+  const service = await standInOpenAI('The OpenAI-compatible planner replied.')
+  const apiKey = 'sk-test-e2e-not-a-real-secret'
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await open(page, 'Settings')
+    const provider = page.getByRole('combobox', { name: 'Provider' })
+    await provider.waitFor()
+    await provider.selectOption('openai')
+    await page.getByRole('textbox', { name: 'Service URL' }).fill(service.url)
+    await page.getByLabel('API key').fill(apiKey)
+    await page.getByRole('button', { name: 'Load models' }).click()
+    await page.waitForFunction(() => document.querySelector('select[aria-label="Model"] option[value="test-openai-model"]') !== null)
+    await page.getByRole('combobox', { name: 'Model' }).selectOption('test-openai-model')
+    await page.getByRole('button', { name: 'Save model' }).click()
+    await page.getByText('Model configuration saved').waitFor()
+
+    // The UI receives only hasApiKey, never the stored secret itself.
+    assert.equal(await page.getByLabel('API key').inputValue(), '')
+    assert.equal(await page.getByLabel('API key').getAttribute('placeholder'), 'Leave empty to keep saved key')
+    assert.equal(await page.getByText(apiKey, { exact: true }).count(), 0)
+    assert.ok(service.authorizations.includes(`Bearer ${apiKey}`), 'model listing did not receive the API key')
+
+    await open(page, 'Workspace')
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Use the configured OpenAI-compatible provider.')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByText('The OpenAI-compatible planner replied.').waitFor({ timeout: 30000 })
+    assert.equal(service.asked.length, 1)
+    assert.match(JSON.stringify(service.asked[0].messages), /Use the configured OpenAI-compatible provider\./)
+    assert.equal(service.authorizations.at(-1), `Bearer ${apiKey}`, 'planner request did not use the saved key')
+  } finally {
+    await app.close()
+    profile.remove()
+    await service.close()
   }
 })
 
