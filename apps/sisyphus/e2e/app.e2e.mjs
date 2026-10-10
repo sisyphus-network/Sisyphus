@@ -150,6 +150,22 @@ test('workspace panels retain their open state and widths after relaunch', async
       const slot = document.querySelector('.workspace-history-slot')
       return slot?.getAttribute('data-open') === 'true' && slot.getBoundingClientRect().width >= 280
     }, Math.min(280, maxHistoryWidth))
+
+    // Keyboard resizing follows the current writing direction and stays
+    // bounded by the same minimum/maximum as pointer resizing.
+    await page.evaluate(() => document.documentElement.dir = 'rtl')
+    await restoredHistory.focus()
+    await restoredHistory.press('ArrowLeft')
+    await page.waitForFunction(() => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) > 280)
+    const rtlWidth = Number(await restoredHistory.getAttribute('aria-valuenow'))
+    await restoredHistory.press('End')
+    await page.waitForFunction((maximum) => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) === maximum, maxHistoryWidth)
+    await restoredHistory.press('ArrowRight')
+    await page.waitForFunction((maximum) => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) === maximum, maxHistoryWidth)
+    await restoredHistory.press('Home')
+    await page.waitForFunction(() => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) === 280)
+    assert.ok(rtlWidth > 280 && rtlWidth <= maxHistoryWidth)
+    await page.evaluate(() => document.documentElement.dir = 'ltr')
   } finally {
     await app?.close()
     profile.remove()
