@@ -212,6 +212,7 @@ func TestAnAgentKeepsWhatAJobMadeAndChecksItsRecord(t *testing.T) {
 	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--slots", "2", "--api-listen", apiAddr, "--replicas", "1")
 	startDaemon(t, "--role", "worker", "--coordinator", addr, "--replica-dir", copies, "--name", "follower", "--slots", "1")
 	waitForOutput(t, "follower", "nodes", "--addr", addr)
+	poolAsSeenBy(t, desktop(t, apiAddr))
 	nodeID := strings.TrimSpace(mustCLI(t, "id", "--data-dir", dataDir))
 	session := agent(t, dataDir, apiAddr, "--addr", addr, "--files-under", "/", "--admin")
 
@@ -368,6 +369,9 @@ func TestAnAgentIsToldOfANodeThatKeepsNoCopiesAndOfOneItCannotReach(t *testing.T
 	dataDir := t.TempDir()
 	addr, apiAddr := freeAddr(t), freeAddr(t)
 	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--slots", "1", "--api-listen", apiAddr)
+	// The local API, and the token it wants, are there a moment after the
+	// pool is: the server is not started until they are.
+	poolAsSeenBy(t, desktop(t, apiAddr))
 	waitForOutput(t, "rig", "nodes", "--addr", addr)
 
 	session := agent(t, dataDir, apiAddr, "--addr", addr)
