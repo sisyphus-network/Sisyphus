@@ -720,7 +720,8 @@ func TestNewsThatArrivesWhileANodeIsLookingIsNotMissed(t *testing.T) {
 	stopped, cancel := context.WithCancel(ctx)
 	cancel()
 	r.nudge()
-	if !r.pause(stopped, &heard) || !r.pause(stopped, &heard) {
+	// Asked twice, since a pause that reports a stop once must go on doing so.
+	if once, again := r.pause(stopped, &heard), r.pause(stopped, &heard); !once || !again {
 		t.Error("a pause on a stopped node did not report it")
 	}
 }
