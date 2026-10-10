@@ -35,7 +35,10 @@ type Options = {
   unused?: (endpoint: string) => Promise<boolean>
   launch?: (executable: string, args: string[]) => ChildProcess
   onError: (message: string) => void
+  shutdownGraceMs?: number
 }
+
+export const daemonShutdownGraceMs = 30000
 
 /** Own only the process we launched. Never kill an existing independently-run node. */
 export class DesktopDaemon {
@@ -56,9 +59,13 @@ export class DesktopDaemon {
 
   private async start(): Promise<void> {
     try {
-      if (!await (this.options.unused ?? portIsUnused)(this.options.endpoint) || this.stopping) return
+      const unused = this.options.unused ?? portIsUnused
+      if (!await unused(this.options.endpoint) || this.stopping) return
+      const preferred = '127.0.0.1:7700'
+      const listen = localApiAddress(this.options.endpoint)?.port !== 7700 && await unused(preferred) ? preferred : '127.0.0.1:0'
+      if (this.stopping) return
       const args = ['run', '--api-listen', this.options.endpoint, '--data-dir', this.options.dataDir,
-        '--listen', '127.0.0.1:0', '--discovery', 'off']
+        '--listen', listen, '--discovery', 'off']
       const child = (this.options.launch ?? ((executable, arguments_) => spawn(executable, arguments_, { stdio: 'ignore', windowsHide: true, shell: false })))(this.options.executable, args)
       this.child = child
       child.once('error', (error) => {
@@ -89,7 +96,7 @@ export class DesktopDaemon {
       const timeout = setTimeout(() => {
         child.kill('SIGKILL')
         finish()
-      }, 3000)
+      }, this.options.shutdownGraceMs ?? daemonShutdownGraceMs)
       child.once('close', finish)
       child.kill('SIGTERM')
     })
