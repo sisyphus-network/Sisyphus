@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // assistant is a node's planner as its owner uses it: the model it is
@@ -44,36 +46,57 @@ type attachmentPinStore interface {
 
 // flushFilePins is called under filePinMu. A crash after storage success
 // but before acknowledgement replays the same idempotent operation.
+//
+// A change that fails is left at the head of the queue, and those behind it
+// wait, so that a release never overtakes the pin it undoes. One that can
+// never be made is the exception, since it would hold the others up for
+// good: a pin of what the store no longer holds, or of what is no CID, is
+// taken off the queue, and reported once the rest has been applied.
 func (a *assistant) flushFilePins(ctx context.Context) error {
 	if a.filePins == nil {
 		return nil
 	}
+	var lost error
 	for {
 		ops, err := a.store.PendingFilePins()
 		if err != nil {
 			return err
 		}
 		if len(ops) == 0 {
-			return nil
+			return lost
 		}
 		for _, op := range ops {
-			c, err := cid.Decode(op.CID)
-			if err != nil {
+			err := a.applyFilePin(ctx, op)
+			if err != nil && !errors.Is(err, errPinImpossible) {
 				return err
 			}
-			if op.Keep {
-				err = a.filePins.Pin(ctx, op.Owner, time.Time{}, c)
-			} else {
-				err = a.filePins.Unpin(op.Owner, c)
-			}
-			if err != nil {
-				return err
+			if err != nil && op.Keep && lost == nil {
+				lost = err
 			}
 			if err := a.store.CompleteFilePin(op.Seq); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// errPinImpossible marks a queued pin change that no retry can make.
+var errPinImpossible = errors.New("cannot be kept")
+
+// applyFilePin makes one queued change in the store.
+func (a *assistant) applyFilePin(ctx context.Context, op nodedb.FilePinOperation) error {
+	c, err := cid.Decode(op.CID)
+	if err != nil {
+		return fmt.Errorf("attachment %q %w: %v", op.CID, errPinImpossible, err)
+	}
+	if !op.Keep {
+		return a.filePins.Unpin(op.Owner, c)
+	}
+	err = a.filePins.Pin(ctx, op.Owner, time.Time{}, c)
+	if errors.Is(err, storage.ErrNotFound) {
+		return fmt.Errorf("attachment %s %w: this node no longer holds it", c, errPinImpossible)
+	}
+	return err
 }
 
 func (a *assistant) replayFilePins(ctx context.Context) error {
@@ -190,15 +213,20 @@ func (a *assistant) RemoveModel(ctx context.Context, at *nodedb.ModelConfig, mod
 
 func (a *assistant) Chats() ([]nodedb.Chat, error) { return a.store.Chats() }
 
+// DeleteChat removes a conversation. Releasing what it kept is queued with
+// the removal and tried here; a release that fails is not the caller's
+// failure, since the conversation is gone and the release is tried again
+// until it is made.
 func (a *assistant) DeleteChat(id string) error {
 	a.filePinMu.Lock()
 	defer a.filePinMu.Unlock()
 	if err := a.store.DeleteChat(id); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), filePinTimeout)
 	defer cancel()
-	return a.flushFilePins(ctx)
+	a.flushFilePins(ctx)
+	return nil
 }
 
 // Chat returns what has been said in a conversation.

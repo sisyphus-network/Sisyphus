@@ -54,9 +54,11 @@ func TestFailedAttachmentReleaseIsRetriedAfterChatDeletion(t *testing.T) {
 	if err := store.Pin(context.Background(), "user", time.Time{}, c); err != nil {
 		t.Fatal(err)
 	}
+	// The conversation is gone whether or not what it held could be
+	// released, so the deletion is not reported as having failed.
 	store.failRelease = true
-	if err := a.DeleteChat("owner"); err == nil {
-		t.Fatal("release failure was hidden")
+	if err := a.DeleteChat("owner"); err != nil {
+		t.Fatalf("a deletion that was made was reported as failing: %v", err)
 	}
 	if chats, err := db.Chats(); err != nil || len(chats) != 0 {
 		t.Fatalf("chat deletion not committed: %v, %v", chats, err)
@@ -190,13 +192,68 @@ func TestAQueuedAttachmentPinStaysQueuedUntilItIsApplied(t *testing.T) {
 	}
 }
 
-func TestAQueuedPinOfSomethingThatIsNoCIDIsReported(t *testing.T) {
-	a := &assistant{store: chatWithFile(t, "not a CID"), filePins: storage.NewMemory()}
-	if err := a.replayFilePins(context.Background()); err == nil {
-		t.Error("a pin of something that is no CID was applied")
+// A change that no retry can make is reported and taken off the queue,
+// where it would otherwise hold up every change behind it for good.
+func TestAPinThatCanNeverBeMadeDoesNotHoldUpTheQueue(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	gone, err := storage.NewMemory().Put(ctx, strings.NewReader("an attachment this node no longer holds"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if ops, _ := a.store.PendingFilePins(); len(ops) != 1 {
+	held, err := store.Put(ctx, strings.NewReader("an attachment it does hold"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := chatWithFile(t, gone.String())
+	if err := db.AddFile(nodedb.File{CID: held.String()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RetainChatFile("owner", held.String()); err != nil {
+		t.Fatal(err)
+	}
+	a := &assistant{store: db, filePins: store}
+	err = a.replayFilePins(ctx)
+	if err == nil || !strings.Contains(err.Error(), "attachment "+gone.String()+" cannot be kept: this node no longer holds it") {
+		t.Errorf("a pin of what the node does not hold: %v", err)
+	}
+	if ops, _ := db.PendingFilePins(); len(ops) != 0 {
 		t.Errorf("the queue holds %v", ops)
+	}
+	var kept []cid.Cid
+	for _, pin := range store.Pins() {
+		if pin.Owner == "chat:owner" {
+			kept = append(kept, pin.CID)
+		}
+	}
+	if len(kept) != 1 || !kept[0].Equals(held) {
+		t.Errorf("the conversation keeps %v, not the attachment queued behind the one that is gone", kept)
+	}
+	// Said once: there is nothing left to try again.
+	if err := a.replayFilePins(ctx); err != nil {
+		t.Errorf("a second replay: %v", err)
+	}
+
+	// The same goes for what is no CID at all, whose release, having
+	// nothing to release, is dropped without a word.
+	db = chatWithFile(t, "not a CID")
+	a = &assistant{store: db, filePins: store}
+	if err := a.DeleteChat("owner"); err != nil {
+		t.Errorf("deleting a conversation given what is no CID: %v", err)
+	}
+	if ops, _ := db.PendingFilePins(); len(ops) != 0 {
+		t.Errorf("the queue holds %v", ops)
+	}
+	db = chatWithFile(t, "not a CID")
+	a = &assistant{store: db, filePins: store}
+	if err := a.replayFilePins(ctx); err == nil || !strings.Contains(err.Error(), `attachment "not a CID" cannot be kept`) {
+		t.Errorf("a pin of something that is no CID: %v", err)
+	}
+	if err := db.DeleteChat("owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.replayFilePins(ctx); err != nil {
+		t.Errorf("a release of something that is no CID: %v", err)
 	}
 }
 
@@ -214,8 +271,8 @@ func TestQueuedAttachmentPinsAreTriedAgainUntilTheyAreApplied(t *testing.T) {
 	}
 	// The conversation goes while the store cannot release what it held.
 	store.failRelease = true
-	if err := a.DeleteChat("owner"); err == nil {
-		t.Fatal("release failure was hidden")
+	if err := a.DeleteChat("owner"); err != nil {
+		t.Fatal(err)
 	}
 
 	logs := new(syncBuffer)
