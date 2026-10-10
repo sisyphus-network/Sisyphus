@@ -145,7 +145,7 @@ Detail: [Running containers](../apps/sisyphusd/README.md#running-containers).
 | --- | --- |
 | `--rm`, a random name | The image, pulled from wherever its name says |
 | `/input` read-only, `/output` writable, each a temporary directory | The command and environment |
-| `--user` as the node's own user and group, and with it `--cap-drop ALL` | `--network none`, unless the job says `"network": true` |
+| `--user` as the node's own user and group, and with it `--cap-drop ALL` and `HOME=/tmp` | `--network none`, unless the job says `"network": true` |
 | `--security-opt no-new-privileges` | `--memory` and `--cpus`, absent unless the job sets them |
 | `--pids-limit 4096` | `--gpus` |
 

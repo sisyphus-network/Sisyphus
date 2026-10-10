@@ -45,6 +45,8 @@ Tasks have no network unless asked. Either use an image that already has what th
   "command": ["sh", "-c", "pip install -q numpy && python -c 'import numpy; print(numpy.__version__)'"] }
 ```
 
+The command runs as an ordinary user whose home is `/tmp`, so `pip install` puts the package there and Python finds it. What needs root, such as `apt-get install`, fails: that calls for an image with the package in it.
+
 Installing in every task is slow. For anything run more than once, ask the user for an image with the packages in it.
 
 ## Transcoding a video
