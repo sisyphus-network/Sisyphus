@@ -52,6 +52,17 @@ func TestTheCoordinatorChecksAWorkersResultByRunningTheTaskItself(t *testing.T) 
 	if got := p.standing(w); got != "1 agreed, 0 outvoted, 0 owed" {
 		t.Errorf("an honest worker's standing: %s", got)
 	}
+	// The job's record says it was asked for, as a job's that was not
+	// audited does not.
+	if record := p.recordText(honest.GetJobId()); !strings.Contains(record, `"audit_share":1`) {
+		t.Errorf("the record of an audited job:\n%s", record)
+	}
+	plain := p.submit(&pb.JobSpec{Workload: "primes", Params: []byte(hundred), MaxTasks: 1}).GetJobId()
+	w.returns(w.assignment(), primesBelow100)
+	p.wait(plain)
+	if record := p.recordText(plain); strings.Contains(record, "audit_share") {
+		t.Errorf("the record of a job that was not audited:\n%s", record)
+	}
 
 	// The same task, and a worker that says seven.
 	lied, told := run(`{"count":7}`)

@@ -779,6 +779,7 @@ bin/sisyphusd job logs <job-id>                                                 
 - **It is for work that gives the same result every time**, like `--verify`. A task the node fails to run is not held against the worker: its result is taken, and the events say it went unchecked.
 - **Not with `--verify`.** A job asks other workers to check, or the coordinator, not both.
 - **A private job is audited like any other**: the node has the job's key.
+- **The job's record says it was audited**, with `audit_share` among what was asked. Which tasks were picked and how each came out is in the job's events (`job logs`), which are kept with the job and are not part of the record.
 - **A job made of steps** hands its audit share to each step.
 
 ## A job's record
@@ -796,7 +797,7 @@ A record is made of these nodes:
 | Node | What it holds |
 | --- | --- |
 | root | `kind` (`sisyphus-job-record`), `version` (1), the job's ID, whether it is `private`, and links to the others. A step of a graph has `parent`: the graph's job ID and the step's name. |
-| manifest | What was asked: `workload`, `params`, `mode`, `requirements` (tasks asked for, task timeout, memory, graphics cards, and `verify` for a job that was [verified](#verifying-results)), links to the `inputs` it read, the node ID of the `submitter` (absent for a job the node gave itself, from the desktop app or the planner), `created_at`. |
+| manifest | What was asked: `workload`, `params`, `mode`, `requirements` (tasks asked for, task timeout, memory, graphics cards, `verify` for a job that was [verified](#verifying-results), and `audit_share` for one the coordinator [checked itself](#checked-by-the-coordinator-itself)), links to the `inputs` it read, the node ID of the `submitter` (absent for a job the node gave itself, from the desktop app or the planner), `created_at`. |
 | a receipt for each task | The task's number, how it ended, its `output`, how many attempts failed, and every attempt in order: which worker (node ID and name), how it went, and why it failed if it did. For a verified job also `results`: for each result a worker returned, the attempt, the worker, a `digest` that is the same for results that are the same, and whether it `agreed` with the result the task was settled by. |
 | result | How the job ended, its `result` or `error`, links to the `outputs` it stored and to the `intermediate` data that passed between its tasks, `finished_at`. |
 | graph | Only for a job made of jobs: each step's name, its job's ID, and a link to that job's record. |
