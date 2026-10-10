@@ -149,9 +149,16 @@ func (*carried) ReservationRequestHandled(pbv2.Status) {}
 // with a worker that holds several connections, beside a desktop, a command
 // line and an agent's server. A connection is still nothing until its
 // handshake has shown a node that was admitted.
+//
+// libp2p also keeps a connection apart, as passing through, until it has
+// been made a libp2p connection to a peer, and allows few of those at
+// once: 64 on a small machine. A connection to the gRPC server is never
+// made one, so that was a limit on every member's connections together.
+// They are limited as all the host's connections are, at inAll.
 const (
 	perAddress = 256
 	perSecond  = 32
+	inAll      = 4096
 )
 
 // resources returns what limits a host's connections, streams and memory:
@@ -164,7 +171,11 @@ func resources() network.ResourceManager {
 	// machine's own addresses are not limited, as they are not by libp2p.
 	often := rate.Limit{RPS: perSecond, Burst: perAddress}
 	wider := rate.Limit{RPS: 8 * perSecond, Burst: 8 * perAddress}
-	manager, _ := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(limits.AutoScale()),
+	room := rcmgr.PartialLimitConfig{
+		System:    rcmgr.ResourceLimits{ConnsInbound: inAll, Conns: 2 * inAll, FD: rcmgr.Unlimited},
+		Transient: rcmgr.ResourceLimits{ConnsInbound: rcmgr.Unlimited, Conns: rcmgr.Unlimited, FD: rcmgr.Unlimited},
+	}.Build(limits.AutoScale())
+	manager, _ := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(room),
 		rcmgr.WithLimitPerSubnet(
 			[]rcmgr.ConnLimitPerSubnet{{PrefixLength: 32, ConnCount: perAddress}},
 			[]rcmgr.ConnLimitPerSubnet{{PrefixLength: 56, ConnCount: perAddress}, {PrefixLength: 48, ConnCount: 8 * perAddress}},

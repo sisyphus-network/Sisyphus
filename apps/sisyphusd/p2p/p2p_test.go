@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -744,9 +745,11 @@ func TestAHostTakesAsManyConnectionsFromOneAddressAsAPoolsMembersMake(t *testing
 			}
 			conn.Done()
 		}
-		// And a hundred at once, as a household's workers hold them.
+		// And a hundred and fifty at once, as a household's workers hold
+		// them: more than libp2p lets pass through at once on a small
+		// machine, and with the sixty before, fewer than may come at a run.
 		var held []network.ConnManagementScope
-		for i := range 100 {
+		for i := range 150 {
 			conn, err := limits.OpenConnection(network.DirInbound, true, from)
 			if err != nil {
 				t.Fatalf("connection %d at once from %s: %v", i+1, name, err)
@@ -773,5 +776,22 @@ func TestAHostTakesAsManyConnectionsFromOneAddressAsAPoolsMembersMake(t *testing
 	}
 	if !refused {
 		t.Errorf("%d connections at once from one address were all taken", 2*perAddress)
+	}
+	// Many addresses together have room for a large pool, and not for
+	// every connection there could be.
+	held, refused = nil, false
+	for i := range 2 * inAll {
+		conn, err := limits.OpenConnection(network.DirInbound, true, ma.StringCast(fmt.Sprintf("/ip4/198.51.%d.%d/tcp/40000", i/250, i%250+1)))
+		if err != nil {
+			refused = true
+			break
+		}
+		held = append(held, conn)
+	}
+	for _, conn := range held {
+		conn.Done()
+	}
+	if len(held) < 1000 || !refused {
+		t.Errorf("%d connections at once from as many addresses were taken, refused: %v", len(held), refused)
 	}
 }
