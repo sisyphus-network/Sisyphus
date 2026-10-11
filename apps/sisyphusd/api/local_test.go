@@ -1125,9 +1125,8 @@ func TestModelServiceFindsAKeyInTheMatchingNamedProfile(t *testing.T) {
 	if err != nil || got.APIKey != profile.Config.APIKey {
 		t.Fatalf("profile key lookup = %+v, %v", got, err)
 	}
-	wrongService := *named
-	wrongService.BaseUrl = "https://other.example.test/v1"
-	got, err = service.modelService(ctx, &wrongService)
+	wrongService := &nodepb.ModelService{Provider: named.GetProvider(), BaseUrl: "https://other.example.test/v1", KeepApiKey: true}
+	got, err = service.modelService(ctx, wrongService)
 	if err != nil || got.APIKey != "" {
 		t.Errorf("profile key leaked to other endpoint: %+v, %v", got, err)
 	}
