@@ -199,6 +199,10 @@ func (testNetworkAddress) Network() string  { return "test" }
 func (a testNetworkAddress) String() string { return string(a) }
 
 func TestWebOptionDependenciesAreValidated(t *testing.T) {
+	notDirectory := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(notDirectory, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		name string
 		args []string
@@ -206,6 +210,8 @@ func TestWebOptionDependenciesAreValidated(t *testing.T) {
 	}{
 		{"LAN needs listener", []string{"--web-lan"}, "--web-lan needs --web-listen"},
 		{"UI needs listener", []string{"--web-ui-dir", t.TempDir()}, "--web-ui-dir needs --web-listen"},
+		{"UI directory is missing", []string{"--web-listen", freeAddr(t), "--web-ui-dir", filepath.Join(t.TempDir(), "missing")}, "must name a directory"},
+		{"UI path is a file", []string{"--web-listen", freeAddr(t), "--web-ui-dir", notDirectory}, "must name a directory"},
 		{"UI needs index", []string{"--web-listen", freeAddr(t), "--web-ui-dir", t.TempDir()}, "has no index.html"},
 	} {
 		args := append([]string{"run", "--data-dir", t.TempDir()}, test.args...)
