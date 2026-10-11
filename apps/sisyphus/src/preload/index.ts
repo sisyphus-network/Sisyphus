@@ -34,7 +34,7 @@ export type NodeSnapshot = {
 export type NodeRpcMethod =
   | 'getBootstrapPeers' | 'setBootstrapPeers' | 'listWorkers' | 'listPeers' | 'getNodeInfo'
   | 'submitJob' | 'getJob' | 'listJobs' | 'cancelJob'
-  | 'getModelConfig' | 'setModelConfig' | 'listProviders' | 'listModels' | 'removeModel'
+  | 'getModelConfig' | 'setModelConfig' | 'listModelProfiles' | 'saveModelProfile' | 'deleteModelProfile' | 'listProviders' | 'listModels' | 'removeModel'
   | 'listChats' | 'getChat' | 'deleteChat'
   | 'listFiles' | 'removeFile'
   | 'createInvitation' | 'listMembers' | 'removeMember' | 'joinPool'

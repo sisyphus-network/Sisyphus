@@ -25,6 +25,53 @@ func TestTheModelConfigurationIsKept(t *testing.T) {
 	}
 }
 
+func TestModelProfilesKeepMultipleServicesAndOnlyOneActive(t *testing.T) {
+	db, _ := newDB(t)
+	profiles := []ModelProfile{
+		{ID: "local", Name: "Local Ollama", Config: ModelConfig{Provider: "ollama", BaseURL: "http://localhost:11434", Model: "qwen3"}, Active: true},
+		{ID: "cloud", Name: "Cloud API", Config: ModelConfig{Provider: "openai", BaseURL: "https://api.example.net/v1", Model: "gpt-5", APIKey: "secret"}},
+	}
+	for _, p := range profiles {
+		if err := db.SaveModelProfile(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := db.ModelProfiles()
+	if err != nil || len(got) != 2 {
+		t.Fatalf("profiles = %#v, %v", got, err)
+	}
+	if !got[0].Active || got[1].Config.APIKey != "secret" {
+		t.Fatalf("profiles lost active/key state: %#v", got)
+	}
+	profiles[1].Active = true
+	profiles[1].Config.Model = "gpt-5-mini"
+	if err := db.SaveModelProfile(profiles[1]); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.ModelProfiles()
+	if !got[0].Active || got[0].ID != "cloud" {
+		t.Fatalf("active profile = %#v", got)
+	}
+	active, found, err := db.ModelConfig()
+	if err != nil || !found || active.Provider != "openai" || active.Model != "gpt-5-mini" || active.APIKey != "secret" {
+		t.Fatalf("active config = %#v, %v, %v", active, found, err)
+	}
+	if err := db.DeleteModelProfile("cloud"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.ModelProfiles()
+	if len(got) != 2 || !got[0].Active {
+		t.Fatalf("active profile was removed: %#v", got)
+	}
+	if err := db.DeleteModelProfile("local"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.ModelProfiles()
+	if len(got) != 1 || !got[0].Active {
+		t.Fatalf("profiles after delete = %#v", got)
+	}
+}
+
 func TestChatsAndWhatWasSaidInThem(t *testing.T) {
 	db, file := newDB(t)
 	at := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)

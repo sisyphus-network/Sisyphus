@@ -139,7 +139,7 @@ function handleNode(channel: string, handler: (event: IpcMainInvokeEvent, ...arg
 }
 const unaryRpcMethods = new Set([
   'getNodeInfo', 'listPeers', 'getBootstrapPeers', 'setBootstrapPeers', 'listWorkers', 'submitJob', 'getJob', 'listJobs', 'cancelJob',
-  'getModelConfig', 'setModelConfig', 'listProviders', 'listModels', 'removeModel', 'listChats', 'getChat', 'deleteChat',
+  'getModelConfig', 'setModelConfig', 'listModelProfiles', 'saveModelProfile', 'deleteModelProfile', 'listProviders', 'listModels', 'removeModel', 'listChats', 'getChat', 'deleteChat',
   'listFiles', 'removeFile', 'createInvitation', 'listMembers', 'removeMember', 'joinPool',
 ])
 const streamingRpcMethods = new Set(['watchJobs', 'watchJobEvents', 'ask', 'pullModel'])

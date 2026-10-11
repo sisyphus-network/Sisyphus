@@ -17,6 +17,55 @@ type ModelConfig struct {
 	APIKey string
 }
 
+type ModelProfile struct {
+	ID, Name string
+	Config   ModelConfig
+	Active   bool
+}
+
+func (db *DB) ModelProfiles() ([]ModelProfile, error) {
+	var profiles []ModelProfile
+	err := db.read(func(rows *sql.Rows) error {
+		var p ModelProfile
+		var active int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Config.Provider, &p.Config.BaseURL, &p.Config.Model, &p.Config.APIKey, &active); err != nil {
+			return err
+		}
+		p.Active = active != 0
+		profiles = append(profiles, p)
+		return nil
+	}, `SELECT profile_id, name, provider, base_url, model, api_key, is_active FROM model_profiles ORDER BY is_active DESC, name COLLATE NOCASE`)
+	if err != nil {
+		return nil, fmt.Errorf("load model profiles: %w", err)
+	}
+	return profiles, nil
+}
+
+func (db *DB) SaveModelProfile(p ModelProfile) error {
+	return db.durably("save model profile", func(b *batch) {
+		if p.Active {
+			b.exec(`UPDATE model_profiles SET is_active = 0`)
+		}
+		b.exec(`INSERT INTO model_profiles (profile_id, name, provider, base_url, model, api_key, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (profile_id) DO UPDATE SET name=excluded.name, provider=excluded.provider, base_url=excluded.base_url, model=excluded.model, api_key=excluded.api_key, is_active=excluded.is_active`,
+			p.ID, p.Name, p.Config.Provider, p.Config.BaseURL, p.Config.Model, p.Config.APIKey, boolInt(p.Active))
+		if p.Active {
+			b.exec(`INSERT INTO model_config (singleton_id, provider, base_url, model, api_key) VALUES (1, ?, ?, ?, ?) ON CONFLICT (singleton_id) DO UPDATE SET provider=excluded.provider, base_url=excluded.base_url, model=excluded.model, api_key=excluded.api_key`, p.Config.Provider, p.Config.BaseURL, p.Config.Model, p.Config.APIKey)
+		}
+	})
+}
+
+func (db *DB) DeleteModelProfile(id string) error {
+	return db.durably("delete model profile", func(b *batch) { b.exec(`DELETE FROM model_profiles WHERE profile_id = ? AND is_active = 0`, id) })
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 // ModelConfig returns the node's model configuration. found is false if
 // none has been set.
 func (db *DB) ModelConfig() (cfg ModelConfig, found bool, err error) {

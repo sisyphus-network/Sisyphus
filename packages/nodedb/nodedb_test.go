@@ -526,6 +526,7 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 		`ALTER TABLE jobs DROP COLUMN audit_share`,
 		`DROP TABLE worker_standing`,
 		`DROP TABLE file_pin_operations`,
+		`DROP TABLE model_profiles`,
 		`ALTER TABLE tasks DROP COLUMN verify`,
 		`ALTER TABLE jobs DROP COLUMN verify_share`,
 		`DROP TABLE file_references`,
