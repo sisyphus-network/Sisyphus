@@ -29,7 +29,11 @@ export type NodeSnapshot = {
   revision: string
   lastUpdated: string | null
   error: string | null
+  authRequired?: boolean
 }
+
+export type BrowserPairingInvitation = { code: string; expiresAt: string; pairUrl: string }
+export type PairedBrowser = { id: string; name: string; createdAt: string }
 
 export type NodeRpcMethod =
   | 'getBootstrapPeers' | 'setBootstrapPeers' | 'listWorkers' | 'listPeers' | 'getNodeInfo'
@@ -53,6 +57,9 @@ const api = {
   },
   storeFile: (file: { name: string; data: Uint8Array; private: boolean; chatAttachment?: boolean }): Promise<Record<string, unknown>> => ipcRenderer.invoke('node:store-file', file),
   fetchFile: (cid: string): Promise<Uint8Array> => ipcRenderer.invoke('node:fetch-file', cid),
+  createBrowserPairing: (): Promise<BrowserPairingInvitation> => ipcRenderer.invoke('node:browser:create-pairing'),
+  listPairedBrowsers: (): Promise<{ devices: PairedBrowser[] }> => ipcRenderer.invoke('node:browser:list-paired'),
+  revokePairedBrowser: (id: string): Promise<void> => ipcRenderer.invoke('node:browser:revoke-paired', id),
   onSnapshot: (callback: (snapshot: NodeSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: NodeSnapshot) => callback(snapshot)
     ipcRenderer.on('node:snapshot', listener)

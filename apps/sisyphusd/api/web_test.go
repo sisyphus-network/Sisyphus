@@ -2,14 +2,20 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
 
+	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
@@ -138,5 +144,256 @@ func TestAWebPageIsHeldToTheTokenItsOriginAndThisMachine(t *testing.T) {
 	}
 	if status, _, _ := ask(page{path: nodeInfo, body: `{}`, key: "the-token", host: "localhost:50052"}); status != http.StatusOK {
 		t.Errorf("asked for as localhost: %d", status)
+	}
+}
+
+func TestAnEmptyConfiguredTokenNeverAuthenticatesAnEmptyBearer(t *testing.T) {
+	server := httptest.NewServer(NewWebHandler(LocalConfig{Listen: func() []string { return nil }}, nil))
+	defer server.Close()
+	request, err := http.NewRequest(http.MethodPost, server.URL+nodeInfo, strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Connect-Protocol-Version", "1")
+	request.Header.Set("Authorization", "Bearer ")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("empty token authenticated: %d", response.StatusCode)
+	}
+}
+
+func TestNodeServesTheWebAppAndUsesAnHttpOnlySession(t *testing.T) {
+	ui := fstest.MapFS{
+		"index.html":        &fstest.MapFile{Data: []byte("<main>Sisyphus UI</main>")},
+		"assets/app.js":     &fstest.MapFile{Data: []byte("console.log('app')")},
+		"assets/app.css":    &fstest.MapFile{Data: []byte("body { color: black }")},
+		"logo.png":          &fstest.MapFile{Data: []byte("logo")},
+		"not-a-page.js":     &fstest.MapFile{Data: []byte("not found")},
+		"nested/index.html": &fstest.MapFile{Data: []byte("nested")},
+	}
+	cfg := LocalConfig{
+		NodeID: "12D3KooWnode", Token: "the-token",
+		Listen: func() []string { return []string{"/ip4/127.0.0.1/tcp/7700"} },
+		Book:   &book{}, Bootstrap: func(context.Context, []string) {},
+	}
+	server := httptest.NewServer(NewWebAppHandler(cfg, nil, fs.FS(ui)))
+	defer server.Close()
+
+	request := func(method, path, origin, bearer string, cookie *http.Cookie) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(method, server.URL+path, strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Connect-Protocol-Version", "1")
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	readBody := func(res *http.Response) string {
+		t.Helper()
+		defer res.Body.Close()
+		body, err := io.ReadAll(res.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	if res := request(http.MethodGet, "/", "", "", nil); res.StatusCode != http.StatusOK || !strings.Contains(readBody(res), "Sisyphus UI") {
+		t.Fatalf("serve index without exposing API: %d", res.StatusCode)
+	}
+	if res := request(http.MethodGet, "/operations", "", "", nil); res.StatusCode != http.StatusOK || !strings.Contains(readBody(res), "Sisyphus UI") {
+		t.Fatalf("serve SPA route: %d", res.StatusCode)
+	}
+	if res := request(http.MethodGet, "/assets/app.js", "", "", nil); res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/javascript; charset=utf-8" {
+		readBody(res)
+		t.Fatalf("serve asset: %d %v", res.StatusCode, res.Header)
+	}
+	if res := request(http.MethodGet, "/missing.js", "", "", nil); res.StatusCode != http.StatusNotFound {
+		readBody(res)
+		t.Fatalf("missing asset must not fall back to index: %d", res.StatusCode)
+	}
+	if res := request(http.MethodPost, "/session", "https://attacker.example", "the-token", nil); res.StatusCode != http.StatusForbidden {
+		readBody(res)
+		t.Fatalf("reject foreign session origin: %d", res.StatusCode)
+	}
+	res := request(http.MethodPost, "/session", server.URL, "the-token", nil)
+	if res.StatusCode != http.StatusNoContent {
+		body := readBody(res)
+		t.Fatalf("enroll session: %d %s", res.StatusCode, body)
+	}
+	var session *http.Cookie
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == webSessionCookie {
+			session = cookie
+		}
+	}
+	res.Body.Close()
+	if session == nil || !session.HttpOnly || session.SameSite != http.SameSiteStrictMode || session.Value == "the-token" {
+		t.Fatalf("session cookie must be HttpOnly and SameSite=Strict: %#v", session)
+	}
+	res = request(http.MethodPost, nodeInfo, server.URL, "", session)
+	body := readBody(res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, `"peerId":"12D3KooWnode"`) {
+		t.Fatalf("call API with enrolled cookie: %d %s", res.StatusCode, body)
+	}
+	// State-changing cookie-authenticated calls must prove they came from the
+	// node's own page. This protects the session from cross-site form/fetch use.
+	res = request(http.MethodPost, nodeInfo, "https://attacker.example", "", session)
+	if res.StatusCode != http.StatusForbidden {
+		readBody(res)
+		t.Fatalf("reject cross-site cookie-authenticated mutation: %d", res.StatusCode)
+	}
+	res = request(http.MethodPost, nodeInfo, "", "", session)
+	if res.StatusCode != http.StatusForbidden {
+		readBody(res)
+		t.Fatalf("reject cookie-authenticated mutation without Origin: %d", res.StatusCode)
+	}
+	res = request(http.MethodPost, nodeInfo, server.URL, "", session)
+	if res.StatusCode != http.StatusOK {
+		body := readBody(res)
+		t.Fatalf("allow same-origin cookie-authenticated call: %d %s", res.StatusCode, body)
+	}
+	res.Body.Close()
+	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/SetBootstrapPeers", server.URL, "", session)
+	body = readBody(res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, `"peers":[]`) {
+		t.Fatalf("allow an authenticated state change through the session: %d %s", res.StatusCode, body)
+	}
+	res = request(http.MethodDelete, "/session", server.URL, "", session)
+	if res.StatusCode != http.StatusNoContent {
+		readBody(res)
+		t.Fatalf("end session: %d", res.StatusCode)
+	}
+	if len(res.Cookies()) == 0 || res.Cookies()[0].MaxAge >= 0 {
+		res.Body.Close()
+		t.Fatalf("session cookie was not cleared: %v", res.Cookies())
+	}
+	res.Body.Close()
+	if res = request(http.MethodPost, nodeInfo, server.URL, "", nil); res.StatusCode != http.StatusUnauthorized {
+		readBody(res)
+		t.Fatalf("logged-out API call must fail: %d", res.StatusCode)
+	}
+}
+
+func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
+	db, err := nodedb.Open(filepath.Join(t.TempDir(), "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cfg := LocalConfig{NodeID: "12D3KooWnode", Token: "owner-token", Listen: func() []string { return nil }, BrowserAccess: db}
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}
+	server := httptest.NewServer(NewWebAppHandler(cfg, nil, ui))
+	t.Cleanup(func() { server.Close() })
+	request := func(method, route, body string, cookie *http.Cookie, owner bool) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(method, server.URL+route, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", server.URL)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Connect-Protocol-Version", "1")
+		if owner {
+			req.Header.Set("Authorization", "Bearer owner-token")
+		}
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	res := request(http.MethodPost, "/pairing", "{}", nil, true)
+	var invitation struct {
+		Code    string `json:"code"`
+		PairURL string `json:"pairUrl"`
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || json.Unmarshal(body, &invitation) != nil || len(invitation.Code) != 8 || !strings.Contains(invitation.PairURL, "#pair="+invitation.Code) {
+		t.Fatalf("create pairing invitation: %d %s", res.StatusCode, body)
+	}
+	if denied := request(http.MethodPost, "/pair", `{"code":"00000000","name":"Phone"}`, nil, false); denied.StatusCode != http.StatusUnauthorized {
+		denied.Body.Close()
+		t.Fatalf("wrong one-time code status: %d", denied.StatusCode)
+	} else {
+		denied.Body.Close()
+	}
+	res = request(http.MethodPost, "/pair", `{"code":"`+invitation.Code+`","name":"Phone"}`, nil, false)
+	if res.StatusCode != http.StatusNoContent {
+		body, _ = io.ReadAll(res.Body)
+		res.Body.Close()
+		t.Fatalf("complete pairing: %d %s", res.StatusCode, body)
+	}
+	var cookie *http.Cookie
+	for _, item := range res.Cookies() {
+		if item.Name == webSessionCookie {
+			cookie = item
+		}
+	}
+	res.Body.Close()
+	if cookie == nil || !cookie.HttpOnly || cookie.MaxAge < int((24*time.Hour).Seconds()) {
+		t.Fatalf("paired device needs a durable HttpOnly cookie: %#v", cookie)
+	}
+	server.Close()
+	server = httptest.NewServer(NewWebAppHandler(cfg, nil, ui)) // daemon restart: device credential is recovered from SQLite
+	res = request(http.MethodGet, "/devices", "", cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("paired cookie did not authorize device listing: %d %s", res.StatusCode, body)
+	}
+	res = request(http.MethodPost, nodeInfo, `{}`, cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("paired browser API call: %d %s", res.StatusCode, body)
+	}
+	res = request(http.MethodGet, "/devices", "", cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"name":"Phone"`) || strings.Contains(string(body), "tokenHash") {
+		t.Fatalf("list paired devices without credentials: %d %s", res.StatusCode, body)
+	}
+	var devices struct {
+		Devices []struct {
+			ID string `json:"id"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(body, &devices); err != nil || len(devices.Devices) != 1 {
+		t.Fatalf("decode paired devices: %s, %v", body, err)
+	}
+	res = request(http.MethodDelete, "/devices/"+devices.Devices[0].ID, "", cookie, false)
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke paired device: %d", res.StatusCode)
+	}
+	res = request(http.MethodPost, nodeInfo, `{}`, cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revoked cookie remains active: %d %s", res.StatusCode, body)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -70,8 +71,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	pinningListen := fs.String("pinning-listen", "", "coordinator: address to serve the IPFS Pinning Service API on, so that ipfs pin remote and other standard tools can have this node keep data; its key is in the file pinning.token in the data directory; off if empty")
 	gatewayOpen := fs.Bool("gateway-open", false, "let anyone who can reach --gateway-listen and knows a file's content ID fetch it, without the token. Sealed files are never served")
 	publishRecord := fs.Bool("publish-record", false, "coordinator role: keep a description of this node published under its name, which is its ID: its version, the workloads it takes and its pool's members by ID and role. Whoever may resolve the name can read it")
-	webListen := fs.String("web-listen", "", "loopback address to serve the local API on to web pages, as gRPC-Web and Connect, with every call needing the node's API token; off if empty")
+	webListen := fs.String("web-listen", "", "loopback address to serve the local API and web UI; off if empty")
+	webLAN := fs.Bool("web-lan", false, "explicitly allow the web UI and API on one private LAN interface over plain HTTP; pairing is required for browser access")
 	webOrigins := fs.String("web-origin", "", "the origins of the web pages that may use --web-listen, separated by commas, such as http://localhost:5173; pages from anywhere else are refused")
+	webUIDir := fs.String("web-ui-dir", "", "directory containing the built web UI to serve beside the local API; needs --web-listen, and is still loopback-only")
 	apiListen := fs.String("api-listen", "", "loopback address to serve the local API on, for the desktop client on this machine (it expects 127.0.0.1:50051); off if empty")
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
@@ -155,8 +158,23 @@ func runDaemon(ctx context.Context, args []string) error {
 	if *pinningListen != "" && !isCoordinator {
 		return errors.New("--pinning-listen is for a node that coordinates a pool: it is that pool's store the data is kept in")
 	}
-	if host, _, err := net.SplitHostPort(*webListen); *webListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
-		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052: the local API is for this machine only, its web pages included")
+	if err := validateWebListen(*webListen, *webLAN); err != nil {
+		return err
+	}
+	if *webLAN && *webListen == "" {
+		return errors.New("--web-lan needs --web-listen")
+	}
+	if *webUIDir != "" {
+		if *webListen == "" {
+			return errors.New("--web-ui-dir needs --web-listen")
+		}
+		info, err := os.Stat(*webUIDir)
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("--web-ui-dir must name a directory: %s", *webUIDir)
+		}
+		if _, err := os.Stat(filepath.Join(*webUIDir, "index.html")); err != nil {
+			return fmt.Errorf("--web-ui-dir has no index.html: %s", *webUIDir)
+		}
 	}
 	if *s3Endpoint != "" {
 		switch {
@@ -387,6 +405,8 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 	defer db.Close()
+	local.BrowserAccess = db
+	local.AllowLAN = *webLAN
 	// host is the node's libp2p host, started below according to its role.
 	var host *p2p.Host
 	// trustChanged hears of each node the coordinator admits or removes, and
@@ -934,9 +954,19 @@ func runDaemon(ctx context.Context, args []string) error {
 				origins = append(origins, strings.TrimRight(origin, "/"))
 			}
 		}
-		pages := &http.Server{Handler: api.NewWebHandler(local, origins)}
+		var ui iofs.FS
+		if *webUIDir != "" {
+			ui = os.DirFS(*webUIDir)
+		}
+		if *webLAN {
+			local.PairingOrigin = "http://" + lis.Addr().String()
+		}
+		pages := &http.Server{Handler: api.NewWebAppHandler(local, origins, ui)}
 		defer pages.Close()
-		log.Info("local API listening for web pages", "addr", lis.Addr().String(), "origins", origins)
+		if *webLAN {
+			log.Warn("LAN web access is using plain HTTP: pairing codes and browser sessions are visible to devices able to monitor this network", "addr", lis.Addr().String())
+		}
+		log.Info("local API listening for web pages", "addr", lis.Addr().String(), "origins", origins, "ui", *webUIDir != "", "lan", *webLAN)
 		go pages.Serve(lis)
 	}
 
@@ -1693,6 +1723,44 @@ var runsAs = func(_ string, runs *runtime.Registry) *runtime.Registry { return r
 
 // hostname is os.Hostname; tests replace it.
 var hostname = os.Hostname
+
+func validateWebListen(address string, allowLAN bool) error {
+	if address == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052; for LAN access use a private interface address and --web-lan")
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	if !allowLAN {
+		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052; LAN access requires explicit --web-lan")
+	}
+	parsed, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil || !parsed.IsPrivate() || parsed.IsUnspecified() || parsed.IsMulticast() || parsed.IsLoopback() {
+		return errors.New("--web-lan requires --web-listen to use a private LAN IP assigned to this machine; 0.0.0.0 and public addresses are not allowed")
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return fmt.Errorf("inspect local interfaces for --web-lan: %w", err)
+	}
+	for _, network := range interfaces {
+		addresses, err := network.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, item := range addresses {
+			prefix, err := netip.ParsePrefix(item.String())
+			if err == nil && prefix.Addr().Unmap() == parsed.Unmap() {
+				return nil
+			}
+		}
+	}
+	return errors.New("--web-listen address must be a private IP assigned to one of this machine's network interfaces")
+}
 
 // defaultName is the machine's host name.
 func defaultName() string {

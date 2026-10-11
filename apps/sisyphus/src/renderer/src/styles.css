@@ -1,6 +1,53 @@
 @import "@fontsource-variable/dm-sans";
 @import "./design-system/app.css";
 
+.auth-route {
+  background: var(--app-bg);
+  color: var(--app-ink);
+}
+
+.auth-route__wash {
+  background:
+    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--app-accent) 12%, transparent), transparent 38%),
+    linear-gradient(180deg, color-mix(in srgb, var(--app-accent) 3%, var(--app-bg)), var(--app-bg));
+}
+
+.auth-route__grid {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--app-ink) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--app-ink) 4%, transparent) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(to bottom, black, transparent 85%);
+}
+
+.auth-route__glow {
+  border: 1px solid color-mix(in srgb, var(--app-accent) 12%, transparent);
+  background: color-mix(in srgb, var(--app-accent) 8%, transparent);
+}
+
+.auth-route .auth-route__card {
+  border-color: color-mix(in srgb, var(--app-line) 72%, var(--app-accent) 28%);
+  background-color: color-mix(in srgb, var(--app-card) 82%, transparent);
+  box-shadow: 0 24px 80px color-mix(in srgb, var(--app-ink) 12%, transparent);
+}
+
+.auth-route__mark {
+  border: 1px solid color-mix(in srgb, var(--app-accent) 20%, var(--app-line));
+  background: color-mix(in srgb, var(--app-accent) 10%, var(--app-card));
+  color: var(--app-accent);
+}
+
+.auth-route .auth-otp-slot {
+  border-color: color-mix(in srgb, var(--app-line) 68%, var(--app-accent) 32%);
+  background: color-mix(in srgb, var(--app-card) 88%, var(--app-wash));
+  color: var(--app-ink);
+}
+
+.auth-route .auth-otp-slot[data-active="true"] {
+  border-color: color-mix(in srgb, var(--app-accent) 72%, var(--app-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 18%, transparent);
+}
+
 html,
 body,
 #root {

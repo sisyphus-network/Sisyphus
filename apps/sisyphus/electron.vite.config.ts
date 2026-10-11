@@ -22,10 +22,20 @@ export default defineConfig({
     plugins: [tailwindcss(), nodeBrowserApiPlugin(protoSource)],
     server: {
       host: process.env.SISYPHUS_DEV_HOST ?? '127.0.0.1',
+      fs: {
+        // @sisyphus/client is a local file: package outside the renderer root.
+        allow: [resolve(__dirname, '../..')],
+      },
     },
     resolve: {
+      preserveSymlinks: true,
       alias: {
         '@': resolve(__dirname, 'src/renderer/src'),
+        // The local SDK is a file: dependency whose source lives outside this
+        // package. Resolve its runtime deps from the Electron app installation.
+        '@bufbuild/protobuf': resolve(__dirname, 'node_modules/@bufbuild/protobuf'),
+        '@connectrpc/connect-web': resolve(__dirname, 'node_modules/@connectrpc/connect-web'),
+        '@connectrpc/connect': resolve(__dirname, 'node_modules/@connectrpc/connect'),
       },
     },
   },
