@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/api"
 )
 
 func TestTheLocalAPIIsServedToTheWebPagesItsOwnerLists(t *testing.T) {
@@ -189,4 +191,98 @@ func TestTheNodeServesItsWebBuildAndEnrolledBrowserSession(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"peerId"`) {
 		t.Fatalf("call node API with cookie: %d %s", res.StatusCode, body)
 	}
+}
+
+type testNetworkAddress string
+
+func (testNetworkAddress) Network() string  { return "test" }
+func (a testNetworkAddress) String() string { return string(a) }
+
+func TestWebOptionDependenciesAreValidated(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"LAN needs listener", []string{"--web-lan"}, "--web-lan needs --web-listen"},
+		{"UI needs listener", []string{"--web-ui-dir", t.TempDir()}, "--web-ui-dir needs --web-listen"},
+		{"UI needs index", []string{"--web-listen", freeAddr(t), "--web-ui-dir", t.TempDir()}, "has no index.html"},
+	} {
+		args := append([]string{"run", "--data-dir", t.TempDir()}, test.args...)
+		if _, err := cli(t, args...); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Errorf("%s: got %v, want error containing %q", test.name, err, test.want)
+		}
+	}
+}
+
+func TestWebLANListenerUsesAnAssignedPrivateAddress(t *testing.T) {
+	addresses, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var privateIP string
+	for _, item := range addresses {
+		prefix, err := netip.ParsePrefix(item.String())
+		if err == nil && prefix.Addr().IsPrivate() && !prefix.Addr().IsLoopback() {
+			privateIP = prefix.Addr().String()
+			break
+		}
+	}
+	if privateIP == "" {
+		t.Skip("host has no private interface for LAN listener test")
+	}
+	reservation, err := net.Listen("tcp", net.JoinHostPort(privateIP, "0"))
+	if err != nil {
+		t.Skipf("cannot reserve a test LAN listener: %v", err)
+	}
+	webAddr := reservation.Addr().String()
+	reservation.Close()
+	nodeAddr := freeAddr(t)
+	dataDir := t.TempDir()
+	startDaemon(t, "--data-dir", dataDir, "--listen", nodeAddr, "--web-listen", webAddr, "--web-lan", "--name", "lan-ui")
+	waitForOutput(t, "lan-ui", "nodes", "--addr", nodeAddr)
+	token, err := os.ReadFile(filepath.Join(dataDir, "api.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseURL := "http://" + webAddr
+	request, err := http.NewRequest(http.MethodPost, baseURL+"/pairing", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Origin", baseURL)
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), baseURL+"/#pair=") {
+		t.Fatalf("LAN pairing URL: %d %s", response.StatusCode, body)
+	}
+}
+
+func TestValidateWebListenCoversInterfaceFailuresAndMatches(t *testing.T) {
+	const addr = "10.2.3.4:50052"
+	interfacesErr := validateWebListenWithInterfaces(addr, true, func() ([]net.Interface, error) { return nil, os.ErrPermission }, func(net.Interface) ([]net.Addr, error) { return nil, nil })
+	if interfacesErr == nil || !strings.Contains(interfacesErr.Error(), "inspect local interfaces") {
+		t.Fatalf("interface enumeration error: %v", interfacesErr)
+	}
+	if got := validateWebListenWithInterfaces(addr, true, func() ([]net.Interface, error) { return []net.Interface{{Index: 1}}, nil }, func(net.Interface) ([]net.Addr, error) { return nil, os.ErrPermission }); got == nil || !strings.Contains(got.Error(), "address must be") {
+		t.Fatalf("interface address error should be skipped then rejected: %v", got)
+	}
+	if got := validateWebListenWithInterfaces(addr, true, func() ([]net.Interface, error) { return []net.Interface{{Index: 1}}, nil }, func(net.Interface) ([]net.Addr, error) { return []net.Addr{testNetworkAddress("10.2.3.4/24")}, nil }); got != nil {
+		t.Fatalf("matching interface address: %v", got)
+	}
+}
+
+func TestConfigureWebLANAdvertisesThePlainHTTPPairingOrigin(t *testing.T) {
+	cfg := &api.LocalConfig{}
+	warned := false
+	configureWebLAN(cfg, true, "192.168.1.4:50052", func() { warned = true })
+	if cfg.PairingOrigin != "http://192.168.1.4:50052" || !warned {
+		t.Fatalf("LAN configuration: pairing origin %q, warning called %v", cfg.PairingOrigin, warned)
+	}
+	configureWebLAN(cfg, false, "127.0.0.1:50052", func() { t.Fatal("loopback access must not warn") })
 }

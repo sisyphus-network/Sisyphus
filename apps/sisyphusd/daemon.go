@@ -958,14 +958,11 @@ func runDaemon(ctx context.Context, args []string) error {
 		if *webUIDir != "" {
 			ui = os.DirFS(*webUIDir)
 		}
-		if *webLAN {
-			local.PairingOrigin = "http://" + lis.Addr().String()
-		}
+		configureWebLAN(&local, *webLAN, lis.Addr().String(), func() {
+			log.Warn("LAN web access is using plain HTTP: pairing codes and browser sessions are visible to devices able to monitor this network", "addr", lis.Addr().String())
+		})
 		pages := &http.Server{Handler: api.NewWebAppHandler(local, origins, ui)}
 		defer pages.Close()
-		if *webLAN {
-			log.Warn("LAN web access is using plain HTTP: pairing codes and browser sessions are visible to devices able to monitor this network", "addr", lis.Addr().String())
-		}
 		log.Info("local API listening for web pages", "addr", lis.Addr().String(), "origins", origins, "ui", *webUIDir != "", "lan", *webLAN)
 		go pages.Serve(lis)
 	}
@@ -1725,6 +1722,10 @@ var runsAs = func(_ string, runs *runtime.Registry) *runtime.Registry { return r
 var hostname = os.Hostname
 
 func validateWebListen(address string, allowLAN bool) error {
+	return validateWebListenWithInterfaces(address, allowLAN, net.Interfaces, func(network net.Interface) ([]net.Addr, error) { return network.Addrs() })
+}
+
+func validateWebListenWithInterfaces(address string, allowLAN bool, listInterfaces func() ([]net.Interface, error), interfaceAddresses func(net.Interface) ([]net.Addr, error)) error {
 	if address == "" {
 		return nil
 	}
@@ -1743,12 +1744,12 @@ func validateWebListen(address string, allowLAN bool) error {
 	if err != nil || !parsed.IsPrivate() || parsed.IsUnspecified() || parsed.IsMulticast() || parsed.IsLoopback() {
 		return errors.New("--web-lan requires --web-listen to use a private LAN IP assigned to this machine; 0.0.0.0 and public addresses are not allowed")
 	}
-	interfaces, err := net.Interfaces()
+	interfaces, err := listInterfaces()
 	if err != nil {
 		return fmt.Errorf("inspect local interfaces for --web-lan: %w", err)
 	}
 	for _, network := range interfaces {
-		addresses, err := network.Addrs()
+		addresses, err := interfaceAddresses(network)
 		if err != nil {
 			continue
 		}
@@ -1760,6 +1761,14 @@ func validateWebListen(address string, allowLAN bool) error {
 		}
 	}
 	return errors.New("--web-listen address must be a private IP assigned to one of this machine's network interfaces")
+}
+
+func configureWebLAN(cfg *api.LocalConfig, allowLAN bool, address string, warnPlainHTTP func()) {
+	if !allowLAN {
+		return
+	}
+	cfg.PairingOrigin = "http://" + address
+	warnPlainHTTP()
 }
 
 // defaultName is the machine's host name.

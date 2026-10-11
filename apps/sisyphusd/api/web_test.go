@@ -3,12 +3,17 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +23,59 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
+
+type failingBrowserAccessStore struct {
+	devices                                 []nodedb.BrowserDevice
+	err                                     error
+	saveErr, consumeErr, listErr, deleteErr error
+	consume                                 bool
+}
+
+func (s *failingBrowserAccessStore) SaveBrowserPairing([]byte, time.Time) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	return s.err
+}
+func (s *failingBrowserAccessStore) ConsumeBrowserPairing([]byte, time.Time, nodedb.BrowserDevice) (bool, error) {
+	if s.consumeErr != nil {
+		return false, s.consumeErr
+	}
+	return s.consume, s.err
+}
+func (s *failingBrowserAccessStore) BrowserDevices() ([]nodedb.BrowserDevice, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return s.devices, s.err
+}
+func (s *failingBrowserAccessStore) DeleteBrowserDevice(string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	return s.err
+}
+
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) { return 0, errors.New("random source unavailable") }
+
+type partialErrorReader struct{ remaining int }
+
+func (r *partialErrorReader) Read(p []byte) (int, error) {
+	if r.remaining == 0 {
+		return 0, errors.New("random source ended")
+	}
+	n := min(len(p), r.remaining)
+	clear(p[:n])
+	r.remaining -= n
+	return n, nil
+}
+
+type testNetworkAddress string
+
+func (testNetworkAddress) Network() string  { return "test" }
+func (a testNetworkAddress) String() string { return string(a) }
 
 // page is a web page's request of a node: how it is made and what from.
 type page struct {
@@ -396,4 +454,265 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	if res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("revoked cookie remains active: %d %s", res.StatusCode, body)
 	}
+}
+
+func TestWebControlRejectsBadPairingAndStoreFailures(t *testing.T) {
+	errStore := &failingBrowserAccessStore{err: errors.New("store unavailable")}
+	cfg := LocalConfig{Token: "owner-token", BrowserAccess: errStore}
+	server := httptest.NewServer(NewWebAppHandler(cfg, []string{"https://allowed.example"}, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}))
+	defer server.Close()
+	request := func(method, route, body, origin, bearer string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(method, server.URL+route, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	check := func(method, route, body, origin, bearer string, want int) string {
+		t.Helper()
+		res := request(method, route, body, origin, bearer)
+		defer res.Body.Close()
+		said, _ := io.ReadAll(res.Body)
+		if res.StatusCode != want {
+			t.Errorf("%s %s: got %d %s, want %d", method, route, res.StatusCode, said, want)
+		}
+		return string(said)
+	}
+	check(http.MethodGet, "/session", "", "", "", http.StatusMethodNotAllowed)
+	check(http.MethodPost, "/session", `{}`, server.URL, "wrong", http.StatusUnauthorized)
+	check(http.MethodGet, "/pair", `{}`, server.URL, "", http.StatusMethodNotAllowed)
+	check(http.MethodPost, "/pair", `{"code":"12345678"}`, "", "", http.StatusForbidden)
+	check(http.MethodPost, "/pair", `not-json`, server.URL, "", http.StatusBadRequest)
+	check(http.MethodPost, "/pair", `{"code":"12345678","name":"`+strings.Repeat("x", 81)+`"}`, server.URL, "", http.StatusBadRequest)
+	check(http.MethodPost, "/pairing", `{}`, server.URL, "wrong", http.StatusUnauthorized)
+	check(http.MethodPost, "/pairing", `{}`, "https://elsewhere.example", "owner-token", http.StatusForbidden)
+	check(http.MethodOptions, "/anything", "", "", "", http.StatusNoContent)
+	check(http.MethodPost, "/pairing", `{}`, server.URL, "owner-token", http.StatusInternalServerError)
+	check(http.MethodGet, "/devices", `{}`, server.URL, "owner-token", http.StatusInternalServerError)
+	check(http.MethodDelete, "/devices/device-1", `{}`, server.URL, "owner-token", http.StatusInternalServerError)
+	check(http.MethodPost, "/devices", `{}`, server.URL, "owner-token", http.StatusMethodNotAllowed)
+	check(http.MethodPost, "/pairing", `{}`, "", "", http.StatusUnauthorized)
+	errStore.err = nil
+	check(http.MethodPost, "/pair", `{"code":"12345678"}`, server.URL, "", http.StatusUnauthorized)
+	check(http.MethodDelete, "/devices/a/b", `{}`, server.URL, "owner-token", http.StatusNotFound)
+	check(http.MethodPost, "/devices/device-1", `{}`, server.URL, "owner-token", http.StatusMethodNotAllowed)
+	check(http.MethodDelete, "/devices/device-1", `{}`, "https://allowed.example", "owner-token", http.StatusForbidden)
+	check(http.MethodGet, "/devices", `{}`, "https://allowed.example", "owner-token", http.StatusForbidden)
+	check(http.MethodPost, "/pairing", `{}`, "https://allowed.example", "owner-token", http.StatusForbidden)
+	errStore.consumeErr = errors.New("consume unavailable")
+	check(http.MethodPost, "/pair", `{"code":"12345678"}`, server.URL, "", http.StatusInternalServerError)
+	sessions := newWebSessions()
+	sessionID, err := sessions.create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieRequest := httptest.NewRequest(http.MethodGet, "http://node.test/devices", nil)
+	cookieRequest.AddCookie(&http.Cookie{Name: webSessionCookie, Value: sessionID})
+	cookieRequest.Header.Set("Origin", "https://allowed.example")
+	cookieResponse := httptest.NewRecorder()
+	webControl(cookieResponse, cookieRequest, cfg, sessions, newBrowserAccess(errStore, "pepper"))
+	if cookieResponse.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin cookie device management: %d", cookieResponse.Code)
+	}
+	secureCfg := LocalConfig{Token: "owner-token"}
+	secureRequest := httptest.NewRequest(http.MethodPost, "https://node.test/pairing", strings.NewReader(`{}`))
+	secureRequest.Header.Set("Authorization", "Bearer owner-token")
+	secureRequest.Header.Set("Origin", "https://node.test")
+	secureResponse := httptest.NewRecorder()
+	webControl(secureResponse, secureRequest, secureCfg, newWebSessions(), newBrowserAccess(nil, "pepper"))
+	if secureResponse.Code != http.StatusOK || !strings.Contains(secureResponse.Body.String(), "https://node.test/#pair=") {
+		t.Fatalf("secure pairing URL: %d %s", secureResponse.Code, secureResponse.Body.String())
+	}
+}
+
+func TestBrowserPairingFallbackThrottleAndSessionExpiry(t *testing.T) {
+	now := time.Now()
+	volatile := &volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}
+	if err := volatile.SaveBrowserPairing([]byte("hash"), now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if consumed, err := volatile.ConsumeBrowserPairing([]byte("wrong"), now, nodedb.BrowserDevice{ID: "unused"}); err != nil || consumed {
+		t.Fatalf("wrong code: %v, %v", consumed, err)
+	}
+	if consumed, err := volatile.ConsumeBrowserPairing([]byte("hash"), now, nodedb.BrowserDevice{ID: "device"}); err != nil || !consumed {
+		t.Fatalf("valid code: %v, %v", consumed, err)
+	}
+	if devices, err := volatile.BrowserDevices(); err != nil || len(devices) != 1 {
+		t.Fatalf("volatile listing: %+v, %v", devices, err)
+	}
+	if err := volatile.DeleteBrowserDevice("device"); err != nil {
+		t.Fatal(err)
+	}
+
+	access := newBrowserAccess(nil, "pepper")
+	for i := 0; i < 8; i++ {
+		if _, _, paired, err := access.pair("wrong", "Browser", "remote", now); err != nil || paired {
+			t.Fatalf("bad pairing attempt %d: %v, %v", i, paired, err)
+		}
+	}
+	if _, _, paired, err := access.pair("wrong", "Browser", "remote", now); err != nil || paired {
+		t.Fatalf("blocked address: %v, %v", paired, err)
+	}
+	access.blocked["expired"] = now.Add(-time.Second)
+	access.failed["other"] = 1
+	for i := 0; i < 512; i++ {
+		access.blocked[fmt.Sprintf("stale-%d", i)] = now.Add(-time.Second)
+	}
+	if _, _, _, err := access.pair("wrong", "Browser", "remote-new", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := access.blocked["expired"]; exists {
+		t.Fatal("expired throttle entry was not cleaned up")
+	}
+	access.failed = make(map[string]int)
+	access.blocked = make(map[string]time.Time)
+	for i := 0; i < 4096; i++ {
+		access.blocked[fmt.Sprintf("full-%d", i)] = now.Add(time.Minute)
+	}
+	if _, _, paired, err := access.pair("wrong", "Browser", "new", now); err != nil || paired {
+		t.Fatalf("bounded throttle map: %v, %v", paired, err)
+	}
+
+	sessions := newWebSessions()
+	sessions.active["expired"] = time.Now().Add(-time.Second)
+	if sessions.valid("expired") {
+		t.Fatal("expired web session remained valid")
+	}
+	if sessions.valid("missing") {
+		t.Fatal("unknown web session was valid")
+	}
+	sessions.active["old"] = time.Now().Add(-time.Second)
+	if _, err := sessions.create(); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := sessions.active["old"]; exists {
+		t.Fatal("session creation did not prune expired sessions")
+	}
+	if access.valid("malformed") || access.valid("missing.token") {
+		t.Fatal("accepted malformed or unknown browser credential")
+	}
+
+	access.random = errorReader{}
+	sessions.random = errorReader{}
+	if _, _, err := access.issuePairing(now); err == nil {
+		t.Fatal("pairing code generation ignored a failing random source")
+	}
+	if _, err := sessions.create(); err == nil {
+		t.Fatal("session generation ignored a failing random source")
+	}
+	handler := newWebAppHandler(LocalConfig{Token: "owner-token"}, nil, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}, errorReader{})
+	failedSession := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/session", nil)
+	failedSession.Header.Set("Authorization", "Bearer owner-token")
+	failedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(failedResponse, failedSession)
+	if failedResponse.Code != http.StatusInternalServerError {
+		t.Fatalf("failed session entropy status: %d", failedResponse.Code)
+	}
+	access.blocked = make(map[string]time.Time)
+	if _, _, _, err := access.pair("code", "Browser", "random-failure", now); err == nil {
+		t.Fatal("browser token generation ignored a failing random source")
+	}
+	access.random = &partialErrorReader{remaining: 32}
+	if _, _, _, err := access.pair("code", "Browser", "id-random-failure", now); err == nil {
+		t.Fatal("browser ID generation ignored a failing random source")
+	}
+}
+
+func TestWebOriginHostAndStaticMethodEdges(t *testing.T) {
+	if sameOrigin(httptest.NewRequest(http.MethodGet, "http://example.test/", nil), "https://example.test") {
+		t.Fatal("accepted an origin with the wrong scheme")
+	}
+	for _, origin := range []string{"not an origin", "http://user@example.test", "http://example.test/path", "http://example.test/?x=1", "http://example.test/#part"} {
+		if sameOrigin(httptest.NewRequest(http.MethodGet, "http://example.test/", nil), origin) {
+			t.Errorf("accepted malformed origin %q", origin)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://example.test/", nil)
+	if sameBrowserOrigin(request) {
+		t.Fatal("accepted a request without origin or referer")
+	}
+	request.Header.Set("Referer", "://bad")
+	if sameBrowserOrigin(request) {
+		t.Fatal("accepted malformed referer")
+	}
+	request.Header.Set("Referer", "http://example.test/a")
+	if !sameBrowserOrigin(request) {
+		t.Fatal("did not accept same-origin referer fallback")
+	}
+
+	if webHostAllowed("example.com:1234", true) {
+		t.Fatal("accepted public host")
+	}
+	if webHostAllowed("10.0.0.1:1234", true) && localPrivateAddress("") != "10.0.0.1" {
+		t.Fatal("accepted an unassigned private host")
+	}
+	if address := localPrivateAddress(""); address != "" && !webHostAllowed(net.JoinHostPort(address, "1234"), true) {
+		t.Fatalf("did not accept local private address %s", address)
+	}
+	if webHostAllowedWithInterfaces("10.0.0.1:1234", true, func() ([]net.Interface, error) { return nil, errors.New("interfaces unavailable") }, func(net.Interface) ([]net.Addr, error) { return nil, nil }) {
+		t.Fatal("accepted LAN host when interfaces could not be enumerated")
+	}
+	if webHostAllowedWithInterfaces("10.0.0.1:1234", true, func() ([]net.Interface, error) { return []net.Interface{{Index: -1}}, nil }, func(net.Interface) ([]net.Addr, error) { return nil, errors.New("address unavailable") }) {
+		t.Fatal("accepted LAN host when an interface address could not be read")
+	}
+	if webHostAllowedWithInterfaces("10.0.0.1", true, func() ([]net.Interface, error) { return nil, nil }, func(net.Interface) ([]net.Addr, error) { return nil, nil }) {
+		t.Fatal("accepted an unassigned host without a port")
+	}
+	if !webHostAllowedWithInterfaces("10.0.0.1", true, func() ([]net.Interface, error) { return []net.Interface{{Index: 1}}, nil }, func(net.Interface) ([]net.Addr, error) { return []net.Addr{testNetworkAddress("10.0.0.1/24")}, nil }) {
+		t.Fatal("did not accept an assigned private interface address")
+	}
+
+	static := staticWebUI(fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<head></head>")}})
+	response := httptest.NewRecorder()
+	static.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "http://example.test/", nil))
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("static POST status: %d", response.Code)
+	}
+	response = httptest.NewRecorder()
+	static.ServeHTTP(response, httptest.NewRequest(http.MethodHead, "http://example.test/", nil))
+	if response.Code != http.StatusOK || response.Body.Len() != 0 {
+		t.Fatalf("static HEAD: %d %q", response.Code, response.Body.String())
+	}
+	for _, method := range []string{http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		if !mutatesState(httptest.NewRequest(method, "http://example.test/node", nil)) {
+			t.Errorf("%s should be a state mutation", method)
+		}
+	}
+	if !mutatesState(httptest.NewRequest(http.MethodPost, "http://example.test/files/a", nil)) || !mutatesState(httptest.NewRequest(http.MethodPost, "http://example.test/sisyphus.node.v1.NodeService/Call", nil)) || mutatesState(httptest.NewRequest(http.MethodPost, "http://example.test/read", nil)) {
+		t.Fatal("POST mutation path classification is wrong")
+	}
+	secure := httptest.NewRequest(http.MethodGet, "https://example.test/", nil)
+	secure.TLS = &tls.ConnectionState{}
+	if !sameOrigin(secure, "HTTPS://EXAMPLE.TEST") {
+		t.Fatal("did not compare secure origin case-insensitively")
+	}
+}
+
+func localPrivateAddress(exclude string) string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, network := range interfaces {
+		addresses, _ := network.Addrs()
+		for _, item := range addresses {
+			prefix, err := netip.ParsePrefix(item.String())
+			if err == nil && prefix.Addr().IsPrivate() && !prefix.Addr().IsLoopback() && prefix.Addr().String() != exclude {
+				return prefix.Addr().String()
+			}
+		}
+	}
+	return ""
 }

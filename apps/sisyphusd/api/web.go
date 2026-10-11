@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"math/big"
 	"mime"
@@ -52,6 +53,7 @@ const webSessionCookie = "sisyphus_web_session"
 type webSessions struct {
 	mu     sync.Mutex
 	active map[string]time.Time
+	random io.Reader
 }
 
 const browserPairingLifetime = 5 * time.Minute
@@ -61,6 +63,7 @@ type browserAccess struct {
 	mu      sync.Mutex
 	store   BrowserAccessStore
 	pepper  []byte
+	random  io.Reader
 	devices map[string]nodedb.BrowserDevice
 	failed  map[string]int
 	blocked map[string]time.Time
@@ -109,7 +112,7 @@ func newBrowserAccess(store BrowserAccessStore, pepper string) *browserAccess {
 	if store == nil {
 		store = &volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}
 	}
-	access := &browserAccess{store: store, pepper: []byte(pepper), devices: make(map[string]nodedb.BrowserDevice), failed: make(map[string]int), blocked: make(map[string]time.Time)}
+	access := &browserAccess{store: store, pepper: []byte(pepper), random: rand.Reader, devices: make(map[string]nodedb.BrowserDevice), failed: make(map[string]int), blocked: make(map[string]time.Time)}
 	if devices, err := store.BrowserDevices(); err == nil {
 		for _, device := range devices {
 			access.devices[device.ID] = device
@@ -119,7 +122,7 @@ func newBrowserAccess(store BrowserAccessStore, pepper string) *browserAccess {
 }
 
 func (a *browserAccess) issuePairing(now time.Time) (string, time.Time, error) {
-	value, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
+	value, err := rand.Int(a.random, big.NewInt(100_000_000))
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -151,10 +154,10 @@ func (a *browserAccess) pair(code, name, remote string, now time.Time) (string, 
 	}
 	tokenBytes := make([]byte, 32)
 	idBytes := make([]byte, 16)
-	if _, err := rand.Read(tokenBytes); err != nil {
+	if _, err := io.ReadFull(a.random, tokenBytes); err != nil {
 		return "", "", false, err
 	}
-	if _, err := rand.Read(idBytes); err != nil {
+	if _, err := io.ReadFull(a.random, idBytes); err != nil {
 		return "", "", false, err
 	}
 	token := hex.EncodeToString(tokenBytes)
@@ -206,11 +209,13 @@ func (a *browserAccess) revoke(id string) error {
 	return nil
 }
 
-func newWebSessions() *webSessions { return &webSessions{active: make(map[string]time.Time)} }
+func newWebSessions() *webSessions {
+	return &webSessions{active: make(map[string]time.Time), random: rand.Reader}
+}
 
 func (s *webSessions) create() (string, error) {
 	var random [32]byte
-	if _, err := rand.Read(random[:]); err != nil {
+	if _, err := io.ReadFull(s.random, random[:]); err != nil {
 		return "", err
 	}
 	id := hex.EncodeToString(random[:])
@@ -256,8 +261,14 @@ func NewWebHandler(cfg LocalConfig, origins []string) http.Handler {
 // The UI itself is public on the listener; API calls still require a bearer
 // token or an enrolled HttpOnly session cookie.
 func NewWebAppHandler(cfg LocalConfig, origins []string, ui fs.FS) http.Handler {
+	return newWebAppHandler(cfg, origins, ui, rand.Reader)
+}
+
+func newWebAppHandler(cfg LocalConfig, origins []string, ui fs.FS, random io.Reader) http.Handler {
 	sessions := newWebSessions()
+	sessions.random = random
 	devices := newBrowserAccess(cfg.BrowserAccess, cfg.Token)
+	devices.random = random
 	service := &localService{cfg: normal(cfg)}
 	server := grpc.NewServer()
 	nodepb.RegisterNodeServiceServer(server, service)
@@ -289,10 +300,6 @@ func NewWebAppHandler(cfg LocalConfig, origins []string, ui fs.FS) http.Handler 
 	if ui != nil {
 		static := staticWebUI(ui)
 		appHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/session" {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
 			if strings.HasPrefix(r.URL.Path, "/sisyphus.node.v1.NodeService/") || strings.HasPrefix(r.URL.Path, "/files/") {
 				apiMux.ServeHTTP(w, r)
 				return
@@ -591,6 +598,10 @@ func webControl(w http.ResponseWriter, r *http.Request, cfg LocalConfig, session
 }
 
 func webHostAllowed(host string, allowLAN bool) bool {
+	return webHostAllowedWithInterfaces(host, allowLAN, net.Interfaces, func(network net.Interface) ([]net.Addr, error) { return network.Addrs() })
+}
+
+func webHostAllowedWithInterfaces(host string, allowLAN bool, listInterfaces func() ([]net.Interface, error), interfaceAddresses func(net.Interface) ([]net.Addr, error)) bool {
 	if thisMachine(host) {
 		return true
 	}
@@ -605,12 +616,12 @@ func webHostAllowed(host string, allowLAN bool) bool {
 	if err != nil || !address.IsPrivate() || address.IsLoopback() || address.IsUnspecified() || address.IsMulticast() {
 		return false
 	}
-	interfaces, err := net.Interfaces()
+	interfaces, err := listInterfaces()
 	if err != nil {
 		return false
 	}
 	for _, network := range interfaces {
-		addresses, err := network.Addrs()
+		addresses, err := interfaceAddresses(network)
 		if err != nil {
 			continue
 		}
