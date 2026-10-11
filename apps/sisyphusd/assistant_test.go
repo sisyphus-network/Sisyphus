@@ -666,3 +666,35 @@ func TestAModelIsListedWithWhatIsKnownOfIt(t *testing.T) {
 		t.Errorf("a model with a name for people: %q", got)
 	}
 }
+
+func TestAssistantDelegatesModelProfilesToItsStore(t *testing.T) {
+	db := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
+	a := &assistant{store: db}
+	want := nodedb.ModelProfile{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: ai.Ollama, Model: "qwen3"}}
+	if err := a.SaveModelProfile(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.ModelProfiles()
+	if err != nil || len(got) != 1 || got[0] != want {
+		t.Fatalf("ModelProfiles = %+v, %v", got, err)
+	}
+	if err := a.DeleteModelProfile(want.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = a.ModelProfiles(); err != nil || len(got) != 0 {
+		t.Fatalf("profiles after delete = %+v, %v", got, err)
+	}
+
+	// Older stores still satisfy the planner's core storage contract, but
+	// report the optional profile capability as unavailable.
+	older := &assistant{store: &shelves{assistantStore: db}}
+	if _, err := older.ModelProfiles(); err == nil {
+		t.Error("ModelProfiles succeeded without profile storage")
+	}
+	if err := older.SaveModelProfile(want); err == nil {
+		t.Error("SaveModelProfile succeeded without profile storage")
+	}
+	if err := older.DeleteModelProfile(want.ID); err == nil {
+		t.Error("DeleteModelProfile succeeded without profile storage")
+	}
+}

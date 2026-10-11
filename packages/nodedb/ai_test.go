@@ -25,6 +25,30 @@ func TestTheModelConfigurationIsKept(t *testing.T) {
 	}
 }
 
+func TestModelProfilesReportMalformedRowsAndMissingTable(t *testing.T) {
+	db, _ := newDB(t)
+	if _, err := db.sql.Exec(`DROP TABLE model_profiles`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.Exec(`CREATE TABLE model_profiles (
+		profile_id TEXT, name TEXT, provider TEXT, base_url TEXT, model TEXT, api_key TEXT, is_active TEXT
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.Exec(`INSERT INTO model_profiles VALUES ('broken', 'Broken', 'ollama', '', 'm', '', 'not-an-integer')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ModelProfiles(); err == nil || !strings.Contains(err.Error(), "load model profiles") {
+		t.Errorf("a malformed profile row: %v", err)
+	}
+	if _, err := db.sql.Exec(`DROP TABLE model_profiles`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ModelProfiles(); err == nil || !strings.Contains(err.Error(), "load model profiles") {
+		t.Errorf("a missing profiles table: %v", err)
+	}
+}
+
 func TestModelProfilesKeepMultipleServicesAndOnlyOneActive(t *testing.T) {
 	db, _ := newDB(t)
 	profiles := []ModelProfile{
