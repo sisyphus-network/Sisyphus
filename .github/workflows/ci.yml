@@ -70,10 +70,16 @@ jobs:
       - name: Check for mistakes vet does not look for
         run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
       - name: Test against real local services
-        run: flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race ./...
+        # Each Go package test process has its own test-only port allocator.
+        # Keep packages sequential as well as keeping this step exclusive with
+        # other localhost-heavy workflows on the shared host.
+        run: flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race -p 1 ./...
       - name: Check every statement is tested
         run: |
           flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" bash -euo pipefail -c '
+            # Coverage runs the same integration tests as above. Keep their
+            # package processes sequential so test-only ports cannot overlap.
+            export GOFLAGS="-p=1"
             if command -v make >/dev/null 2>&1; then
               make cover
             else
