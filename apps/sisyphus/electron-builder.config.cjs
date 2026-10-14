@@ -7,6 +7,9 @@ const { version } = require('./package.json')
 module.exports = {
   appId: 'network.sisyphus.desktop',
   productName: 'Sisyphus',
+  // Windows shows the author from package.json as the publisher in Apps and
+  // Features and in the file's details; the makers are named by GitHub handle.
+  copyright: 'Copyright © 2026 rvnminers-A-and-N and excho0. Apache License 2.0.',
   executableName: 'sisyphus',
   directories: { output: 'dist' },
   files: ['out/**/*', 'package.json'],
