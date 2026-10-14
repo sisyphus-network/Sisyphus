@@ -433,6 +433,28 @@ func TestStartSavedWebAccessHandlesSavedStateAndTokenCreation(t *testing.T) {
 	}
 }
 
+func TestWaitForDaemonStopPropagatesStartupAndShutdown(t *testing.T) {
+	startupErr := errors.New("saved access failed")
+	failed := &webAccessRuntime{db: &webAccessStoreStub{getErr: startupErr}}
+	if err := waitForDaemonStop(context.Background(), &api.LocalConfig{}, failed, make(chan error), slog.Default()); !errors.Is(err, startupErr) {
+		t.Fatalf("saved access startup error = %v", err)
+	}
+
+	stopErr := errors.New("node stopped")
+	stopped := make(chan error, 1)
+	stopped <- stopErr
+	ready := &webAccessRuntime{db: &webAccessStoreStub{}}
+	if err := waitForDaemonStop(context.Background(), &api.LocalConfig{}, ready, stopped, slog.Default()); !errors.Is(err, stopErr) {
+		t.Fatalf("daemon stop error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitForDaemonStop(ctx, &api.LocalConfig{}, ready, make(chan error), slog.Default()); err != nil {
+		t.Fatalf("context shutdown error = %v", err)
+	}
+}
+
 func TestNormalizeWebAccessConfigValidationAndCanonicalization(t *testing.T) {
 	ips := nonLoopbackInterfaceIPs(t)
 	ip := ips[0].String()

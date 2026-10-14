@@ -976,18 +976,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("local API listening for development web pages", "addr", lis.Addr().String(), "origins", allowedWebOrigins, "ui", *webUIDir != "")
 		go pages.Serve(lis)
 	}
-	if err := startSavedWebAccess(&local, webAccess); err != nil {
-		return err
-	}
-	defer webAccess.Close()
-
-	select {
-	case err := <-stopped:
-		return err
-	case <-ctx.Done():
-		log.Info("shutting down")
-		return nil
-	}
+	return waitForDaemonStop(ctx, &local, webAccess, stopped, log)
 }
 
 func startSavedWebAccess(local *api.LocalConfig, webAccess *webAccessRuntime) error {
@@ -1002,6 +991,21 @@ func startSavedWebAccess(local *api.LocalConfig, webAccess *webAccessRuntime) er
 		}
 	}
 	return webAccess.startSaved()
+}
+
+func waitForDaemonStop(ctx context.Context, local *api.LocalConfig, webAccess *webAccessRuntime, stopped <-chan error, log *slog.Logger) error {
+	if err := startSavedWebAccess(local, webAccess); err != nil {
+		return err
+	}
+	defer webAccess.Close()
+
+	select {
+	case err := <-stopped:
+		return err
+	case <-ctx.Done():
+		log.Info("shutting down")
+		return nil
+	}
 }
 
 // reciprocityCheck is how often a node looks over the nodes it trusts and
