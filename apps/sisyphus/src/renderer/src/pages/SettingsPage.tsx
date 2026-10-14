@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUpRight, Check, Globe2, Languages, LoaderCircle, Palette, Plus, QrCode, ServerCog, Trash2 } from 'lucide-react'
+import { ArrowUpRight, Check, Download, Globe2, Languages, LoaderCircle, Palette, Plus, QrCode, ServerCog, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { LanguagePicker } from '@/components/language-picker'
 import { ThemeModeSwitch } from '@/components/theme-mode-switch'
@@ -36,6 +36,11 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
   const [hasApiKey, setHasApiKey] = useState(false)
   const [models, setModels] = useState<{ name: string; label: string; sizeBytes: string | number; tools: string | number }[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
+  const [downloadModel, setDownloadModel] = useState('')
+  const [pulling, setPulling] = useState(false)
+  const [pullProgress, setPullProgress] = useState(0)
+  const [pullStatus, setPullStatus] = useState('')
+  const pullCancel = useRef<(() => void) | null>(null)
   const currentProvider = providers.find((item) => item.id === provider)
   const editProvider = providers.find((item) => item.id === provider)
   // The node keeps a key for one service: the provider and address it was
@@ -164,6 +169,47 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
       toast.error(labels.listFailed, { description: error instanceof Error ? error.message : String(error) })
     } finally { setLoadingModels(false) }
   }
+
+  function startModelPull(profile: typeof profiles[number]) {
+    const name = downloadModel.trim()
+    if (!name || pulling) return
+    setPullStatus(labels.starting)
+    setPullProgress(0)
+    setPulling(true)
+    pullCancel.current = getNodeApi().stream<{ status: string; completedBytes?: string | number; totalBytes?: string | number }>(
+      'pullModel',
+      { service: { provider: profile.provider, baseUrl: profile.baseUrl, apiKey: '', keepApiKey: profile.hasApiKey }, model: name },
+      (event) => {
+        setPullStatus(event.status)
+        const total = Number(event.totalBytes ?? 0)
+        const complete = Number(event.completedBytes ?? 0)
+        if (total > 0) setPullProgress(Math.min(100, complete / total * 100))
+      },
+      (error) => {
+        setPulling(false)
+        pullCancel.current = null
+        toast.error(labels.downloadFailed, { description: error })
+      },
+      () => {
+        setPulling(false)
+        pullCancel.current = null
+        setPullProgress(100)
+        setPullStatus(labels.complete)
+        toast.success(labels.downloaded)
+        void getNodeApi().call<{ models?: string[]; details?: typeof models }>('listModels', {
+          service: { provider: profile.provider, baseUrl: profile.baseUrl, apiKey: '', keepApiKey: profile.hasApiKey },
+        }).then((result) => setModels(result.details ?? (result.models ?? []).map((modelName) => ({ name: modelName, label: '', sizeBytes: 0, tools: 0 }))))
+          .catch(() => { /* The download succeeded; model listing can be retried from the provider editor. */ })
+      },
+    )
+  }
+
+  function cancelModelPull() {
+    pullCancel.current?.()
+    pullCancel.current = null
+    setPulling(false)
+    setPullStatus(labels.cancelled)
+  }
   useLayoutEffect(() => {
     if (!window.matchMedia('(min-width: 761px)').matches) return
     const scroller = scrollRef.current
@@ -209,7 +255,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
       <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><ServerCog className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{labels.localAi}</div><CardTitle className="mt-0.5 text-sm">{labels.title}</CardTitle></div><Badge variant="outline" className="ms-auto">{labels.stored}</Badge></CardHeader><CardContent className="space-y-4 pt-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{labels.hint}</p><Button type="button" variant="outline" onClick={() => beginProfileEdit()} className="gap-2"><Plus className="size-4" />{labels.addProfile}</Button></div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {profiles.map((profile) => <Card key={profile.id} className={`min-w-0 rounded-2xl transition-colors ${profile.active ? 'border-[var(--app-accent)] ring-1 ring-[var(--app-accent)]/25' : 'hover:border-[var(--app-accent)]/40'}`}><CardContent className="space-y-3 p-4"><div className="flex items-start gap-3"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><ServerCog className="size-4 text-[var(--app-accent)]" /></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{profile.name}</div><div className="truncate text-xs text-muted-foreground">{providers.find((item) => item.id === profile.provider)?.name ?? profile.provider}</div></div>{profile.active && <Badge className="gap-1"><Check className="size-3" />{labels.active}</Badge>}</div><div className="rounded-lg bg-[var(--app-wash)]/70 px-3 py-2 text-xs"><div className="truncate font-medium">{profile.model || labels.noModel}</div><div dir="ltr" className="mt-1 truncate text-[10px] text-muted-foreground">{profile.baseUrl}</div></div><div className="flex items-center gap-2"><Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => beginProfileEdit(profile)}>{labels.editProfile}</Button>{!profile.active && <Button type="button" size="sm" className="flex-1" disabled={!profile.model} onClick={() => void activateProfile(profile)}>{labels.setActive}</Button>}<Button type="button" variant="ghost" size="icon" aria-label={`${messages.remove} ${profile.name}`} disabled={profile.active} onClick={() => void deleteProfile(profile)}><Trash2 className="size-4" /></Button></div></CardContent></Card>)}
+          {profiles.map((profile) => <Card key={profile.id} className={`min-w-0 rounded-2xl transition-colors ${profile.active ? 'border-[var(--app-accent)] ring-1 ring-[var(--app-accent)]/25' : 'hover:border-[var(--app-accent)]/40'}`}><CardContent className="space-y-3 p-4"><div className="flex items-start gap-3"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><ServerCog className="size-4 text-[var(--app-accent)]" /></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{profile.name}</div><div className="truncate text-xs text-muted-foreground">{providers.find((item) => item.id === profile.provider)?.name ?? profile.provider}</div></div>{profile.active && <Badge className="gap-1"><Check className="size-3" />{labels.active}</Badge>}</div><div className="rounded-lg bg-[var(--app-wash)]/70 px-3 py-2 text-xs"><div className="truncate font-medium">{profile.model || labels.noModel}</div><div dir="ltr" className="mt-1 truncate text-[10px] text-muted-foreground">{profile.baseUrl}</div></div><div className="flex items-center gap-2"><Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => beginProfileEdit(profile)}>{labels.editProfile}</Button>{!profile.active && <Button type="button" size="sm" className="flex-1" disabled={!profile.model} onClick={() => void activateProfile(profile)}>{labels.setActive}</Button>}<Button type="button" variant="ghost" size="icon" aria-label={`${messages.remove} ${profile.name}`} disabled={profile.active} onClick={() => void deleteProfile(profile)}><Trash2 className="size-4" /></Button></div>{profile.active && providers.find((item) => item.id === profile.provider)?.fetchesModels && <div className="space-y-2 border-t border-[var(--app-line)] pt-3"><div className="flex flex-wrap items-center gap-2"><Input aria-label={labels.downloadPlaceholder} value={downloadModel} onChange={(event) => setDownloadModel(event.target.value)} placeholder={labels.downloadPlaceholder} className="min-w-0 flex-1" /><Button type="button" variant="outline" disabled={pulling || !downloadModel.trim()} onClick={() => startModelPull(profile)} className="gap-2"><Download className="size-4" />{messages.operationText.download}</Button>{pulling && <Button type="button" variant="ghost" onClick={cancelModelPull}>{messages.cancel}</Button>}</div>{pulling && <div className="space-y-1.5"><div className="flex justify-between gap-3 text-[10px] text-muted-foreground"><span className="truncate">{pullStatus}</span><span>{Math.round(pullProgress)}%</span></div><div role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pullProgress)} className="h-2 overflow-hidden rounded-full bg-[var(--app-wash)]"><div className="h-full rounded-full bg-[var(--app-accent)] transition-[width]" style={{ width: `${pullProgress}%` }} /></div></div>}</div>}</CardContent></Card>)}
           {profiles.length === 0 && <button type="button" onClick={() => beginProfileEdit()} className="grid min-h-36 place-items-center rounded-2xl border border-dashed border-[var(--app-line)] p-5 text-center text-xs text-muted-foreground transition-colors hover:border-[var(--app-accent)]"><span><Plus className="mx-auto mb-2 size-5" />{labels.addProfile}</span></button>}
         </div>
       </CardContent></Card>

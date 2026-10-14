@@ -106,7 +106,7 @@ export async function open(page, name) {
  * say, or { tool, arguments } to call one of the planner's tools.
  */
 export async function standInModel(...replies) {
-  const model = { asked: [], url: '', aborted: 0, pending: [] }
+  const model = { asked: [], pulled: [], url: '', aborted: 0, pending: [] }
   model.waitForRequests = async (count) => {
     const deadline = Date.now() + 15000
     while (model.asked.length < count && Date.now() < deadline) {
@@ -128,7 +128,25 @@ export async function standInModel(...replies) {
       if (request.url === '/api/version') return response.end('{"version":"test"}')
       if (request.url === '/api/tags') return response.end('{"models":[{"name":"test-model","size":4900000000},{"name":"second-model","size":1200000000}]}')
       if (request.url === '/api/show') return response.end('{"capabilities":["completion","tools"]}')
-      model.asked.push(JSON.parse(body || '{}'))
+      const requestBody = JSON.parse(body || '{}')
+      if (request.url === '/api/pull') {
+        model.pulled.push(requestBody.model)
+        response.setHeader('content-type', 'application/x-ndjson')
+        void (async () => {
+          for (const [index, event] of [
+            { status: 'pulling manifest' },
+            { status: 'pulling layer', total: 200, completed: 50 },
+            { status: 'pulling layer', total: 200, completed: 200 },
+            { status: 'success' },
+          ].entries()) {
+            if (index > 0) await new Promise((done) => setTimeout(done, 1000))
+            response.write(`${JSON.stringify(event)}\n`)
+          }
+          response.end()
+        })()
+        return
+      }
+      model.asked.push(requestBody)
       const reply = replies[model.asked.length - 1]
       if (reply === undefined) { response.statusCode = 500; return response.end('the model has run out of things to say') }
       if (reply?.defer === true) {
@@ -153,6 +171,33 @@ export async function standInModel(...replies) {
   model.releasePending = () => model.pending.splice(0).forEach((release) => release())
   model.close = () => new Promise((done) => server.close(done))
   return model
+}
+
+/** A small OpenAI-compatible service that records the key and requests it receives. */
+export async function standInOpenAI(reply) {
+  const service = { asked: [], authorizations: [], url: '' }
+  const server = createHttpServer((request, response) => {
+    let body = ''
+    request.on('data', (piece) => { body += piece })
+    request.on('end', () => {
+      service.authorizations.push(request.headers.authorization ?? '')
+      if (request.url === '/v1/models' && request.method === 'GET') {
+        response.setHeader('content-type', 'application/json')
+        return response.end(JSON.stringify({ data: [{ id: 'test-openai-model' }] }))
+      }
+      if (request.url !== '/v1/chat/completions' || request.method !== 'POST') {
+        response.statusCode = 404
+        return response.end('not found')
+      }
+      service.asked.push(JSON.parse(body || '{}'))
+      response.setHeader('content-type', 'text/event-stream')
+      response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: reply } }] })}\n\ndata: [DONE]\n\n`)
+    })
+  })
+  await new Promise((done) => server.listen(0, '127.0.0.1', done))
+  service.url = `http://127.0.0.1:${server.address().port}/v1`
+  service.close = () => new Promise((done) => server.close(done))
+  return service
 }
 
 /** Has a node's planner plan with a model, as its owner would from the command line. */
