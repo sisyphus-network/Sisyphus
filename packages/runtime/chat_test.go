@@ -22,6 +22,13 @@ func modelServer(t *testing.T, status int, reply string, pieces ...string) (*htt
 			io.WriteString(w, `{"models":[{"name":"llama3.1:8b"},{"name":"qwen3:8b"}]}`)
 			return
 		}
+		if r.URL.Path == "/api/ps" {
+			// One is in memory, three quarters of it on a card. The rest is
+			// what a server might say that means nothing: more on the card
+			// than there is of it, no name, no size.
+			io.WriteString(w, `{"models":[{"name":"llama3.1:8b","size":4000,"size_vram":3000},{"name":"qwen3:8b","size":10,"size_vram":90},{"name":"","size":5},{"name":"empty","size":0}]}`)
+			return
+		}
 		body, _ := io.ReadAll(r.Body)
 		*asked = r.Method + " " + r.URL.Path + " " + string(body)
 		if len(pieces) > 0 {
@@ -174,11 +181,17 @@ func TestAWorkerOffersItsModelsAndAJobNeedsTheOneItNames(t *testing.T) {
 	ctx := context.Background()
 	server, _ := modelServer(t, http.StatusOK, `{}`)
 	serving := Builtin().With(Chat{URL: server.URL})
-	if got := strings.Join(serving.Offers(ctx), " "); got != "model:llama3.1:8b model:qwen3:8b" {
+	if got := strings.Join(serving.Offers(ctx), " "); got != "model:llama3.1:8b model:qwen3:8b loaded:llama3.1:8b=75 loaded:qwen3:8b=100" {
 		t.Errorf("a worker with a model server offers %q", got)
 	}
 	if got := strings.Join(Models(append(serving.Offers(ctx), "region:eu")), " "); got != "llama3.1:8b qwen3:8b" {
 		t.Errorf("its models are %q", got)
+	}
+	// Those in memory are read back out of the labels, and what is not a
+	// share of a model is passed over.
+	labels := append(serving.Offers(ctx), "loaded:none", "loaded:odd=most", "loaded:over=101", "loaded:under=-1", "loaded:a=b:latest=40")
+	if got := fmt.Sprint(LoadedModels(labels)); got != "[{llama3.1:8b 75} {qwen3:8b 100} {a=b:latest 40}]" {
+		t.Errorf("its models in memory are %s", got)
 	}
 	if got := strings.Join(serving.Names(), " "); got != "chat primes wordcount" {
 		t.Errorf("it runs %q", got)

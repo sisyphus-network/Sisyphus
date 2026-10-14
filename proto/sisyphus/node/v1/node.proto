@@ -216,6 +216,10 @@ message Worker {
   repeated WorkerGpu gpus = 15;
   // The language models the worker serves to the pool, by name.
   repeated string models = 16;
+  // Those of them its model server had in memory when it last said, and
+  // how much of each is on a graphics card. A model not listed here is
+  // loaded when first asked for, which takes a while.
+  repeated LoadedModel loaded_models = 20;
   // Its standing, which outlasts any one job: how many results it has
   // returned for verified tasks that were among those the task was settled
   // by, and how many that were not. probation is how many agreeing results
@@ -230,6 +234,13 @@ message Worker {
 message WorkerGpu {
   string name = 1;
   uint64 memory_bytes = 2;
+}
+
+message LoadedModel {
+  string name = 1;
+  // From 0 to 100. The rest is in the machine's memory and worked by its
+  // processor, and replies come that much slower.
+  uint32 on_card_percent = 2;
 }
 
 enum JobState {

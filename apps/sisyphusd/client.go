@@ -15,6 +15,7 @@ import (
 	"time"
 
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
 // stdout is where client commands print; tests replace it.
@@ -382,10 +383,13 @@ func listNodes(ctx context.Context, args []string) error {
 	// of, one to a line below the table.
 	var standings []string
 	for _, node := range listed.GetNodes() {
+		c := node.GetCapabilities()
+		if serving := servingOf(node.GetName(), c.GetLabels()); serving != "" {
+			standings = append(standings, serving)
+		}
 		if standing := standingOf(node); standing != "" {
 			standings = append(standings, standing)
 		}
-		c := node.GetCapabilities()
 		// What a node that relays has carried between other members.
 		relayed := "-"
 		if len(node.GetRelayAddresses()) > 0 {
@@ -404,6 +408,26 @@ func listNodes(ctx context.Context, args []string) error {
 		fmt.Fprintln(tw, standing)
 	}
 	return tw.Flush()
+}
+
+// servingOf says which language models a node serves to the pool, and of
+// those its model server has in memory, how much of each is on a graphics
+// card. It says nothing of a node that serves none.
+func servingOf(name string, labels []string) string {
+	models := runtime.Models(labels)
+	if len(models) == 0 {
+		return ""
+	}
+	loaded := map[string]int{}
+	for _, m := range runtime.LoadedModels(labels) {
+		loaded[m.Model] = m.OnCard
+	}
+	for i, model := range models {
+		if share, is := loaded[model]; is {
+			models[i] = fmt.Sprintf("%s (loaded, %d%% on a graphics card)", model, share)
+		}
+	}
+	return fmt.Sprintf("%s serves %s", name, strings.Join(models, ", "))
 }
 
 // standingOf says how a node's results for verified tasks have come out, in
