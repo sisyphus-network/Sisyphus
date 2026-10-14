@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { hasWebgl, launch, narrow, open, planWith, standInModel, testNode, testProfile, wide } from './harness.mjs'
+import { hasWebgl, launch, narrow, open, planWith, poolInvitation, poolMembers, standInModel, testNode, testProfile, wide } from './harness.mjs'
 
 let node
 before(async () => { node = await testNode() })
@@ -14,6 +14,7 @@ test('the window shows the node it is connected to', async () => {
     await open(page, 'Node overview')
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
     await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+    await page.getByText('Daemon version dev', { exact: true }).waitFor()
     // The node the window describes is the one it was started against,
     // and that node's own worker is listed with what it can run.
     await page.getByText(node.id(), { exact: true }).waitFor()
@@ -117,6 +118,8 @@ test('workspace panels retain their open state and widths after relaunch', async
     app = undefined
     ;({ app, page } = await launch(node, profile))
     await wide(app, page)
+    await page.locator('.workspace-desktop-stage').waitFor()
+    await page.locator('.workspace-history-slot').waitFor({ state: 'attached' })
     await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'false')
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
     const restored = await page.evaluate(() => JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'))
@@ -150,6 +153,98 @@ test('workspace panels retain their open state and widths after relaunch', async
       const slot = document.querySelector('.workspace-history-slot')
       return slot?.getAttribute('data-open') === 'true' && slot.getBoundingClientRect().width >= 280
     }, Math.min(280, maxHistoryWidth))
+
+    // Keyboard resizing follows the current writing direction and stays
+    // bounded by the same minimum/maximum as pointer resizing.
+    await page.evaluate(() => document.documentElement.dir = 'rtl')
+    await restoredHistory.focus()
+    await restoredHistory.press('ArrowLeft')
+    await page.waitForFunction(() => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) > 280)
+    const rtlWidth = Number(await restoredHistory.getAttribute('aria-valuenow'))
+    await restoredHistory.press('End')
+    await page.waitForFunction((maximum) => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) === maximum, maxHistoryWidth)
+    await restoredHistory.press('ArrowRight')
+    await page.waitForFunction((maximum) => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) === maximum, maxHistoryWidth)
+    await restoredHistory.press('Home')
+    await page.waitForFunction(() => Number(document.querySelector('.workspace-history-resize-handle')?.getAttribute('aria-valuenow')) === 280)
+    assert.ok(rtlWidth > 280 && rtlWidth <= maxHistoryWidth)
+    await page.evaluate(() => document.documentElement.dir = 'ltr')
+  } finally {
+    await app?.close()
+    profile.remove()
+  }
+})
+
+test('workspace panels resize and persist in RTL', async (t) => {
+  const profile = testProfile()
+  let app
+  try {
+    ({ app } = await launch(node, profile))
+    let page = await app.firstWindow()
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, so topology resizing is unavailable')
+    }
+    await wide(app, page)
+    await page.evaluate(() => {
+      localStorage.setItem('sisyphus-locale', 'he')
+      localStorage.setItem('sisyphus-workspace-layout', JSON.stringify({ chat: 48, network: 52, historyOpen: true, historyWidth: 300, topologyOpen: true }))
+    })
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dir === 'rtl')
+    const topologyHandle = page.locator('.workspace-topology-resize-handle')
+    const topologySlot = page.locator('.workspace-topology-slot')
+    const historyHandle = page.locator('.workspace-history-resize-handle')
+    const historySlot = page.locator('.workspace-history-slot')
+    await topologyHandle.waitFor()
+    await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'true')
+
+    const initialTopology = await topologySlot.evaluate((element) => element.getBoundingClientRect().width)
+    let box = await topologyHandle.boundingBox()
+    assert.ok(box)
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 72, box.y + box.height / 2, { steps: 8 })
+    await page.mouse.up()
+    await page.waitForFunction((width) => (document.querySelector('.workspace-topology-slot')?.getBoundingClientRect().width ?? 0) > width + 24, initialTopology)
+
+    const initialHistory = await historySlot.evaluate((element) => element.getBoundingClientRect().width)
+    box = await historyHandle.boundingBox()
+    assert.ok(box)
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 - 72, box.y + box.height / 2, { steps: 8 })
+    await page.mouse.up()
+    await page.waitForFunction((width) => (document.querySelector('.workspace-history-slot')?.getBoundingClientRect().width ?? 0) > width + 24, initialHistory)
+    const resizedHistory = await historySlot.evaluate((element) => element.getBoundingClientRect().width)
+    await page.waitForFunction(() => {
+      const layout = JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}')
+      return layout.historyWidth > 300 && layout.network > 52
+    })
+    const resizedLayout = await page.evaluate(() => JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'))
+
+    await app.close()
+    app = undefined
+    ;({ app, page } = await launch(node, profile))
+    await page.waitForFunction(() => document.documentElement.dir === 'rtl')
+    await page.waitForFunction(() => {
+      const layout = JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}')
+      return layout.topologyOpen === true && layout.historyOpen === true &&
+        document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true' &&
+        document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'true'
+    })
+    await page.waitForTimeout(450)
+    const restored = await page.evaluate(() => ({
+      layout: JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'),
+      topology: document.querySelector('.workspace-topology-slot')?.getBoundingClientRect().width ?? 0,
+      history: document.querySelector('.workspace-history-slot')?.getBoundingClientRect().width ?? 0,
+      stage: document.querySelector('.workspace-desktop-stage')?.getBoundingClientRect().width ?? 0,
+    }))
+    assert.ok(Math.abs(restored.layout.network - resizedLayout.network) < 0.1, `topology split changed after RTL relaunch: ${resizedLayout.network}% → ${restored.layout.network}%`)
+    const restoredPanelArea = restored.stage - restored.history - 34
+    const expectedTopology = Math.min(restoredPanelArea * restored.layout.network / 100, restoredPanelArea * 0.7, restoredPanelArea - 280)
+    assert.ok(Math.abs(restored.topology - expectedTopology) < 4, `topology pane does not match its restored split: expected ${expectedTopology}px, got ${restored.topology}px`)
+    assert.ok(Math.abs(restored.history - resizedHistory) < 4, `history width changed after RTL relaunch: ${resizedHistory}px → ${restored.history}px (${JSON.stringify(restored.layout)})`)
   } finally {
     await app?.close()
     profile.remove()
@@ -358,6 +453,44 @@ test('the workspace switches layouts live across tablet and desktop widths', asy
   }
 })
 
+test('an active conversation survives desktop and compact workspace remounts', async () => {
+  const model = await standInModel('The active conversation survived the layout change.')
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    await open(page, 'Node overview')
+    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+    await page.getByRole('complementary').getByRole('link', { name: 'Workspace', exact: true }).click()
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    const composer = page.getByRole('textbox', { name: 'Message your Sisyphus planner…' })
+    await composer.fill('Keep this conversation while resizing.')
+    const send = page.getByRole('button', { name: 'Send message' })
+    await send.waitFor({ state: 'visible' })
+    await page.waitForFunction(() => {
+      const button = [...document.querySelectorAll('button')].find((candidate) => candidate.getAttribute('aria-label') === 'Send message')
+      return button instanceof HTMLButtonElement && !button.disabled
+    })
+    await send.click()
+    await page.getByText('The active conversation survived the layout change.').waitFor({ timeout: 30000 })
+
+    await narrow(app)
+    await page.locator('.workspace-shell--compact').waitFor()
+    await page.getByRole('paragraph').filter({ hasText: 'Keep this conversation while resizing.' }).waitFor()
+    await page.getByText('The active conversation survived the layout change.').waitFor()
+
+    await wide(app, page)
+    await page.locator('.workspace-desktop-stage').waitFor()
+    await page.getByRole('paragraph').filter({ hasText: 'Keep this conversation while resizing.' }).waitFor()
+    await page.getByText('The active conversation survived the layout change.').waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
 test('a job submitted in the window runs on the pool and shows its result', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
@@ -407,6 +540,36 @@ test('a file stored as private is listed, and an invitation is issued', async ()
   }
 })
 
+test('the Pool view joins a coordinator with an invitation', async () => {
+  const joiningNode = await testNode()
+  const coordinator = await testNode()
+  const invitation = poolInvitation(coordinator)
+  const profile = testProfile()
+  const { app, page } = await launch(joiningNode, profile)
+  try {
+    await open(page, 'Operations')
+    await page.getByRole('tab', { name: 'Pool', exact: true }).click()
+    await page.getByPlaceholder('Coordinator host:port').fill(coordinator.pool)
+    await page.getByPlaceholder('Invitation token').fill(invitation)
+    await page.getByRole('button', { name: 'Join another pool' }).click()
+    await page.getByText('Joined pool', { exact: true }).waitFor({ timeout: 10000 }).catch(async () => {
+      const state = await page.evaluate(() => ({
+        inputs: [...document.querySelectorAll('input')].map((input) => ({ placeholder: input.placeholder, value: input.value })),
+        toasts: [...document.querySelectorAll('[data-sonner-toast]')].map((toast) => toast.textContent?.trim()),
+      }))
+      throw new Error(`pool join did not succeed: ${JSON.stringify(state)}\n${await page.locator('body').innerText()}`)
+    })
+    assert.equal(await page.getByPlaceholder('Coordinator host:port').inputValue(), '')
+    assert.equal(await page.getByPlaceholder('Invitation token').inputValue(), '')
+    assert.ok(poolMembers(coordinator).includes(joiningNode.id()), 'the coordinator did not record the node joined through the UI')
+  } finally {
+    await app.close()
+    profile.remove()
+    await joiningNode.remove()
+    await coordinator.remove()
+  }
+})
+
 test('a language chosen with the keyboard turns the window round, and is still chosen at the next start', async () => {
   const profile = testProfile()
   let { app, page } = await launch(node, profile)
@@ -435,6 +598,93 @@ test('a language chosen with the keyboard turns the window round, and is still c
   } finally {
     await app.close()
     profile.remove()
+  }
+})
+
+test('theme mode and accent survive settings/workspace navigation and renderer reload', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.evaluate(() => {
+      localStorage.setItem('sisyphus-theme', 'dark')
+      localStorage.setItem('sisyphus-theme-style', 'pink')
+    })
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.themeStyle === 'pink')
+    const initialAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim())
+    assert.equal(initialAccent, '#f59ac4')
+
+    await open(page, 'Settings')
+    await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
+    const accentPicker = page.getByRole('textbox', { name: 'Accent' })
+    await accentPicker.scrollIntoViewIfNeeded()
+    await accentPicker.click()
+    const accentMenu = page.getByRole('dialog', { name: 'Accent' })
+    await accentMenu.waitFor()
+    await page.waitForTimeout(300)
+    const menuBounds = await accentMenu.boundingBox()
+    const viewportHeight = await page.evaluate(() => window.innerHeight)
+    assert.ok(menuBounds && menuBounds.y >= 0 && menuBounds.y + menuBounds.height <= viewportHeight, `the accent popover is clipped: ${JSON.stringify({ menuBounds, viewportHeight })}`)
+    assert.equal(await accentMenu.evaluate((element) => getComputedStyle(element).position), 'fixed')
+    assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="dialog"]')?.getAttribute('aria-label'), { x: menuBounds.x + menuBounds.width / 2, y: menuBounds.y + menuBounds.height / 2 }), 'Accent', 'the popover is underneath another Settings layer')
+    await accentMenu.getByRole('button', { name: 'Blue' }).click()
+    await page.waitForFunction(() => document.documentElement.dataset.themeStyle === 'blue')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), '#83adff')
+    await accentPicker.click()
+    await page.getByRole('dialog', { name: 'Accent' }).getByRole('button', { name: 'Pink' }).click()
+    await page.waitForFunction(() => document.documentElement.dataset.themeStyle === 'pink')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), initialAccent)
+    await page.getByRole('complementary').getByRole('link', { name: 'Workspace', exact: true }).click()
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark')
+    assert.equal(await page.locator('html').getAttribute('data-theme-style'), 'pink')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), initialAccent)
+
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.themeStyle === 'pink')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), initialAccent)
+
+    await page.evaluate(() => {
+      localStorage.setItem('sisyphus-theme', 'light')
+      localStorage.setItem('sisyphus-theme-style', 'blue')
+    })
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light' && document.documentElement.dataset.themeStyle === 'blue')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim()), '#4f8cff')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('model settings load and save a local provider used by the planner', async () => {
+  const model = await standInModel('The configured planner replied.')
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await open(page, 'Settings')
+    await page.getByRole('button', { name: 'Add provider' }).first().click()
+    await page.getByRole('combobox', { name: 'Provider' }).waitFor()
+    await page.getByRole('combobox', { name: 'Provider' }).selectOption('ollama')
+    await page.getByRole('textbox', { name: 'Profile name' }).fill('Local test model')
+    await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
+    await page.getByRole('button', { name: 'Load models' }).click()
+    await page.waitForFunction(() => document.querySelector('#available-models option[value="test-model"]') !== null)
+    await page.locator('input[list="available-models"]').fill('test-model')
+    await page.getByRole('button', { name: 'Save and activate' }).click()
+    await page.getByText('Model configuration saved').waitFor()
+
+    await open(page, 'Workspace')
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Does the saved local model answer?')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByText('The configured planner replied.').waitFor({ timeout: 30000 })
+    assert.equal(model.asked.length, 1)
+    assert.match(JSON.stringify(model.asked[0].messages), /Does the saved local model answer\?/)
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
   }
 })
 
@@ -546,6 +796,32 @@ test('Operations recovers in place when its node disconnects and reconnects', as
   }
 })
 
+test('Settings replaces stale content while offline and restores its form after reconnect', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await open(page, 'Settings')
+    await page.getByRole('button', { name: 'Add provider' }).first().waitFor()
+    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+
+    await node.stop()
+    await page.getByText('Daemon unavailable').first().waitFor({ timeout: 30000 })
+    await page.getByText('Daemon unavailable').last().waitFor()
+    assert.equal(await page.getByRole('button', { name: 'Add provider' }).count(), 0, 'stale model settings remain interactive while the daemon is offline')
+
+    await node.start()
+    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor({ timeout: 60000 })
+    await page.getByRole('button', { name: 'Add provider' }).first().waitFor({ timeout: 30000 })
+    await page.getByRole('button', { name: 'Add provider' }).first().click()
+    await page.getByRole('combobox', { name: 'Provider' }).waitFor({ timeout: 30000 })
+    await page.getByRole('button', { name: 'Load models' }).waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+    if (node.child?.exitCode !== null) await node.start()
+  }
+})
+
 test('a question with a file attached is planned, computed on the pool and answered, and the file is private', async () => {
   // The model asks for a job, reads its result and answers; then answers a second turn.
   const model = await standInModel(
@@ -587,6 +863,32 @@ test('a question with a file attached is planned, computed on the pool and answe
       .getByRole('button', { name: /How many primes are there below 100\?/ })
       .first()
       .waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
+test('reloading the Electron renderer cancels an in-flight planner stream', async () => {
+  const model = await standInModel({ defer: true, content: 'This late answer must not reach the reloaded window.' })
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Hold this response while I reload.')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await model.waitForRequests(1)
+
+    // A full-frame navigation exercises the actual Electron teardown path:
+    // the renderer-owned stream must be cancelled through IPC and gRPC.
+    await page.reload()
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    await model.waitForAbort()
+    model.releasePending()
+    await page.waitForTimeout(250)
+    assert.equal(await page.getByText('This late answer must not reach the reloaded window.').count(), 0)
   } finally {
     await app.close()
     profile.remove()
