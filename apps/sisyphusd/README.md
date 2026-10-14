@@ -532,7 +532,7 @@ bin/sisyphusd job submit --min-memory-mb 8192 --gpus 1 ...       # a job that ne
 
 - **A job can ask for memory and graphics cards**, and its tasks then go only to workers that have them. Asked to split itself, it splits to fit the workers that qualify. If none does, it waits until one connects.
 - **The owner decides what to offer.** `--offer-memory-mb` and `--offer-gpus` cap what the node says it has. They do not hold a workload to it: nothing yet stops a task using more memory than its node offered.
-- **What is found, and where.** Processor and memory are read on Linux. On other systems they are left unknown, and such a worker is given no job that asks for memory unless its owner says how much to offer. Graphics cards are found wherever NVIDIA's `nvidia-smi` is installed; other makes are not looked for.
+- **What is found, and where.** Processor and memory are read from `/proc` on Linux, asked of `sysctl` on macOS and of PowerShell on Windows. Where none of those answers they are left unknown, and such a worker is given no job that asks for memory unless its owner says how much to offer. Graphics cards are found wherever NVIDIA's `nvidia-smi` is installed; other makes are not looked for.
 - **A requirement is a count, not a choice.** A task that asks for a graphics card is sent to a machine with one. Which card it then uses, and keeping two tasks off the same one, is the workload's business for now.
 
 ## The planner

@@ -16,8 +16,9 @@ const (
 // machine puts a pretend machine in place of the real one for a test.
 func machine(t *testing.T, files map[string]string, tool string, toolErr error) {
 	t.Helper()
-	oldRead, oldRun := readFile, run
-	t.Cleanup(func() { readFile, run = oldRead, oldRun })
+	oldRead, oldRun, oldSystem := readFile, run, system
+	t.Cleanup(func() { readFile, run, system = oldRead, oldRun, oldSystem })
+	system = "linux"
 	readFile = func(name string) ([]byte, error) {
 		if content, ok := files[name]; ok {
 			return []byte(content), nil
@@ -41,6 +42,60 @@ func TestDetectingWhatALinuxMachineHas(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("detected %+v, want %+v", got, want)
+	}
+}
+
+// elsewhere puts a pretend machine of another system in place of the real
+// one: one with no /proc, whose tools say what answers gives for them.
+func elsewhere(t *testing.T, name string, answers map[string]string) {
+	t.Helper()
+	machine(t, nil, "", nil)
+	system = name
+	run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if said, ok := answers[name+" "+args[len(args)-1]]; ok {
+			return []byte(said), nil
+		}
+		if name == "nvidia-smi" {
+			return []byte(answers[name]), nil
+		}
+		return nil, errors.New("executable file not found")
+	}
+}
+
+func TestDetectingWhatAMacHas(t *testing.T) {
+	elsewhere(t, "darwin", map[string]string{
+		"sysctl hw.memsize": "17179869184\n", "sysctl machdep.cpu.brand_string": "Apple M2\n",
+	})
+	if got, want := Detect(context.Background()), (Info{CPUModel: "Apple M2", MemoryBytes: 16 << 30}); !reflect.DeepEqual(got, want) {
+		t.Errorf("detected %+v, want %+v", got, want)
+	}
+}
+
+func TestDetectingWhatAWindowsMachineHas(t *testing.T) {
+	elsewhere(t, "windows", map[string]string{
+		"powershell " + askWindows: "16881270784\r\n13th Gen Intel(R) Core(TM) i5-13420H\r\n",
+		"nvidia-smi":               "NVIDIA GeForce RTX 4050 Laptop GPU, 6141\r\n",
+	})
+	want := Info{
+		CPUModel: "13th Gen Intel(R) Core(TM) i5-13420H", MemoryBytes: 16881270784,
+		GPUs: []GPU{{"NVIDIA GeForce RTX 4050 Laptop GPU", 6141 << 20}},
+	}
+	if got := Detect(context.Background()); !reflect.DeepEqual(got, want) {
+		t.Errorf("detected %+v, want %+v", got, want)
+	}
+}
+
+func TestASystemWhoseToolsSayNothingIsLeftUnknown(t *testing.T) {
+	for _, name := range []string{"darwin", "windows", "plan9"} {
+		elsewhere(t, name, nil)
+		if got := Detect(context.Background()); !reflect.DeepEqual(got, Info{}) {
+			t.Errorf("on %s with nothing to ask: %+v", name, got)
+		}
+	}
+	// A shell that answers with something other than what was asked for.
+	elsewhere(t, "windows", map[string]string{"powershell " + askWindows: "Get-CimInstance : Access denied\r\nAt line:1 char:2\r\n"})
+	if got := Detect(context.Background()); !reflect.DeepEqual(got, Info{}) {
+		t.Errorf("on a Windows machine that refuses: %+v", got)
 	}
 }
 

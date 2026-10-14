@@ -46,7 +46,7 @@ What has no automated test: the desktop app has no coverage measure, and nothing
 | `packages/protocol` | Go generated from `proto/`. Never edited by hand; committed so a fresh clone builds without `protoc`. |
 | `packages/ai` | Talking to language models: one interface, with adapters for Ollama, for OpenAI's dialect, and for Anthropic. |
 | `packages/geo` | Which country an address is registered in, from a table carried in the program. |
-| `packages/hardware` | What a machine has: processor, memory, graphics cards. Reads Linux's `/proc` and asks `nvidia-smi`; unknown elsewhere. |
+| `packages/hardware` | What a machine has: processor, memory, graphics cards. Reads Linux's `/proc`, asks `sysctl` on macOS, PowerShell on Windows, and `nvidia-smi` on all three; unknown elsewhere. |
 | `packages/identity` | A node's key pair and the ID derived from it; signing and verifying; the TLS settings nodes connect with. |
 | `packages/ipfscluster` | Starting and stopping an IPFS Cluster peer beside the node's Kubo, and calling its REST API. |
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
