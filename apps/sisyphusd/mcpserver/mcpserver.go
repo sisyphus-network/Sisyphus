@@ -74,7 +74,7 @@ func New(cfg Config) *mcp.Server {
 	out := mcp.NewServer(&mcp.Implementation{Name: "sisyphus", Title: "Sisyphus", Version: cfg.Version}, &mcp.ServerOptions{Instructions: instructions})
 	seen := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	add(s, out, reads, &mcp.Tool{Name: "pool_status", Annotations: seen,
-		Description: "Says what the pool is now: this node, and each worker with its cores, memory, graphics cards, the language models it serves, how many tasks it can run at once and how many it is running. A worker that has returned results for verified tasks also has verified: how many of them agreed, how many were outvoted, and probation, how many more must agree before a job run with verify_share takes its word alone (zero if it is not on probation)."}, s.poolStatus)
+		Description: "Says what the pool is now: this node, and each worker with its cores, memory, graphics cards, the language models it serves and, under loaded_models, which of them are in memory now with the percentage of each on a graphics card, how many tasks it can run at once and how many it is running. A worker that has returned results for verified tasks also has verified: how many of them agreed, how many were outvoted, and probation, how many more must agree before a job run with verify_share takes its word alone (zero if it is not on probation)."}, s.poolStatus)
 	add(s, out, reads, &mcp.Tool{Name: "list_workloads", Annotations: seen,
 		Description: "Lists the workloads the pool can run, each with what it does and the parameters it takes. workers_running_it is how many of the connected workers offer the workload, busy or not. Read this before run_job."}, s.listWorkloads)
 	add(s, out, uses, &mcp.Tool{Name: "run_job",
@@ -151,6 +151,15 @@ func (s *server) status(ctx context.Context) (any, error) {
 		}
 		if models := w.GetModels(); models != nil {
 			worker["models"] = models
+		}
+		// Those of them in memory now, and how much of each is on a card:
+		// one wholly on a card answers soonest, one not loaded waits to be.
+		if loaded := w.GetLoadedModels(); len(loaded) > 0 {
+			ready := map[string]uint32{}
+			for _, m := range loaded {
+				ready[m.GetName()] = m.GetOnCardPercent()
+			}
+			worker["loaded_models"] = ready
 		}
 		if w.GetVerifiedAgreed()+w.GetVerifiedOutvoted() > 0 {
 			// How its results for verified tasks have come out, in every
