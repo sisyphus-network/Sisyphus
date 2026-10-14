@@ -463,10 +463,6 @@ func writePrivateFile(path string, data []byte) error {
 	return file.Close()
 }
 
-func certificateCovers(path string, listenIP netip.Addr, publicHost string) bool {
-	return certificateCoversAll(path, []netip.Addr{listenIP}, publicHost)
-}
-
 func certificateCoversAll(path string, listenIPs []netip.Addr, publicHost string) bool {
 	contents, err := os.ReadFile(path)
 	if err != nil {
