@@ -16,6 +16,8 @@ import { PageHeading } from '@/components/ui/page-layout'
 import { missingProviderKey } from '@/lib/provider-key'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Drawer } from 'vaul'
+import { isDesktopApp } from '@/lib/node-api'
+import { ModelLendingSettings } from '@/components/model-lending-settings'
 
 type Messages = ReturnType<typeof getMessages>
 export function SettingsPage({ locale, setLocale, messages, direction }: { locale: AppLocale; setLocale: (locale: AppLocale) => void; messages: Messages; direction: 'ltr' | 'rtl' }) {
@@ -211,6 +213,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
           {profiles.length === 0 && <button type="button" onClick={() => beginProfileEdit()} className="grid min-h-36 place-items-center rounded-2xl border border-dashed border-[var(--app-line)] p-5 text-center text-xs text-muted-foreground transition-colors hover:border-[var(--app-accent)]"><span><Plus className="mx-auto mb-2 size-5" />{labels.addProfile}</span></button>}
         </div>
       </CardContent></Card>
+      {isDesktopApp() && <ModelLendingSettings messages={messages} />}
       <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><Palette className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{messages.appearance}</div><CardTitle className="mt-0.5 text-sm">{messages.theme}</CardTitle></div></CardHeader><CardContent><div className="flex flex-wrap items-center justify-between gap-5 py-2"><div><div className="text-xs font-medium">{messages.theme}</div><p className="mt-1 text-[10px] text-muted-foreground">{messages.themeSettingsHint}</p></div><ThemeModeSwitch direction={direction} labels={{ system: messages.themeSystem, light: messages.themeLight, dark: messages.themeDark, switchTheme: messages.switchTheme }} /></div><div className="mt-3 flex flex-wrap items-center justify-between gap-5 border-t border-[var(--app-line)] pt-4"><div><div className="text-xs font-medium">{messages.accent}</div><p className="mt-1 text-[10px] text-muted-foreground">{messages.accentSettingsHint}</p></div><ThemeStylePicker direction={direction} labels={{ label: messages.accent, neutral: messages.accentNeutral, blue: messages.accentBlue, pink: messages.accentPink }} /></div></CardContent></Card>
     </div>
     </div>
