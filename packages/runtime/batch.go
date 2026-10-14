@@ -31,6 +31,16 @@ func modelNeeds(model string) []string {
 	return []string{modelLabel + name}
 }
 
+// ModelNeeded is the model a job's needs name, or "" if they name none.
+func ModelNeeded(needs []string) string {
+	for _, need := range needs {
+		if name, is := strings.CutPrefix(need, modelLabel); is {
+			return name
+		}
+	}
+	return ""
+}
+
 // askServer asks a worker's model server for something and returns the
 // whole of a successful reply.
 func askServer(ctx context.Context, url, path string, payload []byte) ([]byte, error) {
