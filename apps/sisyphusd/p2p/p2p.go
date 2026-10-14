@@ -13,6 +13,7 @@ package p2p
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -93,12 +94,18 @@ type Config struct {
 type Host struct {
 	host   host.Host
 	relays []peer.AddrInfo
+	// preferredRelays are the pool's full nodes. fixedRelays are the
+	// coordinator (or other explicitly configured fallback relays).
+	preferredRelays []peer.AddrInfo
+	fixedRelays     []peer.AddrInfo
+	relayStart      uint64
+	relayCursor     atomic.Uint64
 	// shared hands out what arrives on the listening port by kind.
 	shared *tcpreuse.ConnMgr
 
-	// How often to look to a place on a relay, and how long to try a
-	// direct connection for, fixed when the host starts.
-	placeCheck, directDial time.Duration
+	// How often to look to a place on a relay, how long to prefer full-node
+	// relays, and how long to try a direct connection for.
+	placeCheck, preferredRelayWait, directDial time.Duration
 
 	// table is the distributed hash table, on a host that discovers.
 	table *dht.IpfsDHT
@@ -228,12 +235,13 @@ func New(cfg Config) (*Host, error) {
 			return nil, err
 		}
 	}
-	h := &Host{renew: make(map[peer.ID]time.Time), placeCheck: placeCheck, directDial: directDial}
+	h := &Host{renew: make(map[peer.ID]time.Time), relayStart: rand.Uint64(), placeCheck: placeCheck, preferredRelayWait: 2 * time.Second, directDial: directDial}
 	for _, address := range cfg.Via {
 		info, err := peer.AddrInfoFromString(address)
 		if err != nil {
 			return nil, fmt.Errorf("p2p: relay address %q: %w", address, err)
 		}
+		h.fixedRelays = append(h.fixedRelays, *info)
 		h.relays = append(h.relays, *info)
 	}
 
@@ -393,18 +401,23 @@ var placeCheck = 10 * time.Second
 // relay with a public address, and a pool on one private network has none.
 func (h *Host) keepPlaces(more func(ctx context.Context) []string) {
 	defer h.kept.Done()
-	fixed := h.relays
+	fixed := h.fixedRelays
 	for {
-		relays := fixed
+		var preferred []peer.AddrInfo
 		if more != nil {
 			for _, address := range more(h.ctx) {
-				// One that is no address, or is this host, is passed over.
-				if info, err := peer.AddrInfoFromString(address); err == nil && info.ID != h.host.ID() {
-					relays = append(relays[:len(relays):len(relays)], *info)
+				// An invalid address, this host, or a relay already named as
+				// fixed is passed over.
+				if info, err := peer.AddrInfoFromString(address); err == nil && info.ID != h.host.ID() && !containsRelay(fixed, info.ID) && !containsRelay(preferred, info.ID) {
+					preferred = append(preferred, *info)
 				}
 			}
 		}
+		relays := make([]peer.AddrInfo, 0, len(preferred)+len(fixed))
+		relays = append(relays, preferred...)
+		relays = append(relays, fixed...)
 		h.mu.Lock()
+		h.preferredRelays = preferred
 		h.relays = relays
 		h.mu.Unlock()
 		for _, r := range relays {
@@ -418,6 +431,15 @@ func (h *Host) keepPlaces(more func(ctx context.Context) []string) {
 			return
 		}
 	}
+}
+
+func containsRelay(relays []peer.AddrInfo, id peer.ID) bool {
+	for _, relay := range relays {
+		if relay.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Host) takePlace(r peer.AddrInfo) {
@@ -440,6 +462,21 @@ func (h *Host) via() []peer.AddrInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.relays
+}
+
+// relayGroups returns full-node relays first, rotating their order so one
+// healthy full node does not take every connection merely because its ID
+// sorts first. Explicitly configured relays remain the fallback.
+func (h *Host) relayGroups() (preferred, fallback []peer.AddrInfo) {
+	h.mu.Lock()
+	preferred = append([]peer.AddrInfo(nil), h.preferredRelays...)
+	fallback = append([]peer.AddrInfo(nil), h.fixedRelays...)
+	h.mu.Unlock()
+	if len(preferred) > 1 {
+		offset := int((h.relayStart + h.relayCursor.Add(1) - 1) % uint64(len(preferred)))
+		preferred = append(preferred[offset:], preferred[:offset]...)
+	}
+	return preferred, fallback
 }
 
 // placed reports whether the host holds a place on a relay that is not yet
@@ -683,13 +720,19 @@ func (h *Host) Dial(ctx context.Context, nodeID string, proto protocol.ID) (net.
 		return nil, fmt.Errorf("p2p: node ID %q: %w", nodeID, err)
 	}
 	if h.host.Network().Connectedness(id) != network.Connected {
-		through := peer.AddrInfo{ID: id}
-		for _, r := range h.via() {
-			for _, addr := range r.Addrs {
-				through.Addrs = append(through.Addrs, addr.Encapsulate(ma.StringCast("/p2p/"+r.ID.String()+"/p2p-circuit")))
+		preferred, fallback := h.relayGroups()
+		var err error
+		if len(preferred) > 0 {
+			preferredCtx, cancel := context.WithTimeout(ctx, h.preferredRelayWait)
+			err = h.connectThrough(preferredCtx, id, preferred)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				err = h.connectThrough(ctx, id, fallback)
 			}
+		} else {
+			err = h.connectThrough(ctx, id, fallback)
 		}
-		if err := h.host.Connect(ctx, through); err != nil {
+		if err != nil {
 			return nil, fmt.Errorf("p2p: reach node %s: %w", nodeID, err)
 		}
 		// Connect returns once the two have told each other their
@@ -704,6 +747,31 @@ func (h *Host) Dial(ctx context.Context, nodeID string, proto protocol.ID) (net.
 		return nil, fmt.Errorf("p2p: open a stream to node %s: %w", nodeID, err)
 	}
 	return &streamConn{Stream: stream}, nil
+}
+
+func (h *Host) connectThrough(ctx context.Context, target peer.ID, relays []peer.AddrInfo) error {
+	var lastErr error
+	for _, relay := range relays {
+		through := peer.AddrInfo{ID: target}
+		for _, addr := range relay.Addrs {
+			through.Addrs = append(through.Addrs, addr.Encapsulate(ma.StringCast("/p2p/"+relay.ID.String()+"/p2p-circuit")))
+		}
+		if len(through.Addrs) == 0 {
+			continue
+		}
+		if err := h.host.Connect(ctx, through); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return errors.New("p2p: no relay addresses available")
 }
 
 // Listen returns a listener for the streams other nodes open to this one

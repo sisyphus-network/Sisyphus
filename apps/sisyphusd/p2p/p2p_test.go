@@ -567,6 +567,78 @@ func TestANodeKeepsAPlaceOnTheRelaysItIsToldOf(t *testing.T) {
 	}
 }
 
+func TestFullNodeRelayIsPreferredToCoordinatorAndCoordinatorIsFallback(t *testing.T) {
+	oldDirectDial := directDial
+	directDial = 0
+	defer func() { directDial = oldDirectDial }()
+
+	p := newPool(t)
+	coordinator := p.relay()
+	fullNodes := []*Host{
+		p.start(Config{Listen: "127.0.0.1:0", Relay: true, Via: coordinator.Addrs()}),
+		p.start(Config{Listen: "127.0.0.1:0", Relay: true, Via: coordinator.Addrs()}),
+	}
+	more := func(context.Context) []string {
+		var addresses []string
+		for _, fullNode := range fullNodes {
+			addresses = append(addresses, fullNode.Addrs()...)
+		}
+		return addresses
+	}
+	noDirectAddresses := func([]ma.Multiaddr) []ma.Multiaddr { return nil }
+	a := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more, AddrsFactory: noDirectAddresses})
+	b := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more, AddrsFactory: noDirectAddresses})
+	waitFor(t, func() bool {
+		for _, fullNode := range fullNodes {
+			if !a.placed(fullNode.host.ID(), time.Now()) || !b.placed(fullNode.host.ID(), time.Now()) {
+				return false
+			}
+		}
+		return true
+	})
+	echo(t, b)
+
+	for i := range fullNodes {
+		conn, err := a.Dial(context.Background(), b.ID(), echoProtocol)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roundTrip(t, conn, 1<<20)
+		conn.Close()
+		if i == 0 {
+			// Force the next attempt to choose a relay again instead of
+			// reusing the existing peer connection.
+			a.host.Network().ClosePeer(b.host.ID())
+		}
+	}
+	for _, fullNode := range fullNodes {
+		waitFor(t, func() bool {
+			connections, bytes := fullNode.Carried()
+			return connections > 0 && bytes > 0
+		})
+	}
+	if connections, bytes := coordinator.Carried(); connections != 0 || bytes != 0 {
+		t.Fatalf("preferred full nodes were available, but coordinator carried %d connections and %d bytes", connections, bytes)
+	}
+
+	// Once a stream is closed, force the next Dial to establish a new path.
+	a.host.Network().ClosePeer(b.host.ID())
+	for _, fullNode := range fullNodes {
+		fullNode.Close()
+	}
+	a.preferredRelayWait = 100 * time.Millisecond
+	conn, err := a.Dial(context.Background(), b.ID(), echoProtocol)
+	if err != nil {
+		t.Fatalf("Dial did not fall back to the coordinator after the full node went away: %v", err)
+	}
+	roundTrip(t, conn, 1<<20)
+	conn.Close()
+	waitFor(t, func() bool {
+		connections, bytes := coordinator.Carried()
+		return connections > 0 && bytes > 0
+	})
+}
+
 func TestANodeTakesItsPlaceOnTheRelayAgainAfterLosingIt(t *testing.T) {
 	old := placeCheck
 	placeCheck = 20 * time.Millisecond
