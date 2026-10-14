@@ -69,6 +69,10 @@ func newModel(t *testing.T, replies ...string) *model {
 			}
 			io.WriteString(w, `{"models":[{"name":"test-model","size":4900000000},{"name":"another-model"}]}`)
 			return
+		case "/api/ps":
+			// One of them is in memory, three quarters of it on a card.
+			io.WriteString(w, `{"models":[{"name":"test-model","size":4000,"size_vram":3000}]}`)
+			return
 		case "/api/show":
 			if named == "test-model" {
 				io.WriteString(w, `{"capabilities":["completion","tools"]}`)

@@ -235,6 +235,7 @@ func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) 
 			Relays: len(node.GetRelayAddresses()) > 0, RelayedConnections: node.GetRelayedConnections(), RelayedBytes: node.GetRelayedBytes(),
 			CpuModel: c.GetCpuModel(), MemoryBytes: c.GetMemoryBytes(), Gpus: localGPUs(c.GetGpus()),
 			Models:         runtime.Models(c.GetLabels()),
+			LoadedModels:   localLoaded(c.GetLabels()),
 			VerifiedAgreed: node.GetVerifiedAgreed(), VerifiedOutvoted: node.GetVerifiedOutvoted(), Probation: node.GetProbation(),
 		})
 	}
@@ -376,6 +377,15 @@ func localJob(job *pb.Job) *nodepb.Job {
 			PeerId: task.GetNodeId(), WorkerName: task.GetNodeName(), Error: task.GetError(), Progress: task.GetProgress(),
 			Verify: task.GetVerify(),
 		})
+	}
+	return out
+}
+
+// localLoaded is the models a worker's labels say its server has in memory.
+func localLoaded(labels []string) []*nodepb.LoadedModel {
+	var out []*nodepb.LoadedModel
+	for _, m := range runtime.LoadedModels(labels) {
+		out = append(out, &nodepb.LoadedModel{Name: m.Model, OnCardPercent: uint32(m.OnCard)})
 	}
 	return out
 }

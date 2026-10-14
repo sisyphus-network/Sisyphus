@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -115,7 +116,7 @@ func (c Chat) Offers(ctx context.Context) []string {
 	if c.URL == "" {
 		return nil
 	}
-	body, err := c.tags(ctx)
+	body, err := c.ask(ctx, "/api/tags")
 	if err != nil {
 		return nil
 	}
@@ -128,6 +129,60 @@ func (c Chat) Offers(ctx context.Context) []string {
 	var labels []string
 	for _, m := range listed.Models {
 		labels = append(labels, modelLabel+m.Name)
+	}
+	return append(labels, c.loaded(ctx)...)
+}
+
+// loadedLabel marks a model the worker's server has in memory now, and how
+// much of it is on a graphics card: "loaded:<name>=<percent>".
+const loadedLabel = "loaded:"
+
+// Loaded is a model a worker's server has in memory, ready to answer.
+type Loaded struct {
+	Model string
+	// OnCard is how much of the model is held by graphics cards, from 0 to
+	// 100. The rest is in the machine's own memory, where the processor
+	// does the work, and a reply comes that much slower.
+	OnCard int
+}
+
+// LoadedModels picks out of a worker's labels the models its server had in
+// memory when it last said what it offers.
+func LoadedModels(labels []string) []Loaded {
+	var loaded []Loaded
+	for _, label := range labels {
+		said, is := strings.CutPrefix(label, loadedLabel)
+		at := strings.LastIndex(said, "=")
+		if !is || at < 0 {
+			continue
+		}
+		// A share that is no number, or no share, is some worker's invention.
+		if share, err := strconv.Atoi(said[at+1:]); err == nil && share >= 0 && share <= 100 {
+			loaded = append(loaded, Loaded{Model: said[:at], OnCard: share})
+		}
+	}
+	return loaded
+}
+
+// loaded asks the worker's server which models it has in memory and how
+// much of each is on a graphics card. A server that does not say, as one
+// that is not an Ollama will not, has none to show.
+func (c Chat) loaded(ctx context.Context) []string {
+	body, _ := c.ask(ctx, "/api/ps") // no answer is no list
+	var running struct {
+		Models []struct {
+			Name string `json:"name"`
+			Size uint64 `json:"size"`
+			VRAM uint64 `json:"size_vram"`
+		} `json:"models"`
+	}
+	json.Unmarshal(body, &running) // a reply that is not a list lists nothing
+	var labels []string
+	for _, m := range running.Models {
+		if m.Name == "" || m.Size == 0 {
+			continue
+		}
+		labels = append(labels, fmt.Sprintf("%s%s=%d", loadedLabel, m.Name, min(m.VRAM, m.Size)*100/m.Size))
 	}
 	return labels
 }
@@ -356,11 +411,12 @@ func (Chat) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, err
 // must not hold that up for long.
 var tagsWait = 3 * time.Second
 
-// tags asks the worker's model server which models it has.
-func (c Chat) tags(ctx context.Context) ([]byte, error) {
+// ask asks the worker's model server about its models: which it has, or
+// which it has in memory.
+func (c Chat) ask(ctx context.Context, path string) ([]byte, error) {
 	ctx, done := context.WithTimeout(ctx, tagsWait)
 	defer done()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+"/api/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+path, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -47,6 +47,13 @@ func TestThePoolThinksOnAWorkersModelAndThePlannerPlansWithIt(t *testing.T) {
 	if err != nil || len(workers.GetWorkers()) != 1 || strings.Join(workers.GetWorkers()[0].GetModels(), ",") != "test-model,another-model" {
 		t.Fatalf("workers = %v, %v", workers, err)
 	}
+	// And which of them is in memory, and how much of it on a graphics card.
+	if loaded := workers.GetWorkers()[0].GetLoadedModels(); len(loaded) != 1 || loaded[0].GetName() != "test-model" || loaded[0].GetOnCardPercent() != 75 {
+		t.Errorf("the worker's loaded models = %v", loaded)
+	}
+	if out := mustCLI(t, "nodes", "--addr", addr); !strings.Contains(out, "rig serves test-model (loaded, 75% on a graphics card), another-model\n") {
+		t.Errorf("nodes says of the models:\n%s", out)
+	}
 	req, _ := http.NewRequest(http.MethodGet, "http://"+thinkAddr+"/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
 	res, err := http.DefaultClient.Do(req)
