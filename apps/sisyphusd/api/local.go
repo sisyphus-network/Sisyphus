@@ -82,9 +82,26 @@ type LocalConfig struct {
 	Join func(ctx context.Context, address, invitation string) (id string, role access.Role, err error)
 	// Token is what a caller must present to change anything.
 	Token string
+	// BrowserAccess keeps one-time pairing codes and revocable browser
+	// credentials in the node database. Nil uses volatile storage (tests only).
+	BrowserAccess BrowserAccessStore
+	// AllowLAN accepts requests addressed to one of this host's private IPs.
+	// The listener must separately be enabled on a private interface.
+	AllowLAN bool
+	// PairingOrigin is the LAN URL peers should open, without a trailing slash.
+	PairingOrigin string
 	// Poll is how often a peer watcher is checked for news. Zero means once
 	// a second.
 	Poll time.Duration
+}
+
+// BrowserAccessStore is the durable part of browser pairing. Credentials
+// passed to and returned from it are hashes, never reusable bearer secrets.
+type BrowserAccessStore interface {
+	SaveBrowserPairing(codeHash []byte, expiresAt time.Time) error
+	ConsumeBrowserPairing(codeHash []byte, now time.Time, device nodedb.BrowserDevice) (bool, error)
+	BrowserDevices() ([]nodedb.BrowserDevice, error)
+	DeleteBrowserDevice(id string) error
 }
 
 // AddressBook is where a node keeps the addresses it starts from. A

@@ -11,6 +11,7 @@ import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { toast } from 'sonner'
 import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { startPolling } from '@/lib/polling'
+import { displayDaemonVersion } from '@/lib/daemon-version'
 
 type Messages = ReturnType<typeof getMessages>
 function shortId(id: string) { return id.length > 22 ? `${id.slice(0, 12)}…${id.slice(-8)}` : id }
@@ -84,7 +85,7 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
   return <div className="pb-7">
     <PageHeading title={messages.nodeOverview} description={messages.liveDescription} actions={desktopApp && <Button variant="outline" disabled={refreshing} onClick={() => void reconnect()} className="gap-2"><RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? messages.connecting : messages.reconnect}</Button>} />
     <section aria-label={messages.nodeOverview} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <MetricCard label={messages.nodeIdentity} icon={Server} value={snapshot.info ? shortId(snapshot.info.peerId) : '—'} detail={snapshot.info ? `${messages.daemonVersion} v${snapshot.info.daemonVersion}` : messages.waitingHandshake} mono />
+      <MetricCard label={messages.nodeIdentity} icon={Server} value={snapshot.info ? shortId(snapshot.info.peerId) : '—'} detail={snapshot.info ? `${messages.daemonVersion} ${displayDaemonVersion(snapshot.info.daemonVersion)}` : messages.waitingHandshake} mono />
       <MetricCard label={messages.connectedPeers} icon={Globe2} value={<>{connectedPeers}<span className="text-lg font-normal text-muted-foreground"> / {snapshot.peers.length}</span></>} detail={messages.activeKnownPeers} />
       <MetricCard label={messages.peerRevision} icon={Signal} value={snapshot.revision} detail={snapshot.lastUpdated ? formatMessage(messages.updated, { time: new Date(snapshot.lastUpdated).toLocaleTimeString(document.documentElement.lang) }) : messages.listeningSnapshot} mono className="sm:col-span-2 lg:col-span-1" />
     </section>

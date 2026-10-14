@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { isIP } from 'node:net'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WindowStreams } from './window-streams'
@@ -54,14 +55,48 @@ function resolveTokenFile(): string {
   return join(daemonDataDir(), 'api.token')
 }
 
+function readApiToken(): string {
+  return readFileSync(tokenFile, 'utf8').trim()
+}
+
 function authorization(): grpc.Metadata {
   const metadata = new grpc.Metadata()
   try {
-    metadata.set('authorization', `Bearer ${readFileSync(tokenFile, 'utf8').trim()}`)
+    metadata.set('authorization', `Bearer ${readApiToken()}`)
   } catch {
     // No token: the daemon will refuse the call and say why.
   }
   return metadata
+}
+
+type BrowserPairingInvitation = { code: string; expiresAt: string; pairUrl: string }
+type PairedBrowser = { id: string; name: string; createdAt: string }
+
+async function requestBrowserManagement<T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown): Promise<T> {
+  const address = process.env.SISYPHUS_WEB_API_ADDRESS ?? '127.0.0.1:50052'
+  let base: URL
+  try { base = new URL(`http://${address}`) }
+  catch { throw new Error('The local web API address is invalid.') }
+  const host = base.hostname.replace(/^\[|\]$/g, '')
+  if ((host !== '::1' && !(isIP(host) === 4 && host.startsWith('127.'))) || base.username || base.password || base.pathname !== '/' || base.search || base.hash) {
+    throw new Error('Browser management is restricted to the node web API on this machine.')
+  }
+  let token: string
+  try { token = readApiToken() }
+  catch { throw new Error('Could not read the local node API token.') }
+  if (!token) throw new Error('The local node API token is empty.')
+
+  const response = await fetch(new URL(path, base), {
+    method,
+    headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(detail || `Node browser API returned HTTP ${response.status}.`)
+  }
+  if (response.status === 204) return undefined as T
+  return await response.json() as T
 }
 
 type Peer = {
@@ -348,6 +383,12 @@ app.whenReady().then(() => {
     if (!client) return reject(new Error('The local daemon is not connected.'))
     client.setPeerComputePermissions(request, authorization(), (error) => error ? reject(new Error(error.message)) : resolve())
   }))
+  handleNode('node:browser:create-pairing', () => requestBrowserManagement<BrowserPairingInvitation>('/pairing', 'POST', {}))
+  handleNode('node:browser:list-paired', () => requestBrowserManagement<{ devices: PairedBrowser[] }>('/devices', 'GET'))
+  handleNode('node:browser:revoke-paired', (_event, id: unknown) => {
+    if (typeof id !== 'string' || !id.trim() || id.length > 128) throw new Error('Invalid paired browser ID.')
+    return requestBrowserManagement<void>(`/devices/${encodeURIComponent(id)}`, 'DELETE')
+  })
   handleNode('node:rpc', (_event, payload: unknown) => {
     if (!payload || typeof payload !== 'object' || !('method' in payload) || !('request' in payload)) throw new Error('Invalid daemon RPC request.')
     const { method, request } = payload as { method: unknown; request: unknown }

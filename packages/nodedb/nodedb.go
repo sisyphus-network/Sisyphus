@@ -25,7 +25,8 @@ var migrations embed.FS
 // DB is a node's database. Its methods may be called from several
 // goroutines.
 type DB struct {
-	sql *sql.DB
+	sql        *sql.DB
+	checkpoint func() error
 }
 
 // Open opens the database in the given file, creating it if need be and
@@ -150,6 +151,9 @@ func (db *DB) write(fn func(*batch)) error {
 // sync makes everything written so far safe against the machine itself
 // failing, and leaves nothing of it in the write-ahead log.
 func (db *DB) sync() error {
+	if db.checkpoint != nil {
+		return db.checkpoint()
+	}
 	_, err := db.sql.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
 	return err
 }
