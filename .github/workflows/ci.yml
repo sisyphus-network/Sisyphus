@@ -97,7 +97,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: ${{ runner.environment == 'github-hosted' }}
+      # The self-hosted runner already provides the pinned Node 24 toolchain.
+      # Keep setup-node (and its download/cache traffic) on GitHub-hosted runners.
       - uses: actions/setup-node@v7
+        if: runner.environment == 'github-hosted'
         with:
           node-version: 24
           cache: npm
