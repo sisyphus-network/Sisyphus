@@ -147,6 +147,19 @@ func TestModelLendingCallsNeedTheTokenAndAStore(t *testing.T) {
 	}
 }
 
+func TestModelLendingReportsRestartWhenLiveServerIsMissing(t *testing.T) {
+	running := nodedb.ModelLending{Enabled: true, URL: "http://127.0.0.1:11434", Only: []string{"old"}, GPULayers: -1}
+	saved := newFileList(t)
+	if err := saved.SetModelLending(nodedb.ModelLending{Enabled: true, URL: running.URL, Only: []string{"new"}, GPULayers: -1}); err != nil {
+		t.Fatal(err)
+	}
+	client := serveLocal(t, LocalConfig{Lending: saved, Lent: running})
+	state, err := client.GetModelLending(withToken("the-token"), &nodepb.GetModelLendingRequest{})
+	if err != nil || !state.GetRestartNeeded() {
+		t.Fatalf("saved policy without live model server = %v, %v; want restart", state, err)
+	}
+}
+
 func TestInspectOllamaSaysWhatWouldBeLentOrWhyNothingCould(t *testing.T) {
 	was := inspect
 	t.Cleanup(func() { inspect = was })
