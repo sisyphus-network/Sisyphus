@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -191,6 +193,14 @@ func TestKeyNewMakesAKeyFileAndNeverReplacesOne(t *testing.T) {
 		if _, err := cli(t, args...); err == nil || !strings.Contains(err.Error(), `expected "key new <file>"`) {
 			t.Errorf("%v: error %v", args, err)
 		}
+	}
+	// Asking for help gets help, and no file named for the asking.
+	t.Chdir(t.TempDir())
+	if _, err := cli(t, "key", "new", "--help"); !errors.Is(err, flag.ErrHelp) {
+		t.Errorf("key new --help: %v, want help", err)
+	}
+	if _, err := os.Stat("--help"); !os.IsNotExist(err) {
+		t.Errorf("key new --help made a file: %v", err)
 	}
 }
 
