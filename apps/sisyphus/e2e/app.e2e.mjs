@@ -421,7 +421,11 @@ test('the Pool view joins a coordinator with an invitation', async () => {
     await page.getByPlaceholder('Invitation token').fill(invitation)
     await page.getByRole('button', { name: 'Join another pool' }).click()
     await page.getByText('Joined pool', { exact: true }).waitFor({ timeout: 10000 }).catch(async () => {
-      throw new Error(`pool join did not succeed: ${await page.locator('body').innerText()}`)
+      const state = await page.evaluate(() => ({
+        inputs: [...document.querySelectorAll('input')].map((input) => ({ placeholder: input.placeholder, value: input.value })),
+        toasts: [...document.querySelectorAll('[data-sonner-toast]')].map((toast) => toast.textContent?.trim()),
+      }))
+      throw new Error(`pool join did not succeed: ${JSON.stringify(state)}\n${await page.locator('body').innerText()}`)
     })
     assert.equal(await page.getByPlaceholder('Coordinator host:port').inputValue(), '')
     assert.equal(await page.getByPlaceholder('Invitation token').inputValue(), '')
