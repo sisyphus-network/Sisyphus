@@ -23,6 +23,8 @@
               delve
               go-tools
               golangci-lint
+              actionlint
+              github-cli
               gnumake
               git
               protobuf
@@ -30,10 +32,12 @@
               protoc-gen-go-grpc
               kubo
               pkg-config
+              icu
               nodejs_24
             ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
               pkgs.gtk3
               pkgs.gsettings-desktop-schemas
+              pkgs.xvfb-run
             ];
 
             # Use the Nix-provided compiler rather than silently downloading

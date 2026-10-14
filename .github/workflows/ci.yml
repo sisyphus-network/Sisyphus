@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Keep untrusted fork pull requests on GitHub-hosted infrastructure. PRs
+    # from this repository and pushes to dev use the project's Linux runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
     env:
       # Fail, rather than skip, any test that finds no ipfs program.
       SISYPHUS_REQUIRE_KUBO: "1"
@@ -23,6 +25,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          # Self-hosted runners retain GOMODCACHE and GOCACHE between jobs;
+          # avoid uploading/downloading a large Actions cache on every run.
+          cache: ${{ runner.environment == 'github-hosted' }}
       - name: Install Kubo
         # Some tests run a real IPFS daemon. The version is pinned so that a
         # new release cannot change test results unannounced.
@@ -34,7 +39,9 @@ jobs:
             -p "kubo_${KUBO_VERSION}_linux-amd64.tar.gz" -p "kubo_${KUBO_VERSION}_linux-amd64.tar.gz.sha512"
           echo "$(cut -d' ' -f1 "kubo_${KUBO_VERSION}_linux-amd64.tar.gz.sha512")  kubo_${KUBO_VERSION}_linux-amd64.tar.gz" | sha512sum -c -
           tar -xzf "kubo_${KUBO_VERSION}_linux-amd64.tar.gz"
-          sudo install -m 755 kubo/ipfs /usr/local/bin/ipfs
+          install -Dm 755 kubo/ipfs "$HOME/.local/bin/ipfs"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
           rm -rf kubo "kubo_${KUBO_VERSION}_linux-amd64.tar.gz"*
           ipfs version
       - name: Install IPFS Cluster
@@ -50,7 +57,9 @@ jobs:
             -p "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
           echo "$CLUSTER_SHA256  ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz" | sha256sum -c -
           tar -xzf "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
-          sudo install -m 755 ipfs-cluster-service/ipfs-cluster-service /usr/local/bin/ipfs-cluster-service
+          install -Dm 755 ipfs-cluster-service/ipfs-cluster-service "$HOME/.local/bin/ipfs-cluster-service"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
           rm -rf ipfs-cluster-service "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
           ipfs-cluster-service --version
       - name: Check formatting
@@ -60,24 +69,30 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
       - run: go test -race ./...
       - name: Check every statement is tested
-        run: make cover
+        run: |
+          if command -v make >/dev/null 2>&1; then
+            make cover
+          else
+            nix develop --command make cover
+          fi
       - run: go build ./apps/sisyphusd
 
   # A pool across machines, as near as one runner gets: each node in a
   # container with its own address and disk. It is what finds faults that
   # tests on one machine cannot, since those all run over loopback.
   rehearsal:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: ${{ runner.environment == 'github-hosted' }}
       - name: Rehearse a pool across containers
         run: examples/rehearsal.sh
 
   desktop:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
     defaults:
       run:
         working-directory: apps/sisyphus
@@ -86,7 +101,11 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: ${{ runner.environment == 'github-hosted' }}
+      # The self-hosted runner already provides the pinned Node 24 toolchain.
+      # Keep setup-node (and its download/cache traffic) on GitHub-hosted runners.
       - uses: actions/setup-node@v7
+        if: runner.environment == 'github-hosted'
         with:
           node-version: 24
           cache: npm
