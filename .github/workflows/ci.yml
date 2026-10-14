@@ -8,6 +8,14 @@ on:
 permissions:
   contents: read
 
+
+# A pull request's newer push replaces its older run, which frees the
+# runners for others. Pushes to dev are never cancelled: each commit there
+# keeps its own complete run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     # On GitHub's runners, which run every pull request's checks at once,
