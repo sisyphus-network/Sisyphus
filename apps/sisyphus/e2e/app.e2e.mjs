@@ -355,8 +355,13 @@ test('the topology canvas stays fitted through live window resizes', async (t) =
 
     let observedBufferResize = false
     for (const [nextWidth, nextHeight] of [[1040, 720], [1280, 900], [980, 760], [1180, 800]]) {
-      await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h), [nextWidth, nextHeight])
-      await page.waitForFunction(([w, h]) => Math.abs(window.innerWidth - w) < 30 && Math.abs(window.innerHeight - h) < 80, [nextWidth, nextHeight])
+      const previous = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+      await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h), [nextWidth, nextHeight])
+      await page.waitForFunction(([w, h]) => Math.abs(window.innerWidth - w) < 5 && Math.abs(window.innerHeight - h) < 5, [nextWidth, nextHeight])
+      await page.waitForFunction(([width, height]) => {
+        const canvasEl = document.querySelector('.network-globe-stage canvas')
+        return canvasEl && (canvasEl.width !== width || canvasEl.height !== height)
+      }, [previous.width, previous.height])
       await page.waitForFunction(() => {
         const stageEl = document.querySelector('.network-globe-stage')
         const canvasEl = stageEl?.querySelector('canvas')
@@ -405,14 +410,13 @@ test('the workspace switches layouts live across tablet and desktop widths', asy
     const touch = await page.context().newCDPSession(page)
     await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
     await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(viewportWidth * 0.72), y: 360 }] })
-    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(viewportWidth * 0.72), y: 360 }] })
     await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: Math.round(viewportWidth * 0.55), y: 360 }] })
     await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await page.waitForTimeout(300)
+    assert.equal(await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).count(), 0, 'a swipe should not switch views; mobile navigation is dock-driven')
+    await dockButtons.nth(1).click()
     await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).waitFor()
-    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(viewportWidth * 0.45), y: 360 }] })
-    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: Math.round(viewportWidth * 0.65), y: 360 }] })
-    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await dockButtons.nth(0).click()
     await page.locator('.workspace-mobile-pane[data-active="true"] textarea').waitFor()
 
     const composer = page.locator('.workspace-mobile-pane[data-active="true"] textarea')
