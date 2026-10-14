@@ -222,14 +222,6 @@ func LoadedModels(labels []string) []Loaded {
 	return loaded
 }
 
-// loaded asks the worker's server which models it has in memory and how
-// much of each is on a graphics card. A server that does not say, as one
-// that is not an Ollama will not, has none to show.
-func (c Chat) loaded(ctx context.Context) []string {
-	url, owner := c.settings()
-	return c.loadedAt(ctx, url, owner)
-}
-
 func (c Chat) loadedAt(ctx context.Context, url string, owner Owner) []string {
 	body, _ := c.askAt(ctx, url, "/api/ps") // no answer is no list
 	var running struct {
