@@ -19,6 +19,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	ma "github.com/multiformats/go-multiaddr"
 
@@ -637,6 +638,42 @@ func TestFullNodeRelayIsPreferredToCoordinatorAndCoordinatorIsFallback(t *testin
 		connections, bytes := coordinator.Carried()
 		return connections > 0 && bytes > 0
 	})
+}
+
+func TestContainsRelay(t *testing.T) {
+	wanted := peer.ID("wanted")
+	other := peer.ID("other")
+
+	if !containsRelay([]peer.AddrInfo{{ID: wanted}}, wanted) {
+		t.Fatal("containsRelay did not find the matching relay")
+	}
+	if containsRelay([]peer.AddrInfo{{ID: other}}, wanted) {
+		t.Fatal("containsRelay found a relay with a different ID")
+	}
+}
+
+func TestConnectThroughSkipsRelaysWithoutAddresses(t *testing.T) {
+	var h Host
+	err := h.connectThrough(context.Background(), peer.ID("target"), []peer.AddrInfo{{ID: peer.ID("relay")}})
+	if err == nil || err.Error() != "p2p: no relay addresses available" {
+		t.Fatalf("connectThrough error = %v, want no relay addresses available", err)
+	}
+}
+
+func TestConnectThroughStopsAfterContextCancellation(t *testing.T) {
+	p := newPool(t)
+	from := p.start(Config{Listen: "127.0.0.1:0"})
+	relay := p.start(Config{Listen: "127.0.0.1:0"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := from.connectThrough(ctx, relay.host.ID(), []peer.AddrInfo{{
+		ID:    relay.host.ID(),
+		Addrs: []ma.Multiaddr{relay.host.Addrs()[0]},
+	}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("connectThrough error = %v, want context.Canceled", err)
+	}
 }
 
 func TestANodeTakesItsPlaceOnTheRelayAgainAfterLosingIt(t *testing.T) {
