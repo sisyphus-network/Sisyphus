@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type TouchEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Eye, MessageSquare } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -287,7 +287,6 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const topologyDragRef = useRef<{ pointerId: number; startX: number; startY: number; startWidth: number; startRatio: number; startOpen: boolean; dragging: boolean } | null>(null)
   const topologyLastTapRef = useRef<{ at: number; x: number; y: number } | null>(null)
   const [globeReady, setGlobeReady] = useState(false)
-  const [touchStart, setTouchStart] = useState<{ x: number; y: number } | null>(null)
   useEffect(() => {
     if (compact || historyResizing || topologyResizing) return
     // What was chosen for the topology is kept as it was while it cannot be
@@ -498,14 +497,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
             <div className="max-w-[62%] rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-end text-muted-foreground shadow-sm backdrop-blur"><span className="me-1.5 inline-block size-1.5 rounded-full bg-[var(--app-accent)] align-middle" />{messages.thisNode}{countryFlag(countryCode) ? ` · ${countryFlag(countryCode)}` : ''}{countryPosition ? <span className="ms-1.5">{countryCode}</span> : ''}</div>
           </div>
     </section>
-  const handleTouchEnd = (event: TouchEvent<HTMLDivElement>) => {
-    if (touchStart === null) return
-    const deltaX = event.changedTouches[0].clientX - touchStart.x
-    const deltaY = event.changedTouches[0].clientY - touchStart.y
-    if (topologyAvailable && Math.abs(deltaX) > 55 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) setMobileView(deltaX < 0 ? 'network' : 'chat')
-    setTouchStart(null)
-  }
-  return <div className={`workspace-shell ${compact ? 'workspace-shell--compact' : ''}`} onTouchStart={(event) => setTouchStart({ x: event.touches[0].clientX, y: event.touches[0].clientY })} onTouchEnd={handleTouchEnd}>
+  return <div className={`workspace-shell ${compact ? 'workspace-shell--compact' : ''}`}>
     {compact ? <>
       <div className="workspace-mobile-stage">
         <motion.div aria-hidden={mobileView !== 'chat'} className="workspace-mobile-pane" data-active={mobileView === 'chat'} animate={reduceMotion ? undefined : { opacity: mobileView === 'chat' ? 1 : 0, x: mobileView === 'chat' ? 0 : -24 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: mobileView === 'chat' ? 2 : 1, pointerEvents: mobileView === 'chat' ? 'auto' : 'none' }}>
