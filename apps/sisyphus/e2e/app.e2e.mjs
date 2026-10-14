@@ -14,6 +14,7 @@ test('the window shows the node it is connected to', async () => {
     await open(page, 'Node overview')
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
     await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+    await page.getByText('Daemon version dev', { exact: true }).waitFor()
     // The node the window describes is the one it was started against,
     // and that node's own worker is listed with what it can run.
     await page.getByText(node.id(), { exact: true }).waitFor()
