@@ -213,6 +213,18 @@ func (j *Job) Wanted(t *Task) int {
 	return t.Verify - t.lead() - t.out()
 }
 
+// Dropped reports whether an attempt at the task by a worker ended without
+// a result, because it failed or was lost. Its next attempt goes to another
+// worker if there is one: whatever went wrong there may still be wrong.
+func (t *Task) Dropped(nodeID string) bool {
+	for _, a := range t.History {
+		if a.NodeID == nodeID && (a.State == Pending || a.State == Failed) {
+			return true
+		}
+	}
+	return false
+}
+
 // Asked reports whether a worker has a copy of the task or has returned a
 // result for it. Such a worker is not given the task again: the results
 // that settle a task come from different workers.
