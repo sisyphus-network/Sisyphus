@@ -861,7 +861,18 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
     await settingsScroller.waitFor()
-    await page.waitForFunction((top) => Math.abs(Number(document.querySelector('.settings-page__scroll')?.scrollTop) - top) < 2, savedSettingsTop)
+    try {
+      await page.waitForFunction((top) => Math.abs(Number(document.querySelector('.settings-page__scroll')?.scrollTop) - top) < 2, savedSettingsTop)
+    } catch (error) {
+      const scrollState = await settingsScroller.evaluate((element) => ({
+        top: element.scrollTop,
+        maxTop: element.scrollHeight - element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        saved: JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings'],
+      }))
+      throw new Error(`Settings scroll did not restore from ${savedSettingsTop}: ${JSON.stringify(scrollState)}`, { cause: error })
+    }
     assert.ok(savedSettingsTop > 40, 'the Settings scroll position was not meaningfully saved')
   } finally {
     await app.close()
