@@ -1,18 +1,17 @@
 import { Code, ConnectError, createClient } from '@connectrpc/connect'
-import { MethodKind } from '@bufbuild/protobuf'
 import { createConnectTransport } from '@connectrpc/connect-web'
-import { NodeService } from './gen/sisyphus/node/v1/node_connect.js'
+import { NodeService } from './gen/sisyphus/node/v1/node_pb.js'
 
-export { NodeService } from './gen/sisyphus/node/v1/node_connect.js'
+export { NodeService } from './gen/sisyphus/node/v1/node_pb.js'
 export * from './gen/sisyphus/node/v1/node_pb.js'
 export type { Client } from '@connectrpc/connect'
 
-type NodeMethods = typeof NodeService.methods
+type NodeMethods = typeof NodeService.method
 export type UnaryNodeMethod = {
-  [Name in keyof NodeMethods]: NodeMethods[Name]['kind'] extends MethodKind.Unary ? Name : never
+  [Name in keyof NodeMethods]: NodeMethods[Name]['methodKind'] extends 'unary' ? Name : never
 }[keyof NodeMethods]
 export type ServerStreamingNodeMethod = {
-  [Name in keyof NodeMethods]: NodeMethods[Name]['kind'] extends MethodKind.ServerStreaming ? Name : never
+  [Name in keyof NodeMethods]: NodeMethods[Name]['methodKind'] extends 'server_streaming' ? Name : never
 }[keyof NodeMethods]
 
 export type NodeServiceClient = ReturnType<typeof createNodeServiceClient>
