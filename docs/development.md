@@ -119,7 +119,7 @@ The tests of all this that run real programs are few and slow: one in `packages/
 
 ## Releases
 
-Push a tag such as `v0.1.0`. The release workflow builds every supported platform with `scripts/build-release.sh` and publishes the binaries and a `SHA256SUMS` file. Only Linux on x86-64 is covered by the tests.
+Push a tag such as `v0.1.0`. The release workflow builds every supported platform with `scripts/build-release.sh`, packages the desktop app on Linux, Windows and macOS (an AppImage, an installer and a disk image, and a plain archive of each), and publishes all of it with one `SHA256SUMS` file. The desktop packages are named by the version in `apps/sisyphus/package.json`, so set that to the tag's before tagging. Nothing is signed by a publisher; `docs/user-guide.md` says what people see because of it. Only Linux on x86-64 is covered by the tests.
 
 ### Icons
 

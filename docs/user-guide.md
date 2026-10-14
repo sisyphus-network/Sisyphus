@@ -25,7 +25,31 @@ npm install
 npm run dev                                       # the desktop app, connected to that node
 ```
 
-If no node is answering on `127.0.0.1:50051`, the app starts one itself and stops it when you quit. A node it finds already running is used and left alone. Unsigned builds of the app for Linux, Windows and macOS, with the node inside, are attached to each run of the `Desktop packaging` workflow on GitHub; they are development builds, not installers.
+If no node is answering on `127.0.0.1:50051`, the app starts one itself and stops it when you quit. A node it finds already running is used and left alone.
+
+### Installing a packaged build
+
+Without building anything, take a package of the app with the node inside. A release carries them beside the `sisyphusd` binaries, and every run of the `Desktop packaging` workflow on GitHub attaches the same files as development builds.
+
+| System | File | What to do with it |
+|---|---|---|
+| Windows | `Sisyphus-<version>-win-x64-setup.exe` | Run it. It installs for you alone, asks where, and puts Sisyphus in the Start menu and on the desktop. |
+| macOS | `Sisyphus-<version>-mac-arm64.dmg` | Open it and drag Sisyphus onto Applications. |
+| Linux | `Sisyphus-<version>-linux-x86_64.AppImage` | `chmod +x` it and run it. |
+
+Each also comes as a plain `.zip` or `.tar.gz` to unpack and run in place.
+
+### The warnings on first run
+
+These packages are not signed by a publisher that Windows or macOS knows, because that takes a paid certificate the project does not have yet. Both systems say so the first time, in words that sound worse than the fact. Check what you downloaded against the release's `SHA256SUMS` first (`Get-FileHash <file>` in PowerShell, `shasum -a 256 <file>` on macOS, `sha256sum <file>` on Linux); a file that matches is the one the project built.
+
+- **Windows, "Windows protected your PC".** Choose **More info**, then **Run anyway**. The publisher is shown as unknown.
+- **Windows, the firewall asking about "Sisyphus node".** That is the node inside the app asking to accept connections. Allow it on private networks if other machines are to join yours; a node used alone works without.
+- **macOS, "Sisyphus cannot be opened" or "the developer cannot be verified".** Close the message, open **System Settings**, **Privacy & Security**, scroll to the line about Sisyphus and choose **Open Anyway**. On older versions of macOS, right-click the app and choose **Open** instead.
+- **macOS, "Sisyphus is damaged and can't be opened".** It is not damaged: macOS says this of an unsigned app that came from a browser. Take the download mark off it with `xattr -dr com.apple.quarantine /Applications/Sisyphus.app` and open it again.
+- **Linux** says nothing.
+
+These steps are what each system does with any unsigned program. Nobody on the project has yet walked through them with a released package, so tell us where they are wrong.
 
 For a pool with something in it straight away, `examples/desktop-backend.sh` starts three nodes on one machine and prints how to point the app at them.
 

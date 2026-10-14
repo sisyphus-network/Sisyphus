@@ -1,8 +1,9 @@
 name: Release
 
-# Pushing a tag such as v0.1.0 builds sisyphusd for every supported platform
-# and publishes the binaries as a GitHub release. A pull request that changes
-# the release machinery runs the same build without publishing.
+# Pushing a tag such as v0.1.0 builds sisyphusd for every supported platform,
+# packages the desktop app on Linux, Windows and macOS, and publishes all of
+# it as a GitHub release. A pull request that changes the release machinery
+# runs the same builds without publishing.
 on:
   push:
     tags: ["v*"]
@@ -15,10 +16,8 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  daemon:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -30,8 +29,65 @@ jobs:
         with:
           name: sisyphusd
           path: dist/
+
+  # The desktop app, with the node inside and the logo on it: an installer
+  # for Windows, a disk image for macOS, an AppImage for Linux, and a plain
+  # archive of each. Each is built on its own system. They are not signed
+  # by a publisher; docs/user-guide.md says what a person sees because of it.
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/sisyphus
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/sisyphus/package-lock.json
+      - run: npm ci
+      - run: npm run package:dist
+      - run: npm run test:package
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            apps/sisyphus/dist/*.zip
+            apps/sisyphus/dist/*.tar.gz
+            apps/sisyphus/dist/*.AppImage
+            apps/sisyphus/dist/*-setup.exe
+            apps/sisyphus/dist/*.dmg
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [daemon, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      # One list of checksums for everything published.
+      - name: Checksums
+        working-directory: dist
+        run: |
+          rm -f SHA256SUMS
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
       - name: Publish
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/* --title "${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes
