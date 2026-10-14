@@ -15,6 +15,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # The upstream repository also has a legacy v6.0.23+incompatible tag.
+    # Dependabot treats it as newer than the maintained v0.x line, but its
+    # removed package paths make the Go module graph unresolvable.
+    ignore:
+      - dependency-name: github.com/libp2p/go-libp2p
+        versions: ["6.0.23+incompatible"]
     groups:
       go:
         patterns: ["*"]
