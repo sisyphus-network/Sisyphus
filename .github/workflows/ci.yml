@@ -195,19 +195,19 @@ jobs:
         working-directory: packages/runtime
         run: ${{ matrix.via }} ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
       - name: Run the known-answer workloads on FreeBSD
-        if: matrix.goos == 'freebsd'
+        if: matrix.goos == 'freebsd' && matrix.via == 'vm'
         uses: vmactions/freebsd-vm@v1
         with:
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
       - name: Run the known-answer workloads on OpenBSD
-        if: matrix.goos == 'openbsd'
+        if: matrix.goos == 'openbsd' && matrix.via == 'vm'
         uses: vmactions/openbsd-vm@v1
         with:
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
       - name: Run the known-answer workloads on NetBSD
-        if: matrix.goos == 'netbsd'
+        if: matrix.goos == 'netbsd' && matrix.via == 'vm'
         uses: vmactions/netbsd-vm@v1
         with:
           envs: KNOWN_ANSWERS
