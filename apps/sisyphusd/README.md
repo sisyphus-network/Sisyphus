@@ -264,7 +264,7 @@ What the tunnel costs: every byte between a worker's Kubo and the coordinator's 
 What is not there yet:
 
 - **Two workers on different private networks may stay on a relay.** libp2p can sometimes connect such a pair directly ("hole punching"), and it is switched on. On one machine, relayed pairs do go direct by themselves. Whether they do across two real home routers has not been tried, so do not count on it. Step 4 of [`docs/multi-machine-test.md`](../../docs/multi-machine-test.md) says how to tell.
-- **Which relay carries a connection is not chosen.** A node asks through all of them at once and uses whichever answers first, so a full node takes load off the coordinator without being preferred to it.
+- **Full nodes are preferred as relays.** When several are available, a node rotates through them so the first one in the list does not take every connection. It gives full nodes two seconds in total to connect, then falls back to the explicitly configured relay (the coordinator in an ordinary pool) if none answers. Direct connection is still tried after the first contact, as before.
 - **A full node's count is its own word.** Nothing checks it against what the nodes at either end saw.
 - **Kubo daemons do not use the relay.** Two workers' Kubo daemons with no route between them exchange blocks through the coordinator's.
 
