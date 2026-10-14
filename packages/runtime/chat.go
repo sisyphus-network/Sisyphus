@@ -34,6 +34,17 @@ type Chat struct {
 	URL string
 	// Owner is what the machine's owner allows of that server.
 	Owner Owner
+	// Live, when set, supplies the stable Ollama address and its current
+	// owner policy. It lets model visibility and per-request limits change
+	// without reconnecting the worker.
+	Live *ModelServer
+}
+
+func (c Chat) settings() (string, Owner) {
+	if c.Live != nil {
+		return c.Live.Settings()
+	}
+	return c.URL, c.Owner
 }
 
 // Owner is what the owner of a worker allows the pool of its model server.
@@ -157,10 +168,11 @@ func (Chat) Needs(params []byte) []string { return modelNeeds(modelOf(params)) }
 // Offers is the models the worker's server has, asked for each time the
 // worker says what it is. A server that cannot be reached offers none.
 func (c Chat) Offers(ctx context.Context) []string {
-	if c.URL == "" {
+	url, owner := c.settings()
+	if url == "" {
 		return nil
 	}
-	body, err := c.ask(ctx, "/api/tags")
+	body, err := c.askAt(ctx, url, "/api/tags")
 	if err != nil {
 		return nil
 	}
@@ -172,11 +184,11 @@ func (c Chat) Offers(ctx context.Context) []string {
 	json.Unmarshal(body, &listed) // a reply that is not a list lists nothing
 	var labels []string
 	for _, m := range listed.Models {
-		if c.Owner.Allows(m.Name) {
+		if owner.Allows(m.Name) {
 			labels = append(labels, modelLabel+m.Name)
 		}
 	}
-	return append(labels, c.loaded(ctx)...)
+	return append(labels, c.loadedAt(ctx, url, owner)...)
 }
 
 // loadedLabel marks a model the worker's server has in memory now, and how
@@ -214,7 +226,12 @@ func LoadedModels(labels []string) []Loaded {
 // much of each is on a graphics card. A server that does not say, as one
 // that is not an Ollama will not, has none to show.
 func (c Chat) loaded(ctx context.Context) []string {
-	body, _ := c.ask(ctx, "/api/ps") // no answer is no list
+	url, owner := c.settings()
+	return c.loadedAt(ctx, url, owner)
+}
+
+func (c Chat) loadedAt(ctx context.Context, url string, owner Owner) []string {
+	body, _ := c.askAt(ctx, url, "/api/ps") // no answer is no list
 	var running struct {
 		Models []struct {
 			Name string `json:"name"`
@@ -225,7 +242,7 @@ func (c Chat) loaded(ctx context.Context) []string {
 	json.Unmarshal(body, &running) // a reply that is not a list lists nothing
 	var labels []string
 	for _, m := range running.Models {
-		if m.Name == "" || m.Size == 0 || !c.Owner.Allows(m.Name) {
+		if m.Name == "" || m.Size == 0 || !owner.Allows(m.Name) {
 			continue
 		}
 		labels = append(labels, fmt.Sprintf("%s%s=%d", loadedLabel, m.Name, min(m.VRAM, m.Size)*100/m.Size))
@@ -261,17 +278,18 @@ func (Chat) Split(_ context.Context, _ Blobs, params []byte, _ int) ([][]byte, e
 const maxReply = 16 << 20
 
 func (c Chat) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, error) {
-	if c.URL == "" {
+	url, owner := c.settings()
+	if url == "" {
 		return nil, errors.New("this worker serves no language models")
 	}
-	if err := c.Owner.refuses(modelOf(payload)); err != nil {
+	if err := owner.refuses(modelOf(payload)); err != nil {
 		return nil, err
 	}
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return nil, fmt.Errorf("chat task: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.URL, "/")+"/api/chat", bytes.NewReader(toOllama(request, c.Owner, true)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(url, "/")+"/api/chat", bytes.NewReader(toOllama(request, owner, true)))
 	if err != nil {
 		return nil, fmt.Errorf("model server address: %w", err)
 	}
@@ -342,9 +360,14 @@ var tagsWait = 3 * time.Second
 // ask asks the worker's model server about its models: which it has, or
 // which it has in memory.
 func (c Chat) ask(ctx context.Context, path string) ([]byte, error) {
+	url, _ := c.settings()
+	return c.askAt(ctx, url, path)
+}
+
+func (c Chat) askAt(ctx context.Context, url, path string) ([]byte, error) {
 	ctx, done := context.WithTimeout(ctx, tagsWait)
 	defer done()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(url, "/")+path, nil)
 	if err != nil {
 		return nil, err
 	}

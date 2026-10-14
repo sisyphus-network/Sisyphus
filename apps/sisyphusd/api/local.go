@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -94,6 +95,9 @@ type LocalConfig struct {
 	Lending     LendingStore
 	Lent        nodedb.ModelLending
 	LentByFlags bool
+	// LiveLending replaces model allowlists and request limits while an
+	// already-enabled Ollama at the same address keeps serving the worker.
+	LiveLending *runtime.ModelServer
 	// PairingOrigin is the LAN URL peers should open, without a trailing slash.
 	PairingOrigin string
 	// Poll is how often a peer watcher is checked for news. Zero means once
@@ -182,7 +186,8 @@ func normal(cfg LocalConfig) LocalConfig {
 
 type localService struct {
 	nodepb.UnimplementedNodeServiceServer
-	cfg LocalConfig
+	cfg       LocalConfig
+	lendingMu sync.RWMutex
 }
 
 type attachmentAssistant interface {

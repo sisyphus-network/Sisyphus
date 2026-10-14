@@ -99,9 +99,10 @@ type NodeServiceClient interface {
 	SaveModelProfile(ctx context.Context, in *SaveModelProfileRequest, opts ...grpc.CallOption) (*ModelProfile, error)
 	DeleteModelProfile(ctx context.Context, in *DeleteModelProfileRequest, opts ...grpc.CallOption) (*DeleteModelProfileResponse, error)
 	// GetModelLending says how this machine lends its Ollama models to the
-	// pool: as saved, and as the node runs now. SetModelLending saves it;
-	// it takes effect when the node next starts. InspectOllama asks an
-	// Ollama what it is and which of its models would be lent.
+	// pool: as saved, and as the node runs now. SetModelLending applies model
+	// allowlists and request limits live when lending stays enabled at the
+	// same address; enabling, disabling or changing that address takes effect
+	// on restart. InspectOllama asks an Ollama what it is and which models it lends.
 	GetModelLending(ctx context.Context, in *GetModelLendingRequest, opts ...grpc.CallOption) (*ModelLendingState, error)
 	SetModelLending(ctx context.Context, in *SetModelLendingRequest, opts ...grpc.CallOption) (*ModelLendingState, error)
 	InspectOllama(ctx context.Context, in *InspectOllamaRequest, opts ...grpc.CallOption) (*InspectOllamaResponse, error)
@@ -646,9 +647,10 @@ type NodeServiceServer interface {
 	SaveModelProfile(context.Context, *SaveModelProfileRequest) (*ModelProfile, error)
 	DeleteModelProfile(context.Context, *DeleteModelProfileRequest) (*DeleteModelProfileResponse, error)
 	// GetModelLending says how this machine lends its Ollama models to the
-	// pool: as saved, and as the node runs now. SetModelLending saves it;
-	// it takes effect when the node next starts. InspectOllama asks an
-	// Ollama what it is and which of its models would be lent.
+	// pool: as saved, and as the node runs now. SetModelLending applies model
+	// allowlists and request limits live when lending stays enabled at the
+	// same address; enabling, disabling or changing that address takes effect
+	// on restart. InspectOllama asks an Ollama what it is and which models it lends.
 	GetModelLending(context.Context, *GetModelLendingRequest) (*ModelLendingState, error)
 	SetModelLending(context.Context, *SetModelLendingRequest) (*ModelLendingState, error)
 	InspectOllama(context.Context, *InspectOllamaRequest) (*InspectOllamaResponse, error)

@@ -83,7 +83,7 @@ export function ModelLendingSettings({ messages }: { messages: Messages }) {
   return <Card>
     <CardHeader className="flex flex-row items-start gap-3 border-b border-[var(--app-line)] py-4">
       <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><Cpu className="size-4 text-muted-foreground" /></div>
-      <div className="min-w-0 flex-1"><CardTitle className="text-sm">{labels.lendingTitle}</CardTitle><CardDescription className="mt-1 text-xs">{labels.lendingDescription}</CardDescription></div>
+      <div className="min-w-0 flex-1"><CardTitle className="text-sm">{labels.lendingTitle}</CardTitle><CardDescription className="mt-1 text-xs">{labels.lendingDescription} {labels.lendingLiveNote}</CardDescription></div>
       {state?.restartNeeded && <Badge variant="outline" className="shrink-0">{labels.restartNeeded}</Badge>}
     </CardHeader>
     <CardContent className="space-y-5 pt-4">

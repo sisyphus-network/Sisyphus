@@ -418,7 +418,8 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 	}
 	if lent.Enabled {
-		runs = runs.With(runtime.WithModels(lent.URL, ownerOf(lent))...)
+		local.LiveLending = runtime.NewModelServer(lent.URL, ownerOf(lent))
+		runs = runs.With(runtime.WithLiveModels(local.LiveLending)...)
 	}
 	local.Lending, local.Lent, local.LentByFlags = db, lent, *modelsFrom != ""
 	local.AllowLAN = *webLAN

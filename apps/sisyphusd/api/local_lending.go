@@ -42,8 +42,10 @@ func (s *localService) GetModelLending(ctx context.Context, _ *nodepb.GetModelLe
 	return s.lendingState(saved), nil
 }
 
-// SetModelLending saves how the machine lends its models, for the next
-// time the node starts.
+// SetModelLending saves how the machine lends its models. If the worker is
+// already lending from the same Ollama, its allowlist and request limits
+// take effect immediately; changing whether it lends or where Ollama is
+// still requires a restart.
 func (s *localService) SetModelLending(ctx context.Context, req *nodepb.SetModelLendingRequest) (*nodepb.ModelLendingState, error) {
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
@@ -58,6 +60,21 @@ func (s *localService) SetModelLending(ctx context.Context, req *nodepb.SetModel
 	if err := s.cfg.Lending.SetModelLending(l); err != nil {
 		return nil, asError(err)
 	}
+	s.lendingMu.Lock()
+	running := s.cfg.Lent
+	if !s.cfg.LentByFlags && sameLendingRuntime(l, running) {
+		if l.Enabled {
+			if s.cfg.LiveLending != nil {
+				s.cfg.LiveLending.Update(lendingOwner(l))
+				s.cfg.Lent = l
+			}
+		} else {
+			// There is no active model server to reconfigure while lending is
+			// off; remember the current saved values without a pointless restart.
+			s.cfg.Lent = l
+		}
+	}
+	s.lendingMu.Unlock()
 	return s.lendingState(l), nil
 }
 
@@ -84,12 +101,33 @@ func (s *localService) InspectOllama(ctx context.Context, req *nodepb.InspectOll
 var errNoLending = status.Error(codes.FailedPrecondition, "this node keeps no settings for lending models")
 
 func (s *localService) lendingState(saved nodedb.ModelLending) *nodepb.ModelLendingState {
+	s.lendingMu.RLock()
+	running, byFlags, live := s.cfg.Lent, s.cfg.LentByFlags, s.cfg.LiveLending
+	s.lendingMu.RUnlock()
+	restartNeeded := !byFlags && !sameLendingRuntime(saved, running)
+	if !byFlags && saved.Enabled && sameLendingRuntime(saved, running) && live == nil && !reflect.DeepEqual(saved, running) {
+		restartNeeded = true
+	}
 	return &nodepb.ModelLendingState{
 		Saved:         lendingPB(saved),
-		Running:       lendingPB(s.cfg.Lent),
-		SetByFlags:    s.cfg.LentByFlags,
-		RestartNeeded: !s.cfg.LentByFlags && !reflect.DeepEqual(saved, s.cfg.Lent),
+		Running:       lendingPB(running),
+		SetByFlags:    byFlags,
+		RestartNeeded: restartNeeded,
 	}
+}
+
+func sameLendingRuntime(saved, running nodedb.ModelLending) bool {
+	return saved.Enabled == running.Enabled && (!saved.Enabled || saved.URL == running.URL)
+}
+
+func lendingOwner(l nodedb.ModelLending) runtime.Owner {
+	owner := runtime.Owner{Only: append([]string(nil), l.Only...), Options: map[string]any{}, KeepAlive: l.KeepAlive}
+	for setting, value := range map[string]int{"num_gpu": l.GPULayers, "num_thread": l.Threads, "num_ctx": l.Context} {
+		if value > 0 || (setting == "num_gpu" && value == 0) {
+			owner.Options[setting] = value
+		}
+	}
+	return owner
 }
 
 // checkLending refuses settings Ollama could not use. Settings that lend

@@ -48,9 +48,11 @@ service NodeService {
   rpc SaveModelProfile(SaveModelProfileRequest) returns (ModelProfile);
   rpc DeleteModelProfile(DeleteModelProfileRequest) returns (DeleteModelProfileResponse);
   // GetModelLending says how this machine lends its Ollama models to the
-  // pool: as saved, and as the node runs now. SetModelLending saves it;
-  // it takes effect when the node next starts. InspectOllama asks an
-  // Ollama what it is and which of its models would be lent.
+  // pool: as saved, and as the node runs now. SetModelLending applies model
+  // allowlists and request limits live when lending stays enabled at the
+  // same address; enabling, disabling or changing that address takes effect
+  // on restart. InspectOllama asks an Ollama what it is and which of its
+  // models would be lent.
   rpc GetModelLending(GetModelLendingRequest) returns (ModelLendingState);
   rpc SetModelLending(SetModelLendingRequest) returns (ModelLendingState);
   rpc InspectOllama(InspectOllamaRequest) returns (InspectOllamaResponse);
@@ -477,14 +479,14 @@ message ModelLending {
 }
 
 message ModelLendingState {
-  // What is saved, for the next start.
+  // What is saved.
   ModelLending saved = 1;
   // What the node runs with now.
   ModelLending running = 2;
   // The node was started with --models-from, which decides in place of
   // what is saved.
   bool set_by_flags = 3;
-  // What is saved differs from what runs, until the node is restarted.
+  // A change to lending state or address is saved but waits for restart.
   bool restart_needed = 4;
 }
 

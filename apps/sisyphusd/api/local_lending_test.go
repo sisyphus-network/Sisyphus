@@ -54,6 +54,41 @@ func TestModelLendingSetByFlagsNeedsNoRestart(t *testing.T) {
 	}
 }
 
+func TestModelLendingPolicyAppliesLiveAtTheRunningAddress(t *testing.T) {
+	running := nodedb.ModelLending{Enabled: true, URL: "http://127.0.0.1:11434", Only: []string{"first"}, GPULayers: -1}
+	live := runtime.NewModelServer(running.URL, lendingOwner(running))
+	client := serveLocal(t, LocalConfig{Lending: newFileList(t), Lent: running, LiveLending: live})
+
+	asked := &nodepb.ModelLending{Enabled: true, OllamaUrl: running.URL, Only: []string{"second"}, GpuLayers: 0, Threads: 6, Context: 4096, KeepAlive: "10m"}
+	state, err := client.SetModelLending(withToken("the-token"), &nodepb.SetModelLendingRequest{Lending: asked})
+	if err != nil || state.GetRestartNeeded() {
+		t.Fatalf("save live policy = %v, %v; want no restart", state, err)
+	}
+	if got := state.GetRunning(); !got.GetEnabled() || got.GetOllamaUrl() != running.URL || strings.Join(got.GetOnly(), ",") != "second" || got.GetThreads() != 6 || got.GetContext() != 4096 {
+		t.Fatalf("running settings = %v", got)
+	}
+	url, owner := live.Settings()
+	if url != running.URL || strings.Join(owner.Only, ",") != "second" || owner.Options["num_gpu"] != 0 || owner.Options["num_thread"] != 6 || owner.Options["num_ctx"] != 4096 || owner.KeepAlive != "10m" {
+		t.Fatalf("live model server = %q, %+v", url, owner)
+	}
+}
+
+func TestModelLendingAddressChangeStillNeedsRestart(t *testing.T) {
+	running := nodedb.ModelLending{Enabled: true, URL: "http://127.0.0.1:11434", Only: []string{"first"}, GPULayers: -1}
+	live := runtime.NewModelServer(running.URL, lendingOwner(running))
+	client := serveLocal(t, LocalConfig{Lending: newFileList(t), Lent: running, LiveLending: live})
+	state, err := client.SetModelLending(withToken("the-token"), &nodepb.SetModelLendingRequest{Lending: &nodepb.ModelLending{
+		Enabled: true, OllamaUrl: "http://127.0.0.1:11435", Only: []string{"second"}, GpuLayers: -1,
+	}})
+	if err != nil || !state.GetRestartNeeded() || state.GetRunning().GetOllamaUrl() != running.URL {
+		t.Fatalf("save address change = %v, %v; want restart and old running address", state, err)
+	}
+	url, owner := live.Settings()
+	if url != running.URL || strings.Join(owner.Only, ",") != "first" {
+		t.Fatalf("address change altered live runtime: %q, %+v", url, owner)
+	}
+}
+
 func TestModelLendingRefusesWhatOllamaCouldNotUse(t *testing.T) {
 	client := serveLocal(t, LocalConfig{Lending: newFileList(t)})
 	ctx := withToken("the-token")

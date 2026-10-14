@@ -3181,14 +3181,14 @@ func (x *ModelLending) GetKeepAlive() string {
 
 type ModelLendingState struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// What is saved, for the next start.
+	// What is saved.
 	Saved *ModelLending `protobuf:"bytes,1,opt,name=saved,proto3" json:"saved,omitempty"`
 	// What the node runs with now.
 	Running *ModelLending `protobuf:"bytes,2,opt,name=running,proto3" json:"running,omitempty"`
 	// The node was started with --models-from, which decides in place of
 	// what is saved.
 	SetByFlags bool `protobuf:"varint,3,opt,name=set_by_flags,json=setByFlags,proto3" json:"set_by_flags,omitempty"`
-	// What is saved differs from what runs, until the node is restarted.
+	// A change to lending state or address is saved but waits for restart.
 	RestartNeeded bool `protobuf:"varint,4,opt,name=restart_needed,json=restartNeeded,proto3" json:"restart_needed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
