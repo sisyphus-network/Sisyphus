@@ -80,6 +80,9 @@ type Config struct {
 	// which is what lets strangers find each other. What a stranger can do
 	// once connected is for the services on the host to decide.
 	Discover bool
+	// AddrsFactory overrides which listening addresses this host advertises.
+	// Nil keeps libp2p's default address selection.
+	AddrsFactory func([]ma.Multiaddr) []ma.Multiaddr
 	// MaxConnections is how many connections the host takes at once, from
 	// everyone. Zero leaves it to what the machine can hold open.
 	MaxConnections int
@@ -250,6 +253,9 @@ func New(cfg Config) (*Host, error) {
 		libp2p.EnableHolePunching(),
 		libp2p.DisableMetrics(),
 		libp2p.UserAgent("sisyphusd"),
+	}
+	if cfg.AddrsFactory != nil {
+		options = append(options, libp2p.AddrsFactory(cfg.AddrsFactory))
 	}
 	if cfg.Relay {
 		members := relayRules(cfg.Allow)
