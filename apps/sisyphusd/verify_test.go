@@ -376,7 +376,7 @@ func TestCancellingAVerifiedJobStopsEveryCopy(t *testing.T) {
 func TestACopyThatRunsTooLongIsStoppedAndTheResultsInAreKept(t *testing.T) {
 	p := startPool(t, runtime.Builtin())
 	crew := p.crew("alpha", "beta", "gamma")
-	alpha, beta := crew[0], crew[1]
+	alpha, beta, gamma := crew[0], crew[1], crew[2]
 	spec := verifiedPrimes(1, 2)
 	spec.TaskTimeoutSeconds = 3600
 	id := p.submit(spec).GetJobId()
@@ -385,17 +385,18 @@ func TestACopyThatRunsTooLongIsStoppedAndTheResultsInAreKept(t *testing.T) {
 	waitFor(t, func() bool { return p.job(id).GetTasks()[0].GetProgress() == 0.5 })
 
 	// Within the hour nothing happens; past it the copy still out is
-	// stopped and handed out again, to a worker that has not answered.
+	// stopped and handed out again, to a worker that has neither answered
+	// nor run too long.
 	p.coord.Expire(time.Now().Add(30 * time.Minute))
 	p.coord.Expire(time.Now().Add(2 * time.Hour))
 	if stop := beta.toldToStop(); stop.GetTaskId() != second.GetTaskId() || stop.GetAttempt() != 2 {
 		t.Errorf("the worker that ran too long was told to stop %v", stop)
 	}
-	again := beta.assignment()
+	again := gamma.assignment()
 	if again.GetAttempt() != 3 {
 		t.Errorf("the copy handed out after one ran too long is attempt %d", again.GetAttempt())
 	}
-	beta.returns(again, `{"count":7}`)
+	gamma.returns(again, `{"count":7}`)
 	done := p.wait(id)
 	if done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || string(done.GetResult()) != `{"count":7}` {
 		t.Fatalf("the job %v: %s, %s", done.GetState(), done.GetResult(), done.GetError())
