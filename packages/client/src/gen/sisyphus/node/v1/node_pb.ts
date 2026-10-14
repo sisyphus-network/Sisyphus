@@ -268,6 +268,276 @@ export class GetNodeInfoResponse extends Message<GetNodeInfoResponse> {
 }
 
 /**
+ * @generated from message sisyphus.node.v1.GetWebAccessConfigRequest
+ */
+export class GetWebAccessConfigRequest extends Message<GetWebAccessConfigRequest> {
+  constructor(data?: PartialMessage<GetWebAccessConfigRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.GetWebAccessConfigRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetWebAccessConfigRequest {
+    return new GetWebAccessConfigRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetWebAccessConfigRequest {
+    return new GetWebAccessConfigRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetWebAccessConfigRequest {
+    return new GetWebAccessConfigRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: GetWebAccessConfigRequest | PlainMessage<GetWebAccessConfigRequest> | undefined, b: GetWebAccessConfigRequest | PlainMessage<GetWebAccessConfigRequest> | undefined): boolean {
+    return proto3.util.equals(GetWebAccessConfigRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.WebAccessConfig
+ */
+export class WebAccessConfig extends Message<WebAccessConfig> {
+  /**
+   * @generated from field: bool enabled = 1;
+   */
+  enabled = false;
+
+  /**
+   * A specific IP:port assigned to this node; wildcard listeners are not
+   * accepted. An enabled listener always uses HTTPS and browser pairing.
+   *
+   * @generated from field: string listen_address = 2;
+   */
+  listenAddress = "";
+
+  /**
+   * @generated from field: string certificate_fingerprint = 3;
+   */
+  certificateFingerprint = "";
+
+  /**
+   * @generated from field: bool restart_required = 4;
+   */
+  restartRequired = false;
+
+  /**
+   * @generated from field: string public_url = 5;
+   */
+  publicUrl = "";
+
+  /**
+   * Every selected interface address listens on the same port. The singular
+   * listen_address remains the first entry for older desktop clients.
+   *
+   * @generated from field: repeated string listen_addresses = 6;
+   */
+  listenAddresses: string[] = [];
+
+  constructor(data?: PartialMessage<WebAccessConfig>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.WebAccessConfig";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "enabled", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 2, name: "listen_address", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "certificate_fingerprint", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "restart_required", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 5, name: "public_url", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 6, name: "listen_addresses", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): WebAccessConfig {
+    return new WebAccessConfig().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): WebAccessConfig {
+    return new WebAccessConfig().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): WebAccessConfig {
+    return new WebAccessConfig().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: WebAccessConfig | PlainMessage<WebAccessConfig> | undefined, b: WebAccessConfig | PlainMessage<WebAccessConfig> | undefined): boolean {
+    return proto3.util.equals(WebAccessConfig, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.SetWebAccessConfigRequest
+ */
+export class SetWebAccessConfigRequest extends Message<SetWebAccessConfigRequest> {
+  /**
+   * @generated from field: bool enabled = 1;
+   */
+  enabled = false;
+
+  /**
+   * @generated from field: string listen_address = 2;
+   */
+  listenAddress = "";
+
+  /**
+   * @generated from field: string public_url = 3;
+   */
+  publicUrl = "";
+
+  /**
+   * @generated from field: repeated string listen_addresses = 4;
+   */
+  listenAddresses: string[] = [];
+
+  constructor(data?: PartialMessage<SetWebAccessConfigRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.SetWebAccessConfigRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "enabled", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 2, name: "listen_address", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "public_url", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "listen_addresses", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SetWebAccessConfigRequest {
+    return new SetWebAccessConfigRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SetWebAccessConfigRequest {
+    return new SetWebAccessConfigRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SetWebAccessConfigRequest {
+    return new SetWebAccessConfigRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SetWebAccessConfigRequest | PlainMessage<SetWebAccessConfigRequest> | undefined, b: SetWebAccessConfigRequest | PlainMessage<SetWebAccessConfigRequest> | undefined): boolean {
+    return proto3.util.equals(SetWebAccessConfigRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.ListNetworkInterfacesRequest
+ */
+export class ListNetworkInterfacesRequest extends Message<ListNetworkInterfacesRequest> {
+  constructor(data?: PartialMessage<ListNetworkInterfacesRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.ListNetworkInterfacesRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListNetworkInterfacesRequest {
+    return new ListNetworkInterfacesRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): ListNetworkInterfacesRequest {
+    return new ListNetworkInterfacesRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): ListNetworkInterfacesRequest {
+    return new ListNetworkInterfacesRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: ListNetworkInterfacesRequest | PlainMessage<ListNetworkInterfacesRequest> | undefined, b: ListNetworkInterfacesRequest | PlainMessage<ListNetworkInterfacesRequest> | undefined): boolean {
+    return proto3.util.equals(ListNetworkInterfacesRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.ListNetworkInterfacesResponse
+ */
+export class ListNetworkInterfacesResponse extends Message<ListNetworkInterfacesResponse> {
+  /**
+   * @generated from field: repeated sisyphus.node.v1.NetworkInterface interfaces = 1;
+   */
+  interfaces: NetworkInterface[] = [];
+
+  constructor(data?: PartialMessage<ListNetworkInterfacesResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.ListNetworkInterfacesResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "interfaces", kind: "message", T: NetworkInterface, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListNetworkInterfacesResponse {
+    return new ListNetworkInterfacesResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): ListNetworkInterfacesResponse {
+    return new ListNetworkInterfacesResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): ListNetworkInterfacesResponse {
+    return new ListNetworkInterfacesResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: ListNetworkInterfacesResponse | PlainMessage<ListNetworkInterfacesResponse> | undefined, b: ListNetworkInterfacesResponse | PlainMessage<ListNetworkInterfacesResponse> | undefined): boolean {
+    return proto3.util.equals(ListNetworkInterfacesResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.NetworkInterface
+ */
+export class NetworkInterface extends Message<NetworkInterface> {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name = "";
+
+  /**
+   * @generated from field: string address = 2;
+   */
+  address = "";
+
+  constructor(data?: PartialMessage<NetworkInterface>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.NetworkInterface";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "address", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): NetworkInterface {
+    return new NetworkInterface().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): NetworkInterface {
+    return new NetworkInterface().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): NetworkInterface {
+    return new NetworkInterface().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: NetworkInterface | PlainMessage<NetworkInterface> | undefined, b: NetworkInterface | PlainMessage<NetworkInterface> | undefined): boolean {
+    return proto3.util.equals(NetworkInterface, a, b);
+  }
+}
+
+/**
  * @generated from message sisyphus.node.v1.ListPeersRequest
  */
 export class ListPeersRequest extends Message<ListPeersRequest> {
@@ -1068,6 +1338,37 @@ export class Worker extends Message<Worker> {
    */
   models: string[] = [];
 
+  /**
+   * Those of them its model server had in memory when it last said, and
+   * how much of each is on a graphics card. A model not listed here is
+   * loaded when first asked for, which takes a while.
+   *
+   * @generated from field: repeated sisyphus.node.v1.LoadedModel loaded_models = 20;
+   */
+  loadedModels: LoadedModel[] = [];
+
+  /**
+   * Its standing, which outlasts any one job: how many results it has
+   * returned for verified tasks that were among those the task was settled
+   * by, and how many that were not. probation is how many agreeing results
+   * it still owes, having been outvoted, before a job that verifies a
+   * share of its tasks takes its word alone again; zero for a worker that
+   * is not on probation.
+   *
+   * @generated from field: uint64 verified_agreed = 17;
+   */
+  verifiedAgreed = protoInt64.zero;
+
+  /**
+   * @generated from field: uint64 verified_outvoted = 18;
+   */
+  verifiedOutvoted = protoInt64.zero;
+
+  /**
+   * @generated from field: uint32 probation = 19;
+   */
+  probation = 0;
+
   constructor(data?: PartialMessage<Worker>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1092,6 +1393,10 @@ export class Worker extends Message<Worker> {
     { no: 14, name: "memory_bytes", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
     { no: 15, name: "gpus", kind: "message", T: WorkerGpu, repeated: true },
     { no: 16, name: "models", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 20, name: "loaded_models", kind: "message", T: LoadedModel, repeated: true },
+    { no: 17, name: "verified_agreed", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+    { no: 18, name: "verified_outvoted", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+    { no: 19, name: "probation", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Worker {
@@ -1151,6 +1456,52 @@ export class WorkerGpu extends Message<WorkerGpu> {
 
   static equals(a: WorkerGpu | PlainMessage<WorkerGpu> | undefined, b: WorkerGpu | PlainMessage<WorkerGpu> | undefined): boolean {
     return proto3.util.equals(WorkerGpu, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.LoadedModel
+ */
+export class LoadedModel extends Message<LoadedModel> {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name = "";
+
+  /**
+   * From 0 to 100. The rest is in the machine's memory and worked by its
+   * processor, and replies come that much slower.
+   *
+   * @generated from field: uint32 on_card_percent = 2;
+   */
+  onCardPercent = 0;
+
+  constructor(data?: PartialMessage<LoadedModel>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.LoadedModel";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "on_card_percent", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): LoadedModel {
+    return new LoadedModel().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): LoadedModel {
+    return new LoadedModel().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): LoadedModel {
+    return new LoadedModel().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: LoadedModel | PlainMessage<LoadedModel> | undefined, b: LoadedModel | PlainMessage<LoadedModel> | undefined): boolean {
+    return proto3.util.equals(LoadedModel, a, b);
   }
 }
 
@@ -1274,6 +1625,30 @@ export class Job extends Message<Job> {
    */
   recordCid = "";
 
+  /**
+   * How many different workers must return the same result for each task;
+   * see SubmitJobRequest. Zero or one for a job that is not verified.
+   *
+   * @generated from field: uint32 verify = 21;
+   */
+  verify = 0;
+
+  /**
+   * The share of its tasks that are verified, if not all of them; see
+   * SubmitJobRequest.
+   *
+   * @generated from field: double verify_share = 22;
+   */
+  verifyShare = 0;
+
+  /**
+   * The share of its tasks the coordinator runs again itself; see
+   * SubmitJobRequest.
+   *
+   * @generated from field: double audit_share = 23;
+   */
+  auditShare = 0;
+
   constructor(data?: PartialMessage<Job>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1302,6 +1677,9 @@ export class Job extends Message<Job> {
     { no: 18, name: "parent_job_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 19, name: "step", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 20, name: "record_cid", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 21, name: "verify", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
+    { no: 22, name: "verify_share", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
+    { no: 23, name: "audit_share", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Job {
@@ -1368,6 +1746,14 @@ export class JobTask extends Message<JobTask> {
    */
   progress = 0;
 
+  /**
+   * In a job that is verified, how many different workers must return the
+   * same result for this task: one for a task its spot checks passed over.
+   *
+   * @generated from field: uint32 verify = 8;
+   */
+  verify = 0;
+
   constructor(data?: PartialMessage<JobTask>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1383,6 +1769,7 @@ export class JobTask extends Message<JobTask> {
     { no: 5, name: "worker_name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 6, name: "error", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 7, name: "progress", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
+    { no: 8, name: "verify", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): JobTask {
@@ -1459,6 +1846,39 @@ export class SubmitJobRequest extends Message<SubmitJobRequest> {
    */
   private = false;
 
+  /**
+   * Verify the job's results by replication: two or more has each task run
+   * by that many different workers, and the task succeeds only once that
+   * many have returned the same result. Zero or one runs each task once.
+   * Only for work that gives the same result every time, and not for a
+   * private job. It is refused if fewer workers that could take the job
+   * are connected.
+   *
+   * @generated from field: uint32 verify = 9;
+   */
+  verify = 0;
+
+  /**
+   * Spot checks: with verify, a share between 0 and 1 has only that share
+   * of the tasks verified, chosen at random and rounded up to a whole task,
+   * and the rest run once. A worker whose result for a verified task loses
+   * to the one the others agree on has the tasks it ran unverified in the
+   * job verified after all. Zero, and one, verify every task.
+   *
+   * @generated from field: double verify_share = 10;
+   */
+  verifyShare = 0;
+
+  /**
+   * A share between 0 and 1 of the job's tasks, picked by chance as their
+   * results come in, that the coordinating node runs again itself before
+   * taking the result. Where the two differ its own is taken. Refused for
+   * a workload that node cannot run itself.
+   *
+   * @generated from field: double audit_share = 11;
+   */
+  auditShare = 0;
+
   constructor(data?: PartialMessage<SubmitJobRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1475,6 +1895,9 @@ export class SubmitJobRequest extends Message<SubmitJobRequest> {
     { no: 6, name: "min_memory_bytes", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
     { no: 7, name: "min_gpus", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
     { no: 8, name: "private", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 9, name: "verify", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
+    { no: 10, name: "verify_share", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
+    { no: 11, name: "audit_share", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SubmitJobRequest {
@@ -1671,6 +2094,10 @@ export class JobEvent extends Message<JobEvent> {
   /**
    * What happened: submitted, task-started, task-succeeded, task-failed,
    * task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
+   * In a job that is verified, also task-result, for each result a worker
+   * returns, task-disagreed, when the results in for a task differ, and
+   * task-rechecked, when a task that spot checks had passed over is to be
+   * verified after all.
    *
    * @generated from field: string kind = 3;
    */

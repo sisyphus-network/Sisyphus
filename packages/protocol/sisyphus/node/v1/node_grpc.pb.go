@@ -20,6 +20,9 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	NodeService_GetNodeInfo_FullMethodName               = "/sisyphus.node.v1.NodeService/GetNodeInfo"
+	NodeService_GetWebAccessConfig_FullMethodName        = "/sisyphus.node.v1.NodeService/GetWebAccessConfig"
+	NodeService_SetWebAccessConfig_FullMethodName        = "/sisyphus.node.v1.NodeService/SetWebAccessConfig"
+	NodeService_ListNetworkInterfaces_FullMethodName     = "/sisyphus.node.v1.NodeService/ListNetworkInterfaces"
 	NodeService_ListPeers_FullMethodName                 = "/sisyphus.node.v1.NodeService/ListPeers"
 	NodeService_WatchPeers_FullMethodName                = "/sisyphus.node.v1.NodeService/WatchPeers"
 	NodeService_GetBootstrapPeers_FullMethodName         = "/sisyphus.node.v1.NodeService/GetBootstrapPeers"
@@ -62,6 +65,12 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeServiceClient interface {
 	GetNodeInfo(ctx context.Context, in *GetNodeInfoRequest, opts ...grpc.CallOption) (*GetNodeInfoResponse, error)
+	// Browser access is disabled until explicitly enabled by the node owner.
+	GetWebAccessConfig(ctx context.Context, in *GetWebAccessConfigRequest, opts ...grpc.CallOption) (*WebAccessConfig, error)
+	SetWebAccessConfig(ctx context.Context, in *SetWebAccessConfigRequest, opts ...grpc.CallOption) (*WebAccessConfig, error)
+	// ListNetworkInterfaces lists usable, non-loopback IP addresses assigned
+	// to interfaces on this node, for configuring its optional web listener.
+	ListNetworkInterfaces(ctx context.Context, in *ListNetworkInterfacesRequest, opts ...grpc.CallOption) (*ListNetworkInterfacesResponse, error)
 	ListPeers(ctx context.Context, in *ListPeersRequest, opts ...grpc.CallOption) (*ListPeersResponse, error)
 	WatchPeers(ctx context.Context, in *WatchPeersRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListPeersResponse], error)
 	GetBootstrapPeers(ctx context.Context, in *GetBootstrapPeersRequest, opts ...grpc.CallOption) (*GetBootstrapPeersResponse, error)
@@ -154,6 +163,36 @@ func (c *nodeServiceClient) GetNodeInfo(ctx context.Context, in *GetNodeInfoRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetNodeInfoResponse)
 	err := c.cc.Invoke(ctx, NodeService_GetNodeInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetWebAccessConfig(ctx context.Context, in *GetWebAccessConfigRequest, opts ...grpc.CallOption) (*WebAccessConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WebAccessConfig)
+	err := c.cc.Invoke(ctx, NodeService_GetWebAccessConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) SetWebAccessConfig(ctx context.Context, in *SetWebAccessConfigRequest, opts ...grpc.CallOption) (*WebAccessConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WebAccessConfig)
+	err := c.cc.Invoke(ctx, NodeService_SetWebAccessConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) ListNetworkInterfaces(ctx context.Context, in *ListNetworkInterfacesRequest, opts ...grpc.CallOption) (*ListNetworkInterfacesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListNetworkInterfacesResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListNetworkInterfaces_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -572,6 +611,12 @@ func (c *nodeServiceClient) JoinPool(ctx context.Context, in *JoinPoolRequest, o
 // for forward compatibility.
 type NodeServiceServer interface {
 	GetNodeInfo(context.Context, *GetNodeInfoRequest) (*GetNodeInfoResponse, error)
+	// Browser access is disabled until explicitly enabled by the node owner.
+	GetWebAccessConfig(context.Context, *GetWebAccessConfigRequest) (*WebAccessConfig, error)
+	SetWebAccessConfig(context.Context, *SetWebAccessConfigRequest) (*WebAccessConfig, error)
+	// ListNetworkInterfaces lists usable, non-loopback IP addresses assigned
+	// to interfaces on this node, for configuring its optional web listener.
+	ListNetworkInterfaces(context.Context, *ListNetworkInterfacesRequest) (*ListNetworkInterfacesResponse, error)
 	ListPeers(context.Context, *ListPeersRequest) (*ListPeersResponse, error)
 	WatchPeers(*WatchPeersRequest, grpc.ServerStreamingServer[ListPeersResponse]) error
 	GetBootstrapPeers(context.Context, *GetBootstrapPeersRequest) (*GetBootstrapPeersResponse, error)
@@ -662,6 +707,15 @@ type UnimplementedNodeServiceServer struct{}
 
 func (UnimplementedNodeServiceServer) GetNodeInfo(context.Context, *GetNodeInfoRequest) (*GetNodeInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNodeInfo not implemented")
+}
+func (UnimplementedNodeServiceServer) GetWebAccessConfig(context.Context, *GetWebAccessConfigRequest) (*WebAccessConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWebAccessConfig not implemented")
+}
+func (UnimplementedNodeServiceServer) SetWebAccessConfig(context.Context, *SetWebAccessConfigRequest) (*WebAccessConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetWebAccessConfig not implemented")
+}
+func (UnimplementedNodeServiceServer) ListNetworkInterfaces(context.Context, *ListNetworkInterfacesRequest) (*ListNetworkInterfacesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListNetworkInterfaces not implemented")
 }
 func (UnimplementedNodeServiceServer) ListPeers(context.Context, *ListPeersRequest) (*ListPeersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListPeers not implemented")
@@ -803,6 +857,60 @@ func _NodeService_GetNodeInfo_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeServiceServer).GetNodeInfo(ctx, req.(*GetNodeInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetWebAccessConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWebAccessConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetWebAccessConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetWebAccessConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetWebAccessConfig(ctx, req.(*GetWebAccessConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_SetWebAccessConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetWebAccessConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).SetWebAccessConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_SetWebAccessConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).SetWebAccessConfig(ctx, req.(*SetWebAccessConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_ListNetworkInterfaces_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNetworkInterfacesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListNetworkInterfaces(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListNetworkInterfaces_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListNetworkInterfaces(ctx, req.(*ListNetworkInterfacesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1394,6 +1502,18 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetNodeInfo",
 			Handler:    _NodeService_GetNodeInfo_Handler,
+		},
+		{
+			MethodName: "GetWebAccessConfig",
+			Handler:    _NodeService_GetWebAccessConfig_Handler,
+		},
+		{
+			MethodName: "SetWebAccessConfig",
+			Handler:    _NodeService_SetWebAccessConfig_Handler,
+		},
+		{
+			MethodName: "ListNetworkInterfaces",
+			Handler:    _NodeService_ListNetworkInterfaces_Handler,
 		},
 		{
 			MethodName: "ListPeers",

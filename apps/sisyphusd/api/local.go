@@ -3,6 +3,9 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"net"
+	"net/netip"
+	"sort"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -85,6 +88,8 @@ type LocalConfig struct {
 	// BrowserAccess keeps one-time pairing codes and revocable browser
 	// credentials in the node database. Nil uses volatile storage (tests only).
 	BrowserAccess BrowserAccessStore
+	// WebAccess controls the separate, opt-in HTTPS listener for browser clients.
+	WebAccess WebAccessController
 	// AllowLAN accepts requests addressed to one of this host's private IPs.
 	// The listener must separately be enabled on a private interface.
 	AllowLAN bool
@@ -102,6 +107,13 @@ type BrowserAccessStore interface {
 	ConsumeBrowserPairing(codeHash []byte, now time.Time, device nodedb.BrowserDevice) (bool, error)
 	BrowserDevices() ([]nodedb.BrowserDevice, error)
 	DeleteBrowserDevice(id string) error
+}
+
+// WebAccessController owns persisted settings and the lifetime of the
+// optional HTTPS listener. The private key never crosses the local API.
+type WebAccessController interface {
+	Get() (nodedb.WebAccessConfig, string, bool, error)
+	Set(context.Context, nodedb.WebAccessConfig) (nodedb.WebAccessConfig, string, bool, error)
 }
 
 // AddressBook is where a node keeps the addresses it starts from. A
@@ -177,6 +189,99 @@ func normal(cfg LocalConfig) LocalConfig {
 type localService struct {
 	nodepb.UnimplementedNodeServiceServer
 	cfg LocalConfig
+}
+
+func (s *localService) GetWebAccessConfig(ctx context.Context, _ *nodepb.GetWebAccessConfigRequest) (*nodepb.WebAccessConfig, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.WebAccess == nil {
+		return &nodepb.WebAccessConfig{}, nil
+	}
+	config, fingerprint, restartRequired, err := s.cfg.WebAccess.Get()
+	if err != nil {
+		return nil, asError(err)
+	}
+	return webAccessProtoConfig(config, fingerprint, restartRequired), nil
+}
+
+func (s *localService) SetWebAccessConfig(ctx context.Context, req *nodepb.SetWebAccessConfigRequest) (*nodepb.WebAccessConfig, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.WebAccess == nil {
+		return nil, status.Error(codes.FailedPrecondition, "web access configuration is unavailable")
+	}
+	addresses := req.GetListenAddresses()
+	if len(addresses) == 0 && req.GetListenAddress() != "" {
+		addresses = []string{req.GetListenAddress()}
+	}
+	listenAddress := req.GetListenAddress()
+	if len(addresses) > 0 {
+		listenAddress = addresses[0]
+	}
+	config, fingerprint, restartRequired, err := s.cfg.WebAccess.Set(ctx, nodedb.WebAccessConfig{
+		Enabled: req.GetEnabled(), ListenAddress: listenAddress, ListenAddresses: addresses, PublicURL: req.GetPublicUrl(),
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	return webAccessProtoConfig(config, fingerprint, restartRequired), nil
+}
+
+func webAccessProtoConfig(config nodedb.WebAccessConfig, fingerprint string, restartRequired bool) *nodepb.WebAccessConfig {
+	addresses := config.ListenAddresses
+	if len(addresses) == 0 && config.ListenAddress != "" {
+		addresses = []string{config.ListenAddress}
+	}
+	return &nodepb.WebAccessConfig{
+		Enabled: config.Enabled, ListenAddress: config.ListenAddress, ListenAddresses: addresses,
+		PublicUrl: config.PublicURL, CertificateFingerprint: fingerprint, RestartRequired: restartRequired,
+	}
+}
+
+func (s *localService) ListNetworkInterfaces(ctx context.Context, _ *nodepb.ListNetworkInterfacesRequest) (*nodepb.ListNetworkInterfacesResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list network interfaces: %v", err)
+	}
+	response := &nodepb.ListNetworkInterfacesResponse{}
+	seen := make(map[string]struct{})
+	for _, network := range interfaces {
+		if network.Flags&net.FlagUp == 0 || network.Flags&net.FlagRunning == 0 || network.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := network.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, item := range addresses {
+			prefix, err := netip.ParsePrefix(item.String())
+			if err != nil {
+				continue
+			}
+			address := prefix.Addr().Unmap()
+			if !address.IsValid() || address.IsLoopback() || address.IsUnspecified() || address.IsMulticast() || address.IsLinkLocalUnicast() {
+				continue
+			}
+			value := address.String()
+			if _, exists := seen[value]; exists {
+				continue
+			}
+			seen[value] = struct{}{}
+			response.Interfaces = append(response.Interfaces, &nodepb.NetworkInterface{Name: network.Name, Address: value})
+		}
+	}
+	sort.Slice(response.Interfaces, func(i, j int) bool {
+		if response.Interfaces[i].Name == response.Interfaces[j].Name {
+			return response.Interfaces[i].Address < response.Interfaces[j].Address
+		}
+		return response.Interfaces[i].Name < response.Interfaces[j].Name
+	})
+	return response, nil
 }
 
 type attachmentAssistant interface {

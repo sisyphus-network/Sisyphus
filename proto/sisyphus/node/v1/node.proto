@@ -6,6 +6,12 @@ option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisy
 
 service NodeService {
   rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
+  // Browser access is disabled until explicitly enabled by the node owner.
+  rpc GetWebAccessConfig(GetWebAccessConfigRequest) returns (WebAccessConfig);
+  rpc SetWebAccessConfig(SetWebAccessConfigRequest) returns (WebAccessConfig);
+  // ListNetworkInterfaces lists usable, non-loopback IP addresses assigned
+  // to interfaces on this node, for configuring its optional web listener.
+  rpc ListNetworkInterfaces(ListNetworkInterfacesRequest) returns (ListNetworkInterfacesResponse);
   rpc ListPeers(ListPeersRequest) returns (ListPeersResponse);
   rpc WatchPeers(WatchPeersRequest) returns (stream ListPeersResponse);
   rpc GetBootstrapPeers(GetBootstrapPeersRequest) returns (GetBootstrapPeersResponse);
@@ -112,6 +118,39 @@ message GetNodeInfoResponse {
   // Explicit API capabilities. Missing entries mean unsupported, including
   // when talking to an older daemon that ignores newer request fields.
   repeated string capabilities = 6;
+}
+
+message GetWebAccessConfigRequest {}
+
+message WebAccessConfig {
+  bool enabled = 1;
+  // A specific IP:port assigned to this node; wildcard listeners are not
+  // accepted. An enabled listener always uses HTTPS and browser pairing.
+  string listen_address = 2;
+  string certificate_fingerprint = 3;
+  bool restart_required = 4;
+  string public_url = 5;
+  // Every selected interface address listens on the same port. The singular
+  // listen_address remains the first entry for older desktop clients.
+  repeated string listen_addresses = 6;
+}
+
+message SetWebAccessConfigRequest {
+  bool enabled = 1;
+  string listen_address = 2;
+  string public_url = 3;
+  repeated string listen_addresses = 4;
+}
+
+message ListNetworkInterfacesRequest {}
+
+message ListNetworkInterfacesResponse {
+  repeated NetworkInterface interfaces = 1;
+}
+
+message NetworkInterface {
+  string name = 1;
+  string address = 2;
 }
 
 message ListPeersRequest {}

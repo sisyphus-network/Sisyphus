@@ -3,7 +3,7 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import { AskEvent, AskRequest, CancelJobRequest, CancelJobResponse, ConnectPeerRequest, ConnectPeerResponse, CreateInvitationRequest, CreateInvitationResponse, DeleteChatRequest, DeleteChatResponse, DeleteModelProfileRequest, DeleteModelProfileResponse, FetchFileRequest, FetchFileResponse, File, GetBootstrapPeersRequest, GetBootstrapPeersResponse, GetChatRequest, GetChatResponse, GetJobRequest, GetJobResponse, GetModelConfigRequest, GetNodeInfoRequest, GetNodeInfoResponse, JobEvent, JoinPoolRequest, JoinPoolResponse, ListChatsRequest, ListChatsResponse, ListFilesRequest, ListFilesResponse, ListJobsRequest, ListJobsResponse, ListMembersRequest, ListMembersResponse, ListModelProfilesRequest, ListModelProfilesResponse, ListModelsRequest, ListModelsResponse, ListPeersRequest, ListPeersResponse, ListProvidersRequest, ListProvidersResponse, ListWorkersRequest, ListWorkersResponse, ModelConfig, ModelProfile, PullModelProgress, PullModelRequest, RemoveFileRequest, RemoveFileResponse, RemoveMemberRequest, RemoveMemberResponse, RemoveModelRequest, RemoveModelResponse, SaveModelProfileRequest, SetBootstrapPeersRequest, SetBootstrapPeersResponse, SetModelConfigRequest, SetPeerComputePermissionsRequest, SetPeerComputePermissionsResponse, SetPeerComputeTrustRequest, SetPeerComputeTrustResponse, StoreFileRequest, SubmitJobRequest, SubmitJobResponse, WatchJobEventsRequest, WatchJobsRequest, WatchPeersRequest } from "./node_pb.js";
+import { AskEvent, AskRequest, CancelJobRequest, CancelJobResponse, ConnectPeerRequest, ConnectPeerResponse, CreateInvitationRequest, CreateInvitationResponse, DeleteChatRequest, DeleteChatResponse, DeleteModelProfileRequest, DeleteModelProfileResponse, FetchFileRequest, FetchFileResponse, File, GetBootstrapPeersRequest, GetBootstrapPeersResponse, GetChatRequest, GetChatResponse, GetJobRequest, GetJobResponse, GetModelConfigRequest, GetNodeInfoRequest, GetNodeInfoResponse, GetWebAccessConfigRequest, JobEvent, JoinPoolRequest, JoinPoolResponse, ListChatsRequest, ListChatsResponse, ListFilesRequest, ListFilesResponse, ListJobsRequest, ListJobsResponse, ListMembersRequest, ListMembersResponse, ListModelProfilesRequest, ListModelProfilesResponse, ListModelsRequest, ListModelsResponse, ListNetworkInterfacesRequest, ListNetworkInterfacesResponse, ListPeersRequest, ListPeersResponse, ListProvidersRequest, ListProvidersResponse, ListWorkersRequest, ListWorkersResponse, ModelConfig, ModelProfile, PullModelProgress, PullModelRequest, RemoveFileRequest, RemoveFileResponse, RemoveMemberRequest, RemoveMemberResponse, RemoveModelRequest, RemoveModelResponse, SaveModelProfileRequest, SetBootstrapPeersRequest, SetBootstrapPeersResponse, SetModelConfigRequest, SetPeerComputePermissionsRequest, SetPeerComputePermissionsResponse, SetPeerComputeTrustRequest, SetPeerComputeTrustResponse, SetWebAccessConfigRequest, StoreFileRequest, SubmitJobRequest, SubmitJobResponse, WatchJobEventsRequest, WatchJobsRequest, WatchPeersRequest, WebAccessConfig } from "./node_pb.js";
 import { MethodKind } from "@bufbuild/protobuf";
 
 /**
@@ -19,6 +19,38 @@ export const NodeService = {
       name: "GetNodeInfo",
       I: GetNodeInfoRequest,
       O: GetNodeInfoResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * Browser access is disabled until explicitly enabled by the node owner.
+     *
+     * @generated from rpc sisyphus.node.v1.NodeService.GetWebAccessConfig
+     */
+    getWebAccessConfig: {
+      name: "GetWebAccessConfig",
+      I: GetWebAccessConfigRequest,
+      O: WebAccessConfig,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * @generated from rpc sisyphus.node.v1.NodeService.SetWebAccessConfig
+     */
+    setWebAccessConfig: {
+      name: "SetWebAccessConfig",
+      I: SetWebAccessConfigRequest,
+      O: WebAccessConfig,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * ListNetworkInterfaces lists usable, non-loopback IP addresses assigned
+     * to interfaces on this node, for configuring its optional web listener.
+     *
+     * @generated from rpc sisyphus.node.v1.NodeService.ListNetworkInterfaces
+     */
+    listNetworkInterfaces: {
+      name: "ListNetworkInterfaces",
+      I: ListNetworkInterfacesRequest,
+      O: ListNetworkInterfacesResponse,
       kind: MethodKind.Unary,
     },
     /**

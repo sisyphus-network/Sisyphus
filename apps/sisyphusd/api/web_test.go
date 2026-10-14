@@ -630,6 +630,39 @@ func TestBrowserPairingFallbackThrottleAndSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestHTTPSWebListenerAcceptsOnlyItsConfiguredPublicHost(t *testing.T) {
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("secure UI")}}
+	server := httptest.NewTLSServer(NewWebAppHandler(LocalConfig{
+		AllowLAN: true, PairingOrigin: "https://node.example:9443",
+	}, nil, ui))
+	defer server.Close()
+
+	request := func(host string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	response := request("node.example:9443")
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || string(body) != "secure UI" {
+		t.Fatalf("configured public host: %d %s", response.StatusCode, body)
+	}
+	response = request("attacker.example:9443")
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("unconfigured host: %d, want forbidden", response.StatusCode)
+	}
+}
+
 func TestWebOriginHostAndStaticMethodEdges(t *testing.T) {
 	if sameOrigin(httptest.NewRequest(http.MethodGet, "http://example.test/", nil), "https://example.test") {
 		t.Fatal("accepted an origin with the wrong scheme")

@@ -37,6 +37,19 @@ type localNode struct {
 	peers []*nodepb.Peer
 }
 
+type webAccessControllerStub struct {
+	config nodedb.WebAccessConfig
+}
+
+func (s *webAccessControllerStub) Get() (nodedb.WebAccessConfig, string, bool, error) {
+	return s.config, "", false, nil
+}
+
+func (s *webAccessControllerStub) Set(_ context.Context, config nodedb.WebAccessConfig) (nodedb.WebAccessConfig, string, bool, error) {
+	s.config = config
+	return config, "", false, nil
+}
+
 func (n *localNode) setPeers(peers ...*nodepb.Peer) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -80,6 +93,25 @@ func startLocal(t *testing.T, coordinating bool) *localNode {
 // withToken is a context that presents the node's token.
 func withToken(token string) context.Context {
 	return metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+token)
+}
+
+func TestSetWebAccessConfigPreservesMultipleInterfaces(t *testing.T) {
+	controller := &webAccessControllerStub{}
+	service := &localService{cfg: LocalConfig{Token: "the-token", WebAccess: controller}}
+	want := []string{"192.168.1.20:50052", "10.0.0.8:50052"}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	response, err := service.SetWebAccessConfig(ctx, &nodepb.SetWebAccessConfigRequest{
+		ListenAddress: want[0], ListenAddresses: want, PublicUrl: "https://node.example.test:50052",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(controller.config.ListenAddresses, want) {
+		t.Fatalf("controller received listener addresses %v, want %v", controller.config.ListenAddresses, want)
+	}
+	if !slices.Equal(response.GetListenAddresses(), want) {
+		t.Fatalf("response listener addresses %v, want %v", response.GetListenAddresses(), want)
+	}
 }
 
 func peerEntry(id string, connected, trusted bool) *nodepb.Peer {
@@ -959,6 +991,38 @@ func TestThePlannersCallsOnANodeWithoutOneAndOnOneThatFails(t *testing.T) {
 	s := &localService{cfg: LocalConfig{Token: "the-token", Assistant: settable{}}}
 	if _, err := s.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", Model: "m", KeepApiKey: true}); status.Code(err) != codes.Internal {
 		t.Errorf("keeping the key and failing to save: %v", err)
+	}
+}
+
+func TestListNetworkInterfacesRequiresNodeTokenAndReturnsUsableAddresses(t *testing.T) {
+	service := &localService{cfg: LocalConfig{Token: "the-token"}}
+	if _, err := service.ListNetworkInterfaces(context.Background(), &nodepb.ListNetworkInterfacesRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("without node token: %v", err)
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	response, err := service.ListNetworkInterfaces(ctx, &nodepb.ListNetworkInterfacesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenAddresses := make(map[string]struct{}, len(response.GetInterfaces()))
+	for _, item := range response.GetInterfaces() {
+		address := net.ParseIP(item.GetAddress())
+		if item.GetName() == "" || address == nil || address.IsLoopback() || address.IsUnspecified() || address.IsMulticast() || address.IsLinkLocalUnicast() {
+			t.Errorf("returned unusable network interface address: %+v", item)
+		}
+		if _, exists := seenAddresses[item.GetAddress()]; exists {
+			t.Errorf("returned duplicate network interface address: %s", item.GetAddress())
+		}
+		seenAddresses[item.GetAddress()] = struct{}{}
+		network, err := net.InterfaceByName(item.GetName())
+		if err != nil {
+			t.Errorf("returned interface %q that is not active: %v", item.GetName(), err)
+			continue
+		}
+		if network.Flags&net.FlagUp == 0 || network.Flags&net.FlagRunning == 0 {
+			t.Errorf("returned interface %q that is not active: flags=%v", item.GetName(), network.Flags)
+		}
 	}
 }
 
