@@ -15,7 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const desktop = resolve(here, '..')
 const daemon = process.env.SISYPHUS_DAEMON_PATH ?? resolve(desktop, '../../bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')
 
-function freePort() {
+export function freePort() {
   return new Promise((done, failed) => {
     const server = createServer()
     server.once('error', failed)
