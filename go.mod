@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	connectrpc.com/vanguard v0.4.0
-	github.com/anthropics/anthropic-sdk-go v1.78.0
+	github.com/anthropics/anthropic-sdk-go v1.80.0
 	github.com/gofrs/flock v0.13.1
 	github.com/ipfs/boxo v0.43.0
 	github.com/ipfs/go-block-format v0.2.4
