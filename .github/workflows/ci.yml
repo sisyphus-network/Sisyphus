@@ -69,7 +69,12 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
       - run: go test -race ./...
       - name: Check every statement is tested
-        run: make cover
+        run: |
+          if command -v make >/dev/null 2>&1; then
+            make cover
+          else
+            nix develop --command make cover
+          fi
       - run: go build ./apps/sisyphusd
 
   # A pool across machines, as near as one runner gets: each node in a
