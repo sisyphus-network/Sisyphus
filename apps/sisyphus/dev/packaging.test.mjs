@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { packageResourcesDirectory } from './package-layout.mjs'
+
 const require = createRequire(import.meta.url)
 const config = require('../electron-builder.config.cjs')
 
@@ -26,4 +28,14 @@ test('every package carries an icon drawn from the logo', () => {
 
 test('cross-platform builds fail rather than package a mismatched daemon', async () => {
   await assert.rejects(config.beforePack({ electronPlatformName: process.platform === 'linux' ? 'win32' : 'linux', arch: 1 }), /matching operating system/)
+})
+
+test('package verification locates the unpacked app for every shipped architecture', () => {
+  assert.equal(packageResourcesDirectory('linux', 'x64'), 'linux-unpacked/resources')
+  assert.equal(packageResourcesDirectory('linux', 'arm64'), 'linux-arm64-unpacked/resources')
+  assert.equal(packageResourcesDirectory('win32', 'x64'), 'win-unpacked/resources')
+  assert.equal(packageResourcesDirectory('win32', 'arm64'), 'win-arm64-unpacked/resources')
+  assert.equal(packageResourcesDirectory('darwin', 'x64'), 'mac/Sisyphus.app/Contents/Resources')
+  assert.equal(packageResourcesDirectory('darwin', 'arm64'), 'mac-arm64/Sisyphus.app/Contents/Resources')
+  assert.throws(() => packageResourcesDirectory('freebsd', 'x64'), /Unsupported package platform/)
 })

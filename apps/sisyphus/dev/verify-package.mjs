@@ -4,15 +4,10 @@ import { access } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { listPackage } from '@electron/asar'
 import { createRequire } from 'node:module'
+import { packageResourcesDirectory } from './package-layout.mjs'
 
 const { version } = createRequire(import.meta.url)('../package.json')
-
-const platforms = {
-  linux: 'linux-unpacked/resources',
-  win32: 'win-unpacked/resources',
-  darwin: `${process.arch === 'arm64' ? 'mac-arm64' : 'mac'}/Sisyphus.app/Contents/Resources`,
-}
-const resources = resolve('dist', platforms[process.platform])
+const resources = resolve('dist', packageResourcesDirectory(process.platform, process.arch))
 const daemon = join(resources, 'bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')
 await access(daemon)
 assert.equal(execFileSync(daemon, ['version'], { encoding: 'utf8', timeout: 10000 }).trim(), `sisyphusd ${version}`)

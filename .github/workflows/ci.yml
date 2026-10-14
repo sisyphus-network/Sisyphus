@@ -12,7 +12,7 @@ jobs:
   test:
     # Keep untrusted fork pull requests on GitHub-hosted infrastructure. PRs
     # from this repository and pushes to dev use the project's Linux runner.
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-26.04' || 'sisyphus-ci' }}
     env:
       # All three self-hosted runners share the same host loopback and ephemeral-port space.
       SISYPHUS_CI_LOCAL_NETWORK_LOCK: /tmp/sisyphus-ci-local-network.lock
@@ -95,18 +95,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
+          - runner: ubuntu-26.04
             goos: linux
             goarch: amd64
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-26.04-arm
             goos: linux
             goarch: arm64
           - runner: windows-2025
             goos: windows
             goarch: amd64
-          - runner: macos-15
+          - runner: windows-11-arm
+            goos: windows
+            goarch: arm64
+          - runner: macos-26
             goos: darwin
             goarch: arm64
+          - runner: macos-26-intel
+            goos: darwin
+            goarch: amd64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -127,7 +133,7 @@ jobs:
   # container with its own address and disk. It is what finds faults that
   # tests on one machine cannot, since those all run over loopback.
   rehearsal:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-26.04' || 'sisyphus-ci' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -141,7 +147,7 @@ jobs:
     # Electron E2E must never attach to the maintainer's interactive desktop.
     # Keep desktop checks on an isolated hosted runner; Go integration jobs may
     # still use the self-hosted runner above.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: apps/sisyphus
