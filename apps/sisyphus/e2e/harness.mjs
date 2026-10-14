@@ -106,7 +106,21 @@ export async function open(page, name) {
  * say, or { tool, arguments } to call one of the planner's tools.
  */
 export async function standInModel(...replies) {
-  const model = { asked: [], url: '' }
+  const model = { asked: [], url: '', aborted: 0, pending: [] }
+  model.waitForRequests = async (count) => {
+    const deadline = Date.now() + 15000
+    while (model.asked.length < count && Date.now() < deadline) {
+      await new Promise((wake) => setTimeout(wake, 25))
+    }
+    if (model.asked.length < count) throw new Error(`the model received ${model.asked.length} of ${count} expected requests`)
+  }
+  model.waitForAbort = async () => {
+    const deadline = Date.now() + 15000
+    while (model.aborted === 0 && Date.now() < deadline) {
+      await new Promise((wake) => setTimeout(wake, 25))
+    }
+    if (model.aborted === 0) throw new Error('the model request was not cancelled')
+  }
   const server = createHttpServer((request, response) => {
     let body = ''
     request.on('data', (piece) => { body += piece })
@@ -116,6 +130,17 @@ export async function standInModel(...replies) {
       model.asked.push(JSON.parse(body || '{}'))
       const reply = replies[model.asked.length - 1]
       if (reply === undefined) { response.statusCode = 500; return response.end('the model has run out of things to say') }
+      if (reply?.defer === true) {
+        let completed = false
+        model.pending.push(() => {
+          if (completed || response.destroyed) return
+          completed = true
+          response.end(JSON.stringify({ message: { role: 'assistant', content: reply.content ?? '' }, done: true }))
+        })
+        request.once('aborted', () => { if (!completed) { model.aborted++; completed = true } })
+        response.once('close', () => { if (!completed) { model.aborted++; completed = true } })
+        return
+      }
       const message = typeof reply === 'string'
         ? { role: 'assistant', content: reply }
         : { role: 'assistant', content: '', tool_calls: [{ function: { name: reply.tool, arguments: reply.arguments } }] }
@@ -124,6 +149,7 @@ export async function standInModel(...replies) {
   })
   await new Promise((done) => server.listen(0, '127.0.0.1', done))
   model.url = `http://127.0.0.1:${server.address().port}`
+  model.releasePending = () => model.pending.splice(0).forEach((release) => release())
   model.close = () => new Promise((done) => server.close(done))
   return model
 }
