@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -169,6 +170,15 @@ func TestANodesNameStandsForWhatTheNodeLastPublished(t *testing.T) {
 	if out := waitForOutput(t, second, "name", "resolve", "--addr", addr, id); out != second+"\n" {
 		t.Errorf("name resolve after a restart printed %q, want %s", out, second)
 	}
+	// The gateway listens on a port of its own, which may open a moment
+	// after the node answers on its first.
+	waitFor(t, func() bool {
+		conn, err := net.Dial("tcp", gateway)
+		if err == nil {
+			conn.Close()
+		}
+		return err == nil
+	})
 	if code, body, _ := fetchURL(t, gateway, "/ipns/"+id+token); code != http.StatusOK || body != "the boulder rolls down" {
 		t.Errorf("the gateway after a restart: %d %q", code, body)
 	}
