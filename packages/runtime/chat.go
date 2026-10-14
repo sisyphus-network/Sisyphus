@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,41 @@ type Chat struct {
 	// URL is where the worker's model server is: an Ollama. It is empty on
 	// a node that takes such jobs in without running them.
 	URL string
+	// Owner is what the machine's owner allows of that server.
+	Owner Owner
+}
+
+// Owner is what the owner of a worker allows the pool of its model server.
+// The zero Owner allows everything the server has.
+type Owner struct {
+	// Only names the models offered: each a model as the server names it,
+	// a family ("llama3.1", for every size and tag of it), or a pattern
+	// with "*" in it. Empty offers every model the server has.
+	Only []string
+}
+
+// Allows reports whether the owner offers a model.
+func (o Owner) Allows(model string) bool {
+	if len(o.Only) == 0 {
+		return true
+	}
+	model = strings.ToLower(model)
+	family, _, _ := strings.Cut(model, ":")
+	for _, only := range o.Only {
+		only = strings.ToLower(strings.TrimSpace(only))
+		if matched, _ := path.Match(only, model); matched || only == family || only+":latest" == model {
+			return true
+		}
+	}
+	return false
+}
+
+// refuses is the error for a model the owner does not offer, or nil.
+func (o Owner) refuses(model string) error {
+	if o.Allows(model) {
+		return nil
+	}
+	return fmt.Errorf("this worker's owner does not offer the model %q", model)
 }
 
 func (Chat) Name() string { return "chat" }
@@ -128,7 +164,9 @@ func (c Chat) Offers(ctx context.Context) []string {
 	json.Unmarshal(body, &listed) // a reply that is not a list lists nothing
 	var labels []string
 	for _, m := range listed.Models {
-		labels = append(labels, modelLabel+m.Name)
+		if c.Owner.Allows(m.Name) {
+			labels = append(labels, modelLabel+m.Name)
+		}
 	}
 	return append(labels, c.loaded(ctx)...)
 }
@@ -179,7 +217,7 @@ func (c Chat) loaded(ctx context.Context) []string {
 	json.Unmarshal(body, &running) // a reply that is not a list lists nothing
 	var labels []string
 	for _, m := range running.Models {
-		if m.Name == "" || m.Size == 0 {
+		if m.Name == "" || m.Size == 0 || !c.Owner.Allows(m.Name) {
 			continue
 		}
 		labels = append(labels, fmt.Sprintf("%s%s=%d", loadedLabel, m.Name, min(m.VRAM, m.Size)*100/m.Size))
@@ -217,6 +255,9 @@ const maxReply = 16 << 20
 func (c Chat) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, error) {
 	if c.URL == "" {
 		return nil, errors.New("this worker serves no language models")
+	}
+	if err := c.Owner.refuses(modelOf(payload)); err != nil {
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.URL, "/")+"/v1/chat/completions", bytes.NewReader(payload))
 	if err != nil {

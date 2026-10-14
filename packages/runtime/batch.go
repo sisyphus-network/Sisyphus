@@ -84,6 +84,8 @@ type Prompts struct {
 	// URL is where the worker's model server is; empty on a node that
 	// takes such jobs in without running them.
 	URL string
+	// Owner is what the machine's owner allows of that server.
+	Owner Owner
 }
 
 // PromptsParams says what to ask and of which model.
@@ -176,6 +178,9 @@ func (w Prompts) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, 
 	if err := json.Unmarshal(payload, &share); err != nil {
 		return nil, fmt.Errorf("prompts task: %w", err)
 	}
+	if err := w.Owner.refuses(share.Model); err != nil {
+		return nil, err
+	}
 	report := Report(ctx)
 	out := answersShare{Start: share.Start, Answers: make([]string, 0, len(share.Prompts))}
 	for i, prompt := range share.Prompts {
@@ -250,6 +255,8 @@ type Embed struct {
 	// URL is where the worker's model server is; empty on a node that
 	// takes such jobs in without running them.
 	URL string
+	// Owner is what the machine's owner allows of that server.
+	Owner Owner
 }
 
 // MaxEmbedInputs is how many texts one embed job takes: what comes back
@@ -315,6 +322,11 @@ func (w Embed) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, er
 	var share embedShare
 	if err := json.Unmarshal(payload, &share); err != nil {
 		return nil, fmt.Errorf("embed task: %w", err)
+	}
+	var model string
+	json.Unmarshal(share.Request["model"], &model) // what is not a name names no model
+	if err := w.Owner.refuses(model); err != nil {
+		return nil, err
 	}
 	said, err := askServer(ctx, w.URL, "/v1/embeddings", mustJSON(share.Request))
 	if err != nil {

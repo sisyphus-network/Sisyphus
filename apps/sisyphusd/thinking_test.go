@@ -216,3 +216,16 @@ func TestAMachineThatUsesAPoolOffersItsModelsToItsOwnPrograms(t *testing.T) {
 		}
 	}
 }
+
+func TestAWorkerOffersOnlyTheModelsItsOwnerNames(t *testing.T) {
+	served := newModel(t)
+	dataDir := t.TempDir()
+	addr, apiAddr := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--api-listen", apiAddr,
+		"--models-from", served.URL, "--models-only", " test-model, ,")
+	waitForOutput(t, "rig", "nodes", "--addr", addr)
+	workers, err := desktop(t, apiAddr).ListWorkers(context.Background(), &nodepb.ListWorkersRequest{})
+	if err != nil || len(workers.GetWorkers()) != 1 || strings.Join(workers.GetWorkers()[0].GetModels(), ",") != "test-model" {
+		t.Fatalf("workers = %v, %v", workers, err)
+	}
+}
