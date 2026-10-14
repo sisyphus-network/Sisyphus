@@ -5,11 +5,12 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { getNodeApi } from '@/lib/node-api'
+import { isModelLendingDirty, type ModelLendingValues } from '@/lib/model-lending'
 import { toast } from 'sonner'
 import type { getMessages } from '@/i18n/messages'
 
 type Messages = ReturnType<typeof getMessages>
-type Lending = { enabled: boolean; ollamaUrl: string; only: string[]; gpuLayers: number; threads: number; context: number; keepAlive: string }
+type Lending = ModelLendingValues
 type LendingState = { saved?: Lending; running?: Lending; restartNeeded?: boolean; setByFlags?: boolean }
 type LoadedModel = { name: string; onCardPercent: number }
 const emptyLending: Lending = { enabled: false, ollamaUrl: 'http://127.0.0.1:11434', only: [], gpuLayers: -1, threads: 0, context: 0, keepAlive: '' }
@@ -39,7 +40,7 @@ export function ModelLendingSettings({ messages }: { messages: Messages }) {
   }, [])
 
   const selected = useMemo(() => new Set(form.only), [form.only])
-  const dirty = Boolean(state?.saved && JSON.stringify(state.saved) !== JSON.stringify(form))
+  const dirty = isModelLendingDirty(state?.saved, form)
   function change<K extends keyof Lending>(key: K, value: Lending[K]) { setForm((current) => ({ ...current, [key]: value })) }
 
   async function inspect() {
