@@ -118,6 +118,8 @@ test('workspace panels retain their open state and widths after relaunch', async
     app = undefined
     ;({ app, page } = await launch(node, profile))
     await wide(app, page)
+    await page.locator('.workspace-desktop-stage').waitFor()
+    await page.locator('.workspace-history-slot').waitFor({ state: 'attached' })
     await page.waitForFunction(() => document.querySelector('.workspace-history-slot')?.getAttribute('data-open') === 'false')
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
     const restored = await page.evaluate(() => JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'))
