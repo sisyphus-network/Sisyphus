@@ -1,6 +1,26 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { createRpcStream } from './rpc-stream'
 
+type IpcLogEntry = {
+  phase: 'request' | 'response' | 'error' | 'event'
+  channel: string
+  timestamp: string
+  durationMs?: number
+  request?: unknown
+  response?: unknown
+  error?: unknown
+}
+
+ipcRenderer.on('node:ipc-log', (_event, entry: IpcLogEntry) => {
+  const style = entry.phase === 'error' ? 'color:#ef4444;font-weight:bold' : entry.phase === 'request' ? 'color:#60a5fa;font-weight:bold' : 'color:#34d399;font-weight:bold'
+  console.groupCollapsed(`%cIPC ${entry.phase.toUpperCase()}%c ${entry.channel}${entry.durationMs === undefined ? '' : ` · ${entry.durationMs}ms`}`, style, 'color:inherit')
+  console.log('timestamp:', entry.timestamp)
+  if (entry.request !== undefined) console.log('request:', entry.request)
+  if (entry.response !== undefined) console.log('response:', entry.response)
+  if (entry.error !== undefined) console.error('error:', entry.error)
+  console.groupEnd()
+})
+
 export type Peer = {
   peerId: string
   connectionState: number | string
