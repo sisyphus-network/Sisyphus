@@ -45,7 +45,7 @@ func TestPickWorkerSpreadsModelTasksBeforePreferringGPU(t *testing.T) {
 
 	// A worker with no loaded-model report ranks below one that reports the
 	// model resident, all else being equal.
-	cpu.capabilities.Labels = []string{}
+	cpu.capabilities.Labels = []string{"model:" + model}
 	if got := c.pickWorkerLocked(job, task); got != gpu {
 		if got == nil {
 			t.Fatal("picked no worker, want the worker reporting the model loaded")
