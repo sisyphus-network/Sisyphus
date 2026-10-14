@@ -27,10 +27,17 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
 
-const (
-	defaultHeartbeatInterval = 5 * time.Second
-	minBackoff               = time.Second
-	maxBackoff               = 30 * time.Second
+const defaultHeartbeatInterval = 5 * time.Second
+
+// How long a worker waits before trying its coordinator again, doubling
+// from the least to the most. Once it is trying as seldom as it will, it
+// says so once, and then only every so often that it is still trying, so
+// that a coordinator that is down for the night does not fill the log.
+// Tests put shorter times in their place.
+var (
+	minBackoff  = time.Second
+	maxBackoff  = 30 * time.Second
+	stillTrying = 10 * time.Minute
 )
 
 type Worker struct {
@@ -80,6 +87,9 @@ type Worker struct {
 // coordinator rejects this node outright.
 func (w *Worker) Run(ctx context.Context) error {
 	backoff := minBackoff
+	// lost is when the coordinator was last there, and told when the log
+	// last said that it is not.
+	var lost, told time.Time
 	for {
 		welcomed, err := w.session(ctx)
 		if ctx.Err() != nil {
@@ -89,10 +99,17 @@ func (w *Worker) Run(ctx context.Context) error {
 		case codes.AlreadyExists, codes.InvalidArgument, codes.PermissionDenied:
 			return fmt.Errorf("coordinator rejected node %q: %w", w.Name, err)
 		}
-		if welcomed {
-			backoff = minBackoff
+		if welcomed || lost.IsZero() {
+			backoff, lost = minBackoff, time.Now()
 		}
-		w.Log.Warn("lost coordinator, reconnecting", "node", w.Name, "in", backoff.String(), "error", err)
+		switch {
+		case backoff < maxBackoff:
+			w.Log.Warn("lost coordinator, reconnecting", "node", w.Name, "in", backoff.String(), "error", err)
+		case time.Since(told) >= stillTrying:
+			told = time.Now()
+			w.Log.Warn("still cannot reach the coordinator; trying again quietly", "node", w.Name,
+				"unreachable_for", time.Since(lost).Round(time.Second).String(), "every", backoff.String(), "error", err)
+		}
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
