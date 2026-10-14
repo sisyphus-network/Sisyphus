@@ -285,7 +285,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - A first real workload, `transcode`: a video is cut into stretches, encoded by ffmpeg on different workers, and joined.
 - Container images as jobs: a worker whose owner allows it runs any image, one copy for each task, with its output stored and its log followed live.
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
-- Tests that execute every statement of hand-written code, enforced in CI, and release builds of the node for Linux, macOS, Windows, the BSDs and Android, beside the desktop app's packages.
+- Tests that execute every statement of hand-written code, enforced in CI, and release builds of the node for Linux (eight processors, RISC-V and IBM Z among them), macOS, Windows, the BSDs and Android, and of the desktop app for Linux, Windows and macOS on x64 and arm64, with the workloads' answers checked on each system.
 
 **Not built yet**: more real workloads than the first (`transcode`). Unless a job asks for its tasks to be run by several workers and compared, a coordinator accepts whatever result a worker returns; and that comparison is the first step only ([#19](https://github.com/sisyphus-network/Sisyphus/issues/19)): it works for deterministic jobs that are not private, believes workers that agree, and costs a worker that is caught lying nothing but a probation, during which jobs that verify only some of their tasks verify all of its. So a pool is still only as trustworthy as the workers admitted to it. There is no blockchain, token or public network.
 

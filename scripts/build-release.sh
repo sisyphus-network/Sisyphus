@@ -12,15 +12,19 @@ version=${1:?usage: build-release.sh <version> <output-dir>}
 out=${2:?usage: build-release.sh <version> <output-dir>}
 mkdir -p "$out"
 
-# Every target here builds without a C toolchain. Only linux/amd64 is run by
-# the test suite; the rest are compiled and otherwise untested. Not built:
-# Solaris, illumos, AIX and Plan 9 (a dependency does not support them), and
-# iOS and Android on x86, which need a platform SDK to link.
+# Every target here builds without a C toolchain. The whole test suite runs
+# on linux/amd64; the known-answer workloads also run on each of Linux,
+# Windows and macOS on x64 and arm64, on Linux's other processors under an
+# emulator, on Android's arm64, and on the BSDs in virtual machines (the
+# workload-architecture and workload-elsewhere jobs in ci.yml). Not built:
+# NetBSD on arm64, Solaris, illumos, AIX and Plan 9 (a dependency does not
+# support them), and iOS and Android on x86, which need a platform SDK.
 targets="
 	linux/amd64 linux/arm64 linux/arm linux/riscv64
+	linux/386 linux/ppc64le linux/s390x linux/loong64
 	darwin/amd64 darwin/arm64
 	windows/amd64 windows/arm64
-	freebsd/amd64 freebsd/arm64 openbsd/amd64 netbsd/amd64
+	freebsd/amd64 freebsd/arm64 openbsd/amd64 openbsd/arm64 netbsd/amd64
 	android/arm64
 "
 
