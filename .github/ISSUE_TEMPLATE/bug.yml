@@ -1,0 +1,46 @@
+name: Something is broken
+description: Sisyphus did something it should not, or did not do something it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Paste any error exactly.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to make it happen again
+      placeholder: |
+        1. sisyphusd run --coordinator ...
+        2. sisyphusd submit primes ...
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part
+      multiple: true
+      options:
+        - The node (sisyphusd)
+        - The desktop app
+        - The planner or models
+        - The MCP server or skill
+        - Storage or IPFS
+        - Installing or building
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: "`sisyphusd version`, or the commit you built from."
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: Windows 11, RTX 4050, Ollama 0.21
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The node's output around the problem. Remove anything private first.
+      render: text
