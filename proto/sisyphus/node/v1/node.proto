@@ -44,6 +44,9 @@ service NodeService {
   // the service's key, only whether one is set.
   rpc GetModelConfig(GetModelConfigRequest) returns (ModelConfig);
   rpc SetModelConfig(SetModelConfigRequest) returns (ModelConfig);
+  rpc ListModelProfiles(ListModelProfilesRequest) returns (ListModelProfilesResponse);
+  rpc SaveModelProfile(SaveModelProfileRequest) returns (ModelProfile);
+  rpc DeleteModelProfile(DeleteModelProfileRequest) returns (DeleteModelProfileResponse);
   // ListProviders lists the kinds of model service there are to choose
   // from, the one that needs no account first.
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
@@ -421,6 +424,30 @@ message SetModelConfigRequest {
   string api_key = 4;
   bool keep_api_key = 5;
 }
+
+message ModelProfile {
+  string id = 1;
+  string name = 2;
+  string provider = 3;
+  string base_url = 4;
+  string model = 5;
+  bool has_api_key = 6;
+  bool active = 7;
+}
+message ListModelProfilesRequest {}
+message ListModelProfilesResponse { repeated ModelProfile profiles = 1; }
+message SaveModelProfileRequest {
+  string id = 1;
+  string name = 2;
+  string provider = 3;
+  string base_url = 4;
+  string model = 5;
+  string api_key = 6;
+  bool keep_api_key = 7;
+  bool active = 8;
+}
+message DeleteModelProfileRequest { string id = 1; }
+message DeleteModelProfileResponse {}
 
 message ListProvidersRequest {}
 

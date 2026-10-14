@@ -44,6 +44,19 @@ func (s *localService) modelService(ctx context.Context, named *nodepb.ModelServ
 		// The saved key goes only where it was saved for.
 		if sameService(saved, *at) {
 			at.APIKey = saved.APIKey
+		} else if profiles, ok := s.cfg.Assistant.(interface {
+			ModelProfiles() ([]nodedb.ModelProfile, error)
+		}); ok {
+			all, err := profiles.ModelProfiles()
+			if err != nil {
+				return nil, asError(err)
+			}
+			for _, profile := range all {
+				if sameService(profile.Config, *at) {
+					at.APIKey = profile.Config.APIKey
+					break
+				}
+			}
 		}
 	}
 	return at, nil
