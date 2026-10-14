@@ -131,21 +131,22 @@ jobs:
 
   # The other systems and processors a release is built for, which GitHub
   # has no runner of: the tests are compiled for each and run in an emulator
-  # of the processor, on the Android build's own processor, or in a virtual
-  # machine of the BSD. s390x is big-endian, so it shows that an answer does
+  # of the processor, on the Android build's own processor (loaded by Linux's
+  # loader, since it asks for Android's, which it needs only to be placed in
+  # memory), or in a virtual machine of the BSD. s390x is big-endian, so it shows that an answer does
   # not depend on byte order.
   workload-elsewhere:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {runner: ubuntu-26.04, goos: linux, goarch: riscv64, via: qemu-riscv64-static}
-          - {runner: ubuntu-26.04, goos: linux, goarch: arm, via: qemu-arm-static}
-          - {runner: ubuntu-26.04, goos: linux, goarch: ppc64le, via: qemu-ppc64le-static}
-          - {runner: ubuntu-26.04, goos: linux, goarch: s390x, via: qemu-s390x-static}
-          - {runner: ubuntu-26.04, goos: linux, goarch: loong64, via: qemu-loongarch64-static}
+          - {runner: ubuntu-26.04, goos: linux, goarch: riscv64, via: qemu-riscv64}
+          - {runner: ubuntu-26.04, goos: linux, goarch: arm, via: qemu-arm}
+          - {runner: ubuntu-26.04, goos: linux, goarch: ppc64le, via: qemu-ppc64le}
+          - {runner: ubuntu-26.04, goos: linux, goarch: s390x, via: qemu-s390x}
+          - {runner: ubuntu-26.04, goos: linux, goarch: loong64, via: qemu-loongarch64}
           - {runner: ubuntu-26.04, goos: linux, goarch: "386", via: ""}
-          - {runner: ubuntu-26.04-arm, goos: android, goarch: arm64, via: ""}
+          - {runner: ubuntu-26.04-arm, goos: android, goarch: arm64, via: /lib/ld-linux-aarch64.so.1}
           - {runner: ubuntu-26.04, goos: freebsd, goarch: amd64, via: vm}
           - {runner: ubuntu-26.04, goos: openbsd, goarch: amd64, via: vm}
           - {runner: ubuntu-26.04, goos: netbsd, goarch: amd64, via: vm}
@@ -167,7 +168,7 @@ jobs:
         run: go test -c -o packages/runtime/runtime.test ./packages/runtime
       - name: Install the emulator
         if: startsWith(matrix.via, 'qemu')
-        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
+        run: sudo apt-get update && sudo apt-get install -y qemu-user
       - name: Run the known-answer workloads
         if: matrix.via != 'vm'
         working-directory: packages/runtime
