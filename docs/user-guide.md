@@ -150,6 +150,8 @@ Two things to know:
 
 - **Your node must be listening where the other machine can reach it.** A node the app started for itself listens only on your own machine. Start the node yourself with `--listen 0.0.0.0:7700`, and open TCP port 7700 to the other machine.
 - **Invite client** is for a machine that submits work and stores files but runs none.
+- **A machine with Ollama can lend its models.** Add `--models-from http://127.0.0.1:11434`. Its owner decides what the pool gets: `--models-only llama3.1,qwen3:8b` offers only those, `--models-gpu-layers 0` keeps the pool's work off the graphics card, and `--models-keep-alive 0` frees the model's memory as soon as it has answered. `sisyphusd nodes` then shows each model and how much of it is on the card. Some limits only Ollama itself can be told; the [daemon guide](../apps/sisyphusd/README.md) lists them.
+- **On Windows**, the first run of `sisyphusd.exe`, or of the app, may bring up "Windows protected your PC" and then the firewall asking about "Sisyphus node"; see [the warnings on first run](#the-warnings-on-first-run).
 
 Members are listed underneath, and **Remove** takes one out. [Testing a pool across machines](multi-machine-test.md) goes through all of it step by step, including what to do when a machine will not join.
 
