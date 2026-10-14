@@ -52,3 +52,70 @@ func TestAWorkerServesNoModelItsOwnerDoesNotOffer(t *testing.T) {
 		t.Errorf("the server was asked %s", *asked)
 	}
 }
+
+func TestModelAllowlistChangesOnTheLiveModelServer(t *testing.T) {
+	ctx := context.Background()
+	server, asked := modelServer(t, http.StatusOK, `{"model":"qwen3:8b","message":{"role":"assistant","content":"ok"},"done":true}`)
+	live := NewModelServer(server.URL, Owner{Only: []string{"llama3.1"}})
+	chat := Chat{Live: live}
+	if got := strings.Join(chat.Offers(ctx), " "); got != "model:llama3.1:8b loaded:llama3.1:8b=75" {
+		t.Fatalf("initial offers %q", got)
+	}
+
+	live.Update(Owner{Only: []string{"qwen3"}, Options: map[string]any{"num_gpu": 0, "num_thread": 6, "num_ctx": 4096}, KeepAlive: "10m"})
+	if got := strings.Join(chat.Offers(ctx), " "); got != "model:qwen3:8b loaded:qwen3:8b=100" {
+		t.Fatalf("updated offers %q", got)
+	}
+	if _, err := chat.Execute(ctx, nil, []byte(`{"model":"qwen3:8b","messages":[{"role":"user","content":"hi"}]}`)); err != nil {
+		t.Fatalf("chat with newly allowed model: %v", err)
+	}
+	for _, setting := range []string{`"num_gpu":0`, `"num_thread":6`, `"num_ctx":4096`, `"keep_alive":"10m"`} {
+		if !strings.Contains(*asked, setting) {
+			t.Errorf("live request is missing %s: %s", setting, *asked)
+		}
+	}
+	for name, run := range map[string]func() error{
+		"chat": func() error {
+			_, err := chat.Execute(ctx, nil, []byte(`{"model":"llama3.1:8b","messages":[{"role":"user","content":"hi"}]}`))
+			return err
+		},
+		"prompts": func() error {
+			_, err := (Prompts{Live: live}).Execute(ctx, nil, []byte(`{"model":"llama3.1:8b","prompts":["hi"]}`))
+			return err
+		},
+		"embed": func() error {
+			_, err := (Embed{Live: live}).Execute(ctx, nil, []byte(`{"start":0,"request":{"model":"llama3.1:8b","input":["hi"]}}`))
+			return err
+		},
+	} {
+		if err := run(); err == nil || !strings.Contains(err.Error(), "does not offer") {
+			t.Errorf("%s did not use the updated allowlist: %v", name, err)
+		}
+	}
+}
+
+func TestOwnerFromSettingsDistinguishesUnsetFromZeroGPU(t *testing.T) {
+	only := []string{"llama3.1"}
+	owner := OwnerFromSettings(only, -1, 0, 0, "")
+	if _, ok := owner.Options["num_gpu"]; ok {
+		t.Fatal("an unset GPU layer count should be left to Ollama")
+	}
+	if _, ok := owner.Options["num_thread"]; ok {
+		t.Fatal("zero threads should be left to Ollama")
+	}
+	if _, ok := owner.Options["num_ctx"]; ok {
+		t.Fatal("zero context should be left to Ollama")
+	}
+
+	noGPU := OwnerFromSettings(only, 0, 6, 4096, "10m")
+	if got, ok := noGPU.Options["num_gpu"]; !ok || got != 0 {
+		t.Fatalf("explicit no-GPU setting = %v, present %v; want 0, present", got, ok)
+	}
+	if noGPU.Options["num_thread"] != 6 || noGPU.Options["num_ctx"] != 4096 || noGPU.KeepAlive != "10m" {
+		t.Fatalf("owner settings = %#v", noGPU)
+	}
+	only[0] = "changed"
+	if noGPU.Only[0] != "llama3.1" {
+		t.Fatal("owner aliases the caller's model allowlist")
+	}
+}

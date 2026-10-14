@@ -60,6 +60,7 @@ export type NodeRpcMethod =
   | 'submitJob' | 'getJob' | 'listJobs' | 'cancelJob'
   | 'getModelConfig' | 'setModelConfig' | 'listModelProfiles' | 'saveModelProfile' | 'deleteModelProfile' | 'listProviders' | 'listModels' | 'removeModel'
   | 'getWebAccessConfig' | 'setWebAccessConfig' | 'listNetworkInterfaces'
+  | 'getModelLending' | 'setModelLending' | 'inspectOllama'
   | 'listChats' | 'getChat' | 'deleteChat'
   | 'listFiles' | 'removeFile'
   | 'createInvitation' | 'listMembers' | 'removeMember' | 'joinPool'

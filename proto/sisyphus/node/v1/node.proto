@@ -53,6 +53,15 @@ service NodeService {
   rpc ListModelProfiles(ListModelProfilesRequest) returns (ListModelProfilesResponse);
   rpc SaveModelProfile(SaveModelProfileRequest) returns (ModelProfile);
   rpc DeleteModelProfile(DeleteModelProfileRequest) returns (DeleteModelProfileResponse);
+  // GetModelLending says how this machine lends its Ollama models to the
+  // pool: as saved, and as the node runs now. SetModelLending applies model
+  // allowlists and request limits live when lending stays enabled at the
+  // same address; enabling, disabling or changing that address takes effect
+  // on restart. InspectOllama asks an Ollama what it is and which of its
+  // models would be lent.
+  rpc GetModelLending(GetModelLendingRequest) returns (ModelLendingState);
+  rpc SetModelLending(SetModelLendingRequest) returns (ModelLendingState);
+  rpc InspectOllama(InspectOllamaRequest) returns (InspectOllamaResponse);
   // ListProviders lists the kinds of model service there are to choose
   // from, the one that needs no account first.
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
@@ -487,6 +496,55 @@ message SaveModelProfileRequest {
 }
 message DeleteModelProfileRequest { string id = 1; }
 message DeleteModelProfileResponse {}
+
+// How a worker's owner lends the models of an Ollama on their machine.
+message ModelLending {
+  bool enabled = 1;
+  // Such as http://127.0.0.1:11434.
+  string ollama_url = 2;
+  // The models offered: a model as Ollama names it (qwen3:8b), a family
+  // (llama3.1) or a pattern (gemma*). None offers them all.
+  repeated string only = 3;
+  // How many of a model's layers may go on graphics cards: 0 for none, -1
+  // for as many as fit.
+  int32 gpu_layers = 4;
+  // The processor's threads a model may use; 0 lets Ollama decide.
+  int32 threads = 5;
+  // The tokens of a conversation a model holds; 0 lets Ollama decide.
+  int32 context = 6;
+  // How long a model stays loaded after it answered, such as "10m", or "0"
+  // to unload it at once; empty lets Ollama decide.
+  string keep_alive = 7;
+}
+
+message ModelLendingState {
+  // What is saved.
+  ModelLending saved = 1;
+  // What the node runs with now.
+  ModelLending running = 2;
+  // The node was started with --models-from, which decides in place of
+  // what is saved.
+  bool set_by_flags = 3;
+  // A change to lending state or address is saved but waits for restart.
+  bool restart_needed = 4;
+}
+
+message GetModelLendingRequest {}
+message SetModelLendingRequest { ModelLending lending = 1; }
+
+message InspectOllamaRequest {
+  string url = 1;
+  // Which of its models would be lent; none for all.
+  repeated string only = 2;
+}
+
+message InspectOllamaResponse {
+  // Empty if it could not be reached or is not an Ollama; error says why.
+  string version = 1;
+  string error = 2;
+  repeated string models = 3;
+  repeated LoadedModel loaded = 4;
+}
 
 message ListProvidersRequest {}
 

@@ -194,7 +194,6 @@ export class GetNodeInfoRequest extends Message<GetNodeInfoRequest> {
     return proto3.util.equals(GetNodeInfoRequest, a, b);
   }
 }
-
 /**
  * @generated from message sisyphus.node.v1.GetNodeInfoResponse
  */
@@ -2773,6 +2772,330 @@ export class DeleteModelProfileResponse extends Message<DeleteModelProfileRespon
 
   static equals(a: DeleteModelProfileResponse | PlainMessage<DeleteModelProfileResponse> | undefined, b: DeleteModelProfileResponse | PlainMessage<DeleteModelProfileResponse> | undefined): boolean {
     return proto3.util.equals(DeleteModelProfileResponse, a, b);
+  }
+}
+
+/**
+ * How a worker's owner lends the models of an Ollama on their machine.
+ *
+ * @generated from message sisyphus.node.v1.ModelLending
+ */
+export class ModelLending extends Message<ModelLending> {
+  /**
+   * @generated from field: bool enabled = 1;
+   */
+  enabled = false;
+
+  /**
+   * Such as http://127.0.0.1:11434.
+   *
+   * @generated from field: string ollama_url = 2;
+   */
+  ollamaUrl = "";
+
+  /**
+   * The models offered: a model as Ollama names it (qwen3:8b), a family
+   * (llama3.1) or a pattern (gemma*). None offers them all.
+   *
+   * @generated from field: repeated string only = 3;
+   */
+  only: string[] = [];
+
+  /**
+   * How many of a model's layers may go on graphics cards: 0 for none, -1
+   * for as many as fit.
+   *
+   * @generated from field: int32 gpu_layers = 4;
+   */
+  gpuLayers = 0;
+
+  /**
+   * The processor's threads a model may use; 0 lets Ollama decide.
+   *
+   * @generated from field: int32 threads = 5;
+   */
+  threads = 0;
+
+  /**
+   * The tokens of a conversation a model holds; 0 lets Ollama decide.
+   *
+   * @generated from field: int32 context = 6;
+   */
+  context = 0;
+
+  /**
+   * How long a model stays loaded after it answered, such as "10m", or "0"
+   * to unload it at once; empty lets Ollama decide.
+   *
+   * @generated from field: string keep_alive = 7;
+   */
+  keepAlive = "";
+
+  constructor(data?: PartialMessage<ModelLending>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.ModelLending";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "enabled", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 2, name: "ollama_url", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "only", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 4, name: "gpu_layers", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 5, name: "threads", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 6, name: "context", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 7, name: "keep_alive", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ModelLending {
+    return new ModelLending().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): ModelLending {
+    return new ModelLending().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): ModelLending {
+    return new ModelLending().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: ModelLending | PlainMessage<ModelLending> | undefined, b: ModelLending | PlainMessage<ModelLending> | undefined): boolean {
+    return proto3.util.equals(ModelLending, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.ModelLendingState
+ */
+export class ModelLendingState extends Message<ModelLendingState> {
+  /**
+   * What is saved.
+   *
+   * @generated from field: sisyphus.node.v1.ModelLending saved = 1;
+   */
+  saved?: ModelLending;
+
+  /**
+   * What the node runs with now.
+   *
+   * @generated from field: sisyphus.node.v1.ModelLending running = 2;
+   */
+  running?: ModelLending;
+
+  /**
+   * The node was started with --models-from, which decides in place of
+   * what is saved.
+   *
+   * @generated from field: bool set_by_flags = 3;
+   */
+  setByFlags = false;
+
+  /**
+   * A change to lending state or address is saved but waits for restart.
+   *
+   * @generated from field: bool restart_needed = 4;
+   */
+  restartNeeded = false;
+
+  constructor(data?: PartialMessage<ModelLendingState>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.ModelLendingState";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "saved", kind: "message", T: ModelLending },
+    { no: 2, name: "running", kind: "message", T: ModelLending },
+    { no: 3, name: "set_by_flags", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 4, name: "restart_needed", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ModelLendingState {
+    return new ModelLendingState().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): ModelLendingState {
+    return new ModelLendingState().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): ModelLendingState {
+    return new ModelLendingState().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: ModelLendingState | PlainMessage<ModelLendingState> | undefined, b: ModelLendingState | PlainMessage<ModelLendingState> | undefined): boolean {
+    return proto3.util.equals(ModelLendingState, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.GetModelLendingRequest
+ */
+export class GetModelLendingRequest extends Message<GetModelLendingRequest> {
+  constructor(data?: PartialMessage<GetModelLendingRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.GetModelLendingRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetModelLendingRequest {
+    return new GetModelLendingRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetModelLendingRequest {
+    return new GetModelLendingRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetModelLendingRequest {
+    return new GetModelLendingRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: GetModelLendingRequest | PlainMessage<GetModelLendingRequest> | undefined, b: GetModelLendingRequest | PlainMessage<GetModelLendingRequest> | undefined): boolean {
+    return proto3.util.equals(GetModelLendingRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.SetModelLendingRequest
+ */
+export class SetModelLendingRequest extends Message<SetModelLendingRequest> {
+  /**
+   * @generated from field: sisyphus.node.v1.ModelLending lending = 1;
+   */
+  lending?: ModelLending;
+
+  constructor(data?: PartialMessage<SetModelLendingRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.SetModelLendingRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "lending", kind: "message", T: ModelLending },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SetModelLendingRequest {
+    return new SetModelLendingRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SetModelLendingRequest {
+    return new SetModelLendingRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SetModelLendingRequest {
+    return new SetModelLendingRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SetModelLendingRequest | PlainMessage<SetModelLendingRequest> | undefined, b: SetModelLendingRequest | PlainMessage<SetModelLendingRequest> | undefined): boolean {
+    return proto3.util.equals(SetModelLendingRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.InspectOllamaRequest
+ */
+export class InspectOllamaRequest extends Message<InspectOllamaRequest> {
+  /**
+   * @generated from field: string url = 1;
+   */
+  url = "";
+
+  /**
+   * Which of its models would be lent; none for all.
+   *
+   * @generated from field: repeated string only = 2;
+   */
+  only: string[] = [];
+
+  constructor(data?: PartialMessage<InspectOllamaRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.InspectOllamaRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "url", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "only", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): InspectOllamaRequest {
+    return new InspectOllamaRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): InspectOllamaRequest {
+    return new InspectOllamaRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): InspectOllamaRequest {
+    return new InspectOllamaRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: InspectOllamaRequest | PlainMessage<InspectOllamaRequest> | undefined, b: InspectOllamaRequest | PlainMessage<InspectOllamaRequest> | undefined): boolean {
+    return proto3.util.equals(InspectOllamaRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.InspectOllamaResponse
+ */
+export class InspectOllamaResponse extends Message<InspectOllamaResponse> {
+  /**
+   * Empty if it could not be reached or is not an Ollama; error says why.
+   *
+   * @generated from field: string version = 1;
+   */
+  version = "";
+
+  /**
+   * @generated from field: string error = 2;
+   */
+  error = "";
+
+  /**
+   * @generated from field: repeated string models = 3;
+   */
+  models: string[] = [];
+
+  /**
+   * @generated from field: repeated sisyphus.node.v1.LoadedModel loaded = 4;
+   */
+  loaded: LoadedModel[] = [];
+
+  constructor(data?: PartialMessage<InspectOllamaResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.InspectOllamaResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "version", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "error", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "models", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 4, name: "loaded", kind: "message", T: LoadedModel, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): InspectOllamaResponse {
+    return new InspectOllamaResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): InspectOllamaResponse {
+    return new InspectOllamaResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): InspectOllamaResponse {
+    return new InspectOllamaResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: InspectOllamaResponse | PlainMessage<InspectOllamaResponse> | undefined, b: InspectOllamaResponse | PlainMessage<InspectOllamaResponse> | undefined): boolean {
+    return proto3.util.equals(InspectOllamaResponse, a, b);
   }
 }
 

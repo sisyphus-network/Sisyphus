@@ -3,7 +3,7 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import { AskEvent, AskRequest, CancelJobRequest, CancelJobResponse, ConnectPeerRequest, ConnectPeerResponse, CreateInvitationRequest, CreateInvitationResponse, DeleteChatRequest, DeleteChatResponse, DeleteModelProfileRequest, DeleteModelProfileResponse, FetchFileRequest, FetchFileResponse, File, GetBootstrapPeersRequest, GetBootstrapPeersResponse, GetChatRequest, GetChatResponse, GetJobRequest, GetJobResponse, GetModelConfigRequest, GetNodeInfoRequest, GetNodeInfoResponse, GetWebAccessConfigRequest, JobEvent, JoinPoolRequest, JoinPoolResponse, ListChatsRequest, ListChatsResponse, ListFilesRequest, ListFilesResponse, ListJobsRequest, ListJobsResponse, ListMembersRequest, ListMembersResponse, ListModelProfilesRequest, ListModelProfilesResponse, ListModelsRequest, ListModelsResponse, ListNetworkInterfacesRequest, ListNetworkInterfacesResponse, ListPeersRequest, ListPeersResponse, ListProvidersRequest, ListProvidersResponse, ListWorkersRequest, ListWorkersResponse, ModelConfig, ModelProfile, PullModelProgress, PullModelRequest, RemoveFileRequest, RemoveFileResponse, RemoveMemberRequest, RemoveMemberResponse, RemoveModelRequest, RemoveModelResponse, SaveModelProfileRequest, SetBootstrapPeersRequest, SetBootstrapPeersResponse, SetModelConfigRequest, SetPeerComputePermissionsRequest, SetPeerComputePermissionsResponse, SetPeerComputeTrustRequest, SetPeerComputeTrustResponse, SetWebAccessConfigRequest, StoreFileRequest, SubmitJobRequest, SubmitJobResponse, WatchJobEventsRequest, WatchJobsRequest, WatchPeersRequest, WebAccessConfig } from "./node_pb.js";
+import { AskEvent, AskRequest, CancelJobRequest, CancelJobResponse, ConnectPeerRequest, ConnectPeerResponse, CreateInvitationRequest, CreateInvitationResponse, DeleteChatRequest, DeleteChatResponse, DeleteModelProfileRequest, DeleteModelProfileResponse, FetchFileRequest, FetchFileResponse, File, GetBootstrapPeersRequest, GetBootstrapPeersResponse, GetChatRequest, GetChatResponse, GetJobRequest, GetJobResponse, GetModelConfigRequest, GetModelLendingRequest, GetNodeInfoRequest, GetNodeInfoResponse, GetWebAccessConfigRequest, InspectOllamaRequest, InspectOllamaResponse, JobEvent, JoinPoolRequest, JoinPoolResponse, ListChatsRequest, ListChatsResponse, ListFilesRequest, ListFilesResponse, ListJobsRequest, ListJobsResponse, ListMembersRequest, ListMembersResponse, ListModelProfilesRequest, ListModelProfilesResponse, ListModelsRequest, ListModelsResponse, ListNetworkInterfacesRequest, ListNetworkInterfacesResponse, ListPeersRequest, ListPeersResponse, ListProvidersRequest, ListProvidersResponse, ListWorkersRequest, ListWorkersResponse, ModelConfig, ModelLendingState, ModelProfile, PullModelProgress, PullModelRequest, RemoveFileRequest, RemoveFileResponse, RemoveMemberRequest, RemoveMemberResponse, RemoveModelRequest, RemoveModelResponse, SaveModelProfileRequest, SetBootstrapPeersRequest, SetBootstrapPeersResponse, SetModelConfigRequest, SetModelLendingRequest, SetPeerComputePermissionsRequest, SetPeerComputePermissionsResponse, SetPeerComputeTrustRequest, SetPeerComputeTrustResponse, SetWebAccessConfigRequest, StoreFileRequest, SubmitJobRequest, SubmitJobResponse, WatchJobEventsRequest, WatchJobsRequest, WatchPeersRequest, WebAccessConfig } from "./node_pb.js";
 import { MethodKind } from "@bufbuild/protobuf";
 
 /**
@@ -245,6 +245,40 @@ export const NodeService = {
       name: "DeleteModelProfile",
       I: DeleteModelProfileRequest,
       O: DeleteModelProfileResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * GetModelLending says how this machine lends its Ollama models to the
+     * pool: as saved, and as the node runs now. SetModelLending applies model
+     * allowlists and request limits live when lending stays enabled at the
+     * same address; enabling, disabling or changing that address takes effect
+     * on restart. InspectOllama asks an Ollama what it is and which of its
+     * models would be lent.
+     *
+     * @generated from rpc sisyphus.node.v1.NodeService.GetModelLending
+     */
+    getModelLending: {
+      name: "GetModelLending",
+      I: GetModelLendingRequest,
+      O: ModelLendingState,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * @generated from rpc sisyphus.node.v1.NodeService.SetModelLending
+     */
+    setModelLending: {
+      name: "SetModelLending",
+      I: SetModelLendingRequest,
+      O: ModelLendingState,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * @generated from rpc sisyphus.node.v1.NodeService.InspectOllama
+     */
+    inspectOllama: {
+      name: "InspectOllama",
+      I: InspectOllamaRequest,
+      O: InspectOllamaResponse,
       kind: MethodKind.Unary,
     },
     /**
