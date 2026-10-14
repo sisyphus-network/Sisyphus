@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -16,13 +17,17 @@ import (
 
 // A model server's replies as OpenAI's dialect has them, which is how a
 // worker asks its own: one that asks for a tool, and one that is only text.
+// asksFor is a worker's model asking for a tool, in the dialect a worker
+// speaks to its Ollama. The arguments are written as OpenAI writes them, as
+// JSON in a string, and the worker passes them on as OpenAI would have.
 func asksFor(tool, arguments string) string {
-	return `{"choices":[{"index":0,"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"` + tool + `","arguments":` + arguments + `}}]},"finish_reason":"tool_calls"}]}`
+	var written string
+	json.Unmarshal([]byte(arguments), &written)
+	return wants(tool, written)
 }
 
-func replies(text string) string {
-	return `{"choices":[{"index":0,"message":{"role":"assistant","content":"` + text + `"},"finish_reason":"stop"}]}`
-}
+// replies is a worker's model answering in words.
+func replies(text string) string { return says(text) }
 
 func TestThePoolThinksOnAWorkersModelAndThePlannerPlansWithIt(t *testing.T) {
 	served := newModel(t,
@@ -217,15 +222,27 @@ func TestAMachineThatUsesAPoolOffersItsModelsToItsOwnPrograms(t *testing.T) {
 	}
 }
 
-func TestAWorkerOffersOnlyTheModelsItsOwnerNames(t *testing.T) {
-	served := newModel(t)
+func TestAWorkerOffersOnlyTheModelsItsOwnerNamesAsTheyAskForThem(t *testing.T) {
+	served := newModel(t, says("Hello."))
 	dataDir := t.TempDir()
 	addr, apiAddr := freeAddr(t), freeAddr(t)
 	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--api-listen", apiAddr,
-		"--models-from", served.URL, "--models-only", " test-model, ,")
+		"--models-from", served.URL, "--models-only", " test-model, ,",
+		"--models-gpu-layers", "0", "--models-threads", "4", "--models-keep-alive", "1m")
 	waitForOutput(t, "rig", "nodes", "--addr", addr)
 	workers, err := desktop(t, apiAddr).ListWorkers(context.Background(), &nodepb.ListWorkersRequest{})
 	if err != nil || len(workers.GetWorkers()) != 1 || strings.Join(workers.GetWorkers()[0].GetModels(), ",") != "test-model" {
 		t.Fatalf("workers = %v, %v", workers, err)
+	}
+	// A reply is asked of the worker's Ollama with the owner's settings on
+	// it, and those the owner left to Ollama left out.
+	if out := mustCLI(t, "job", "submit", "--addr", addr, "--workload", "chat", "--params", `{"model":"test-model","messages":[{"role":"user","content":"Hi"}]}`); !strings.Contains(out, "Hello.") {
+		t.Fatalf("the reply: %s", out)
+	}
+	served.mu.Lock()
+	defer served.mu.Unlock()
+	asked := served.asked[len(served.asked)-1]
+	if options, _ := asked["options"].(map[string]any); options["num_gpu"] != float64(0) || options["num_thread"] != float64(4) || len(options) != 2 || asked["keep_alive"] != "1m" {
+		t.Errorf("the worker's Ollama was asked %v", asked)
 	}
 }

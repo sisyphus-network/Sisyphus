@@ -65,6 +65,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	serve := fs.String("serve", "", "worker-only node: address to serve its cached data on to the other workers of its pool, so that they need not all fetch it from the coordinator")
 	advertise := fs.String("advertise", "", "worker-only node: the address other workers should use to reach --serve, if not the same")
 	modelsOnly := fs.String("models-only", "", "worker role, with --models-from: offer only these of its models, separated by commas: a model as Ollama names it (qwen3:8b), a family (llama3.1, every size of it), or a pattern (gemma*); empty offers them all")
+	modelsGPULayers := fs.Int("models-gpu-layers", -1, "worker role, with --models-from: how many of a model's layers Ollama may put on graphics cards for the pool's jobs; 0 keeps the models on the processor and in the machine's memory, -1 lets Ollama put on as many as fit")
+	modelsThreads := fs.Int("models-threads", 0, "worker role, with --models-from: how many of the processor's threads a model may use for the pool's jobs; 0 lets Ollama decide")
+	modelsContext := fs.Int("models-context", 0, "worker role, with --models-from: how many tokens of a conversation a model holds for the pool's jobs; more takes more memory; 0 lets Ollama decide")
+	modelsKeepAlive := fs.String("models-keep-alive", "", "worker role, with --models-from: how long a model stays loaded after it last answered for the pool, such as 10m, or 0 to unload it at once; empty lets Ollama decide")
 	modelsFrom := fs.String("models-from", "", "worker role: offer the language models of the Ollama at this address, such as http://127.0.0.1:11434, to the pool's jobs. Whoever may submit jobs can then use them, and this machine sees what they ask")
 	inferenceListen := fs.String("inference-listen", "", "coordinator: loopback address to offer the pool's language models on, as a service speaking OpenAI's dialect whose key is the node's API token; off if empty")
 	gatewayListen := fs.String("gateway-listen", "", "address to serve stored files on, read-only, by content ID as GET /ipfs/<cid> and by the names this node answers for as GET /ipns/<node ID>, to whoever shows the node's API token; off if empty")
@@ -228,7 +232,14 @@ func runDaemon(ctx context.Context, args []string) error {
 		runs = runtime.ContainersConfined(confined)
 	}
 	if *modelsFrom != "" {
-		runs = runs.With(runtime.WithModels(*modelsFrom, runtime.Owner{Only: listOf(*modelsOnly)})...)
+		owner := runtime.Owner{Only: listOf(*modelsOnly), Options: map[string]any{}, KeepAlive: *modelsKeepAlive}
+		for setting, value := range map[string]int{"num_gpu": *modelsGPULayers, "num_thread": *modelsThreads, "num_ctx": *modelsContext} {
+			// Ollama decides what the owner did not.
+			if value > 0 || (setting == "num_gpu" && value == 0) {
+				owner.Options[setting] = value
+			}
+		}
+		runs = runs.With(runtime.WithModels(*modelsFrom, owner)...)
 	}
 	// A graph is a job of jobs, which a coordinator carries out itself: no
 	// worker runs one, so only what takes jobs in knows of it.
