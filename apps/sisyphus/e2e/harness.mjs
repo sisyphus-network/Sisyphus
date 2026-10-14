@@ -138,7 +138,7 @@ export async function standInModel(...replies) {
             { status: 'pulling layer', total: 200, completed: 200 },
             { status: 'success' },
           ].entries()) {
-            if (index > 0) await new Promise((done) => setTimeout(done, 250))
+            if (index > 0) await new Promise((done) => setTimeout(done, 1000))
             response.write(`${JSON.stringify(event)}\n`)
           }
           response.end()
