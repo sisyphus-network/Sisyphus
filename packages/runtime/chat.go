@@ -65,6 +65,19 @@ type Owner struct {
 	KeepAlive string
 }
 
+// OwnerFromSettings builds an owner policy from the settings saved for a node.
+// A GPU layer count of 0 is an explicit request to use no GPU; -1 leaves it
+// to Ollama. Zero threads and context leave those decisions to Ollama too.
+func OwnerFromSettings(only []string, gpuLayers, threads, context int, keepAlive string) Owner {
+	owner := Owner{Only: append([]string(nil), only...), Options: map[string]any{}, KeepAlive: keepAlive}
+	for setting, value := range map[string]int{"num_gpu": gpuLayers, "num_thread": threads, "num_ctx": context} {
+		if value > 0 || (setting == "num_gpu" && value == 0) {
+			owner.Options[setting] = value
+		}
+	}
+	return owner
+}
+
 // Allows reports whether the owner offers a model.
 func (o Owner) Allows(model string) bool {
 	if len(o.Only) == 0 {

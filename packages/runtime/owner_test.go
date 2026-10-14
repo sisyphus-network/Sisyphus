@@ -93,3 +93,29 @@ func TestModelAllowlistChangesOnTheLiveModelServer(t *testing.T) {
 		}
 	}
 }
+
+func TestOwnerFromSettingsDistinguishesUnsetFromZeroGPU(t *testing.T) {
+	only := []string{"llama3.1"}
+	owner := OwnerFromSettings(only, -1, 0, 0, "")
+	if _, ok := owner.Options["num_gpu"]; ok {
+		t.Fatal("an unset GPU layer count should be left to Ollama")
+	}
+	if _, ok := owner.Options["num_thread"]; ok {
+		t.Fatal("zero threads should be left to Ollama")
+	}
+	if _, ok := owner.Options["num_ctx"]; ok {
+		t.Fatal("zero context should be left to Ollama")
+	}
+
+	noGPU := OwnerFromSettings(only, 0, 6, 4096, "10m")
+	if got, ok := noGPU.Options["num_gpu"]; !ok || got != 0 {
+		t.Fatalf("explicit no-GPU setting = %v, present %v; want 0, present", got, ok)
+	}
+	if noGPU.Options["num_thread"] != 6 || noGPU.Options["num_ctx"] != 4096 || noGPU.KeepAlive != "10m" {
+		t.Fatalf("owner settings = %#v", noGPU)
+	}
+	only[0] = "changed"
+	if noGPU.Only[0] != "llama3.1" {
+		t.Fatal("owner aliases the caller's model allowlist")
+	}
+}

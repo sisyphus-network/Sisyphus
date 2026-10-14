@@ -418,7 +418,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 	}
 	if lent.Enabled {
-		local.LiveLending = runtime.NewModelServer(lent.URL, ownerOf(lent))
+		local.LiveLending = runtime.NewModelServer(lent.URL, runtime.OwnerFromSettings(lent.Only, lent.GPULayers, lent.Threads, lent.Context, lent.KeepAlive))
 		runs = runs.With(runtime.WithLiveModels(local.LiveLending)...)
 	}
 	local.Lending, local.Lent, local.LentByFlags = db, lent, *modelsFrom != ""
@@ -1833,18 +1833,6 @@ func dataDirFor(home, goos string, env func(string) string, exists func(string) 
 }
 
 // listOf reads a list separated by commas, leaving out what is blank.
-// ownerOf is what an owner who lends their models allows the pool.
-func ownerOf(lent nodedb.ModelLending) runtime.Owner {
-	owner := runtime.Owner{Only: lent.Only, Options: map[string]any{}, KeepAlive: lent.KeepAlive}
-	for setting, value := range map[string]int{"num_gpu": lent.GPULayers, "num_thread": lent.Threads, "num_ctx": lent.Context} {
-		// Ollama decides what the owner did not.
-		if value > 0 || (setting == "num_gpu" && value == 0) {
-			owner.Options[setting] = value
-		}
-	}
-	return owner
-}
-
 func listOf(flag string) []string {
 	var items []string
 	for _, item := range strings.Split(flag, ",") {

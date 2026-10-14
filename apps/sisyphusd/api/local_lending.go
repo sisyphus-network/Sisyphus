@@ -65,7 +65,7 @@ func (s *localService) SetModelLending(ctx context.Context, req *nodepb.SetModel
 	if !s.cfg.LentByFlags && sameLendingRuntime(l, running) {
 		if l.Enabled {
 			if s.cfg.LiveLending != nil {
-				s.cfg.LiveLending.Update(lendingOwner(l))
+				s.cfg.LiveLending.Update(runtime.OwnerFromSettings(l.Only, l.GPULayers, l.Threads, l.Context, l.KeepAlive))
 				s.cfg.Lent = l
 			}
 		} else {
@@ -118,16 +118,6 @@ func (s *localService) lendingState(saved nodedb.ModelLending) *nodepb.ModelLend
 
 func sameLendingRuntime(saved, running nodedb.ModelLending) bool {
 	return saved.Enabled == running.Enabled && (!saved.Enabled || saved.URL == running.URL)
-}
-
-func lendingOwner(l nodedb.ModelLending) runtime.Owner {
-	owner := runtime.Owner{Only: append([]string(nil), l.Only...), Options: map[string]any{}, KeepAlive: l.KeepAlive}
-	for setting, value := range map[string]int{"num_gpu": l.GPULayers, "num_thread": l.Threads, "num_ctx": l.Context} {
-		if value > 0 || (setting == "num_gpu" && value == 0) {
-			owner.Options[setting] = value
-		}
-	}
-	return owner
 }
 
 // checkLending refuses settings Ollama could not use. Settings that lend
