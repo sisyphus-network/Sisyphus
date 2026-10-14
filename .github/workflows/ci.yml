@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Keep untrusted fork pull requests on GitHub-hosted infrastructure. PRs
+    # from this repository and pushes to dev use the project's Linux runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
     env:
       # Fail, rather than skip, any test that finds no ipfs program.
       SISYPHUS_REQUIRE_KUBO: "1"
@@ -34,7 +36,9 @@ jobs:
             -p "kubo_${KUBO_VERSION}_linux-amd64.tar.gz" -p "kubo_${KUBO_VERSION}_linux-amd64.tar.gz.sha512"
           echo "$(cut -d' ' -f1 "kubo_${KUBO_VERSION}_linux-amd64.tar.gz.sha512")  kubo_${KUBO_VERSION}_linux-amd64.tar.gz" | sha512sum -c -
           tar -xzf "kubo_${KUBO_VERSION}_linux-amd64.tar.gz"
-          sudo install -m 755 kubo/ipfs /usr/local/bin/ipfs
+          install -Dm 755 kubo/ipfs "$HOME/.local/bin/ipfs"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
           rm -rf kubo "kubo_${KUBO_VERSION}_linux-amd64.tar.gz"*
           ipfs version
       - name: Install IPFS Cluster
@@ -50,7 +54,9 @@ jobs:
             -p "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
           echo "$CLUSTER_SHA256  ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz" | sha256sum -c -
           tar -xzf "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
-          sudo install -m 755 ipfs-cluster-service/ipfs-cluster-service /usr/local/bin/ipfs-cluster-service
+          install -Dm 755 ipfs-cluster-service/ipfs-cluster-service "$HOME/.local/bin/ipfs-cluster-service"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
           rm -rf ipfs-cluster-service "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
           ipfs-cluster-service --version
       - name: Check formatting
@@ -67,7 +73,7 @@ jobs:
   # container with its own address and disk. It is what finds faults that
   # tests on one machine cannot, since those all run over loopback.
   rehearsal:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -77,7 +83,7 @@ jobs:
         run: examples/rehearsal.sh
 
   desktop:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
     defaults:
       run:
         working-directory: apps/sisyphus
