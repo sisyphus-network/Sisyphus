@@ -848,12 +848,12 @@ body::before {
 
 .liquid-dock__active {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 6px;
+  right: 0;
   z-index: 0;
   display: block;
-  width: 84px;
-  height: calc(100% - 10px);
+  width: var(--liquid-width, 84px);
+  height: calc(100% - 12px);
   border-radius: 999px;
   background-color: color-mix(in srgb, var(--app-wash) 72%, transparent);
   box-shadow:
@@ -862,7 +862,7 @@ body::before {
     inset -1.5px -1px 0 -1px color-mix(in srgb, var(--app-card) 60%, transparent),
     inset -1px 2px 3px -1px color-mix(in srgb, #000 16%, transparent),
     0 3px 6px color-mix(in srgb, #000 8%, transparent);
-  transform: translateX(calc(var(--liquid-index) * -76px));
+  transform: translateX(calc(var(--liquid-offset, 0px) * -1));
   transform-origin: right center;
   transition: transform 400ms cubic-bezier(1, 0, 0.4, 1), background-color 90ms linear, box-shadow 90ms linear;
   animation: liquid-scale-toggle 440ms ease;
@@ -870,7 +870,7 @@ body::before {
 
 .liquid-dock[data-active="false"] .liquid-dock__active {
   opacity: 0;
-  transform: translateX(calc(var(--liquid-index) * -76px)) scale(0.82, 0.9);
+  transform: translateX(calc(var(--liquid-offset, 0px) * -1)) scale(0.82, 0.9);
   pointer-events: none;
 }
 
