@@ -82,6 +82,17 @@ The issue's first item is the fix: carry the CID whole, with its version, codec 
 - **Consensus should check its form and nothing else**: that it parses as a CID, within a length limit. Not that the data exists, which no node can know.
 - **A limit** on length, so that an identity hash, which carries data inline, cannot be used to put arbitrary bytes on chain. Refuse the identity hash outright.
 
+The wire field should be the **binary CID**, not its printable multibase string. The string base is a presentation choice; consensus must not give different encodings of the same CID different meanings. The CID specification also requires minimally encoded varints and exact consumption of the multihash digest, rejecting malformed/trailing bytes ([CID specification](https://github.com/ipfs/specs/blob/main/src/cid.md)).
+
+#### Draft validation boundary (not a chain decision)
+
+1. Parse the complete byte string as a CID; reject malformed versions, non-minimal varints, truncated fields and trailing bytes.
+2. Reject identity multihashes, so a CID cannot be used to smuggle its payload into the transaction.
+3. Treat the parsed CID as an identifier only. Do not fetch its content, resolve a name, or rely on a gateway during consensus validation.
+4. Keep the accepted CID versions, codec/hash allowlists, maximum encoded size, legacy-v0 migration policy and fee schedule explicitly open for #20/#21. The Multiformats registries include codecs and hash functions with different properties; registry membership alone is not a security allowlist ([multihash notes](https://github.com/multiformats/multihash#insecure--obsolete-hash-functions)).
+
+This gives implementers a deterministic parsing contract without choosing network-specific serialization limits or fees before the chain and token work is settled.
+
 ### Hints are not identifiers
 
 The issue has this right and it should stay in the design's first sentence: the CID says what the content is; a hint says where a copy may be; a reader checks what it fetched against the CID. A hint that lies costs a reader a failed fetch and nothing else.
@@ -90,7 +101,9 @@ That makes hints safe to leave out of consensus rules beyond a size limit and a 
 
 ### A name in place of a CID
 
-For content meant to change, an asset would carry a name and not a CID. The daemon already has names: a node's ID stands for whichever CID the node last signed, with a record that says until when. An asset pointing at a name is then as trustworthy as the key behind the name, which should be said to whoever holds the asset. Reissuing the asset with a new CID is the on-chain alternative and leaves a history; the name does not.
+For content meant to change, an asset can carry a typed mutable name rather than a CID. These are different identifier kinds and should not be represented by an untagged string. For IPNS, the name is tied to a public key and records are signed by its private-key holder; the record includes a path and validity information. That proves who signed a record, not that a resolver returned the latest record: publication and resolution have separate availability/consistency tradeoffs ([IPNS overview](https://docs.ipfs.tech/concepts/ipns/)).
+
+The daemon also has its own signed names: a node's ID stands for whichever CID the node last signed, with a record that says until when. Either kind of name is an off-chain pointer whose resolution may change or lag. Consensus can preserve the name bytes and type, but must not treat its current resolution as the asset's immutable content commitment. Reissuing the asset with a new CID is the on-chain alternative and leaves a history; a mutable name does not.
 
 ### Job receipts
 
@@ -100,4 +113,4 @@ The chain note argues that a receipt is better as the reward transaction, which 
 
 1. **Challenges from a coordinator to its followers.** Built since this note was first written: a random range of a random blob, answered with a digest under a fresh number, counted in what `blob replicas` reports. What it leaves for a paid network is everything in the list above: more than one real copy, the future, and retrieval.
 2. **A written format for a deal** and for a challenge, as messages, so that the chain work has something exact to carry.
-3. **A CID field's rules** written as a short specification: accepted versions and codecs, the length limit, the refusal of inline data.
+3. **A CID field's rules** written as a short specification: strict binary parsing and refusal of inline data are clear now; accepted versions/codecs/hashes, the length limit and fee remain decisions for #20/#21.
