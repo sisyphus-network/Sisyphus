@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ask a question
+    url: https://github.com/sisyphus-network/Sisyphus/discussions/categories/q-a
+    about: How to run a node, lend a machine, or use the desktop app. Questions get answered in Discussions.
+  - name: Share an idea
+    url: https://github.com/sisyphus-network/Sisyphus/discussions/categories/ideas
+    about: Something Sisyphus could do. Ideas start in Discussions and become issues once there is a plan.
+  - name: Report a vulnerability
+    url: https://github.com/sisyphus-network/Sisyphus/security/policy
+    about: Please report security problems privately, not in a public issue.
