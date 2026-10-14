@@ -598,6 +598,75 @@ func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelC
 	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: cfg.BaseURL, Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
 }
 
+func (s *localService) ListModelProfiles(ctx context.Context, _ *nodepb.ListModelProfilesRequest) (*nodepb.ListModelProfilesResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	profiles, ok := s.cfg.Assistant.(interface {
+		ModelProfiles() ([]nodedb.ModelProfile, error)
+	})
+	if !ok {
+		return nil, errNoPlanner
+	}
+	items, err := profiles.ModelProfiles()
+	if err != nil {
+		return nil, asError(err)
+	}
+	response := &nodepb.ListModelProfilesResponse{}
+	for _, p := range items {
+		response.Profiles = append(response.Profiles, &nodepb.ModelProfile{Id: p.ID, Name: p.Name, Provider: p.Config.Provider, BaseUrl: p.Config.BaseURL, Model: p.Config.Model, HasApiKey: p.Config.APIKey != "", Active: p.Active})
+	}
+	return response, nil
+}
+
+func (s *localService) SaveModelProfile(ctx context.Context, req *nodepb.SaveModelProfileRequest) (*nodepb.ModelProfile, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	profiles, ok := s.cfg.Assistant.(interface {
+		ModelProfiles() ([]nodedb.ModelProfile, error)
+		SaveModelProfile(nodedb.ModelProfile) error
+	})
+	if !ok {
+		return nil, errNoPlanner
+	}
+	config := nodedb.ModelConfig{Provider: req.GetProvider(), BaseURL: req.GetBaseUrl(), Model: req.GetModel(), APIKey: req.GetApiKey()}
+	if req.GetKeepApiKey() {
+		all, err := profiles.ModelProfiles()
+		if err != nil {
+			return nil, asError(err)
+		}
+		for _, existing := range all {
+			if existing.ID == req.GetId() && sameService(existing.Config, config) {
+				config.APIKey = existing.Config.APIKey
+				break
+			}
+		}
+	}
+	p := nodedb.ModelProfile{ID: req.GetId(), Name: req.GetName(), Config: config, Active: req.GetActive()}
+	if p.ID == "" || p.Name == "" || p.Config.Provider == "" {
+		return nil, status.Error(codes.InvalidArgument, "profile id, name and provider are required")
+	}
+	if err := profiles.SaveModelProfile(p); err != nil {
+		return nil, asError(err)
+	}
+	return &nodepb.ModelProfile{Id: p.ID, Name: p.Name, Provider: p.Config.Provider, BaseUrl: p.Config.BaseURL, Model: p.Config.Model, HasApiKey: p.Config.APIKey != "", Active: p.Active}, nil
+}
+
+func (s *localService) DeleteModelProfile(ctx context.Context, req *nodepb.DeleteModelProfileRequest) (*nodepb.DeleteModelProfileResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	profiles, ok := s.cfg.Assistant.(interface{ DeleteModelProfile(string) error })
+	if !ok {
+		return nil, errNoPlanner
+	}
+	if err := profiles.DeleteModelProfile(req.GetId()); err != nil {
+		return nil, asError(err)
+	}
+	return &nodepb.DeleteModelProfileResponse{}, nil
+}
+
 // Ask puts a question to the planner and sends what it does as it does it.
 // It spends the pool's time and perhaps a service's credit, and what is
 // said is the owner's business, so it needs the token, as do the calls that
