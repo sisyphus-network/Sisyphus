@@ -42,5 +42,8 @@ jobs:
           path: |
             apps/sisyphus/dist/*.zip
             apps/sisyphus/dist/*.tar.gz
+            apps/sisyphus/dist/*.AppImage
+            apps/sisyphus/dist/*-setup.exe
+            apps/sisyphus/dist/*.dmg
           if-no-files-found: error
           retention-days: 7
