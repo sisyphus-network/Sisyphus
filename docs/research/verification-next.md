@@ -49,6 +49,21 @@ Three kinds of work are in the daemon that verification cannot touch today: mode
 
 The honest summary: approximate comparison is buildable for embeddings now, structural checks for transcoding now, and the rest wants either real hardware to measure on or trusted hardware.
 
+### Determinism of the workloads in the current source
+
+This is a source review of the workloads on `dev`, not evidence that different operating systems or processor architectures have been tested. “Exact” below means that, for the same named input, the workload has a canonical result that is suitable for byte-for-byte verification; it does not mean that every current worker has already been cross-tested.
+
+| Workload | Comparison that is defensible | Basis and remaining limit |
+|---|---|---|
+| `primes` | Exact result comparison; known-answer tasks are a good first candidate. | `packages/runtime/primes.go` counts integer ranges with a segmented sieve and returns an integer count. Its bounded square-root is only used to seed the sieve. Add cross-architecture CI before claiming that matrix as verified. |
+| `wordcount` | Exact comparison for the same input CID and parameters; canonical aggregate output. | `packages/runtime/wordcount.go` defines tokenization over bytes, folds ASCII case, treats non-ASCII bytes as word bytes, and sorts the final table by count and byte order. This is a specific byte-oriented contract, not general Unicode word segmentation. |
+| `container` | No blanket exact-comparison promise. | A caller controls the image, command, environment, input and optional network. The program can observe time, randomness, host details or remote services. A future deterministic mode would need a narrower contract and pinned image digest, not merely the same image tag. |
+| `transcode` | Do not compare encoded bytes as exact results; validate media structure or quality under a named validator. | The current FFmpeg workload uses a tagged Alpine base and installs FFmpeg from the package repository, rather than pinning the complete image by digest. Encoder version, build and execution details can therefore differ. |
+| `chat`, `prompts` | No exact result comparison. | Generation can vary with model weights, model-server/runtime build, hardware and options; temperature zero alone is not a determinism guarantee. |
+| `embed` | No exact vector comparison; tolerance-based comparison remains experimental. | Floating-point results can vary across model servers and hardware. Measure honest variance on the supported machine classes before choosing a threshold. |
+
+This makes the first known-answer experiment deliberately small: `primes` and `wordcount`, with the exact input and workload contract recorded. It does not yet answer how much verification costs in a market, or whether results stay apart against collusion; those remain separate questions above.
+
 ## What needs a chain, or at least money
 
 ### Stakes
