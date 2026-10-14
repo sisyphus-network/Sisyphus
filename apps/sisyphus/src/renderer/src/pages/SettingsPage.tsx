@@ -168,6 +168,9 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
     const scroller = scrollRef.current
     if (!scroller) return
     const key = 'sisyphus-page-scroll-positions'
+    let disposed = false
+    let restoreFrame = 0
+    let restoreAttempts = 0
     const save = () => {
       try {
         const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
@@ -175,14 +178,28 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
         window.localStorage.setItem(key, JSON.stringify({ ...stored, '/settings': scroller.scrollTop }))
       } catch { /* Storage may be unavailable in restricted contexts. */ }
     }
-    try {
-      const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
-      if (positions && typeof positions === 'object' && typeof (positions as Record<string, unknown>)['/settings'] === 'number') {
-        scroller.scrollTop = (positions as Record<string, number>)['/settings']
-      }
-    } catch { /* Ignore malformed saved scroll positions. */ }
+    const restore = () => {
+      if (disposed) return
+      try {
+        const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
+        if (positions && typeof positions === 'object' && typeof (positions as Record<string, unknown>)['/settings'] === 'number') {
+          const savedTop = (positions as Record<string, number>)['/settings']
+          scroller.scrollTop = savedTop
+          // The route can mount while its parent is still entering the layout.
+          // Re-apply briefly across the entry frames so a late flex/layout pass
+          // cannot reset the settings-owned scroller after the first restore.
+          if (restoreAttempts < 3) {
+            restoreAttempts += 1
+            restoreFrame = window.requestAnimationFrame(restore)
+          }
+        }
+      } catch { /* Ignore malformed saved scroll positions. */ }
+    }
+    restoreFrame = window.requestAnimationFrame(restore)
     scroller.addEventListener('scroll', save, { passive: true })
     return () => {
+      disposed = true
+      window.cancelAnimationFrame(restoreFrame)
       save()
       scroller.removeEventListener('scroll', save)
     }
