@@ -88,6 +88,30 @@ jobs:
           '
       - run: go build ./apps/sisyphusd
 
+  # Known-answer workloads must agree across real CPU architectures, not only
+  # compile for them. These tests avoid the daemon's network/service fixtures.
+  workload-architecture:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goarch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Verify runner architecture
+        run: test "$(go env GOARCH)" = "${{ matrix.goarch }}"
+      - name: Check known-answer workloads
+        run: >-
+          go test ./packages/runtime
+          -run '^(TestCountPrimes|TestPrimesSplitExecuteAggregate|TestIsqrtIsExactAcrossThePrimesRange|TestCountWordsOverTheWholeText|TestCountWordsIsUnaffectedByWhereRangesAreCut|TestWordCountProducesASortedTable|TestWordCountResultCIDIsTheSameHoweverTheJobIsSplit)$'
+
   # A pool across machines, as near as one runner gets: each node in a
   # container with its own address and disk. It is what finds faults that
   # tests on one machine cannot, since those all run over loopback.
