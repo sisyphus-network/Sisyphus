@@ -698,6 +698,10 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
   const { app, page } = await launch(node, profile)
   try {
     await wide(app, page)
+    // Keep the desktop layout, but leave enough vertical content to exercise
+    // restoration even when Settings otherwise nearly fits in the window.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 620))
+    await page.waitForFunction(() => window.innerWidth > 900 && window.innerHeight < 700)
     await open(page, 'Settings')
     const sidebar = page.locator('.app-shell-body--advanced > aside')
     const header = page.locator('.app-global-header')
@@ -705,6 +709,9 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     const settings = page.locator('.settings-page')
     const settingsScroller = page.locator('.settings-page__scroll')
     await settingsScroller.waitFor()
+    // The access card hydrates asynchronously; wait for its saved OFF-state
+    // content before measuring or setting the scroll position.
+    await page.getByText('HTTPS', { exact: true }).waitFor()
 
     const layout = await page.evaluate(() => {
       const sidebarRect = document.querySelector('.app-shell-body--advanced > aside').getBoundingClientRect()
