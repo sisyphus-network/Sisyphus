@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use Sisyphus in research, please cite it as below."
+title: "Sisyphus: a decentralized network for useful compute"
+type: software
+authors:
+  - alias: rvnminers-A-and-N
+  - alias: excho0
+repository-code: "https://github.com/sisyphus-network/Sisyphus"
+license: Apache-2.0
+keywords:
+  - decentralized computing
+  - distributed computing
+  - peer-to-peer
+  - large language models
+  - IPFS
+  - libp2p
