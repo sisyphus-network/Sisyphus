@@ -149,7 +149,7 @@ type Coordinator struct {
 	// ctx bounds the aggregations still running when the coordinator closes.
 	ctx         context.Context
 	cancel      context.CancelFunc
-	aggregating sync.WaitGroup
+	aggregating background
 
 	mu sync.Mutex
 	// swarmFingerprint identifies the current key of the pool's private
@@ -636,6 +636,42 @@ func (c *Coordinator) saveLocked(job *jobmodel.Job) {
 // it to end. Call it before closing the blob store, and before cutting off
 // the workers: a worker lost to a coordinator that has been closed is not
 // held against the tasks it was running. Closing twice does no harm.
+// background counts what the coordinator has set going on its own, so that
+// Close can wait for it. Unlike a sync.WaitGroup it may be added to while
+// Close is waiting, as a worker that disconnects as the coordinator closes
+// may finish a job and store its record: what starts then is waited for
+// too.
+type background struct {
+	mu   sync.Mutex
+	n    int
+	idle *sync.Cond
+}
+
+func (b *background) Add(n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.n += n
+}
+
+func (b *background) Done() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.n--; b.n == 0 && b.idle != nil {
+		b.idle.Broadcast()
+	}
+}
+
+func (b *background) Wait() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.idle == nil {
+		b.idle = sync.NewCond(&b.mu)
+	}
+	for b.n > 0 {
+		b.idle.Wait()
+	}
+}
+
 func (c *Coordinator) Close() {
 	c.cancel()
 	c.aggregating.Wait()
