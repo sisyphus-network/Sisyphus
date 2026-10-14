@@ -124,6 +124,12 @@ jobs:
         run: |
           test "$(go env GOOS)" = "${{ matrix.goos }}"
           test "$(go env GOARCH)" = "${{ matrix.goarch }}"
+      - name: Build the daemon for the release target
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./apps/sisyphusd
       - name: Check known-answer workloads
         run: >-
           go test ./packages/runtime
@@ -147,7 +153,9 @@ jobs:
           - {runner: ubuntu-26.04, goos: linux, goarch: loong64, via: qemu-loongarch64}
           - {runner: ubuntu-26.04, goos: linux, goarch: "386", via: ""}
           - {runner: ubuntu-26.04-arm, goos: android, goarch: arm64, via: /lib/ld-linux-aarch64.so.1}
+          - {runner: ubuntu-26.04, goos: freebsd, goarch: arm64, via: build-only}
           - {runner: ubuntu-26.04, goos: freebsd, goarch: amd64, via: vm}
+          - {runner: ubuntu-26.04, goos: openbsd, goarch: arm64, via: build-only}
           - {runner: ubuntu-26.04, goos: openbsd, goarch: amd64, via: vm}
           - {runner: ubuntu-26.04, goos: netbsd, goarch: amd64, via: vm}
     name: workload-elsewhere (${{ matrix.goos }}, ${{ matrix.goarch }})
@@ -166,11 +174,18 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: "7"
         run: go test -c -o packages/runtime/runtime.test ./packages/runtime
+      - name: Build the daemon for the release target
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: "7"
+        run: go build -o "$RUNNER_TEMP/sisyphusd" ./apps/sisyphusd
       - name: Install the emulator
         if: startsWith(matrix.via, 'qemu')
         run: sudo apt-get update && sudo apt-get install -y qemu-user
       - name: Run the known-answer workloads
-        if: matrix.via != 'vm'
+        if: matrix.via != 'vm' && matrix.via != 'build-only'
         working-directory: packages/runtime
         run: ${{ matrix.via }} ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
       - name: Run the known-answer workloads on FreeBSD
