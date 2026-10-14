@@ -216,37 +216,54 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
     if (!scroller) return
     const key = 'sisyphus-page-scroll-positions'
     let disposed = false
-    let restoreFrame = 0
-    let restoreAttempts = 0
+    let restorePending = false
+    let savedTop = 0
+    const resizeObserver = new ResizeObserver(() => restore())
+    const mutationObserver = new MutationObserver(() => {
+      observeChildren()
+      restore()
+    })
     const save = () => {
+      if (restorePending) return
       try {
         const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
         const stored = positions && typeof positions === 'object' ? positions as Record<string, unknown> : {}
         window.localStorage.setItem(key, JSON.stringify({ ...stored, '/settings': scroller.scrollTop }))
       } catch { /* Storage may be unavailable in restricted contexts. */ }
     }
-    const restore = () => {
-      if (disposed) return
-      try {
-        const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
-        if (positions && typeof positions === 'object' && typeof (positions as Record<string, unknown>)['/settings'] === 'number') {
-          const savedTop = (positions as Record<string, number>)['/settings']
-          scroller.scrollTop = savedTop
-          // The route can mount while its parent is still entering the layout.
-          // Re-apply briefly across the entry frames so a late flex/layout pass
-          // cannot reset the settings-owned scroller after the first restore.
-          if (restoreAttempts < 3) {
-            restoreAttempts += 1
-            restoreFrame = window.requestAnimationFrame(restore)
-          }
-        }
-      } catch { /* Ignore malformed saved scroll positions. */ }
+    const finishRestore = () => {
+      restorePending = false
+      resizeObserver.disconnect()
+      mutationObserver.disconnect()
     }
-    restoreFrame = window.requestAnimationFrame(restore)
+    const observeChildren = () => {
+      for (const child of scroller.children) resizeObserver.observe(child)
+    }
+    const restore = () => {
+      if (disposed || !restorePending) return
+      const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      scroller.scrollTop = Math.min(savedTop, maxTop)
+      // Settings data can hydrate after the route mounts. Keep the original
+      // position pending until the content is tall enough to restore it.
+      if (scroller.scrollTop >= savedTop - 1) finishRestore()
+    }
+    try {
+      const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
+      const value = positions && typeof positions === 'object' ? (positions as Record<string, unknown>)['/settings'] : undefined
+      savedTop = typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+    } catch { /* Ignore malformed saved scroll positions. */ }
+    restorePending = savedTop > 0
+    if (restorePending) {
+      resizeObserver.observe(scroller)
+      observeChildren()
+      mutationObserver.observe(scroller, { childList: true, characterData: true, subtree: true })
+    }
+    restore()
     scroller.addEventListener('scroll', save, { passive: true })
     return () => {
       disposed = true
-      window.cancelAnimationFrame(restoreFrame)
+      resizeObserver.disconnect()
+      mutationObserver.disconnect()
       save()
       scroller.removeEventListener('scroll', save)
     }
