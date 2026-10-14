@@ -139,7 +139,8 @@ jobs:
   # has no runner of: the tests are compiled for each and run in an emulator
   # of the processor, on the Android build's own processor (loaded by Linux's
   # loader, since it asks for Android's, which it needs only to be placed in
-  # memory), or in a virtual machine of the BSD. s390x is big-endian, so it shows that an answer does
+  # memory), or in a virtual machine of the BSD, an emulated ARM64 one for
+  # FreeBSD and OpenBSD on ARM64. s390x is big-endian, so it shows that an answer does
   # not depend on byte order.
   workload-elsewhere:
     strategy:
@@ -153,9 +154,9 @@ jobs:
           - {runner: ubuntu-26.04, goos: linux, goarch: loong64, via: qemu-loongarch64}
           - {runner: ubuntu-26.04, goos: linux, goarch: "386", via: ""}
           - {runner: ubuntu-26.04-arm, goos: android, goarch: arm64, via: /lib/ld-linux-aarch64.so.1}
-          - {runner: ubuntu-26.04, goos: freebsd, goarch: arm64, via: build-only}
+          - {runner: ubuntu-26.04, goos: freebsd, goarch: arm64, via: vm}
           - {runner: ubuntu-26.04, goos: freebsd, goarch: amd64, via: vm}
-          - {runner: ubuntu-26.04, goos: openbsd, goarch: arm64, via: build-only}
+          - {runner: ubuntu-26.04, goos: openbsd, goarch: arm64, via: vm}
           - {runner: ubuntu-26.04, goos: openbsd, goarch: amd64, via: vm}
           - {runner: ubuntu-26.04, goos: netbsd, goarch: amd64, via: vm}
     name: workload-elsewhere (${{ matrix.goos }}, ${{ matrix.goarch }})
@@ -198,12 +199,14 @@ jobs:
         if: matrix.goos == 'freebsd' && matrix.via == 'vm'
         uses: vmactions/freebsd-vm@v1
         with:
+          arch: ${{ matrix.goarch == 'arm64' && 'aarch64' || '' }}
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
       - name: Run the known-answer workloads on OpenBSD
         if: matrix.goos == 'openbsd' && matrix.via == 'vm'
         uses: vmactions/openbsd-vm@v1
         with:
+          arch: ${{ matrix.goarch == 'arm64' && 'aarch64' || '' }}
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
       - name: Run the known-answer workloads on NetBSD
