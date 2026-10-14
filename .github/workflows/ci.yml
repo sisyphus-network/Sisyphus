@@ -25,6 +25,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          # Self-hosted runners retain GOMODCACHE and GOCACHE between jobs;
+          # avoid uploading/downloading a large Actions cache on every run.
+          cache: ${{ runner.environment == 'github-hosted' }}
       - name: Install Kubo
         # Some tests run a real IPFS daemon. The version is pinned so that a
         # new release cannot change test results unannounced.
@@ -79,6 +82,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: ${{ runner.environment == 'github-hosted' }}
       - name: Rehearse a pool across containers
         run: examples/rehearsal.sh
 
@@ -92,6 +96,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: ${{ runner.environment == 'github-hosted' }}
       - uses: actions/setup-node@v7
         with:
           node-version: 24
