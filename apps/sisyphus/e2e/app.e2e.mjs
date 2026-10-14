@@ -355,8 +355,13 @@ test('the topology canvas stays fitted through live window resizes', async (t) =
 
     let observedBufferResize = false
     for (const [nextWidth, nextHeight] of [[1040, 720], [1280, 900], [980, 760], [1180, 800]]) {
-      await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setSize(w, h), [nextWidth, nextHeight])
-      await page.waitForFunction(([w, h]) => Math.abs(window.innerWidth - w) < 30 && Math.abs(window.innerHeight - h) < 80, [nextWidth, nextHeight])
+      const previous = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+      await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h), [nextWidth, nextHeight])
+      await page.waitForFunction(([w, h]) => Math.abs(window.innerWidth - w) < 5 && Math.abs(window.innerHeight - h) < 5, [nextWidth, nextHeight])
+      await page.waitForFunction(([width, height]) => {
+        const canvasEl = document.querySelector('.network-globe-stage canvas')
+        return canvasEl && (canvasEl.width !== width || canvasEl.height !== height)
+      }, [previous.width, previous.height])
       await page.waitForFunction(() => {
         const stageEl = document.querySelector('.network-globe-stage')
         const canvasEl = stageEl?.querySelector('canvas')

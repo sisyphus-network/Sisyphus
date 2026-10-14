@@ -92,7 +92,10 @@ jobs:
         run: examples/rehearsal.sh
 
   desktop:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
+    # Electron E2E must never attach to the maintainer's interactive desktop.
+    # Keep desktop checks on an isolated hosted runner; Go integration jobs may
+    # still use the self-hosted runner above.
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/sisyphus
