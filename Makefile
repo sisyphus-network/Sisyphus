@@ -1,7 +1,9 @@
 PROTO_FILES := $(wildcard proto/sisyphus/v1/*.proto) $(wildcard proto/sisyphus/node/v1/*.proto)
+# STATICCHECK is the version of staticcheck that make lint and CI run.
+STATICCHECK := 2026.2.1
 COVERED := ./apps/...,./packages/ai/...,./packages/geo/...,./packages/hardware/...,./packages/identity/...,./packages/ipfscluster/...,./packages/job-model/...,./packages/jobrecord/...,./packages/kubo/...,./packages/names/...,./packages/nodedb/...,./packages/runtime/...,./packages/s3/...,./packages/sealed/...,./packages/storage/...
 
-.PHONY: build test cover demo proto tools fmt
+.PHONY: build test cover demo proto tools fmt lint
 
 build:
 	go build -o bin/sisyphusd ./apps/sisyphusd
@@ -19,6 +21,11 @@ cover:
 # Runs a three-node pool and a job on this machine, in one terminal.
 demo:
 	./scripts/demo.sh
+
+# lint looks for mistakes the compiler and vet let through.
+lint:
+	go vet ./...
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK) ./...
 
 fmt:
 	gofmt -w apps packages

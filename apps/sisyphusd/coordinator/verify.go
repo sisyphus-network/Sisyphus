@@ -2,14 +2,20 @@ package coordinator
 
 import (
 	"cmp"
+	"context"
 	crand "crypto/rand"
 	"fmt"
 	mrand "math/rand/v2"
+	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/peer"
+
 	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
 // Verification by replication: a job that asks for it has each of its tasks
@@ -258,25 +264,108 @@ func (c *Coordinator) unsettledLocked(job *jobmodel.Job, task *jobmodel.Task, si
 // unaskedLocked counts the connected workers that could be given a task of
 // a verified job and have not been.
 func (c *Coordinator) unaskedLocked(job *jobmodel.Job, task *jobmodel.Task) int {
-	n := 0
+	var could []string
 	for _, w := range c.workers {
-		if w.capabilities.GetTaskSlots() > 0 && suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) && !task.Asked(w.id) {
-			n++
+		if w.capabilities.GetTaskSlots() > 0 && suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) && !task.Asked(w.id) && !c.besideLocked(task, w.id) {
+			could = append(could, w.id)
 		}
 	}
-	return n
+	return c.apartLocked(could)
 }
 
 // ableLocked counts the connected workers that could be given tasks of a
 // workload that ask for so much, whether or not they are busy now.
 func (c *Coordinator) ableLocked(workload string, minMemory uint64, minGPUs int, needs []string) int {
-	n := 0
+	var could []string
 	for _, w := range c.workers {
 		if w.capabilities.GetTaskSlots() > 0 && suits(w.capabilities, workload, minMemory, minGPUs, needs) {
-			n++
+			could = append(could, w.id)
 		}
 	}
+	return c.apartLocked(could)
+}
+
+// Workers that can vouch for each other.
+//
+// Two workers that return the same result are taken to have each done the
+// work. Two that are one person's, on one machine, need do it once, or not
+// at all, and agree. A coordinator cannot see who owns a worker. It can see
+// where each connects from, and its owner may ask that a verified task's
+// copies go only to workers at different addresses.
+//
+// That is off unless asked for, because it is wrong for the pool most
+// people have: one household's machines share an address, and so do the
+// workers behind any relay, and there the owner trusts them all and
+// verifies against faults, not against themselves. It is for a pool with
+// strangers in it. It raises the cost of vouching for oneself to having
+// machines at several addresses; it does not stop two people who agree to
+// lie, which nothing here does.
+
+// callersAddress is where a call comes from, as its connection has it: an
+// IPv4 address, or for IPv6 the network it is in, since one machine there
+// has as many addresses as it likes.
+func callersAddress(ctx context.Context) string {
+	from, ok := peer.FromContext(ctx)
+	if !ok {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(from.Addr.String())
+	if err != nil {
+		return ""
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return ""
+	}
+	if ip = ip.Unmap(); ip.Is6() {
+		network, _ := ip.Prefix(64) // cannot fail for a length an address has
+		return network.String()
+	}
+	return ip.String()
+}
+
+// besideLocked reports whether a worker is at the address of one already
+// asked for a task, where that matters: the coordinator was told to keep a
+// verified task's copies apart, and the task is one that is verified. A
+// worker whose address is not known is beside nobody.
+func (c *Coordinator) besideLocked(task *jobmodel.Task, id string) bool {
+	at := c.addresses[id]
+	if !c.distinct || task.Verify < 2 || at == "" {
+		return false
+	}
+	for other, where := range c.addresses {
+		if other != id && where == at && task.Asked(other) {
+			return true
+		}
+	}
+	return false
+}
+
+// apartLocked counts how many of some workers could each be given a copy of
+// one task: all of them, or, where copies are kept apart, as many as they
+// have addresses between them.
+func (c *Coordinator) apartLocked(ids []string) int {
+	if !c.distinct {
+		return len(ids)
+	}
+	seen := make(map[string]bool)
+	n := 0
+	for _, id := range ids {
+		at := c.addresses[id]
+		if at == "" || !seen[at] {
+			n++
+		}
+		seen[at] = true
+	}
 	return n
+}
+
+// apart is what is added to a count of workers where copies are kept apart.
+func (c *Coordinator) apart() string {
+	if c.distinct {
+		return ", counting those at one address as one"
+	}
+	return ""
 }
 
 // short is the beginning of a result's digest: enough to tell the results
@@ -302,4 +391,95 @@ func describe(sides [][]jobmodel.Result) string {
 		said = append(said, names(side)+" returned "+short(side[0]))
 	}
 	return strings.Join(said, "; ")
+}
+
+// Audits. A job may ask that a share of its tasks be checked by the
+// coordinator running them again itself. Which tasks is decided by chance
+// as each result comes in, so no worker knows beforehand, and the result is
+// not taken until the coordinator has its own to set beside it. Where they
+// are the same the worker's standing gains by it. Where they differ the
+// coordinator's own is the task's result and the worker is counted as
+// outvoted, as it would be by other workers.
+//
+// It needs no second worker, so it is what a pool with one worker has, and
+// it is not fooled by workers that agree with each other. It costs the
+// coordinating machine the work of each task it checks, and like every
+// comparison here it is for work that gives the same result each time.
+
+// runsItself reports whether this node can run a workload's tasks itself.
+func (c *Coordinator) runsItself(workload string) bool {
+	if c.audits == nil {
+		return false
+	}
+	_, err := c.audits.Get(workload)
+	return err == nil
+}
+
+// pickedLocked decides, by chance, whether a result that has just come in
+// for one of a job's tasks is to be checked.
+func (c *Coordinator) pickedLocked(job *jobmodel.Job) bool {
+	return job.AuditShare > 0 && c.runsItself(job.Workload) && mrand.Float64() < job.AuditShare
+}
+
+// audit runs a task again here and settles it: with what the worker
+// returned if that is what this node got too, or could not get anything to
+// compare, and with this node's own result if it got another. Running a
+// task may read and write stored data and takes as long as it takes, so it
+// is done without the lock.
+func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte, stored []string) {
+	defer c.aggregating.Done()
+	job, task := a.job, a.task
+	c.mu.Lock()
+	key, id, name, payload := job.Key, job.ID, job.Workload, task.Payload
+	c.mu.Unlock()
+
+	workload, _ := c.audits.Get(name) // picked only for a workload this node runs
+	touched := runtime.Record(c.store)
+	own, err := workload.Execute(c.ctx, withKey(touched, key, id), payload)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ctx.Err() != nil || job.Terminal() || task.State != jobmodel.Running || task.Attempt != a.attempt {
+		// Stopped, cancelled, or handed out again meanwhile: the task is
+		// no longer this result's to settle.
+		return
+	}
+	sorted := func(blobs []string) []string { return slices.Compact(slices.Sorted(slices.Values(blobs))) }
+	theirs := jobmodel.Result{Output: output, Blobs: sorted(stored)}
+	mine := jobmodel.Result{Output: own, Blobs: sorted(touched.Written())}
+	who := cmp.Or(nodeName, nodeID)
+	standing := c.standing[nodeID]
+	standing.NodeID = nodeID
+	taken := output
+	switch {
+	case err != nil:
+		// Nothing to compare with. The worker did not fail, so its result
+		// stands as it would have with no audit.
+		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, fmt.Sprintf("the coordinator could not run the task itself to check it (%v), so the result is taken unchecked", err))
+	case mine.Digest() == theirs.Digest():
+		standing.Agree()
+		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, "the coordinator ran the task itself and got the same result")
+	default:
+		standing.Outvote()
+		taken = own
+		job.NoteRead(touched.Read()...)
+		job.NoteTaskOutput(touched.Written()...)
+		c.pin(job, time.Time{}, touched.Written())
+		c.log.Warn("a worker returned another result for a task than this node got by running it itself", "task", task.ID, "node", nodeID, "returned", short(theirs), "got", short(mine))
+		c.recordLocked(job, eventTaskDisagreed, task.Index, "", fmt.Sprintf("%s returned %s; the coordinator ran the task itself and got %s", who, short(theirs), short(mine)))
+		c.recordLocked(job, eventTaskSucceeded, task.Index, "", "the coordinator's own result is taken, and not "+who+"'s")
+	}
+	if err == nil {
+		c.standing[nodeID] = standing
+		if err := c.standings.SaveStanding(standing); err != nil {
+			c.log.Warn("could not save a worker's standing; it will be lost if the coordinator stops now", "node", nodeID, "error", err)
+		}
+	}
+	if job.Succeed(task, taken) {
+		c.aggregating.Add(1)
+		go c.aggregate(job)
+	}
+	c.settleLocked(job)
+	c.notifyLocked(job)
+	c.scheduleLocked()
 }

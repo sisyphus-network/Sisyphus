@@ -36,6 +36,9 @@ const (
 	NodeService_WatchJobEvents_FullMethodName            = "/sisyphus.node.v1.NodeService/WatchJobEvents"
 	NodeService_GetModelConfig_FullMethodName            = "/sisyphus.node.v1.NodeService/GetModelConfig"
 	NodeService_SetModelConfig_FullMethodName            = "/sisyphus.node.v1.NodeService/SetModelConfig"
+	NodeService_ListModelProfiles_FullMethodName         = "/sisyphus.node.v1.NodeService/ListModelProfiles"
+	NodeService_SaveModelProfile_FullMethodName          = "/sisyphus.node.v1.NodeService/SaveModelProfile"
+	NodeService_DeleteModelProfile_FullMethodName        = "/sisyphus.node.v1.NodeService/DeleteModelProfile"
 	NodeService_ListProviders_FullMethodName             = "/sisyphus.node.v1.NodeService/ListProviders"
 	NodeService_ListModels_FullMethodName                = "/sisyphus.node.v1.NodeService/ListModels"
 	NodeService_PullModel_FullMethodName                 = "/sisyphus.node.v1.NodeService/PullModel"
@@ -89,6 +92,9 @@ type NodeServiceClient interface {
 	// the service's key, only whether one is set.
 	GetModelConfig(ctx context.Context, in *GetModelConfigRequest, opts ...grpc.CallOption) (*ModelConfig, error)
 	SetModelConfig(ctx context.Context, in *SetModelConfigRequest, opts ...grpc.CallOption) (*ModelConfig, error)
+	ListModelProfiles(ctx context.Context, in *ListModelProfilesRequest, opts ...grpc.CallOption) (*ListModelProfilesResponse, error)
+	SaveModelProfile(ctx context.Context, in *SaveModelProfileRequest, opts ...grpc.CallOption) (*ModelProfile, error)
+	DeleteModelProfile(ctx context.Context, in *DeleteModelProfileRequest, opts ...grpc.CallOption) (*DeleteModelProfileResponse, error)
 	// ListProviders lists the kinds of model service there are to choose
 	// from, the one that needs no account first.
 	ListProviders(ctx context.Context, in *ListProvidersRequest, opts ...grpc.CallOption) (*ListProvidersResponse, error)
@@ -341,6 +347,36 @@ func (c *nodeServiceClient) SetModelConfig(ctx context.Context, in *SetModelConf
 	return out, nil
 }
 
+func (c *nodeServiceClient) ListModelProfiles(ctx context.Context, in *ListModelProfilesRequest, opts ...grpc.CallOption) (*ListModelProfilesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListModelProfilesResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListModelProfiles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) SaveModelProfile(ctx context.Context, in *SaveModelProfileRequest, opts ...grpc.CallOption) (*ModelProfile, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ModelProfile)
+	err := c.cc.Invoke(ctx, NodeService_SaveModelProfile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) DeleteModelProfile(ctx context.Context, in *DeleteModelProfileRequest, opts ...grpc.CallOption) (*DeleteModelProfileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteModelProfileResponse)
+	err := c.cc.Invoke(ctx, NodeService_DeleteModelProfile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *nodeServiceClient) ListProviders(ctx context.Context, in *ListProvidersRequest, opts ...grpc.CallOption) (*ListProvidersResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListProvidersResponse)
@@ -566,6 +602,9 @@ type NodeServiceServer interface {
 	// the service's key, only whether one is set.
 	GetModelConfig(context.Context, *GetModelConfigRequest) (*ModelConfig, error)
 	SetModelConfig(context.Context, *SetModelConfigRequest) (*ModelConfig, error)
+	ListModelProfiles(context.Context, *ListModelProfilesRequest) (*ListModelProfilesResponse, error)
+	SaveModelProfile(context.Context, *SaveModelProfileRequest) (*ModelProfile, error)
+	DeleteModelProfile(context.Context, *DeleteModelProfileRequest) (*DeleteModelProfileResponse, error)
 	// ListProviders lists the kinds of model service there are to choose
 	// from, the one that needs no account first.
 	ListProviders(context.Context, *ListProvidersRequest) (*ListProvidersResponse, error)
@@ -671,6 +710,15 @@ func (UnimplementedNodeServiceServer) GetModelConfig(context.Context, *GetModelC
 }
 func (UnimplementedNodeServiceServer) SetModelConfig(context.Context, *SetModelConfigRequest) (*ModelConfig, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetModelConfig not implemented")
+}
+func (UnimplementedNodeServiceServer) ListModelProfiles(context.Context, *ListModelProfilesRequest) (*ListModelProfilesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListModelProfiles not implemented")
+}
+func (UnimplementedNodeServiceServer) SaveModelProfile(context.Context, *SaveModelProfileRequest) (*ModelProfile, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveModelProfile not implemented")
+}
+func (UnimplementedNodeServiceServer) DeleteModelProfile(context.Context, *DeleteModelProfileRequest) (*DeleteModelProfileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteModelProfile not implemented")
 }
 func (UnimplementedNodeServiceServer) ListProviders(context.Context, *ListProvidersRequest) (*ListProvidersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListProviders not implemented")
@@ -1026,6 +1074,60 @@ func _NodeService_SetModelConfig_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_ListModelProfiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListModelProfilesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListModelProfiles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListModelProfiles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListModelProfiles(ctx, req.(*ListModelProfilesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_SaveModelProfile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveModelProfileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).SaveModelProfile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_SaveModelProfile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).SaveModelProfile(ctx, req.(*SaveModelProfileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_DeleteModelProfile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteModelProfileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).DeleteModelProfile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_DeleteModelProfile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).DeleteModelProfile(ctx, req.(*DeleteModelProfileRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _NodeService_ListProviders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListProvidersRequest)
 	if err := dec(in); err != nil {
@@ -1344,6 +1446,18 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetModelConfig",
 			Handler:    _NodeService_SetModelConfig_Handler,
+		},
+		{
+			MethodName: "ListModelProfiles",
+			Handler:    _NodeService_ListModelProfiles_Handler,
+		},
+		{
+			MethodName: "SaveModelProfile",
+			Handler:    _NodeService_SaveModelProfile_Handler,
+		},
+		{
+			MethodName: "DeleteModelProfile",
+			Handler:    _NodeService_DeleteModelProfile_Handler,
 		},
 		{
 			MethodName: "ListProviders",

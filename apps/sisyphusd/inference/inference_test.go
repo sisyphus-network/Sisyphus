@@ -25,6 +25,8 @@ type pool struct {
 	refuses error
 	lost    error
 	gone    error
+	// empty is a pool with no workers.
+	empty bool
 }
 
 func (p *pool) Submit(_ context.Context, spec *pb.JobSpec) (*pb.Job, error) {
@@ -62,10 +64,14 @@ func (p *pool) Cancel(jobID string) (*pb.Job, error) {
 	return nil, nil
 }
 
-func (*pool) Nodes() []*pb.NodeInfo {
+func (p *pool) Nodes() []*pb.NodeInfo {
+	if p.empty {
+		return nil
+	}
 	return []*pb.NodeInfo{
 		{Name: "rig", Capabilities: &pb.NodeCapabilities{Labels: []string{"worker:rig", "model:qwen3:8b", "model:llama3.1:8b"}}},
 		{Name: "den", Capabilities: &pb.NodeCapabilities{Labels: []string{"worker:den", "worker:12D3KooWden", "model:llama3.1:8b", "region:eu"}}},
+		{Name: "bare", Capabilities: &pb.NodeCapabilities{Labels: []string{"worker:bare"}}},
 		{},
 	}
 }
@@ -229,8 +235,11 @@ func TestWhatCannotBeAnsweredIsRefusedAsSuchAServiceRefuses(t *testing.T) {
 	}{
 		"not JSON":                   {&pool{}, `Hi`, http.StatusBadRequest, "not JSON"},
 		"too long":                   {&pool{}, strings.Repeat("x", maxRequest+1), http.StatusRequestEntityTooLarge, "longer than this service takes"},
-		"a model no worker serves":   {&pool{}, `{"model":"gpt-5"}`, http.StatusNotFound, `no worker connected to the pool serves a model that "gpt-5" can only mean; those served are: llama3.1:8b, qwen3:8b`},
-		"a worker without the model": {&pool{}, `{"model":"qwen3:8b@den"}`, http.StatusNotFound, `the worker "den" is not connected to the pool, or serves no model that "qwen3:8b" can only mean; those served are: llama3.1:8b`},
+		"a model no worker serves":   {&pool{}, `{"model":"gpt-5"}`, http.StatusNotFound, `no worker connected to the pool serves "gpt-5"; those served are: llama3.1:8b, qwen3:8b`},
+		"a pool serving no models":   {&pool{empty: true}, `{"model":"gpt-5"}`, http.StatusNotFound, `no worker connected to the pool serves "gpt-5", or any model`},
+		"a worker without the model": {&pool{}, `{"model":"qwen3:8b@den"}`, http.StatusNotFound, `the worker "den" does not serve "qwen3:8b"; it serves: llama3.1:8b`},
+		"a worker with no models":    {&pool{}, `{"model":"qwen3:8b@bare"}`, http.StatusNotFound, `the worker "bare" serves no models`},
+		"a worker that is not there": {&pool{}, `{"model":"qwen3:8b@gone"}`, http.StatusNotFound, `no worker named "gone" is connected to the pool`},
 		"a request the pool refuses": {&pool{refuses: errors.New("a chat request must have messages")}, hello, http.StatusBadRequest, "must have messages"},
 		"a job that fails":           {&pool{state: pb.JobState_JOB_STATE_FAILED}, hello, http.StatusBadGateway, "job job-1 did not produce a reply: the worker's model server is down"},
 	} {

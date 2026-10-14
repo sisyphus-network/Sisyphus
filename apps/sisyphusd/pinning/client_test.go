@@ -174,7 +174,7 @@ func TestWaitingAsksUntilTheRequestIsSettled(t *testing.T) {
 	if done, err := client.Wait(ctx, "r1", time.Millisecond); err != nil || done.Status != Pinned || asks() != 4 {
 		t.Errorf("a request that is fetched: %+v, %v, after %d asks", done, err, asks())
 	}
-	client, asks = following(Queued, Failed)
+	client, _ = following(Queued, Failed)
 	if done, err := client.Wait(ctx, "r1", time.Millisecond); err != nil || done.Status != Failed || done.Info[Details] != "as of ask 2" {
 		t.Errorf("a request that fails: %+v, %v", done, err)
 	}

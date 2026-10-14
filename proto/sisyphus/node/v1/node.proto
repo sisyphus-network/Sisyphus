@@ -44,6 +44,9 @@ service NodeService {
   // the service's key, only whether one is set.
   rpc GetModelConfig(GetModelConfigRequest) returns (ModelConfig);
   rpc SetModelConfig(SetModelConfigRequest) returns (ModelConfig);
+  rpc ListModelProfiles(ListModelProfilesRequest) returns (ListModelProfilesResponse);
+  rpc SaveModelProfile(SaveModelProfileRequest) returns (ModelProfile);
+  rpc DeleteModelProfile(DeleteModelProfileRequest) returns (DeleteModelProfileResponse);
   // ListProviders lists the kinds of model service there are to choose
   // from, the one that needs no account first.
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
@@ -216,6 +219,10 @@ message Worker {
   repeated WorkerGpu gpus = 15;
   // The language models the worker serves to the pool, by name.
   repeated string models = 16;
+  // Those of them its model server had in memory when it last said, and
+  // how much of each is on a graphics card. A model not listed here is
+  // loaded when first asked for, which takes a while.
+  repeated LoadedModel loaded_models = 20;
   // Its standing, which outlasts any one job: how many results it has
   // returned for verified tasks that were among those the task was settled
   // by, and how many that were not. probation is how many agreeing results
@@ -230,6 +237,13 @@ message Worker {
 message WorkerGpu {
   string name = 1;
   uint64 memory_bytes = 2;
+}
+
+message LoadedModel {
+  string name = 1;
+  // From 0 to 100. The rest is in the machine's memory and worked by its
+  // processor, and replies come that much slower.
+  uint32 on_card_percent = 2;
 }
 
 enum JobState {
@@ -285,6 +299,9 @@ message Job {
   // The share of its tasks that are verified, if not all of them; see
   // SubmitJobRequest.
   double verify_share = 22;
+  // The share of its tasks the coordinator runs again itself; see
+  // SubmitJobRequest.
+  double audit_share = 23;
 }
 
 message JobTask {
@@ -335,6 +352,11 @@ message SubmitJobRequest {
   // to the one the others agree on has the tasks it ran unverified in the
   // job verified after all. Zero, and one, verify every task.
   double verify_share = 10;
+  // A share between 0 and 1 of the job's tasks, picked by chance as their
+  // results come in, that the coordinating node runs again itself before
+  // taking the result. Where the two differ its own is taken. Refused for
+  // a workload that node cannot run itself.
+  double audit_share = 11;
 }
 
 message SubmitJobResponse { Job job = 1; }
@@ -402,6 +424,30 @@ message SetModelConfigRequest {
   string api_key = 4;
   bool keep_api_key = 5;
 }
+
+message ModelProfile {
+  string id = 1;
+  string name = 2;
+  string provider = 3;
+  string base_url = 4;
+  string model = 5;
+  bool has_api_key = 6;
+  bool active = 7;
+}
+message ListModelProfilesRequest {}
+message ListModelProfilesResponse { repeated ModelProfile profiles = 1; }
+message SaveModelProfileRequest {
+  string id = 1;
+  string name = 2;
+  string provider = 3;
+  string base_url = 4;
+  string model = 5;
+  string api_key = 6;
+  bool keep_api_key = 7;
+  bool active = 8;
+}
+message DeleteModelProfileRequest { string id = 1; }
+message DeleteModelProfileResponse {}
 
 message ListProvidersRequest {}
 

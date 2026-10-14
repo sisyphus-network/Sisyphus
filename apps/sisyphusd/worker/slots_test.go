@@ -38,7 +38,7 @@ func TestSlotsAreSharedOutFairlyBetweenPools(t *testing.T) {
 	s := NewSlots(2)
 	ctx := context.Background()
 	// One pool fills the node and queues three more tasks behind them.
-	if !s.Acquire(ctx, "greedy") || !s.Acquire(ctx, "greedy") {
+	if first, second := s.Acquire(ctx, "greedy"), s.Acquire(ctx, "greedy"); !first || !second {
 		t.Fatal("a free slot could not be taken")
 	}
 	queued := make(chan bool, 3)

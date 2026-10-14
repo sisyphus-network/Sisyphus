@@ -331,6 +331,10 @@ func (b *builder) manifest(job *jobmodel.Job) datamodel.Node {
 			if job.VerifyShare > 0 {
 				m.AssembleEntry("verify_share").AssignFloat(job.VerifyShare)
 			}
+			// And the share the coordinator was to run again itself.
+			if job.AuditShare > 0 {
+				m.AssembleEntry("audit_share").AssignFloat(job.AuditShare)
+			}
 		})
 		blobs(m, "inputs", job.InputBlobs())
 		if job.Submitter != "" {

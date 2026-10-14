@@ -31,6 +31,16 @@ func modelNeeds(model string) []string {
 	return []string{modelLabel + name}
 }
 
+// ModelNeeded is the model a job's needs name, or "" if they name none.
+func ModelNeeded(needs []string) string {
+	for _, need := range needs {
+		if name, is := strings.CutPrefix(need, modelLabel); is {
+			return name
+		}
+	}
+	return ""
+}
+
 // askServer asks a worker's model server for something and returns the
 // whole of a successful reply.
 func askServer(ctx context.Context, url, path string, payload []byte) ([]byte, error) {
@@ -74,6 +84,8 @@ type Prompts struct {
 	// URL is where the worker's model server is; empty on a node that
 	// takes such jobs in without running them.
 	URL string
+	// Owner is what the machine's owner allows of that server.
+	Owner Owner
 }
 
 // PromptsParams says what to ask and of which model.
@@ -166,10 +178,13 @@ func (w Prompts) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, 
 	if err := json.Unmarshal(payload, &share); err != nil {
 		return nil, fmt.Errorf("prompts task: %w", err)
 	}
+	if err := w.Owner.refuses(share.Model); err != nil {
+		return nil, err
+	}
 	report := Report(ctx)
 	out := answersShare{Start: share.Start, Answers: make([]string, 0, len(share.Prompts))}
 	for i, prompt := range share.Prompts {
-		request := map[string]any{"model": share.Model, "stream": false}
+		request := map[string]json.RawMessage{"model": mustJSON(share.Model)}
 		for option, value := range share.Options {
 			request[option] = value
 		}
@@ -177,22 +192,20 @@ func (w Prompts) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, 
 		if share.System != "" {
 			messages = append([]map[string]string{{"role": "system", "content": share.System}}, messages...)
 		}
-		request["messages"] = messages
-		said, err := askServer(ctx, w.URL, "/v1/chat/completions", mustJSON(request))
+		request["messages"] = mustJSON(messages)
+		said, err := askServer(ctx, w.URL, "/api/chat", toOllama(request, w.Owner, false))
 		if err != nil {
 			return nil, fmt.Errorf("prompt %d: %w", share.Start+i+1, err)
 		}
 		var reply struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
+			Message *struct {
+				Content string `json:"content"`
+			} `json:"message"`
 		}
-		if err := json.Unmarshal(said, &reply); err != nil || len(reply.Choices) == 0 {
+		if err := json.Unmarshal(said, &reply); err != nil || reply.Message == nil {
 			return nil, fmt.Errorf("prompt %d: the model server's reply is not a chat reply", share.Start+i+1)
 		}
-		out.Answers = append(out.Answers, reply.Choices[0].Message.Content)
+		out.Answers = append(out.Answers, reply.Message.Content)
 		report.Progress(float64(i+1) / float64(len(share.Prompts)))
 		report.Log(fmt.Sprintf("answered prompt %d", share.Start+i+1))
 	}
@@ -240,6 +253,8 @@ type Embed struct {
 	// URL is where the worker's model server is; empty on a node that
 	// takes such jobs in without running them.
 	URL string
+	// Owner is what the machine's owner allows of that server.
+	Owner Owner
 }
 
 // MaxEmbedInputs is how many texts one embed job takes: what comes back
@@ -306,29 +321,24 @@ func (w Embed) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, er
 	if err := json.Unmarshal(payload, &share); err != nil {
 		return nil, fmt.Errorf("embed task: %w", err)
 	}
-	said, err := askServer(ctx, w.URL, "/v1/embeddings", mustJSON(share.Request))
+	var model string
+	json.Unmarshal(share.Request["model"], &model) // what is not a name names no model
+	if err := w.Owner.refuses(model); err != nil {
+		return nil, err
+	}
+	said, err := askServer(ctx, w.URL, "/api/embed", toOllama(share.Request, w.Owner, false))
 	if err != nil {
 		return nil, err
 	}
 	var reply struct {
-		Model string `json:"model"`
-		Data  []struct {
-			Index     int             `json:"index"`
-			Embedding json.RawMessage `json:"embedding"`
-		} `json:"data"`
-		Usage struct {
-			PromptTokens int `json:"prompt_tokens"`
-		} `json:"usage"`
+		Model      string            `json:"model"`
+		Embeddings []json.RawMessage `json:"embeddings"`
+		Prompt     int               `json:"prompt_eval_count"`
 	}
-	if err := json.Unmarshal(said, &reply); err != nil || len(reply.Data) == 0 {
+	if err := json.Unmarshal(said, &reply); err != nil || len(reply.Embeddings) == 0 {
 		return nil, errors.New("the model server's reply is not an embeddings reply")
 	}
-	sort.SliceStable(reply.Data, func(a, b int) bool { return reply.Data[a].Index < reply.Data[b].Index })
-	out := vectorsShare{Start: share.Start, Model: reply.Model, Tokens: reply.Usage.PromptTokens}
-	for _, d := range reply.Data {
-		out.Data = append(out.Data, d.Embedding)
-	}
-	return mustJSON(out), nil
+	return mustJSON(vectorsShare{Start: share.Start, Model: reply.Model, Tokens: reply.Prompt, Data: reply.Embeddings}), nil
 }
 
 func (Embed) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, error) {

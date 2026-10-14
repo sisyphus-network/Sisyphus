@@ -23,6 +23,7 @@ func (j *Job) ToProto() *pb.Job {
 			MinGpus:            uint32(j.MinGPUs),
 			Verify:             uint32(j.Verify),
 			VerifyShare:        j.VerifyShare,
+			AuditShare:         j.AuditShare,
 		},
 		State:       pb.JobState(j.State + 1),
 		Result:      append([]byte(nil), j.Result...),

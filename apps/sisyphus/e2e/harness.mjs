@@ -11,12 +11,11 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron as electron } from 'playwright-core'
 
-
 const here = dirname(fileURLToPath(import.meta.url))
 const desktop = resolve(here, '..')
 const daemon = process.env.SISYPHUS_DAEMON_PATH ?? resolve(desktop, '../../bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')
 
-function freePort() {
+export function freePort() {
   return new Promise((done, failed) => {
     const server = createServer()
     server.once('error', failed)
@@ -107,25 +106,38 @@ export async function open(page, name) {
  * say, or { tool, arguments } to call one of the planner's tools.
  */
 export async function standInModel(...replies) {
-  const model = { asked: [], pulled: [], url: '' }
+  const model = { asked: [], pulled: [], url: '', aborted: 0, pending: [] }
+  model.waitForRequests = async (count) => {
+    const deadline = Date.now() + 15000
+    while (model.asked.length < count && Date.now() < deadline) {
+      await new Promise((wake) => setTimeout(wake, 25))
+    }
+    if (model.asked.length < count) throw new Error(`the model received ${model.asked.length} of ${count} expected requests`)
+  }
+  model.waitForAbort = async () => {
+    const deadline = Date.now() + 15000
+    while (model.aborted === 0 && Date.now() < deadline) {
+      await new Promise((wake) => setTimeout(wake, 25))
+    }
+    if (model.aborted === 0) throw new Error('the model request was not cancelled')
+  }
   const server = createHttpServer((request, response) => {
     let body = ''
     request.on('data', (piece) => { body += piece })
     request.on('end', () => {
       if (request.url === '/api/tags') return response.end('{"models":[{"name":"test-model","size":4900000000}]}')
       if (request.url === '/api/show') return response.end('{"capabilities":["completion","tools"]}')
-      const asked = JSON.parse(body || '{}')
+      const requestBody = JSON.parse(body || '{}')
       if (request.url === '/api/pull') {
-        model.pulled.push(asked.model)
+        model.pulled.push(requestBody.model)
         response.setHeader('content-type', 'application/x-ndjson')
-        const events = [
-          { status: 'pulling manifest' },
-          { status: 'pulling layer', total: 200, completed: 50 },
-          { status: 'pulling layer', total: 200, completed: 200 },
-          { status: 'success' },
-        ]
         void (async () => {
-          for (const [index, event] of events.entries()) {
+          for (const [index, event] of [
+            { status: 'pulling manifest' },
+            { status: 'pulling layer', total: 200, completed: 50 },
+            { status: 'pulling layer', total: 200, completed: 200 },
+            { status: 'success' },
+          ].entries()) {
             if (index > 0) await new Promise((done) => setTimeout(done, 250))
             response.write(`${JSON.stringify(event)}\n`)
           }
@@ -133,9 +145,20 @@ export async function standInModel(...replies) {
         })()
         return
       }
-      model.asked.push(asked)
+      model.asked.push(requestBody)
       const reply = replies[model.asked.length - 1]
       if (reply === undefined) { response.statusCode = 500; return response.end('the model has run out of things to say') }
+      if (reply?.defer === true) {
+        let completed = false
+        model.pending.push(() => {
+          if (completed || response.destroyed) return
+          completed = true
+          response.end(JSON.stringify({ message: { role: 'assistant', content: reply.content ?? '' }, done: true }))
+        })
+        request.once('aborted', () => { if (!completed) { model.aborted++; completed = true } })
+        response.once('close', () => { if (!completed) { model.aborted++; completed = true } })
+        return
+      }
       const message = typeof reply === 'string'
         ? { role: 'assistant', content: reply }
         : { role: 'assistant', content: '', tool_calls: [{ function: { name: reply.tool, arguments: reply.arguments } }] }
@@ -144,6 +167,7 @@ export async function standInModel(...replies) {
   })
   await new Promise((done) => server.listen(0, '127.0.0.1', done))
   model.url = `http://127.0.0.1:${server.address().port}`
+  model.releasePending = () => model.pending.splice(0).forEach((release) => release())
   model.close = () => new Promise((done) => server.close(done))
   return model
 }

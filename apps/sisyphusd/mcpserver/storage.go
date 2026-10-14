@@ -253,10 +253,13 @@ func followersView(r *pb.ReplicasResponse) map[string]any {
 		}
 		if len(files) < mostCopies {
 			holders, _ := some(blob.GetHolders())
-			files = append(files, map[string]any{"cid": blob.GetCid(), "copies": len(blob.GetHolders()), "held_by": holders})
+			files = append(files, map[string]any{"cid": blob.GetCid(), "copies": len(blob.GetHolders()), "copies_shown": len(blob.GetShown()), "held_by": holders})
 		}
 	}
 	out["files"], out["files_pinned"], out["files_with_too_few_copies"] = files, len(r.GetBlobs()), short
+	if failed := r.GetChallengesFailed(); failed > 0 {
+		out["copies_not_shown"] = fmt.Sprintf("%d time(s) since the node started, a follower asked to show it held a file it said it held did not; such a copy is not counted until it is shown", failed)
+	}
 	if len(files) < len(r.GetBlobs()) {
 		out["note"] = fmt.Sprintf("only the first %d of %d files are listed: give cid to ask about one", len(files), len(r.GetBlobs()))
 	}

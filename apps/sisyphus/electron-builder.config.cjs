@@ -11,11 +11,29 @@ module.exports = {
   directories: { output: 'dist' },
   files: ['out/**/*', 'package.json'],
   asar: true,
-  extraResources: [{ from: '.packaging/bin', to: 'bin', filter: ['sisyphusd', 'sisyphusd.exe'] }],
+  extraResources: [
+    { from: '.packaging/bin', to: 'bin', filter: ['sisyphusd', 'sisyphusd.exe'] },
+    // Linux takes a window's icon from the window, not from the package.
+    { from: 'build/icons/256x256.png', to: 'icon.png' },
+  ],
   artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
-  linux: { target: ['tar.gz'], category: 'Science' },
-  win: { target: ['zip'] },
-  mac: { target: ['zip'], category: 'public.app-category.productivity' },
+  // The icons in build/ are drawn from assets/logo.png by scripts/make-icons.py.
+  linux: { target: ['tar.gz', 'AppImage'], category: 'Science', icon: 'build/icons', synopsis: 'A node of the Sisyphus network' },
+  win: { target: ['zip', 'nsis'], icon: 'build/icon.ico' },
+  // An installer a person steps through, so that Windows shows where it goes
+  // and puts the logo in the Start menu and on the desktop.
+  nsis: {
+    oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true,
+    installerIcon: 'build/icon.ico', uninstallerIcon: 'build/icon.ico',
+    createDesktopShortcut: true, createStartMenuShortcut: true, shortcutName: 'Sisyphus',
+    artifactName: '${productName}-${version}-${os}-${arch}-setup.${ext}',
+  },
+  mac: { target: ['zip', 'dmg'], category: 'public.app-category.productivity', icon: 'build/icon.icns' },
+  // The disk image a person opens to drag the app onto Applications.
+  dmg: {
+    icon: 'build/icon.icns', title: '${productName} ${version}', window: { width: 540, height: 380 },
+    contents: [{ x: 140, y: 190 }, { x: 400, y: 190, type: 'link', path: '/Applications' }],
+  },
   // Build on each target OS; do not accidentally ship a host-architecture daemon.
   beforePack: async ({ electronPlatformName, arch }) => {
     if (electronPlatformName !== process.platform || Arch[arch] !== process.arch) {

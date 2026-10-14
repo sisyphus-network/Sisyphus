@@ -123,6 +123,14 @@ message JobSpec {
   // unverified in the job verified after all, and so has whatever of the
   // job it is given afterwards. Zero, and one, verify every task.
   double verify_share = 10;
+  // Audits. A share between 0 and 1 of the job's tasks, each picked by
+  // chance as its result comes in, is run again by the coordinator itself
+  // before the result is taken. Where the two differ the coordinator's own
+  // is taken and the worker counted as outvoted. It needs no second
+  // worker, and a worker cannot tell which of its tasks will be run again.
+  // It is refused for a workload the coordinating node cannot run itself.
+  // It does not apply to a task that is verified by other workers.
+  double audit_share = 11;
 }
 
 message Task {

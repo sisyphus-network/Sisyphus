@@ -104,7 +104,15 @@ type Config struct {
 	// ID names this coordinator to its workers.
 	ID        string
 	Workloads *runtime.Registry
-	Store     Store
+	// Audits is the workloads this node can run itself, and so can audit:
+	// run a task again to check what a worker returned for it. Nil is none.
+	Audits *runtime.Registry
+	Store  Store
+	// DistinctAddresses has a verified task's copies go only to workers at
+	// different network addresses; see verify.go. AddressOf says where the
+	// worker making a call is, and is the call's own address if left nil.
+	DistinctAddresses bool
+	AddressOf         func(ctx context.Context) string
 	// Journal, if set, is where jobs are kept across restarts; see Recover.
 	Journal Journal
 	// Standings, if set, is where the standing of workers is kept across
@@ -124,6 +132,13 @@ type Coordinator struct {
 
 	id        string
 	workloads *runtime.Registry
+	audits    *runtime.Registry
+	// distinct is whether a verified task's copies must go to workers at
+	// different addresses, addressOf how a caller's is told, and addresses
+	// where each worker that has connected was when it last did.
+	distinct  bool
+	addressOf func(ctx context.Context) string
+	addresses map[string]string
 	store     Store
 	journal   Journal
 	standings Standings
@@ -134,7 +149,7 @@ type Coordinator struct {
 	// ctx bounds the aggregations still running when the coordinator closes.
 	ctx         context.Context
 	cancel      context.CancelFunc
-	aggregating sync.WaitGroup
+	aggregating background
 
 	mu sync.Mutex
 	// swarmFingerprint identifies the current key of the pool's private
@@ -268,6 +283,10 @@ func New(cfg Config) *Coordinator {
 	c := &Coordinator{
 		id:        cfg.ID,
 		workloads: cfg.Workloads,
+		audits:    cfg.Audits,
+		distinct:  cfg.DistinctAddresses,
+		addressOf: cfg.AddressOf,
+		addresses: make(map[string]string),
 		store:     cfg.Store,
 		journal:   cfg.Journal,
 		standings: cfg.Standings,
@@ -284,6 +303,9 @@ func New(cfg Config) *Coordinator {
 		seqs:      make(map[string]uint64),
 		logged:    make(map[string]int),
 		keys:      make(map[string]*pb.TaskAssignment),
+	}
+	if c.addressOf == nil {
+		c.addressOf = callersAddress
 	}
 	// Attempts that have run past their time are looked for once a second.
 	c.aggregating.Add(1)
@@ -614,6 +636,42 @@ func (c *Coordinator) saveLocked(job *jobmodel.Job) {
 // it to end. Call it before closing the blob store, and before cutting off
 // the workers: a worker lost to a coordinator that has been closed is not
 // held against the tasks it was running. Closing twice does no harm.
+// background counts what the coordinator has set going on its own, so that
+// Close can wait for it. Unlike a sync.WaitGroup it may be added to while
+// Close is waiting, as a worker that disconnects as the coordinator closes
+// may finish a job and store its record: what starts then is waited for
+// too.
+type background struct {
+	mu   sync.Mutex
+	n    int
+	idle *sync.Cond
+}
+
+func (b *background) Add(n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.n += n
+}
+
+func (b *background) Done() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.n--; b.n == 0 && b.idle != nil {
+		b.idle.Broadcast()
+	}
+}
+
+func (b *background) Wait() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.idle == nil {
+		b.idle = sync.NewCond(&b.mu)
+	}
+	for b.n > 0 {
+		b.idle.Wait()
+	}
+}
+
 func (c *Coordinator) Close() {
 	c.cancel()
 	c.aggregating.Wait()
@@ -656,6 +714,15 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	if share > 0 && verify < 2 {
 		return nil, status.Error(codes.InvalidArgument, "verify_share says how many of a job's tasks to verify, and needs verify to say by how many workers")
 	}
+	audit := spec.GetAuditShare()
+	switch _, composite := workload.(runtime.Composite); {
+	case audit < 0 || audit > 1 || audit != audit:
+		return nil, status.Error(codes.InvalidArgument, "audit_share is the share of a job's tasks for the coordinator to run again itself, from 0 to 1")
+	case audit > 0 && verify >= 2:
+		return nil, status.Error(codes.InvalidArgument, "audit_share has the coordinator check tasks by running them itself, and verify has other workers check them: a job asks for one or the other")
+	case audit > 0 && !composite && !c.runsItself(workload.Name()):
+		return nil, status.Errorf(codes.FailedPrecondition, "audit_share has this node run tasks of the job again itself, and it cannot run %s: it is not a worker for that workload", workload.Name())
+	}
 	needs := c.needs(workload.Name(), spec.GetParams(), len(spec.GetKey()) > 0)
 
 	parts := 1
@@ -697,7 +764,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	// steps of a job whose tasks are jobs are held to that as each begins.
 	_, steps := workload.(runtime.Composite)
 	if able := c.ableLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs); verify >= 2 && !steps && able < verify {
-		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job", verify, able)
+		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job%s", verify, able, c.apart())
 	}
 	job := jobmodel.New(id, workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
 	switch {
@@ -708,6 +775,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		job.Check(verify, share, shuffled(len(job.Tasks)))
 	}
 	job.Key, job.Private, job.Submitter = spec.GetKey(), len(spec.GetKey()) > 0, submitter
+	job.AuditShare = audit
 	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
 	job.Needs = needs
@@ -858,6 +926,9 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	capabilities.Labels = labelsOf(id, hello.GetName(), capabilities.GetLabels())
 
 	now := time.Now()
+	c.mu.Lock()
+	c.addresses[id] = c.addressOf(stream.Context())
+	c.mu.Unlock()
 	w := &worker{
 		id:             id,
 		name:           hello.GetName(),
@@ -1060,6 +1131,12 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 			// One result among several, which settles the task only if
 			// enough of them are the same.
 			done = c.returnedLocked(w, a, outcome.Output, written)
+		} else if c.pickedLocked(a.job) {
+			// Not taken yet: this node runs the task itself first, and
+			// the task is over when it has.
+			c.recordLocked(a.job, eventTaskResult, a.task.Index, w.name, "returned a result, which the coordinator checks by running the task itself")
+			c.aggregating.Add(1)
+			go c.audit(w.id, w.name, a, outcome.Output, written)
 		} else {
 			c.recordLocked(a.job, eventTaskSucceeded, a.task.Index, w.name, "")
 			done = a.job.Succeed(a.task, outcome.Output)
@@ -1360,19 +1437,92 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 // the workload, or nil if none has a free slot. A worker that has a copy of
 // the task, or has returned a result for it, is passed over: only a task of
 // a verified job has such workers while it waits for another.
+//
+// A worker that an attempt at the task has already failed on, or been lost
+// with, is the last to be given it again. While another that could run it
+// is connected the task goes there, waiting for a slot if it must; it goes
+// back to where it went wrong only when there is nowhere else.
+//
+// A task that needs a language model goes first to the worker with the
+// fewest tasks on that model already: a model server answers one at a time,
+// or nearly, however many slots its worker has. Among those, it goes to the
+// one with the model in memory and most of it on a graphics card, where the
+// reply comes soonest.
 func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) *worker {
-	var best *worker
-	bestFree := 0
+	model := runtime.ModelNeeded(job.Needs)
+	var best, again *worker
+	var bestRank, againRank rank
+	elsewhere := false
 	for _, w := range c.workers {
-		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) {
+		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) || c.besideLocked(task, w.id) {
 			continue
 		}
-		free := int(w.capabilities.GetTaskSlots()) - len(w.running)
-		if free > bestFree || (free == bestFree && best != nil && w.id < best.id) {
-			best, bestFree = w, free
+		r := rank{free: int(w.capabilities.GetTaskSlots()) - len(w.running), id: w.id}
+		if model != "" {
+			r.onModel, r.onCard = w.onModel(model), onCard(w.capabilities.GetLabels(), model)
+		}
+		if task.Dropped(w.id) {
+			if r.free > 0 && (again == nil || r.before(againRank)) {
+				again, againRank = w, r
+			}
+			continue
+		}
+		elsewhere = true
+		if r.free > 0 && (best == nil || r.before(bestRank)) {
+			best, bestRank = w, r
 		}
 	}
+	if best == nil && !elsewhere {
+		return again
+	}
 	return best
+}
+
+// rank is what decides between workers that could be given a task.
+type rank struct {
+	// onModel is how many tasks the worker is running on the model the task
+	// needs, and onCard how much of that model it has on a graphics card: -1
+	// if the model is not in memory. Both are zero for a task that needs no
+	// model.
+	onModel, onCard int
+	free            int
+	id              string
+}
+
+// before reports whether a worker ranked r is to be given the task before
+// one ranked other.
+func (r rank) before(other rank) bool {
+	switch {
+	case r.onModel != other.onModel:
+		return r.onModel < other.onModel
+	case r.onCard != other.onCard:
+		return r.onCard > other.onCard
+	case r.free != other.free:
+		return r.free > other.free
+	}
+	return r.id < other.id
+}
+
+// onModel counts the tasks a worker is running that need a model.
+func (w *worker) onModel(model string) int {
+	n := 0
+	for _, a := range w.running {
+		if runtime.ModelNeeded(a.job.Needs) == model {
+			n++
+		}
+	}
+	return n
+}
+
+// onCard is how much of a model a worker's labels say is on its graphics
+// cards, or -1 if they do not say it is in memory.
+func onCard(labels []string, model string) int {
+	for _, loaded := range runtime.LoadedModels(labels) {
+		if loaded.Model == model {
+			return loaded.OnCard
+		}
+	}
+	return -1
 }
 
 // slotsLocked counts task slots across connected workers that support the

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, HashRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Boxes, Cpu, House, MonitorCog, Settings2, Wifi, WifiOff } from 'lucide-react'
+import { ArrowLeft, Boxes, Cpu, House, MonitorCog, QrCode, Settings2, Wifi, WifiOff } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { NodeSnapshot } from '../../preload'
 import { Badge } from '@/components/ui/badge'
@@ -11,9 +11,12 @@ import { getLocaleDirection, isAppLocale, type AppLocale } from '@/i18n/locales'
 import { getMessages } from '@/i18n/messages'
 import { NodeDetailsPage } from '@/pages/NodeDetailsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { BrowserAccessPage } from '@/pages/BrowserAccessPage'
 import { WorkspacePage } from '@/pages/WorkspacePage'
 import { OperationsPage } from '@/pages/OperationsPage'
-import { getNodeApi } from '@/lib/node-api'
+import { getNodeApi, isDesktopApp } from '@/lib/node-api'
+import { isAuthenticationError, pairBrowser } from '@sisyphus/client'
+import { getBrowserDeviceName } from '@/lib/browser-device-name'
 import { logoUrl } from '@/lib/brand'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/liquid-glass-dock'
@@ -23,7 +26,7 @@ import { ToasterResponsive } from '@/components/toaster-responsive'
 import { NodeConnectionState } from '@/components/node-connection-state'
 
 const initialSnapshot: NodeSnapshot = {
-  status: 'connecting', endpoint: '127.0.0.1:50051', info: null, peers: [], revision: '0', lastUpdated: null, error: null,
+  status: 'connecting', endpoint: '127.0.0.1:50051', info: null, peers: [], revision: '0', lastUpdated: null, error: null, authRequired: false,
 }
 const scrollPositionsStorageKey = 'sisyphus-page-scroll-positions'
 
@@ -63,9 +66,23 @@ function App() {
     const api = getNodeApi()
     const unsubscribe = api.onSnapshot((next) => { if (active) setSnapshot(next) })
     void api.getSnapshot().then((next) => { if (active) setSnapshot(next) }).catch((error: unknown) => {
-      if (active) setSnapshot((current) => ({ ...current, status: 'disconnected', error: error instanceof Error ? error.message : String(error) }))
+      if (active) setSnapshot((current) => ({ ...current, status: 'disconnected', error: error instanceof Error ? error.message : String(error), authRequired: !isDesktopApp() && isAuthenticationError(error) }))
     })
     return () => { active = false; unsubscribe() }
+  }, [])
+
+  useEffect(() => {
+    if (isDesktopApp() || !window.location.hash.startsWith('#pair=')) return
+    const code = decodeURIComponent(window.location.hash.slice('#pair='.length)).trim()
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    let active = true
+    void pairBrowser(code, getBrowserDeviceName()).then(async () => {
+      const next = await getNodeApi().getSnapshot()
+      if (active) setSnapshot(next)
+    }).catch((error: unknown) => {
+      if (active) setSnapshot((current) => ({ ...current, status: 'disconnected', authRequired: true, error: `Pairing failed: ${error instanceof Error ? error.message : String(error)}` }))
+    })
+    return () => { active = false }
   }, [])
 
   useEffect(() => {
@@ -77,14 +94,14 @@ function App() {
   const statusLabel = snapshot.status === 'connected' ? messages.connected : snapshot.status === 'connecting' ? messages.connecting : messages.offline
   const StatusIcon = snapshot.status === 'connected' ? Wifi : WifiOff
 
-  const Router = window.sisyphus ? HashRouter : BrowserRouter
+  const Router = isDesktopApp() ? HashRouter : BrowserRouter
   return <Router>
     <ToasterResponsive />
-    <AppRoutes snapshot={snapshot} locale={locale} setLocale={setLocale} messages={messages} direction={direction} connectedPeers={connectedPeers} statusLabel={statusLabel} StatusIcon={StatusIcon} />
+    <AppRoutes snapshot={snapshot} setSnapshot={setSnapshot} locale={locale} setLocale={setLocale} messages={messages} direction={direction} connectedPeers={connectedPeers} statusLabel={statusLabel} StatusIcon={StatusIcon} />
   </Router>
 }
 
-function AppRoutes({ snapshot, locale, setLocale, messages, direction, connectedPeers, statusLabel, StatusIcon }: { snapshot: NodeSnapshot; locale: AppLocale; setLocale: (locale: AppLocale) => void; messages: ReturnType<typeof getMessages>; direction: 'ltr' | 'rtl'; connectedPeers: number; statusLabel: string; StatusIcon: typeof Wifi }) {
+function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, direction, connectedPeers, statusLabel, StatusIcon }: { snapshot: NodeSnapshot; setSnapshot: (snapshot: NodeSnapshot) => void; locale: AppLocale; setLocale: (locale: AppLocale) => void; messages: ReturnType<typeof getMessages>; direction: 'ltr' | 'rtl'; connectedPeers: number; statusLabel: string; StatusIcon: typeof Wifi }) {
   const location = useLocation()
   const navigate = useNavigate()
   const reduceMotion = useReducedMotion()
@@ -192,7 +209,15 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
     { id: 'node', label: messages.nodeOverview, href: '/node', icon: <MonitorCog size={21} strokeWidth={1.8} />, active: location.pathname === '/node' },
     { id: 'operations', label: messages.operations, href: '/operations', icon: <Boxes size={21} strokeWidth={1.8} />, active: location.pathname === '/operations' },
     { id: 'settings', label: messages.settings, href: '/settings', icon: <Settings2 size={21} strokeWidth={1.8} />, active: location.pathname === '/settings' },
+    { id: 'pairing', label: messages.browserAccess.title, href: '/pairing', icon: <QrCode size={21} strokeWidth={1.8} />, active: location.pathname === '/pairing' },
   ]
+  if (!isDesktopApp() && snapshot.authRequired) {
+    return <Routes>
+      <Route path="/auth" element={<NodeConnectionState snapshot={snapshot} messages={messages} onConnected={setSnapshot} direction={direction} fullScreen />} />
+      <Route path="*" element={<Navigate to="/auth" replace />} />
+    </Routes>
+  }
+  if (!isDesktopApp() && location.pathname === '/auth') return <Navigate to="/" replace />
   return <div dir={direction} className={`app-shell flex min-h-0 bg-background text-foreground ${advanced ? 'app-shell--advanced' : 'app-shell--workspace'} ${location.pathname === '/settings' ? 'app-shell--settings' : ''}`}>
       <div className={`app-shell-body flex min-h-0 min-w-0 flex-1 ${advanced ? 'app-shell-body--advanced' : ''}`}>
       {advanced && !compact && <aside className="flex w-[248px] shrink-0 flex-col border-e border-[var(--app-line)] bg-[var(--app-sidebar)] px-4 py-5 max-[1000px]:w-[205px]">
@@ -208,6 +233,7 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
         <NavItem to="/operations" icon={Boxes} label={messages.operations} />
         <div className="mb-2 mt-7 px-2 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">{messages.preferences}</div>
         <NavItem to="/settings" icon={Settings2} label={messages.settings} />
+        <NavItem to="/pairing" icon={QrCode} label={messages.browserAccess.title} />
 
         <div className="mt-auto space-y-4">
           <div className="rounded-xl bg-[var(--app-card)] p-3 ring-1 ring-foreground/10">
@@ -237,10 +263,11 @@ function AppRoutes({ snapshot, locale, setLocale, messages, direction, connected
           animate={{ opacity: 1 }}
           transition={reduceMotion ? { duration: 0 } : { opacity: { duration: 0.18, ease: [0.22, 1, 0.36, 1] } }}
         >
-            {snapshot.status !== 'connected' ? <NodeConnectionState snapshot={snapshot} messages={messages} /> : <Routes location={location}>
+            {snapshot.status !== 'connected' ? <NodeConnectionState snapshot={snapshot} messages={messages} onConnected={setSnapshot} /> : <Routes location={location}>
               <Route path="/node" element={<NodeDetailsPage snapshot={snapshot} messages={messages} />} />
               <Route path="/operations" element={<OperationsPage messages={messages} />} />
               <Route path="/settings" element={<SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} />} />
+              <Route path="/pairing" element={<BrowserAccessPage messages={messages} />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>}
         </motion.div>}
@@ -257,7 +284,7 @@ function NavItem({ to, icon: Icon, label, end = false }: { to: string; icon: typ
 
 function Breadcrumb({ messages, direction }: { messages: ReturnType<typeof getMessages>; direction: 'ltr' | 'rtl' }) {
   const location = useLocation()
-  const label = location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/operations' ? messages.operations : location.pathname === '/settings' ? messages.settings : messages.workspace
+  const label = location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/operations' ? messages.operations : location.pathname === '/settings' ? messages.settings : location.pathname === '/pairing' ? messages.browserAccess.title : messages.workspace
   const slideDistance = direction === 'rtl' ? -10 : 10
   return <div dir={direction} className="flex h-full min-w-0 flex-1 items-center gap-3 sm:gap-4">
     <NavLink to="/" aria-label={messages.workspace} title={messages.workspace} className={`${buttonVariants({ variant: 'ghost', size: 'icon' })} size-10 shrink-0 rounded-full`}>

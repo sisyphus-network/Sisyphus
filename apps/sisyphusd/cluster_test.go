@@ -88,8 +88,8 @@ func TestAPoolWithAClusterKeepsWhatItsCoordinatorPinsOnSeveralNodes(t *testing.T
 	}
 	// The three cluster peers find each other, each as the node it serves.
 	// The workers have no way to the coordinator's but through its port.
-	members := waitForOutput(t, "south", "pool", "cluster", "--addr", addr)
-	members = waitForOutput(t, "north", "pool", "cluster", "--addr", addr)
+	waitForOutput(t, "south", "pool", "cluster", "--addr", addr)
+	members := waitForOutput(t, "north", "pool", "cluster", "--addr", addr)
 	for _, dir := range []string{coordinatorDir, dirs["north"], dirs["south"]} {
 		if !strings.Contains(members, nodeID(t, dir)) {
 			t.Errorf("node %s is not among the cluster's members:\n%s", nodeID(t, dir), members)

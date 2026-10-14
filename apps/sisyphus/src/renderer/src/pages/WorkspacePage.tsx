@@ -270,6 +270,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   // is not offered at all: no pane, no dock entry, and nothing to land on.
   const topologyAvailable = useWebgl()
   const [mobileView, setMobileView] = useState<'chat' | 'network'>('chat')
+  const [activeChatId, setActiveChatId] = useState('')
   const [historyOpen, setHistoryOpen] = useState(savedLayout.historyOpen)
   const [historyWidth, setHistoryWidth] = useState(savedLayout.historyWidth)
   const [historyResizing, setHistoryResizing] = useState(false)
@@ -487,7 +488,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     event.preventDefault()
   }
   const chatPane = <section className="workspace-chat workspace-glass liquid-glass-menu relative flex h-full min-h-0 flex-col rounded-[22px] px-8 pb-6 pt-7 max-[760px]:px-5">
-      <div className="workspace-chat-content mx-auto flex min-h-0 w-full flex-1 flex-col"><div className="workspace-chat-surface flex min-h-0 flex-1 flex-col overflow-hidden"><AgentChat snapshot={snapshot} messages={messages} direction={direction} historyOpen={historyOpen} setHistoryOpen={setHistoryOpen} historyPanelHost={historyPanelHost} onOpenSettings={() => navigate('/settings')} /></div></div>
+      <div className="workspace-chat-content mx-auto flex min-h-0 w-full flex-1 flex-col"><div className="workspace-chat-surface flex min-h-0 flex-1 flex-col overflow-hidden"><AgentChat snapshot={snapshot} messages={messages} direction={direction} historyOpen={historyOpen} setHistoryOpen={setHistoryOpen} historyPanelHost={historyPanelHost} onOpenSettings={() => navigate('/settings')} activeChatId={activeChatId} onActiveChatChange={setActiveChatId} /></div></div>
     </section>
   const countryCode = snapshot.info?.countryCode?.toUpperCase()
   const countryPosition = countryCode ? countryCentroids.get(countryCode) : undefined

@@ -39,6 +39,8 @@ type scripted struct {
 	// it asks a follower that shows no list for the one it has.
 	list *pb.KeepList
 	asks bool
+	// questions, if set, are put to a follower that asks without answers.
+	questions []*pb.Challenge
 	// asked holds every request it has had.
 	asked []*pb.ReplicateRequest
 }
@@ -50,7 +52,18 @@ func (s *scripted) Replicate(_ context.Context, req *pb.ReplicateRequest) (*pb.R
 	if s.err != nil {
 		return nil, s.err
 	}
-	return &pb.ReplicateResponse{Hold: s.hold, Store: s.name, List: s.list, ShowList: s.asks && req.GetList() == nil}, nil
+	var questions []*pb.Challenge
+	if len(req.GetAnswers()) == 0 {
+		questions = s.questions
+	}
+	return &pb.ReplicateResponse{Hold: s.hold, Store: s.name, List: s.list, ShowList: s.asks && req.GetList() == nil, Challenges: questions}, nil
+}
+
+// ask has the coordinator put these questions from now on.
+func (s *scripted) ask(questions ...*pb.Challenge) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.questions = questions
 }
 
 func (s *scripted) Get(req *pb.GetBlobRequest, stream grpc.ServerStreamingServer[pb.GetBlobResponse]) error {

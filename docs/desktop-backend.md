@@ -40,7 +40,7 @@ Anything on the machine can **read** what the node is, who it knows and who work
 | `SetBootstrapPeers` | yes | Replace the address book. |
 | `SetPeerComputePermissions` | yes | Set the two sides of trust in a peer, separately. |
 | `SetPeerComputeTrust` | yes | Set both sides at once. Kept for clients with one switch. |
-| `ListWorkers` | | The nodes connected as this node's workers: name, slots, running tasks, and what each machine has (processor, memory, graphics cards; zero and empty where unknown), and `models`, the language models it serves to the pool. `verified_agreed` and `verified_outvoted` count the results it has returned for verified tasks that were, and were not, among those the task was settled by, in every job so far; `probation` is how many agreeing results it still owes after being outvoted, zero if it is not on probation. |
+| `ListWorkers` | | The nodes connected as this node's workers: name, slots, running tasks, and what each machine has (processor, memory, graphics cards; zero and empty where unknown), `models`, the language models it serves to the pool, and `loaded_models`, those of them its model server had in memory when the worker last said (within a heartbeat), each with `on_card_percent`: how much of the model is on a graphics card, from 0 to 100, the rest being worked by the processor. `verified_agreed` and `verified_outvoted` count the results it has returned for verified tasks that were, and were not, among those the task was settled by, in every job so far; `probation` is how many agreeing results it still owes after being outvoted, zero if it is not on probation. |
 | `SubmitJob` | yes | Give the pool a job. Returns it as it stands at once. |
 | `GetJob` | yes | One job, with its tasks. It needs the token though it changes nothing, as do the three below: a job's parameters, result and log are its owner's. |
 | `ListJobs`, `WatchJobs` | yes | Every job on record, newest first. `WatchJobs` re-sends the whole list when any job changes, progress included. |
@@ -103,7 +103,7 @@ To submit one of the built-in workloads:
 
 `verify`, if two or more, has each task run by that many different workers and takes a result only once that many have returned the same one; `Job.verify` gives it back. Zero or one runs each task once, as before. It multiplies the work by that number, is only for work that gives the same result every time it is run, and works with `private` too, where every worker asked is given the key. `SubmitJob` refuses it with `FAILED_PRECONDITION` when fewer workers that could take the job are connected, and a task whose workers cannot agree fails the job with an error that names them. While it runs, a task's `attempt` counts every copy handed out and `peer_id` is the worker last given one; once it has succeeded, `peer_id` is the first worker that returned the result agreed on. The job's events have two more kinds, `task-result` and `task-disagreed`. The desktop app does not offer the field yet.
 
-`verify_share`, with `verify`, has only that share of the tasks verified, from 0 to 1, drawn at random and rounded up to a whole task; the rest run once. `Job.verify_share` gives it back, and `JobTask.verify` says how many workers each task is held to: `verify` for one that is verified, 1 for one that is run once. A worker whose result for a verified task is outvoted has the tasks it ran unverified in the job verified after all, so a task that had succeeded can go back to running, with `JobTask.verify` raised and a `task-rechecked` event. The same happens to a task handed to a worker that is on probation (`Worker.probation` above zero) for having been outvoted in another job, so a job can come back from `SubmitJob` with more of its tasks verified than its share. Zero, and one, verify every task. A share outside 0 to 1, or one without `verify`, is `INVALID_ARGUMENT`.
+`audit_share`, from 0 to 1, has the coordinating node run that share of the tasks again itself, picked by chance as results come in, and take its own result where a worker's differs; `Job.audit_share` gives it back, and it is refused with `verify` or for a workload the node does not run. `verify_share`, with `verify`, has only that share of the tasks verified, from 0 to 1, drawn at random and rounded up to a whole task; the rest run once. `Job.verify_share` gives it back, and `JobTask.verify` says how many workers each task is held to: `verify` for one that is verified, 1 for one that is run once. A worker whose result for a verified task is outvoted has the tasks it ran unverified in the job verified after all, so a task that had succeeded can go back to running, with `JobTask.verify` raised and a `task-rechecked` event. The same happens to a task handed to a worker that is on probation (`Worker.probation` above zero) for having been outvoted in another job, so a job can come back from `SubmitJob` with more of its tasks verified than its share. Zero, and one, verify every task. A share outside 0 to 1, or one without `verify`, is `INVALID_ARGUMENT`.
 
 ## What a job event tells you
 
@@ -190,7 +190,7 @@ A job whose `workload` is `graph` is several jobs run as one (see the daemon's R
 
 ## From a web page
 
-A page in a browser cannot speak gRPC as the desktop app does. Started with `--web-listen 127.0.0.1:50052 --web-origin http://localhost:5173`, the node serves the same calls in two ways a browser can make them: **Connect** and **gRPC-Web**. `@connectrpc/connect-web` with code generated from `node.proto` speaks either; so does a plain `fetch`:
+A page in a browser cannot speak native gRPC as the desktop app does. Started with `--web-listen 127.0.0.1:50052`, the node serves the same calls in two ways a browser can make them: **Connect** and **gRPC-Web**. The `@sisyphus/client` package generates its typed Connect client from `proto/sisyphus/node/v1/node.proto`.
 
 ```js
 const res = await fetch("http://127.0.0.1:50052/sisyphus.node.v1.NodeService/ListWorkers", {
@@ -202,9 +202,26 @@ const res = await fetch("http://127.0.0.1:50052/sisyphus.node.v1.NodeService/Lis
 
 - **Calls that return a stream** (`Ask`, `WatchJobs`, `WatchJobEvents`, `PullModel`, `FetchFile`) work as Connect server streams.
 - **Storing a file** is the one call a browser cannot make, since it sends a stream. Instead `PUT /files/<name>` with the file as the body, and `?private=true` to seal it; the answer is the `File` as JSON.
-- **Every call needs the token, reading included**, unlike the gRPC address. Any page the user visits can try the node's address, so nothing is answered without it. The page has to be given the token by the user: it cannot read `api.token` itself.
-- **Only pages from the origins listed with `--web-origin`** are answered, and a request that names the node by anything but `localhost` or a loopback address is refused, so a page cannot reach it under a name of its own.
-- It listens on this machine only. Using a node from a browser on another machine is not offered.
+- **API calls need authentication, reading included.** On loopback, the UI can exchange the token from `api.token` for a 12-hour `HttpOnly; SameSite=Strict` cookie. On a LAN-enabled node, another browser pairs with a one-time eight-digit code generated by an already authenticated browser. Codes expire after five minutes and work once; each paired browser receives its own 30-day revocable cookie. SQLite stores only SHA-256 verifiers for random browser credentials.
+- **LAN exposure is opt-in and HTTP is unencrypted.** By default the listener accepts loopback only. To expose it, bind to a private IP assigned to the machine and add `--web-lan`; `0.0.0.0` and public addresses are refused. The daemon prints a warning, but the owner is responsible for using a trusted LAN/firewall: pairing codes and browser sessions can be observed by devices monitoring that network. Pairing protects enrollment and enables revocation; it does not encrypt HTTP.
+- A separately hosted page must still be explicitly listed with `--web-origin`; browser management and pairing routes remain same-origin only.
+
+To serve the built React UI from the node itself, build the desktop renderer and pass its renderer output directory:
+
+```sh
+npm --prefix apps/sisyphus run build
+bin/sisyphusd run --web-listen 127.0.0.1:50052 --web-ui-dir apps/sisyphus/out/renderer
+```
+
+Open `http://127.0.0.1:50052`. The daemon serves the UI, Connect API, SPA routes, and file PUT endpoint from one origin. `--web-ui-dir` requires `--web-listen`; the default remains loopback-only.
+
+For an explicitly enabled local-network listener, use a private address assigned to the host (find it with your OS's network settings), for example:
+
+```sh
+bin/sisyphusd run --web-listen 192.168.1.20:50052 --web-lan --web-ui-dir apps/sisyphus/out/renderer
+```
+
+Open that address on the node host, authenticate with its API token once, then use **Settings → Paired browsers** to create a QR/code for another device on the same LAN. Revoke devices there. Do not forward this port to the public internet.
 
 `node.proto` is shared. After editing it:
 

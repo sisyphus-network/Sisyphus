@@ -111,6 +111,10 @@ type Job struct {
 	// run once, unless what a worker returns elsewhere gives cause to
 	// verify them after all; see Check and Recheck.
 	VerifyShare float64
+	// AuditShare, if above zero, is the chance that a task's result is
+	// checked by the coordinator running the task again itself, before it
+	// is taken.
+	AuditShare float64
 	// outvoted is the workers that have returned, for a task of the job
 	// that has succeeded, a result other than the one it succeeded with. It
 	// is worked out from the tasks when first asked for.

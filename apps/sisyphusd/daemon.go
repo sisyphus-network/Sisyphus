@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -64,20 +65,28 @@ func runDaemon(ctx context.Context, args []string) error {
 	invitation := fs.String("join", "", "worker-only node: an invitation from the coordinator, needed the first time this node connects to it and ignored after that")
 	serve := fs.String("serve", "", "worker-only node: address to serve its cached data on to the other workers of its pool, so that they need not all fetch it from the coordinator")
 	advertise := fs.String("advertise", "", "worker-only node: the address other workers should use to reach --serve, if not the same")
+	modelsOnly := fs.String("models-only", "", "worker role, with --models-from: offer only these of its models, separated by commas: a model as Ollama names it (qwen3:8b), a family (llama3.1, every size of it), or a pattern (gemma*); empty offers them all")
+	modelsGPULayers := fs.Int("models-gpu-layers", -1, "worker role, with --models-from: how many of a model's layers Ollama may put on graphics cards for the pool's jobs; 0 keeps the models on the processor and in the machine's memory, -1 lets Ollama put on as many as fit")
+	modelsThreads := fs.Int("models-threads", 0, "worker role, with --models-from: how many of the processor's threads a model may use for the pool's jobs; 0 lets Ollama decide")
+	modelsContext := fs.Int("models-context", 0, "worker role, with --models-from: how many tokens of a conversation a model holds for the pool's jobs; more takes more memory; 0 lets Ollama decide")
+	modelsKeepAlive := fs.String("models-keep-alive", "", "worker role, with --models-from: how long a model stays loaded after it last answered for the pool, such as 10m, or 0 to unload it at once; empty lets Ollama decide")
 	modelsFrom := fs.String("models-from", "", "worker role: offer the language models of the Ollama at this address, such as http://127.0.0.1:11434, to the pool's jobs. Whoever may submit jobs can then use them, and this machine sees what they ask")
 	inferenceListen := fs.String("inference-listen", "", "coordinator: loopback address to offer the pool's language models on, as a service speaking OpenAI's dialect whose key is the node's API token; off if empty")
 	gatewayListen := fs.String("gateway-listen", "", "address to serve stored files on, read-only, by content ID as GET /ipfs/<cid> and by the names this node answers for as GET /ipns/<node ID>, to whoever shows the node's API token; off if empty")
 	pinningListen := fs.String("pinning-listen", "", "coordinator: address to serve the IPFS Pinning Service API on, so that ipfs pin remote and other standard tools can have this node keep data; its key is in the file pinning.token in the data directory; off if empty")
 	gatewayOpen := fs.Bool("gateway-open", false, "let anyone who can reach --gateway-listen and knows a file's content ID fetch it, without the token. Sealed files are never served")
 	publishRecord := fs.Bool("publish-record", false, "coordinator role: keep a description of this node published under its name, which is its ID: its version, the workloads it takes and its pool's members by ID and role. Whoever may resolve the name can read it")
-	webListen := fs.String("web-listen", "", "loopback address to serve the local API on to web pages, as gRPC-Web and Connect, with every call needing the node's API token; off if empty")
+	webListen := fs.String("web-listen", "", "loopback address to serve the local API and web UI; off if empty")
+	webLAN := fs.Bool("web-lan", false, "explicitly allow the web UI and API on one private LAN interface over plain HTTP; pairing is required for browser access")
 	webOrigins := fs.String("web-origin", "", "the origins of the web pages that may use --web-listen, separated by commas, such as http://localhost:5173; pages from anywhere else are refused")
+	webUIDir := fs.String("web-ui-dir", "", "directory containing the built web UI to serve beside the local API; needs --web-listen, and is still loopback-only")
 	apiListen := fs.String("api-listen", "", "loopback address to serve the local API on, for the desktop client on this machine (it expects 127.0.0.1:50051); off if empty")
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
 	containerRuntime := fs.String("container-runtime", "", "with --containers: have Docker run the pool's tasks with this runtime in place of its usual, such as runsc (gVisor) or kata-runtime, which keep a task further from this machine than an ordinary container does; it must be installed and known to Docker")
 	containersReadOnly := fs.Bool("containers-read-only", false, "with --containers: give a task nowhere to write but /output and /tmp, the second held in memory; an image that writes anywhere else will fail")
+	distinctAddresses := fs.Bool("verify-distinct-addresses", false, "coordinator: for jobs submitted with --verify, hand each task's copies only to workers at different network addresses, so that two workers on one machine or behind one router cannot vouch for each other. For a pool with strangers in it: in a pool whose workers share an address it leaves too few to verify with")
 	maxConnections := fs.Int("max-connections", 0, "how many connections to take at once from other nodes and their command lines, on --listen; 0 takes as many as half the files the system lets this program have open, which on most machines is far more than a pool needs. An eighth of them, and at least 256, may come from one address")
 	containers := fs.Bool("containers", false, "worker role: run container images for the pool's jobs, with Docker. This lets whoever may submit jobs to the pool run what they like on this machine")
 	maxMemory := fs.Uint64("offer-memory-mb", 0, "worker role: tell the pool this node has no more than this much memory, in mebibytes; 0 offers all it has")
@@ -154,8 +163,23 @@ func runDaemon(ctx context.Context, args []string) error {
 	if *pinningListen != "" && !isCoordinator {
 		return errors.New("--pinning-listen is for a node that coordinates a pool: it is that pool's store the data is kept in")
 	}
-	if host, _, err := net.SplitHostPort(*webListen); *webListen != "" && (err != nil || !net.ParseIP(host).IsLoopback()) {
-		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052: the local API is for this machine only, its web pages included")
+	if err := validateWebListen(*webListen, *webLAN); err != nil {
+		return err
+	}
+	if *webLAN && *webListen == "" {
+		return errors.New("--web-lan needs --web-listen")
+	}
+	if *webUIDir != "" {
+		if *webListen == "" {
+			return errors.New("--web-ui-dir needs --web-listen")
+		}
+		info, err := os.Stat(*webUIDir)
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("--web-ui-dir must name a directory: %s", *webUIDir)
+		}
+		if _, err := os.Stat(filepath.Join(*webUIDir, "index.html")); err != nil {
+			return fmt.Errorf("--web-ui-dir has no index.html: %s", *webUIDir)
+		}
 	}
 	if *s3Endpoint != "" {
 		switch {
@@ -226,7 +250,14 @@ func runDaemon(ctx context.Context, args []string) error {
 		runs = runtime.ContainersConfined(confined)
 	}
 	if *modelsFrom != "" {
-		runs = runs.With(runtime.WithModels(*modelsFrom)...)
+		owner := runtime.Owner{Only: listOf(*modelsOnly), Options: map[string]any{}, KeepAlive: *modelsKeepAlive}
+		for setting, value := range map[string]int{"num_gpu": *modelsGPULayers, "num_thread": *modelsThreads, "num_ctx": *modelsContext} {
+			// Ollama decides what the owner did not.
+			if value > 0 || (setting == "num_gpu" && value == 0) {
+				owner.Options[setting] = value
+			}
+		}
+		runs = runs.With(runtime.WithModels(*modelsFrom, owner)...)
 	}
 	// A graph is a job of jobs, which a coordinator carries out itself: no
 	// worker runs one, so only what takes jobs in knows of it.
@@ -386,6 +417,8 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 	defer db.Close()
+	local.BrowserAccess = db
+	local.AllowLAN = *webLAN
 	// host is the node's libp2p host, started below according to its role.
 	var host *p2p.Host
 	// trustChanged hears of each node the coordinator admits or removes, and
@@ -463,8 +496,14 @@ func runDaemon(ctx context.Context, args []string) error {
 		// to lack is first fetched back from a follower.
 		kept := replication.Recovering{Store: store, From: replicated}
 		blobs, readable = kept, kept
+		// A node that is its own worker can run a task again to check what
+		// another worker returned for it.
+		var audits *runtime.Registry
+		if isWorker {
+			audits = runs
+		}
 		coord = coordinator.New(coordinator.Config{
-			ID: ident.ID(), Workloads: workloads, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			ID: ident.ID(), Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
 		unfinished, err := coord.Recover()
@@ -927,9 +966,16 @@ func runDaemon(ctx context.Context, args []string) error {
 				origins = append(origins, strings.TrimRight(origin, "/"))
 			}
 		}
-		pages := &http.Server{Handler: api.NewWebHandler(local, origins)}
+		var ui iofs.FS
+		if *webUIDir != "" {
+			ui = os.DirFS(*webUIDir)
+		}
+		configureWebLAN(&local, *webLAN, lis.Addr().String(), func() {
+			log.Warn("LAN web access is using plain HTTP: pairing codes and browser sessions are visible to devices able to monitor this network", "addr", lis.Addr().String())
+		})
+		pages := &http.Server{Handler: api.NewWebAppHandler(local, origins, ui)}
 		defer pages.Close()
-		log.Info("local API listening for web pages", "addr", lis.Addr().String(), "origins", origins)
+		log.Info("local API listening for web pages", "addr", lis.Addr().String(), "origins", origins, "ui", *webUIDir != "", "lan", *webLAN)
 		go pages.Serve(lis)
 	}
 
@@ -1687,6 +1733,56 @@ var runsAs = func(_ string, runs *runtime.Registry) *runtime.Registry { return r
 // hostname is os.Hostname; tests replace it.
 var hostname = os.Hostname
 
+func validateWebListen(address string, allowLAN bool) error {
+	return validateWebListenWithInterfaces(address, allowLAN, net.Interfaces, func(network net.Interface) ([]net.Addr, error) { return network.Addrs() })
+}
+
+func validateWebListenWithInterfaces(address string, allowLAN bool, listInterfaces func() ([]net.Interface, error), interfaceAddresses func(net.Interface) ([]net.Addr, error)) error {
+	if address == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052; for LAN access use a private interface address and --web-lan")
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	if !allowLAN {
+		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052; LAN access requires explicit --web-lan")
+	}
+	parsed, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil || !parsed.IsPrivate() || parsed.IsUnspecified() || parsed.IsMulticast() || parsed.IsLoopback() {
+		return errors.New("--web-lan requires --web-listen to use a private LAN IP assigned to this machine; 0.0.0.0 and public addresses are not allowed")
+	}
+	interfaces, err := listInterfaces()
+	if err != nil {
+		return fmt.Errorf("inspect local interfaces for --web-lan: %w", err)
+	}
+	for _, network := range interfaces {
+		addresses, err := interfaceAddresses(network)
+		if err != nil {
+			continue
+		}
+		for _, item := range addresses {
+			prefix, err := netip.ParsePrefix(item.String())
+			if err == nil && prefix.Addr().Unmap() == parsed.Unmap() {
+				return nil
+			}
+		}
+	}
+	return errors.New("--web-listen address must be a private IP assigned to one of this machine's network interfaces")
+}
+
+func configureWebLAN(cfg *api.LocalConfig, allowLAN bool, address string, warnPlainHTTP func()) {
+	if !allowLAN {
+		return
+	}
+	cfg.PairingOrigin = "http://" + address
+	warnPlainHTTP()
+}
+
 // defaultName is the machine's host name.
 func defaultName() string {
 	name, err := hostname()
@@ -1730,4 +1826,15 @@ func dataDirFor(home, goos string, env func(string) string, exists func(string) 
 		return filepath.Join(data, "sisyphus")
 	}
 	return filepath.Join(home, ".local", "share", "sisyphus")
+}
+
+// listOf reads a list separated by commas, leaving out what is blank.
+func listOf(flag string) []string {
+	var items []string
+	for _, item := range strings.Split(flag, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }

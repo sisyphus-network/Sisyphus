@@ -122,6 +122,34 @@ type assistantStore interface {
 
 func (a *assistant) ModelConfig() (nodedb.ModelConfig, bool, error) { return a.store.ModelConfig() }
 
+type modelProfileStore interface {
+	ModelProfiles() ([]nodedb.ModelProfile, error)
+	SaveModelProfile(nodedb.ModelProfile) error
+	DeleteModelProfile(string) error
+}
+
+func (a *assistant) ModelProfiles() ([]nodedb.ModelProfile, error) {
+	s, ok := a.store.(modelProfileStore)
+	if !ok {
+		return nil, fmt.Errorf("model profiles are unavailable")
+	}
+	return s.ModelProfiles()
+}
+func (a *assistant) SaveModelProfile(p nodedb.ModelProfile) error {
+	s, ok := a.store.(modelProfileStore)
+	if !ok {
+		return fmt.Errorf("model profiles are unavailable")
+	}
+	return s.SaveModelProfile(p)
+}
+func (a *assistant) DeleteModelProfile(id string) error {
+	s, ok := a.store.(modelProfileStore)
+	if !ok {
+		return fmt.Errorf("model profiles are unavailable")
+	}
+	return s.DeleteModelProfile(id)
+}
+
 // SetModelConfig sets which model the node plans with, having checked that
 // it names a provider there is.
 func (a *assistant) SetModelConfig(cfg nodedb.ModelConfig) error {

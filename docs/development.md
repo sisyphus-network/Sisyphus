@@ -12,12 +12,30 @@ The same goes for the tests of `--cluster`, which run real cluster peers and nee
 make build   # bin/sisyphusd
 make test    # go vet, then the tests under the race detector
 make cover   # fails unless the tests execute every statement of hand-written code
+make lint    # go vet and staticcheck, for mistakes the compiler lets through
 make demo    # a three-node pool and a few jobs on this machine, in one terminal
 make proto   # regenerate packages/protocol after editing proto/
 make fmt
 ```
 
-CI runs formatting, `go vet`, the tests under the race detector, `make cover` and a build on every pull request.
+CI runs formatting, `go vet`, staticcheck, the tests under the race detector, `make cover`, a build and the container rehearsal on every pull request, and for the desktop app its typecheck, unit tests, build and end-to-end tests.
+
+### What is tested how
+
+| Layer | What it is here | Run with |
+| --- | --- | --- |
+| Formatting | `gofmt`, which has one style and no options | `make fmt` |
+| Static checks | `go vet` and [staticcheck](https://staticcheck.dev), pinned in the `Makefile` | `make lint` |
+| Unit tests | Go's own `testing` package, in `_test.go` files beside the code. A package's logic is tested alone, with stand-ins for what it talks to | `go test ./packages/...` |
+| Integration tests | The same tool. `apps/sisyphusd`'s tests start real nodes in the test process, and where a test needs them, the real `ipfs`, `ipfs-cluster-service` and Docker | `make test` |
+| Coverage | Every statement of hand-written Go must be run by some test, with Kubo, Docker and the cluster required so nothing is skipped | `make cover` |
+| The race detector | Every test is run with it | `make test` |
+| Across machines | `examples/rehearsal.sh`: each node in a container with its own address and disk, 26 checks; CI runs it on every pull request | `examples/rehearsal.sh` |
+| Desktop unit tests | Node's own test runner over the app's modules | `npm test` in `apps/sisyphus` |
+| Desktop end to end | Playwright driving the built Electron app against a node of its own | `npm run test:e2e` in `apps/sisyphus` |
+| Agents | A live trial of the MCP server from Claude Code, by hand, recorded on [#88](https://github.com/sisyphus-network/Sisyphus/issues/88) | by hand |
+
+What has no automated test: the desktop app has no coverage measure, and nothing drives the app on Windows or macOS beyond building its package and starting its daemon.
 
 ## Where things are
 
@@ -28,7 +46,7 @@ CI runs formatting, `go vet`, the tests under the race detector, `make cover` an
 | `packages/protocol` | Go generated from `proto/`. Never edited by hand; committed so a fresh clone builds without `protoc`. |
 | `packages/ai` | Talking to language models: one interface, with adapters for Ollama, for OpenAI's dialect, and for Anthropic. |
 | `packages/geo` | Which country an address is registered in, from a table carried in the program. |
-| `packages/hardware` | What a machine has: processor, memory, graphics cards. Reads Linux's `/proc` and asks `nvidia-smi`; unknown elsewhere. |
+| `packages/hardware` | What a machine has: processor, memory, graphics cards. Reads Linux's `/proc`, asks `sysctl` on macOS, PowerShell on Windows, and `nvidia-smi` on all three; unknown elsewhere. |
 | `packages/identity` | A node's key pair and the ID derived from it; signing and verifying; the TLS settings nodes connect with. |
 | `packages/ipfscluster` | Starting and stopping an IPFS Cluster peer beside the node's Kubo, and calling its REST API. |
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
@@ -101,7 +119,18 @@ The tests of all this that run real programs are few and slow: one in `packages/
 
 ## Releases
 
-Push a tag such as `v0.1.0`. The release workflow builds every supported platform with `scripts/build-release.sh` and publishes the binaries and a `SHA256SUMS` file. Only Linux on x86-64 is covered by the tests.
+Push a tag such as `v0.1.0`. The release workflow builds every supported platform with `scripts/build-release.sh`, packages the desktop app on Linux, Windows and macOS (an AppImage, an installer and a disk image, and a plain archive of each), and publishes all of it with one `SHA256SUMS` file. The desktop packages are named by the version in `apps/sisyphus/package.json`, so set that to the tag's before tagging. Nothing is signed by a publisher; `docs/user-guide.md` says what people see because of it. Only Linux on x86-64 is covered by the tests.
+
+### Icons
+
+Every icon is drawn from `assets/logo.png` by `scripts/make-icons.py` (it needs Pillow), which sets the logo on a dark rounded plate so that it shows on a light taskbar. What it writes is committed. After changing the logo:
+
+```sh
+python3 scripts/make-icons.py
+(cd apps/sisyphusd && go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64,arm64)
+```
+
+The second line rebuilds `apps/sisyphusd/rsrc_windows_*.syso`, which Go links into the Windows daemon by itself. They give `sisyphusd.exe` its icon and the name ("Sisyphus node") that Windows shows in its firewall prompt and in a file's properties. The desktop app's packages take theirs from `apps/sisyphus/build/`.
 
 ## Branches and merging
 

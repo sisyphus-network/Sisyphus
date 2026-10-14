@@ -151,14 +151,14 @@ func WithContainers() *Registry {
 // ContainersConfined returns what WithContainers does, with the containers
 // held in as a worker's owner asked.
 func ContainersConfined(confined Confinement) *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Container{Confined: confined}, Transcode{Confined: confined}).With(WithModels("")...)
+	return NewRegistry(Primes{}, WordCount{}, Container{Confined: confined}, Transcode{Confined: confined}).With(WithModels("", Owner{})...)
 }
 
 // WithModels returns the workloads that use the language models of the
-// model server at url: a worker's own, or none for a node that only takes
-// such jobs in.
-func WithModels(url string) []Workload {
-	return []Workload{Chat{URL: url}, Prompts{URL: url}, Embed{URL: url}}
+// model server at url, as far as its owner allows: a worker's own, or none
+// for a node that only takes such jobs in.
+func WithModels(url string, owner Owner) []Workload {
+	return []Workload{Chat{URL: url, Owner: owner}, Prompts{URL: url, Owner: owner}, Embed{URL: url, Owner: owner}}
 }
 
 func (r *Registry) Get(name string) (Workload, error) {

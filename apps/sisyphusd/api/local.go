@@ -82,9 +82,26 @@ type LocalConfig struct {
 	Join func(ctx context.Context, address, invitation string) (id string, role access.Role, err error)
 	// Token is what a caller must present to change anything.
 	Token string
+	// BrowserAccess keeps one-time pairing codes and revocable browser
+	// credentials in the node database. Nil uses volatile storage (tests only).
+	BrowserAccess BrowserAccessStore
+	// AllowLAN accepts requests addressed to one of this host's private IPs.
+	// The listener must separately be enabled on a private interface.
+	AllowLAN bool
+	// PairingOrigin is the LAN URL peers should open, without a trailing slash.
+	PairingOrigin string
 	// Poll is how often a peer watcher is checked for news. Zero means once
 	// a second.
 	Poll time.Duration
+}
+
+// BrowserAccessStore is the durable part of browser pairing. Credentials
+// passed to and returned from it are hashes, never reusable bearer secrets.
+type BrowserAccessStore interface {
+	SaveBrowserPairing(codeHash []byte, expiresAt time.Time) error
+	ConsumeBrowserPairing(codeHash []byte, now time.Time, device nodedb.BrowserDevice) (bool, error)
+	BrowserDevices() ([]nodedb.BrowserDevice, error)
+	DeleteBrowserDevice(id string) error
 }
 
 // AddressBook is where a node keeps the addresses it starts from. A
@@ -235,6 +252,7 @@ func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) 
 			Relays: len(node.GetRelayAddresses()) > 0, RelayedConnections: node.GetRelayedConnections(), RelayedBytes: node.GetRelayedBytes(),
 			CpuModel: c.GetCpuModel(), MemoryBytes: c.GetMemoryBytes(), Gpus: localGPUs(c.GetGpus()),
 			Models:         runtime.Models(c.GetLabels()),
+			LoadedModels:   localLoaded(c.GetLabels()),
 			VerifiedAgreed: node.GetVerifiedAgreed(), VerifiedOutvoted: node.GetVerifiedOutvoted(), Probation: node.GetProbation(),
 		})
 	}
@@ -253,7 +271,7 @@ func (s *localService) SubmitJob(ctx context.Context, req *nodepb.SubmitJobReque
 	spec := &pb.JobSpec{
 		Workload: req.GetWorkload(), Params: req.GetParams(), Mode: pb.ScheduleMode(req.GetMode()), MaxTasks: req.GetMaxTasks(),
 		TaskTimeoutSeconds: req.GetTaskTimeoutSeconds(), MinMemoryBytes: req.GetMinMemoryBytes(), MinGpus: req.GetMinGpus(),
-		Verify: req.GetVerify(), VerifyShare: req.GetVerifyShare(),
+		Verify: req.GetVerify(), VerifyShare: req.GetVerifyShare(), AuditShare: req.GetAuditShare(),
 	}
 	if req.GetPrivate() {
 		key, err := s.sealingKey()
@@ -368,7 +386,7 @@ func localJob(job *pb.Job) *nodepb.Job {
 		Progress: job.GetProgress(), TaskTimeoutSeconds: job.GetSpec().GetTaskTimeoutSeconds(),
 		MinMemoryBytes: job.GetSpec().GetMinMemoryBytes(), MinGpus: job.GetSpec().GetMinGpus(),
 		Private: job.GetPrivate(), ParentJobId: job.GetParentJobId(), Step: job.GetStep(),
-		RecordCid: job.GetRecordCid(), Verify: job.GetSpec().GetVerify(), VerifyShare: job.GetSpec().GetVerifyShare(),
+		RecordCid: job.GetRecordCid(), Verify: job.GetSpec().GetVerify(), VerifyShare: job.GetSpec().GetVerifyShare(), AuditShare: job.GetSpec().GetAuditShare(),
 	}
 	for _, task := range job.GetTasks() {
 		out.Tasks = append(out.Tasks, &nodepb.JobTask{
@@ -376,6 +394,15 @@ func localJob(job *pb.Job) *nodepb.Job {
 			PeerId: task.GetNodeId(), WorkerName: task.GetNodeName(), Error: task.GetError(), Progress: task.GetProgress(),
 			Verify: task.GetVerify(),
 		})
+	}
+	return out
+}
+
+// localLoaded is the models a worker's labels say its server has in memory.
+func localLoaded(labels []string) []*nodepb.LoadedModel {
+	var out []*nodepb.LoadedModel
+	for _, m := range runtime.LoadedModels(labels) {
+		out = append(out, &nodepb.LoadedModel{Name: m.Model, OnCardPercent: uint32(m.OnCard)})
 	}
 	return out
 }
@@ -586,6 +613,75 @@ func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelC
 		return nil, asError(err)
 	}
 	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: cfg.BaseURL, Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
+}
+
+func (s *localService) ListModelProfiles(ctx context.Context, _ *nodepb.ListModelProfilesRequest) (*nodepb.ListModelProfilesResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	profiles, ok := s.cfg.Assistant.(interface {
+		ModelProfiles() ([]nodedb.ModelProfile, error)
+	})
+	if !ok {
+		return nil, errNoPlanner
+	}
+	items, err := profiles.ModelProfiles()
+	if err != nil {
+		return nil, asError(err)
+	}
+	response := &nodepb.ListModelProfilesResponse{}
+	for _, p := range items {
+		response.Profiles = append(response.Profiles, &nodepb.ModelProfile{Id: p.ID, Name: p.Name, Provider: p.Config.Provider, BaseUrl: p.Config.BaseURL, Model: p.Config.Model, HasApiKey: p.Config.APIKey != "", Active: p.Active})
+	}
+	return response, nil
+}
+
+func (s *localService) SaveModelProfile(ctx context.Context, req *nodepb.SaveModelProfileRequest) (*nodepb.ModelProfile, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	profiles, ok := s.cfg.Assistant.(interface {
+		ModelProfiles() ([]nodedb.ModelProfile, error)
+		SaveModelProfile(nodedb.ModelProfile) error
+	})
+	if !ok {
+		return nil, errNoPlanner
+	}
+	config := nodedb.ModelConfig{Provider: req.GetProvider(), BaseURL: req.GetBaseUrl(), Model: req.GetModel(), APIKey: req.GetApiKey()}
+	if req.GetKeepApiKey() {
+		all, err := profiles.ModelProfiles()
+		if err != nil {
+			return nil, asError(err)
+		}
+		for _, existing := range all {
+			if existing.ID == req.GetId() && sameService(existing.Config, config) {
+				config.APIKey = existing.Config.APIKey
+				break
+			}
+		}
+	}
+	p := nodedb.ModelProfile{ID: req.GetId(), Name: req.GetName(), Config: config, Active: req.GetActive()}
+	if p.ID == "" || p.Name == "" || p.Config.Provider == "" {
+		return nil, status.Error(codes.InvalidArgument, "profile id, name and provider are required")
+	}
+	if err := profiles.SaveModelProfile(p); err != nil {
+		return nil, asError(err)
+	}
+	return &nodepb.ModelProfile{Id: p.ID, Name: p.Name, Provider: p.Config.Provider, BaseUrl: p.Config.BaseURL, Model: p.Config.Model, HasApiKey: p.Config.APIKey != "", Active: p.Active}, nil
+}
+
+func (s *localService) DeleteModelProfile(ctx context.Context, req *nodepb.DeleteModelProfileRequest) (*nodepb.DeleteModelProfileResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	profiles, ok := s.cfg.Assistant.(interface{ DeleteModelProfile(string) error })
+	if !ok {
+		return nil, errNoPlanner
+	}
+	if err := profiles.DeleteModelProfile(req.GetId()); err != nil {
+		return nil, asError(err)
+	}
+	return &nodepb.DeleteModelProfileResponse{}, nil
 }
 
 // Ask puts a question to the planner and sends what it does as it does it.

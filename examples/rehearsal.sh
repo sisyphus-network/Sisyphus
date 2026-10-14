@@ -21,6 +21,11 @@ P=sisyphus-rehearsal
 IMAGE=alpine:3.20
 MODEL=${MODEL:-}
 
+# has reads everything it is given before answering. grep -q stops at the
+# first match, and under pipefail a command still writing then fails the
+# check it had just passed.
+has() { grep "$@" >/dev/null; }
+
 down() {
 	docker rm -f $P-coordinator $P-north $P-south $P-laptop $P-desk $P-stray >/dev/null 2>&1 || true
 	docker network rm $P-a $P-b >/dev/null 2>&1 || true
@@ -83,7 +88,9 @@ start() {
 }
 
 echo "the coordinator, on both networks"
-start coordinator $P-a --role coordinator --listen 0.0.0.0:7700 --name coordinator --max-connections 2000
+# It keeps a verified task's copies to workers at different addresses, which
+# the two workers here, on two networks, are.
+start coordinator $P-a --role coordinator --listen 0.0.0.0:7700 --name coordinator --max-connections 2000 --verify-distinct-addresses
 docker network connect --alias coordinator $P-b $P-coordinator
 until_ok 30 on coordinator nodes || { bad "the coordinator started"; docker logs $P-coordinator | tail -5; exit 1; }
 ok "the coordinator started"
@@ -102,7 +109,7 @@ else
 		--data-dir /tmp/north --models-from http://127.0.0.1:11434 >/dev/null
 fi
 start south $P-b --role worker --coordinator coordinator:7700 --join "$south_invitation" --name south --slots 2
-joined() { on coordinator nodes | grep -q north && on coordinator nodes | grep -q south; }
+joined() { on coordinator nodes | has north && on coordinator nodes | has south; }
 if until_ok 30 joined; then ok "both workers joined, each with its invitation"; else bad "both workers joined"; fi
 if docker exec $P-south ping -c 1 -W 1 north >/dev/null 2>&1; then bad "the workers cannot reach each other directly (they can: the rehearsal is not testing what it says)"; else ok "the workers cannot reach each other directly"; fi
 
@@ -110,7 +117,7 @@ echo "an invitation is good once"
 docker run -d --name $P-stray --network $P-a -v "$bin:/sisyphus:ro" "$IMAGE" \
 	/sisyphus/sisyphusd run --role worker --coordinator coordinator:7700 --join "$north_invitation" --name stray >/dev/null
 sleep 3
-if on coordinator nodes | grep -q stray; then bad "a used invitation is refused"; else ok "a used invitation is refused"; fi
+if on coordinator nodes | has stray; then bad "a used invitation is refused"; else ok "a used invitation is refused"; fi
 docker rm -f $P-stray >/dev/null 2>&1
 
 echo "a client on another machine"
@@ -118,42 +125,42 @@ docker run -d --name $P-laptop --hostname laptop --network $P-b -v "$bin:/sisyph
 check "a machine that has not joined is refused" bash -c "! docker exec $P-laptop /sisyphus/sisyphusd nodes --addr coordinator:7700"
 client_invitation=$(on coordinator pool invite --role client | tail -1)
 check "it joins as a client" on laptop pool join --addr coordinator:7700 "$client_invitation"
-check "and then sees the pool's workers" bash -c "docker exec $P-laptop /sisyphus/sisyphusd nodes --addr coordinator:7700 | grep -q south"
+check "and then sees the pool's workers" bash -c "docker exec $P-laptop /sisyphus/sisyphusd nodes --addr coordinator:7700 | grep south >/dev/null"
 
 echo "jobs from the client, run by both workers"
 out=$(on laptop job submit --addr coordinator:7700 --workload primes --params '{"from":0,"to":20000000}' --tasks 8 2>&1) || true
-if echo "$out" | grep -q '"count":1270607'; then ok "primes below 20,000,000 counted: 1,270,607"; else bad "primes job: $(echo "$out" | tail -2)"; fi
-if echo "$out" | grep -q "on north" && echo "$out" | grep -q "on south"; then ok "its tasks ran on both workers"; else bad "its tasks ran on both workers"; fi
+if echo "$out" | has '"count":1270607'; then ok "primes below 20,000,000 counted: 1,270,607"; else bad "primes job: $(echo "$out" | tail -2)"; fi
+if echo "$out" | has "on north" && echo "$out" | has "on south"; then ok "its tasks ran on both workers"; else bad "its tasks ran on both workers"; fi
 
 cid=$(on laptop blob put --addr coordinator:7700 /sisyphus/boulder.txt | tail -1)
 out=$(on laptop job submit --addr coordinator:7700 --workload wordcount --params "{\"input\":\"$cid\"}" --tasks 4 2>&1) || true
-if echo "$out" | grep -q '"words"'; then ok "a file stored by the client was read by the workers and its words counted"; else bad "wordcount job: $(echo "$out" | tail -2)"; fi
+if echo "$out" | has '"words"'; then ok "a file stored by the client was read by the workers and its words counted"; else bad "wordcount job: $(echo "$out" | tail -2)"; fi
 
 echo "a job checked by both workers"
 checked=$(on laptop job submit --addr coordinator:7700 --workload primes --params '{"from":0,"to":2000000}' --tasks 4 --verify 2 --detach | tail -1)
-finished() { on laptop job get --addr coordinator:7700 "$1" | grep -q succeeded; }
-if until_ok 60 finished "$checked" && on laptop job get --addr coordinator:7700 "$checked" | grep -q '"count":148933'; then ok "each task run by both workers, and their results the same: 148,933 primes below 2,000,000"; else bad "a verified job: $(on laptop job get --addr coordinator:7700 "$checked" 2>&1 | head -3)"; fi
-if on laptop job logs --addr coordinator:7700 "$checked" 2>&1 | grep -q "returned the same result"; then ok "the job's events say which workers agreed"; else bad "the verified job's events name the workers that agreed"; fi
+finished() { on laptop job get --addr coordinator:7700 "$1" | has succeeded; }
+if until_ok 60 finished "$checked" && on laptop job get --addr coordinator:7700 "$checked" | has '"count":148933'; then ok "each task run by both workers, which are at different addresses, and their results the same: 148,933 primes below 2,000,000"; else bad "a verified job: $(on laptop job get --addr coordinator:7700 "$checked" 2>&1 | head -3)"; fi
+if on laptop job logs --addr coordinator:7700 "$checked" 2>&1 | has "returned the same result"; then ok "the job's events say which workers agreed"; else bad "the verified job's events name the workers that agreed"; fi
 
 echo "a private job: the client holds the key, and the workers are given only this job's"
 on laptop key new /tmp/job.key >/dev/null
 sealed=$(on laptop blob put --addr coordinator:7700 --key-file /tmp/job.key /sisyphus/boulder.txt | tail -1)
 out=$(on laptop job submit --addr coordinator:7700 --workload wordcount --key-file /tmp/job.key --params "{\"input\":\"$sealed\"}" --tasks 4 2>&1) || true
 table=$(echo "$out" | grep -o '"output":"[a-z0-9]*"' | head -1 | cut -d'"' -f4)
-if [ -n "$table" ] && on laptop blob get --addr coordinator:7700 --key-file /tmp/job.key "$table" 2>/dev/null | grep -q boulder; then ok "words of a sealed file counted on both workers, and the result read back with the key"; else bad "a private job: $(echo "$out" | tail -2)"; fi
-if [ -n "$table" ] && on laptop blob get --addr coordinator:7700 "$table" 2>/dev/null | head -c 8 | grep -q SISYENC2; then ok "without the key the result is sealed bytes"; else bad "the private job's result is sealed in the store"; fi
+if [ -n "$table" ] && on laptop blob get --addr coordinator:7700 --key-file /tmp/job.key "$table" 2>/dev/null | has boulder; then ok "words of a sealed file counted on both workers, and the result read back with the key"; else bad "a private job: $(echo "$out" | tail -2)"; fi
+if [ -n "$table" ] && on laptop blob get --addr coordinator:7700 "$table" 2>/dev/null | { head -c 8; cat >/dev/null; } | has SISYENC2; then ok "without the key the result is sealed bytes"; else bad "the private job's result is sealed in the store"; fi
 refused=$(on laptop job submit --addr coordinator:7700 --workload wordcount --params "{\"input\":\"$sealed\"}" 2>&1) || true
-if echo "$refused" | grep -q "is sealed, and this job is not private"; then ok "a job that is not private is refused the sealed file"; else bad "a job that is not private is refused a sealed file"; fi
+if echo "$refused" | has "is sealed, and this job is not private"; then ok "a job that is not private is refused the sealed file"; else bad "a job that is not private is refused a sealed file"; fi
 
 echo "a second client, kept to what is its own"
 docker run -d --name $P-desk --hostname desk --network $P-a -v "$bin:/sisyphus:ro" "$IMAGE" sleep 86400 >/dev/null
 second_invitation=$(on coordinator pool invite --role client | tail -1)
 check "it joins as a client too" on desk pool join --addr coordinator:7700 "$second_invitation"
 theirs=$(on desk job get --addr coordinator:7700 "$checked" 2>&1) || true
-if echo "$theirs" | grep -q "not found"; then ok "the first client's job is, to it, a job that is not there"; else bad "a second client is refused the first client's job"; fi
+if echo "$theirs" | has "not found"; then ok "the first client's job is, to it, a job that is not there"; else bad "a second client is refused the first client's job"; fi
 theirs=$(on desk job cancel --addr coordinator:7700 "$checked" 2>&1) || true
-if echo "$theirs" | grep -q "not found"; then ok "nor can it stop one"; else bad "a second client cannot cancel the first client's job"; fi
-if on laptop blob pins --addr coordinator:7700 2>/dev/null | grep -q "$cid" && ! on desk blob pins --addr coordinator:7700 2>/dev/null | grep -q "$cid"; then ok "each client sees its own pins and not the other's"; else bad "clients see only their own pins"; fi
+if echo "$theirs" | has "not found"; then ok "nor can it stop one"; else bad "a second client cannot cancel the first client's job"; fi
+if on laptop blob pins --addr coordinator:7700 2>/dev/null | has "$cid" && ! on desk blob pins --addr coordinator:7700 2>/dev/null | has "$cid"; then ok "each client sees its own pins and not the other's"; else bad "clients see only their own pins"; fi
 
 echo "a worker is lost while a job runs"
 job=$(on laptop job submit --addr coordinator:7700 --workload primes --params '{"from":0,"to":3000000000}' --tasks 8 --detach | tail -1)
@@ -168,29 +175,31 @@ for _ in $(seq 1 40); do on laptop nodes --addr coordinator:7700 >/dev/null 2>&1
 if [ "$refused" -eq 0 ]; then ok "forty commands in a row from one machine were all answered"; else bad "forty commands in a row from one machine: $refused refused"; fi
 docker kill $P-south >/dev/null
 if until_ok 180 finished "$job"; then ok "the job finished all the same, its tasks done again on the worker left"; else bad "the job finished after losing a worker: $(on laptop job get --addr coordinator:7700 "$job" | head -3)"; fi
+alone=$(on laptop job submit --addr coordinator:7700 --workload primes --params '{"from":0,"to":100}' --verify 2 2>&1) || true
+if echo "$alone" | has "counting those at one address as one"; then ok "with one worker left, a job to be checked by two at different addresses is refused"; else bad "a verified job with one worker left: $(echo "$alone" | tail -1)"; fi
 
 echo "the coordinator is stopped and started again while a job runs"
 running=$(on laptop job submit --addr coordinator:7700 --workload primes --params '{"from":0,"to":3000000000}' --tasks 8 --detach | tail -1)
 sleep 2
 docker restart $P-coordinator >/dev/null
-back() { on coordinator nodes | grep -q north; }
+back() { on coordinator nodes | has north; }
 if until_ok 60 back; then ok "the worker that was left came back to it unasked"; else bad "the worker came back after the coordinator restarted"; fi
-check "the job it had finished is still on record" bash -c "docker exec $P-laptop /sisyphus/sisyphusd job get --addr coordinator:7700 $job | grep -q succeeded"
+check "the job it had finished is still on record" bash -c "docker exec $P-laptop /sisyphus/sisyphusd job get --addr coordinator:7700 $job | grep succeeded >/dev/null"
 if until_ok 240 finished "$running"; then ok "and the job that was running when it stopped finished all the same"; else bad "a job running across the coordinator's restart: $(on laptop job get --addr coordinator:7700 "$running" 2>&1 | head -3)"; fi
 
 if [ -n "$MODEL" ]; then
 	echo "a worker's models, used from the client's machine"
-	serves() { on coordinator nodes | grep north | grep -q chat; }
+	serves() { on coordinator nodes | grep north | has chat; }
 	if until_ok 20 serves; then ok "north offers the models of this machine's Ollama"; else bad "north offers models (is Ollama listening on more than 127.0.0.1?)"; fi
 	docker exec -d $P-laptop /sisyphus/sisyphusd inference --addr coordinator:7700 --listen 127.0.0.1:11435
 	sleep 3
 	key=$(docker exec $P-laptop sh -c 'cat "$(/sisyphus/sisyphusd data-dir)/api.token"')
 	listed=$(docker exec $P-laptop wget -qO- --header "Authorization: Bearer $key" http://127.0.0.1:11435/v1/models 2>&1) || true
-	if echo "$listed" | grep -q "\"$MODEL\""; then ok "the client's own endpoint lists $MODEL"; else bad "the client's endpoint lists $MODEL: $(echo "$listed" | head -c 200)"; fi
+	if echo "$listed" | has "\"$MODEL\""; then ok "the client's own endpoint lists $MODEL"; else bad "the client's endpoint lists $MODEL: $(echo "$listed" | head -c 200)"; fi
 	answer=$(docker exec $P-laptop wget -qO- -T 300 --header "Authorization: Bearer $key" --header "Content-Type: application/json" \
 		--post-data "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with one word: what does Sisyphus push?\"}]}" \
 		http://127.0.0.1:11435/v1/chat/completions 2>&1) || true
-	if echo "$answer" | grep -q '"content"'; then ok "and $MODEL answered through the pool: $(echo "$answer" | sed 's/.*"content":"\([^"]*\)".*/\1/' | head -c 80)"; else bad "a reply through the pool: $(echo "$answer" | head -c 200)"; fi
+	if echo "$answer" | has '"content"'; then ok "and $MODEL answered through the pool: $(echo "$answer" | sed 's/.*"content":"\([^"]*\)".*/\1/' | head -c 80)"; else bad "a reply through the pool: $(echo "$answer" | head -c 200)"; fi
 fi
 
 echo

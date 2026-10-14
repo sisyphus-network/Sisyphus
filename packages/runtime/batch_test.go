@@ -24,7 +24,7 @@ func thinking(t *testing.T) (*httptest.Server, *[]map[string]any) {
 		json.Unmarshal(body, &request)
 		*asked = append(*asked, request)
 		switch r.URL.Path {
-		case "/v1/chat/completions":
+		case "/api/chat":
 			messages := request["messages"].([]any)
 			prompt := messages[len(messages)-1].(map[string]any)["content"].(string)
 			if prompt == "break" {
@@ -32,18 +32,17 @@ func thinking(t *testing.T) (*httptest.Server, *[]map[string]any) {
 				return
 			}
 			if prompt == "mumble" {
-				io.WriteString(w, `{"choices":[]}`)
+				io.WriteString(w, `{"done":true}`)
 				return
 			}
-			fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":%q}}]}`, strings.ToUpper(prompt))
-		case "/v1/embeddings":
+			fmt.Fprintf(w, `{"message":{"role":"assistant","content":%q},"done":true}`, strings.ToUpper(prompt))
+		case "/api/embed":
 			texts := request["input"].([]any)
-			// In an order of its own, to be put right by their numbers.
-			var data []string
-			for i := len(texts) - 1; i >= 0; i-- {
-				data = append(data, fmt.Sprintf(`{"index":%d,"embedding":[%d]}`, i, len(texts[i].(string))))
+			var vectors []string
+			for _, text := range texts {
+				vectors = append(vectors, fmt.Sprintf(`[%d]`, len(text.(string))))
 			}
-			fmt.Fprintf(w, `{"model":"nomic:latest","data":[%s],"usage":{"prompt_tokens":%d}}`, strings.Join(data, ","), len(texts))
+			fmt.Fprintf(w, `{"model":"nomic:latest","embeddings":[%s],"prompt_eval_count":%d}`, strings.Join(vectors, ","), len(texts))
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -83,7 +82,8 @@ func TestManyPromptsAreSharedOutAndAnsweredInOrder(t *testing.T) {
 		t.Fatalf("%s in %d tasks, %v", got, tasks, err)
 	}
 	first := (*asked)[0]
-	if first["model"] != "llama3.1:8b" || first["temperature"] != float64(0) || first["stream"] != false || len(first["messages"].([]any)) != 2 {
+	// In Ollama's own dialect, the job's options among its options.
+	if options, _ := first["options"].(map[string]any); first["model"] != "llama3.1:8b" || options["temperature"] != float64(0) || first["stream"] != false || len(first["messages"].([]any)) != 2 {
 		t.Errorf("the model server was asked %v", first)
 	}
 	// More parts than prompts is a part for each, and the prompts may come

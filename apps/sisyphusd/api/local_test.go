@@ -728,7 +728,7 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 		t.Fatalf("the first list of jobs: %v, %v", first, err)
 	}
 
-	request := &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":100}`), Mode: nodepb.JobMode_JOB_MODE_FULL_WORKER, MaxTasks: 3, Verify: 2, VerifyShare: 0.5}
+	request := &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":100}`), Mode: nodepb.JobMode_JOB_MODE_FULL_WORKER, MaxTasks: 3, Verify: 2, VerifyShare: 0.5, AuditShare: 0.25}
 	// It spends the pool's time, so it needs the token.
 	if _, err := client.SubmitJob(context.Background(), request); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("submitting without the token: %v", err)
@@ -743,7 +743,7 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 		job.GetCreatedAtMs() != 1_700_000_000_000 || job.GetFinishedAtMs() != 0 || job.GetVerify() != 2 {
 		t.Errorf("the job as submitted: %v", job)
 	}
-	if spec := pool.submitted[0]; spec.GetMode() != pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER || spec.GetMaxTasks() != 3 || spec.GetVerify() != 2 || spec.GetVerifyShare() != 0.5 {
+	if spec := pool.submitted[0]; spec.GetMode() != pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER || spec.GetMaxTasks() != 3 || spec.GetVerify() != 2 || spec.GetVerifyShare() != 0.5 || spec.GetAuditShare() != 0.25 {
 		t.Errorf("the pool was given %v", spec)
 	}
 	if second, err := stream.Recv(); err != nil || second.GetRevision() != 2 || len(second.GetJobs()) != 1 {
@@ -983,6 +983,181 @@ func TestTheProvidersThereAreAreListedOnAnyNode(t *testing.T) {
 	}
 	if claude := listed.GetProviders()[1]; claude.GetId() != ai.Anthropic || claude.GetNeedsKey() != nodepb.Support_SUPPORT_YES || claude.GetFetchesModels() {
 		t.Errorf("the second provider: %v", claude)
+	}
+}
+
+type profiledAssistant struct {
+	Assistant
+	config      nodedb.ModelConfig
+	configErr   error
+	profiles    []nodedb.ModelProfile
+	profilesErr error
+	saveErr     error
+	deleteErr   error
+	saved       nodedb.ModelProfile
+	deleted     string
+}
+
+func (a *profiledAssistant) ModelConfig() (nodedb.ModelConfig, bool, error) {
+	return a.config, a.config.Provider != "" || a.configErr != nil, a.configErr
+}
+func (a *profiledAssistant) ModelProfiles() ([]nodedb.ModelProfile, error) {
+	return a.profiles, a.profilesErr
+}
+func (a *profiledAssistant) SaveModelProfile(profile nodedb.ModelProfile) error {
+	if a.saveErr != nil {
+		return a.saveErr
+	}
+	a.saved = profile
+	return nil
+}
+func (a *profiledAssistant) DeleteModelProfile(id string) error {
+	if a.deleteErr != nil {
+		return a.deleteErr
+	}
+	a.deleted = id
+	return nil
+}
+
+func TestModelProfileRPCsAuthorizeAndPreserveOnlyMatchingKeys(t *testing.T) {
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	profile := nodedb.ModelProfile{ID: "cloud", Name: "Cloud", Config: nodedb.ModelConfig{Provider: "openai", BaseURL: "https://api.example.test/v1", Model: "gpt-5", APIKey: "profile-secret"}, Active: true}
+	planner := &profiledAssistant{profiles: []nodedb.ModelProfile{profile}}
+	service := &localService{cfg: LocalConfig{Token: "the-token", Assistant: planner}}
+
+	if _, err := service.ListModelProfiles(context.Background(), &nodepb.ListModelProfilesRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("ListModelProfiles without token = %v", err)
+	}
+	if _, err := service.SaveModelProfile(context.Background(), &nodepb.SaveModelProfileRequest{Id: "x", Name: "X", Provider: "openai"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("SaveModelProfile without token = %v", err)
+	}
+	listed, err := service.ListModelProfiles(ctx, &nodepb.ListModelProfilesRequest{})
+	if err != nil || len(listed.GetProfiles()) != 1 || listed.GetProfiles()[0].GetId() != profile.ID || !listed.GetProfiles()[0].GetHasApiKey() || !listed.GetProfiles()[0].GetActive() {
+		t.Fatalf("ListModelProfiles = %v, %v", listed, err)
+	}
+
+	for _, req := range []*nodepb.SaveModelProfileRequest{
+		{Name: "Missing ID", Provider: "openai"},
+		{Id: "missing-name", Provider: "openai"},
+		{Id: "missing-provider", Name: "Missing provider"},
+	} {
+		if _, err := service.SaveModelProfile(ctx, req); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("invalid profile %+v: %v", req, err)
+		}
+	}
+
+	kept, err := service.SaveModelProfile(ctx, &nodepb.SaveModelProfileRequest{
+		Id: profile.ID, Name: "Renamed", Provider: profile.Config.Provider, BaseUrl: profile.Config.BaseURL,
+		Model: "gpt-5-mini", KeepApiKey: true, Active: true,
+	})
+	if err != nil || !kept.GetHasApiKey() || !planner.saved.Active || planner.saved.Config.APIKey != profile.Config.APIKey || planner.saved.Config.Model != "gpt-5-mini" {
+		t.Fatalf("keep matching profile key: response=%v saved=%+v err=%v", kept, planner.saved, err)
+	}
+	_, err = service.SaveModelProfile(ctx, &nodepb.SaveModelProfileRequest{
+		Id: profile.ID, Name: "Moved", Provider: profile.Config.Provider, BaseUrl: "https://other.example.test/v1", KeepApiKey: true,
+	})
+	if err != nil || planner.saved.Config.APIKey != "" {
+		t.Errorf("key crossed to another endpoint: saved=%+v err=%v", planner.saved, err)
+	}
+
+	planner.saveErr = errAbsent
+	if _, err := service.SaveModelProfile(ctx, &nodepb.SaveModelProfileRequest{Id: "x", Name: "X", Provider: "ollama"}); status.Code(err) != codes.Internal {
+		t.Errorf("failed profile save: %v", err)
+	}
+	planner.saveErr = nil
+	planner.profilesErr = errAbsent
+	if _, err := service.ListModelProfiles(ctx, &nodepb.ListModelProfilesRequest{}); status.Code(err) != codes.Internal {
+		t.Errorf("failed profile listing: %v", err)
+	}
+	if _, err := service.SaveModelProfile(ctx, &nodepb.SaveModelProfileRequest{Id: "x", Name: "X", Provider: "ollama", KeepApiKey: true}); status.Code(err) != codes.Internal {
+		t.Errorf("failed key-preserving profile read: %v", err)
+	}
+	planner.profilesErr = nil
+
+	if _, err := service.DeleteModelProfile(context.Background(), &nodepb.DeleteModelProfileRequest{Id: profile.ID}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("DeleteModelProfile without token: %v", err)
+	}
+	if _, err := service.DeleteModelProfile(ctx, &nodepb.DeleteModelProfileRequest{Id: profile.ID}); err != nil || planner.deleted != profile.ID {
+		t.Errorf("DeleteModelProfile = %v, deleted %q", err, planner.deleted)
+	}
+	planner.deleteErr = errAbsent
+	if _, err := service.DeleteModelProfile(ctx, &nodepb.DeleteModelProfileRequest{Id: profile.ID}); status.Code(err) != codes.Internal {
+		t.Errorf("failed profile deletion: %v", err)
+	}
+
+	withoutPlanner := &localService{cfg: LocalConfig{Token: "the-token"}}
+	legacyPlanner := &localService{cfg: LocalConfig{Token: "the-token", Assistant: absent{}}}
+	for name, call := range map[string]func() error{
+		"missing planner list": func() error {
+			_, err := withoutPlanner.ListModelProfiles(ctx, &nodepb.ListModelProfilesRequest{})
+			return err
+		},
+		"legacy planner list": func() error {
+			_, err := legacyPlanner.ListModelProfiles(ctx, &nodepb.ListModelProfilesRequest{})
+			return err
+		},
+		"missing profile capability on save": func() error {
+			_, err := legacyPlanner.SaveModelProfile(ctx, &nodepb.SaveModelProfileRequest{})
+			return err
+		},
+		"missing profile capability on delete": func() error {
+			_, err := legacyPlanner.DeleteModelProfile(ctx, &nodepb.DeleteModelProfileRequest{})
+			return err
+		},
+	} {
+		if status.Code(call()) != codes.FailedPrecondition {
+			t.Errorf("%s should report no planner/profile support", name)
+		}
+	}
+}
+
+func TestModelServiceFindsAKeyInTheMatchingNamedProfile(t *testing.T) {
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	profile := nodedb.ModelProfile{ID: "cloud", Config: nodedb.ModelConfig{Provider: "openai", BaseURL: "https://api.example.test/v1", APIKey: "profile-secret"}}
+	planner := &profiledAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "local"}, profiles: []nodedb.ModelProfile{profile}}
+	service := &localService{cfg: LocalConfig{Token: "the-token", Assistant: planner}}
+	named := &nodepb.ModelService{Provider: profile.Config.Provider, BaseUrl: profile.Config.BaseURL, KeepApiKey: true}
+
+	if _, err := service.modelService(context.Background(), named); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("named model service without token: %v", err)
+	}
+	got, err := service.modelService(ctx, named)
+	if err != nil || got.APIKey != profile.Config.APIKey {
+		t.Fatalf("profile key lookup = %+v, %v", got, err)
+	}
+	wrongService := &nodepb.ModelService{Provider: named.GetProvider(), BaseUrl: "https://other.example.test/v1", KeepApiKey: true}
+	got, err = service.modelService(ctx, wrongService)
+	if err != nil || got.APIKey != "" {
+		t.Errorf("profile key leaked to other endpoint: %+v, %v", got, err)
+	}
+
+	// The currently selected service takes precedence over a profile lookup.
+	planner.config = nodedb.ModelConfig{Provider: named.Provider, BaseURL: named.BaseUrl, APIKey: "active-secret"}
+	got, err = service.modelService(ctx, named)
+	if err != nil || got.APIKey != "active-secret" {
+		t.Errorf("active key lookup = %+v, %v", got, err)
+	}
+	planner.config = nodedb.ModelConfig{Provider: "ollama"}
+	planner.configErr = errAbsent
+	if _, err := service.modelService(ctx, named); status.Code(err) != codes.Internal {
+		t.Errorf("model configuration read error: %v", err)
+	}
+	planner.configErr = nil
+	planner.profilesErr = errAbsent
+	if _, err := service.modelService(ctx, named); status.Code(err) != codes.Internal {
+		t.Errorf("profile read error: %v", err)
+	}
+
+	legacy := &localService{cfg: LocalConfig{Token: "the-token", Assistant: settable{}}}
+	got, err = legacy.modelService(ctx, named)
+	if err != nil || got.APIKey != "" {
+		t.Errorf("legacy planner key lookup = %+v, %v", got, err)
+	}
+	if _, err := (&localService{}).modelService(ctx, named); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("no planner: %v", err)
+	}
+	if got, err := service.modelService(context.Background(), nil); err != nil || got != nil {
+		t.Errorf("unnamed configured service = %+v, %v", got, err)
 	}
 }
 

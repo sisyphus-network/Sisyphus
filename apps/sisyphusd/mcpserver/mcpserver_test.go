@@ -202,8 +202,8 @@ func TestEveryToolSaysSoWhenTheNodeFailsIt(t *testing.T) {
 
 func TestThePoolIsDescribedWithItsCardsAndTheTokenIsShown(t *testing.T) {
 	n := &node{workers: []*nodepb.Worker{
-		{Name: "rig", TaskSlots: 4, RunningTasks: 1, Workloads: []string{"primes"}, Gpus: []*nodepb.WorkerGpu{{Name: "RTX 5090"}}, Models: []string{"llama3.1:8b"},
-			VerifiedAgreed: 12, VerifiedOutvoted: 1, Probation: 7},
+		{Name: "rig", TaskSlots: 4, RunningTasks: 1, Workloads: []string{"primes"}, Gpus: []*nodepb.WorkerGpu{{Name: "RTX 5090"}}, Models: []string{"llama3.1:8b", "qwen3:8b"},
+			LoadedModels: []*nodepb.LoadedModel{{Name: "llama3.1:8b", OnCardPercent: 75}}, VerifiedAgreed: 12, VerifiedOutvoted: 1, Probation: 7},
 		{Name: "laptop", TaskSlots: 2},
 	}}
 	got, err := serving(n).status(serving(n).as(context.Background()))
@@ -213,7 +213,8 @@ func TestThePoolIsDescribedWithItsCardsAndTheTokenIsShown(t *testing.T) {
 	pool := got.(map[string]any)
 	workers := pool["workers"].([]map[string]any)
 	if pool["task_slots"] != 6 || pool["running_tasks"] != 1 || workers[0]["gpus"].([]string)[0] != "RTX 5090" || workers[1]["gpus"] != nil ||
-		workers[0]["models"].([]string)[0] != "llama3.1:8b" || workers[1]["models"] != nil {
+		workers[0]["models"].([]string)[0] != "llama3.1:8b" || workers[1]["models"] != nil ||
+		workers[0]["loaded_models"].(map[string]uint32)["llama3.1:8b"] != 75 || workers[1]["loaded_models"] != nil {
 		t.Errorf("pool = %v", pool)
 	}
 	// A worker is shown with its standing once verified tasks have given
@@ -255,6 +256,16 @@ func TestAJobCanBeAskedToBeVerifiedAndIsShownToHaveBeen(t *testing.T) {
 	// the tasks that were held to it.
 	if _, err := serving(n).run(context.Background(), runJobArgs{Workload: "primes", Verify: 2, VerifyShare: 0.25, Detach: true}); err != nil || n.submitted.GetVerifyShare() != 0.25 {
 		t.Fatalf("the node was asked for %v, %v", n.submitted, err)
+	}
+	// An audit by the coordinating node is asked for and shown the same way.
+	if _, err := serving(n).run(context.Background(), runJobArgs{Workload: "primes", AuditShare: 0.5, Detach: true}); err != nil || n.submitted.GetAuditShare() != 0.5 {
+		t.Errorf("a job with a share audited: %v, asked for as %v", err, n.submitted)
+	}
+	if audited := jobView(&nodepb.Job{JobId: "j", AuditShare: 0.5}, true); audited["audit_share"] != 0.5 {
+		t.Errorf("an audited job is shown as %v", audited)
+	}
+	if plain := jobView(&nodepb.Job{JobId: "j"}, true); plain["audit_share"] != nil {
+		t.Errorf("a job that is not audited is shown as %v", plain)
 	}
 	spot := jobView(&nodepb.Job{JobId: "j", Verify: 2, VerifyShare: 0.25, Tasks: []*nodepb.JobTask{{Index: 0, Verify: 1}, {Index: 1, Verify: 2}, {Index: 2, Verify: 1}}}, true)
 	if got, _ := json.Marshal(spot["verified_tasks"]); string(got) != "[1]" || spot["verified_by"] != uint32(2) {

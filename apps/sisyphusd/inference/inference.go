@@ -79,6 +79,28 @@ func served(pool Pool, worker string) []string {
 	return slices.Compact(names)
 }
 
+// notServed says why a model that was asked for cannot be had: of a worker
+// that is not there, of one that is and does not serve it, or of a pool in
+// which nobody does. models is what could have been had instead.
+func notServed(pool Pool, model, worker string, models []string) string {
+	if worker == "" {
+		if len(models) == 0 {
+			return fmt.Sprintf("no worker connected to the pool serves %q, or any model", model)
+		}
+		return fmt.Sprintf("no worker connected to the pool serves %q; those served are: %s", model, strings.Join(models, ", "))
+	}
+	connected := slices.ContainsFunc(pool.Nodes(), func(node *pb.NodeInfo) bool {
+		return slices.Contains(node.GetCapabilities().GetLabels(), runtime.WorkerLabel+worker)
+	})
+	switch {
+	case !connected:
+		return fmt.Sprintf("no worker named %q is connected to the pool", worker)
+	case len(models) == 0:
+		return fmt.Sprintf("the worker %q serves no models", worker)
+	}
+	return fmt.Sprintf("the worker %q does not serve %q; it serves: %s", worker, model, strings.Join(models, ", "))
+}
+
 // asked reads a request that names a model, and has it name the model as
 // the pool does. It returns false, having answered, if the request cannot
 // be read or the pool serves nothing it can mean.
@@ -103,11 +125,7 @@ func asked(pool Pool, w http.ResponseWriter, r *http.Request) (body []byte, mode
 	models := served(pool, worker)
 	model, found := runtime.ResolveModel(named, models)
 	if !found {
-		where := "no worker connected to the pool serves a model"
-		if worker != "" {
-			where = fmt.Sprintf("the worker %q is not connected to the pool, or serves no model", worker)
-		}
-		refuse(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("%s that %q can only mean; those served are: %s", where, strings.TrimSuffix(named, "@"+worker), strings.Join(models, ", ")))
+		refuse(w, http.StatusNotFound, "model_not_found", notServed(pool, strings.TrimSuffix(named, "@"+worker), worker, models))
 		return nil, "", false, false
 	}
 	request["model"], _ = json.Marshal(model) // a string always encodes

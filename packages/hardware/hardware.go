@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -35,23 +36,46 @@ var (
 	run      = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, name, args...).Output()
 	}
+	system = runtime.GOOS
 )
+
+// What Windows is asked for, through the shell it always has: the memory
+// in bytes on one line, and the processor's name on the next.
+const askWindows = "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory; (Get-CimInstance Win32_Processor | Select-Object -First 1).Name"
 
 // Detect looks at this machine. It takes a moment at most: a tool that
 // does not answer promptly is taken to have nothing to say.
 func Detect(ctx context.Context) Info {
 	var info Info
-	// Linux says what it has in two files. Elsewhere they are not there,
-	// and the processor and memory stay unknown.
-	if cpu, err := readFile("/proc/cpuinfo"); err == nil {
-		info.CPUModel = cpuModel(string(cpu))
-	}
-	if memory, err := readFile("/proc/meminfo"); err == nil {
-		info.MemoryBytes = memoryTotal(string(memory))
-	}
-	// NVIDIA's tool is the same on every system that has one of its cards.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	// Linux says what it has in two files. macOS and Windows each have a
+	// tool to ask. On anything else the processor and memory stay unknown.
+	switch system {
+	case "darwin":
+		if memory, err := run(ctx, "sysctl", "-n", "hw.memsize"); err == nil {
+			info.MemoryBytes, _ = strconv.ParseUint(strings.TrimSpace(string(memory)), 10, 64)
+		}
+		if cpu, err := run(ctx, "sysctl", "-n", "machdep.cpu.brand_string"); err == nil {
+			info.CPUModel = strings.TrimSpace(string(cpu))
+		}
+	case "windows":
+		if said, err := run(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", askWindows); err == nil {
+			memory, cpu, _ := strings.Cut(strings.TrimSpace(string(said)), "\n")
+			// Anything but a number first is the shell complaining.
+			if bytes, err := strconv.ParseUint(strings.TrimSpace(memory), 10, 64); err == nil {
+				info.MemoryBytes, info.CPUModel = bytes, strings.TrimSpace(cpu)
+			}
+		}
+	default:
+		if cpu, err := readFile("/proc/cpuinfo"); err == nil {
+			info.CPUModel = cpuModel(string(cpu))
+		}
+		if memory, err := readFile("/proc/meminfo"); err == nil {
+			info.MemoryBytes = memoryTotal(string(memory))
+		}
+	}
+	// NVIDIA's tool is the same on every system that has one of its cards.
 	if listed, err := run(ctx, "nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"); err == nil {
 		info.GPUs = nvidiaGPUs(string(listed))
 	}

@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,6 +32,50 @@ type Chat struct {
 	// URL is where the worker's model server is: an Ollama. It is empty on
 	// a node that takes such jobs in without running them.
 	URL string
+	// Owner is what the machine's owner allows of that server.
+	Owner Owner
+}
+
+// Owner is what the owner of a worker allows the pool of its model server.
+// The zero Owner allows everything the server has.
+type Owner struct {
+	// Only names the models offered: each a model as the server names it,
+	// a family ("llama3.1", for every size and tag of it), or a pattern
+	// with "*" in it. Empty offers every model the server has.
+	Only []string
+	// Options are Ollama's settings for running a model, put on every
+	// request whatever the job asked: num_gpu, how many of a model's layers
+	// go on graphics cards (0 for none); num_thread, how many of the
+	// processor's threads it may use; num_ctx, how long a conversation it
+	// holds. One left out is Ollama's to decide.
+	Options map[string]any
+	// KeepAlive is how long a model stays loaded after it last answered,
+	// such as "10m", or "0" to unload it at once; empty is Ollama's own.
+	KeepAlive string
+}
+
+// Allows reports whether the owner offers a model.
+func (o Owner) Allows(model string) bool {
+	if len(o.Only) == 0 {
+		return true
+	}
+	model = strings.ToLower(model)
+	family, _, _ := strings.Cut(model, ":")
+	for _, only := range o.Only {
+		only = strings.ToLower(strings.TrimSpace(only))
+		if matched, _ := path.Match(only, model); matched || only == family || only+":latest" == model {
+			return true
+		}
+	}
+	return false
+}
+
+// refuses is the error for a model the owner does not offer, or nil.
+func (o Owner) refuses(model string) error {
+	if o.Allows(model) {
+		return nil
+	}
+	return fmt.Errorf("this worker's owner does not offer the model %q", model)
 }
 
 func (Chat) Name() string { return "chat" }
@@ -115,7 +160,7 @@ func (c Chat) Offers(ctx context.Context) []string {
 	if c.URL == "" {
 		return nil
 	}
-	body, err := c.tags(ctx)
+	body, err := c.ask(ctx, "/api/tags")
 	if err != nil {
 		return nil
 	}
@@ -127,7 +172,63 @@ func (c Chat) Offers(ctx context.Context) []string {
 	json.Unmarshal(body, &listed) // a reply that is not a list lists nothing
 	var labels []string
 	for _, m := range listed.Models {
-		labels = append(labels, modelLabel+m.Name)
+		if c.Owner.Allows(m.Name) {
+			labels = append(labels, modelLabel+m.Name)
+		}
+	}
+	return append(labels, c.loaded(ctx)...)
+}
+
+// loadedLabel marks a model the worker's server has in memory now, and how
+// much of it is on a graphics card: "loaded:<name>=<percent>".
+const loadedLabel = "loaded:"
+
+// Loaded is a model a worker's server has in memory, ready to answer.
+type Loaded struct {
+	Model string
+	// OnCard is how much of the model is held by graphics cards, from 0 to
+	// 100. The rest is in the machine's own memory, where the processor
+	// does the work, and a reply comes that much slower.
+	OnCard int
+}
+
+// LoadedModels picks out of a worker's labels the models its server had in
+// memory when it last said what it offers.
+func LoadedModels(labels []string) []Loaded {
+	var loaded []Loaded
+	for _, label := range labels {
+		said, is := strings.CutPrefix(label, loadedLabel)
+		at := strings.LastIndex(said, "=")
+		if !is || at < 0 {
+			continue
+		}
+		// A share that is no number, or no share, is some worker's invention.
+		if share, err := strconv.Atoi(said[at+1:]); err == nil && share >= 0 && share <= 100 {
+			loaded = append(loaded, Loaded{Model: said[:at], OnCard: share})
+		}
+	}
+	return loaded
+}
+
+// loaded asks the worker's server which models it has in memory and how
+// much of each is on a graphics card. A server that does not say, as one
+// that is not an Ollama will not, has none to show.
+func (c Chat) loaded(ctx context.Context) []string {
+	body, _ := c.ask(ctx, "/api/ps") // no answer is no list
+	var running struct {
+		Models []struct {
+			Name string `json:"name"`
+			Size uint64 `json:"size"`
+			VRAM uint64 `json:"size_vram"`
+		} `json:"models"`
+	}
+	json.Unmarshal(body, &running) // a reply that is not a list lists nothing
+	var labels []string
+	for _, m := range running.Models {
+		if m.Name == "" || m.Size == 0 || !c.Owner.Allows(m.Name) {
+			continue
+		}
+		labels = append(labels, fmt.Sprintf("%s%s=%d", loadedLabel, m.Name, min(m.VRAM, m.Size)*100/m.Size))
 	}
 	return labels
 }
@@ -163,7 +264,14 @@ func (c Chat) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, err
 	if c.URL == "" {
 		return nil, errors.New("this worker serves no language models")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.URL, "/")+"/v1/chat/completions", bytes.NewReader(payload))
+	if err := c.Owner.refuses(modelOf(payload)); err != nil {
+		return nil, err
+	}
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return nil, fmt.Errorf("chat task: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.URL, "/")+"/api/chat", bytes.NewReader(toOllama(request, c.Owner, true)))
 	if err != nil {
 		return nil, fmt.Errorf("model server address: %w", err)
 	}
@@ -178,35 +286,10 @@ func (c Chat) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, err
 		said, _ := io.ReadAll(io.LimitReader(body, 4096))
 		return nil, fmt.Errorf("the model server answered %s: %s", res.Status, strings.TrimSpace(string(said)))
 	}
-	// A server that does not send pieces sends the reply whole.
-	if !strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {
-		reply, err := io.ReadAll(body)
-		if err != nil {
-			return nil, fmt.Errorf("read the model server's reply: %w", err)
-		}
-		if !json.Valid(reply) {
-			return nil, errors.New("the model server's reply is not JSON")
-		}
-		return reply, nil
-	}
-
-	whole := newReply()
+	whole := new(ollamaReply)
 	said := &pieces{log: Report(ctx).Log, last: time.Now()}
-	lines := bufio.NewScanner(body)
-	lines.Buffer(make([]byte, 0, 64<<10), 4<<20)
-	for lines.Scan() {
-		data, isData := bytes.CutPrefix(bytes.TrimSpace(lines.Bytes()), []byte("data:"))
-		if data = bytes.TrimSpace(data); !isData || string(data) == "[DONE]" {
-			continue
-		}
-		text, err := whole.add(data)
-		if err != nil {
-			return nil, err
-		}
-		said.say(text)
-	}
-	if err := lines.Err(); err != nil {
-		return nil, fmt.Errorf("read the model server's reply: %w", err)
+	if err := whole.read(body, said.say); err != nil {
+		return nil, err
 	}
 	said.flush()
 	return whole.json(), nil
@@ -244,106 +327,6 @@ func (p *pieces) flush() {
 	p.last = time.Now()
 }
 
-// reply puts a reply that came in pieces back together.
-type reply struct {
-	// top is what the pieces say of the reply as a whole: its ID, its
-	// model, what it used.
-	top map[string]any
-	// message is the reply's message so far, calls the tools it asks
-	// for, and finish why it ended.
-	message map[string]any
-	calls   []map[string]any
-	finish  any
-}
-
-func newReply() *reply {
-	return &reply{top: map[string]any{}, message: map[string]any{"role": "assistant", "content": ""}}
-}
-
-// add takes in one piece and returns the text it adds to what the model
-// has said.
-func (r *reply) add(data []byte) (string, error) {
-	var piece map[string]any
-	if err := json.Unmarshal(data, &piece); err != nil {
-		return "", fmt.Errorf("the model server sent a piece that is not JSON: %w", err)
-	}
-	if failure, failed := piece["error"]; failed {
-		return "", fmt.Errorf("the model server reported: %s", mustJSON(failure))
-	}
-	for key, value := range piece {
-		if key != "choices" && value != nil {
-			r.top[key] = value
-		}
-	}
-	choices, _ := piece["choices"].([]any)
-	if len(choices) == 0 {
-		return "", nil
-	}
-	choice, _ := choices[0].(map[string]any)
-	if reason := choice["finish_reason"]; reason != nil {
-		r.finish = reason
-	}
-	delta, _ := choice["delta"].(map[string]any)
-	text, _ := delta["content"].(string)
-	for key, value := range delta {
-		switch value := value.(type) {
-		case string:
-			// Text of any kind comes a little at a time; the role comes once.
-			if before, _ := r.message[key].(string); key != "role" {
-				r.message[key] = before + value
-			}
-		case []any:
-			if key == "tool_calls" {
-				r.call(value)
-			}
-		}
-	}
-	return text, nil
-}
-
-// call takes in pieces of the tools a reply asks for. A call's name and ID
-// come once and its arguments a little at a time, each piece saying which
-// call it is of.
-func (r *reply) call(pieces []any) {
-	for _, p := range pieces {
-		piece, _ := p.(map[string]any)
-		index := len(r.calls)
-		if at, numbered := piece["index"].(float64); numbered {
-			index = int(at)
-		} else if id, _ := piece["id"].(string); id == "" && len(r.calls) > 0 {
-			index = len(r.calls) - 1
-		}
-		if index < 0 || index > len(r.calls) {
-			continue
-		}
-		if index == len(r.calls) {
-			r.calls = append(r.calls, map[string]any{"type": "function", "function": map[string]any{"name": "", "arguments": ""}})
-		}
-		call := r.calls[index]
-		if id, _ := piece["id"].(string); id != "" {
-			call["id"] = id
-		}
-		into := call["function"].(map[string]any)
-		from, _ := piece["function"].(map[string]any)
-		if name, _ := from["name"].(string); name != "" {
-			into["name"] = name
-		}
-		if arguments, _ := from["arguments"].(string); arguments != "" {
-			into["arguments"] = into["arguments"].(string) + arguments
-		}
-	}
-}
-
-// json returns the reply whole, as a server that sent it whole would have.
-func (r *reply) json() []byte {
-	if len(r.calls) > 0 {
-		r.message["tool_calls"] = r.calls
-	}
-	r.top["object"] = "chat.completion"
-	r.top["choices"] = []any{map[string]any{"index": 0, "message": r.message, "finish_reason": r.finish}}
-	return mustJSON(r.top)
-}
-
 func (Chat) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, error) {
 	if len(outputs) != 1 {
 		return nil, fmt.Errorf("a conversation is one task, and %d reported", len(outputs))
@@ -356,11 +339,12 @@ func (Chat) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, err
 // must not hold that up for long.
 var tagsWait = 3 * time.Second
 
-// tags asks the worker's model server which models it has.
-func (c Chat) tags(ctx context.Context) ([]byte, error) {
+// ask asks the worker's model server about its models: which it has, or
+// which it has in memory.
+func (c Chat) ask(ctx context.Context, path string) ([]byte, error) {
 	ctx, done := context.WithTimeout(ctx, tagsWait)
 	defer done()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+"/api/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+path, nil)
 	if err != nil {
 		return nil, err
 	}
