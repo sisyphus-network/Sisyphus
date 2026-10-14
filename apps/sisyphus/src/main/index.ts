@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WindowStreams } from './window-streams'
+import { createIpcLogEntry } from './ipc-logger'
 import { DesktopDaemon } from './daemon-process'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
@@ -128,13 +129,27 @@ let connectionGeneration = 0
 const activeStreams = new WindowStreams()
 const appWindows = new Set<number>()
 const developmentRenderer = !app.isPackaged && Boolean(process.env.ELECTRON_RENDERER_URL)
+const ipcLoggingEnabled = developmentRenderer && process.env.SISYPHUS_IPC_LOG !== '0'
 const rendererUrl = developmentRenderer ? process.env.ELECTRON_RENDERER_URL! : pathToFileURL(join(here, '../renderer/index.html')).href
 function handleNode(channel: string, handler: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) {
-  ipcMain.handle(channel, (event, ...args) => {
+  ipcMain.handle(channel, async (event, ...args) => {
     if (!appWindows.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame || !event.senderFrame || !isTrustedRendererUrl(event.senderFrame.url, rendererUrl, developmentRenderer)) {
       throw new Error('This frame is not allowed to access the node bridge.')
     }
-    return handler(event, ...args)
+    const startedAt = performance.now()
+    const log = (phase: 'request' | 'response' | 'error', details: { request?: unknown; response?: unknown; error?: unknown; durationMs?: number }) => {
+      if (!ipcLoggingEnabled || event.sender.isDestroyed()) return
+      event.sender.send('node:ipc-log', createIpcLogEntry({ phase, channel, timestamp: new Date().toISOString(), ...details }))
+    }
+    log('request', { request: args })
+    try {
+      const response = await handler(event, ...args)
+      log('response', { response, durationMs: Math.round((performance.now() - startedAt) * 100) / 100 })
+      return response
+    } catch (error) {
+      log('error', { error, durationMs: Math.round((performance.now() - startedAt) * 100) / 100 })
+      throw error
+    }
   })
 }
 const unaryRpcMethods = new Set([
@@ -158,7 +173,10 @@ function callUnary(method: string, request: Record<string, unknown>): Promise<un
 function publish(next: Partial<NodeSnapshot>) {
   snapshot = { ...snapshot, ...next }
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('node:snapshot', snapshot)
+    if (!window.isDestroyed()) {
+      window.webContents.send('node:snapshot', snapshot)
+      if (ipcLoggingEnabled) window.webContents.send('node:ipc-log', createIpcLogEntry({ phase: 'event', channel: 'node:snapshot', timestamp: new Date().toISOString(), response: snapshot }))
+    }
   }
 }
 
@@ -274,10 +292,20 @@ function createWindow() {
   }
   window.webContents.once('did-finish-load', () => {
     window.webContents.send('node:snapshot', snapshot)
-    if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-      window.webContents.openDevTools({ mode: 'right' })
-    }
+    if (ipcLoggingEnabled) window.webContents.send('node:ipc-log', createIpcLogEntry({ phase: 'event', channel: 'node:snapshot', timestamp: new Date().toISOString(), response: snapshot }))
   })
+  if (developmentRenderer) {
+    window.webContents.on('before-input-event', (event, input) => {
+      const isDevToolsShortcut = input.type === 'keyDown'
+        && (input.key === 'F12'
+          || (input.control && input.shift && input.key.toLowerCase() === 'i')
+          || (input.meta && input.alt && input.key.toLowerCase() === 'i'))
+      if (!isDevToolsShortcut) return
+      event.preventDefault()
+      if (window.webContents.isDevToolsOpened()) window.webContents.closeDevTools()
+      else window.webContents.openDevTools({ mode: 'right' })
+    })
+  }
 }
 
 app.whenReady().then(() => {
@@ -340,16 +368,22 @@ app.whenReady().then(() => {
     const stream = (rpc as (request: Record<string, unknown>, metadata: grpc.Metadata) => grpc.ClientReadableStream<unknown>).call(client, request as Record<string, unknown>, authorization())
     activeStreams.add(owner, id, stream)
     const channel = `node:rpc-stream:${id}`
-    stream.on('data', (data) => { if (activeStreams.has(owner, id, stream) && !event.sender.isDestroyed()) event.sender.send(channel, { data }) })
+    stream.on('data', (data) => {
+      if (!activeStreams.has(owner, id, stream) || event.sender.isDestroyed()) return
+      event.sender.send(channel, { data })
+      if (ipcLoggingEnabled) event.sender.send('node:ipc-log', createIpcLogEntry({ phase: 'event', channel, timestamp: new Date().toISOString(), response: data }))
+    })
     stream.on('error', (error: grpc.ServiceError) => {
       if (!activeStreams.has(owner, id, stream)) return
       activeStreams.release(owner, id, stream)
       if (!event.sender.isDestroyed()) event.sender.send(channel, { error: error.message, errorCode: error.code })
+      if (ipcLoggingEnabled && !event.sender.isDestroyed()) event.sender.send('node:ipc-log', createIpcLogEntry({ phase: 'error', channel, timestamp: new Date().toISOString(), error: { message: error.message, code: error.code } }))
     })
     stream.on('end', () => {
       if (!activeStreams.has(owner, id, stream)) return
       activeStreams.release(owner, id, stream)
       if (!event.sender.isDestroyed()) event.sender.send(channel, { end: true })
+      if (ipcLoggingEnabled && !event.sender.isDestroyed()) event.sender.send('node:ipc-log', createIpcLogEntry({ phase: 'event', channel, timestamp: new Date().toISOString(), response: { end: true } }))
     })
   })
   handleNode('node:rpc-stream-stop', (event, id: unknown) => {
