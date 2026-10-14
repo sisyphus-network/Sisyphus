@@ -129,6 +129,69 @@ jobs:
           go test ./packages/runtime
           -run '^(TestCountPrimes|TestPrimesSplitExecuteAggregate|TestIsqrtIsExactAcrossThePrimesRange|TestCountWordsOverTheWholeText|TestCountWordsIsUnaffectedByWhereRangesAreCut|TestWordCountProducesASortedTable|TestWordCountResultCIDIsTheSameHoweverTheJobIsSplit)$'
 
+  # The other systems and processors a release is built for, which GitHub
+  # has no runner of: the tests are compiled for each and run in an emulator
+  # of the processor, on the Android build's own processor (loaded by Linux's
+  # loader, since it asks for Android's, which it needs only to be placed in
+  # memory), or in a virtual machine of the BSD. s390x is big-endian, so it shows that an answer does
+  # not depend on byte order.
+  workload-elsewhere:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-26.04, goos: linux, goarch: riscv64, via: qemu-riscv64}
+          - {runner: ubuntu-26.04, goos: linux, goarch: arm, via: qemu-arm}
+          - {runner: ubuntu-26.04, goos: linux, goarch: ppc64le, via: qemu-ppc64le}
+          - {runner: ubuntu-26.04, goos: linux, goarch: s390x, via: qemu-s390x}
+          - {runner: ubuntu-26.04, goos: linux, goarch: loong64, via: qemu-loongarch64}
+          - {runner: ubuntu-26.04, goos: linux, goarch: "386", via: ""}
+          - {runner: ubuntu-26.04-arm, goos: android, goarch: arm64, via: /lib/ld-linux-aarch64.so.1}
+          - {runner: ubuntu-26.04, goos: freebsd, goarch: amd64, via: vm}
+          - {runner: ubuntu-26.04, goos: openbsd, goarch: amd64, via: vm}
+          - {runner: ubuntu-26.04, goos: netbsd, goarch: amd64, via: vm}
+    name: workload-elsewhere (${{ matrix.goos }}, ${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      KNOWN_ANSWERS: '^(TestCountPrimes|TestPrimesSplitExecuteAggregate|TestIsqrtIsExactAcrossThePrimesRange|TestCountWordsOverTheWholeText|TestCountWordsIsUnaffectedByWhereRangesAreCut|TestWordCountProducesASortedTable|TestWordCountResultCIDIsTheSameHoweverTheJobIsSplit)$'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Compile the tests for ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: "7"
+        run: go test -c -o packages/runtime/runtime.test ./packages/runtime
+      - name: Install the emulator
+        if: startsWith(matrix.via, 'qemu')
+        run: sudo apt-get update && sudo apt-get install -y qemu-user
+      - name: Run the known-answer workloads
+        if: matrix.via != 'vm'
+        working-directory: packages/runtime
+        run: ${{ matrix.via }} ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
+      - name: Run the known-answer workloads on FreeBSD
+        if: matrix.goos == 'freebsd'
+        uses: vmactions/freebsd-vm@v1
+        with:
+          envs: KNOWN_ANSWERS
+          run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
+      - name: Run the known-answer workloads on OpenBSD
+        if: matrix.goos == 'openbsd'
+        uses: vmactions/openbsd-vm@v1
+        with:
+          envs: KNOWN_ANSWERS
+          run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
+      - name: Run the known-answer workloads on NetBSD
+        if: matrix.goos == 'netbsd'
+        uses: vmactions/netbsd-vm@v1
+        with:
+          envs: KNOWN_ANSWERS
+          run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
+
   # A pool across machines, as near as one runner gets: each node in a
   # container with its own address and disk. It is what finds faults that
   # tests on one machine cannot, since those all run over loopback.
