@@ -76,8 +76,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	pinningListen := fs.String("pinning-listen", "", "coordinator: address to serve the IPFS Pinning Service API on, so that ipfs pin remote and other standard tools can have this node keep data; its key is in the file pinning.token in the data directory; off if empty")
 	gatewayOpen := fs.Bool("gateway-open", false, "let anyone who can reach --gateway-listen and knows a file's content ID fetch it, without the token. Sealed files are never served")
 	publishRecord := fs.Bool("publish-record", false, "coordinator role: keep a description of this node published under its name, which is its ID: its version, the workloads it takes and its pool's members by ID and role. Whoever may resolve the name can read it")
-	webListen := fs.String("web-listen", "", "loopback address to serve the local API and web UI; off if empty")
-	webLAN := fs.Bool("web-lan", false, "explicitly allow the web UI and API on one private LAN interface over plain HTTP; pairing is required for browser access")
+	webListen := fs.String("web-listen", "", "loopback address to serve the local API and web UI for development; off if empty")
 	webOrigins := fs.String("web-origin", "", "the origins of the web pages that may use --web-listen, separated by commas, such as http://localhost:5173; pages from anywhere else are refused")
 	webUIDir := fs.String("web-ui-dir", "", "directory containing the built web UI to serve beside the local API; needs --web-listen, and is still loopback-only")
 	apiListen := fs.String("api-listen", "", "loopback address to serve the local API on, for the desktop client on this machine (it expects 127.0.0.1:50051); off if empty")
@@ -163,11 +162,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	if *pinningListen != "" && !isCoordinator {
 		return errors.New("--pinning-listen is for a node that coordinates a pool: it is that pool's store the data is kept in")
 	}
-	if err := validateWebListen(*webListen, *webLAN); err != nil {
+	if err := validateWebListen(*webListen); err != nil {
 		return err
-	}
-	if *webLAN && *webListen == "" {
-		return errors.New("--web-lan needs --web-listen")
 	}
 	if *webUIDir != "" {
 		if *webListen == "" {
@@ -408,6 +404,18 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	defer db.Close()
 	local.BrowserAccess = db
+	var allowedWebOrigins []string
+	for _, origin := range strings.Split(*webOrigins, ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			allowedWebOrigins = append(allowedWebOrigins, strings.TrimRight(origin, "/"))
+		}
+	}
+	var webUI iofs.FS
+	if *webUIDir != "" {
+		webUI = os.DirFS(*webUIDir)
+	}
+	webAccess := &webAccessRuntime{db: db, dataDir: *dataDir, local: &local, origins: allowedWebOrigins, ui: webUI, log: log}
+	local.WebAccess = webAccess
 	// The models a worker lends are those its owner gave when starting it
 	// or, if none were given, those saved from the desktop app.
 	lent := nodedb.ModelLending{Enabled: *modelsFrom != "", URL: *modelsFrom, Only: listOf(*modelsOnly),
@@ -422,7 +430,6 @@ func runDaemon(ctx context.Context, args []string) error {
 		runs = runs.With(runtime.WithLiveModels(local.LiveLending)...)
 	}
 	local.Lending, local.Lent, local.LentByFlags = db, lent, *modelsFrom != ""
-	local.AllowLAN = *webLAN
 	// host is the node's libp2p host, started below according to its role.
 	var host *p2p.Host
 	// trustChanged hears of each node the coordinator admits or removes, and
@@ -964,24 +971,33 @@ func runDaemon(ctx context.Context, args []string) error {
 			lis.Close()
 			return err
 		}
-		var origins []string
-		for _, origin := range strings.Split(*webOrigins, ",") {
-			if origin = strings.TrimSpace(origin); origin != "" {
-				origins = append(origins, strings.TrimRight(origin, "/"))
-			}
-		}
-		var ui iofs.FS
-		if *webUIDir != "" {
-			ui = os.DirFS(*webUIDir)
-		}
-		configureWebLAN(&local, *webLAN, lis.Addr().String(), func() {
-			log.Warn("LAN web access is using plain HTTP: pairing codes and browser sessions are visible to devices able to monitor this network", "addr", lis.Addr().String())
-		})
-		pages := &http.Server{Handler: api.NewWebAppHandler(local, origins, ui)}
+		pages := &http.Server{Handler: api.NewWebAppHandler(local, allowedWebOrigins, webUI)}
 		defer pages.Close()
-		log.Info("local API listening for web pages", "addr", lis.Addr().String(), "origins", origins, "ui", *webUIDir != "", "lan", *webLAN)
+		log.Info("local API listening for development web pages", "addr", lis.Addr().String(), "origins", allowedWebOrigins, "ui", *webUIDir != "")
 		go pages.Serve(lis)
 	}
+	return waitForDaemonStop(ctx, &local, webAccess, stopped, log)
+}
+
+func startSavedWebAccess(local *api.LocalConfig, webAccess *webAccessRuntime) error {
+	config, err := webAccess.db.WebAccess()
+	if err != nil || !config.Enabled {
+		return err
+	}
+	if local.Token == "" {
+		local.Token, err = apiToken(filepath.Join(webAccess.dataDir, "api.token"))
+		if err != nil {
+			return err
+		}
+	}
+	return webAccess.startSaved()
+}
+
+func waitForDaemonStop(ctx context.Context, local *api.LocalConfig, webAccess *webAccessRuntime, stopped <-chan error, log *slog.Logger) error {
+	if err := startSavedWebAccess(local, webAccess); err != nil {
+		return err
+	}
+	defer webAccess.Close()
 
 	select {
 	case err := <-stopped:
@@ -1737,54 +1753,19 @@ var runsAs = func(_ string, runs *runtime.Registry) *runtime.Registry { return r
 // hostname is os.Hostname; tests replace it.
 var hostname = os.Hostname
 
-func validateWebListen(address string, allowLAN bool) error {
-	return validateWebListenWithInterfaces(address, allowLAN, net.Interfaces, func(network net.Interface) ([]net.Addr, error) { return network.Addrs() })
-}
-
-func validateWebListenWithInterfaces(address string, allowLAN bool, listInterfaces func() ([]net.Interface, error), interfaceAddresses func(net.Interface) ([]net.Addr, error)) error {
+func validateWebListen(address string) error {
 	if address == "" {
 		return nil
 	}
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
-		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052; for LAN access use a private interface address and --web-lan")
+		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052")
 	}
 	ip := net.ParseIP(strings.Trim(host, "[]"))
-	if ip != nil && ip.IsLoopback() {
-		return nil
+	if ip == nil || !ip.IsLoopback() {
+		return errors.New("--web-listen must be a loopback address; configure remote HTTPS access in Settings")
 	}
-	if !allowLAN {
-		return errors.New("--web-listen must be a loopback address such as 127.0.0.1:50052; LAN access requires explicit --web-lan")
-	}
-	parsed, err := netip.ParseAddr(strings.Trim(host, "[]"))
-	if err != nil || !parsed.IsPrivate() || parsed.IsUnspecified() || parsed.IsMulticast() || parsed.IsLoopback() {
-		return errors.New("--web-lan requires --web-listen to use a private LAN IP assigned to this machine; 0.0.0.0 and public addresses are not allowed")
-	}
-	interfaces, err := listInterfaces()
-	if err != nil {
-		return fmt.Errorf("inspect local interfaces for --web-lan: %w", err)
-	}
-	for _, network := range interfaces {
-		addresses, err := interfaceAddresses(network)
-		if err != nil {
-			continue
-		}
-		for _, item := range addresses {
-			prefix, err := netip.ParsePrefix(item.String())
-			if err == nil && prefix.Addr().Unmap() == parsed.Unmap() {
-				return nil
-			}
-		}
-	}
-	return errors.New("--web-listen address must be a private IP assigned to one of this machine's network interfaces")
-}
-
-func configureWebLAN(cfg *api.LocalConfig, allowLAN bool, address string, warnPlainHTTP func()) {
-	if !allowLAN {
-		return
-	}
-	cfg.PairingOrigin = "http://" + address
-	warnPlainHTTP()
+	return nil
 }
 
 // defaultName is the machine's host name.

@@ -308,7 +308,7 @@ func newWebAppHandler(cfg LocalConfig, origins []string, ui fs.FS, random io.Rea
 		})
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !webHostAllowed(r.Host, cfg.AllowLAN) {
+		if !webRequestHostAllowed(r, cfg) {
 			refuseWeb(w, http.StatusForbidden, "this is a node's local API, and answers only to its own machine's address")
 			return
 		}
@@ -595,6 +595,21 @@ func webControl(w http.ResponseWriter, r *http.Request, cfg LocalConfig, session
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// webRequestHostAllowed accepts normal local node addresses and, for the
+// HTTPS listener only, the exact public host configured by the owner. The
+// latter is needed when a DNS name points at one of the selected interfaces;
+// arbitrary Host headers remain rejected.
+func webRequestHostAllowed(r *http.Request, cfg LocalConfig) bool {
+	if webHostAllowed(r.Host, cfg.AllowLAN) {
+		return true
+	}
+	if r.TLS == nil || cfg.PairingOrigin == "" {
+		return false
+	}
+	configured, err := url.Parse(cfg.PairingOrigin)
+	return err == nil && strings.EqualFold(configured.Scheme, "https") && configured.Host != "" && strings.EqualFold(configured.Host, r.Host)
 }
 
 func webHostAllowed(host string, allowLAN bool) bool {

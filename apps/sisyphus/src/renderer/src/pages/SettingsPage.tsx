@@ -10,13 +10,13 @@ import { type getMessages } from '@/i18n/messages'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { getNodeApi } from '@/lib/node-api'
+import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { toast } from 'sonner'
 import { PageHeading } from '@/components/ui/page-layout'
 import { missingProviderKey } from '@/lib/provider-key'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Drawer } from 'vaul'
-import { isDesktopApp } from '@/lib/node-api'
+import { RemoteAccessSettings } from '@/pages/RemoteAccessSettings'
 import { ModelLendingSettings } from '@/components/model-lending-settings'
 
 type Messages = ReturnType<typeof getMessages>
@@ -215,6 +215,9 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
     const scroller = scrollRef.current
     if (!scroller) return
     const key = 'sisyphus-page-scroll-positions'
+    let disposed = false
+    let restoreFrame = 0
+    let restoreAttempts = 0
     const save = () => {
       try {
         const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
@@ -222,14 +225,28 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
         window.localStorage.setItem(key, JSON.stringify({ ...stored, '/settings': scroller.scrollTop }))
       } catch { /* Storage may be unavailable in restricted contexts. */ }
     }
-    try {
-      const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
-      if (positions && typeof positions === 'object' && typeof (positions as Record<string, unknown>)['/settings'] === 'number') {
-        scroller.scrollTop = (positions as Record<string, number>)['/settings']
-      }
-    } catch { /* Ignore malformed saved scroll positions. */ }
+    const restore = () => {
+      if (disposed) return
+      try {
+        const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
+        if (positions && typeof positions === 'object' && typeof (positions as Record<string, unknown>)['/settings'] === 'number') {
+          const savedTop = (positions as Record<string, number>)['/settings']
+          scroller.scrollTop = savedTop
+          // The route can mount while its parent is still entering the layout.
+          // Re-apply briefly across the entry frames so a late flex/layout pass
+          // cannot reset the settings-owned scroller after the first restore.
+          if (restoreAttempts < 3) {
+            restoreAttempts += 1
+            restoreFrame = window.requestAnimationFrame(restore)
+          }
+        }
+      } catch { /* Ignore malformed saved scroll positions. */ }
+    }
+    restoreFrame = window.requestAnimationFrame(restore)
     scroller.addEventListener('scroll', save, { passive: true })
     return () => {
+      disposed = true
+      window.cancelAnimationFrame(restoreFrame)
       save()
       scroller.removeEventListener('scroll', save)
     }
@@ -250,6 +267,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
     <div ref={scrollRef} className="settings-page__scroll">
     <div className="grid w-full min-w-0 gap-4">
       <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><Globe2 className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{messages.node}</div><CardTitle className="mt-0.5 text-sm">{messages.localNodeSettings}</CardTitle></div></CardHeader><CardContent><div className="flex items-center gap-3 py-2"><div className="grid size-8 place-items-center rounded-lg border border-[var(--app-line)]"><ServerCog className="size-4 text-muted-foreground" /></div><div className="min-w-0 flex-1"><div className="text-xs font-medium">{messages.localDaemon}</div><div className="mt-1 text-[10px] text-muted-foreground">{messages.localDaemonSettingsHint}</div></div><span className="rounded-full border border-emerald-500/25 bg-emerald-500/5 px-2 py-1 text-[9px] text-emerald-700 dark:text-emerald-300">{messages.managedByDaemon}</span></div></CardContent></Card>
+      {isDesktopApp() && <RemoteAccessSettings messages={messages} />}
       <Link to="/pairing" className="block no-underline"><Card className="transition-colors hover:border-[var(--app-accent)]/40"><CardHeader className="flex flex-row items-center gap-3 py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><QrCode className="size-4 text-muted-foreground" /></div><div className="min-w-0 flex-1"><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{messages.browserAccess.eyebrow}</div><CardTitle className="mt-0.5 text-sm">{messages.browserAccess.title}</CardTitle><p className="mt-1 text-[10px] text-muted-foreground">{messages.browserAccess.description}</p></div><ArrowUpRight className="size-4 shrink-0 text-muted-foreground rtl:rotate-[-90deg]" /></CardHeader></Card></Link>
       <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><Languages className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{messages.language}</div><CardTitle className="mt-0.5 text-sm">{messages.languageSettings}</CardTitle></div></CardHeader><CardContent><div className="max-w-sm py-2"><LanguagePicker value={locale} label={messages.language} onChange={setLocale} /></div><p className="mt-2 text-[10px] text-muted-foreground">{messages.languageSettingsHint}</p></CardContent></Card>
       <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><ServerCog className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{labels.localAi}</div><CardTitle className="mt-0.5 text-sm">{labels.title}</CardTitle></div><Badge variant="outline" className="ms-auto">{labels.stored}</Badge></CardHeader><CardContent className="space-y-4 pt-4">
