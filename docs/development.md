@@ -121,6 +121,17 @@ The tests of all this that run real programs are few and slow: one in `packages/
 
 Push a tag such as `v0.1.0`. The release workflow builds every supported platform with `scripts/build-release.sh` and publishes the binaries and a `SHA256SUMS` file. Only Linux on x86-64 is covered by the tests.
 
+### Icons
+
+Every icon is drawn from `assets/logo.png` by `scripts/make-icons.py` (it needs Pillow), which sets the logo on a dark rounded plate so that it shows on a light taskbar. What it writes is committed. After changing the logo:
+
+```sh
+python3 scripts/make-icons.py
+(cd apps/sisyphusd && go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64,arm64)
+```
+
+The second line rebuilds `apps/sisyphusd/rsrc_windows_*.syso`, which Go links into the Windows daemon by itself. They give `sisyphusd.exe` its icon and the name ("Sisyphus node") that Windows shows in its firewall prompt and in a file's properties. The desktop app's packages take theirs from `apps/sisyphus/build/`.
+
 ## Branches and merging
 
 - `dev` is the default branch. Nothing is pushed to it directly: work goes on a branch, in a pull request against `dev`.
