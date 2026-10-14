@@ -209,11 +209,20 @@ func readKey(file string) (sealed.Key, error) {
 
 // keyCommand makes sealing keys.
 func keyCommand(args []string) error {
-	if len(args) != 2 || args[0] != "new" {
+	if len(args) == 0 || args[0] != "new" {
+		return errors.New(`expected "key new <file>"`)
+	}
+	// Parsed as flags, so that --help is asked for help and not taken for
+	// the name of a file to put a key in.
+	fs := flag.NewFlagSet("sisyphusd key new <file>", flag.ContinueOnError)
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
 		return errors.New(`expected "key new <file>"`)
 	}
 	// Created, never overwritten: replacing a key loses whatever it sealed.
-	file, err := os.OpenFile(args[1], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := os.OpenFile(fs.Arg(0), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("create key file: %w", err)
 	}

@@ -293,7 +293,7 @@ func TestDaemonStopsWhenItsCoordinatorRemovesIt(t *testing.T) {
 	}
 }
 
-func TestVerboseDaemonLogsEachTask(t *testing.T) {
+func TestADaemonLogsEachTaskItGivesAndRuns(t *testing.T) {
 	logs := captureLogs(t)
 	addr := freeAddr(t)
 	stop := startDaemon(t, "-v", "--listen", addr, "--slots", "1")
@@ -303,8 +303,12 @@ func TestVerboseDaemonLogsEachTask(t *testing.T) {
 	}
 	stop()
 
-	if !strings.Contains(logs.String(), `level=DEBUG msg="task done"`) {
-		t.Errorf("no per-task debug line in the log:\n%s", logs)
+	// The worker says what it ran, and the coordinator whom it gave each
+	// task to and, at the end, who did how many.
+	for _, want := range []string{`level=INFO msg="task started"`, `level=INFO msg="task done"`, `msg="task given"`, `msg="task returned"`, `msg="job finished"`, `by=`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("no %s in the log:\n%s", want, logs)
+		}
 	}
 }
 

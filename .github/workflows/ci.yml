@@ -14,6 +14,8 @@ jobs:
     # from this repository and pushes to dev use the project's Linux runner.
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'sisyphus-ci' }}
     env:
+      # All three self-hosted runners share the same host loopback and ephemeral-port space.
+      SISYPHUS_CI_LOCAL_NETWORK_LOCK: /tmp/sisyphus-ci-local-network.lock
       # Fail, rather than skip, any test that finds no ipfs program.
       SISYPHUS_REQUIRE_KUBO: "1"
       # Likewise any that finds it cannot use Docker.
@@ -67,14 +69,23 @@ jobs:
       - run: go vet ./...
       - name: Check for mistakes vet does not look for
         run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
-      - run: go test -race ./...
+      - name: Test against real local services
+        # Each Go package test process has its own test-only port allocator.
+        # Keep packages sequential as well as keeping this step exclusive with
+        # other localhost-heavy workflows on the shared host.
+        run: flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race -p 1 ./...
       - name: Check every statement is tested
         run: |
-          if command -v make >/dev/null 2>&1; then
-            make cover
-          else
-            nix develop --command make cover
-          fi
+          flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" bash -euo pipefail -c '
+            # Coverage runs the same integration tests as above. Keep their
+            # package processes sequential so test-only ports cannot overlap.
+            export GOFLAGS="-p=1"
+            if command -v make >/dev/null 2>&1; then
+              make cover
+            else
+              nix develop --command make cover
+            fi
+          '
       - run: go build ./apps/sisyphusd
 
   # A pool across machines, as near as one runner gets: each node in a
@@ -99,6 +110,9 @@ jobs:
     defaults:
       run:
         working-directory: apps/sisyphus
+    env:
+      # Electron's test node binds loopback ports just like the Go integration suite.
+      SISYPHUS_CI_LOCAL_NETWORK_LOCK: /tmp/sisyphus-ci-local-network.lock
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -119,9 +133,10 @@ jobs:
       - name: Build matching daemon for desktop lifecycle acceptance
         working-directory: .
         run: go build -o bin/sisyphusd ./apps/sisyphusd
-      - run: npm run test:daemon
+      - name: Test desktop daemon lifecycle
+        run: flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" npm run test:daemon
       - run: npm run build
       # The real app, built above, driven in a window nobody sees against
       # the daemon built above, on a node and a profile of the tests' own.
       - name: End-to-end tests of the desktop app
-        run: npm run test:e2e
+        run: flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" npm run test:e2e

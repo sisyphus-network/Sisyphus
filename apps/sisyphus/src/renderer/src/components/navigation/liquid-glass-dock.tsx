@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 export type LiquidDockItem = {
@@ -27,12 +27,46 @@ export function LiquidGlassDock({
   const activeIndex = items.findIndex((item) => item.active);
   const visualIndex = activeIndex >= 0 ? activeIndex : 0;
   const [previousIndex, setPreviousIndex] = useState(visualIndex);
+  const dockRef = useRef<HTMLFieldSetElement>(null);
+  const activeRef = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    const dock = dockRef.current;
+    const active = activeRef.current;
+    if (!dock || !active) return;
+
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const option = dock.querySelectorAll<HTMLElement>(".liquid-dock__option")[visualIndex];
+        if (!option) return;
+        const dockBounds = dock.getBoundingClientRect();
+        const optionBounds = option.getBoundingClientRect();
+        // Keep the selected glass pill visually substantial as the dock gains
+        // items, while centering it on the actual option and staying in bounds.
+        const width = optionBounds.width + (items.length > 4 ? 8 : 0);
+        const centeredRight = dockBounds.right - optionBounds.right - (width - optionBounds.width) / 2;
+        active.style.setProperty("--liquid-width", `${width}px`);
+        active.style.setProperty("--liquid-offset", `${centeredRight}px`);
+      });
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(dock);
+    dock.querySelectorAll(".liquid-dock__option").forEach((option) => observer.observe(option));
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [items.length, visualIndex]);
 
   return (
     <div className={`liquid-dock-wrap ${className ?? ""}`} dir="rtl">
-      <fieldset className="liquid-dock" aria-label={label} data-active={activeIndex >= 0} data-previous={previousIndex}>
+      <fieldset ref={dockRef} className="liquid-dock" aria-label={label} data-active={activeIndex >= 0} data-previous={previousIndex}>
         <legend className="sr-only">{label}</legend>
-        <span aria-hidden="true" className="liquid-dock__active" style={{ "--liquid-index": visualIndex } as CSSProperties} />
+        <span ref={activeRef} aria-hidden="true" className="liquid-dock__active" style={{ "--liquid-index": visualIndex } as CSSProperties} />
         {items.map((item) => (
           <label key={item.id} className="liquid-dock__option" data-active={item.active ? "true" : "false"}>
             <input className="liquid-dock__input" type="radio" name={`sisyphus-navigation-${label}`} checked={item.active} readOnly aria-label={item.label} />

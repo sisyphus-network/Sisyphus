@@ -1,0 +1,23 @@
+name: A planned piece of work
+description: Something to build, once it has been talked through. Open ideas belong in Discussions first.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What someone cannot do today, or what goes wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: What would be built, and how we will know it works.
+    validations:
+      required: true
+  - type: input
+    id: discussion
+    attributes:
+      label: Discussion
+      description: A link to where this was talked through, if anywhere.
