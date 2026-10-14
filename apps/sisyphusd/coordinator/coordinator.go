@@ -1406,30 +1406,87 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 // with, is the last to be given it again. While another that could run it
 // is connected the task goes there, waiting for a slot if it must; it goes
 // back to where it went wrong only when there is nowhere else.
+//
+// A task that needs a language model goes first to the worker with the
+// fewest tasks on that model already: a model server answers one at a time,
+// or nearly, however many slots its worker has. Among those, it goes to the
+// one with the model in memory and most of it on a graphics card, where the
+// reply comes soonest.
 func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) *worker {
+	model := runtime.ModelNeeded(job.Needs)
 	var best, again *worker
-	bestFree, againFree := 0, 0
+	var bestRank, againRank rank
 	elsewhere := false
 	for _, w := range c.workers {
 		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) || c.besideLocked(task, w.id) {
 			continue
 		}
-		free := int(w.capabilities.GetTaskSlots()) - len(w.running)
+		r := rank{free: int(w.capabilities.GetTaskSlots()) - len(w.running), id: w.id}
+		if model != "" {
+			r.onModel, r.onCard = w.onModel(model), onCard(w.capabilities.GetLabels(), model)
+		}
 		if task.Dropped(w.id) {
-			if free > againFree || (free == againFree && again != nil && w.id < again.id) {
-				again, againFree = w, free
+			if r.free > 0 && (again == nil || r.before(againRank)) {
+				again, againRank = w, r
 			}
 			continue
 		}
 		elsewhere = true
-		if free > bestFree || (free == bestFree && best != nil && w.id < best.id) {
-			best, bestFree = w, free
+		if r.free > 0 && (best == nil || r.before(bestRank)) {
+			best, bestRank = w, r
 		}
 	}
 	if best == nil && !elsewhere {
 		return again
 	}
 	return best
+}
+
+// rank is what decides between workers that could be given a task.
+type rank struct {
+	// onModel is how many tasks the worker is running on the model the task
+	// needs, and onCard how much of that model it has on a graphics card: -1
+	// if the model is not in memory. Both are zero for a task that needs no
+	// model.
+	onModel, onCard int
+	free            int
+	id              string
+}
+
+// before reports whether a worker ranked r is to be given the task before
+// one ranked other.
+func (r rank) before(other rank) bool {
+	switch {
+	case r.onModel != other.onModel:
+		return r.onModel < other.onModel
+	case r.onCard != other.onCard:
+		return r.onCard > other.onCard
+	case r.free != other.free:
+		return r.free > other.free
+	}
+	return r.id < other.id
+}
+
+// onModel counts the tasks a worker is running that need a model.
+func (w *worker) onModel(model string) int {
+	n := 0
+	for _, a := range w.running {
+		if runtime.ModelNeeded(a.job.Needs) == model {
+			n++
+		}
+	}
+	return n
+}
+
+// onCard is how much of a model a worker's labels say is on its graphics
+// cards, or -1 if they do not say it is in memory.
+func onCard(labels []string, model string) int {
+	for _, loaded := range runtime.LoadedModels(labels) {
+		if loaded.Model == model {
+			return loaded.OnCard
+		}
+	}
+	return -1
 }
 
 // slotsLocked counts task slots across connected workers that support the
