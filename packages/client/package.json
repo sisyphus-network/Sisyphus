@@ -1,0 +1,16 @@
+{
+  "name": "@sisyphus/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./proto": "./src/gen/sisyphus/node/v1/node_pb.ts",
+    "./connect": "./src/gen/sisyphus/node/v1/node_connect.ts"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^1.10.1",
+    "@connectrpc/connect": "^1.6.1",
+    "@connectrpc/connect-web": "^1.6.1"
+  }
+}
