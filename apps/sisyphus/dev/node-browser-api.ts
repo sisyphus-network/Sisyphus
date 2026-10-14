@@ -1,8 +1,5 @@
 import type { ServerResponse } from 'node:http'
 import { request as httpRequest, type IncomingMessage } from 'node:http'
-import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { TLSSocket } from 'node:tls'
 import type { Plugin } from 'vite'
 import * as grpc from '@grpc/grpc-js'
@@ -33,7 +30,6 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
   if (!(webApiHost === '::1' || /^127\./.test(webApiHost)) || webApiURL.username || webApiURL.password || webApiURL.pathname !== '/' || webApiURL.search || webApiURL.hash) {
     throw new Error('SISYPHUS_WEB_API_ADDRESS must point to a loopback-only sisyphusd web listener.')
   }
-  const tokenFile = resolveDevTokenFile()
   let snapshot: Snapshot = { status: 'connecting', endpoint, info: null, peers: [], revision: '0', lastUpdated: null, error: null }
   let client: NodeClient | null = null
   let stream: grpc.ClientReadableStream<unknown> | null = null
@@ -50,20 +46,6 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
     if (pathname.startsWith('/devices/')) return method === 'DELETE'
     if (pathname.startsWith('/sisyphus.node.v1.NodeService/')) return method === 'POST'
     return pathname.startsWith('/files/')
-  }
-
-  function needsNodeToken(pathname: string): boolean {
-    return pathname === '/pairing' || pathname === '/devices' || pathname.startsWith('/devices/') || pathname.startsWith('/sisyphus.node.v1.NodeService/') || pathname.startsWith('/files/')
-  }
-
-  function readDevToken(): string {
-    try {
-      const token = readFileSync(tokenFile, 'utf8').trim()
-      if (!token) throw new Error('empty token')
-      return token
-    } catch {
-      throw new Error(`Cannot read the node API token at ${tokenFile}. Set SISYPHUS_API_TOKEN_FILE if the daemon uses a custom data directory.`)
-    }
   }
 
   function sameDevOrigin(request: IncomingMessage): boolean {
@@ -91,15 +73,9 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
     const requestOrigin = request.socket instanceof TLSSocket ? `https://${request.headers.host}` : `http://${request.headers.host}`
     const requestURL = new URL(request.url ?? '/', requestOrigin)
     const upstreamHeaders: Record<string, string | string[] | undefined> = { ...request.headers, host: webApiURL.host }
-    if (needsNodeToken(requestURL.pathname)) {
-      try { upstreamHeaders.authorization = `Bearer ${readDevToken()}` }
-      catch (error) {
-        response.statusCode = 503
-        response.setHeader('Content-Type', 'text/plain; charset=utf-8')
-        response.end(error instanceof Error ? error.message : 'The node API token is unavailable.')
-        return
-      }
-    }
+    // The Vite preview is only a transport proxy. Authentication must come
+    // from the browser's paired session or an explicitly supplied credential;
+    // never silently authenticate a visitor with the node's API token.
     if (request.headers.origin) upstreamHeaders.origin = webApiURL.origin
     if (request.headers.referer) {
       try {
@@ -258,14 +234,4 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
       })
     },
   }
-}
-
-function resolveDevTokenFile(): string {
-  if (process.env.SISYPHUS_API_TOKEN_FILE) return process.env.SISYPHUS_API_TOKEN_FILE
-  const home = homedir()
-  const legacy = join(home, '.sisyphus')
-  if (existsSync(legacy)) return join(legacy, 'api.token')
-  if (process.platform === 'win32') return join(process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'sisyphus', 'api.token')
-  if (process.platform === 'darwin') return join(home, 'Library', 'Application Support', 'sisyphus', 'api.token')
-  return join(process.env.XDG_DATA_HOME || join(home, '.local', 'share'), 'sisyphus', 'api.token')
 }
