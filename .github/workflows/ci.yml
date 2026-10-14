@@ -180,7 +180,13 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           GOARM: "7"
-        run: go build -o "$RUNNER_TEMP/sisyphusd" ./apps/sisyphusd
+        run: |
+          if [ "$GOOS" = android ]; then
+            # Match build-release.sh: anet uses a standard-library linkname on Android.
+            go build -ldflags=-checklinkname=0 -o "$RUNNER_TEMP/sisyphusd" ./apps/sisyphusd
+          else
+            go build -o "$RUNNER_TEMP/sisyphusd" ./apps/sisyphusd
+          fi
       - name: Install the emulator
         if: startsWith(matrix.via, 'qemu')
         run: sudo apt-get update && sudo apt-get install -y qemu-user
