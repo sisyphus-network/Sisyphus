@@ -154,7 +154,7 @@ func TestAReplyThatComesInPiecesIsLoggedAsItComesAndPutTogether(t *testing.T) {
 
 func TestPiecesThatCannotBePutTogetherFailTheTask(t *testing.T) {
 	for want, pieces := range map[string][]string{
-		"a piece that is not JSON":                  {`{"message":`},
+		"a piece that is not JSON":                 {`{"message":`},
 		"the model server reported: out of memory": {`{"message":{"content":"So"}}`, `{"error":"out of memory"}`},
 	} {
 		server, _ := modelServer(t, 0, "", pieces...)
