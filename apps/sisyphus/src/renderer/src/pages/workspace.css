@@ -176,7 +176,7 @@
   .app-shell--settings .route-transition { flex: 1 1 auto; min-height: 0; overflow: hidden; }
   .settings-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
   .settings-page__heading { flex: 0 0 auto; }
-  .settings-page__scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-bottom: 28px; }
+  .settings-page__scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; scrollbar-gutter: stable; padding-bottom: 28px; }
 }
 @media (max-width: 900px) {
   .app-shell--advanced { position: relative; display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
