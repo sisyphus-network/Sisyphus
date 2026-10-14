@@ -1068,6 +1068,37 @@ export class Worker extends Message<Worker> {
    */
   models: string[] = [];
 
+  /**
+   * Those of them its model server had in memory when it last said, and
+   * how much of each is on a graphics card. A model not listed here is
+   * loaded when first asked for, which takes a while.
+   *
+   * @generated from field: repeated sisyphus.node.v1.LoadedModel loaded_models = 20;
+   */
+  loadedModels: LoadedModel[] = [];
+
+  /**
+   * Its standing, which outlasts any one job: how many results it has
+   * returned for verified tasks that were among those the task was settled
+   * by, and how many that were not. probation is how many agreeing results
+   * it still owes, having been outvoted, before a job that verifies a
+   * share of its tasks takes its word alone again; zero for a worker that
+   * is not on probation.
+   *
+   * @generated from field: uint64 verified_agreed = 17;
+   */
+  verifiedAgreed = protoInt64.zero;
+
+  /**
+   * @generated from field: uint64 verified_outvoted = 18;
+   */
+  verifiedOutvoted = protoInt64.zero;
+
+  /**
+   * @generated from field: uint32 probation = 19;
+   */
+  probation = 0;
+
   constructor(data?: PartialMessage<Worker>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1092,6 +1123,10 @@ export class Worker extends Message<Worker> {
     { no: 14, name: "memory_bytes", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
     { no: 15, name: "gpus", kind: "message", T: WorkerGpu, repeated: true },
     { no: 16, name: "models", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 20, name: "loaded_models", kind: "message", T: LoadedModel, repeated: true },
+    { no: 17, name: "verified_agreed", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+    { no: 18, name: "verified_outvoted", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
+    { no: 19, name: "probation", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Worker {
@@ -1151,6 +1186,52 @@ export class WorkerGpu extends Message<WorkerGpu> {
 
   static equals(a: WorkerGpu | PlainMessage<WorkerGpu> | undefined, b: WorkerGpu | PlainMessage<WorkerGpu> | undefined): boolean {
     return proto3.util.equals(WorkerGpu, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.LoadedModel
+ */
+export class LoadedModel extends Message<LoadedModel> {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name = "";
+
+  /**
+   * From 0 to 100. The rest is in the machine's memory and worked by its
+   * processor, and replies come that much slower.
+   *
+   * @generated from field: uint32 on_card_percent = 2;
+   */
+  onCardPercent = 0;
+
+  constructor(data?: PartialMessage<LoadedModel>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.LoadedModel";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "on_card_percent", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): LoadedModel {
+    return new LoadedModel().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): LoadedModel {
+    return new LoadedModel().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): LoadedModel {
+    return new LoadedModel().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: LoadedModel | PlainMessage<LoadedModel> | undefined, b: LoadedModel | PlainMessage<LoadedModel> | undefined): boolean {
+    return proto3.util.equals(LoadedModel, a, b);
   }
 }
 
@@ -1274,6 +1355,30 @@ export class Job extends Message<Job> {
    */
   recordCid = "";
 
+  /**
+   * How many different workers must return the same result for each task;
+   * see SubmitJobRequest. Zero or one for a job that is not verified.
+   *
+   * @generated from field: uint32 verify = 21;
+   */
+  verify = 0;
+
+  /**
+   * The share of its tasks that are verified, if not all of them; see
+   * SubmitJobRequest.
+   *
+   * @generated from field: double verify_share = 22;
+   */
+  verifyShare = 0;
+
+  /**
+   * The share of its tasks the coordinator runs again itself; see
+   * SubmitJobRequest.
+   *
+   * @generated from field: double audit_share = 23;
+   */
+  auditShare = 0;
+
   constructor(data?: PartialMessage<Job>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1302,6 +1407,9 @@ export class Job extends Message<Job> {
     { no: 18, name: "parent_job_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 19, name: "step", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 20, name: "record_cid", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 21, name: "verify", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
+    { no: 22, name: "verify_share", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
+    { no: 23, name: "audit_share", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Job {
@@ -1368,6 +1476,14 @@ export class JobTask extends Message<JobTask> {
    */
   progress = 0;
 
+  /**
+   * In a job that is verified, how many different workers must return the
+   * same result for this task: one for a task its spot checks passed over.
+   *
+   * @generated from field: uint32 verify = 8;
+   */
+  verify = 0;
+
   constructor(data?: PartialMessage<JobTask>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1383,6 +1499,7 @@ export class JobTask extends Message<JobTask> {
     { no: 5, name: "worker_name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 6, name: "error", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 7, name: "progress", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
+    { no: 8, name: "verify", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): JobTask {
@@ -1459,6 +1576,39 @@ export class SubmitJobRequest extends Message<SubmitJobRequest> {
    */
   private = false;
 
+  /**
+   * Verify the job's results by replication: two or more has each task run
+   * by that many different workers, and the task succeeds only once that
+   * many have returned the same result. Zero or one runs each task once.
+   * Only for work that gives the same result every time, and not for a
+   * private job. It is refused if fewer workers that could take the job
+   * are connected.
+   *
+   * @generated from field: uint32 verify = 9;
+   */
+  verify = 0;
+
+  /**
+   * Spot checks: with verify, a share between 0 and 1 has only that share
+   * of the tasks verified, chosen at random and rounded up to a whole task,
+   * and the rest run once. A worker whose result for a verified task loses
+   * to the one the others agree on has the tasks it ran unverified in the
+   * job verified after all. Zero, and one, verify every task.
+   *
+   * @generated from field: double verify_share = 10;
+   */
+  verifyShare = 0;
+
+  /**
+   * A share between 0 and 1 of the job's tasks, picked by chance as their
+   * results come in, that the coordinating node runs again itself before
+   * taking the result. Where the two differ its own is taken. Refused for
+   * a workload that node cannot run itself.
+   *
+   * @generated from field: double audit_share = 11;
+   */
+  auditShare = 0;
+
   constructor(data?: PartialMessage<SubmitJobRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1475,6 +1625,9 @@ export class SubmitJobRequest extends Message<SubmitJobRequest> {
     { no: 6, name: "min_memory_bytes", kind: "scalar", T: 4 /* ScalarType.UINT64 */ },
     { no: 7, name: "min_gpus", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
     { no: 8, name: "private", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 9, name: "verify", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
+    { no: 10, name: "verify_share", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
+    { no: 11, name: "audit_share", kind: "scalar", T: 1 /* ScalarType.DOUBLE */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SubmitJobRequest {
@@ -1671,6 +1824,10 @@ export class JobEvent extends Message<JobEvent> {
   /**
    * What happened: submitted, task-started, task-succeeded, task-failed,
    * task-lost, task-timed-out, log, succeeded, failed, cancelled, resumed.
+   * In a job that is verified, also task-result, for each result a worker
+   * returns, task-disagreed, when the results in for a task differ, and
+   * task-rechecked, when a task that spot checks had passed over is to be
+   * verified after all.
    *
    * @generated from field: string kind = 3;
    */
@@ -2346,6 +2503,330 @@ export class DeleteModelProfileResponse extends Message<DeleteModelProfileRespon
 
   static equals(a: DeleteModelProfileResponse | PlainMessage<DeleteModelProfileResponse> | undefined, b: DeleteModelProfileResponse | PlainMessage<DeleteModelProfileResponse> | undefined): boolean {
     return proto3.util.equals(DeleteModelProfileResponse, a, b);
+  }
+}
+
+/**
+ * How a worker's owner lends the models of an Ollama on their machine.
+ *
+ * @generated from message sisyphus.node.v1.ModelLending
+ */
+export class ModelLending extends Message<ModelLending> {
+  /**
+   * @generated from field: bool enabled = 1;
+   */
+  enabled = false;
+
+  /**
+   * Such as http://127.0.0.1:11434.
+   *
+   * @generated from field: string ollama_url = 2;
+   */
+  ollamaUrl = "";
+
+  /**
+   * The models offered: a model as Ollama names it (qwen3:8b), a family
+   * (llama3.1) or a pattern (gemma*). None offers them all.
+   *
+   * @generated from field: repeated string only = 3;
+   */
+  only: string[] = [];
+
+  /**
+   * How many of a model's layers may go on graphics cards: 0 for none, -1
+   * for as many as fit.
+   *
+   * @generated from field: int32 gpu_layers = 4;
+   */
+  gpuLayers = 0;
+
+  /**
+   * The processor's threads a model may use; 0 lets Ollama decide.
+   *
+   * @generated from field: int32 threads = 5;
+   */
+  threads = 0;
+
+  /**
+   * The tokens of a conversation a model holds; 0 lets Ollama decide.
+   *
+   * @generated from field: int32 context = 6;
+   */
+  context = 0;
+
+  /**
+   * How long a model stays loaded after it answered, such as "10m", or "0"
+   * to unload it at once; empty lets Ollama decide.
+   *
+   * @generated from field: string keep_alive = 7;
+   */
+  keepAlive = "";
+
+  constructor(data?: PartialMessage<ModelLending>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.ModelLending";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "enabled", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 2, name: "ollama_url", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "only", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 4, name: "gpu_layers", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 5, name: "threads", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 6, name: "context", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 7, name: "keep_alive", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ModelLending {
+    return new ModelLending().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): ModelLending {
+    return new ModelLending().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): ModelLending {
+    return new ModelLending().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: ModelLending | PlainMessage<ModelLending> | undefined, b: ModelLending | PlainMessage<ModelLending> | undefined): boolean {
+    return proto3.util.equals(ModelLending, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.ModelLendingState
+ */
+export class ModelLendingState extends Message<ModelLendingState> {
+  /**
+   * What is saved, for the next start.
+   *
+   * @generated from field: sisyphus.node.v1.ModelLending saved = 1;
+   */
+  saved?: ModelLending;
+
+  /**
+   * What the node runs with now.
+   *
+   * @generated from field: sisyphus.node.v1.ModelLending running = 2;
+   */
+  running?: ModelLending;
+
+  /**
+   * The node was started with --models-from, which decides in place of
+   * what is saved.
+   *
+   * @generated from field: bool set_by_flags = 3;
+   */
+  setByFlags = false;
+
+  /**
+   * What is saved differs from what runs, until the node is restarted.
+   *
+   * @generated from field: bool restart_needed = 4;
+   */
+  restartNeeded = false;
+
+  constructor(data?: PartialMessage<ModelLendingState>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.ModelLendingState";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "saved", kind: "message", T: ModelLending },
+    { no: 2, name: "running", kind: "message", T: ModelLending },
+    { no: 3, name: "set_by_flags", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 4, name: "restart_needed", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ModelLendingState {
+    return new ModelLendingState().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): ModelLendingState {
+    return new ModelLendingState().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): ModelLendingState {
+    return new ModelLendingState().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: ModelLendingState | PlainMessage<ModelLendingState> | undefined, b: ModelLendingState | PlainMessage<ModelLendingState> | undefined): boolean {
+    return proto3.util.equals(ModelLendingState, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.GetModelLendingRequest
+ */
+export class GetModelLendingRequest extends Message<GetModelLendingRequest> {
+  constructor(data?: PartialMessage<GetModelLendingRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.GetModelLendingRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetModelLendingRequest {
+    return new GetModelLendingRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetModelLendingRequest {
+    return new GetModelLendingRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetModelLendingRequest {
+    return new GetModelLendingRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: GetModelLendingRequest | PlainMessage<GetModelLendingRequest> | undefined, b: GetModelLendingRequest | PlainMessage<GetModelLendingRequest> | undefined): boolean {
+    return proto3.util.equals(GetModelLendingRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.SetModelLendingRequest
+ */
+export class SetModelLendingRequest extends Message<SetModelLendingRequest> {
+  /**
+   * @generated from field: sisyphus.node.v1.ModelLending lending = 1;
+   */
+  lending?: ModelLending;
+
+  constructor(data?: PartialMessage<SetModelLendingRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.SetModelLendingRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "lending", kind: "message", T: ModelLending },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SetModelLendingRequest {
+    return new SetModelLendingRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SetModelLendingRequest {
+    return new SetModelLendingRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SetModelLendingRequest {
+    return new SetModelLendingRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SetModelLendingRequest | PlainMessage<SetModelLendingRequest> | undefined, b: SetModelLendingRequest | PlainMessage<SetModelLendingRequest> | undefined): boolean {
+    return proto3.util.equals(SetModelLendingRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.InspectOllamaRequest
+ */
+export class InspectOllamaRequest extends Message<InspectOllamaRequest> {
+  /**
+   * @generated from field: string url = 1;
+   */
+  url = "";
+
+  /**
+   * Which of its models would be lent; none for all.
+   *
+   * @generated from field: repeated string only = 2;
+   */
+  only: string[] = [];
+
+  constructor(data?: PartialMessage<InspectOllamaRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.InspectOllamaRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "url", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "only", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): InspectOllamaRequest {
+    return new InspectOllamaRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): InspectOllamaRequest {
+    return new InspectOllamaRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): InspectOllamaRequest {
+    return new InspectOllamaRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: InspectOllamaRequest | PlainMessage<InspectOllamaRequest> | undefined, b: InspectOllamaRequest | PlainMessage<InspectOllamaRequest> | undefined): boolean {
+    return proto3.util.equals(InspectOllamaRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message sisyphus.node.v1.InspectOllamaResponse
+ */
+export class InspectOllamaResponse extends Message<InspectOllamaResponse> {
+  /**
+   * Empty if it could not be reached or is not an Ollama; error says why.
+   *
+   * @generated from field: string version = 1;
+   */
+  version = "";
+
+  /**
+   * @generated from field: string error = 2;
+   */
+  error = "";
+
+  /**
+   * @generated from field: repeated string models = 3;
+   */
+  models: string[] = [];
+
+  /**
+   * @generated from field: repeated sisyphus.node.v1.LoadedModel loaded = 4;
+   */
+  loaded: LoadedModel[] = [];
+
+  constructor(data?: PartialMessage<InspectOllamaResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "sisyphus.node.v1.InspectOllamaResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "version", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "error", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "models", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 4, name: "loaded", kind: "message", T: LoadedModel, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): InspectOllamaResponse {
+    return new InspectOllamaResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): InspectOllamaResponse {
+    return new InspectOllamaResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): InspectOllamaResponse {
+    return new InspectOllamaResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: InspectOllamaResponse | PlainMessage<InspectOllamaResponse> | undefined, b: InspectOllamaResponse | PlainMessage<InspectOllamaResponse> | undefined): boolean {
+    return proto3.util.equals(InspectOllamaResponse, a, b);
   }
 }
 
@@ -4067,3 +4548,4 @@ export class JoinPoolResponse extends Message<JoinPoolResponse> {
     return proto3.util.equals(JoinPoolResponse, a, b);
   }
 }
+

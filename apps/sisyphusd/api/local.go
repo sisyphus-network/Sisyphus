@@ -88,6 +88,12 @@ type LocalConfig struct {
 	// AllowLAN accepts requests addressed to one of this host's private IPs.
 	// The listener must separately be enabled on a private interface.
 	AllowLAN bool
+	// Lending, if set, keeps how this machine lends its Ollama models to
+	// the pool. Lent is how the node runs with them now, and LentByFlags
+	// says that --models-from decided it in place of what is saved.
+	Lending     LendingStore
+	Lent        nodedb.ModelLending
+	LentByFlags bool
 	// PairingOrigin is the LAN URL peers should open, without a trailing slash.
 	PairingOrigin string
 	// Poll is how often a peer watcher is checked for news. Zero means once

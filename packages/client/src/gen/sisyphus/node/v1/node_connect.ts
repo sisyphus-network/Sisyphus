@@ -3,7 +3,7 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import { AskEvent, AskRequest, CancelJobRequest, CancelJobResponse, ConnectPeerRequest, ConnectPeerResponse, CreateInvitationRequest, CreateInvitationResponse, DeleteChatRequest, DeleteChatResponse, DeleteModelProfileRequest, DeleteModelProfileResponse, FetchFileRequest, FetchFileResponse, File, GetBootstrapPeersRequest, GetBootstrapPeersResponse, GetChatRequest, GetChatResponse, GetJobRequest, GetJobResponse, GetModelConfigRequest, GetNodeInfoRequest, GetNodeInfoResponse, JobEvent, JoinPoolRequest, JoinPoolResponse, ListChatsRequest, ListChatsResponse, ListFilesRequest, ListFilesResponse, ListJobsRequest, ListJobsResponse, ListMembersRequest, ListMembersResponse, ListModelProfilesRequest, ListModelProfilesResponse, ListModelsRequest, ListModelsResponse, ListPeersRequest, ListPeersResponse, ListProvidersRequest, ListProvidersResponse, ListWorkersRequest, ListWorkersResponse, ModelConfig, ModelProfile, PullModelProgress, PullModelRequest, RemoveFileRequest, RemoveFileResponse, RemoveMemberRequest, RemoveMemberResponse, RemoveModelRequest, RemoveModelResponse, SaveModelProfileRequest, SetBootstrapPeersRequest, SetBootstrapPeersResponse, SetModelConfigRequest, SetPeerComputePermissionsRequest, SetPeerComputePermissionsResponse, SetPeerComputeTrustRequest, SetPeerComputeTrustResponse, StoreFileRequest, SubmitJobRequest, SubmitJobResponse, WatchJobEventsRequest, WatchJobsRequest, WatchPeersRequest } from "./node_pb.js";
+import { AskEvent, AskRequest, CancelJobRequest, CancelJobResponse, ConnectPeerRequest, ConnectPeerResponse, CreateInvitationRequest, CreateInvitationResponse, DeleteChatRequest, DeleteChatResponse, DeleteModelProfileRequest, DeleteModelProfileResponse, FetchFileRequest, FetchFileResponse, File, GetBootstrapPeersRequest, GetBootstrapPeersResponse, GetChatRequest, GetChatResponse, GetJobRequest, GetJobResponse, GetModelConfigRequest, GetModelLendingRequest, GetNodeInfoRequest, GetNodeInfoResponse, InspectOllamaRequest, InspectOllamaResponse, JobEvent, JoinPoolRequest, JoinPoolResponse, ListChatsRequest, ListChatsResponse, ListFilesRequest, ListFilesResponse, ListJobsRequest, ListJobsResponse, ListMembersRequest, ListMembersResponse, ListModelProfilesRequest, ListModelProfilesResponse, ListModelsRequest, ListModelsResponse, ListPeersRequest, ListPeersResponse, ListProvidersRequest, ListProvidersResponse, ListWorkersRequest, ListWorkersResponse, ModelConfig, ModelLendingState, ModelProfile, PullModelProgress, PullModelRequest, RemoveFileRequest, RemoveFileResponse, RemoveMemberRequest, RemoveMemberResponse, RemoveModelRequest, RemoveModelResponse, SaveModelProfileRequest, SetBootstrapPeersRequest, SetBootstrapPeersResponse, SetModelConfigRequest, SetModelLendingRequest, SetPeerComputePermissionsRequest, SetPeerComputePermissionsResponse, SetPeerComputeTrustRequest, SetPeerComputeTrustResponse, StoreFileRequest, SubmitJobRequest, SubmitJobResponse, WatchJobEventsRequest, WatchJobsRequest, WatchPeersRequest } from "./node_pb.js";
 import { MethodKind } from "@bufbuild/protobuf";
 
 /**
@@ -216,6 +216,38 @@ export const NodeService = {
       kind: MethodKind.Unary,
     },
     /**
+     * GetModelLending says how this machine lends its Ollama models to the
+     * pool: as saved, and as the node runs now. SetModelLending saves it;
+     * it takes effect when the node next starts. InspectOllama asks an
+     * Ollama what it is and which of its models would be lent.
+     *
+     * @generated from rpc sisyphus.node.v1.NodeService.GetModelLending
+     */
+    getModelLending: {
+      name: "GetModelLending",
+      I: GetModelLendingRequest,
+      O: ModelLendingState,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * @generated from rpc sisyphus.node.v1.NodeService.SetModelLending
+     */
+    setModelLending: {
+      name: "SetModelLending",
+      I: SetModelLendingRequest,
+      O: ModelLendingState,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * @generated from rpc sisyphus.node.v1.NodeService.InspectOllama
+     */
+    inspectOllama: {
+      name: "InspectOllama",
+      I: InspectOllamaRequest,
+      O: InspectOllamaResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
      * ListProviders lists the kinds of model service there are to choose
      * from, the one that needs no account first.
      *
@@ -404,3 +436,4 @@ export const NodeService = {
     },
   }
 } as const;
+

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc/metadata"
+
+	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
@@ -244,5 +248,62 @@ func TestAWorkerOffersOnlyTheModelsItsOwnerNamesAsTheyAskForThem(t *testing.T) {
 	asked := served.asked[len(served.asked)-1]
 	if options, _ := asked["options"].(map[string]any); options["num_gpu"] != float64(0) || options["num_thread"] != float64(4) || len(options) != 2 || asked["keep_alive"] != "1m" {
 		t.Errorf("the worker's Ollama was asked %v", asked)
+	}
+}
+
+func TestAWorkerLendsTheModelsSavedFromTheDesktopWhenStartedWithoutFlags(t *testing.T) {
+	served := newModel(t, says("Hello."))
+	dataDir := t.TempDir()
+	db, err := nodedb.Open(filepath.Join(dataDir, "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := nodedb.ModelLending{Enabled: true, URL: served.URL, Only: []string{"test-model"}, GPULayers: 0, KeepAlive: "1m"}
+	if err := db.SetModelLending(saved); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	addr, apiAddr := freeAddr(t), freeAddr(t)
+	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--api-listen", apiAddr)
+	waitForOutput(t, "rig", "nodes", "--addr", addr)
+	client := desktop(t, apiAddr)
+	workers, err := client.ListWorkers(context.Background(), &nodepb.ListWorkersRequest{})
+	if err != nil || len(workers.GetWorkers()) != 1 || strings.Join(workers.GetWorkers()[0].GetModels(), ",") != "test-model" {
+		t.Fatalf("workers = %v, %v", workers, err)
+	}
+	token, _ := os.ReadFile(filepath.Join(dataDir, "api.token"))
+	authorized := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+strings.TrimSpace(string(token)))
+	state, err := client.GetModelLending(authorized, &nodepb.GetModelLendingRequest{})
+	if err != nil || state.GetSetByFlags() || state.GetRestartNeeded() || state.GetRunning().GetOllamaUrl() != served.URL {
+		t.Errorf("lending = %v, %v; want what was saved, running", state, err)
+	}
+	if out := mustCLI(t, "job", "submit", "--addr", addr, "--workload", "chat", "--params", `{"model":"test-model","messages":[{"role":"user","content":"Hi"}]}`); !strings.Contains(out, "Hello.") {
+		t.Fatalf("the reply: %s", out)
+	}
+	served.mu.Lock()
+	defer served.mu.Unlock()
+	asked := served.asked[len(served.asked)-1]
+	if options, _ := asked["options"].(map[string]any); options["num_gpu"] != float64(0) || len(options) != 1 || asked["keep_alive"] != "1m" {
+		t.Errorf("the worker's Ollama was asked %v", asked)
+	}
+}
+
+func TestANodeWhoseSavedLendingCannotBeReadDoesNotStart(t *testing.T) {
+	dataDir := t.TempDir()
+	db, err := nodedb.Open(filepath.Join(dataDir, "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	raw, err := sql.Open("sqlite", filepath.Join(dataDir, "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`DROP TABLE model_lending`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	if _, err := cli(t, "run", "--data-dir", dataDir, "--listen", freeAddr(t)); err == nil || !strings.Contains(err.Error(), "load model lending") {
+		t.Errorf("a node whose lending cannot be read: %v", err)
 	}
 }
