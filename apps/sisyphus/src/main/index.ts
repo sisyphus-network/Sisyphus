@@ -262,6 +262,8 @@ function createWindow() {
     minWidth: 900,
     minHeight: 650,
     title: 'Sisyphus',
+    // Windows and macOS show the packaged app's icon; Linux shows this one.
+    ...(process.platform === 'linux' && app.isPackaged ? { icon: join(process.resourcesPath, 'icon.png') } : {}),
     backgroundColor: '#10141a',
     webPreferences: {
       preload: join(here, '../preload/index.js'),
