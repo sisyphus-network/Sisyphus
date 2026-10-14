@@ -692,7 +692,7 @@ bin/sisyphusd job logs <job-id>                                            # who
 - **When they agree**, which is the usual case, the task has succeeded with that result. The task is shown as the first of those workers'.
 - **When they differ**, the task goes to one more worker that has not been asked, for each result the larger side still lacks, until some result has been returned by `N` workers. With `--verify 2`, two that differ are settled by a third. A task takes in at most `2N-1` results. If no result can reach `N` within that, or no connected worker is left that has not been asked, the task fails and the job with it. The error names each worker and a short digest of what it returned.
 - **Each disagreement is an event.** `job logs` shows `task-result` for every result with the worker that returned it, `task-disagreed` with the workers on each side when the results in for a task differ, and `task-succeeded` with the workers that agreed and any that returned something else. The job's [record](#a-jobs-record) has the same for good: each receipt lists every result by worker, with a digest and whether it was one of those that settled the task.
-- **A failed attempt is not a disagreement.** An attempt that fails, times out (`--timeout`) or is lost with its worker returned no result. It is tried again, by that worker or another, and counts towards the usual three failures a task may have.
+- **A failed attempt is not a disagreement.** An attempt that fails, times out (`--timeout`) or is lost with its worker returned no result. It is tried again, by another worker if one could run it and otherwise by that one, and counts towards the usual three failures a task may have.
 - **A job that asks for more workers than there are is refused** when it is submitted: `--verify 3` needs three connected workers that could take the job, counting those that are busy. If workers leave afterwards, a task that still needs one waits for it, as a task of any job waits for a worker; the coordinator cannot tell a worker that has gone for good from one that is restarting. Cancel the job if nobody is coming.
 - **With no `--tasks`**, a job is split into one task for every `N` free slots, since each task takes a slot on `N` workers. `--mode full-worker` runs the whole job as one task on `N` workers.
 - **A restart loses nothing.** The results in are kept in the database. A coordinator that is restarted asks only the workers that had not answered.
@@ -1043,7 +1043,7 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 
 ## Known limits
 
-- A task may fail three times, and losing its worker counts as a failure. Losing its coordinator does not.
+- A task may fail three times, and losing its worker counts as a failure. Losing its coordinator does not. Its next attempt goes to a worker it has not gone wrong on, waiting for one that is busy if it must, and back to one it has only when there is no other that could run it.
 - A coordinator accepts whatever result a worker returns, unless the job asks to be [verified](#verifying-results), and then it believes any `N` workers that agree. Verification is for deterministic work only. Admit only workers you trust.
 - A node is remembered by address. If a coordinator's address changes, its workers and clients must join again.
 - A node's key cannot be changed without becoming a different node, and there is no way to stop a copied key being used other than removing that node.
