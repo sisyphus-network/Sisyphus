@@ -88,16 +88,24 @@ jobs:
           '
       - run: go build ./apps/sisyphusd
 
-  # Known-answer workloads must agree across real CPU architectures, not only
-  # compile for them. These tests avoid the daemon's network/service fixtures.
+  # Known-answer workloads must agree across real CPU architectures and OSes,
+  # not only compile for them. These tests avoid the daemon's service fixtures.
   workload-architecture:
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: ubuntu-24.04
+            goos: linux
             goarch: amd64
           - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+          - runner: windows-2025
+            goos: windows
+            goarch: amd64
+          - runner: macos-15
+            goos: darwin
             goarch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
@@ -105,8 +113,11 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Verify runner architecture
-        run: test "$(go env GOARCH)" = "${{ matrix.goarch }}"
+      - name: Verify runner platform
+        shell: bash
+        run: |
+          test "$(go env GOOS)" = "${{ matrix.goos }}"
+          test "$(go env GOARCH)" = "${{ matrix.goarch }}"
       - name: Check known-answer workloads
         run: >-
           go test ./packages/runtime
