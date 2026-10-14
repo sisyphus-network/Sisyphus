@@ -693,6 +693,34 @@ test('model settings load and save a local provider used by the planner', async 
   }
 })
 
+test('model lending inspects Ollama, saves selected models and shows restart state', async () => {
+  const ollama = await standInModel()
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await open(page, 'Settings')
+    await page.getByText('Lend this machine’s models', { exact: true }).waitFor()
+    await page.getByRole('textbox', { name: 'Ollama address' }).fill(ollama.url)
+    await page.getByRole('button', { name: 'Check connection' }).click()
+    await page.getByRole('checkbox', { name: 'test-model' }).waitFor()
+    await page.getByRole('checkbox', { name: 'second-model' }).uncheck()
+    await page.getByRole('checkbox', { name: 'Make this machine’s models available to the pool' }).check()
+    await page.getByRole('button', { name: 'Save lending settings' }).click()
+    await page.getByText('Restart to apply lending or address changes', { exact: true }).first().waitFor()
+    await page.reload()
+    await open(page, 'Settings')
+    await page.getByRole('button', { name: 'Check connection' }).click()
+    await page.getByRole('checkbox', { name: 'Make this machine’s models available to the pool', checked: true }).waitFor()
+    await page.getByRole('checkbox', { name: 'test-model', checked: true }).waitFor()
+    await page.getByRole('checkbox', { name: 'second-model', checked: false }).waitFor()
+    await page.getByText('Restart to apply lending or address changes', { exact: true }).first().waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+    await ollama.close()
+  }
+})
+
 test('model settings download a local model and report completion', async () => {
   const model = await standInModel('The downloaded planner replied.')
   const profile = testProfile()

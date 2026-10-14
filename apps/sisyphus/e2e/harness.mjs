@@ -125,7 +125,8 @@ export async function standInModel(...replies) {
     let body = ''
     request.on('data', (piece) => { body += piece })
     request.on('end', () => {
-      if (request.url === '/api/tags') return response.end('{"models":[{"name":"test-model","size":4900000000}]}')
+      if (request.url === '/api/version') return response.end('{"version":"test"}')
+      if (request.url === '/api/tags') return response.end('{"models":[{"name":"test-model","size":4900000000},{"name":"second-model","size":1200000000}]}')
       if (request.url === '/api/show') return response.end('{"capabilities":["completion","tools"]}')
       const requestBody = JSON.parse(body || '{}')
       if (request.url === '/api/pull') {

@@ -86,6 +86,14 @@ type Prompts struct {
 	URL string
 	// Owner is what the machine's owner allows of that server.
 	Owner Owner
+	Live  *ModelServer
+}
+
+func (w Prompts) settings() (string, Owner) {
+	if w.Live != nil {
+		return w.Live.Settings()
+	}
+	return w.URL, w.Owner
 }
 
 // PromptsParams says what to ask and of which model.
@@ -174,11 +182,12 @@ func (Prompts) Split(ctx context.Context, blobs Blobs, params []byte, parts int)
 }
 
 func (w Prompts) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, error) {
+	url, owner := w.settings()
 	var share promptsShare
 	if err := json.Unmarshal(payload, &share); err != nil {
 		return nil, fmt.Errorf("prompts task: %w", err)
 	}
-	if err := w.Owner.refuses(share.Model); err != nil {
+	if err := owner.refuses(share.Model); err != nil {
 		return nil, err
 	}
 	report := Report(ctx)
@@ -193,7 +202,7 @@ func (w Prompts) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, 
 			messages = append([]map[string]string{{"role": "system", "content": share.System}}, messages...)
 		}
 		request["messages"] = mustJSON(messages)
-		said, err := askServer(ctx, w.URL, "/api/chat", toOllama(request, w.Owner, false))
+		said, err := askServer(ctx, url, "/api/chat", toOllama(request, owner, false))
 		if err != nil {
 			return nil, fmt.Errorf("prompt %d: %w", share.Start+i+1, err)
 		}
@@ -255,6 +264,14 @@ type Embed struct {
 	URL string
 	// Owner is what the machine's owner allows of that server.
 	Owner Owner
+	Live  *ModelServer
+}
+
+func (w Embed) settings() (string, Owner) {
+	if w.Live != nil {
+		return w.Live.Settings()
+	}
+	return w.URL, w.Owner
 }
 
 // MaxEmbedInputs is how many texts one embed job takes: what comes back
@@ -317,16 +334,17 @@ func (Embed) Split(_ context.Context, _ Blobs, params []byte, parts int) ([][]by
 }
 
 func (w Embed) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, error) {
+	url, owner := w.settings()
 	var share embedShare
 	if err := json.Unmarshal(payload, &share); err != nil {
 		return nil, fmt.Errorf("embed task: %w", err)
 	}
 	var model string
 	json.Unmarshal(share.Request["model"], &model) // what is not a name names no model
-	if err := w.Owner.refuses(model); err != nil {
+	if err := owner.refuses(model); err != nil {
 		return nil, err
 	}
-	said, err := askServer(ctx, w.URL, "/api/embed", toOllama(share.Request, w.Owner, false))
+	said, err := askServer(ctx, url, "/api/embed", toOllama(share.Request, owner, false))
 	if err != nil {
 		return nil, err
 	}

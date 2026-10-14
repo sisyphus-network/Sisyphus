@@ -249,16 +249,6 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		runs = runtime.ContainersConfined(confined)
 	}
-	if *modelsFrom != "" {
-		owner := runtime.Owner{Only: listOf(*modelsOnly), Options: map[string]any{}, KeepAlive: *modelsKeepAlive}
-		for setting, value := range map[string]int{"num_gpu": *modelsGPULayers, "num_thread": *modelsThreads, "num_ctx": *modelsContext} {
-			// Ollama decides what the owner did not.
-			if value > 0 || (setting == "num_gpu" && value == 0) {
-				owner.Options[setting] = value
-			}
-		}
-		runs = runs.With(runtime.WithModels(*modelsFrom, owner)...)
-	}
 	// A graph is a job of jobs, which a coordinator carries out itself: no
 	// worker runs one, so only what takes jobs in knows of it.
 	workloads = workloads.With(runtime.Graph{})
@@ -418,6 +408,20 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	defer db.Close()
 	local.BrowserAccess = db
+	// The models a worker lends are those its owner gave when starting it
+	// or, if none were given, those saved from the desktop app.
+	lent := nodedb.ModelLending{Enabled: *modelsFrom != "", URL: *modelsFrom, Only: listOf(*modelsOnly),
+		GPULayers: *modelsGPULayers, Threads: *modelsThreads, Context: *modelsContext, KeepAlive: *modelsKeepAlive}
+	if !lent.Enabled {
+		if lent, err = db.ModelLending(); err != nil {
+			return err
+		}
+	}
+	if lent.Enabled {
+		local.LiveLending = runtime.NewModelServer(lent.URL, runtime.OwnerFromSettings(lent.Only, lent.GPULayers, lent.Threads, lent.Context, lent.KeepAlive))
+		runs = runs.With(runtime.WithLiveModels(local.LiveLending)...)
+	}
+	local.Lending, local.Lent, local.LentByFlags = db, lent, *modelsFrom != ""
 	local.AllowLAN = *webLAN
 	// host is the node's libp2p host, started below according to its role.
 	var host *p2p.Host

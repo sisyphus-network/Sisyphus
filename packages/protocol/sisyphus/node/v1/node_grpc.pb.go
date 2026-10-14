@@ -39,6 +39,9 @@ const (
 	NodeService_ListModelProfiles_FullMethodName         = "/sisyphus.node.v1.NodeService/ListModelProfiles"
 	NodeService_SaveModelProfile_FullMethodName          = "/sisyphus.node.v1.NodeService/SaveModelProfile"
 	NodeService_DeleteModelProfile_FullMethodName        = "/sisyphus.node.v1.NodeService/DeleteModelProfile"
+	NodeService_GetModelLending_FullMethodName           = "/sisyphus.node.v1.NodeService/GetModelLending"
+	NodeService_SetModelLending_FullMethodName           = "/sisyphus.node.v1.NodeService/SetModelLending"
+	NodeService_InspectOllama_FullMethodName             = "/sisyphus.node.v1.NodeService/InspectOllama"
 	NodeService_ListProviders_FullMethodName             = "/sisyphus.node.v1.NodeService/ListProviders"
 	NodeService_ListModels_FullMethodName                = "/sisyphus.node.v1.NodeService/ListModels"
 	NodeService_PullModel_FullMethodName                 = "/sisyphus.node.v1.NodeService/PullModel"
@@ -95,6 +98,14 @@ type NodeServiceClient interface {
 	ListModelProfiles(ctx context.Context, in *ListModelProfilesRequest, opts ...grpc.CallOption) (*ListModelProfilesResponse, error)
 	SaveModelProfile(ctx context.Context, in *SaveModelProfileRequest, opts ...grpc.CallOption) (*ModelProfile, error)
 	DeleteModelProfile(ctx context.Context, in *DeleteModelProfileRequest, opts ...grpc.CallOption) (*DeleteModelProfileResponse, error)
+	// GetModelLending says how this machine lends its Ollama models to the
+	// pool: as saved, and as the node runs now. SetModelLending applies model
+	// allowlists and request limits live when lending stays enabled at the
+	// same address; enabling, disabling or changing that address takes effect
+	// on restart. InspectOllama asks an Ollama what it is and which models it lends.
+	GetModelLending(ctx context.Context, in *GetModelLendingRequest, opts ...grpc.CallOption) (*ModelLendingState, error)
+	SetModelLending(ctx context.Context, in *SetModelLendingRequest, opts ...grpc.CallOption) (*ModelLendingState, error)
+	InspectOllama(ctx context.Context, in *InspectOllamaRequest, opts ...grpc.CallOption) (*InspectOllamaResponse, error)
 	// ListProviders lists the kinds of model service there are to choose
 	// from, the one that needs no account first.
 	ListProviders(ctx context.Context, in *ListProvidersRequest, opts ...grpc.CallOption) (*ListProvidersResponse, error)
@@ -377,6 +388,36 @@ func (c *nodeServiceClient) DeleteModelProfile(ctx context.Context, in *DeleteMo
 	return out, nil
 }
 
+func (c *nodeServiceClient) GetModelLending(ctx context.Context, in *GetModelLendingRequest, opts ...grpc.CallOption) (*ModelLendingState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ModelLendingState)
+	err := c.cc.Invoke(ctx, NodeService_GetModelLending_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) SetModelLending(ctx context.Context, in *SetModelLendingRequest, opts ...grpc.CallOption) (*ModelLendingState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ModelLendingState)
+	err := c.cc.Invoke(ctx, NodeService_SetModelLending_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) InspectOllama(ctx context.Context, in *InspectOllamaRequest, opts ...grpc.CallOption) (*InspectOllamaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InspectOllamaResponse)
+	err := c.cc.Invoke(ctx, NodeService_InspectOllama_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *nodeServiceClient) ListProviders(ctx context.Context, in *ListProvidersRequest, opts ...grpc.CallOption) (*ListProvidersResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListProvidersResponse)
@@ -605,6 +646,14 @@ type NodeServiceServer interface {
 	ListModelProfiles(context.Context, *ListModelProfilesRequest) (*ListModelProfilesResponse, error)
 	SaveModelProfile(context.Context, *SaveModelProfileRequest) (*ModelProfile, error)
 	DeleteModelProfile(context.Context, *DeleteModelProfileRequest) (*DeleteModelProfileResponse, error)
+	// GetModelLending says how this machine lends its Ollama models to the
+	// pool: as saved, and as the node runs now. SetModelLending applies model
+	// allowlists and request limits live when lending stays enabled at the
+	// same address; enabling, disabling or changing that address takes effect
+	// on restart. InspectOllama asks an Ollama what it is and which models it lends.
+	GetModelLending(context.Context, *GetModelLendingRequest) (*ModelLendingState, error)
+	SetModelLending(context.Context, *SetModelLendingRequest) (*ModelLendingState, error)
+	InspectOllama(context.Context, *InspectOllamaRequest) (*InspectOllamaResponse, error)
 	// ListProviders lists the kinds of model service there are to choose
 	// from, the one that needs no account first.
 	ListProviders(context.Context, *ListProvidersRequest) (*ListProvidersResponse, error)
@@ -719,6 +768,15 @@ func (UnimplementedNodeServiceServer) SaveModelProfile(context.Context, *SaveMod
 }
 func (UnimplementedNodeServiceServer) DeleteModelProfile(context.Context, *DeleteModelProfileRequest) (*DeleteModelProfileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteModelProfile not implemented")
+}
+func (UnimplementedNodeServiceServer) GetModelLending(context.Context, *GetModelLendingRequest) (*ModelLendingState, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetModelLending not implemented")
+}
+func (UnimplementedNodeServiceServer) SetModelLending(context.Context, *SetModelLendingRequest) (*ModelLendingState, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetModelLending not implemented")
+}
+func (UnimplementedNodeServiceServer) InspectOllama(context.Context, *InspectOllamaRequest) (*InspectOllamaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InspectOllama not implemented")
 }
 func (UnimplementedNodeServiceServer) ListProviders(context.Context, *ListProvidersRequest) (*ListProvidersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListProviders not implemented")
@@ -1128,6 +1186,60 @@ func _NodeService_DeleteModelProfile_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_GetModelLending_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetModelLendingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetModelLending(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetModelLending_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetModelLending(ctx, req.(*GetModelLendingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_SetModelLending_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetModelLendingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).SetModelLending(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_SetModelLending_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).SetModelLending(ctx, req.(*SetModelLendingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_InspectOllama_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InspectOllamaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).InspectOllama(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_InspectOllama_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).InspectOllama(ctx, req.(*InspectOllamaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _NodeService_ListProviders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListProvidersRequest)
 	if err := dec(in); err != nil {
@@ -1458,6 +1570,18 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteModelProfile",
 			Handler:    _NodeService_DeleteModelProfile_Handler,
+		},
+		{
+			MethodName: "GetModelLending",
+			Handler:    _NodeService_GetModelLending_Handler,
+		},
+		{
+			MethodName: "SetModelLending",
+			Handler:    _NodeService_SetModelLending_Handler,
+		},
+		{
+			MethodName: "InspectOllama",
+			Handler:    _NodeService_InspectOllama_Handler,
 		},
 		{
 			MethodName: "ListProviders",
