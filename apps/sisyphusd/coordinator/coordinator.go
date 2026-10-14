@@ -1401,17 +1401,33 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 // the workload, or nil if none has a free slot. A worker that has a copy of
 // the task, or has returned a result for it, is passed over: only a task of
 // a verified job has such workers while it waits for another.
+//
+// A worker that an attempt at the task has already failed on, or been lost
+// with, is the last to be given it again. While another that could run it
+// is connected the task goes there, waiting for a slot if it must; it goes
+// back to where it went wrong only when there is nowhere else.
 func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) *worker {
-	var best *worker
-	bestFree := 0
+	var best, again *worker
+	bestFree, againFree := 0, 0
+	elsewhere := false
 	for _, w := range c.workers {
 		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) || c.besideLocked(task, w.id) {
 			continue
 		}
 		free := int(w.capabilities.GetTaskSlots()) - len(w.running)
+		if task.Dropped(w.id) {
+			if free > againFree || (free == againFree && again != nil && w.id < again.id) {
+				again, againFree = w, free
+			}
+			continue
+		}
+		elsewhere = true
 		if free > bestFree || (free == bestFree && best != nil && w.id < best.id) {
 			best, bestFree = w, free
 		}
+	}
+	if best == nil && !elsewhere {
+		return again
 	}
 	return best
 }

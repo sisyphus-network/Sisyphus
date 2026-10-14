@@ -93,11 +93,14 @@ func TestWhatAWorkerReturnsForVerifiedTasksIsCountedWhenTheyAreSettled(t *testin
 		t.Errorf("after a task that was never settled: %s", got)
 	}
 
-	// An attempt that fails is not a result. The one that follows it is,
-	// and a result that agrees is one fewer owed.
+	// An attempt that fails is not a result. The copy goes to the worker
+	// it has not failed on, and when it fails there too, back to the first:
+	// the attempt that follows is a result, and one that agrees is one
+	// fewer owed.
 	id = p.submit(verifiedPrimes(1, 2)).GetJobId()
 	first, second = liar.assignment(), beta.assignment()
 	liar.fails(first, "out of memory")
+	gamma.fails(gamma.assignment(), "out of memory")
 	liar.returns(liar.assignment(), `{"count":7}`)
 	beta.returns(second, `{"count":7}`)
 	if done := p.wait(id); done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
