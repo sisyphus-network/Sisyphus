@@ -177,6 +177,9 @@ func TestWordCountProducesASortedTable(t *testing.T) {
 	if result.Words != 7 || result.Distinct != 4 {
 		t.Errorf("words %d, distinct %d; want 7 and 4", result.Words, result.Distinct)
 	}
+	if result.Output != "bafkreih73rq3xpicw64ic5mi7ur4kvqatd45maw37u42dw4nrnntgzus5e" {
+		t.Errorf("output CID = %s, want the canonical CID for the known table", result.Output)
+	}
 	want := "3\tthe\n2\thill\n1\tboulder\n1\tup\n"
 	if got := readBlob(t, store, result.Output); got != want {
 		t.Errorf("table:\n%s\nwant:\n%s", got, want)
