@@ -35,16 +35,46 @@ import (
 // webAccessRuntime owns the optional, HTTPS-only browser listener. The local
 // Electron API and the node-to-node P2P listener are deliberately independent.
 type webAccessRuntime struct {
-	mu        sync.Mutex
-	db        *nodedb.DB
-	dataDir   string
-	local     *api.LocalConfig
-	origins   []string
-	ui        fs.FS
-	log       *slog.Logger
-	server    *http.Server
-	addr      string
-	listeners []net.Listener
+	mu          sync.Mutex
+	db          webAccessStore
+	dataDir     string
+	local       *api.LocalConfig
+	origins     []string
+	ui          fs.FS
+	log         *slog.Logger
+	server      *http.Server
+	addr        string
+	listeners   []net.Listener
+	fingerprint func(string) (string, error)
+}
+
+type webAccessStore interface {
+	WebAccess() (nodedb.WebAccessConfig, error)
+	SetWebAccess(nodedb.WebAccessConfig) error
+}
+
+var webAccessInterfaces = net.Interfaces
+var webAccessInterfaceAddresses = func(network net.Interface) ([]net.Addr, error) { return network.Addrs() }
+var generateWebAccessKey = func() (*ecdsa.PrivateKey, error) { return ecdsa.GenerateKey(elliptic.P256(), rand.Reader) }
+var generateWebAccessSerial = func() (*big.Int, error) { return rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128)) }
+var createWebAccessCertificate = x509.CreateCertificate
+var marshalWebAccessKey = x509.MarshalECPrivateKey
+var loadWebAccessKeyPair = tls.LoadX509KeyPair
+var openWebAccessKeyFile = func(path string, flag int, mode os.FileMode) (privateKeyFile, error) {
+	return os.OpenFile(path, flag, mode)
+}
+
+type privateKeyFile interface {
+	Chmod(os.FileMode) error
+	Write([]byte) (int, error)
+	Close() error
+}
+
+func (w *webAccessRuntime) readFingerprint() (string, error) {
+	if w.fingerprint != nil {
+		return w.fingerprint(w.dataDir)
+	}
+	return webAccessFingerprint(w.dataDir)
 }
 
 func (w *webAccessRuntime) Get() (nodedb.WebAccessConfig, string, bool, error) {
@@ -61,7 +91,7 @@ func (w *webAccessRuntime) Get() (nodedb.WebAccessConfig, string, bool, error) {
 		// The saved configuration remains intact and can be retried by saving it.
 		config.Enabled = false
 	}
-	fingerprint, err := webAccessFingerprint(w.dataDir)
+	fingerprint, err := w.readFingerprint()
 	return config, fingerprint, restartRequired, err
 }
 
@@ -86,7 +116,7 @@ func (w *webAccessRuntime) Set(ctx context.Context, config nodedb.WebAccessConfi
 					return previous, "", false, err
 				}
 			}
-			fingerprint, err := webAccessFingerprint(w.dataDir)
+			fingerprint, err := w.readFingerprint()
 			return previous, fingerprint, false, err
 		}
 		return previous, "", false, errors.New("turn remote access off before changing its listener or public URL")
@@ -118,7 +148,7 @@ func (w *webAccessRuntime) Set(ctx context.Context, config nodedb.WebAccessConfi
 		return config, "", false, nil
 	}
 	if err := w.start(config); err != nil {
-		fingerprint, _ := webAccessFingerprint(w.dataDir)
+		fingerprint, _ := w.readFingerprint()
 		return previous, fingerprint, false, err
 	}
 	if err := w.db.SetWebAccess(config); err != nil {
@@ -131,7 +161,7 @@ func (w *webAccessRuntime) Set(ctx context.Context, config nodedb.WebAccessConfi
 		}
 		return previous, "", false, fmt.Errorf("save web access settings: %w", err)
 	}
-	fingerprint, err := webAccessFingerprint(w.dataDir)
+	fingerprint, err := w.readFingerprint()
 	if err != nil {
 		return config, "", false, err
 	}
@@ -177,7 +207,7 @@ func (w *webAccessRuntime) start(config nodedb.WebAccessConfig) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+	if _, err := loadWebAccessKeyPair(certFile, keyFile); err != nil {
 		return fmt.Errorf("load browser-access TLS certificate: %w", err)
 	}
 	listeners := make([]net.Listener, 0, len(addresses))
@@ -322,7 +352,7 @@ func validateWebListenTLS(address string, requireAssigned, requireActive bool) e
 	if !requireAssigned {
 		return nil
 	}
-	interfaces, err := net.Interfaces()
+	interfaces, err := webAccessInterfaces()
 	if err != nil {
 		return fmt.Errorf("inspect local network interfaces: %w", err)
 	}
@@ -330,7 +360,7 @@ func validateWebListenTLS(address string, requireAssigned, requireActive bool) e
 		if network.Flags&net.FlagLoopback != 0 || requireActive && (network.Flags&net.FlagUp == 0 || network.Flags&net.FlagRunning == 0) {
 			continue
 		}
-		addresses, err := network.Addrs()
+		addresses, err := webAccessInterfaceAddresses(network)
 		if err != nil {
 			continue
 		}
@@ -394,15 +424,15 @@ func ensureWebAccessCertificateForAddresses(dataDir string, listenAddresses []st
 	certFile := filepath.Join(dataDir, "web-access.crt")
 	keyFile := filepath.Join(dataDir, "web-access.key")
 	if certificateCoversAll(certFile, listenIPs, publicHost) {
-		if _, err := tls.LoadX509KeyPair(certFile, keyFile); err == nil {
+		if _, err := loadWebAccessKeyPair(certFile, keyFile); err == nil {
 			return certFile, keyFile, nil
 		}
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := generateWebAccessKey()
 	if err != nil {
 		return "", "", fmt.Errorf("generate browser-access key: %w", err)
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	serial, err := generateWebAccessSerial()
 	if err != nil {
 		return "", "", fmt.Errorf("generate browser-access certificate serial: %w", err)
 	}
@@ -430,11 +460,11 @@ func ensureWebAccessCertificateForAddresses(dataDir string, listenAddresses []st
 			template.IPAddresses = append(template.IPAddresses, net.IP(listenIP.AsSlice()))
 		}
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	der, err := createWebAccessCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
 		return "", "", fmt.Errorf("create browser-access certificate: %w", err)
 	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
+	keyDER, err := marshalWebAccessKey(key)
 	if err != nil {
 		return "", "", fmt.Errorf("encode browser-access key: %w", err)
 	}
@@ -448,7 +478,7 @@ func ensureWebAccessCertificateForAddresses(dataDir string, listenAddresses []st
 }
 
 func writePrivateFile(path string, data []byte) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	file, err := openWebAccessKeyFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}

@@ -27,6 +27,9 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 )
 
+var localNetworkInterfaces = net.Interfaces
+var localNetworkInterfaceAddresses = func(network net.Interface) ([]net.Addr, error) { return network.Addrs() }
+
 // The local API is how a desktop client on the same machine watches and
 // steers its node. It is the sisyphus.node.v1 contract the desktop client
 // was written against, served here in terms of pools: a node's peers are the
@@ -255,7 +258,7 @@ func (s *localService) ListNetworkInterfaces(ctx context.Context, _ *nodepb.List
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	interfaces, err := net.Interfaces()
+	interfaces, err := localNetworkInterfaces()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list network interfaces: %v", err)
 	}
@@ -265,7 +268,7 @@ func (s *localService) ListNetworkInterfaces(ctx context.Context, _ *nodepb.List
 		if network.Flags&net.FlagUp == 0 || network.Flags&net.FlagRunning == 0 || network.Flags&net.FlagLoopback != 0 {
 			continue
 		}
-		addresses, err := network.Addrs()
+		addresses, err := localNetworkInterfaceAddresses(network)
 		if err != nil {
 			continue
 		}

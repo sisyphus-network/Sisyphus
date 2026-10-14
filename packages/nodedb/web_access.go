@@ -40,10 +40,9 @@ func (db *DB) WebAccess() (WebAccessConfig, error) {
 
 // SetWebAccess replaces the optional remote browser-access configuration.
 func (db *DB) SetWebAccess(config WebAccessConfig) error {
-	addressesJSON, err := json.Marshal(config.ListenAddresses)
-	if err != nil {
-		return fmt.Errorf("encode web listener addresses: %w", err)
-	}
+	// A string slice cannot fail to marshal, so keep the persistence path free
+	// of a defensive branch that has no possible input to exercise.
+	addressesJSON, _ := json.Marshal(config.ListenAddresses)
 	return db.durably("save web access configuration", func(b *batch) {
 		b.exec(`INSERT INTO web_access_config (singleton_id, enabled, listen_address, public_url, listen_addresses) VALUES (1, ?, ?, ?, ?)
 			ON CONFLICT (singleton_id) DO UPDATE SET enabled = excluded.enabled, listen_address = excluded.listen_address, public_url = excluded.public_url, listen_addresses = excluded.listen_addresses`, boolInt(config.Enabled), config.ListenAddress, config.PublicURL, string(addressesJSON))

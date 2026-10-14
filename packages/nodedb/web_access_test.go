@@ -36,3 +36,25 @@ func TestWebAccessDefaultsToDisabledAndPersists(t *testing.T) {
 		t.Fatalf("multiple web access addresses = %+v, %v; want %+v", got, err, multiple)
 	}
 }
+
+func TestWebAccessRejectsClosedDatabaseAndMalformedStoredAddresses(t *testing.T) {
+	db, _ := newDB(t)
+	if err := db.SetWebAccess(WebAccessConfig{ListenAddress: "192.0.2.20:50052"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.Exec(`UPDATE web_access_config SET listen_addresses = 'not-json' WHERE singleton_id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.WebAccess(); err == nil {
+		t.Fatal("malformed saved listener addresses unexpectedly decoded")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.WebAccess(); err == nil {
+		t.Fatal("closed database read unexpectedly succeeded")
+	}
+	if err := db.SetWebAccess(WebAccessConfig{}); err == nil {
+		t.Fatal("closed database write unexpectedly succeeded")
+	}
+}

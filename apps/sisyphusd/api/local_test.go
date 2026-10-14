@@ -38,16 +38,23 @@ type localNode struct {
 }
 
 type webAccessControllerStub struct {
-	config nodedb.WebAccessConfig
+	config          nodedb.WebAccessConfig
+	getErr          error
+	setErr          error
+	fingerprint     string
+	restartRequired bool
 }
 
 func (s *webAccessControllerStub) Get() (nodedb.WebAccessConfig, string, bool, error) {
-	return s.config, "", false, nil
+	return s.config, s.fingerprint, s.restartRequired, s.getErr
 }
 
 func (s *webAccessControllerStub) Set(_ context.Context, config nodedb.WebAccessConfig) (nodedb.WebAccessConfig, string, bool, error) {
+	if s.setErr != nil {
+		return nodedb.WebAccessConfig{}, "", false, s.setErr
+	}
 	s.config = config
-	return config, "", false, nil
+	return config, s.fingerprint, s.restartRequired, nil
 }
 
 func (n *localNode) setPeers(peers ...*nodepb.Peer) {
@@ -111,6 +118,47 @@ func TestSetWebAccessConfigPreservesMultipleInterfaces(t *testing.T) {
 	}
 	if !slices.Equal(response.GetListenAddresses(), want) {
 		t.Fatalf("response listener addresses %v, want %v", response.GetListenAddresses(), want)
+	}
+}
+
+func TestWebAccessRPCAuthorizationAvailabilityAndFallbacks(t *testing.T) {
+	service := &localService{cfg: LocalConfig{Token: "the-token"}}
+	request := &nodepb.GetWebAccessConfigRequest{}
+	if _, err := service.GetWebAccessConfig(context.Background(), request); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("unauthorized GetWebAccessConfig error = %v", err)
+	}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	got, err := service.GetWebAccessConfig(ctx, request)
+	if err != nil || got == nil || got.GetEnabled() {
+		t.Fatalf("unavailable access config = %v, %v", got, err)
+	}
+	if _, err := service.SetWebAccessConfig(context.Background(), &nodepb.SetWebAccessConfigRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("unauthorized SetWebAccessConfig error = %v", err)
+	}
+	if _, err := service.SetWebAccessConfig(ctx, &nodepb.SetWebAccessConfigRequest{}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("unavailable SetWebAccessConfig error = %v", err)
+	}
+
+	controller := &webAccessControllerStub{config: nodedb.WebAccessConfig{Enabled: true, ListenAddress: "192.168.1.20:50052"}, fingerprint: "ABC123", restartRequired: true}
+	service.cfg.WebAccess = controller
+	got, err = service.GetWebAccessConfig(ctx, request)
+	if err != nil || !got.GetEnabled() || got.GetCertificateFingerprint() != "ABC123" || !got.GetRestartRequired() || !slices.Equal(got.GetListenAddresses(), []string{controller.config.ListenAddress}) {
+		t.Fatalf("access config response/fallback = %+v, %v", got, err)
+	}
+	controller.getErr = errors.New("read failed")
+	if _, err := service.GetWebAccessConfig(ctx, request); status.Code(err) != codes.Internal {
+		t.Fatalf("GetWebAccessConfig controller error = %v", err)
+	}
+	controller.getErr = nil
+	controller.setErr = errors.New("invalid settings")
+	if _, err := service.SetWebAccessConfig(ctx, &nodepb.SetWebAccessConfigRequest{}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("SetWebAccessConfig controller error = %v", err)
+	}
+	controller.setErr = nil
+	address := "192.168.1.20:50052"
+	set, err := service.SetWebAccessConfig(ctx, &nodepb.SetWebAccessConfigRequest{ListenAddress: address})
+	if err != nil || !slices.Equal(controller.config.ListenAddresses, []string{address}) || !slices.Equal(set.GetListenAddresses(), []string{address}) {
+		t.Fatalf("single-address compatibility = config %+v response %+v error %v", controller.config, set, err)
 	}
 }
 
@@ -1022,6 +1070,61 @@ func TestListNetworkInterfacesRequiresNodeTokenAndReturnsUsableAddresses(t *test
 		}
 		if network.Flags&net.FlagUp == 0 || network.Flags&net.FlagRunning == 0 {
 			t.Errorf("returned interface %q that is not active: flags=%v", item.GetName(), network.Flags)
+		}
+	}
+}
+
+type localTestNetAddr string
+
+func (a localTestNetAddr) Network() string { return "test" }
+func (a localTestNetAddr) String() string  { return string(a) }
+
+func TestListNetworkInterfacesHandlesSystemErrorsAndFiltersResults(t *testing.T) {
+	oldInterfaces, oldAddresses := localNetworkInterfaces, localNetworkInterfaceAddresses
+	t.Cleanup(func() { localNetworkInterfaces, localNetworkInterfaceAddresses = oldInterfaces, oldAddresses })
+	service := &localService{cfg: LocalConfig{Token: "the-token"}}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	localNetworkInterfaces = func() ([]net.Interface, error) { return nil, errors.New("enumeration failed") }
+	if _, err := service.ListNetworkInterfaces(ctx, &nodepb.ListNetworkInterfacesRequest{}); status.Code(err) != codes.Internal {
+		t.Fatalf("interface enumeration error = %v", err)
+	}
+
+	localNetworkInterfaces = func() ([]net.Interface, error) {
+		return []net.Interface{
+			{Name: "loop", Flags: net.FlagUp | net.FlagRunning | net.FlagLoopback},
+			{Name: "down", Flags: net.FlagRunning},
+			{Name: "stopped", Flags: net.FlagUp},
+			{Name: "no-addresses", Flags: net.FlagUp | net.FlagRunning},
+			{Name: "a", Flags: net.FlagUp | net.FlagRunning},
+			{Name: "z", Flags: net.FlagUp | net.FlagRunning},
+		}, nil
+	}
+	localNetworkInterfaceAddresses = func(network net.Interface) ([]net.Addr, error) {
+		switch network.Name {
+		case "no-addresses":
+			return nil, errors.New("addresses unavailable")
+		case "a":
+			return []net.Addr{
+				localTestNetAddr("198.51.100.20/24"), localTestNetAddr("not-a-prefix"),
+				localTestNetAddr("127.0.0.1/8"), localTestNetAddr("0.0.0.0/0"),
+				localTestNetAddr("224.0.0.1/24"), localTestNetAddr("169.254.1.1/16"),
+				localTestNetAddr("198.51.100.10/24"),
+			}, nil
+		default:
+			return []net.Addr{localTestNetAddr("198.51.100.10/24"), localTestNetAddr("203.0.113.5/24")}, nil
+		}
+	}
+	response, err := service.ListNetworkInterfaces(ctx, &nodepb.ListNetworkInterfacesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a:198.51.100.10", "a:198.51.100.20", "z:203.0.113.5"}
+	if len(response.GetInterfaces()) != len(want) {
+		t.Fatalf("usable interfaces = %+v, want %v", response.GetInterfaces(), want)
+	}
+	for i, item := range response.GetInterfaces() {
+		if got := item.GetName() + ":" + item.GetAddress(); got != want[i] {
+			t.Errorf("interface[%d] = %q, want %q", i, got, want[i])
 		}
 	}
 }
