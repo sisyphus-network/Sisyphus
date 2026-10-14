@@ -1,0 +1,30 @@
+# Keeps the actions, Go modules and the desktop app's packages current.
+# Updates come weekly, grouped so that each ecosystem is one pull request,
+# and pass the same checks as any other change before they merge.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [infra, dependencies]
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+    labels: [area:daemon, dependencies]
+  - package-ecosystem: npm
+    directory: /apps/sisyphus
+    schedule:
+      interval: weekly
+    groups:
+      desktop:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    labels: [area:client, dependencies]

@@ -13,7 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Every system and processor the app ships for, each built on its
+        # own: Linux, Windows and macOS, on x64 and on arm64.
+        os: [ubuntu-26.04, ubuntu-26.04-arm, windows-2025, windows-11-arm, macos-26, macos-26-intel]
     runs-on: ${{ matrix.os }}
     defaults:
       run:

@@ -33,9 +33,9 @@ Without building anything, take a package of the app with the node inside. A rel
 
 | System | File | What to do with it |
 |---|---|---|
-| Windows | `Sisyphus-<version>-win-x64-setup.exe` | Run it. It installs for you alone, asks where, and puts Sisyphus in the Start menu and on the desktop. |
-| macOS | `Sisyphus-<version>-mac-arm64.dmg` | Open it and drag Sisyphus onto Applications. |
-| Linux | `Sisyphus-<version>-linux-x86_64.AppImage` | `chmod +x` it and run it. |
+| Windows | `Sisyphus-<version>-win-x64-setup.exe`, or `-win-arm64-setup.exe` on an Arm laptop | Run it. It installs for you alone, asks where, and puts Sisyphus in the Start menu and on the desktop. |
+| macOS | `Sisyphus-<version>-mac-arm64.dmg` on Apple silicon, `-mac-x64.dmg` on an Intel Mac | Open it and drag Sisyphus onto Applications. |
+| Linux | `Sisyphus-<version>-linux-x86_64.AppImage`, or `-linux-arm64.AppImage` on an Arm machine | `chmod +x` it and run it. |
 
 Each also comes as a plain `.zip` or `.tar.gz` to unpack and run in place.
 
