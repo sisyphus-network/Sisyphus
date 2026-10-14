@@ -626,6 +626,37 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
   }
 })
 
+test('model settings load and save a local provider used by the planner', async () => {
+  const model = await standInModel('The configured planner replied.')
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await open(page, 'Settings')
+    await page.getByRole('button', { name: 'Add provider' }).first().click()
+    await page.getByRole('combobox', { name: 'Provider' }).waitFor()
+    await page.getByRole('combobox', { name: 'Provider' }).selectOption('ollama')
+    await page.getByRole('textbox', { name: 'Profile name' }).fill('Local test model')
+    await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
+    await page.getByRole('button', { name: 'Load models' }).click()
+    await page.waitForFunction(() => document.querySelector('#available-models option[value="test-model"]') !== null)
+    await page.locator('input[list="available-models"]').fill('test-model')
+    await page.getByRole('button', { name: 'Save and activate' }).click()
+    await page.getByText('Model configuration saved').waitFor()
+
+    await open(page, 'Workspace')
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Does the saved local model answer?')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByText('The configured planner replied.').waitFor({ timeout: 30000 })
+    assert.equal(model.asked.length, 1)
+    assert.match(JSON.stringify(model.asked[0].messages), /Does the saved local model answer\?/)
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
 test('desktop Settings keeps the shell fixed and restores its own scroll position', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
