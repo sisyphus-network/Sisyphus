@@ -80,12 +80,12 @@ function AssistantMark({ working = false, large = false }: { working?: boolean; 
   </motion.span>
 }
 
-export function AgentChat({ snapshot, messages, direction, historyOpen, setHistoryOpen, historyPanelHost, onOpenSettings }: { snapshot: NodeSnapshot; messages: Messages; direction: 'ltr' | 'rtl'; historyOpen: boolean; setHistoryOpen: Dispatch<SetStateAction<boolean>>; historyPanelHost: HTMLDivElement | null; onOpenSettings: () => void }) {
+export function AgentChat({ snapshot, messages, direction, historyOpen, setHistoryOpen, historyPanelHost, onOpenSettings, activeChatId = '', onActiveChatChange }: { snapshot: NodeSnapshot; messages: Messages; direction: 'ltr' | 'rtl'; historyOpen: boolean; setHistoryOpen: Dispatch<SetStateAction<boolean>>; historyPanelHost: HTMLDivElement | null; onOpenSettings: () => void; activeChatId?: string; onActiveChatChange?: (id: string) => void }) {
   const reduceMotion = useReducedMotion()
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null)
   const [deletingChat, setDeletingChat] = useState(false)
-  const [chatId, setChatId] = useState('')
+  const [chatId, setChatId] = useState(activeChatId)
   const [items, setItems] = useState<ChatItem[]>([])
   const [prompt, setPrompt] = useState('')
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
@@ -115,6 +115,11 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   useEffect(() => {
     if (snapshot.status === 'connected' && !browserOnly) void refreshChats()
   }, [snapshot.status, browserOnly])
+  // Workspace can switch between its desktop and compact layouts. If that
+  // remounts this view, restore the selected conversation from its owner.
+  useEffect(() => {
+    if (activeChatId) void openChat(activeChatId)
+  }, [])
   useEffect(() => () => {
     streamCancel.current?.()
     previewUrls.current.forEach((url) => URL.revokeObjectURL(url))
@@ -153,6 +158,7 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
     streamCancel.current = null
     setAsking(false)
     setChatId(id)
+    onActiveChatChange?.(id)
     setConversationLoading(Boolean(id))
     if (!id) { setItems([]); setConversationLoading(false); stickToBottom.current = true; return }
     try {
@@ -172,7 +178,7 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
     try {
       await getNodeApi().call('deleteChat', { chatId: id })
       setChats((current) => current.filter((chat) => chat.chatId !== id))
-      if (chatId === id) { ++requestRef.current; streamCancel.current?.(); streamCancel.current = null; setAsking(false); setChatId(''); setItems([]) }
+      if (chatId === id) { ++requestRef.current; streamCancel.current?.(); streamCancel.current = null; setAsking(false); setChatId(''); onActiveChatChange?.(''); setItems([]) }
       toast.success(messages.conversationDeleted)
       setDeleteTarget(null)
     } catch (error) { toast.error(messages.deleteConversationFailed, { description: error instanceof Error ? error.message : String(error) }) }
@@ -236,7 +242,7 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
         text: fullText,
         attachmentCids: storedAttachments.map((attachment) => attachment.cid),
       }, (event) => {
-        if (event.chatId && !chatId) setChatId(event.chatId)
+        if (event.chatId && !chatId) { setChatId(event.chatId); onActiveChatChange?.(event.chatId) }
         if (event.kind === 'text') updateAssistant(answerId, (item) => ({ ...item, content: item.content + event.text }))
         if (event.kind === 'call') updateAssistant(answerId, (item) => ({ ...item, activities: [...(item.activities ?? []), { id: newId(), tool: event.tool || messages.agentActionUnknown, arguments: event.text, state: 'working' }] }))
         if (event.kind === 'job') updateAssistant(answerId, (item) => {
