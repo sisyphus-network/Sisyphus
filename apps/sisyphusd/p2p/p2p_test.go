@@ -90,6 +90,21 @@ func (p *pool) behind(relay *Host) *Host {
 	return h
 }
 
+// behindWithoutDirectAddresses models a node whose network does not accept
+// inbound connections. This prevents peers on the same test machine from
+// bypassing the relay over a shared loopback or LAN interface.
+func (p *pool) behindWithoutDirectAddresses(relay *Host) *Host {
+	p.t.Helper()
+	h := p.start(Config{
+		Via: relay.Addrs(),
+		AddrsFactory: func([]ma.Multiaddr) []ma.Multiaddr {
+			return nil
+		},
+	})
+	waitFor(p.t, h.Relayed)
+	return h
+}
+
 func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
@@ -164,7 +179,7 @@ func TestTwoNodesWithNoOpenPortReachEachOtherThroughARelay(t *testing.T) {
 
 	p := newPool(t)
 	relay := p.relay()
-	a, b := p.behind(relay), p.behind(relay)
+	a, b := p.behindWithoutDirectAddresses(relay), p.behindWithoutDirectAddresses(relay)
 	echo(t, b)
 
 	conn, err := a.Dial(context.Background(), b.ID(), echoProtocol)
@@ -175,7 +190,11 @@ func TestTwoNodesWithNoOpenPortReachEachOtherThroughARelay(t *testing.T) {
 	// Far more than a relay meant only for introductions would carry.
 	roundTrip(t, conn, 8<<20)
 
-	if got := routes(a, b); !relayed(got) || direct(got) {
+	var got []string
+	for _, connection := range a.host.Network().ConnsToPeer(b.host.ID()) {
+		got = append(got, connection.RemoteMultiaddr().String())
+	}
+	if !relayed(got) || direct(got) {
 		t.Errorf("a's connections to b: %v, want only one through the relay", got)
 	}
 	if conn.RemoteAddr().String() != b.ID() || conn.LocalAddr().String() != a.ID() || conn.RemoteAddr().Network() != "p2p" {
