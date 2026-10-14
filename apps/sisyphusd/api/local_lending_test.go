@@ -56,7 +56,7 @@ func TestModelLendingSetByFlagsNeedsNoRestart(t *testing.T) {
 
 func TestModelLendingPolicyAppliesLiveAtTheRunningAddress(t *testing.T) {
 	running := nodedb.ModelLending{Enabled: true, URL: "http://127.0.0.1:11434", Only: []string{"first"}, GPULayers: -1}
-	live := runtime.NewModelServer(running.URL, lendingOwner(running))
+	live := runtime.NewModelServer(running.URL, runtime.OwnerFromSettings(running.Only, running.GPULayers, running.Threads, running.Context, running.KeepAlive))
 	client := serveLocal(t, LocalConfig{Lending: newFileList(t), Lent: running, LiveLending: live})
 
 	asked := &nodepb.ModelLending{Enabled: true, OllamaUrl: running.URL, Only: []string{"second"}, GpuLayers: 0, Threads: 6, Context: 4096, KeepAlive: "10m"}
@@ -75,7 +75,7 @@ func TestModelLendingPolicyAppliesLiveAtTheRunningAddress(t *testing.T) {
 
 func TestModelLendingAddressChangeStillNeedsRestart(t *testing.T) {
 	running := nodedb.ModelLending{Enabled: true, URL: "http://127.0.0.1:11434", Only: []string{"first"}, GPULayers: -1}
-	live := runtime.NewModelServer(running.URL, lendingOwner(running))
+	live := runtime.NewModelServer(running.URL, runtime.OwnerFromSettings(running.Only, running.GPULayers, running.Threads, running.Context, running.KeepAlive))
 	client := serveLocal(t, LocalConfig{Lending: newFileList(t), Lent: running, LiveLending: live})
 	state, err := client.SetModelLending(withToken("the-token"), &nodepb.SetModelLendingRequest{Lending: &nodepb.ModelLending{
 		Enabled: true, OllamaUrl: "http://127.0.0.1:11435", Only: []string{"second"}, GpuLayers: -1,
