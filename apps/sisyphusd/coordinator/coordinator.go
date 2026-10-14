@@ -4,6 +4,7 @@
 package coordinator
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -1115,6 +1117,7 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	}
 	switch outcome := result.GetOutcome().(type) {
 	case *pb.TaskResult_Output:
+		c.log.Info("task returned", "task", a.task.ID, "worker", w.name, "took", now.Sub(a.started).Round(time.Millisecond).String())
 		// What the task stored must outlive the hour a new blob is kept
 		// for, since the job may run longer than that. Only what the store
 		// holds is taken as stored: the worker's word for it is not enough.
@@ -1192,9 +1195,32 @@ func (c *Coordinator) aggregate(job *jobmodel.Job) {
 	job.NoteResult(touched.Written()...)
 	job.Finish(result, err, now)
 	c.settleLocked(job)
-	c.log.Info("job finished", "job", job.ID, "state", job.State.String(), "took", now.Sub(job.CreatedAt).String())
+	c.log.Info("job finished", "job", job.ID, "state", job.State.String(), "took", now.Sub(job.CreatedAt).String(), "by", workedBy(job))
 	c.notifyLocked(job)
 	c.scheduleLocked()
+}
+
+// workedBy says which workers did a job's tasks and how many each did, as
+// "laptop×12 r620×20", most first.
+func workedBy(job *jobmodel.Job) string {
+	counts := map[string]int{}
+	for _, task := range job.Tasks {
+		if task.NodeName != "" {
+			counts[task.NodeName]++
+		}
+	}
+	names := slices.Collect(maps.Keys(counts))
+	slices.SortFunc(names, func(a, b string) int {
+		if c := cmp.Compare(counts[b], counts[a]); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
+	said := make([]string, len(names))
+	for i, name := range names {
+		said[i] = fmt.Sprintf("%s×%d", name, counts[name])
+	}
+	return strings.Join(said, " ")
 }
 
 // settleLocked sets how long a job's blobs are kept once it is over: its
@@ -1419,6 +1445,7 @@ func (c *Coordinator) scheduleLocked() {
 // handLocked gives a worker an attempt at a task.
 func (c *Coordinator) handLocked(w *worker, a assignment) {
 	c.recordLocked(a.job, eventTaskStarted, a.task.Index, w.name, fmt.Sprintf("attempt %d", a.attempt))
+	c.log.Info("task given", "task", a.task.ID, "worker", w.name, "attempt", a.attempt)
 	w.running[a.task.ID] = a
 	keys := c.keys[a.job.ID]
 	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
