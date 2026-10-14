@@ -1,6 +1,6 @@
 # Contributing to Sisyphus
 
-Sisyphus is an early prototype built in the open. Issues, questions and pull requests are welcome.
+Sisyphus is an early prototype built in the open. Issues, questions and pull requests are welcome. Questions and early ideas go to [Discussions](https://github.com/sisyphus-network/Sisyphus/discussions); bugs and planned work go to issues. Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Before you start
 

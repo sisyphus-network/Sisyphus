@@ -273,6 +273,10 @@ func (w *Worker) swarmChanged(fingerprint string) {
 
 func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.TaskResult) {
 	result = &pb.TaskResult{TaskId: a.GetTaskId(), Attempt: a.GetAttempt()}
+	began := time.Now()
+	// Each task the worker is given shows in its own log as it ends, so
+	// that its owner sees what their machine is doing for the pool.
+	defer func() { w.logOutcome(ctx, a, result, time.Since(began)) }()
 	fail := func(err any) {
 		result.Outcome = &pb.TaskResult_Error{Error: fmt.Sprint(err)}
 	}
@@ -288,6 +292,15 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 		fail(err)
 		return result
 	}
+	started := []any{"job", a.GetJobId(), "task", a.GetTaskId(), "workload", a.GetWorkload(), "attempt", a.GetAttempt()}
+	// The model a task asks for is named, but not for a private job, whose
+	// owner may not want even that in a worker's log.
+	if needy, ok := workload.(runtime.Needy); ok && !private(a) {
+		if model := runtime.ModelNeeded(needy.Needs(a.GetPayload())); model != "" {
+			started = append(started, "model", model)
+		}
+	}
+	w.Log.Info("task started", started...)
 	if w.Limit != nil {
 		if !w.Limit.Acquire(ctx, w.Pool) {
 			fail(ctx.Err())
@@ -295,7 +308,6 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 		}
 		defer w.Limit.Release(w.Pool)
 	}
-	started := time.Now()
 	touched := runtime.Record(w.Blobs)
 	// A job that is not private opens no sealed blob: it has no key to one.
 	blobs := runtime.Open(touched)
@@ -315,9 +327,21 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 		return result
 	}
 	result.ReadBlobs, result.WrittenBlobs = touched.Read(), touched.Written()
-	w.Log.Debug("task done", "node", w.Name, "task", a.GetTaskId(), "took", time.Since(started).String())
 	result.Outcome = &pb.TaskResult_Output{Output: output}
 	return result
+}
+
+// logOutcome says in the worker's log how a task it was given ended.
+func (w *Worker) logOutcome(ctx context.Context, a *pb.TaskAssignment, result *pb.TaskResult, took time.Duration) {
+	said := []any{"job", a.GetJobId(), "task", a.GetTaskId(), "took", took.Round(time.Millisecond).String()}
+	switch {
+	case result.GetError() == "":
+		w.Log.Info("task done", append(said, "output_bytes", len(result.GetOutput()))...)
+	case ctx.Err() != nil:
+		w.Log.Info("task stopped", said...)
+	default:
+		w.Log.Warn("task failed", append(said, "error", result.GetError())...)
+	}
 }
 
 func (w *Worker) capabilities() *pb.NodeCapabilities {

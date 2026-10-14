@@ -4,6 +4,13 @@
 
 <h1 align="center">Sisyphus</h1>
 
+<p align="center">
+  <a href="https://github.com/sisyphus-network/Sisyphus/actions/workflows/ci.yml"><img src="https://github.com/sisyphus-network/Sisyphus/actions/workflows/ci.yml/badge.svg?branch=dev" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="Apache 2.0 license" /></a>
+  <a href="https://github.com/sisyphus-network/Sisyphus/discussions"><img src="https://img.shields.io/github/discussions/sisyphus-network/Sisyphus" alt="Discussions" /></a>
+  <a href="https://github.com/sisyphus-network/Sisyphus/issues/23"><img src="https://img.shields.io/badge/roadmap-%2323-8a2be2" alt="Roadmap" /></a>
+</p>
+
 **Sisyphus is a decentralized network for useful compute.** Independent participants contribute CPU and GPU capacity, and users and AI agents submit computational work to the network. Its planned economic layer uses SISY to coordinate incentives, supply, and demand.
 
 AI makes the network easier to use: describe a problem, and Sisyphus can plan the work, find suitable capacity, coordinate execution, inspect the results, and decide what to compute next.
@@ -244,7 +251,7 @@ The development shell includes Go, gopls, Delve, lint tools, Protocol Buffer gen
 
 ## Project status
 
-Sisyphus is an early prototype. The network loop works without AI: a coordinator splits a job, workers on other nodes run the tasks, and the results are combined. Everything so far has run on one machine as separate processes; it has not yet been tried across physically separate machines.
+Sisyphus is an early prototype. The network loop works without AI: a coordinator splits a job, workers on other nodes run the tasks, and the results are combined. It has run across physically separate machines on a home network, a Linux server and a Windows laptop with a graphics card, splitting a job between them and serving a language model from the card ([#18](https://github.com/sisyphus-network/Sisyphus/issues/18), [#87](https://github.com/sisyphus-network/Sisyphus/issues/87)).
 
 **Working today**, in `sisyphusd`, written in Go:
 
@@ -272,6 +279,8 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - Jobs made of steps, each a job of its own that can use the results of those before it.
 - Opt-in verification by replication: a job can ask that each of its tasks be run by several different workers and take a result only when they agree. A worker that returns something else is outvoted and named. It is for deterministic work, and does not stop workers that agree to lie. With spot checks only a share of the tasks, picked at random, is verified, and a worker that is caught has its other tasks in the job verified after all. A coordinator can count workers at one address as one, and can check a share of any job's tasks by running them again itself, which needs no second worker.
 - The node's local API over Connect and gRPC-Web as well as gRPC, so that a page in a browser can use it.
+- The desktop app's interface served by a node to a browser, which is paired with the node once by a one-time code and can be revoked device by device.
+- Several named model providers kept by a node, each with its own key, which never leaves the node.
 - A desktop app that shows a node and its pool, plans with it and admits or removes workers, packaged with the logo as a Windows installer, a macOS disk image and a Linux AppImage.
 - A first real workload, `transcode`: a video is cut into stretches, encoded by ffmpeg on different workers, and joined.
 - Container images as jobs: a worker whose owner allows it runs any image, one copy for each task, with its output stored and its log followed live.
@@ -283,6 +292,12 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 Try it with `make demo`, or see [Trying it](#trying-it) below. [`apps/sisyphusd/README.md`](apps/sisyphusd/README.md) is the full guide to running nodes, and [`docs/development.md`](docs/development.md) covers building, testing and contributing. [`docs/security-model.md`](docs/security-model.md) says what is protected today, what is not, and whom each party has to trust. The plan, in order, is in the [roadmap issue](https://github.com/sisyphus-network/Sisyphus/issues/23). What is still being thought through, the chain, the token, verification beyond what is built, and paid storage, is in [`docs/research`](docs/research/README.md): surveys and proposals, not decisions.
 
 Two things in this section go beyond what the sections above describe and are still open for discussion: the choice of Go ([#1](https://github.com/sisyphus-network/Sisyphus/issues/1)), and building storage on IPFS formats while V0 lists IPFS as out of scope ([#25](https://github.com/sisyphus-network/Sisyphus/issues/25)).
+
+## Community
+
+- **[Discussions](https://github.com/sisyphus-network/Sisyphus/discussions)**: questions, ideas, and what you have run on a pool.
+- **[Issues](https://github.com/sisyphus-network/Sisyphus/issues)**: bugs and planned work. The [board](https://github.com/orgs/sisyphus-network/projects/1) shows what is in progress.
+- **[Contributing](CONTRIBUTING.md)**, the [code of conduct](CODE_OF_CONDUCT.md), and [reporting a vulnerability](SECURITY.md).
 
 ## License
 

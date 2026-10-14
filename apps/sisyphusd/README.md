@@ -77,6 +77,18 @@ bin/sisyphusd pool join --addr <coordinator-ip>:7700 <invitation>   # on the oth
 bin/sisyphusd nodes --addr <coordinator-ip>:7700
 ```
 
+**Watching the work.** Each node's own output says what it is doing for the pool, so a pool can be followed from any of its machines:
+
+```text
+coordinator  msg="task given" task=34b7…/0 worker=laptop attempt=1
+laptop       msg="task started" job=34b7… task=34b7…/0 workload=chat attempt=1 model=llama3.1:8b
+laptop       msg="task done" job=34b7… task=34b7…/0 took=8.076s output_bytes=283
+coordinator  msg="task returned" task=34b7…/0 worker=laptop took=8.079s
+coordinator  msg="job finished" job=34b7… state=succeeded took=8.95s by="laptop×1"
+```
+
+A task that fails says why on the worker (`task failed … error=…`); one the coordinator took back says `task stopped`. A private job's tasks are logged without the model they ask for. `-v` adds the lower-level detail.
+
 ## Who can connect
 
 Every connection between nodes is encrypted, and each end proves who it is.
