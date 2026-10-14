@@ -29,12 +29,12 @@ Pushing a tag such as `v0.1.0` makes GitHub build `sisyphusd` and publish the bi
 | NetBSD | x86-64 |
 | Android | ARM64, for use in a terminal such as Termux |
 
-The whole test suite runs on Linux x86-64. The known-answer workloads, which have to give the same result wherever they run, are also run on every other row of the table but OpenBSD and FreeBSD on ARM64:
+The whole test suite runs on Linux x86-64. The known-answer workloads, which have to give the same result wherever they run, are also run on every other row of the table, and every row's daemon is built:
 
 - on GitHub's own Linux, Windows and macOS machines, on x86-64 and ARM64;
 - under an emulator for Linux's other processors;
 - natively for Android;
-- in virtual machines for FreeBSD, OpenBSD and NetBSD.
+- in virtual machines for FreeBSD, OpenBSD and NetBSD, emulated ARM64 ones for FreeBSD and OpenBSD on ARM64.
 
 Solaris, illumos, AIX, Plan 9 and NetBSD on ARM64 are not built because a dependency does not support them.
 
