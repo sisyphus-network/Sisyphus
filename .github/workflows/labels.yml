@@ -21,7 +21,7 @@ jobs:
       # someone has already been assigned. Bots, such as Dependabot, are not
       # assigned anything.
       - name: Assign the author
-        if: github.event.action == 'opened' && github.event.pull_request.user.type != 'Bot' && toJSON(github.event.pull_request.assignees) == '[]'
+        if: github.event.action == 'opened' && github.event.pull_request.user.type != 'Bot' && github.event.pull_request.user.login != 'rvnminers-A-and-N' && toJSON(github.event.pull_request.assignees) == '[]'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
