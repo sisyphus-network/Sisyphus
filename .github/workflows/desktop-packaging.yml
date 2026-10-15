@@ -2,6 +2,15 @@ name: Desktop packaging
 
 on:
   pull_request:
+    # A pull request that changes only words for people runs no builds or
+    # tests; one that changes anything else runs all of them. dev runs
+    # everything on every push.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'CITATION.cff'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
   push:
     branches: [dev]
 
