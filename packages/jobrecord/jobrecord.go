@@ -26,8 +26,9 @@
 // out it holds a commitment to it, which only the job's key can check; see
 // Commit.
 //
-// A record is not signed. Signing the root with the coordinator's node key
-// is future work.
+// A record holds no signature, so that its CID depends on the job alone. A
+// coordinator signs it in an attestation kept beside it (see Attest), which
+// anyone can check with the coordinator's node ID.
 package jobrecord
 
 import (

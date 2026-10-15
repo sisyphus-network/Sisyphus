@@ -205,6 +205,14 @@ message JobRecord {
   // the order the record has them, and whether the key gives it. Empty for
   // a record that holds no commitments.
   repeated CommitmentCheck commitments = 6;
+  // The coordinator's signature on the record, in a DAG-CBOR node of its
+  // own beside it, and that node's CID. Empty from a coordinator that does
+  // not sign. See packages/jobrecord, Attest.
+  string attestation_cid = 7;
+  RecordNode attestation = 8;
+  // Set if the record was asked to be checked and the attestation holds:
+  // the node ID whose key signed the record.
+  string attested_by = 9;
 }
 
 // CommitmentCheck is whether a key and a value the coordinator holds give

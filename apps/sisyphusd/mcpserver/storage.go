@@ -71,7 +71,7 @@ func (s *server) storage(out *mcp.Server) {
 	add(s, out, reads, &mcp.Tool{Name: "storage_status", Annotations: seen,
 		Description: "Says whether other nodes hold copies of what this node has pinned. kept_by says how the pool keeps copies. If followers (storage followers each hold a copy) or cluster (the pool's IPFS Cluster does, and its counts include this node), the answer lists each pinned file with how many copies it has, who holds them and how many were wanted. If this node alone, no other node is asked to hold anything and there is nothing more to list. Give cid to ask about one file."}, keeping(s, storageStatus))
 	add(s, out, reads, &mcp.Tool{Name: "get_job_record", Annotations: seen,
-		Description: "Returns the record of a job that is over: its history as linked data, named by one content ID, record_cid, that changes if anything in the history does. nodes holds the record's parts by their own IDs: what was asked, which worker ran each attempt at each task, and the IDs of its inputs and outputs. In them a link to another part or file is {\"/\": \"<content ID>\"} and bytes, such as the parameters and the result, are {\"/\": {\"bytes\": \"<base64 without padding>\"}}. With verify, the node works the record out again from the job as it holds it now: verified is true if that gives the same ID, and the tool fails if it does not. That shows the job has not changed since its record was written; it is the node checked against itself, not by anyone else."}, keeping(s, jobRecord))
+		Description: "Returns the record of a job that is over: its history as linked data, named by one content ID, record_cid, that changes if anything in the history does. nodes holds the record's parts by their own IDs: what was asked, which worker ran each attempt at each task, and the IDs of its inputs and outputs. In them a link to another part or file is {\"/\": \"<content ID>\"} and bytes, such as the parameters and the result, are {\"/\": {\"bytes\": \"<base64 without padding>\"}}. With verify, the node works the record out again from the job as it holds it now: verified is true if that gives the same ID, and the tool fails if it does not. That shows the job has not changed since its record was written; it is the node checked against itself, not by anyone else. attestation_cid names the coordinator's signature on the record, in a node of its own; with verify the signature is checked too, signed_by is the node ID whose key made it, and the tool fails if it does not hold. Anyone with that node ID can check it without trusting this node."}, keeping(s, jobRecord))
 	add(s, out, reads, &mcp.Tool{Name: "resolve_name", Annotations: seen,
 		Description: "Says which file a name stands for now. A name is a node's ID and stands for whichever file that node last published under it. This node is asked, which answers for its own name and for the nodes in its pool. The answer is a record the name's node signed, which is checked here: one that is not that node's, or has run out, is refused. sequence numbers the name's records from 0, each publishing one more than the last."}, keeping(s, resolveName))
 	add(s, out, uses, &mcp.Tool{Name: "pin_file",
@@ -99,7 +99,7 @@ func (s *server) storage(out *mcp.Server) {
 			return &mcp.GetPromptResult{Messages: []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: "Keep what job " + req.Params.Arguments["job_id"] + " on the Sisyphus pool made, " + long + ".\n\n" +
 				"get_job gives its stored_outputs: pin_file each of them, with ttl_hours if it is for a time. list_pins with each cid shows the pin and until when. " +
 				"storage_status says whether any other node holds a copy; say plainly if this node holds the only one. " +
-				"get_job_record with verify gives the ID of the job's record, which is what to quote as proof of what ran. " +
+				"get_job_record with verify gives the ID of the job's record, which is what to quote as proof of what ran, and the coordinator's signed attestation of it. " +
 				"Only if I ask for a name for the result: publish_name the output, then resolve_name to check it, and tell me when the record runs out. " +
 				"Report the content IDs kept and until when, how many copies there are, and the record's ID."}}}}, nil
 		})
@@ -351,6 +351,17 @@ func jobRecord(ctx context.Context, m *Main, args recordArgs) (any, error) {
 	out := map[string]any{"job_id": record.GetJobId(), "record_cid": record.GetRootCid()}
 	if request.GetVerify() {
 		out["verified"] = true
+	}
+	// The coordinator's signature on the record, which anyone can check
+	// with its node ID alone.
+	if attestation := record.GetAttestationCid(); attestation != "" {
+		out["attestation_cid"] = attestation
+		if request.GetVerify() && record.GetAttestedBy() == "" {
+			return nil, fmt.Errorf("the attestation %s of job %s's record %s does not hold: it is not the coordinator's signature on this record", attestation, record.GetJobId(), record.GetRootCid())
+		}
+		if signer := record.GetAttestedBy(); signer != "" {
+			out["signed_by"] = signer
+		}
 	}
 	// Each node as the coordinator rendered it, for as many as there is
 	// room to show.

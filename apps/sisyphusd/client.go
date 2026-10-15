@@ -298,11 +298,22 @@ func jobRecord(ctx context.Context, args []string) error {
 		return fmt.Errorf("the record came back as something that is not JSON: %w", err)
 	}
 	fmt.Fprintln(stdout, pretty.String())
+	attestation := record.GetAttestationCid()
+	if attestation != "" {
+		fmt.Fprintln(stdout, "attestation:", attestation)
+	}
 	if *verify && !record.GetMatches() {
 		return fmt.Errorf("job %s does not match its record: worked out again, the record would be %s", record.GetJobId(), record.GetRecomputedCid())
 	}
 	if *verify {
 		fmt.Fprintln(stdout, "verified: the job as the node holds it gives this record")
+	}
+	switch {
+	case !*verify || attestation == "":
+	case record.GetAttestedBy() == "":
+		return fmt.Errorf("the attestation %s of job %s's record does not hold: it is not the coordinator's signature on this record", attestation, record.GetJobId())
+	default:
+		fmt.Fprintln(stdout, "signed by:", record.GetAttestedBy())
 	}
 	if *keyFile != "" {
 		return reportCommitments(record, *keyFile)
