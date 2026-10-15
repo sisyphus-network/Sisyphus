@@ -1,7 +1,7 @@
 name: Labels
 
 # Labels each pull request by the files it changes and the kind of branch it
-# comes from, so that the board and the milestones can be read by area.
+# comes from, and assigns it to its author, so that the board and the milestones can be read by area.
 # pull_request_target runs this workflow as it is on dev, with the right to
 # label, and never checks out or runs the pull request's own code.
 on:
@@ -17,3 +17,14 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/labeler@v7
+      # The author is who the board shows the pull request with, unless
+      # someone has already been assigned. Bots, such as Dependabot, are not
+      # assigned anything.
+      - name: Assign the author
+        if: github.event.action == 'opened' && github.event.pull_request.user.type != 'Bot' && toJSON(github.event.pull_request.assignees) == '[]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: gh api -X POST "repos/$REPO/issues/$NUMBER/assignees" -f "assignees[]=$AUTHOR" --silent
