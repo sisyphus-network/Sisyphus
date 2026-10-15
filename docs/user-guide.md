@@ -43,7 +43,7 @@ Each also comes as a plain `.zip` or `.tar.gz` to unpack and run in place.
 
 These packages are not signed by a publisher that Windows or macOS knows, because that takes a paid certificate the project does not have yet. Both systems say so the first time, in words that sound worse than the fact. Check what you downloaded against the release's `SHA256SUMS` first (`Get-FileHash <file>` in PowerShell, `shasum -a 256 <file>` on macOS, `sha256sum <file>` on Linux); a file that matches is the one the project built.
 
-- **Windows, "Windows protected your PC".** Choose **More info**, then **Run anyway**. The publisher is shown as unknown.
+- **Windows, "Windows protected your PC".** Choose **More info**, then **Run anyway**. The publisher is shown as unknown: Windows takes that name only from a signature. Once installed, the app's details (its Properties, and Apps and Features) name it as made by Sisyphus Network, rvnminers-A-and-N and excho0.
 - **Windows, the firewall asking about "Sisyphus node".** That is the node inside the app asking to accept connections. Allow it on private networks if other machines are to join yours; a node used alone works without.
 - **macOS, "Sisyphus cannot be opened" or "the developer cannot be verified".** Close the message, open **System Settings**, **Privacy & Security**, scroll to the line about Sisyphus and choose **Open Anyway**. On older versions of macOS, right-click the app and choose **Open** instead.
 - **macOS, "Sisyphus is damaged and can't be opened".** It is not damaged: macOS says this of an unsigned app that came from a browser. Take the download mark off it with `xattr -dr com.apple.quarantine /Applications/Sisyphus.app` and open it again.

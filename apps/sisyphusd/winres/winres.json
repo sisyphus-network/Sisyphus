@@ -17,10 +17,10 @@
         "fixed": { "file_version": "0.0.0.0", "product_version": "0.0.0.0" },
         "info": {
           "0409": {
-            "CompanyName": "Sisyphus Network",
+            "CompanyName": "Sisyphus Network (rvnminers-A-and-N, excho0)",
             "FileDescription": "Sisyphus node",
             "InternalName": "sisyphusd",
-            "LegalCopyright": "Apache License 2.0",
+            "LegalCopyright": "Copyright © 2026 rvnminers-A-and-N and excho0. Apache License 2.0.",
             "OriginalFilename": "sisyphusd.exe",
             "ProductName": "Sisyphus"
           }
