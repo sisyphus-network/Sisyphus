@@ -6,6 +6,22 @@ let node
 before(async () => { node = await testNode() })
 after(async () => { await node?.remove() })
 
+async function openSettingsCategory(page, category) {
+  await open(page, 'Settings')
+  await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: new RegExp(category, 'i') }).click()
+}
+
+async function selectProvider(page, name) {
+  await page.getByRole('textbox', { name: 'Provider' }).click()
+  await page.getByRole('dialog', { name: 'Provider' }).getByRole('button', { name: new RegExp(`^${name}`, 'i') }).click()
+}
+
+async function selectLoadedModel(page, name) {
+  await page.getByText(/^Connected · \d+ models available$/).waitFor()
+  await page.getByRole('textbox', { name: 'Model' }).click()
+  await page.getByRole('dialog', { name: 'Choose model' }).getByRole('button', { name, exact: true }).click()
+}
+
 test('the window shows the node it is connected to', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
@@ -579,7 +595,7 @@ test('a language chosen with the keyboard turns the window round, and is still c
   const profile = testProfile()
   let { app, page } = await launch(node, profile)
   try {
-    await open(page, 'Settings')
+    await openSettingsCategory(page, 'Interface language')
     assert.equal(await page.locator('html').getAttribute('dir'), 'ltr')
     await page.getByRole('button', { name: 'Language' }).focus()
     await page.keyboard.press('Enter')
@@ -619,8 +635,8 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
     const initialAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim())
     assert.equal(initialAccent, '#f59ac4')
 
-    await open(page, 'Settings')
-    await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
+    await openSettingsCategory(page, 'Theme')
+    await page.getByRole('heading', { name: 'Theme', level: 1 }).waitFor()
     const accentPicker = page.getByRole('textbox', { name: 'Accent' })
     await accentPicker.scrollIntoViewIfNeeded()
     await accentPicker.click()
@@ -668,15 +684,12 @@ test('model settings load and save a local provider used by the planner', async 
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
-    await open(page, 'Settings')
+    await openSettingsCategory(page, 'Model provider')
     await page.getByRole('button', { name: 'Add provider' }).first().click()
-    await page.getByRole('combobox', { name: 'Provider' }).waitFor()
-    await page.getByRole('combobox', { name: 'Provider' }).selectOption('ollama')
+    await selectProvider(page, 'Ollama')
     await page.getByRole('textbox', { name: 'Profile name' }).fill('Local test model')
     await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
-    await page.getByRole('button', { name: 'Load models' }).click()
-    await page.waitForFunction(() => document.querySelector('#available-models option[value="test-model"]') !== null)
-    await page.locator('input[list="available-models"]').fill('test-model')
+    await selectLoadedModel(page, 'test-model')
     await page.getByRole('button', { name: 'Save and activate' }).click()
     await page.getByText('Model configuration saved').waitFor()
 
@@ -698,7 +711,7 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
-    await open(page, 'Settings')
+    await openSettingsCategory(page, 'Model provider')
     await page.getByText('Lend this machine’s models', { exact: true }).waitFor()
     await page.getByRole('textbox', { name: 'Ollama address' }).fill(ollama.url)
     await page.getByRole('button', { name: 'Check connection' }).click()
@@ -712,7 +725,7 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
     await page.getByRole('button', { name: 'Save lending settings' }).click()
     await page.getByText('Restart to apply lending or address changes', { exact: true }).first().waitFor()
     await page.reload()
-    await open(page, 'Settings')
+    await openSettingsCategory(page, 'Model provider')
     await page.getByRole('button', { name: 'Check connection' }).click()
     await page.getByRole('checkbox', { name: 'Make this machine’s models available to the pool', checked: true }).waitFor()
     await page.getByRole('checkbox', { name: 'test-model', checked: true }).waitFor()
@@ -734,15 +747,12 @@ test('model settings download a local model and report completion', async () => 
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
-    await open(page, 'Settings')
+    await openSettingsCategory(page, 'Model provider')
     await page.getByRole('button', { name: 'Add provider' }).first().click()
-    await page.getByRole('combobox', { name: 'Provider' }).waitFor()
-    await page.getByRole('combobox', { name: 'Provider' }).selectOption('ollama')
+    await selectProvider(page, 'Ollama')
     await page.getByRole('textbox', { name: 'Profile name' }).fill('Download test model')
     await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
-    await page.getByRole('button', { name: 'Load models' }).click()
-    await page.waitForFunction(() => document.querySelector('#available-models option[value="test-model"]') !== null)
-    await page.locator('input[list="available-models"]').fill('test-model')
+    await selectLoadedModel(page, 'test-model')
     await page.getByRole('button', { name: 'Save and activate' }).click()
     await page.getByText('Model configuration saved').waitFor()
     await page.getByRole('textbox', { name: 'Model name to download (e.g. llama3.1:8b)' }).fill('downloaded-test-model')
@@ -774,25 +784,23 @@ test('model settings save an OpenAI-compatible API key on the node and use it fo
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
-    await open(page, 'Settings')
+    await openSettingsCategory(page, 'Model provider')
     await page.getByRole('button', { name: 'Add provider' }).first().click()
-    const provider = page.getByRole('combobox', { name: 'Provider' })
-    await provider.waitFor()
-    await provider.selectOption('openai')
+    await selectProvider(page, 'OpenAI')
     await page.getByRole('textbox', { name: 'Profile name' }).fill('OpenAI test provider')
     await page.getByRole('textbox', { name: 'Service URL' }).fill(service.url)
     await page.getByLabel('API key').fill(apiKey)
-    await page.getByRole('button', { name: 'Load models' }).click()
-    await page.waitForFunction(() => document.querySelector('#available-models option[value="test-openai-model"]') !== null)
-    await page.locator('input[list="available-models"]').fill('test-openai-model')
+    await selectLoadedModel(page, 'test-openai-model')
     await page.getByRole('button', { name: 'Save and activate' }).click()
     await page.getByText('Model configuration saved').waitFor()
 
     // The UI receives only hasApiKey, never the stored secret itself.
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
     assert.equal(await page.getByLabel('API key').inputValue(), '')
     assert.equal(await page.getByLabel('API key').getAttribute('placeholder'), 'Leave empty to keep saved key')
     assert.equal(await page.getByText(apiKey, { exact: true }).count(), 0)
     assert.ok(service.authorizations.includes(`Bearer ${apiKey}`), 'model listing did not receive the API key')
+    await page.getByRole('dialog', { name: 'Edit' }).getByRole('button', { name: 'Cancel' }).click()
 
     await open(page, 'Workspace')
     await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Use the configured OpenAI-compatible provider.')
@@ -817,7 +825,7 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     // restoration even when Settings otherwise nearly fits in the window.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 620))
     await page.waitForFunction(() => window.innerWidth > 900 && window.innerHeight < 700)
-    await open(page, 'Settings')
+    await openSettingsCategory(page, 'Access')
     const sidebar = page.locator('.app-shell-body--advanced > aside')
     const header = page.locator('.app-global-header')
     const main = page.locator('.app-shell--settings .app-main')
@@ -864,10 +872,11 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     await settingsScroller.evaluate((element) => { element.scrollTop = Math.min(180, element.scrollHeight - element.clientHeight) })
     await page.waitForFunction(() => Number(document.querySelector('.settings-page__scroll')?.scrollTop) > 40)
     const savedSettingsTop = await page.locator('.settings-page__scroll').evaluate((element) => element.scrollTop)
-    await page.waitForFunction(() => Number(JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings']) > 40)
+    await page.waitForFunction(() => Number(JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings/access']) > 40)
     await page.getByRole('complementary').getByRole('link', { name: 'Node overview', exact: true }).click()
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
+    await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: /^Access/ }).click()
     await settingsScroller.waitFor()
     try {
       await page.waitForFunction((top) => Math.abs(Number(document.querySelector('.settings-page__scroll')?.scrollTop) - top) < 2, savedSettingsTop)
@@ -877,7 +886,7 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
         maxTop: element.scrollHeight - element.clientHeight,
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
-        saved: JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings'],
+        saved: JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings/access'],
       }))
       throw new Error(`Settings scroll did not restore from ${savedSettingsTop}: ${JSON.stringify(scrollState)}`, { cause: error })
     }
@@ -938,7 +947,7 @@ test('Settings replaces stale content while offline and restores its form after 
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
-    await open(page, 'Settings')
+    await openSettingsCategory(page, 'Model provider')
     await page.getByRole('button', { name: 'Add provider' }).first().waitFor()
     await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
 
@@ -951,8 +960,7 @@ test('Settings replaces stale content while offline and restores its form after 
     await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor({ timeout: 60000 })
     await page.getByRole('button', { name: 'Add provider' }).first().waitFor({ timeout: 30000 })
     await page.getByRole('button', { name: 'Add provider' }).first().click()
-    await page.getByRole('combobox', { name: 'Provider' }).waitFor({ timeout: 30000 })
-    await page.getByRole('button', { name: 'Load models' }).waitFor()
+    await page.getByRole('textbox', { name: 'Provider' }).waitFor({ timeout: 30000 })
   } finally {
     await app.close()
     profile.remove()
