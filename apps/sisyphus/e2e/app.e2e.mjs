@@ -795,7 +795,10 @@ test('model settings save an OpenAI-compatible API key on the node and use it fo
     await page.getByText('Model configuration saved').waitFor()
 
     // The UI receives only hasApiKey, never the stored secret itself.
-    await page.getByRole('button', { name: 'Edit', exact: true }).click()
+    await page.locator('[data-slot="card"].rounded-2xl')
+      .filter({ hasText: 'OpenAI test provider' })
+      .getByRole('button', { name: 'Edit', exact: true })
+      .click()
     assert.equal(await page.getByLabel('API key').inputValue(), '')
     assert.equal(await page.getByLabel('API key').getAttribute('placeholder'), 'Leave empty to keep saved key')
     assert.equal(await page.getByText(apiKey, { exact: true }).count(), 0)

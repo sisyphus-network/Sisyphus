@@ -112,9 +112,9 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
   const advanced = location.pathname !== '/'
   const compact = useBreakpoint('(max-width: 760px)')
   useLayoutEffect(() => {
-    // Desktop settings owns an internal scroller so its shell and header can stay fixed.
-    // That scroller persists its position from SettingsPage.
-    if (advanced && !compact && location.pathname === '/settings') return
+    // Every desktop settings route owns an internal scroller so its shell and
+    // header can stay fixed. SettingsPage persists that scroller's position.
+    if (advanced && !compact && location.pathname.startsWith('/settings')) return
     const mainScroller = advanced ? document.querySelector<HTMLElement>('.app-shell--advanced .app-main') : null
     const scrollTarget: Window | HTMLElement = mainScroller ?? window
     const getTop = () => mainScroller ? mainScroller.scrollTop : window.scrollY
