@@ -63,3 +63,19 @@ func TestWorkloadsDescribeThemselves(t *testing.T) {
 		t.Errorf("a workload that is not there describes itself as %q", got)
 	}
 }
+
+// A model's reply and a container's output can differ between honest
+// runs; the other built-in workloads give the same bytes every time, and
+// only those may be checked by comparing runs.
+func TestWhichWorkloadsSayTheirResultsVary(t *testing.T) {
+	for _, w := range []Workload{Chat{}, Prompts{}, Embed{}, Container{}} {
+		if varying, ok := w.(Varying); !ok || !varying.Varies() {
+			t.Errorf("%s does not say its results vary", w.Name())
+		}
+	}
+	for _, w := range []Workload{Primes{}, WordCount{}, Transcode{}, Graph{}} {
+		if _, ok := w.(Varying); ok {
+			t.Errorf("%s says its results vary", w.Name())
+		}
+	}
+}

@@ -107,6 +107,32 @@ func (failsHere) Execute(context.Context, runtime.Blobs, []byte) ([]byte, error)
 	return nil, errors.New("no such program on this machine")
 }
 
+// Work whose result can differ between honest runs is not verified or
+// audited: comparing two runs' bytes would only fail it, after paying for
+// every copy. Run once, it is taken as before.
+func TestWorkWhoseResultVariesIsNotCheckedByComparingRuns(t *testing.T) {
+	p := startPool(t, runtime.NewRegistry(runtime.Primes{}, runtime.Chat{}, runtime.Prompts{}, runtime.Embed{}, runtime.Container{}))
+	chat := []byte(`{"model":"llama3.1:8b","messages":[{"role":"user","content":"hi"}]}`)
+	for _, workload := range []string{"chat", "prompts", "embed", "container"} {
+		for name, spec := range map[string]*pb.JobSpec{
+			"verify":       {Workload: workload, Params: chat, Verify: 2},
+			"verify_share": {Workload: workload, Params: chat, Verify: 3, VerifyShare: 0.5},
+			"audit_share":  {Workload: workload, Params: chat, AuditShare: 0.5},
+		} {
+			_, err := p.client.SubmitJob(p.ctx, &pb.SubmitJobRequest{Spec: spec})
+			if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), workload+" gives results that can differ from one run to the next") {
+				t.Errorf("%s with %s: %v", workload, name, err)
+			}
+		}
+	}
+	// Work that gives the same result every time may still be checked: in
+	// this pool, with no workers, it waits for two, not for a reason
+	// about the work.
+	if _, err := p.client.SubmitJob(p.ctx, &pb.SubmitJobRequest{Spec: &pb.JobSpec{Workload: "primes", Params: []byte(hundred), Verify: 2}}); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "2 different workers") {
+		t.Errorf("primes with verify: %v", err)
+	}
+}
+
 func TestWhatAnAuditIsRefusedForAndWhatItDoesWhenItCannotCompare(t *testing.T) {
 	p := startPool(t, runtime.NewRegistry(runtime.Primes{}, runtime.Graph{}, failsHere{}))
 	for name, tt := range map[string]struct {

@@ -128,6 +128,9 @@ type ContainerResult struct {
 	Tasks []ContainerOutput `json:"tasks"`
 }
 
+// Varies says that Container results can differ between runs.
+func (Container) Varies() bool { return true }
+
 func (Container) Name() string { return "container" }
 
 func (Container) Describe() string {
