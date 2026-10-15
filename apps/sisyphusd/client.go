@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/sisyphus-network/Sisyphus/packages/jobrecord"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
@@ -252,7 +253,7 @@ func jobLogs(ctx context.Context, args []string) error {
 func jobRecord(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd job record", flag.ContinueOnError)
 	node := targetFlags(fs)
-	verify := fs.Bool("verify", false, "work the record out again from the job, and fail if it is not the record the job names")
+	verify := fs.Bool("verify", false, "work the record out again from the job, and fail if it is not the record the job names or the coordinator's signature on it does not hold")
 	keyFile := fs.String("key-file", "", "a private job's key: verify the record, and also check its commitments against the values the node holds")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -308,12 +309,17 @@ func jobRecord(ctx context.Context, args []string) error {
 	if *verify {
 		fmt.Fprintln(stdout, "verified: the job as the node holds it gives this record")
 	}
-	switch {
-	case !*verify || attestation == "":
-	case record.GetAttestedBy() == "":
-		return fmt.Errorf("the attestation %s of job %s's record does not hold: it is not the coordinator's signature on this record", attestation, record.GetJobId())
-	default:
-		fmt.Fprintln(stdout, "signed by:", record.GetAttestedBy())
+	if *verify && attestation != "" {
+		// Checked here, not taken from the coordinator: the attestation
+		// holds its signer's ID, and the ID holds the key that checks it.
+		checked, err := jobrecord.CheckAttestation(record.GetAttestation().GetData())
+		if err == nil && checked.Record.String() != record.GetRootCid() {
+			err = fmt.Errorf("it signs record %s, not this one", checked.Record)
+		}
+		if err != nil {
+			return fmt.Errorf("the attestation %s of job %s's record does not hold: %w", attestation, record.GetJobId(), err)
+		}
+		fmt.Fprintln(stdout, "signed by:", checked.Signer)
 	}
 	if *keyFile != "" {
 		return reportCommitments(record, *keyFile)
