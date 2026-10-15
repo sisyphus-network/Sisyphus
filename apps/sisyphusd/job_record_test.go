@@ -22,6 +22,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
 	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
+	"github.com/sisyphus-network/Sisyphus/packages/jobrecord"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
@@ -617,14 +618,21 @@ func TestCLIPrintsAJobsRecordAndItIsThereAfterARestart(t *testing.T) {
 	if err != nil || root.Type() != cid.DagCBOR {
 		t.Fatalf("the first line printed is %q, want the record's CID: %v", first, err)
 	}
+	// The record's nodes as JSON, then the node's attestation of it.
+	doc, attested, _ := strings.Cut(rest, "attestation: ")
+	attestationCID, err := cid.Decode(strings.TrimSpace(attested))
+	if err != nil || attestationCID.Type() != cid.DagCBOR {
+		t.Fatalf("no attestation after the record: %q, %v", attested, err)
+	}
 	var nodes map[string]map[string]any
-	if err := json.Unmarshal([]byte(rest), &nodes); err != nil {
+	if err := json.Unmarshal([]byte(doc), &nodes); err != nil {
 		t.Fatalf("what follows the CID is not JSON: %v\n%s", err, rest)
 	}
 	if len(nodes) != 4 || nodes[first]["job"] != id || nodes[linkOf(nodes[first]["manifest"])]["workload"] != "primes" {
 		t.Errorf("printed:\n%s", printed)
 	}
-	if checked := mustCLI(t, "job", "record", "--verify", "--addr", addr, id); !strings.HasPrefix(checked, printed) || !strings.Contains(checked, "verified:") {
+	// Checking it says whose key signed it: this node's.
+	if checked := mustCLI(t, "job", "record", "--verify", "--addr", addr, id); !strings.HasPrefix(checked, printed) || !strings.Contains(checked, "verified:") || !strings.Contains(checked, "signed by: "+nodeID(t, dataDir)+"\n") {
 		t.Errorf("job record --verify printed:\n%s", checked)
 	}
 	stop()
@@ -635,10 +643,15 @@ func TestCLIPrintsAJobsRecordAndItIsThereAfterARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, missing := store.GetNode(context.Background(), root)
+	attestation, unattested := store.GetNode(context.Background(), attestationCID)
 	pins := jobRecordPins(store, id)
 	store.Close()
-	if missing != nil || len(pins) != 1 {
-		t.Fatalf("with the node stopped, its store holds the record: %v, under %d pins", missing, len(pins))
+	if missing != nil || unattested != nil || len(pins) != 2 {
+		t.Fatalf("with the node stopped, its store holds the record (%v) and its attestation (%v), under %d pins", missing, unattested, len(pins))
+	}
+	// The attestation checks out with nothing but the node's ID.
+	if checked, err := jobrecord.CheckAttestation(attestation); err != nil || !checked.Record.Equals(root) || checked.Signer != nodeID(t, dataDir) {
+		t.Errorf("the stored attestation: %+v, %v", checked, err)
 	}
 
 	// And the node, started again, gives the same record for the same job.
@@ -908,4 +921,22 @@ func TestCLIChecksAPrivateJobsCommitmentsWithItsKey(t *testing.T) {
 		t.Errorf("after a restart job record --verify printed:\n%s\nbefore it:\n%s", after, printed)
 	}
 	checkedWithKey(again)
+}
+
+// job record shows a record's attestation, and checking the record checks
+// it too: one that does not hold fails the check.
+func TestCLIReportsARecordsAttestation(t *testing.T) {
+	record := &pb.JobRecord{
+		JobId: "j", RootCid: "bafyroot", RecomputedCid: "bafyroot", Matches: true, AttestationCid: "bafyattestation",
+		Nodes: []*pb.RecordNode{{Cid: "bafyroot", Json: `{"job":"j"}`}},
+	}
+	addr := serveFake(t, func(srv *grpc.Server) { pb.RegisterNodeServiceServer(srv, scriptedRecord{record: record}) })
+	out, err := cli(t, "job", "record", "--verify", "--addr", addr, "j")
+	if err == nil || !strings.Contains(err.Error(), "the attestation bafyattestation of job j's record does not hold") || !strings.Contains(out, "attestation: bafyattestation\n") {
+		t.Errorf("an attestation that does not hold: %q, %v", out, err)
+	}
+	record.AttestedBy = "12D3KooWcoordinator"
+	if out, err := cli(t, "job", "record", "--verify", "--addr", addr, "j"); err != nil || !strings.HasSuffix(out, "signed by: 12D3KooWcoordinator\n") {
+		t.Errorf("an attestation that holds: %q, %v", out, err)
+	}
 }

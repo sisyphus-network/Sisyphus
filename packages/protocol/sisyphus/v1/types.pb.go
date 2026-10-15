@@ -977,7 +977,15 @@ type JobRecord struct {
 	// Set if a key was sent: each commitment of a private job's record, in
 	// the order the record has them, and whether the key gives it. Empty for
 	// a record that holds no commitments.
-	Commitments   []*CommitmentCheck `protobuf:"bytes,6,rep,name=commitments,proto3" json:"commitments,omitempty"`
+	Commitments []*CommitmentCheck `protobuf:"bytes,6,rep,name=commitments,proto3" json:"commitments,omitempty"`
+	// The coordinator's signature on the record, in a DAG-CBOR node of its
+	// own beside it, and that node's CID. Empty from a coordinator that does
+	// not sign. See packages/jobrecord, Attest.
+	AttestationCid string      `protobuf:"bytes,7,opt,name=attestation_cid,json=attestationCid,proto3" json:"attestation_cid,omitempty"`
+	Attestation    *RecordNode `protobuf:"bytes,8,opt,name=attestation,proto3" json:"attestation,omitempty"`
+	// Set if the record was asked to be checked and the attestation holds:
+	// the node ID whose key signed the record.
+	AttestedBy    string `protobuf:"bytes,9,opt,name=attested_by,json=attestedBy,proto3" json:"attested_by,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1052,6 +1060,27 @@ func (x *JobRecord) GetCommitments() []*CommitmentCheck {
 		return x.Commitments
 	}
 	return nil
+}
+
+func (x *JobRecord) GetAttestationCid() string {
+	if x != nil {
+		return x.AttestationCid
+	}
+	return ""
+}
+
+func (x *JobRecord) GetAttestation() *RecordNode {
+	if x != nil {
+		return x.Attestation
+	}
+	return nil
+}
+
+func (x *JobRecord) GetAttestedBy() string {
+	if x != nil {
+		return x.AttestedBy
+	}
+	return ""
 }
 
 // CommitmentCheck is whether a key and a value the coordinator holds give
@@ -1352,14 +1381,18 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x04step\x18\x0e \x01(\tR\x04step\x12\x1d\n" +
 	"\n" +
 	"record_cid\x18\x0f \x01(\tR\trecordCid\x12!\n" +
-	"\fsubmitter_id\x18\x10 \x01(\tR\vsubmitterId\"\xed\x01\n" +
+	"\fsubmitter_id\x18\x10 \x01(\tR\vsubmitterId\"\xf2\x02\n" +
 	"\tJobRecord\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x19\n" +
 	"\broot_cid\x18\x02 \x01(\tR\arootCid\x12-\n" +
 	"\x05nodes\x18\x03 \x03(\v2\x17.sisyphus.v1.RecordNodeR\x05nodes\x12%\n" +
 	"\x0erecomputed_cid\x18\x04 \x01(\tR\rrecomputedCid\x12\x18\n" +
 	"\amatches\x18\x05 \x01(\bR\amatches\x12>\n" +
-	"\vcommitments\x18\x06 \x03(\v2\x1c.sisyphus.v1.CommitmentCheckR\vcommitments\"?\n" +
+	"\vcommitments\x18\x06 \x03(\v2\x1c.sisyphus.v1.CommitmentCheckR\vcommitments\x12'\n" +
+	"\x0fattestation_cid\x18\a \x01(\tR\x0eattestationCid\x129\n" +
+	"\vattestation\x18\b \x01(\v2\x17.sisyphus.v1.RecordNodeR\vattestation\x12\x1f\n" +
+	"\vattested_by\x18\t \x01(\tR\n" +
+	"attestedBy\"?\n" +
 	"\x0fCommitmentCheck\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\amatches\x18\x02 \x01(\bR\amatches\"F\n" +
@@ -1439,12 +1472,13 @@ var file_sisyphus_v1_types_proto_depIdxs = []int32{
 	13, // 10: sisyphus.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
 	11, // 11: sisyphus.v1.JobRecord.nodes:type_name -> sisyphus.v1.RecordNode
 	10, // 12: sisyphus.v1.JobRecord.commitments:type_name -> sisyphus.v1.CommitmentCheck
-	13, // 13: sisyphus.v1.JobEvent.at:type_name -> google.protobuf.Timestamp
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	11, // 13: sisyphus.v1.JobRecord.attestation:type_name -> sisyphus.v1.RecordNode
+	13, // 14: sisyphus.v1.JobEvent.at:type_name -> google.protobuf.Timestamp
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_types_proto_init() }

@@ -526,3 +526,22 @@ func TestAJobIsSharedOutAsTheAgentSays(t *testing.T) {
 		t.Errorf("a mode there is not: %v", err)
 	}
 }
+
+// A record a coordinator signed comes with its attestation, which checking
+// the record checks too.
+func TestAJobsRecordComesWithItsAttestation(t *testing.T) {
+	ctx := context.Background()
+	k := &kept{record: &pb.JobRecord{JobId: "job-3", RootCid: "root-cid", Matches: true, AttestationCid: "attestation-cid",
+		Nodes: []*pb.RecordNode{{Cid: "root-cid", Json: `{"job":"job-3"}`}}}}
+	m := reaching(t, k)
+	if got := told(jobRecord(ctx, m, recordArgs{JobID: "job-3"})); !strings.Contains(got, `"attestation_cid":"attestation-cid"`) || strings.Contains(got, "signed_by") {
+		t.Errorf("a signed record, not checked: %s", got)
+	}
+	if got := told(jobRecord(ctx, m, recordArgs{JobID: "job-3", Verify: true})); got != "failed: the attestation attestation-cid of job job-3's record root-cid does not hold: it is not the coordinator's signature on this record" {
+		t.Errorf("an attestation that does not hold: %s", got)
+	}
+	k.record.AttestedBy = "12D3KooWcoordinator"
+	if got := told(jobRecord(ctx, m, recordArgs{JobID: "job-3", Verify: true})); !strings.Contains(got, `"signed_by":"12D3KooWcoordinator"`) || !strings.Contains(got, `"verified":true`) {
+		t.Errorf("an attestation that holds: %s", got)
+	}
+}

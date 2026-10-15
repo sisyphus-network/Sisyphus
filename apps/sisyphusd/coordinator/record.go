@@ -98,9 +98,24 @@ func (c *Coordinator) keepRecord(ctx context.Context, job *jobmodel.Job, record 
 		linked = append(linked, node.Data)
 	}
 	_, failed := c.store.PutNodes(ctx, record.Nodes[0].Data, linked...)
+	kept := []cid.Cid{record.Root}
+	if attestation, ok := c.attest(record.Root); ok {
+		_, stored := c.store.PutNodes(ctx, attestation.Data)
+		failed = errors.Join(failed, stored)
+		kept = append(kept, attestation.CID)
+	}
 	return errors.Join(err, failed,
 		c.store.Pin(ctx, owner(job), job.FinishedAt.Add(c.retain), values...),
-		c.store.Pin(ctx, recordOwner(job.ID), time.Time{}, record.Root))
+		c.store.Pin(ctx, recordOwner(job.ID), time.Time{}, kept...))
+}
+
+// attest returns this coordinator's attestation of the record with the
+// given root, if it signs records.
+func (c *Coordinator) attest(root cid.Cid) (jobrecord.Node, bool) {
+	if c.sign == nil {
+		return jobrecord.Node{}, false
+	}
+	return jobrecord.Attest(root, c.id, c.sign), true
 }
 
 // Record returns the record of a job that is over, as the store holds it.
@@ -149,6 +164,21 @@ func (c *Coordinator) Record(ctx context.Context, jobID string, verify bool, key
 	}
 	if verify {
 		out.RecomputedCid, out.Matches = fresh.Root.String(), fresh.Root.Equals(root)
+	}
+	if attestation, ok := c.attest(root); ok {
+		// The attestation as stored, if it is, so that a check reads what
+		// anyone fetching it would; made afresh if not, since it is the
+		// same every time.
+		data, err := c.store.GetNode(ctx, attestation.CID)
+		if err != nil {
+			data = attestation.Data
+		}
+		node := jobrecord.Node{CID: attestation.CID, Data: data}
+		out.AttestationCid = node.CID.String()
+		out.Attestation = &pb.RecordNode{Cid: node.CID.String(), Data: node.Data, Json: node.JSON()}
+		if checked, err := jobrecord.CheckAttestation(data); verify && err == nil && checked.Record.Equals(root) {
+			out.AttestedBy = checked.Signer
+		}
 	}
 	return out, nil
 }

@@ -104,7 +104,10 @@ func (noStandings) LoadStandings() ([]jobmodel.Standing, error) { return nil, ni
 
 type Config struct {
 	// ID names this coordinator to its workers.
-	ID        string
+	ID string
+	// Sign, if set, signs with the key of the node named ID. A job's
+	// record is then kept with the coordinator's attestation of it.
+	Sign      func([]byte) []byte
 	Workloads *runtime.Registry
 	// Audits is the workloads this node can run itself, and so can audit:
 	// run a task again to check what a worker returned for it. Nil is none.
@@ -132,7 +135,9 @@ type Config struct {
 type Coordinator struct {
 	pb.UnimplementedCoordinatorServiceServer
 
-	id        string
+	id string
+	// sign, if set, signs with the coordinator's node key; see Config.Sign.
+	sign      func([]byte) []byte
 	workloads *runtime.Registry
 	audits    *runtime.Registry
 	// distinct is whether a verified task's copies must go to workers at
@@ -284,6 +289,7 @@ func New(cfg Config) *Coordinator {
 	}
 	c := &Coordinator{
 		id:        cfg.ID,
+		sign:      cfg.Sign,
 		workloads: cfg.Workloads,
 		audits:    cfg.Audits,
 		distinct:  cfg.DistinctAddresses,
