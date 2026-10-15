@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUpRight, Check, Download, Globe2, Languages, LoaderCircle, Palette, Plus, QrCode, ServerCog, Trash2 } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Check, ChevronRight, Download, Globe2, Languages, LoaderCircle, Palette, Plus, QrCode, ServerCog, Trash2 } from 'lucide-react'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { LanguagePicker } from '@/components/language-picker'
 import { ThemeModeSwitch } from '@/components/theme-mode-switch'
 import { ThemeStylePicker } from '@/components/theme-style-picker'
@@ -18,10 +18,16 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Drawer } from 'vaul'
 import { RemoteAccessSettings } from '@/pages/RemoteAccessSettings'
 import { ModelLendingSettings } from '@/components/model-lending-settings'
+import { BrowserAccessPage } from '@/pages/BrowserAccessPage'
 
 type Messages = ReturnType<typeof getMessages>
-export function SettingsPage({ locale, setLocale, messages, direction }: { locale: AppLocale; setLocale: (locale: AppLocale) => void; messages: Messages; direction: 'ltr' | 'rtl' }) {
+type SettingsCategory = 'node' | 'access' | 'language' | 'models' | 'appearance'
+export function SettingsPage({ locale, setLocale, messages, direction, category: categoryOverride }: { locale: AppLocale; setLocale: (locale: AppLocale) => void; messages: Messages; direction: 'ltr' | 'rtl'; category?: string }) {
   const labels = messages.modelSettings
+  const location = useLocation()
+  const { category: routeCategory } = useParams()
+  const category = categoryOverride ?? routeCategory
+  const activeCategory = category && ['node', 'access', 'language', 'models', 'appearance'].includes(category) ? category as SettingsCategory : undefined
   const scrollRef = useRef<HTMLDivElement>(null)
   const [providers, setProviders] = useState<{ id: string; name: string; about: string; defaultUrl: string; needsKey: string | number; fetchesModels: boolean }[]>([])
   const [profiles, setProfiles] = useState<{ id: string; name: string; provider: string; baseUrl: string; model: string; hasApiKey: boolean; active: boolean }[]>([])
@@ -228,7 +234,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
       try {
         const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
         const stored = positions && typeof positions === 'object' ? positions as Record<string, unknown> : {}
-        window.localStorage.setItem(key, JSON.stringify({ ...stored, '/settings': scroller.scrollTop }))
+        window.localStorage.setItem(key, JSON.stringify({ ...stored, [location.pathname]: scroller.scrollTop }))
       } catch { /* Storage may be unavailable in restricted contexts. */ }
     }
     const finishRestore = () => {
@@ -249,7 +255,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
     }
     try {
       const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
-      const value = positions && typeof positions === 'object' ? (positions as Record<string, unknown>)['/settings'] : undefined
+      const value = positions && typeof positions === 'object' ? (positions as Record<string, unknown>)[location.pathname] : undefined
       savedTop = typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
     } catch { /* Ignore malformed saved scroll positions. */ }
     restorePending = savedTop > 0
@@ -267,7 +273,7 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
       save()
       scroller.removeEventListener('scroll', save)
     }
-  }, [])
+  }, [location.pathname])
 
   const profileForm = <div className="space-y-4 p-5 sm:p-6">
     <label className="block space-y-1.5 text-xs"><span>{labels.profileName}</span><Input value={profileName} onChange={(event) => setProfileName(event.target.value)} autoFocus /></label>
@@ -279,23 +285,35 @@ export function SettingsPage({ locale, setLocale, messages, direction }: { local
     <div className="flex flex-col-reverse gap-2 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:justify-end"><Button type="button" variant="outline" onClick={() => handleProfileOpenChange(false)}>{messages.cancel}</Button><Button type="button" disabled={!profileName.trim() || !provider} onClick={() => void saveProfile(false)}>{labels.saveProfile}</Button><Button type="button" disabled={!profileName.trim() || !provider || !model} onClick={() => void saveProfile(true)}>{labels.saveAndActivate}</Button></div>
   </div>
 
+  const categoryMeta: Record<SettingsCategory, { title: string; description: string; icon: typeof Globe2 }> = {
+    node: { title: messages.localNodeSettings, description: messages.localDaemonSettingsHint, icon: Globe2 },
+    access: { title: messages.webAccess.title, description: messages.webAccess.exposureDescription, icon: QrCode },
+    language: { title: messages.languageSettings, description: messages.languageSettingsHint, icon: Languages },
+    models: { title: labels.title, description: labels.hint, icon: ServerCog },
+    appearance: { title: messages.theme, description: messages.themeSettingsHint, icon: Palette },
+  }
+  const categories = (Object.keys(categoryMeta) as SettingsCategory[]).filter((item) => item !== 'access' || isDesktopApp())
+
   return <div className="settings-page">
-    <div className="settings-page__heading"><PageHeading title={messages.settings} description={messages.settingsDescription} /></div>
+    <div className="settings-page__heading"><PageHeading title={activeCategory ? categoryMeta[activeCategory].title : messages.settings} description={activeCategory ? categoryMeta[activeCategory].description : messages.settingsDescription} /></div>
     <div ref={scrollRef} className="settings-page__scroll">
-    <div className="grid w-full min-w-0 gap-4">
-      <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><Globe2 className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{messages.node}</div><CardTitle className="mt-0.5 text-sm">{messages.localNodeSettings}</CardTitle></div></CardHeader><CardContent><div className="flex items-center gap-3 py-2"><div className="grid size-8 place-items-center rounded-lg border border-[var(--app-line)]"><ServerCog className="size-4 text-muted-foreground" /></div><div className="min-w-0 flex-1"><div className="text-xs font-medium">{messages.localDaemon}</div><div className="mt-1 text-[10px] text-muted-foreground">{messages.localDaemonSettingsHint}</div></div><span className="rounded-full border border-emerald-500/25 bg-emerald-500/5 px-2 py-1 text-[9px] text-emerald-700 dark:text-emerald-300">{messages.managedByDaemon}</span></div></CardContent></Card>
-      {isDesktopApp() && <RemoteAccessSettings messages={messages} />}
-      <Link to="/pairing" className="block no-underline"><Card className="transition-colors hover:border-[var(--app-accent)]/40"><CardHeader className="flex flex-row items-center gap-3 py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><QrCode className="size-4 text-muted-foreground" /></div><div className="min-w-0 flex-1"><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{messages.browserAccess.eyebrow}</div><CardTitle className="mt-0.5 text-sm">{messages.browserAccess.title}</CardTitle><p className="mt-1 text-[10px] text-muted-foreground">{messages.browserAccess.description}</p></div><ArrowUpRight className="size-4 shrink-0 text-muted-foreground rtl:rotate-[-90deg]" /></CardHeader></Card></Link>
-      <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><Languages className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{messages.language}</div><CardTitle className="mt-0.5 text-sm">{messages.languageSettings}</CardTitle></div></CardHeader><CardContent><div className="max-w-sm py-2"><LanguagePicker value={locale} label={messages.language} onChange={setLocale} /></div><p className="mt-2 text-[10px] text-muted-foreground">{messages.languageSettingsHint}</p></CardContent></Card>
-      <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><ServerCog className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{labels.localAi}</div><CardTitle className="mt-0.5 text-sm">{labels.title}</CardTitle></div><Badge variant="outline" className="ms-auto">{labels.stored}</Badge></CardHeader><CardContent className="space-y-4 pt-4">
+    <div className="settings-page__content grid w-full min-w-0 gap-4">
+      {!activeCategory ? <nav aria-label={messages.settings} className="settings-category-grid">
+        {categories.map((item) => { const Icon = categoryMeta[item].icon; return <Link key={item} to={`/settings/${item}`} className="settings-category-card"><span className="settings-category-card__icon"><Icon className="size-5" /></span><span className="settings-category-card__copy"><span className="settings-category-card__title">{categoryMeta[item].title}</span><span className="settings-category-card__description">{categoryMeta[item].description}</span></span><ChevronRight className="settings-category-card__arrow" /></Link> })}
+      </nav> : <div className="settings-category-content">
+      {activeCategory === 'node' && <Card className="settings-card"><CardHeader className="settings-card__header"><div className="settings-card__icon"><Globe2 className="size-5" /></div><div><div className="settings-card__eyebrow">{messages.node}</div><CardTitle>{messages.localNodeSettings}</CardTitle></div></CardHeader><CardContent><div className="settings-row"><div className="settings-row__icon"><ServerCog className="size-4" /></div><div className="min-w-0 flex-1"><div className="text-sm font-medium">{messages.localDaemon}</div><div className="mt-1 text-sm text-muted-foreground">{messages.localDaemonSettingsHint}</div></div><span className="settings-status">{messages.managedByDaemon}</span></div></CardContent></Card>}
+      {activeCategory === 'access' && isDesktopApp() && <><RemoteAccessSettings messages={messages} /><BrowserAccessPage messages={messages} showHeading={false} /></>}
+      {activeCategory === 'language' && <Card className="settings-card settings-card--popover"><CardHeader className="settings-card__header"><div className="settings-card__icon"><Languages className="size-5" /></div><div><div className="settings-card__eyebrow">{messages.language}</div><CardTitle>{messages.languageSettings}</CardTitle></div></CardHeader><CardContent><div className="max-w-md"><LanguagePicker value={locale} label={messages.language} onChange={setLocale} /></div><p className="mt-3 text-sm text-muted-foreground">{messages.languageSettingsHint}</p></CardContent></Card>}
+      {activeCategory === 'appearance' && <Card className="settings-card settings-card--popover"><CardHeader className="settings-card__header"><div className="settings-card__icon"><Palette className="size-5" /></div><div><div className="settings-card__eyebrow">{messages.appearance}</div><CardTitle>{messages.theme}</CardTitle></div></CardHeader><CardContent><div className="settings-row"><div><div className="text-sm font-medium">{messages.theme}</div><p className="mt-1 text-sm text-muted-foreground">{messages.themeSettingsHint}</p></div><ThemeModeSwitch direction={direction} labels={{ system: messages.themeSystem, light: messages.themeLight, dark: messages.themeDark, switchTheme: messages.switchTheme }} /></div><div className="settings-row settings-row--divider"><div><div className="text-sm font-medium">{messages.accent}</div><p className="mt-1 text-sm text-muted-foreground">{messages.accentSettingsHint}</p></div><div className="w-full max-w-md"><ThemeStylePicker direction={direction} labels={{ label: messages.accent, neutral: messages.accentNeutral, blue: messages.accentBlue, pink: messages.accentPink }} /></div></div></CardContent></Card>}
+      {activeCategory === 'models' && <Card className="settings-card settings-card--wide"><CardHeader className="settings-card__header"><div className="settings-card__icon"><ServerCog className="size-5" /></div><div><div className="settings-card__eyebrow">{labels.localAi}</div><CardTitle>{labels.title}</CardTitle></div><Badge variant="outline" className="ms-auto">{labels.stored}</Badge></CardHeader><CardContent className="space-y-4 pt-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{labels.hint}</p><Button type="button" variant="outline" onClick={() => beginProfileEdit()} className="gap-2"><Plus className="size-4" />{labels.addProfile}</Button></div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {profiles.map((profile) => <Card key={profile.id} className={`min-w-0 rounded-2xl transition-colors ${profile.active ? 'border-[var(--app-accent)] ring-1 ring-[var(--app-accent)]/25' : 'hover:border-[var(--app-accent)]/40'}`}><CardContent className="space-y-3 p-4"><div className="flex items-start gap-3"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><ServerCog className="size-4 text-[var(--app-accent)]" /></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{profile.name}</div><div className="truncate text-xs text-muted-foreground">{providers.find((item) => item.id === profile.provider)?.name ?? profile.provider}</div></div>{profile.active && <Badge className="gap-1"><Check className="size-3" />{labels.active}</Badge>}</div><div className="rounded-lg bg-[var(--app-wash)]/70 px-3 py-2 text-xs"><div className="truncate font-medium">{profile.model || labels.noModel}</div><div dir="ltr" className="mt-1 truncate text-[10px] text-muted-foreground">{profile.baseUrl}</div></div><div className="flex items-center gap-2"><Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => beginProfileEdit(profile)}>{labels.editProfile}</Button>{!profile.active && <Button type="button" size="sm" className="flex-1" disabled={!profile.model} onClick={() => void activateProfile(profile)}>{labels.setActive}</Button>}<Button type="button" variant="ghost" size="icon" aria-label={`${messages.remove} ${profile.name}`} disabled={profile.active} onClick={() => void deleteProfile(profile)}><Trash2 className="size-4" /></Button></div>{profile.active && providers.find((item) => item.id === profile.provider)?.fetchesModels && <div className="space-y-2 border-t border-[var(--app-line)] pt-3"><div className="flex flex-wrap items-center gap-2"><Input aria-label={labels.downloadPlaceholder} value={downloadModel} onChange={(event) => setDownloadModel(event.target.value)} placeholder={labels.downloadPlaceholder} className="min-w-0 flex-1" /><Button type="button" variant="outline" disabled={pulling || !downloadModel.trim()} onClick={() => startModelPull(profile)} className="gap-2"><Download className="size-4" />{messages.operationText.download}</Button>{pulling && <Button type="button" variant="ghost" onClick={cancelModelPull}>{messages.cancel}</Button>}</div>{pulling && <div className="space-y-1.5"><div className="flex justify-between gap-3 text-[10px] text-muted-foreground"><span className="truncate">{pullStatus}</span><span>{Math.round(pullProgress)}%</span></div><div role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pullProgress)} className="h-2 overflow-hidden rounded-full bg-[var(--app-wash)]"><div className="h-full rounded-full bg-[var(--app-accent)] transition-[width]" style={{ width: `${pullProgress}%` }} /></div></div>}</div>}</CardContent></Card>)}
           {profiles.length === 0 && <button type="button" onClick={() => beginProfileEdit()} className="grid min-h-36 place-items-center rounded-2xl border border-dashed border-[var(--app-line)] p-5 text-center text-xs text-muted-foreground transition-colors hover:border-[var(--app-accent)]"><span><Plus className="mx-auto mb-2 size-5" />{labels.addProfile}</span></button>}
         </div>
-      </CardContent></Card>
-      {isDesktopApp() && <ModelLendingSettings messages={messages} />}
-      <Card><CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4"><div className="grid size-9 place-items-center rounded-xl bg-[var(--app-wash)]"><Palette className="size-4 text-muted-foreground" /></div><div><div className="text-[9px] font-semibold tracking-[0.13em] text-muted-foreground">{messages.appearance}</div><CardTitle className="mt-0.5 text-sm">{messages.theme}</CardTitle></div></CardHeader><CardContent><div className="flex flex-wrap items-center justify-between gap-5 py-2"><div><div className="text-xs font-medium">{messages.theme}</div><p className="mt-1 text-[10px] text-muted-foreground">{messages.themeSettingsHint}</p></div><ThemeModeSwitch direction={direction} labels={{ system: messages.themeSystem, light: messages.themeLight, dark: messages.themeDark, switchTheme: messages.switchTheme }} /></div><div className="mt-3 flex flex-wrap items-center justify-between gap-5 border-t border-[var(--app-line)] pt-4"><div><div className="text-xs font-medium">{messages.accent}</div><p className="mt-1 text-[10px] text-muted-foreground">{messages.accentSettingsHint}</p></div><ThemeStylePicker direction={direction} labels={{ label: messages.accent, neutral: messages.accentNeutral, blue: messages.accentBlue, pink: messages.accentPink }} /></div></CardContent></Card>
+      </CardContent></Card>}
+      {isDesktopApp() && activeCategory === 'models' && <ModelLendingSettings messages={messages} />}
+      </div>}
     </div>
     </div>
     {compactViewport ? <Drawer.Root open={profileOpen} onOpenChange={handleProfileOpenChange} direction="bottom"><Drawer.Portal><Drawer.Overlay className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm" /><Drawer.Content dir={direction} className="liquid-glass-menu fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] overflow-y-auto rounded-t-[1.5rem] bg-[var(--app-card)] pb-[max(1rem,env(safe-area-inset-bottom))] outline-none"><div aria-hidden="true" className="mx-auto mt-3 h-1 w-10 rounded-full bg-[var(--app-line)]" /><Drawer.Title className="px-5 pt-4 text-lg font-semibold">{editingProfile ? labels.editProfile : labels.addProfile}</Drawer.Title><Drawer.Description className="px-5 pt-1 text-xs text-muted-foreground">{labels.profileDescription}</Drawer.Description>{profileForm}</Drawer.Content></Drawer.Portal></Drawer.Root> : <Dialog open={profileOpen} onOpenChange={handleProfileOpenChange}><DialogContent className="liquid-glass-menu max-h-[min(90dvh,52rem)] w-[min(38rem,calc(100vw-2rem))] max-w-none overflow-y-auto rounded-[1.5rem] border border-[var(--app-line)] bg-[var(--app-card)] p-0"><DialogHeader className="px-6 pt-6"><DialogTitle>{editingProfile ? labels.editProfile : labels.addProfile}</DialogTitle><DialogDescription>{labels.profileDescription}</DialogDescription></DialogHeader>{profileForm}</DialogContent></Dialog>}

@@ -11,7 +11,7 @@ import type { PairedBrowser } from '@sisyphus/client'
 
 type Messages = ReturnType<typeof getMessages>
 
-export function BrowserAccessPage({ messages }: { messages: Messages }) {
+export function BrowserAccessPage({ messages, showHeading = true }: { messages: Messages; showHeading?: boolean }) {
   const [devices, setDevices] = useState<PairedBrowser[]>([])
   const [invitation, setInvitation] = useState<{ code: string; expiresAt: string; pairUrl: string } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -51,7 +51,7 @@ export function BrowserAccessPage({ messages }: { messages: Messages }) {
   const secondsLeft = invitation ? Math.max(0, Math.ceil((Date.parse(invitation.expiresAt) - now) / 1000)) : 0
 
   return <div className="browser-access-page w-full min-w-0">
-    <PageHeading title={access.title} description={access.description} />
+    {showHeading && <PageHeading title={access.title} description={access.description} />}
     <div className="devices-layout mt-5 grid w-full min-w-0 gap-5">
       <Card className="devices-pair-card">
         <CardHeader className="flex flex-row items-center gap-3 border-b border-[var(--app-line)] py-4">
