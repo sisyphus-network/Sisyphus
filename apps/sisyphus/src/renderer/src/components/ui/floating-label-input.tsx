@@ -22,6 +22,7 @@ type FloatingLabelInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "size
   success?: boolean;
   validate?: (value: string) => string | undefined;
   containerClassName?: string;
+  uiDirection?: "ltr" | "rtl";
 };
 
 export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInputProps>(function FloatingLabelInput(
@@ -36,6 +37,7 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
     success = false,
     validate,
     containerClassName,
+    uiDirection,
     className,
     value,
     defaultValue,
@@ -80,9 +82,15 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
   const showSuccess = !hasError && !loading && (success || (touched && hasValue && Boolean(inputRef.current?.validity.valid)));
   const isDisabled = disabled || loading;
 
-  return <div className={cn("group/floating-input", containerClassName)}>
+  const directionalPadding = uiDirection
+    ? uiDirection === "rtl"
+      ? icon ? "pr-16 pl-12" : "pr-4 pl-12"
+      : icon ? "pl-16 pr-12" : "pl-4 pr-12"
+    : icon ? "ps-16 pe-12" : "ps-4 pe-12";
+
+  return <div dir={uiDirection} className={cn("group/floating-input", containerClassName)}>
     <div className="relative">
-      {icon && <span aria-hidden="true" className={cn("pointer-events-none absolute start-3.5 top-1/2 z-10 -translate-y-1/2 text-[var(--app-muted)] transition-colors", focused && "text-[var(--app-ink)]", isDisabled && "opacity-55")}>{icon}</span>}
+      {icon && <span aria-hidden="true" className={cn("pointer-events-none absolute start-3.5 top-1/2 z-10 -translate-y-1/2 text-[var(--app-muted)] transition-colors", focused && "text-[var(--app-accent)]", isDisabled && "opacity-55")}>{icon}</span>}
       <input
         {...props}
         ref={inputRef}
@@ -118,9 +126,9 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
         }}
         className={cn(
           "h-14 w-full rounded-2xl border bg-[var(--app-card)] pe-12 text-sm text-[var(--app-ink)] outline-none transition-[border-color,box-shadow,background-color] duration-200 placeholder:text-[var(--app-placeholder)] disabled:cursor-not-allowed disabled:opacity-55",
-          icon ? "ps-16" : "ps-4",
+          directionalPadding,
           hasError ? "border-red-500 shadow-[0_0_0_3px_rgb(239_68_68_/_14%)]" : "border-[var(--app-border)]",
-          !hasError && focused && "border-[var(--app-ink)] bg-[var(--app-card)] shadow-[0_0_0_3px_color-mix(in_srgb,var(--app-ink)_8%,transparent)]",
+          !hasError && focused && "border-[var(--app-accent)] bg-[var(--app-card)] shadow-[0_0_0_3px_color-mix(in_srgb,var(--app-accent)_18%,transparent)]",
           className,
         )}
       />
@@ -130,7 +138,7 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
           "pointer-events-none absolute z-10 origin-start select-none bg-[var(--app-card)] px-1.5 text-[var(--app-muted)] transition-all duration-200",
           icon ? "start-16" : "start-3",
           isFloating ? "top-0 -translate-y-1/2 scale-90" : "top-1/2 -translate-y-1/2 scale-100",
-          focused && "text-[var(--app-ink)]",
+          focused && "text-[var(--app-accent)]",
           hasError && "text-red-500",
         )}
       >{label}</label>
