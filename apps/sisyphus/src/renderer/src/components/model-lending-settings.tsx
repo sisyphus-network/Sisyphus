@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Cpu, LoaderCircle, MemoryStick, RefreshCw, ServerCog, SlidersHorizontal } from 'lucide-react'
+import { Check, CircleAlert, Cpu, Globe2, LoaderCircle, MemoryStick, RefreshCw, ServerCog, SlidersHorizontal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,7 +14,7 @@ type LendingState = { saved?: Lending; running?: Lending; restartNeeded?: boolea
 type LoadedModel = { name: string; onCardPercent: number }
 const emptyLending: Lending = { enabled: false, ollamaUrl: 'http://127.0.0.1:11434', only: [], gpuLayers: -1, threads: 0, context: 0, keepAlive: '' }
 
-export function ModelLendingSettings({ messages }: { messages: Messages }) {
+export function ModelLendingSettings({ messages, embedded = false }: { messages: Messages; embedded?: boolean }) {
   const labels = messages.modelSettings
   const [form, setForm] = useState<Lending>(emptyLending)
   const [state, setState] = useState<LendingState>()
@@ -40,6 +40,15 @@ export function ModelLendingSettings({ messages }: { messages: Messages }) {
 
   const selected = useMemo(() => new Set(form.only), [form.only])
   const dirty = Boolean(state?.saved && JSON.stringify(state.saved) !== JSON.stringify(form))
+  const remoteEndpoint = useMemo(() => {
+    try {
+      const endpoint = new URL(form.ollamaUrl.trim())
+      if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') return ''
+      const host = endpoint.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+      const loopback = host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host.startsWith('127.')
+      return loopback ? '' : endpoint.protocol === 'http:' ? 'http' : 'https'
+    } catch { return '' }
+  }, [form.ollamaUrl])
   function change<K extends keyof Lending>(key: K, value: Lending[K]) { setForm((current) => ({ ...current, [key]: value })) }
 
   async function inspect() {
@@ -77,16 +86,23 @@ export function ModelLendingSettings({ messages }: { messages: Messages }) {
     } finally { setSaving(false) }
   }
 
-  if (loading) return <Card><CardContent className="flex items-center gap-3 py-8 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{messages.connecting}</CardContent></Card>
+  if (loading) return embedded
+    ? <div role="status" className="flex items-center gap-3 py-8 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{messages.connecting}</div>
+    : <Card><CardContent className="flex items-center gap-3 py-8 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{messages.connecting}</CardContent></Card>
   if (!supported) return null
 
-  return <Card>
-    <CardHeader className="flex flex-row items-start gap-3 border-b border-[var(--app-line)] py-4">
+  const header = embedded
+    ? <div className="flex items-start gap-3">
+      <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><Cpu className="size-4 text-muted-foreground" /></div>
+      <div className="min-w-0 flex-1"><CardTitle className="text-sm">{labels.lendingTitle}</CardTitle><CardDescription className="mt-1 text-xs">{labels.lendingDescription} {labels.lendingLiveNote}</CardDescription></div>
+      {state?.restartNeeded && <Badge variant="outline" className="shrink-0">{labels.restartNeeded}</Badge>}
+    </div>
+    : <CardHeader className="flex flex-row items-start gap-3 border-b border-[var(--app-line)] py-4">
       <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><Cpu className="size-4 text-muted-foreground" /></div>
       <div className="min-w-0 flex-1"><CardTitle className="text-sm">{labels.lendingTitle}</CardTitle><CardDescription className="mt-1 text-xs">{labels.lendingDescription} {labels.lendingLiveNote}</CardDescription></div>
       {state?.restartNeeded && <Badge variant="outline" className="shrink-0">{labels.restartNeeded}</Badge>}
     </CardHeader>
-    <CardContent className="space-y-5 pt-4">
+  const controls = <div className="space-y-5">
       {state?.setByFlags && <div role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-800 dark:text-amber-200">{labels.setByFlags}</div>}
       <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]/45 p-3 text-sm">
         <input type="checkbox" checked={form.enabled} onChange={(event) => change('enabled', event.target.checked)} className="size-4 accent-[var(--app-accent)]" />
@@ -97,6 +113,10 @@ export function ModelLendingSettings({ messages }: { messages: Messages }) {
         <label className="min-w-0 space-y-1.5 text-xs"><span>{labels.ollamaUrl}</span><Input dir="ltr" disabled={inspecting} value={form.ollamaUrl} onChange={(event) => change('ollamaUrl', event.target.value)} placeholder="http://127.0.0.1:11434" /></label>
         <Button type="button" variant="outline" disabled={inspecting || !form.ollamaUrl.trim()} onClick={() => void inspect()} className="gap-2">{inspecting ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}{inspecting ? labels.inspecting : labels.inspect}</Button>
       </div>
+      {remoteEndpoint && <div role="note" className={`flex items-start gap-2.5 rounded-xl border p-3 text-xs leading-relaxed ${remoteEndpoint === 'http' ? 'border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-200' : 'border-[var(--app-line)] bg-[var(--app-wash)]/45 text-muted-foreground'}`}>
+        {remoteEndpoint === 'http' ? <CircleAlert className="mt-0.5 size-4 shrink-0" /> : <Globe2 className="mt-0.5 size-4 shrink-0" />}
+        <span>{remoteEndpoint === 'http' ? labels.remoteOllamaHttpNote : labels.remoteOllamaNote}</span>
+      </div>}
       {(version || available.length > 0 || loaded.length > 0) && <div role="status" className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
         <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"><Check className="size-4" />{version || labels.modelsOffered}: {available.length}</div>
         {available.length > 0 ? <><p className="mt-3 text-xs text-muted-foreground">{labels.allModelsHint}</p><div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{available.map((name) => <label key={name} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg border border-[var(--app-line)] bg-background/70 px-3 py-2 text-xs"><input type="checkbox" checked={form.only.length === 0 || selected.has(name)} onChange={(event) => toggleModel(name, event.target.checked)} className="size-3.5 accent-[var(--app-accent)]" /><span className="truncate">{name}</span></label>)}</div></> : <p className="mt-2 text-xs text-muted-foreground">{labels.inspectEmpty}</p>}
@@ -125,6 +145,9 @@ export function ModelLendingSettings({ messages }: { messages: Messages }) {
         <p className="text-xs text-muted-foreground">{state?.restartNeeded ? labels.restartNeeded : state?.running?.enabled ? labels.lendingRunning : labels.lendingStopped}</p>
         <Button type="button" disabled={!dirty || saving} onClick={() => void save()} className="gap-2">{saving && <LoaderCircle className="size-4 animate-spin" />}{labels.saveLending}</Button>
       </div>
-    </CardContent>
-  </Card>
+  </div>
+
+  return embedded
+    ? <section className="space-y-5">{header}{controls}</section>
+    : <Card>{header}<CardContent className="space-y-5 pt-4">{controls}</CardContent></Card>
 }

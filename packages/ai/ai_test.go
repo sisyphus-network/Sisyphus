@@ -95,6 +95,17 @@ func TestOllamaChatStreamsTextAndCollectsToolCalls(t *testing.T) {
 	}
 }
 
+func TestOllamaCanUseAnOptionalAPIKey(t *testing.T) {
+	f := newFake(t, map[string]string{"/api/tags": `{"models":[]}`})
+	_, err := provider(t, Config{Provider: Ollama, BaseURL: f.URL, APIKey: "ollama-proxy-token"}).Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.headers.Get("Authorization"); got != "Bearer ollama-proxy-token" {
+		t.Fatalf("Ollama authorization = %q, want optional bearer key", got)
+	}
+}
+
 func TestOpenAIChatStreamsTextAndAssemblesToolCalls(t *testing.T) {
 	f := newFake(t, map[string]string{"/chat/completions": strings.Join([]string{
 		`: a comment the service sends to keep the connection open`,

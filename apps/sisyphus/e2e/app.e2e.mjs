@@ -25,9 +25,22 @@ async function selectProvider(page, name) {
 }
 
 async function selectLoadedModel(page, name) {
-  await page.getByText(/^Connected · \d+ models available$/).waitFor()
   await page.getByRole('button', { name: 'Model', exact: true }).click()
   await page.getByRole('dialog', { name: 'Model' }).getByRole('button', { name, exact: true }).click()
+}
+
+async function openProviderModelStep(page, { provider, profile, url, apiKey }) {
+  await selectProvider(page, provider)
+  await page.getByRole('textbox', { name: 'Profile name' }).fill(profile)
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Service URL' }).fill(url)
+  if (apiKey) await page.getByLabel('API key').fill(apiKey)
+  await page.getByText('models available', { exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
+}
+
+async function waitForConnectedDaemon(page, options) {
+  await page.getByRole('status', { name: 'Daemon: Connected' }).waitFor(options)
 }
 
 test('the window shows the node it is connected to', async () => {
@@ -688,15 +701,21 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
 
 test('model settings load and save a local provider used by the planner', async () => {
   const model = await standInModel('The configured planner replied.')
+  const apiKey = 'ollama-proxy-test-token'
   planWith(node, model)
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
     await openSettingsCategory(page, 'Model provider')
     await page.getByRole('button', { name: 'Add provider' }).first().click()
-    await selectProvider(page, 'Ollama')
-    await page.getByRole('textbox', { name: 'Profile name' }).fill('Local test model')
-    await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
+    const wizard = page.getByRole('dialog', { name: 'Add provider' })
+    const wizardBounds = await wizard.boundingBox()
+    assert.ok(wizardBounds?.width > 900, `the desktop provider wizard is only ${wizardBounds?.width ?? 0}px wide`)
+    await page.mouse.click(16, Math.round((wizardBounds?.y ?? 0) + (wizardBounds?.height ?? 0) / 2))
+    await wizard.waitFor()
+    await page.keyboard.press('Escape')
+    await wizard.waitFor()
+    await openProviderModelStep(page, { provider: 'Ollama', profile: 'Local test model', url: model.url, apiKey })
     await selectLoadedModel(page, 'test-model')
     await page.getByRole('button', { name: 'Save and activate' }).click()
     await page.getByText('Model configuration saved').waitFor()
@@ -705,6 +724,7 @@ test('model settings load and save a local provider used by the planner', async 
     await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Does the saved local model answer?')
     await page.getByRole('button', { name: 'Send message' }).click()
     await page.getByText('The configured planner replied.').waitFor({ timeout: 30000 })
+    assert.ok(model.authorizations.includes(`Bearer ${apiKey}`), 'the optional Ollama API key was not sent to the service')
     assert.equal(model.asked.length, 1)
     assert.match(JSON.stringify(model.asked[0].messages), /Does the saved local model answer\?/)
   } finally {
@@ -719,13 +739,13 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
-    await openSettingsCategory(page, 'Model provider')
-    await page.getByText('Lend this machine’s models', { exact: true }).waitFor()
+    await openSettingsCategory(page, 'Local node')
+    await page.getByText('Lend Ollama models to the pool', { exact: true }).waitFor()
     await page.getByRole('textbox', { name: 'Ollama address' }).fill(ollama.url)
     await page.getByRole('button', { name: 'Check connection' }).click()
     await page.getByRole('checkbox', { name: 'test-model' }).waitFor()
     await page.getByRole('checkbox', { name: 'second-model' }).uncheck()
-    await page.getByRole('checkbox', { name: 'Make this machine’s models available to the pool' }).check()
+    await page.getByRole('checkbox', { name: 'Make models from this Ollama endpoint available to the pool' }).check()
     await page.getByRole('spinbutton', { name: /GPU layers/ }).fill('24')
     await page.getByRole('spinbutton', { name: /CPU threads/ }).fill('6')
     await page.getByRole('spinbutton', { name: /Context length/ }).fill('8192')
@@ -733,9 +753,9 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
     await page.getByRole('button', { name: 'Save lending settings' }).click()
     await page.getByText('Restart to apply lending or address changes', { exact: true }).first().waitFor()
     await page.reload()
-    await openSettingsCategory(page, 'Model provider')
+    await openSettingsCategory(page, 'Local node')
     await page.getByRole('button', { name: 'Check connection' }).click()
-    await page.getByRole('checkbox', { name: 'Make this machine’s models available to the pool', checked: true }).waitFor()
+    await page.getByRole('checkbox', { name: 'Make models from this Ollama endpoint available to the pool', checked: true }).waitFor()
     await page.getByRole('checkbox', { name: 'test-model', checked: true }).waitFor()
     await page.getByRole('checkbox', { name: 'second-model', checked: false }).waitFor()
     assert.equal(await page.getByRole('spinbutton', { name: /GPU layers/ }).inputValue(), '24')
@@ -752,17 +772,13 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
 
 test('model settings download a local model and report completion', async () => {
   const model = await standInModel('The downloaded planner replied.')
+  const apiKey = 'ollama-download-test-token'
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
     await openSettingsCategory(page, 'Model provider')
     await page.getByRole('button', { name: 'Add provider' }).first().click()
-    await selectProvider(page, 'Ollama')
-    await page.getByRole('textbox', { name: 'Profile name' }).fill('Download test model')
-    await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
-    await selectLoadedModel(page, 'test-model')
-    await page.getByRole('button', { name: 'Save and activate' }).click()
-    await page.getByText('Model configuration saved').waitFor()
+    await openProviderModelStep(page, { provider: 'Ollama', profile: 'Download test model', url: model.url, apiKey })
     await page.getByRole('textbox', { name: 'Model name to download (e.g. llama3.1:8b)' }).fill('downloaded-test-model')
     await page.getByRole('button', { name: 'Download', exact: true }).click()
     const progress = page.getByRole('progressbar')
@@ -771,9 +787,16 @@ test('model settings download a local model and report completion', async () => 
       const value = Number(document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow'))
       return value > 0 && value < 100
     })
-    assert.ok(Number(await progress.getAttribute('aria-valuenow')) < 100, 'the download progress should remain visible before completion')
     await page.getByText('Model downloaded', { exact: true }).waitFor({ timeout: 30000 })
     assert.deepEqual(model.pulled, ['downloaded-test-model'])
+    assert.ok(model.authorizations.includes(`Bearer ${apiKey}`), 'the optional Ollama API key was not sent for model download')
+    await page.getByRole('button', { name: 'Remove model downloaded-test-model' }).click()
+    await page.getByRole('dialog', { name: 'Remove Ollama model?' }).getByRole('button', { name: 'Remove model', exact: true }).click()
+    await page.getByText('Model removed', { exact: true }).waitFor()
+    assert.deepEqual(model.removed, ['downloaded-test-model'])
+    await selectLoadedModel(page, 'test-model')
+    await page.getByRole('button', { name: 'Save and activate' }).click()
+    await page.getByText('Model configuration saved').waitFor()
 
     await open(page, 'Workspace')
     await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Is the planner still available after download?')
@@ -796,8 +819,11 @@ test('model settings save an OpenAI-compatible API key on the node and use it fo
     await page.getByRole('button', { name: 'Add provider' }).first().click()
     await selectProvider(page, 'OpenAI')
     await page.getByRole('textbox', { name: 'Profile name' }).fill('OpenAI test provider')
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await page.getByRole('textbox', { name: 'Service URL' }).fill(service.url)
     await page.getByLabel('API key').fill(apiKey)
+    await page.getByText('models available', { exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await selectLoadedModel(page, 'test-openai-model')
     await page.getByRole('button', { name: 'Save and activate' }).click()
     await page.getByText('Model configuration saved').waitFor()
@@ -807,6 +833,7 @@ test('model settings save an OpenAI-compatible API key on the node and use it fo
       .filter({ hasText: 'OpenAI test provider' })
       .getByRole('button', { name: 'Edit', exact: true })
       .click()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
     const apiKeyInput = page.getByLabel('API key')
     assert.equal(await apiKeyInput.inputValue(), '')
     await apiKeyInput.focus()

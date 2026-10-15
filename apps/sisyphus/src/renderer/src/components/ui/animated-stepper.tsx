@@ -36,7 +36,7 @@ export function AnimatedStepper({
 
   return (
     <div className={cn("flex h-full min-h-0 w-full flex-col", className)}>
-      <motion.nav aria-label="Progress" animate={hideProgress ? { height: 0, opacity: 0, y: -18, paddingTop: 0, paddingBottom: 0 } : { height: "auto", opacity: 1, y: 0 }} transition={reduceMotion ? { duration: 0.12 } : { duration: 0.42, ease: [0.22, 1, 0.36, 1] }} className="mx-auto w-full max-w-3xl shrink-0 overflow-hidden my-2 md:my-1">
+      <motion.nav aria-label="Progress" animate={hideProgress ? { height: 0, opacity: 0, y: -18, paddingTop: 0, paddingBottom: 0 } : { height: "auto", opacity: 1, y: 0 }} transition={reduceMotion ? { duration: 0.12 } : { duration: 0.42, ease: [0.22, 1, 0.36, 1] }} className="mx-auto my-2 w-full shrink-0 overflow-hidden md:my-1">
         <div className="flex items-center gap-3 lg:hidden" dir={direction}>
           <div
             className="onboarding-mobile-progress__track relative h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--app-line)]"
