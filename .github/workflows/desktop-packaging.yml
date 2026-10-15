@@ -4,15 +4,6 @@ on:
   pull_request:
     # labeled is heard only so that adding all-platforms packages all six.
     types: [opened, synchronize, reopened, labeled]
-    # A pull request that changes only words for people runs no builds or
-    # tests; one that changes anything else runs all of them. dev runs
-    # everything on every push.
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'CITATION.cff'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/pull_request_template.md'
   push:
     branches: [dev]
 
@@ -27,8 +18,31 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  package:
+  scope:
     if: github.event.action != 'labeled' || github.event.label.name == 'all-platforms'
+    runs-on: ubuntu-26.04
+    outputs:
+      changed: ${{ steps.scope.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          ALL: ${{ contains(github.event.pull_request.labels.*.name, 'all-platforms') }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ] || [ "$ALL" = true ] ||
+            git diff --name-only "$BASE" HEAD | grep -qvE '(^|/)[^/]+\.md$|^docs/|^CITATION\.cff$|^\.github/ISSUE_TEMPLATE/|^\.github/pull_request_template\.md$'; then
+            echo changed=true >> "$GITHUB_OUTPUT"
+          else
+            echo changed=false >> "$GITHUB_OUTPUT"
+          fi
+
+  package:
+    needs: scope
+    if: needs.scope.outputs.changed == 'true'
     strategy:
       fail-fast: false
       matrix:
