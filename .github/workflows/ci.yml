@@ -4,6 +4,9 @@ on:
   push:
     branches: [dev]
   pull_request:
+    # labeled is heard only so that adding all-platforms starts a run; any
+    # other label skips every job (see skip below).
+    types: [opened, synchronize, reopened, labeled]
     # A pull request that changes only words for people runs no builds or
     # tests; one that changes anything else runs all of them. dev runs
     # everything on every push.
@@ -20,12 +23,40 @@ permissions:
 # A pull request's newer push replaces its older run, which frees the
 # runners for others. Pushes to dev are never cancelled: each commit there
 # keeps its own complete run.
+# A label other than all-platforms is a run of its own that does nothing,
+# so the labeler adding area labels never cancels a real run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'all-platforms') && github.run_id || github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Whether this run has anything to do, and whether it checks every
+  # platform: a push to dev and a pull request labelled all-platforms always
+  # do; another pull request does when it changes what those jobs check.
+  scope:
+    if: github.event.action != 'labeled' || github.event.label.name == 'all-platforms'
+    runs-on: ubuntu-26.04
+    outputs:
+      platforms: ${{ steps.scope.outputs.platforms }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          ALL: ${{ contains(github.event.pull_request.labels.*.name, 'all-platforms') }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ] || [ "$ALL" = true ] ||
+            git diff --name-only "$BASE" HEAD | grep -qE '^(packages/|apps/sisyphusd/|go\.(mod|sum)$|scripts/build-release\.sh$|\.github/workflows/)'; then
+            echo platforms=true >> "$GITHUB_OUTPUT"
+          else
+            echo platforms=false >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: scope
     # On GitHub's runners, which run every pull request's checks at once,
     # each on a machine of its own. The project's self-hosted runner ran them
     # one at a time, behind a lock, and every pull request queued for it.
@@ -83,6 +114,8 @@ jobs:
       - name: Check formatting
         run: test -z "$(gofmt -l apps packages)" || { gofmt -l apps packages; exit 1; }
       - run: go vet ./...
+      - name: Check the workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Check for mistakes vet does not look for
         run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
       - name: Test against real local services
@@ -107,6 +140,8 @@ jobs:
   # Known-answer workloads must agree across real CPU architectures and OSes,
   # not only compile for them. These tests avoid the daemon's service fixtures.
   workload-architecture:
+    needs: scope
+    if: needs.scope.outputs.platforms == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -159,6 +194,8 @@ jobs:
   # FreeBSD and OpenBSD on ARM64. s390x is big-endian, so it shows that an answer does
   # not depend on byte order.
   workload-elsewhere:
+    needs: scope
+    if: needs.scope.outputs.platforms == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -215,6 +252,9 @@ jobs:
         if: matrix.goos == 'freebsd' && matrix.via == 'vm'
         uses: vmactions/freebsd-vm@v1
         with:
+          # The tests' answer is all that is wanted back, and copying the
+          # VM's files back has failed on its own (tar on FreeBSD/arm64).
+          copyback: false
           arch: ${{ matrix.goarch == 'arm64' && 'aarch64' || '' }}
           sync: ${{ matrix.goarch == 'arm64' && 'tar' || 'rsync' }}
           envs: KNOWN_ANSWERS
@@ -223,6 +263,9 @@ jobs:
         if: matrix.goos == 'openbsd' && matrix.via == 'vm'
         uses: vmactions/openbsd-vm@v1
         with:
+          # The tests' answer is all that is wanted back, and copying the
+          # VM's files back has failed on its own (tar on FreeBSD/arm64).
+          copyback: false
           arch: ${{ matrix.goarch == 'arm64' && 'aarch64' || '' }}
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
@@ -230,6 +273,9 @@ jobs:
         if: matrix.goos == 'netbsd' && matrix.via == 'vm'
         uses: vmactions/netbsd-vm@v1
         with:
+          # The tests' answer is all that is wanted back, and copying the
+          # VM's files back has failed on its own (tar on FreeBSD/arm64).
+          copyback: false
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
 
@@ -237,6 +283,7 @@ jobs:
   # container with its own address and disk. It is what finds faults that
   # tests on one machine cannot, since those all run over loopback.
   rehearsal:
+    needs: scope
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
@@ -248,6 +295,7 @@ jobs:
         run: examples/rehearsal.sh
 
   desktop:
+    needs: scope
     # Electron E2E must never attach to the maintainer's interactive desktop,
     # so desktop checks stay on an isolated hosted runner.
     runs-on: ubuntu-26.04

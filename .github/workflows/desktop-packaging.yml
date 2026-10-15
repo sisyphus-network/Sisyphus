@@ -2,6 +2,8 @@ name: Desktop packaging
 
 on:
   pull_request:
+    # labeled is heard only so that adding all-platforms packages all six.
+    types: [opened, synchronize, reopened, labeled]
     # A pull request that changes only words for people runs no builds or
     # tests; one that changes anything else runs all of them. dev runs
     # everything on every push.
@@ -21,11 +23,12 @@ permissions:
 # runners for others. Pushes to dev are never cancelled: each commit there
 # keeps its own complete run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'all-platforms') && github.run_id || github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   package:
+    if: github.event.action != 'labeled' || github.event.label.name == 'all-platforms'
     strategy:
       fail-fast: false
       matrix:

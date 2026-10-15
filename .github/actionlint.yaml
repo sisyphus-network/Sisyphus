@@ -1,0 +1,7 @@
+# Runner labels actionlint does not know yet: GitHub's Ubuntu 26.04 images,
+# and the project's self-hosted runner.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - ubuntu-26.04-arm
+    - sisyphus-ci
