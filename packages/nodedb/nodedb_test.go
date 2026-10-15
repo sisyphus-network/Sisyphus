@@ -1,6 +1,7 @@
 package nodedb
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -279,6 +280,121 @@ func TestOpeningAppliesEachMigrationOnce(t *testing.T) {
 	}
 	if jobs := load(t, db); len(jobs) != 1 || jobs[0].ID != "kept" {
 		t.Errorf("jobs after reopening: %v", jobs)
+	}
+}
+
+func TestMigrationHistoryFollowsNamesWhenNumbersHaveShifted(t *testing.T) {
+	handle, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "history.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { handle.Close() })
+	if _, err := handle.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	// This was the sequence recorded by older builds before verification and
+	// worker-standing migrations were inserted ahead of these entries.
+	for _, item := range []struct {
+		version int
+		name    string
+	}{
+		{16, "0016_file_pin_operations"},
+		{17, "0017_browser_pairing"},
+		{18, "0018_model_profiles"},
+		{19, "0019_web_access"},
+		{20, "0020_web_access_interfaces"},
+	} {
+		if _, err := handle.Exec(`INSERT INTO schema_migrations (version, name) VALUES (?, ?)`, item.version, item.name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	names := []string{
+		"0016_verify.sql",
+		"0017_verify_share.sql",
+		"0018_file_pin_operations.sql",
+		"0019_worker_standing.sql",
+		"0020_audit_share.sql",
+		"0021_model_profiles.sql",
+		"0022_browser_pairing.sql",
+		"0023_model_lending.sql",
+		"0024_web_access.sql",
+		"0025_web_access_interfaces.sql",
+	}
+	if err := (&DB{sql: handle}).alignMigrationHistory(names); err != nil {
+		t.Fatal(err)
+	}
+	var got []struct {
+		version int
+		name    string
+	}
+	rows, err := handle.Query(`SELECT version, name FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item struct {
+			version int
+			name    string
+		}
+		if err := rows.Scan(&item.version, &item.name); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, item)
+	}
+	want := []struct {
+		version int
+		name    string
+	}{
+		{18, "0018_file_pin_operations"},
+		{21, "0021_model_profiles"},
+		{22, "0022_browser_pairing"},
+		{24, "0024_web_access"},
+		{25, "0025_web_access_interfaces"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("aligned migration history = %v, want %v", got, want)
+	}
+}
+
+// A history whose names, followed to today's numbers, would put two
+// migrations at one number is refused rather than guessed at, and nothing
+// in it is changed.
+func TestOpenRefusesAMigrationHistoryThatClashes(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "node.db")
+	handle, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL);
+		INSERT INTO schema_migrations (version, name) VALUES (16, '0016_file_pin_operations'), (18, '0018_from_another_branch')`); err != nil {
+		t.Fatal(err)
+	}
+	handle.Close()
+	if _, err := Open(file); err == nil || !strings.Contains(err.Error(), `align migration history: migrations "0016_file_pin_operations" and "0018_from_another_branch" both resolve to version 18`) {
+		t.Errorf("Open of a history that clashes: %v", err)
+	}
+	handle, err = sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	var name string
+	if err := handle.QueryRow(`SELECT name FROM schema_migrations WHERE version = 16`).Scan(&name); err != nil || name != "0016_file_pin_operations" {
+		t.Errorf("the refused history changed: %q, %v", name, err)
+	}
+}
+
+// A history that cannot be read is not aligned.
+func TestAligningAMigrationHistoryThatCannotBeRead(t *testing.T) {
+	handle, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle.Close()
+	if err := (&DB{sql: handle}).alignMigrationHistory(nil); err == nil {
+		t.Error("aligned the history of a closed database")
 	}
 }
 
