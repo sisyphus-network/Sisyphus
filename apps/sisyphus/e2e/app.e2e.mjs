@@ -740,7 +740,7 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
   const { app, page } = await launch(node, profile)
   try {
     await openSettingsCategory(page, 'Local node')
-    await page.getByRole('heading', { name: 'Lend Ollama models to the pool' }).waitFor()
+    await page.getByText('Lend Ollama models to the pool', { exact: true }).waitFor()
     await page.getByRole('textbox', { name: 'Ollama address' }).fill(ollama.url)
     await page.getByRole('button', { name: 'Check connection' }).click()
     await page.getByRole('checkbox', { name: 'test-model' }).waitFor()
