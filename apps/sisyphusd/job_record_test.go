@@ -940,3 +940,44 @@ func TestCLIReportsARecordsAttestation(t *testing.T) {
 		t.Errorf("an attestation that holds: %q, %v", out, err)
 	}
 }
+
+// A record kept before its coordinator signed records, so with no
+// attestation stored beside it, comes with one once the coordinator signs:
+// the attestation is made from the record and the node's key alone.
+func TestARecordKeptBeforeSigningIsAttestedOnceTheCoordinatorSigns(t *testing.T) {
+	ctx := context.Background()
+	journal := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
+	store := storage.NewMemory()
+	unsigned := restarted(t, store, journal)
+	job, err := unsigned.Submit(ctx, &pb.JobSpec{Workload: "primes", Params: []byte(`{"from":0,"to":10}`), MaxTasks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unsigned.Cancel(job.GetJobId()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := unsigned.Record(ctx, job.GetJobId(), true, nil)
+	if err != nil || before.GetAttestationCid() != "" || before.GetAttestation() != nil {
+		t.Fatalf("a coordinator that does not sign gave %v, %v", before, err)
+	}
+	unsigned.Close()
+
+	ident := mustIdentity(t, t.TempDir())
+	signing := coordinator.New(coordinator.Config{ID: ident.ID(), Sign: ident.Sign, Workloads: runtime.Builtin(), Store: store, Journal: journal, Log: quiet})
+	t.Cleanup(signing.Close)
+	if _, err := signing.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := signing.Record(ctx, job.GetJobId(), true, nil)
+	if err != nil || after.GetRootCid() != before.GetRootCid() || after.GetAttestedBy() != ident.ID() {
+		t.Fatalf("the same record from a coordinator that signs: %v, %v", after, err)
+	}
+	checked, err := jobrecord.CheckAttestation(after.GetAttestation().GetData())
+	if err != nil || checked.Record.String() != before.GetRootCid() || after.GetAttestation().GetCid() != after.GetAttestationCid() {
+		t.Errorf("the attestation given: %+v, %v", checked, err)
+	}
+	// Not asked to check, the attestation is given but not vouched for.
+	if plain, err := signing.Record(ctx, job.GetJobId(), false, nil); err != nil || plain.GetAttestationCid() != after.GetAttestationCid() || plain.GetAttestedBy() != "" {
+		t.Errorf("the record not asked to be checked: %v, %v", plain, err)
+	}
+}
