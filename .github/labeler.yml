@@ -1,0 +1,51 @@
+# Labels a pull request by what it changes. The areas match the ones the
+# issues and the board use. A label is only ever added, never taken off.
+area:client:
+  - changed-files:
+      - any-glob-to-any-file: ['apps/sisyphus/**', 'packages/client/**']
+i18n:
+  - changed-files:
+      - any-glob-to-any-file: ['apps/sisyphus/src/renderer/src/i18n/**']
+area:protocol:
+  - changed-files:
+      - any-glob-to-any-file: ['proto/**']
+area:ai:
+  - changed-files:
+      - any-glob-to-any-file: ['packages/ai/**', 'apps/sisyphusd/planner/**', 'apps/sisyphusd/inference/**', 'apps/sisyphusd/assistant*.go']
+area:agents:
+  - changed-files:
+      - any-glob-to-any-file: ['apps/sisyphusd/mcpserver/**', 'skills/**']
+area:runtime:
+  - changed-files:
+      - any-glob-to-any-file: ['packages/runtime/**']
+area:storage:
+  - changed-files:
+      - any-glob-to-any-file: ['packages/storage/**', 'packages/kubo/**', 'packages/ipfscluster/**', 'packages/s3/**', 'packages/names/**', 'apps/sisyphusd/pinning/**', 'apps/sisyphusd/replication/**', 'apps/sisyphusd/blobclient/**']
+area:p2p:
+  - changed-files:
+      - any-glob-to-any-file: ['apps/sisyphusd/p2p/**', 'apps/sisyphusd/tunnel/**']
+area:daemon:
+  - changed-files:
+      - any-glob-to-any-file: ['apps/sisyphusd/*.go', 'apps/sisyphusd/coordinator/**', 'apps/sisyphusd/worker/**', 'apps/sisyphusd/api/**', 'apps/sisyphusd/access/**', 'packages/nodedb/**', 'packages/job-model/**', 'packages/jobrecord/**', 'packages/hardware/**']
+security:
+  - changed-files:
+      - any-glob-to-any-file: ['packages/sealed/**', 'apps/sisyphusd/access/**', 'SECURITY.md', 'docs/security-model.md']
+research:
+  - changed-files:
+      - any-glob-to-any-file: ['docs/research/**']
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: ['**/*.md', 'docs/**']
+infra:
+  - changed-files:
+      - any-glob-to-any-file: ['.github/workflows/**', '.github/dependabot.yml', 'flake.*', 'Makefile', 'scripts/**', 'examples/rehearsal.sh']
+community:
+  - changed-files:
+      - any-glob-to-any-file: ['CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'SUPPORT.md', 'CITATION.cff', '.github/ISSUE_TEMPLATE/**', '.github/pull_request_template.md']
+testing:
+  - changed-files:
+      - all-globs-to-all-files: ['**/*_test.go', 'apps/sisyphus/e2e/**', 'apps/sisyphus/dev/*.test.mjs']
+enhancement:
+  - head-branch: ['^feat/']
+bug:
+  - head-branch: ['^fix/']
