@@ -24,6 +24,8 @@
     "unavailable": "Demon niedostępny",
     "load": "Wczytaj modele",
     "choose": "Wybierz model",
+    "loadingModels": "Łączenie i wczytywanie modeli…",
+    "modelsAvailable": "Połączono · dostępne modele: {count}",
     "noTools": "Bez narzędzi",
     "apiKey": "Klucz API",
     "model": "Model",

@@ -24,6 +24,8 @@
     "unavailable": "הדימון אינו זמין",
     "load": "טעינת מודלים",
     "choose": "בחירת מודל",
+    "loadingModels": "מתחבר וטוען מודלים…",
+    "modelsAvailable": "מחובר · {count} מודלים זמינים",
     "noTools": "ללא כלים",
     "apiKey": "מפתח API",
     "model": "מודל",

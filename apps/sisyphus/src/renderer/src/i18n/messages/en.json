@@ -24,6 +24,8 @@
     "unavailable": "Daemon unavailable",
     "load": "Load models",
     "choose": "Choose model",
+    "loadingModels": "Connecting and loading models…",
+    "modelsAvailable": "Connected · {count} models available",
     "noTools": "No tools",
     "apiKey": "API key",
     "model": "Model",

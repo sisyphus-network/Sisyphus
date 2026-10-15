@@ -20,6 +20,7 @@ import { getBrowserDeviceName } from '@/lib/browser-device-name'
 import { logoUrl } from '@/lib/brand'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/liquid-glass-dock'
+import { AdvancedSidebar } from '@/components/navigation/advanced-sidebar'
 import { initializeThemeMode } from '@/components/theme-mode-switch'
 import { initializeThemeStyle } from '@/components/theme-style-picker'
 import { ToasterResponsive } from '@/components/toaster-responsive'
@@ -111,9 +112,9 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
   const advanced = location.pathname !== '/'
   const compact = useBreakpoint('(max-width: 760px)')
   useLayoutEffect(() => {
-    // Desktop settings owns an internal scroller so its shell and header can stay fixed.
-    // That scroller persists its position from SettingsPage.
-    if (advanced && !compact && location.pathname === '/settings') return
+    // Every desktop settings route owns an internal scroller so its shell and
+    // header can stay fixed. SettingsPage persists that scroller's position.
+    if (advanced && !compact && location.pathname.startsWith('/settings')) return
     const mainScroller = advanced ? document.querySelector<HTMLElement>('.app-shell--advanced .app-main') : null
     const scrollTarget: Window | HTMLElement = mainScroller ?? window
     const getTop = () => mainScroller ? mainScroller.scrollTop : window.scrollY
@@ -208,7 +209,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     { id: 'workspace', label: messages.workspace, href: '/', icon: <House size={21} strokeWidth={1.8} />, active: location.pathname === '/' },
     { id: 'node', label: messages.nodeOverview, href: '/node', icon: <MonitorCog size={21} strokeWidth={1.8} />, active: location.pathname === '/node' },
     { id: 'operations', label: messages.operations, href: '/operations', icon: <Boxes size={21} strokeWidth={1.8} />, active: location.pathname === '/operations' },
-    { id: 'settings', label: messages.settings, href: '/settings', icon: <Settings2 size={21} strokeWidth={1.8} />, active: location.pathname === '/settings' },
+    { id: 'settings', label: messages.settings, href: '/settings', icon: <Settings2 size={21} strokeWidth={1.8} />, active: location.pathname.startsWith('/settings') },
     { id: 'pairing', label: messages.browserAccess.title, href: '/pairing', icon: <QrCode size={21} strokeWidth={1.8} />, active: location.pathname === '/pairing' },
   ]
   if (!isDesktopApp() && snapshot.authRequired) {
@@ -218,30 +219,9 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     </Routes>
   }
   if (!isDesktopApp() && location.pathname === '/auth') return <Navigate to="/" replace />
-  return <div dir={direction} className={`app-shell flex min-h-0 bg-background text-foreground ${advanced ? 'app-shell--advanced' : 'app-shell--workspace'} ${location.pathname === '/settings' ? 'app-shell--settings' : ''}`}>
+  return <div dir={direction} className={`app-shell flex min-h-0 bg-background text-foreground ${advanced ? 'app-shell--advanced' : 'app-shell--workspace'} ${location.pathname.startsWith('/settings') ? 'app-shell--settings' : ''}`}>
       <div className={`app-shell-body flex min-h-0 min-w-0 flex-1 ${advanced ? 'app-shell-body--advanced' : ''}`}>
-      {advanced && !compact && <aside className="flex w-[248px] shrink-0 flex-col border-e border-[var(--app-line)] bg-[var(--app-sidebar)] px-4 py-5 max-[1000px]:w-[205px]">
-        <NavLink to="/" className="mb-12 flex items-center gap-3 px-2 no-underline">
-          <img src={logoUrl} alt="" className="size-10 rounded-xl object-cover shadow-sm" />
-          <div className="min-w-0"><div className="font-semibold tracking-tight text-foreground">Sisyphus</div><div className="mt-0.5 text-[9px] font-medium tracking-[0.16em] text-muted-foreground">{messages.computeNetwork}</div></div>
-        </NavLink>
-
-        <div className="mb-2 px-2 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">{messages.workspace}</div>
-        <NavItem to="/" icon={House} label={messages.workspace} end />
-        <div className="mb-2 mt-7 px-2 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">{messages.node}</div>
-        <NavItem to="/node" icon={MonitorCog} label={messages.nodeOverview} />
-        <NavItem to="/operations" icon={Boxes} label={messages.operations} />
-        <div className="mb-2 mt-7 px-2 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground">{messages.preferences}</div>
-        <NavItem to="/settings" icon={Settings2} label={messages.settings} />
-        <NavItem to="/pairing" icon={QrCode} label={messages.browserAccess.title} />
-
-        <div className="mt-auto space-y-4">
-          <div className="rounded-xl bg-[var(--app-card)] p-3 ring-1 ring-foreground/10">
-            <div className="flex items-center gap-2.5"><span className={`size-2 shrink-0 rounded-full ${snapshot.status === 'connected' ? 'bg-emerald-500' : snapshot.status === 'connecting' ? 'animate-pulse bg-amber-500' : 'bg-muted-foreground'}`} /><div className="min-w-0"><div className="text-xs font-medium">{messages.localDaemon}</div><div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{snapshot.endpoint}</div></div></div>
-            <div className="mt-3 flex items-center justify-between border-t border-[var(--app-line)] pt-2.5 text-[10px] text-muted-foreground"><span>{messages.connectedPeers}</span><span className="font-mono text-foreground">{connectedPeers} / {snapshot.peers.length}</span></div>
-          </div>
-        </div>
-      </aside>}
+      {advanced && !compact && <AdvancedSidebar snapshot={snapshot} connectedPeers={connectedPeers} statusLabel={statusLabel} messages={messages} />}
 
       <div className={`app-content-column flex min-h-0 min-w-0 flex-1 flex-col ${advanced ? 'app-content-column--advanced' : ''}`}>
       {advanced && <header className="app-global-header flex h-[68px] w-full shrink-0 items-center justify-between border-b border-[var(--app-line)] px-8 max-[1000px]:px-5 max-[760px]:h-[58px] max-[760px]:px-4"><Breadcrumb messages={messages} direction={direction} /><Badge variant="outline" className={`h-7 gap-1.5 rounded-full px-2.5 text-[10px] font-medium ${snapshot.status === 'connected' ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300' : snapshot.status === 'connecting' ? 'border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300' : ''}`}><StatusIcon className="size-3.5" />{statusLabel}</Badge></header>}
@@ -267,6 +247,8 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
               <Route path="/node" element={<NodeDetailsPage snapshot={snapshot} messages={messages} />} />
               <Route path="/operations" element={<OperationsPage messages={messages} />} />
               <Route path="/settings" element={<SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} />} />
+              <Route path="/settings/access" element={isDesktopApp() ? <SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} category="access" /> : <Navigate to="/settings" replace />} />
+              <Route path="/settings/:category" element={<SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} />} />
               <Route path="/pairing" element={<BrowserAccessPage messages={messages} />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>}
@@ -284,10 +266,14 @@ function NavItem({ to, icon: Icon, label, end = false }: { to: string; icon: typ
 
 function Breadcrumb({ messages, direction }: { messages: ReturnType<typeof getMessages>; direction: 'ltr' | 'rtl' }) {
   const location = useLocation()
-  const label = location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/operations' ? messages.operations : location.pathname === '/settings' ? messages.settings : location.pathname === '/pairing' ? messages.browserAccess.title : messages.workspace
+  const settingsCategory = location.pathname.startsWith('/settings/') ? location.pathname.split('/')[2] : undefined
+  const categoryLabels: Record<string, string> = { node: messages.localNodeSettings, access: messages.webAccess.title, language: messages.languageSettings, models: messages.modelSettings.title, appearance: messages.theme }
+  const label = settingsCategory ? categoryLabels[settingsCategory] ?? messages.settings : location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/operations' ? messages.operations : location.pathname === '/settings' ? messages.settings : location.pathname === '/pairing' ? messages.browserAccess.title : messages.workspace
+  const backHref = settingsCategory ? '/settings' : '/'
+  const backLabel = settingsCategory ? messages.settings : messages.workspace
   const slideDistance = direction === 'rtl' ? -10 : 10
   return <div dir={direction} className="flex h-full min-w-0 flex-1 items-center gap-3 sm:gap-4">
-    <NavLink to="/" aria-label={messages.workspace} title={messages.workspace} className={`${buttonVariants({ variant: 'ghost', size: 'icon' })} size-10 shrink-0 rounded-full`}>
+    <NavLink to={backHref} aria-label={backLabel} title={backLabel} className={`${buttonVariants({ variant: 'ghost', size: 'icon' })} size-10 shrink-0 rounded-full`}>
       <ArrowLeft aria-hidden="true" className="size-4 rtl:rotate-180" />
     </NavLink>
     <BreadcrumbNav aria-label={messages.breadcrumbNavigation} className="min-w-0 flex-1">
@@ -296,6 +282,10 @@ function Breadcrumb({ messages, direction }: { messages: ReturnType<typeof getMe
           <BreadcrumbLink render={<NavLink to="/" />}>{messages.workspace}</BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator className="hidden shrink-0 sm:block" />
+        {settingsCategory ? <>
+          <BreadcrumbItem className="min-w-0"><BreadcrumbLink render={<NavLink to="/settings" />}>{messages.settings}</BreadcrumbLink></BreadcrumbItem>
+          <BreadcrumbSeparator className="shrink-0" />
+        </> : null}
         <BreadcrumbItem className="min-w-0">
           <AnimatePresence initial={false} mode="popLayout">
             <motion.span key={location.pathname} initial={{ opacity: 0, x: slideDistance }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -slideDistance }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}>

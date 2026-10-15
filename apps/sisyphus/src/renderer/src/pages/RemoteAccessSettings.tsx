@@ -4,6 +4,7 @@ import { ArrowRight, Fingerprint, Globe, Hash, Link2, LoaderCircle, Network, Shi
 import { type getMessages } from '@/i18n/messages'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { FloatingLabelInput } from '@/components/ui/floating-label-input'
 import { LiquidSwitch } from '@/components/ui/liquid-switch'
 import { NetworkInterfacePicker, type NetworkInterfaceAddress } from '@/components/network-interface-picker'
@@ -96,11 +97,15 @@ export function RemoteAccessSettings({ messages }: { messages: Messages }) {
   if (loading) return <Card className="grid h-56 place-items-center"><LoaderCircle aria-label={labels.configLoadFailed} className="size-5 animate-spin text-[var(--app-accent)]" /></Card>
 
   return <Card className="w-full min-w-0 p-2 sm:p-3">
-    <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
-      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><Settings2 className="size-5 text-[var(--app-accent)]" /></span>
-      <div className="min-w-0 flex-1"><div className="text-sm font-semibold">{labels.exposureTitle}</div><p className="mt-0.5 text-xs text-muted-foreground">{labels.exposureDescription}</p></div>
-      <span className={`inline-flex h-7 items-center rounded-full border px-2.5 text-[10px] font-semibold tracking-wide ${config.enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300'}`} role="status">{config.enabled ? 'ON' : 'OFF'}</span>
-    </div>
+    <Collapsible defaultOpen>
+      <CollapsibleTrigger
+        title={labels.exposureTitle}
+        description={labels.exposureDescription}
+        icon={Settings2}
+        rightSlot={<span className={`inline-flex h-7 items-center rounded-full border px-2.5 text-[10px] font-semibold tracking-wide ${config.enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300'}`} role="status">{config.enabled ? 'ON' : 'OFF'}</span>}
+        className="px-3 py-3 sm:px-4"
+      />
+      <CollapsibleContent className="gap-0" animateSpacing={false}>
 
     <div className={`mt-2 flex min-h-[72px] items-center gap-3 rounded-2xl border px-4 py-3 transition-colors duration-300 ${draftEnabled ? 'border-emerald-500/35 bg-emerald-500/[0.06]' : 'border-rose-500/35 bg-rose-500/[0.045]'}`}>
       <span className={`grid size-10 shrink-0 place-items-center rounded-xl border ${draftEnabled ? 'border-emerald-500/30 text-emerald-600 dark:text-emerald-400' : 'border-rose-500/30 text-rose-600 dark:text-rose-400'}`}><Globe className="size-5" /></span>
@@ -132,6 +137,8 @@ export function RemoteAccessSettings({ messages }: { messages: Messages }) {
     <motion.div initial={false} animate={{ height: unchanged ? 0 : 'auto', opacity: unchanged ? 0 : 1, y: unchanged ? -4 : 0 }} transition={{ duration: 0.2 }} aria-hidden={unchanged} className="overflow-hidden" style={{ pointerEvents: unchanged ? 'none' : 'auto' }}>
       <div className="flex justify-end border-t border-[var(--app-line)] px-3 pb-2 pt-4 sm:px-4"><Button type="button" disabled={saving || unchanged || invalidEnabled} onClick={() => void save()} className="gap-2">{saving && <LoaderCircle className="size-4 animate-spin" />}{labels.save}</Button></div>
     </motion.div>
+      </CollapsibleContent>
+    </Collapsible>
   </Card>
 }
 
