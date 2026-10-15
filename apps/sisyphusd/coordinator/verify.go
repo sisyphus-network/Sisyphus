@@ -455,12 +455,15 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 	case err != nil:
 		// Nothing to compare with. The worker did not fail, so its result
 		// stands as it would have with no audit.
+		job.NoteAudit(task, jobmodel.AuditInconclusive)
 		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, fmt.Sprintf("the coordinator could not run the task itself to check it (%v), so the result is taken unchecked", err))
 	case mine.Digest() == theirs.Digest():
 		standing.Agree()
+		job.NoteAudit(task, jobmodel.AuditMatched)
 		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, "the coordinator ran the task itself and got the same result")
 	default:
 		standing.Outvote()
+		job.NoteAudit(task, jobmodel.AuditCaught)
 		taken = own
 		job.NoteRead(touched.Read()...)
 		job.NoteTaskOutput(touched.Written()...)

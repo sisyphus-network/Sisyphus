@@ -73,6 +73,10 @@ type Task struct {
 	// job's spot checks passed over; see Job.Check. It is zero in a job
 	// that is not verified.
 	Verify int
+	// Audit is what came of the coordinator running the task again itself
+	// to check the worker's result: AuditMatched, AuditCaught or
+	// AuditInconclusive, or empty for a task that was not audited.
+	Audit string
 	// Progress is how far along the current attempt says it is, from 0 to
 	// 1, and StartedAt when that attempt was handed out. Neither is kept
 	// across a restart: an attempt in progress then is lost anyway.
@@ -207,6 +211,23 @@ func (j *Job) Start(t *Task, nodeID, nodeName string, now time.Time) {
 	if j.State == Pending {
 		j.State = Running
 	}
+}
+
+// What an audit of a task found; see Task.Audit.
+const (
+	// AuditMatched: the coordinator got the same result as the worker.
+	AuditMatched = "matched"
+	// AuditCaught: it got another, and took its own.
+	AuditCaught = "caught"
+	// AuditInconclusive: it could not run the task to compare, and took
+	// the worker's result unchecked.
+	AuditInconclusive = "inconclusive"
+)
+
+// NoteAudit records what an audit of a task found.
+func (j *Job) NoteAudit(t *Task, outcome string) {
+	t.Audit = outcome
+	j.touch(t)
 }
 
 // Succeed records a task's output and reports whether every task is now done,

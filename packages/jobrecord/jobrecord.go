@@ -234,6 +234,24 @@ func Build(job *jobmodel.Job, steps []Step, name func(data []byte) cid.Cid) *Rec
 			}
 		})
 		m.AssembleEntry("result").AssignLink(b.add(b.result(job)))
+		// What the coordinator found when it ran tasks again itself, for a
+		// job that asked for that. A task missing from the list was not
+		// audited, and a job with none has no list, so its record is what
+		// it was before audits were recorded. It names the task and the
+		// worker and nothing of either's output, so it is the same for a
+		// private job.
+		if audits := audited(job); len(audits) > 0 {
+			m.AssembleEntry("audits").CreateList(-1, func(l fluent.ListAssembler) {
+				for _, task := range audits {
+					l.AssembleValue().CreateMap(-1, func(m fluent.MapAssembler) {
+						m.AssembleEntry("task").AssignInt(int64(task.Index))
+						m.AssembleEntry("node").AssignString(task.NodeID)
+						m.AssembleEntry("name").AssignString(task.NodeName)
+						m.AssembleEntry("outcome").AssignString(task.Audit)
+					})
+				}
+			})
+		}
 		if len(steps) > 0 {
 			m.AssembleEntry("graph").AssignLink(b.add(graph(steps)))
 		}
@@ -404,6 +422,17 @@ func (b *builder) result(job *jobmodel.Job) datamodel.Node {
 		blobs(m, "intermediate", job.IntermediateBlobs())
 		moment(m, "finished_at", job.FinishedAt)
 	})
+}
+
+// audited returns the job's tasks that were audited, in task order.
+func audited(job *jobmodel.Job) []*jobmodel.Task {
+	var tasks []*jobmodel.Task
+	for _, task := range job.Tasks {
+		if task.Audit != "" {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks
 }
 
 // graph is the node that says which jobs carried out a job's steps.

@@ -809,7 +809,7 @@ bin/sisyphusd job logs <job-id>                                                 
 - **It is for work that gives the same result every time**, like `--verify`. A task the node fails to run is not held against the worker: its result is taken, and the events say it went unchecked.
 - **Not with `--verify`.** A job asks other workers to check, or the coordinator, not both.
 - **A private job is audited like any other**: the node has the job's key.
-- **The job's record says it was audited**, with `audit_share` among what was asked. Which tasks were picked and how each came out is in the job's events (`job logs`), which are kept with the job and are not part of the record.
+- **The job's record says what the audits found.** `audit_share` is among what was asked, and the root's `audits` lists each task that was run again: its number, the worker (node ID and name), and the `outcome`. That is `matched`, `caught` (the node got another result, and took its own), or `inconclusive` (the node could not run the task, so the worker's result stands unchecked). A task missing from the list was not audited, and a job with no audits has no list, so its record is the same as before audits were recorded. The entries name tasks and workers and nothing of what either computed, so a private job's record carries them too. The events (`job logs`) still tell the same in words.
 - **A job made of steps** hands its audit share to each step.
 
 ## A job's record
@@ -826,7 +826,7 @@ A record is made of these nodes:
 
 | Node | What it holds |
 | --- | --- |
-| root | `kind` (`sisyphus-job-record`), `version` (1), the job's ID, whether it is `private`, and links to the others. A step of a graph has `parent`: the graph's job ID and the step's name. |
+| root | `kind` (`sisyphus-job-record`), `version` (1), the job's ID, whether it is `private`, and links to the others. A step of a graph has `parent`: the graph's job ID and the step's name. A job whose tasks the coordinator [checked itself](#checked-by-the-coordinator-itself) has `audits`: for each task it ran again, the task, the worker and the `outcome`. |
 | manifest | What was asked: `workload`, `params`, `mode`, `requirements` (tasks asked for, task timeout, memory, graphics cards, `verify` for a job that was [verified](#verifying-results), and `audit_share` for one the coordinator [checked itself](#checked-by-the-coordinator-itself)), links to the `inputs` it read, the node ID of the `submitter` (absent for a job the node gave itself, from the desktop app or the planner), `created_at`. |
 | a receipt for each task | The task's number, how it ended, its `output`, how many attempts failed, and every attempt in order: which worker (node ID and name), how it went, and why it failed if it did. For a verified job also `results`: for each result a worker returned, the attempt, the worker, a `digest` that is the same for results that are the same, and whether it `agreed` with the result the task was settled by. |
 | result | How the job ended, its `result` or `error`, links to the `outputs` it stored and to the `intermediate` data that passed between its tasks, `finished_at`. |
