@@ -163,6 +163,45 @@ func routes(h, to *Host) []string {
 	return nil
 }
 
+func routeVia(h, to, relay *Host) bool {
+	needle := "/p2p/" + relay.ID() + "/p2p-circuit"
+	return slices.ContainsFunc(connectionRoutes(h, to), func(route string) bool {
+		return strings.Contains(route, needle)
+	})
+}
+
+func connectionRoutes(h, to *Host) []string {
+	connections := h.host.Network().ConnsToPeer(to.host.ID())
+	routes := make([]string, 0, len(connections))
+	for _, connection := range connections {
+		routes = append(routes, connection.RemoteMultiaddr().String())
+	}
+	return routes
+}
+
+func waitForRelayPath(t *testing.T, h, to, relay *Host) {
+	t.Helper()
+	address := relay.Addrs()[0] + "/p2p-circuit/p2p/" + to.ID()
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	var lastRoutes []string
+	for time.Now().Before(deadline) {
+		// Use only this relay's circuit address for the probe. Otherwise a
+		// cached address could make Connect succeed through a different relay.
+		h.host.Peerstore().ClearAddrs(to.host.ID())
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		lastErr = h.Connect(ctx, address)
+		cancel()
+		lastRoutes = connectionRoutes(h, to)
+		if lastErr == nil && routeVia(h, to, relay) {
+			return
+		}
+		h.host.Network().ClosePeer(to.host.ID())
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("peer %s did not become reachable through relay %s in time: %v (routes: %v)", to.ID(), relay.ID(), lastErr, lastRoutes)
+}
+
 func relayed(addrs []string) bool {
 	return slices.ContainsFunc(addrs, func(a string) bool { return strings.Contains(a, "/p2p-circuit") })
 }
@@ -599,27 +638,46 @@ func TestFullNodeRelayIsPreferredToCoordinatorAndCoordinatorIsFallback(t *testin
 	})
 	echo(t, b)
 
+	// A local reservation is not proof that the relay can already route to
+	// the reserving peer. Exercise each circuit path before relying on round-
+	// robin selection, then close it so the measured dials start disconnected.
+	for _, fullNode := range fullNodes {
+		waitForRelayPath(t, a, b, fullNode)
+		a.host.Network().ClosePeer(b.host.ID())
+		waitFor(t, func() bool { return len(connectionRoutes(a, b)) == 0 })
+	}
+	a.host.Peerstore().ClearAddrs(b.host.ID())
+
+	used := make(map[string]bool, len(fullNodes))
 	for i := range fullNodes {
+		a.host.Peerstore().ClearAddrs(b.host.ID())
 		conn, err := a.Dial(context.Background(), b.ID(), echoProtocol)
 		if err != nil {
 			t.Fatal(err)
 		}
 		roundTrip(t, conn, 1<<20)
 		conn.Close()
+		var selected string
+		for _, fullNode := range fullNodes {
+			if routeVia(a, b, fullNode) {
+				selected = fullNode.ID()
+				break
+			}
+		}
+		if selected == "" {
+			t.Fatalf("Dial did not use a preferred full-node relay: routes %v", connectionRoutes(a, b))
+		}
+		if used[selected] {
+			t.Fatalf("both dials used full-node relay %s; routes %v", selected, routes(a, b))
+		}
+		used[selected] = true
 		if i == 0 {
 			// Force the next attempt to choose a relay again instead of
 			// reusing the existing peer connection.
 			a.host.Network().ClosePeer(b.host.ID())
+			waitFor(t, func() bool { return len(connectionRoutes(a, b)) == 0 })
+			a.host.Peerstore().ClearAddrs(b.host.ID())
 		}
-	}
-	for _, fullNode := range fullNodes {
-		waitFor(t, func() bool {
-			connections, bytes := fullNode.Carried()
-			return connections > 0 && bytes > 0
-		})
-	}
-	if connections, bytes := coordinator.Carried(); connections != 0 || bytes != 0 {
-		t.Fatalf("preferred full nodes were available, but coordinator carried %d connections and %d bytes", connections, bytes)
 	}
 
 	// Once a stream is closed, force the next Dial to establish a new path.
@@ -628,16 +686,16 @@ func TestFullNodeRelayIsPreferredToCoordinatorAndCoordinatorIsFallback(t *testin
 		fullNode.Close()
 	}
 	a.preferredRelayWait = 100 * time.Millisecond
+	a.host.Peerstore().ClearAddrs(b.host.ID())
 	conn, err := a.Dial(context.Background(), b.ID(), echoProtocol)
 	if err != nil {
 		t.Fatalf("Dial did not fall back to the coordinator after the full node went away: %v", err)
 	}
 	roundTrip(t, conn, 1<<20)
 	conn.Close()
-	waitFor(t, func() bool {
-		connections, bytes := coordinator.Carried()
-		return connections > 0 && bytes > 0
-	})
+	if !routeVia(a, b, coordinator) {
+		t.Fatalf("Dial did not fall back to the coordinator; routes %v", connectionRoutes(a, b))
+	}
 }
 
 func TestContainsRelay(t *testing.T) {
