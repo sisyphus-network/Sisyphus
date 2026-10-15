@@ -54,13 +54,14 @@ func TestTheCoordinatorChecksAWorkersResultByRunningTheTaskItself(t *testing.T) 
 	}
 	// The job's record says it was asked for, as a job's that was not
 	// audited does not.
-	if record := p.recordText(honest.GetJobId()); !strings.Contains(record, `"audit_share":1`) {
+	// It says what the audit found, too.
+	if record := p.recordText(honest.GetJobId()); !strings.Contains(record, `"audit_share":1`) || !strings.Contains(record, `"audits":[{"name":"only",`) || !strings.Contains(record, `"outcome":"matched","task":0}]`) {
 		t.Errorf("the record of an audited job:\n%s", record)
 	}
 	plain := p.submit(&pb.JobSpec{Workload: "primes", Params: []byte(hundred), MaxTasks: 1}).GetJobId()
 	w.returns(w.assignment(), primesBelow100)
 	p.wait(plain)
-	if record := p.recordText(plain); strings.Contains(record, "audit_share") {
+	if record := p.recordText(plain); strings.Contains(record, "audit_share") || strings.Contains(record, "audits") {
 		t.Errorf("the record of a job that was not audited:\n%s", record)
 	}
 
@@ -78,6 +79,9 @@ func TestTheCoordinatorChecksAWorkersResultByRunningTheTaskItself(t *testing.T) 
 	if got := p.standing(w); got != "1 agreed, 1 outvoted, 10 owed" {
 		t.Errorf("the standing of a worker caught by an audit: %s", got)
 	}
+	if record := p.recordText(lied.GetJobId()); !strings.Contains(record, `"outcome":"caught"`) {
+		t.Errorf("the record of a job whose worker was caught:\n%s", record)
+	}
 
 	// A share that is next to nothing picks next to no task: the result is
 	// taken as it comes, as from a job that asked for no audit.
@@ -86,6 +90,11 @@ func TestTheCoordinatorChecksAWorkersResultByRunningTheTaskItself(t *testing.T) 
 	w.reply(&pb.TaskResult{TaskId: a.GetTaskId(), Attempt: a.GetAttempt(), Outcome: &pb.TaskResult_Output{Output: []byte(`{"count":7}`)}})
 	if unchecked := p.wait(id); string(unchecked.GetResult()) != `{"count":7}` || strings.Contains(story(p.events(id, 0)), "the coordinator") {
 		t.Errorf("a task that was not picked: %s\n%s", unchecked.GetResult(), story(p.events(id, 0)))
+	}
+	// Its record asked for audits but lists none: a task missing from the
+	// list was not audited.
+	if record := p.recordText(id); strings.Contains(record, "audits") {
+		t.Errorf("the record of a job none of whose tasks were picked:\n%s", record)
 	}
 }
 
@@ -129,6 +138,9 @@ func TestWhatAnAuditIsRefusedForAndWhatItDoesWhenItCannotCompare(t *testing.T) {
 	}
 	if got := p.standing(w); got != "0 agreed, 0 outvoted, 0 owed" {
 		t.Errorf("the standing of a worker whose result could not be checked: %s", got)
+	}
+	if record := p.recordText(id); !strings.Contains(record, `"outcome":"inconclusive"`) {
+		t.Errorf("the record of a job this node could not check:\n%s", record)
 	}
 
 	// A job made of steps hands the audit on to each of them.
@@ -197,6 +209,11 @@ func TestAPrivateJobIsAuditedLikeAnyOther(t *testing.T) {
 	}
 	if told := story(p.events(job.GetJobId(), 0)); strings.Count(told, audited) != 2 || strings.Contains(told, "task-disagreed") {
 		t.Errorf("the events of an audited private job:\n%s", told)
+	}
+	// A private job's record lists its audits like any other's: they name
+	// tasks and workers, and nothing of what either computed.
+	if record := p.recordText(job.GetJobId()); strings.Count(record, `"outcome":"matched"`) != 2 {
+		t.Errorf("the record of an audited private job:\n%s", record)
 	}
 }
 

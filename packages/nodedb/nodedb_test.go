@@ -408,7 +408,7 @@ func loosen(t *testing.T, db *DB, table, columns string) {
 func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	const (
 		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify, verify_share, audit_share"
-		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error, verify"
+		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error, verify, audit"
 	)
 	for _, tt := range []struct {
 		table, columns, want string
@@ -527,6 +527,7 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 		`DROP TABLE worker_standing`,
 		`DROP TABLE file_pin_operations`,
 		`DROP TABLE model_profiles`,
+		`ALTER TABLE tasks DROP COLUMN audit`,
 		`DROP TABLE model_lending`,
 		`DROP TABLE browser_pairings`,
 		`DROP TABLE browser_devices`,
