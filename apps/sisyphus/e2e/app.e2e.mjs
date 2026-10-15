@@ -25,7 +25,7 @@ async function selectProvider(page, name) {
 }
 
 async function selectLoadedModel(page, name) {
-  await page.getByText(/^Connected · \d+ models available$/).waitFor()
+  await page.getByText('models available', { exact: true }).waitFor()
   await page.getByRole('button', { name: 'Model', exact: true }).click()
   await page.getByRole('dialog', { name: 'Model' }).getByRole('button', { name, exact: true }).click()
 }
@@ -36,7 +36,7 @@ async function openProviderModelStep(page, { provider, profile, url, apiKey }) {
   await page.getByRole('button', { name: 'Continue', exact: true }).click()
   await page.getByRole('textbox', { name: 'Service URL' }).fill(url)
   if (apiKey) await page.getByLabel('API key').fill(apiKey)
-  await page.getByText(/^Connected · \d+ models available$/).waitFor()
+  await page.getByText('models available', { exact: true }).waitFor()
   await page.getByRole('button', { name: 'Continue', exact: true }).click()
 }
 
@@ -835,7 +835,7 @@ test('model settings save an OpenAI-compatible API key on the node and use it fo
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await page.getByRole('textbox', { name: 'Service URL' }).fill(service.url)
     await page.getByLabel('API key').fill(apiKey)
-    await page.getByText(/^Connected · \d+ models available$/).waitFor()
+    await page.getByText('models available', { exact: true }).waitFor()
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await selectLoadedModel(page, 'test-openai-model')
     await page.getByRole('button', { name: 'Save and activate' }).click()
