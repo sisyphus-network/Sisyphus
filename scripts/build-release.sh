@@ -15,7 +15,8 @@ mkdir -p "$out"
 # Every target here builds without a C toolchain. The whole test suite runs
 # on linux/amd64; the known-answer workloads also run on each of Linux,
 # Windows and macOS on x64 and arm64, on Linux's other processors under an
-# emulator, on Android's arm64, and on the BSDs in virtual machines (the
+# emulator, on Android's arm64, and on the BSDs in virtual machines, ARM64
+# ones included, and each target's daemon is built (the
 # workload-architecture and workload-elsewhere jobs in ci.yml). Not built:
 # NetBSD on arm64, Solaris, illumos, AIX and Plan 9 (a dependency does not
 # support them), and iOS and Android on x86, which need a platform SDK.
