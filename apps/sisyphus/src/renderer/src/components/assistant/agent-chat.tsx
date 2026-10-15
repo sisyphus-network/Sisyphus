@@ -17,7 +17,7 @@ import { needsPlannerSetup } from '@/lib/grpc-status'
 import { supportsChatFileReferences } from '@/lib/node-capabilities'
 import { loadMessages, type Activity, type AttachedFile, type ChatItem, type StoredChatMessage } from '@/lib/chat-history'
 import ShinyText from '@/components/ui/shiny-text'
-import { getNodeApi, isDesktopApp } from '@/lib/node-api'
+import { getNodeApi } from '@/lib/node-api'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { type getMessages } from '@/i18n/messages'
 
@@ -94,7 +94,6 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [composerHeight, setComposerHeight] = useState(0)
   const [conversationLoading, setConversationLoading] = useState(false)
-  const [browserOnly] = useState(() => !isDesktopApp())
   const isMobile = useBreakpoint('(max-width: 900px)')
   const scrollRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLDivElement>(null)
@@ -113,8 +112,8 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   }
 
   useEffect(() => {
-    if (snapshot.status === 'connected' && !browserOnly) void refreshChats()
-  }, [snapshot.status, browserOnly])
+    if (snapshot.status === 'connected') void refreshChats()
+  }, [snapshot.status])
   // Workspace can switch between its desktop and compact layouts. If that
   // remounts this view, restore the selected conversation from its owner.
   useEffect(() => {
@@ -211,7 +210,7 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
 
   async function sendMessage(text = prompt) {
     const value = text.trim()
-    if ((!value && attachments.length === 0) || isBusy || browserOnly || snapshot.status !== 'connected') return
+    if ((!value && attachments.length === 0) || isBusy || snapshot.status !== 'connected') return
     setBusy(true)
     const pendingFiles = [...attachments]
     try {
@@ -294,7 +293,7 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   const scrollBottom = () => { const element = scrollRef.current; if (element) { stickToBottom.current = true; element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' }) } }
   const selectedChat = chats.find((chat) => chat.chatId === chatId)
   const historyList = <>
-    <Button type="button" variant="outline" disabled={browserOnly || asking} onClick={() => { if (isMobile) setHistoryOpen(false); void openChat('') }} className="mx-2 mb-2 flex h-10 w-[calc(100%-1rem)] min-w-0 justify-start gap-2 rounded-xl border-[var(--app-line)] bg-[var(--app-card)] px-3 text-sm font-medium text-foreground shadow-sm shadow-black/[0.03] hover:border-[color-mix(in_srgb,var(--app-accent)_42%,var(--app-line))] hover:bg-[var(--app-wash)]">
+    <Button type="button" variant="outline" disabled={asking} onClick={() => { if (isMobile) setHistoryOpen(false); void openChat('') }} className="mx-2 mb-2 flex h-10 w-[calc(100%-1rem)] min-w-0 justify-start gap-2 rounded-xl border-[var(--app-line)] bg-[var(--app-card)] px-3 text-sm font-medium text-foreground shadow-sm shadow-black/[0.03] hover:border-[color-mix(in_srgb,var(--app-accent)_42%,var(--app-line))] hover:bg-[var(--app-wash)]">
       <Plus className="size-4 text-[var(--app-accent)]" /><span className="truncate">{messages.newConversation}</span>
     </Button>
     {chats.length ? <nav aria-label={messages.conversationHistory} className="grid gap-1 px-2">
@@ -306,7 +305,7 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
             <span title={chat.title || messages.conversation} className="block w-full truncate text-sm font-medium">{chat.title || messages.conversation}</span>
             <span className="mt-1 block w-full truncate text-xs text-muted-foreground">{Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(direction === 'rtl' ? 'he-IL' : 'en-US')}</span>
           </button>
-          <Button type="button" variant="ghost" size="icon" onClick={() => setDeleteTarget({ id: chat.chatId, title: chat.title || messages.conversation })} disabled={asking || browserOnly} aria-label={`${messages.deleteConversation}: ${chat.title || messages.conversation}`} className="me-1 size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-red-500/10 hover:text-red-500 md:opacity-0 md:group-hover/conversation:opacity-100 focus-visible:opacity-100">
+          <Button type="button" variant="ghost" size="icon" onClick={() => setDeleteTarget({ id: chat.chatId, title: chat.title || messages.conversation })} disabled={asking} aria-label={`${messages.deleteConversation}: ${chat.title || messages.conversation}`} className="me-1 size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-red-500/10 hover:text-red-500 md:opacity-0 md:group-hover/conversation:opacity-100 focus-visible:opacity-100">
             <Trash2 className="size-4" />
           </Button>
         </div>
@@ -327,12 +326,12 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
         <div className="min-h-0 flex-1 overflow-y-auto py-3">{historyList}</div>
       </div>
     </aside>, historyPanelHost) : null}
-    <div dir={direction} data-chat-loading={conversationLoading ? '' : undefined} className={`sisyphus-agent-chat relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden text-foreground ${browserOnly ? 'is-browser' : ''}`}>
+    <div dir={direction} data-chat-loading={conversationLoading ? '' : undefined} className="sisyphus-agent-chat relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden text-foreground">
     <div className="sisyphus-chat-toolbar relative z-20 flex h-10 shrink-0 items-center gap-1 px-1">
       <Button type="button" size="icon" variant="ghost" onClick={() => setHistoryOpen((open) => !open)} aria-label={historyOpen ? messages.closeHistory : messages.openHistory} aria-haspopup="dialog" aria-expanded={historyOpen} aria-pressed={historyOpen} data-state={historyOpen ? 'open' : 'closed'} className="grid size-10 shrink-0 touch-manipulation place-items-center rounded-full text-foreground transition-colors hover:bg-[var(--app-wash)] focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]/60"><History className="size-[22px]" strokeWidth={1.8} /></Button>
       <span className="sisyphus-conversation-title hidden min-w-0 flex-1 truncate px-1 text-start text-xs text-muted-foreground min-[901px]:block">{selectedChat?.title || messages.newConversation}</span>
       <div className="ms-auto flex shrink-0 items-center gap-1">
-      {chatId && <Button type="button" size="icon" variant="ghost" disabled={asking || browserOnly} className="hidden size-8 rounded-full text-muted-foreground min-[901px]:inline-flex" aria-label={messages.deleteConversation} title={messages.deleteConversation} onClick={() => setDeleteTarget({ id: chatId, title: selectedChat?.title || messages.conversation })}><Trash2 className="size-4" /></Button>}
+      {chatId && <Button type="button" size="icon" variant="ghost" disabled={asking} className="hidden size-8 rounded-full text-muted-foreground min-[901px]:inline-flex" aria-label={messages.deleteConversation} title={messages.deleteConversation} onClick={() => setDeleteTarget({ id: chatId, title: selectedChat?.title || messages.conversation })}><Trash2 className="size-4" /></Button>}
       <Button type="button" size="icon" variant="ghost" onClick={onOpenSettings} aria-label={messages.openAdvanced} title={messages.openAdvanced} className="size-10 rounded-full text-muted-foreground"><Settings2 className="size-[18px]" /></Button>
       </div>
     </div>
@@ -346,7 +345,6 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
         </Drawer.Content>
       </Drawer.Portal>
     </Drawer.Root>
-    {browserOnly && <div role="status" className="relative z-20 mx-2 mt-2 rounded-lg border border-[var(--app-line)] bg-[var(--app-wash)] px-3 py-2 text-[11px] text-muted-foreground">{messages.browserChatReadOnly}</div>}
     <div ref={scrollRef} onScroll={stopScroll} className="sisyphus-chat-scroll absolute inset-x-0 bottom-0 top-10 overflow-x-hidden overflow-y-auto overscroll-y-contain px-2 [scrollbar-gutter:stable]" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', paddingBottom: Math.max(composerHeight + 24, 100) }}>
       <div className="mx-auto flex h-full min-h-full min-w-0 w-full max-w-3xl flex-col gap-6 px-2 pb-5 pt-5 sm:px-4">
         <AnimatePresence mode="wait" initial={false}>
@@ -379,9 +377,9 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
     </div>
     <div ref={composerRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-20 min-w-0 pb-1">
       {showScrollToBottom && <Button type="button" variant="outline" size="icon" onClick={scrollBottom} className="pointer-events-auto absolute bottom-[calc(100%+0.75rem)] left-1/2 z-10 size-9 -translate-x-1/2 rounded-full border-[var(--app-line)] bg-[var(--app-card)] text-foreground shadow-lg shadow-black/10 hover:-translate-x-1/2 hover:-translate-y-0.5" aria-label={messages.scrollToBottom}><ArrowDown size={17} /></Button>}
-      {paneItems.length === 0 && !conversationLoading && <div className="sisyphus-composer-suggestions pointer-events-auto relative z-10 mx-auto mb-1 flex w-full max-w-3xl flex-wrap justify-center gap-2 overflow-visible px-2 py-2">{suggestions.map((suggestion, index) => <Button variant="outline" size="sm" type="button" key={suggestion} disabled={browserOnly || snapshot.status !== 'connected' || isBusy} onClick={() => void sendMessage(suggestion)} className="h-9 shrink-0 gap-2 whitespace-nowrap rounded-full border-[var(--app-line)] bg-[var(--app-card)]/85 px-3.5 text-xs font-medium text-foreground shadow-sm shadow-black/5 transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-[var(--app-accent)] hover:bg-[var(--app-wash)] hover:shadow-md"><span className={`grid size-5 shrink-0 place-items-center rounded-full ${index === 0 ? 'bg-sky-500/12 text-sky-500' : 'bg-violet-500/12 text-violet-500'}`}><Sparkles className="size-3.5" strokeWidth={2} /></span>{suggestion}</Button>)}</div>}
+      {paneItems.length === 0 && !conversationLoading && <div className="sisyphus-composer-suggestions pointer-events-auto relative z-10 mx-auto mb-1 flex w-full max-w-3xl flex-wrap justify-center gap-2 overflow-visible px-2 py-2">{suggestions.map((suggestion, index) => <Button variant="outline" size="sm" type="button" key={suggestion} disabled={snapshot.status !== 'connected' || isBusy} onClick={() => void sendMessage(suggestion)} className="h-9 shrink-0 gap-2 whitespace-nowrap rounded-full border-[var(--app-line)] bg-[var(--app-card)]/85 px-3.5 text-xs font-medium text-foreground shadow-sm shadow-black/5 transition-[transform,border-color,background-color,box-shadow] hover:-translate-y-0.5 hover:border-[var(--app-accent)] hover:bg-[var(--app-wash)] hover:shadow-md"><span className={`grid size-5 shrink-0 place-items-center rounded-full ${index === 0 ? 'bg-sky-500/12 text-sky-500' : 'bg-violet-500/12 text-violet-500'}`}><Sparkles className="size-3.5" strokeWidth={2} /></span>{suggestion}</Button>)}</div>}
       {attachments.length > 0 && <p role="note" className="mx-auto mb-2 max-w-2xl px-4 text-center text-xs text-muted-foreground">{messages.chatAttachmentPrivacyNotice}</p>}
-      <SisyphusPrompt direction={direction} value={prompt} onValueChange={setPrompt} onSubmit={() => void sendMessage()} placeholder={snapshot.status === 'connected' ? messages.promptPlaceholder : messages.agentNotReadyShort} sendLabel={messages.sendMessage} addAttachmentLabel={messages.addAttachment} removeAttachmentLabel={messages.removeAttachment} closePreviewLabel={messages.closePreview} attachments={attachments} onFilesPicked={addAttachments} onAttachmentRemove={removeAttachment} disabled={browserOnly || snapshot.status !== 'connected' || isBusy} />
+      <SisyphusPrompt direction={direction} value={prompt} onValueChange={setPrompt} onSubmit={() => void sendMessage()} placeholder={snapshot.status === 'connected' ? messages.promptPlaceholder : messages.agentNotReadyShort} sendLabel={messages.sendMessage} addAttachmentLabel={messages.addAttachment} removeAttachmentLabel={messages.removeAttachment} closePreviewLabel={messages.closePreview} attachments={attachments} onFilesPicked={addAttachments} onAttachmentRemove={removeAttachment} disabled={snapshot.status !== 'connected' || isBusy} />
     </div>
     </div>
   </>

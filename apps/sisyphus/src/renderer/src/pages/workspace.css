@@ -101,8 +101,6 @@
   .workspace-shell--compact .workspace-chat-toolbar { display: flex !important; }
   .workspace-shell--compact .sisyphus-chat-scroll { top: 40px !important; padding-inline: 0; }
   .workspace-shell--compact .sisyphus-chat-scroll > div { max-width: 44rem; padding-inline: 12px; }
-  .workspace-shell--compact .sisyphus-agent-chat.is-browser > [role="status"] { margin: 8px 12px 0; }
-  .workspace-shell--compact .sisyphus-agent-chat.is-browser .sisyphus-chat-scroll { top: 78px !important; }
   .workspace-mobile-dock {
     height: 80px;
     overflow: hidden;
