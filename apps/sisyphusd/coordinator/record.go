@@ -166,17 +166,12 @@ func (c *Coordinator) Record(ctx context.Context, jobID string, verify bool, key
 		out.RecomputedCid, out.Matches = fresh.Root.String(), fresh.Root.Equals(root)
 	}
 	if attestation, ok := c.attest(root); ok {
-		// The attestation as stored, if it is, so that a check reads what
-		// anyone fetching it would; made afresh if not, since it is the
-		// same every time.
-		data, err := c.store.GetNode(ctx, attestation.CID)
-		if err != nil {
-			data = attestation.Data
-		}
-		node := jobrecord.Node{CID: attestation.CID, Data: data}
-		out.AttestationCid = node.CID.String()
-		out.Attestation = &pb.RecordNode{Cid: node.CID.String(), Data: node.Data, Json: node.JSON()}
-		if checked, err := jobrecord.CheckAttestation(data); verify && err == nil && checked.Record.Equals(root) {
+		// Made afresh: an Ed25519 signature is the same every time, so it
+		// is the very node keepRecord stored, and checking it checks that
+		// this node's key signs this record.
+		out.AttestationCid = attestation.CID.String()
+		out.Attestation = &pb.RecordNode{Cid: attestation.CID.String(), Data: attestation.Data, Json: attestation.JSON()}
+		if checked, err := jobrecord.CheckAttestation(attestation.Data); verify && err == nil && checked.Record.Equals(root) {
 			out.AttestedBy = checked.Signer
 		}
 	}
