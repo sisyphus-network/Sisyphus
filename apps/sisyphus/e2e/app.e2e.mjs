@@ -19,7 +19,7 @@ async function selectProvider(page, name) {
 async function selectLoadedModel(page, name) {
   await page.getByText(/^Connected · \d+ models available$/).waitFor()
   await page.getByRole('textbox', { name: 'Model' }).click()
-  await page.getByRole('dialog', { name: 'Choose model' }).getByRole('button', { name, exact: true }).click()
+  await page.getByRole('dialog', { name: 'Model' }).getByRole('button', { name, exact: true }).click()
 }
 
 test('the window shows the node it is connected to', async () => {
