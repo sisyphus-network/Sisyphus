@@ -30,8 +30,11 @@ jobs:
       fail-fast: false
       matrix:
         # Every system and processor the app ships for, each built on its
-        # own: Linux, Windows and macOS, on x64 and on arm64.
-        os: [ubuntu-26.04, ubuntu-26.04-arm, windows-2025, windows-11-arm, macos-26, macos-26-intel]
+        # own: Linux, Windows and macOS, on x64 and on arm64, for each push
+        # to dev and for a pull request labelled all-platforms. Other pull
+        # requests build the three most people run, since the account has
+        # twenty runners at a time to share between every pull request.
+        os: ${{ fromJSON((github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'all-platforms')) && '["ubuntu-26.04","ubuntu-26.04-arm","windows-2025","windows-11-arm","macos-26","macos-26-intel"]' || '["ubuntu-26.04","windows-2025","macos-26"]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
