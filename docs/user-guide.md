@@ -166,6 +166,18 @@ bin/sisyphusd pool members
 
 **Settings** holds what belongs to the window (language, theme and accent, which are kept on this device) and the planner's model, which is kept on the node. The app is in seven languages, two of them written right to left.
 
+**Lend this machine's models** offers the models of an Ollama on this machine to the pool, without the command line:
+
+1. Turn lending on and give Ollama's address (`http://127.0.0.1:11434` for one on this machine). **Check connection** shows the models it has and which are loaded now.
+2. Tick the models to offer. Then set the limits:
+   - **GPU layers:** how much of a model goes on the graphics card. `0` keeps the pool's work off it, `-1` puts on as much as fits.
+   - **CPU threads**, **context length**, and **keep loaded**, which is how long a model stays in memory after it answers.
+3. Save.
+
+Changes to the models and the limits apply at once. Turning lending on or off, or changing the address, needs the node restarted. The page says when. A few limits belong to Ollama itself rather than to Sisyphus, such as how many models it keeps loaded and which graphics cards it may use; the section lists them and how to set them on Windows, macOS and Linux. If the node was started with `--models-from`, those flags decide, and the saved settings wait for a start without them.
+
+**Access** lets browsers on other machines use this node, which is off until you turn it on. Pick which of the machine's network addresses to serve on. Browsers then reach the node over HTTPS, with a certificate the node makes for itself, so each one warns about it the first time: compare the fingerprint shown here before accepting. **Devices** then pairs a browser with a one-time code, and lists the paired ones so you can revoke them.
+
 ## Checking results
 
 A pool of your own machines can be taken at its word. One with other people's machines in it cannot, and a job can ask to be checked:
