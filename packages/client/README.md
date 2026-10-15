@@ -1,8 +1,8 @@
 # `@sisyphus/client`
 
 The shared TypeScript client package is built from `proto/sisyphus/node/v1/node.proto`.
-Generated message schemas and the Connect service descriptor are checked in under
-`src/gen`; regenerate them from the repository root with:
+Generated message schemas and the service descriptor, both in `node_pb.ts` (Protobuf-ES v2),
+are checked in under `src/gen`; regenerate them from the repository root with:
 
 ```sh
 nix develop --command npm --prefix apps/sisyphus run proto:generate

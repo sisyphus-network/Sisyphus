@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build && node --experimental-strip-types dev/verify-locale-flags.mjs",
-    "proto:generate": "protoc -I ../../proto --es_out=../../packages/client/src/gen --es_opt=target=ts,import_extension=.js --connect-es_out=../../packages/client/src/gen --connect-es_opt=target=ts,import_extension=.js ../../proto/sisyphus/node/v1/node.proto",
+    "proto:generate": "protoc -I ../../proto --es_out=../../packages/client/src/gen --es_opt=target=ts,import_extension=.js ../../proto/sisyphus/node/v1/node.proto",
     "package:dir": "npm run build && electron-builder --config electron-builder.config.cjs --dir --publish never",
     "package:dist": "npm run build && electron-builder --config electron-builder.config.cjs --publish never",
     "test:package": "node dev/verify-package.mjs",
@@ -21,9 +21,9 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
-    "@bufbuild/protobuf": "^1.10.1",
-    "@connectrpc/connect": "^1.6.1",
-    "@connectrpc/connect-web": "^1.6.1",
+    "@bufbuild/protobuf": "^2.16.0",
+    "@connectrpc/connect": "^2.2.0",
+    "@connectrpc/connect-web": "^2.2.0",
     "@fontsource-variable/dm-sans": "^5.3.0",
     "@grpc/grpc-js": "^1.14.6",
     "@grpc/proto-loader": "^0.8.0",
@@ -60,8 +60,7 @@
   },
   "devDependencies": {
     "@electron/asar": "4.3.1",
-    "@bufbuild/protoc-gen-es": "^1.10.1",
-    "@connectrpc/protoc-gen-connect-es": "^1.7.0",
+    "@bufbuild/protoc-gen-es": "^2.16.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "26.6.5",
     "@types/react": "^19.2.7",
