@@ -252,6 +252,9 @@ jobs:
         if: matrix.goos == 'freebsd' && matrix.via == 'vm'
         uses: vmactions/freebsd-vm@v1
         with:
+          # The tests' answer is all that is wanted back, and copying the
+          # VM's files back has failed on its own (tar on FreeBSD/arm64).
+          copyback: false
           arch: ${{ matrix.goarch == 'arm64' && 'aarch64' || '' }}
           sync: ${{ matrix.goarch == 'arm64' && 'tar' || 'rsync' }}
           envs: KNOWN_ANSWERS
@@ -260,6 +263,9 @@ jobs:
         if: matrix.goos == 'openbsd' && matrix.via == 'vm'
         uses: vmactions/openbsd-vm@v1
         with:
+          # The tests' answer is all that is wanted back, and copying the
+          # VM's files back has failed on its own (tar on FreeBSD/arm64).
+          copyback: false
           arch: ${{ matrix.goarch == 'arm64' && 'aarch64' || '' }}
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
@@ -267,6 +273,9 @@ jobs:
         if: matrix.goos == 'netbsd' && matrix.via == 'vm'
         uses: vmactions/netbsd-vm@v1
         with:
+          # The tests' answer is all that is wanted back, and copying the
+          # VM's files back has failed on its own (tar on FreeBSD/arm64).
+          copyback: false
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
 
