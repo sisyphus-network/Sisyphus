@@ -73,8 +73,9 @@ type Config struct {
 	// Ollama or https://api.openai.com/v1 for OpenAI. Empty means that
 	// provider's usual place.
 	BaseURL string
-	// APIKey is the service's key. Ollama needs none, and for Anthropic an
-	// empty one means the key Anthropic's own tools are set up with.
+	// APIKey is the service's optional bearer key. Ollama does not require one
+	// by default, but accepts one for authenticated endpoints or proxies. For
+	// Anthropic, an empty key means its own tools provide the credentials.
 	APIKey string
 }
 

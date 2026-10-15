@@ -106,7 +106,11 @@ export async function open(page, name) {
  * say, or { tool, arguments } to call one of the planner's tools.
  */
 export async function standInModel(...replies) {
-  const model = { asked: [], pulled: [], url: '', aborted: 0, pending: [] }
+  const model = { asked: [], pulled: [], removed: [], authorizations: [], url: '', aborted: 0, pending: [] }
+  const tags = [
+    { name: 'test-model', size: 4900000000 },
+    { name: 'second-model', size: 1200000000 },
+  ]
   model.waitForRequests = async (count) => {
     const deadline = Date.now() + 15000
     while (model.asked.length < count && Date.now() < deadline) {
@@ -125,10 +129,17 @@ export async function standInModel(...replies) {
     let body = ''
     request.on('data', (piece) => { body += piece })
     request.on('end', () => {
+      model.authorizations.push(request.headers.authorization ?? '')
       if (request.url === '/api/version') return response.end('{"version":"test"}')
-      if (request.url === '/api/tags') return response.end('{"models":[{"name":"test-model","size":4900000000},{"name":"second-model","size":1200000000}]}')
+      if (request.url === '/api/tags') return response.end(JSON.stringify({ models: tags }))
       if (request.url === '/api/show') return response.end('{"capabilities":["completion","tools"]}')
       const requestBody = JSON.parse(body || '{}')
+      if (request.url === '/api/delete' && request.method === 'DELETE') {
+        model.removed.push(requestBody.model)
+        const index = tags.findIndex((item) => item.name === requestBody.model)
+        if (index >= 0) tags.splice(index, 1)
+        return response.end('{}')
+      }
       if (request.url === '/api/pull') {
         model.pulled.push(requestBody.model)
         response.setHeader('content-type', 'application/x-ndjson')
@@ -142,6 +153,7 @@ export async function standInModel(...replies) {
             if (index > 0) await new Promise((done) => setTimeout(done, 1000))
             response.write(`${JSON.stringify(event)}\n`)
           }
+          if (!tags.some((item) => item.name === requestBody.model)) tags.push({ name: requestBody.model, size: 2000000000 })
           response.end()
         })()
         return
