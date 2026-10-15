@@ -4,17 +4,35 @@ on:
   push:
     branches: [dev]
   pull_request:
+    # A pull request that changes only words for people runs no builds or
+    # tests; one that changes anything else runs all of them. dev runs
+    # everything on every push.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'CITATION.cff'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
 
 permissions:
   contents: read
 
+# A pull request's newer push replaces its older run, which frees the
+# runners for others. Pushes to dev are never cancelled: each commit there
+# keeps its own complete run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
-    # Keep untrusted fork pull requests on GitHub-hosted infrastructure. PRs
-    # from this repository and pushes to dev use the project's Linux runner.
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-26.04' || 'sisyphus-ci' }}
+    # On GitHub's runners, which run every pull request's checks at once,
+    # each on a machine of its own. The project's self-hosted runner ran them
+    # one at a time, behind a lock, and every pull request queued for it.
+    runs-on: ubuntu-26.04
     env:
-      # All three self-hosted runners share the same host loopback and ephemeral-port space.
+      # Harmless on a machine of the job's own, and still what keeps the
+      # integration steps from sharing ports with each other.
       SISYPHUS_CI_LOCAL_NETWORK_LOCK: /tmp/sisyphus-ci-local-network.lock
       # Fail, rather than skip, any test that finds no ipfs program.
       SISYPHUS_REQUIRE_KUBO: "1"
@@ -27,8 +45,6 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          # Self-hosted runners retain GOMODCACHE and GOCACHE between jobs;
-          # avoid uploading/downloading a large Actions cache on every run.
           cache: ${{ runner.environment == 'github-hosted' }}
       - name: Install Kubo
         # Some tests run a real IPFS daemon. The version is pinned so that a
@@ -221,7 +237,7 @@ jobs:
   # container with its own address and disk. It is what finds faults that
   # tests on one machine cannot, since those all run over loopback.
   rehearsal:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-26.04' || 'sisyphus-ci' }}
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -232,9 +248,8 @@ jobs:
         run: examples/rehearsal.sh
 
   desktop:
-    # Electron E2E must never attach to the maintainer's interactive desktop.
-    # Keep desktop checks on an isolated hosted runner; Go integration jobs may
-    # still use the self-hosted runner above.
+    # Electron E2E must never attach to the maintainer's interactive desktop,
+    # so desktop checks stay on an isolated hosted runner.
     runs-on: ubuntu-26.04
     defaults:
       run:
