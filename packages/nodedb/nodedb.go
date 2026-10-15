@@ -88,12 +88,13 @@ func (db *DB) migrate() error {
 		names = append(names, file.Name())
 	}
 	sort.Strings(names)
-	if err := alignMigrationHistory(db.sql, names); err != nil {
-		return fmt.Errorf("align migration history: %w", err)
-	}
 	latest := version(names[len(names)-1])
 	if newest > latest {
 		return fmt.Errorf("it was made by a newer sisyphusd (schema version %d; this one knows up to %d)", newest, latest)
+	}
+	// Only after that: a newer sisyphusd's history is its own to number.
+	if err := db.alignMigrationHistory(names); err != nil {
+		return fmt.Errorf("align migration history: %w", err)
 	}
 	for _, name := range names {
 		// Whether a database has had a migration is asked of each, and not
@@ -120,93 +121,58 @@ func (db *DB) migrate() error {
 // numbered differently. Migration names, unlike their numbers, identify the
 // schema change; some released builds recorded the same named migrations at
 // older numbers after earlier work was added to the sequence.
-func alignMigrationHistory(handle *sql.DB, names []string) error {
+func (db *DB) alignMigrationHistory(names []string) error {
 	type entry struct {
 		version int
 		name    string
 	}
-	type update struct {
-		entry
-		target int
-		name   string
-	}
-
 	current := make(map[string]entry, len(names))
 	for _, name := range names {
-		suffix := migrationSuffix(name)
-		current[suffix] = entry{version: version(name), name: strings.TrimSuffix(name, ".sql")}
+		name = strings.TrimSuffix(name, ".sql")
+		current[migrationSuffix(name)] = entry{version(name), name}
 	}
-
-	rows, err := handle.Query(`SELECT version, name FROM schema_migrations ORDER BY version`)
+	var recorded []entry
+	err := db.read(func(rows *sql.Rows) error {
+		recorded = append(recorded, entry{})
+		last := &recorded[len(recorded)-1]
+		return rows.Scan(&last.version, &last.name)
+	}, `SELECT version, name FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		return err
 	}
-	var entries []entry
-	for rows.Next() {
-		var item entry
-		if err := rows.Scan(&item.version, &item.name); err != nil {
-			rows.Close()
-			return err
-		}
-		entries = append(entries, item)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
 
-	updates := make([]update, 0)
-	finalVersions := make(map[int]string, len(entries))
-	for _, item := range entries {
+	type update struct{ from, to entry }
+	var updates []update
+	taken := make(map[int]string, len(recorded))
+	for _, item := range recorded {
 		target, known := current[migrationSuffix(item.name)]
 		if !known {
-			target = entry{version: item.version, name: item.name}
+			target = item
 		}
-		if previous, exists := finalVersions[target.version]; exists {
+		if previous, clash := taken[target.version]; clash {
 			return fmt.Errorf("migrations %q and %q both resolve to version %d", previous, item.name, target.version)
 		}
-		finalVersions[target.version] = item.name
-		if target.version != item.version || target.name != item.name {
-			updates = append(updates, update{entry: item, target: target.version, name: target.name})
+		taken[target.version] = item.name
+		if target != item {
+			updates = append(updates, update{item, target})
 		}
 	}
-	if len(updates) == 0 {
-		return nil
-	}
-
-	// Move changed keys out of the way first, since renumbering can contain
+	// Move changed rows out of the way first, since renumbering can contain
 	// cycles (for example, old migration 16 becoming 18 while old 18 becomes
-	// 21). The transaction makes the bookkeeping update atomic.
-	tx, err := handle.Begin()
-	if err != nil {
-		return err
-	}
-	rollback := func(err error) error {
-		_ = tx.Rollback()
-		return err
-	}
-	for i, item := range updates {
-		if _, err := tx.Exec(`UPDATE schema_migrations SET version = ? WHERE version = ?`, -i-1, item.version); err != nil {
-			return rollback(err)
+	// 21). One transaction makes the whole change or none of it.
+	return db.write(func(b *batch) {
+		for i, u := range updates {
+			b.exec(`UPDATE schema_migrations SET version = ? WHERE version = ?`, -i-1, u.from.version)
 		}
-	}
-	for i, item := range updates {
-		if _, err := tx.Exec(`UPDATE schema_migrations SET version = ?, name = ? WHERE version = ?`, item.target, item.name, -i-1); err != nil {
-			return rollback(err)
+		for i, u := range updates {
+			b.exec(`UPDATE schema_migrations SET version = ?, name = ? WHERE version = ?`, u.to.version, u.to.name, -i-1)
 		}
-	}
-	return tx.Commit()
+	})
 }
 
+// migrationSuffix is a migration's name without its number.
 func migrationSuffix(name string) string {
-	name = strings.TrimSuffix(name, ".sql")
-	_, suffix, found := strings.Cut(name, "_")
-	if !found {
-		return name
-	}
+	_, suffix, _ := strings.Cut(strings.TrimSuffix(name, ".sql"), "_")
 	return suffix
 }
 

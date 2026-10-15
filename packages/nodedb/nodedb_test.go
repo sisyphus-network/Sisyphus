@@ -321,7 +321,7 @@ func TestMigrationHistoryFollowsNamesWhenNumbersHaveShifted(t *testing.T) {
 		"0024_web_access.sql",
 		"0025_web_access_interfaces.sql",
 	}
-	if err := alignMigrationHistory(handle, names); err != nil {
+	if err := (&DB{sql: handle}).alignMigrationHistory(names); err != nil {
 		t.Fatal(err)
 	}
 	var got []struct {
@@ -355,6 +355,46 @@ func TestMigrationHistoryFollowsNamesWhenNumbersHaveShifted(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("aligned migration history = %v, want %v", got, want)
+	}
+}
+
+// A history whose names, followed to today's numbers, would put two
+// migrations at one number is refused rather than guessed at, and nothing
+// in it is changed.
+func TestOpenRefusesAMigrationHistoryThatClashes(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "node.db")
+	handle, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL);
+		INSERT INTO schema_migrations (version, name) VALUES (16, '0016_file_pin_operations'), (18, '0018_from_another_branch')`); err != nil {
+		t.Fatal(err)
+	}
+	handle.Close()
+	if _, err := Open(file); err == nil || !strings.Contains(err.Error(), `align migration history: migrations "0016_file_pin_operations" and "0018_from_another_branch" both resolve to version 18`) {
+		t.Errorf("Open of a history that clashes: %v", err)
+	}
+	handle, err = sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	var name string
+	if err := handle.QueryRow(`SELECT name FROM schema_migrations WHERE version = 16`).Scan(&name); err != nil || name != "0016_file_pin_operations" {
+		t.Errorf("the refused history changed: %q, %v", name, err)
+	}
+}
+
+// A history that cannot be read is not aligned.
+func TestAligningAMigrationHistoryThatCannotBeRead(t *testing.T) {
+	handle, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle.Close()
+	if err := (&DB{sql: handle}).alignMigrationHistory(nil); err == nil {
+		t.Error("aligned the history of a closed database")
 	}
 }
 
