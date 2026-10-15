@@ -52,7 +52,7 @@ export function ResponsiveActionDialog({ open, onOpenChange, onAfterClose, direc
     <Drawer.Root open={open} onOpenChange={onOpenChange} onAnimationEnd={isOpen => { if (!isOpen && !open) onAfterClose?.(); }} direction="bottom">
       <Drawer.Portal>
         <Drawer.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-sm" />
-        <Drawer.Content dir={direction} className={cn("liquid-glass-menu fixed inset-x-0 bottom-0 z-50 rounded-t-[1.6rem] bg-[var(--app-card)] pb-[max(1rem,env(safe-area-inset-bottom))] outline-none", className)}>
+        <Drawer.Content dir={direction} className={cn("responsive-action-drawer liquid-glass-menu fixed inset-x-0 bottom-0 z-50 rounded-t-[1.6rem] bg-[var(--app-card)] pb-[max(1rem,env(safe-area-inset-bottom))] outline-none", className)}>
           <div aria-hidden="true" className="mx-auto mt-3 h-1 w-10 rounded-full bg-[var(--app-border)]" />
           <DialogBody title={title} description={description} icon={icon} drawer>{children}</DialogBody>
         </Drawer.Content>
