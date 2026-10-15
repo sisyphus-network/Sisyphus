@@ -924,20 +924,41 @@ func TestCLIChecksAPrivateJobsCommitmentsWithItsKey(t *testing.T) {
 }
 
 // job record shows a record's attestation, and checking the record checks
-// it too: one that does not hold fails the check.
-func TestCLIReportsARecordsAttestation(t *testing.T) {
+// the attestation itself, with nothing but the signer's ID it holds: what
+// the coordinator says of it does not count.
+func TestCLIChecksARecordsAttestationItself(t *testing.T) {
+	ident := mustIdentity(t, t.TempDir())
+	// Any two CIDs will do as records'.
+	root := cid.MustParse("bafyreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy")
+	other := jobrecord.Attest(root, "", func([]byte) []byte { return nil }).CID
 	record := &pb.JobRecord{
-		JobId: "j", RootCid: "bafyroot", RecomputedCid: "bafyroot", Matches: true, AttestationCid: "bafyattestation",
-		Nodes: []*pb.RecordNode{{Cid: "bafyroot", Json: `{"job":"j"}`}},
+		JobId: "j", RootCid: root.String(), RecomputedCid: root.String(), Matches: true, AttestationCid: "bafyattestation",
+		Nodes: []*pb.RecordNode{{Cid: root.String(), Json: `{"job":"j"}`}}, AttestedBy: ident.ID(),
+		Attestation: &pb.RecordNode{Data: []byte("not an attestation")},
 	}
 	addr := serveFake(t, func(srv *grpc.Server) { pb.RegisterNodeServiceServer(srv, scriptedRecord{record: record}) })
-	out, err := cli(t, "job", "record", "--verify", "--addr", addr, "j")
-	if err == nil || !strings.Contains(err.Error(), "the attestation bafyattestation of job j's record does not hold") || !strings.Contains(out, "attestation: bafyattestation\n") {
-		t.Errorf("an attestation that does not hold: %q, %v", out, err)
+	fails := func(what, reason string) {
+		t.Helper()
+		out, err := cli(t, "job", "record", "--verify", "--addr", addr, "j")
+		if err == nil || !strings.Contains(err.Error(), "the attestation bafyattestation of job j's record does not hold: "+reason) || !strings.Contains(out, "attestation: bafyattestation\n") || strings.Contains(out, "signed by:") {
+			t.Errorf("%s: %q, %v", what, out, err)
+		}
 	}
-	record.AttestedBy = "12D3KooWcoordinator"
-	if out, err := cli(t, "job", "record", "--verify", "--addr", addr, "j"); err != nil || !strings.HasSuffix(out, "signed by: 12D3KooWcoordinator\n") {
-		t.Errorf("an attestation that holds: %q, %v", out, err)
+	fails("an attestation that is not one, though the coordinator vouches for it", "an attestation that is not DAG-CBOR")
+	record.Attestation.Data = jobrecord.Attest(other, ident.ID(), ident.Sign).Data
+	fails("a signature on another record", "it signs record "+other.String()+", not this one")
+	forged := jobrecord.Attest(root, ident.ID(), ident.Sign).Data
+	forged[len(forged)-1] ^= 1
+	record.Attestation.Data = forged
+	fails("a signature that is not the signer's", "the signature is not "+ident.ID()+"'s")
+
+	record.Attestation.Data, record.AttestedBy = jobrecord.Attest(root, ident.ID(), ident.Sign).Data, ""
+	if out, err := cli(t, "job", "record", "--verify", "--addr", addr, "j"); err != nil || !strings.HasSuffix(out, "signed by: "+ident.ID()+"\n") {
+		t.Errorf("an attestation that holds, though the coordinator does not say so: %q, %v", out, err)
+	}
+	// Not asked to check, the CLI names the attestation and nothing more.
+	if out, err := cli(t, "job", "record", "--addr", addr, "j"); err != nil || !strings.HasSuffix(out, "attestation: bafyattestation\n") {
+		t.Errorf("a record not checked: %q, %v", out, err)
 	}
 }
 
