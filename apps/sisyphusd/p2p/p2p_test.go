@@ -607,6 +607,37 @@ func TestANodeKeepsAPlaceOnTheRelaysItIsToldOf(t *testing.T) {
 	}
 }
 
+// Each dial tries the full nodes in turn first, wherever the turn starts,
+// so one that answers does not take every connection; the coordinator is
+// always the fallback.
+func TestRelayGroupsRotateTheFullNodesTriedFirst(t *testing.T) {
+	fullNodes := []peer.AddrInfo{{ID: "full-1"}, {ID: "full-2"}, {ID: "full-3"}}
+	coordinator := []peer.AddrInfo{{ID: "coordinator"}}
+	for _, start := range []uint64{0, 1, 2, 1 << 40} {
+		h := &Host{preferredRelays: fullNodes, fixedRelays: coordinator, relayStart: start}
+		var first []peer.ID
+		for range 2 * len(fullNodes) {
+			preferred, fallback := h.relayGroups()
+			if len(preferred) != len(fullNodes) || len(fallback) != 1 || fallback[0].ID != "coordinator" {
+				t.Fatalf("relay groups from %d: %v, then %v", start, preferred, fallback)
+			}
+			first = append(first, preferred[0].ID)
+		}
+		for i := range first {
+			if first[i] == first[(i+1)%len(first)] || first[i] != first[(i+len(fullNodes))%len(first)] {
+				t.Fatalf("from %d the full nodes tried first went %v, not each in turn", start, first)
+			}
+		}
+	}
+	// One full node is all there is to try first.
+	h := &Host{preferredRelays: fullNodes[:1], fixedRelays: coordinator}
+	for range 2 {
+		if preferred, _ := h.relayGroups(); len(preferred) != 1 || preferred[0].ID != "full-1" {
+			t.Fatalf("one full node: %v", preferred)
+		}
+	}
+}
+
 func TestFullNodeRelayIsPreferredToCoordinatorAndCoordinatorIsFallback(t *testing.T) {
 	oldDirectDial := directDial
 	directDial = 0
@@ -648,7 +679,11 @@ func TestFullNodeRelayIsPreferredToCoordinatorAndCoordinatorIsFallback(t *testin
 	}
 	a.host.Peerstore().ClearAddrs(b.host.ID())
 
-	used := make(map[string]bool, len(fullNodes))
+	// Each dial goes through a full node rather than the coordinator. Which
+	// one is not checked here: Dial moves on to the next full node when the
+	// one it tried first fails, so on a busy machine both dials may take the
+	// same one. That the first choice rotates is
+	// TestRelayGroupsRotateTheFullNodesTriedFirst's to check.
 	for i := range fullNodes {
 		a.host.Peerstore().ClearAddrs(b.host.ID())
 		conn, err := a.Dial(context.Background(), b.ID(), echoProtocol)
@@ -657,20 +692,9 @@ func TestFullNodeRelayIsPreferredToCoordinatorAndCoordinatorIsFallback(t *testin
 		}
 		roundTrip(t, conn, 1<<20)
 		conn.Close()
-		var selected string
-		for _, fullNode := range fullNodes {
-			if routeVia(a, b, fullNode) {
-				selected = fullNode.ID()
-				break
-			}
-		}
-		if selected == "" {
+		if !slices.ContainsFunc(fullNodes, func(fullNode *Host) bool { return routeVia(a, b, fullNode) }) {
 			t.Fatalf("Dial did not use a preferred full-node relay: routes %v", connectionRoutes(a, b))
 		}
-		if used[selected] {
-			t.Fatalf("both dials used full-node relay %s; routes %v", selected, routes(a, b))
-		}
-		used[selected] = true
 		if i == 0 {
 			// Force the next attempt to choose a relay again instead of
 			// reusing the existing peer connection.
