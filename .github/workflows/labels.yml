@@ -1,0 +1,19 @@
+name: Labels
+
+# Labels each pull request by the files it changes and the kind of branch it
+# comes from, so that the board and the milestones can be read by area.
+# pull_request_target runs this workflow as it is on dev, with the right to
+# label, and never checks out or runs the pull request's own code.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/labeler@v7

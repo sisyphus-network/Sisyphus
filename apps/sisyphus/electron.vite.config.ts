@@ -31,12 +31,13 @@ export default defineConfig({
       preserveSymlinks: true,
       alias: {
         '@': resolve(__dirname, 'src/renderer/src'),
-        // The local SDK is a file: dependency whose source lives outside this
-        // package. Resolve its runtime deps from the Electron app installation.
-        '@bufbuild/protobuf': resolve(__dirname, 'node_modules/@bufbuild/protobuf'),
-        '@connectrpc/connect-web': resolve(__dirname, 'node_modules/@connectrpc/connect-web'),
-        '@connectrpc/connect': resolve(__dirname, 'node_modules/@connectrpc/connect'),
       },
+      // The local SDK is a file: dependency whose source lives outside this
+      // package. Its runtime deps resolve from the Electron app installation,
+      // through each package's exports map: Protobuf-ES v2 is imported by
+      // subpath (@bufbuild/protobuf/codegenv2), which an alias to the package
+      // directory would bypass.
+      dedupe: ['@bufbuild/protobuf', '@connectrpc/connect', '@connectrpc/connect-web'],
     },
   },
 })
