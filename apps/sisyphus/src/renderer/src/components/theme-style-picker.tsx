@@ -73,7 +73,7 @@ function ThemeStylePicker({ direction, labels }: { direction: "rtl" | "ltr"; lab
   return <ResponsiveSelector
     label={labels.label}
     direction={direction}
-    trigger={({ open, setOpen }) => <FloatingLabelInput id="settings-theme-style" label={labels.label} value={selectedLabel} readOnly onClick={() => setOpen((current) => !current)} aria-haspopup="dialog" aria-expanded={open} icon={<StyleSwatch style={value} active />} className="cursor-pointer pe-10" />}
+    trigger={({ open, setOpen }) => <FloatingLabelInput id="settings-theme-style" label={labels.label} value={selectedLabel} readOnly role="button" onClick={() => setOpen((current) => !current)} aria-haspopup="dialog" aria-expanded={open} icon={<StyleSwatch style={value} active />} className="cursor-pointer pe-10" />}
   >
     {({ setOpen }) => <div className="grid gap-1">{styles.map((style) => <button type="button" key={style} onClick={() => { setThemeStyle(style); setOpen(false); }} className={cn("flex w-full items-center justify-between rounded-xl px-3 py-3 text-sm transition-colors hover:bg-[var(--app-wash)]", value === style && "bg-[var(--app-wash)] font-semibold")}><span className="flex min-w-0 items-center gap-3"><StyleSwatch style={style} active={value === style} /><span>{labels[style]}</span></span>{value === style ? <Check className="size-4 shrink-0" /> : null}</button>)}</div>}
   </ResponsiveSelector>;

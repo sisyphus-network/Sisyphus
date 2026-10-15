@@ -48,6 +48,8 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
     onBlur,
     onChange,
     onFocus,
+    onKeyDown,
+    onKeyUp,
     onInvalid,
     ...props
   },
@@ -117,6 +119,18 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
           if (value === undefined) setUncontrolledValue(event.target.value);
           if (touched) validateInput(event.currentTarget);
           onChange?.(event);
+        }}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          if (event.defaultPrevented || props.role !== "button" || event.key !== "Enter") return;
+          event.preventDefault();
+          event.currentTarget.click();
+        }}
+        onKeyUp={(event) => {
+          onKeyUp?.(event);
+          if (event.defaultPrevented || props.role !== "button" || event.key !== " ") return;
+          event.preventDefault();
+          event.currentTarget.click();
         }}
         onInvalid={(event) => {
           event.preventDefault();

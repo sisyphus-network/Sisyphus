@@ -1,4 +1,5 @@
 {
+  "accessUi": { "override": "Override", "sameAs": "Same as", "on": "On", "off": "Off" },
   "networkInterfacePicker": { "choose": "Choose network interfaces", "search": "Search interfaces or addresses…", "none": "No usable network interfaces found.", "noMatches": "No matching interfaces.", "current": "Previously configured address", "refresh": "Refresh", "loading": "Loading interfaces…", "port": "Port", "done": "Done", "loadFailed": "Could not load network interfaces" },
   "webAccess": { "title": "Access", "exposureTitle": "Remote access", "exposureDescription": "Choose whether browsers outside this computer can reach this node. Access is off until you enable and save it.", "enabled": "Remote access is enabled", "disabled": "Remote access is off", "enable": "Enable remote access", "disable": "Disable remote access", "listenAddress": "Node interface address", "listenAddressHint": "A specific IP address assigned to this node and a port, for example 192.168.1.20:50052. Wildcard addresses are not allowed.", "publicUrl": "Browser address", "publicUrlHint": "Optional. Leave blank to use the listener address. For internet access through a router, enter the external HTTPS host and port.", "httpsNotice": "HTTPS is always required. Sisyphus creates a self-signed certificate; each browser may need you to accept its certificate warning before pairing and API calls work.", "certificateFingerprint": "Certificate SHA-256 fingerprint", "save": "Save access settings", "saved": "Access settings updated", "saveFailed": "Could not update access settings", "configLoadFailed": "Could not load access settings", "pairingTitle": "Pair a browser", "devicesTitle": "Paired devices" },
   "chatAttachmentsNeedNodeUpdate": "Update the node before sending chat attachments. This daemon does not support safe chat file ownership.",
@@ -110,12 +111,13 @@
   "nodeIdentity": "NODE IDENTITY",
   "waitingHandshake": "Waiting for daemon handshake",
   "connectedPeers": "CONNECTED PEERS",
+  "peers": "Peers",
   "activeKnownPeers": "Active connections / known peers",
   "peerRevision": "PEER REVISION",
   "stream": "STREAM",
   "listeningSnapshot": "Listening for first snapshot",
   "updated": "Updated {time}",
-  "daemon": "DAEMON",
+  "daemon": "Daemon",
   "nodeDetails": "Node details",
   "peerId": "Peer ID",
   "daemonVersion": "Daemon version",
@@ -343,5 +345,7 @@
   },
   "deleteChatTitle": "Delete this chat?",
   "deleteChatDescription": "This conversation will be permanently deleted. This action cannot be undone.",
-  "deletingChat": "Deleting..."
+  "deletingChat": "Deleting...",
+  "revokeDeviceTitle": "Revoke this device?",
+  "revokeDeviceDescription": "This browser will lose access to the node and must pair again to reconnect."
 }

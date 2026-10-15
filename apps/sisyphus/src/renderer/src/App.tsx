@@ -1,17 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, HashRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Boxes, Cpu, House, MonitorCog, QrCode, Settings2, Wifi, WifiOff } from 'lucide-react'
+import { ArrowLeft, Boxes, Cpu, House, MonitorCog, Settings2, Wifi, WifiOff } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { NodeSnapshot } from '../../preload'
-import { Badge } from '@/components/ui/badge'
 import { buttonVariants } from '@/components/ui/button'
 import { Breadcrumb as BreadcrumbNav, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
 import { getLocaleDirection, isAppLocale, type AppLocale } from '@/i18n/locales'
 import { getMessages } from '@/i18n/messages'
 import { NodeDetailsPage } from '@/pages/NodeDetailsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
-import { BrowserAccessPage } from '@/pages/BrowserAccessPage'
 import { WorkspacePage } from '@/pages/WorkspacePage'
 import { OperationsPage } from '@/pages/OperationsPage'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
@@ -21,6 +19,7 @@ import { logoUrl } from '@/lib/brand'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/liquid-glass-dock'
 import { AdvancedSidebar } from '@/components/navigation/advanced-sidebar'
+import { NodeStatusBadge } from '@/components/navigation/node-status-badge'
 import { initializeThemeMode } from '@/components/theme-mode-switch'
 import { initializeThemeStyle } from '@/components/theme-style-picker'
 import { ToasterResponsive } from '@/components/toaster-responsive'
@@ -110,7 +109,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
   scrollPathRef.current = location.pathname
   const scrollPositionsRef = useRef<Record<string, number>>(readScrollPositions())
   const advanced = location.pathname !== '/'
-  const compact = useBreakpoint('(max-width: 760px)')
+  const compact = useBreakpoint('(max-width: 900px)')
   useLayoutEffect(() => {
     // Every desktop settings route owns an internal scroller so its shell and
     // header can stay fixed. SettingsPage persists that scroller's position.
@@ -210,7 +209,6 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     { id: 'node', label: messages.nodeOverview, href: '/node', icon: <MonitorCog size={21} strokeWidth={1.8} />, active: location.pathname === '/node' },
     { id: 'operations', label: messages.operations, href: '/operations', icon: <Boxes size={21} strokeWidth={1.8} />, active: location.pathname === '/operations' },
     { id: 'settings', label: messages.settings, href: '/settings', icon: <Settings2 size={21} strokeWidth={1.8} />, active: location.pathname.startsWith('/settings') },
-    { id: 'pairing', label: messages.browserAccess.title, href: '/pairing', icon: <QrCode size={21} strokeWidth={1.8} />, active: location.pathname === '/pairing' },
   ]
   if (!isDesktopApp() && snapshot.authRequired) {
     return <Routes>
@@ -224,8 +222,8 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
       {advanced && !compact && <AdvancedSidebar snapshot={snapshot} connectedPeers={connectedPeers} statusLabel={statusLabel} messages={messages} />}
 
       <div className={`app-content-column flex min-h-0 min-w-0 flex-1 flex-col ${advanced ? 'app-content-column--advanced' : ''}`}>
-      {advanced && <header className="app-global-header flex h-[68px] w-full shrink-0 items-center justify-between border-b border-[var(--app-line)] px-8 max-[1000px]:px-5 max-[760px]:h-[58px] max-[760px]:px-4"><Breadcrumb messages={messages} direction={direction} /><Badge variant="outline" className={`h-7 gap-1.5 rounded-full px-2.5 text-[10px] font-medium ${snapshot.status === 'connected' ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300' : snapshot.status === 'connecting' ? 'border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300' : ''}`}><StatusIcon className="size-3.5" />{statusLabel}</Badge></header>}
-      <main className={`app-main mx-auto min-w-0 w-full ${advanced ? 'max-w-[1440px] px-8 pb-7 max-[1000px]:px-5 max-[760px]:px-4' : 'max-w-none max-[760px]:px-0'}`}>
+      {advanced && <header className="app-global-header flex h-[68px] w-full shrink-0 items-center justify-between border-b border-[var(--app-line)] px-8 max-[1000px]:px-5 max-[900px]:h-[58px] max-[900px]:px-4"><Breadcrumb messages={messages} direction={direction} />{compact && <NodeStatusBadge status={snapshot.status} label={statusLabel} icon={StatusIcon} />}</header>}
+      <main className={`app-main mx-auto min-w-0 w-full ${advanced ? 'max-w-[1440px] px-8 pb-7 max-[1000px]:px-5 max-[900px]:px-4' : 'max-w-none max-[760px]:px-0'}`}>
         <motion.div
           className="workspace-persistent"
           aria-hidden={advanced}
@@ -249,7 +247,8 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
               <Route path="/settings" element={<SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} />} />
               <Route path="/settings/access" element={isDesktopApp() ? <SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} category="access" /> : <Navigate to="/settings" replace />} />
               <Route path="/settings/:category" element={<SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} />} />
-              <Route path="/pairing" element={<BrowserAccessPage messages={messages} />} />
+              <Route path="/access" element={<Navigate to="/settings/access" replace />} />
+              <Route path="/pairing" element={<Navigate to="/settings/access" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>}
         </motion.div>}

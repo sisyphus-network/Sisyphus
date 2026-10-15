@@ -28,7 +28,10 @@ test('the dev proxy forwards browser credentials without adding the node token',
     received.push({ authorization: request.headers.authorization, cookie: request.headers.cookie })
     const authorized = request.headers.authorization === 'Bearer user-supplied-token'
     response.writeHead(authorized ? 200 : 401, { 'Content-Type': 'application/json' })
-    response.end(JSON.stringify({ message: authorized ? 'authorized' : 'unauthorized' }))
+    const payload = request.url === '/pairing' && authorized
+      ? { code: '12345678', expiresAt: '2026-10-15T12:00:00Z', pairUrl: 'https://node.example.test:50052/#pair=12345678' }
+      : { message: authorized ? 'authorized' : 'unauthorized' }
+    response.end(JSON.stringify(payload))
   })
   const upstreamPort = await listen(upstream)
   const previousTokenFile = process.env.SISYPHUS_API_TOKEN_FILE
@@ -75,6 +78,18 @@ test('the dev proxy forwards browser credentials without adding the node token',
     })
     assert.equal(explicitlyAuthorized.status, 200)
     assert.equal(received[1].authorization, 'Bearer user-supplied-token')
+
+    const pairing = await fetch(`http://127.0.0.1:${previewPort}/pairing`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: `http://127.0.0.1:${previewPort}`,
+        Authorization: 'Bearer user-supplied-token',
+      },
+      body: '{}',
+    })
+    assert.equal(pairing.status, 200)
+    assert.equal((await pairing.json()).pairUrl, 'https://node.example.test:50052/#pair=12345678')
   } finally {
     lifecycle.emit('close')
     await close(preview)
