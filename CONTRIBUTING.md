@@ -12,6 +12,7 @@ Sisyphus is an early prototype built in the open. Issues, questions and pull req
 - Branch from `dev` and open the pull request against `dev`. Nothing is pushed to `dev` directly.
 - A pull request merges by squash once its checks are green, so each commit on `dev` has passed.
 - Commit and pull request titles use a conventional prefix: `feat:`, `fix:`, `docs:`, `test:`, `chore:`.
+- A pull request is labelled by area from the files it changes (`.github/labeler.yml`); the maintainers add the milestone.
 - Keep documentation current in the same pull request: the root README, `apps/sisyphusd/README.md` and the files under `docs/`.
 
 ## What the checks expect
