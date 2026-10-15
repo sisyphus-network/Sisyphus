@@ -58,7 +58,20 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run package:dist
+      - name: Package
+        shell: bash
+        # macOS's hdiutil sometimes cannot detach the disk image it just
+        # built ("Resource busy"), which fails the build after everything
+        # has worked. That one failure is tried again, once; any other is not.
+        run: |
+          if ! npm run package:dist 2>&1 | tee package.log; then
+            if [ "$RUNNER_OS" = macOS ] && grep -q "Unable to detach device cleanly" package.log; then
+              echo "::warning::hdiutil could not detach the disk image; packaging again"
+              npm run package:dist
+            else
+              exit 1
+            fi
+          fi
       - run: npm run test:package
       - uses: actions/upload-artifact@v7
         with:
