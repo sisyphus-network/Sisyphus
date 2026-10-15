@@ -6,7 +6,7 @@ const locales = ['en', 'he', 'ar', 'ru', 'pl', 'es', 'fr']
 const dictionaries = Object.fromEntries(locales.map((locale) => [locale, JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8'))]))
 test('all model settings locales contain every nonempty label', () => {
   const keys = Object.keys(dictionaries.en.modelSettings).sort()
-  assert.equal(keys.length, 71)
+  assert.equal(keys.length, 73)
   for (const locale of locales) {
     const labels = dictionaries[locale].modelSettings
     assert.deepEqual(Object.keys(labels).sort(), keys, locale)
