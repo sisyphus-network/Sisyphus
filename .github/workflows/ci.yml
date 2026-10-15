@@ -200,6 +200,7 @@ jobs:
         uses: vmactions/freebsd-vm@v1
         with:
           arch: ${{ matrix.goarch == 'arm64' && 'aarch64' || '' }}
+          sync: ${{ matrix.goarch == 'arm64' && 'tar' || 'rsync' }}
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
       - name: Run the known-answer workloads on OpenBSD
