@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Check, ChevronRight, Download, Globe2, Languages, LoaderCircle, Palette, Plus, QrCode, ServerCog, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Check, CheckCircle2, ChevronRight, CircleAlert, Cpu, Download, Globe2, KeyRound, Languages, Link2, LoaderCircle, Palette, Plus, QrCode, ServerCog, Trash2, UserRound } from 'lucide-react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { LanguagePicker } from '@/components/language-picker'
 import { ThemeModeSwitch } from '@/components/theme-mode-switch'
@@ -9,6 +9,7 @@ import type { AppLocale } from '@/i18n/locales'
 import { type getMessages } from '@/i18n/messages'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { FloatingLabelInput } from '@/components/ui/floating-label-input'
 import { Badge } from '@/components/ui/badge'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { toast } from 'sonner'
@@ -19,6 +20,7 @@ import { Drawer } from 'vaul'
 import { RemoteAccessSettings } from '@/pages/RemoteAccessSettings'
 import { ModelLendingSettings } from '@/components/model-lending-settings'
 import { BrowserAccessPage } from '@/pages/BrowserAccessPage'
+import { ResponsiveSelector } from '@/components/ui/responsive-selector'
 
 type Messages = ReturnType<typeof getMessages>
 type SettingsCategory = 'node' | 'access' | 'language' | 'models' | 'appearance'
@@ -42,6 +44,8 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
   const [hasApiKey, setHasApiKey] = useState(false)
   const [models, setModels] = useState<{ name: string; label: string; sizeBytes: string | number; tools: string | number }[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
+  const [modelLoadState, setModelLoadState] = useState<'idle' | 'loading' | 'connected' | 'error' | 'key-required'>('idle')
+  const modelLoadSequence = useRef(0)
   const [downloadModel, setDownloadModel] = useState('')
   const [pulling, setPulling] = useState(false)
   const [pullProgress, setPullProgress] = useState(0)
@@ -49,6 +53,7 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
   const pullCancel = useRef<(() => void) | null>(null)
   const currentProvider = providers.find((item) => item.id === provider)
   const editProvider = providers.find((item) => item.id === provider)
+  const selectedProviderName = editProvider?.name ?? ''
   // The node keeps a key for one service: the provider and address it was
   // saved with. Pointed anywhere else, this page must neither claim a key
   // is saved nor ask the node to reuse it.
@@ -162,19 +167,54 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
     } catch (error) { toast.error(labels.removeFailed, { description: error instanceof Error ? error.message : String(error) }) }
   }
 
-  async function refreshModels() {
-    if (!provider || !validateKey()) return
+  const refreshModels = useCallback(async (showToast = true) => {
+    if (!provider || !baseUrl.trim()) return
+    if (keyMissing) {
+      setModelLoadState('key-required')
+      return
+    }
+    const requestSequence = ++modelLoadSequence.current
     setLoadingModels(true)
+    setModelLoadState('loading')
     try {
       const result = await getNodeApi().call<{ models?: string[]; details?: typeof models }>('listModels', { service: { provider, baseUrl, apiKey, keepApiKey } })
       const details = result.details ?? (result.models ?? []).map((name) => ({ name, label: '', sizeBytes: 0, tools: 0 }))
+      if (requestSequence !== modelLoadSequence.current) return
       setModels(details)
-      if (details.some((item) => item.name === model)) return
-      if (details.length && !model) setModel(details[0].name)
+      setModel((current) => details.some((item) => item.name === current) ? current : details[0]?.name ?? '')
+      setModelLoadState('connected')
     } catch (error) {
-      toast.error(labels.listFailed, { description: error instanceof Error ? error.message : String(error) })
-    } finally { setLoadingModels(false) }
-  }
+      if (requestSequence !== modelLoadSequence.current) return
+      setModelLoadState('error')
+      if (showToast) toast.error(labels.listFailed, { description: error instanceof Error ? error.message : String(error) })
+    } finally {
+      if (requestSequence === modelLoadSequence.current) setLoadingModels(false)
+    }
+  }, [apiKey, baseUrl, keyMissing, keepApiKey, labels.listFailed, provider])
+
+  useEffect(() => {
+    if (!profileOpen) {
+      modelLoadSequence.current += 1
+      setLoadingModels(false)
+      setModelLoadState('idle')
+      return
+    }
+    setLoadingModels(false)
+    if (!provider || !baseUrl.trim()) {
+      setModelLoadState('idle')
+      return
+    }
+    if (keyMissing) {
+      setModelLoadState('key-required')
+      return
+    }
+    setModelLoadState('idle')
+    const timer = window.setTimeout(() => { void refreshModels(false) }, 650)
+    return () => {
+      window.clearTimeout(timer)
+      modelLoadSequence.current += 1
+    }
+  }, [baseUrl, keyMissing, profileOpen, provider, refreshModels])
 
   function startModelPull(profile: typeof profiles[number]) {
     const name = downloadModel.trim()
@@ -276,12 +316,28 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
   }, [location.pathname])
 
   const profileForm = <div className="space-y-4 p-5 sm:p-6">
-    <label className="block space-y-1.5 text-xs"><span>{labels.profileName}</span><Input value={profileName} onChange={(event) => setProfileName(event.target.value)} autoFocus /></label>
-    <label className="block space-y-1.5 text-xs"><span>{labels.provider}</span><select value={provider} onChange={(event) => { const item = providers.find((entry) => entry.id === event.target.value); setProvider(event.target.value); setApiKey(''); setHasApiKey(false); if (item) setBaseUrl(item.defaultUrl) }} className="h-10 w-full rounded-xl border border-[var(--app-line)] bg-background px-3 text-sm">{providers.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
-    <label className="block space-y-1.5 text-xs"><span>{labels.url}</span><Input dir="ltr" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={editProvider?.defaultUrl} /></label>
-    {editProvider?.needsKey !== 2 && editProvider?.needsKey !== 'SUPPORT_NO' && <label className="block space-y-1.5 text-xs"><span>{labels.apiKey} {hasApiKey && !apiKey ? labels.keySaved : ''}</span><Input dir="ltr" type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={hasApiKey ? labels.keepKey : labels.enterKey} /></label>}
+    <FloatingLabelInput label={labels.profileName} icon={<UserRound className="size-[18px]" />} value={profileName} onChange={(event) => setProfileName(event.target.value)} autoFocus />
+    <ResponsiveSelector
+      label={labels.provider}
+      direction={direction}
+      trigger={({ open, setOpen }) => <FloatingLabelInput label={labels.provider} value={selectedProviderName || labels.choose} readOnly disabled={providers.length === 0} onClick={() => setOpen((current) => !current)} aria-haspopup="dialog" aria-expanded={open} icon={<ServerCog className="size-[18px]" />} className="cursor-pointer" />}
+    >
+      {({ setOpen }) => <div className="grid gap-1">{providers.map((item) => <button type="button" key={item.id} aria-pressed={provider === item.id} onClick={() => { setProvider(item.id); setApiKey(''); setHasApiKey(false); setBaseUrl(item.defaultUrl); setModel(''); setModels([]); setOpen(false) }} className={`flex w-full items-center justify-between gap-4 rounded-xl px-3 py-3 text-start transition-colors hover:bg-[var(--app-wash)] ${provider === item.id ? 'bg-[var(--app-wash)] font-semibold' : ''}`}><span className="min-w-0"><span className="block truncate text-sm">{item.name}</span>{item.about && <span className="mt-1 block line-clamp-2 text-xs font-normal leading-relaxed text-muted-foreground">{item.about}</span>}</span>{provider === item.id ? <Check className="size-4 shrink-0 text-[var(--app-accent)]" /> : null}</button>)}</div>}
+    </ResponsiveSelector>
+    <FloatingLabelInput label={labels.url} icon={<Link2 className="size-[18px]" />} dir="ltr" value={baseUrl} onChange={(event) => { setBaseUrl(event.target.value); setModel(''); setModels([]) }} placeholder={editProvider?.defaultUrl} />
+    {editProvider?.needsKey !== 2 && editProvider?.needsKey !== 'SUPPORT_NO' && <FloatingLabelInput label={labels.apiKey} icon={<KeyRound className="size-[18px]" />} dir="ltr" type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={hasApiKey ? labels.keepKey : labels.enterKey} success={keyIsForThisService && !apiKey} />}
     {editProvider?.about && <p dir="auto" className="text-xs leading-relaxed text-muted-foreground">{editProvider.about}</p>}
-    <label className="block space-y-1.5 text-xs"><span>{labels.model}</span><div className="flex gap-2"><Input aria-label={labels.model} list="available-models" value={model} onChange={(event) => setModel(event.target.value)} placeholder={labels.choose} className="min-w-0 flex-1" /><datalist id="available-models">{models.map((item) => <option key={item.name} value={item.name}>{item.label || item.name}</option>)}</datalist><Button type="button" variant="outline" disabled={!provider || loadingModels} onClick={() => void refreshModels()}>{loadingModels ? <LoaderCircle className="size-4 animate-spin" /> : labels.load}</Button></div></label>
+    <ResponsiveSelector
+      label={labels.model}
+      direction={direction}
+      trigger={({ open, setOpen }) => <FloatingLabelInput label={labels.model} icon={<Cpu className="size-[18px]" />} value={model || labels.choose} readOnly disabled={loadingModels || models.length === 0} loading={loadingModels} success={modelLoadState === 'connected' && Boolean(model)} onClick={() => setOpen((current) => !current)} aria-haspopup="dialog" aria-expanded={open} className="cursor-pointer" />}
+    >
+      {({ setOpen }) => <div className="grid gap-1">{models.map((item) => <button type="button" key={item.name} aria-pressed={model === item.name} onClick={() => { setModel(item.name); setOpen(false) }} className={`flex w-full items-center justify-between gap-4 rounded-xl px-3 py-3 text-start text-sm transition-colors hover:bg-[var(--app-wash)] ${model === item.name ? 'bg-[var(--app-wash)] font-semibold' : ''}`}><span className="min-w-0 truncate">{item.label || item.name}</span>{model === item.name ? <Check className="size-4 shrink-0 text-[var(--app-accent)]" /> : null}</button>)}</div>}
+    </ResponsiveSelector>
+    {modelLoadState !== 'idle' && <div role="status" aria-live="polite" className={`flex min-h-8 items-center gap-2 px-1 text-xs ${modelLoadState === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : modelLoadState === 'error' || modelLoadState === 'key-required' ? 'text-destructive' : 'text-muted-foreground'}`}>
+      {modelLoadState === 'loading' ? <LoaderCircle className="size-3.5 animate-spin" /> : modelLoadState === 'connected' ? <CheckCircle2 className="size-3.5" /> : modelLoadState === 'error' || modelLoadState === 'key-required' ? <CircleAlert className="size-3.5" /> : null}
+      <span>{modelLoadState === 'loading' ? labels.loadingModels : modelLoadState === 'connected' ? labels.modelsAvailable.replace('{count}', new Intl.NumberFormat(locale).format(models.length)) : modelLoadState === 'key-required' ? messages.providerKeyRequired : labels.listFailed}</span>
+    </div>}
     <div className="flex flex-col-reverse gap-2 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:justify-end"><Button type="button" variant="outline" onClick={() => handleProfileOpenChange(false)}>{messages.cancel}</Button><Button type="button" disabled={!profileName.trim() || !provider} onClick={() => void saveProfile(false)}>{labels.saveProfile}</Button><Button type="button" disabled={!profileName.trim() || !provider || !model} onClick={() => void saveProfile(true)}>{labels.saveAndActivate}</Button></div>
   </div>
 
@@ -316,6 +372,6 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
       </div>}
     </div>
     </div>
-    {compactViewport ? <Drawer.Root open={profileOpen} onOpenChange={handleProfileOpenChange} direction="bottom"><Drawer.Portal><Drawer.Overlay className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm" /><Drawer.Content dir={direction} className="liquid-glass-menu fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] overflow-y-auto rounded-t-[1.5rem] bg-[var(--app-card)] pb-[max(1rem,env(safe-area-inset-bottom))] outline-none"><div aria-hidden="true" className="mx-auto mt-3 h-1 w-10 rounded-full bg-[var(--app-line)]" /><Drawer.Title className="px-5 pt-4 text-lg font-semibold">{editingProfile ? labels.editProfile : labels.addProfile}</Drawer.Title><Drawer.Description className="px-5 pt-1 text-xs text-muted-foreground">{labels.profileDescription}</Drawer.Description>{profileForm}</Drawer.Content></Drawer.Portal></Drawer.Root> : <Dialog open={profileOpen} onOpenChange={handleProfileOpenChange}><DialogContent className="liquid-glass-menu max-h-[min(90dvh,52rem)] w-[min(38rem,calc(100vw-2rem))] max-w-none overflow-y-auto rounded-[1.5rem] border border-[var(--app-line)] bg-[var(--app-card)] p-0"><DialogHeader className="px-6 pt-6"><DialogTitle>{editingProfile ? labels.editProfile : labels.addProfile}</DialogTitle><DialogDescription>{labels.profileDescription}</DialogDescription></DialogHeader>{profileForm}</DialogContent></Dialog>}
+    {compactViewport ? <Drawer.Root open={profileOpen} onOpenChange={handleProfileOpenChange} direction="bottom"><Drawer.Portal><Drawer.Overlay className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm" /><Drawer.Content dir={direction} className="liquid-glass-menu fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] overflow-y-auto rounded-t-[1.5rem] bg-[var(--app-card)] pb-[max(1rem,env(safe-area-inset-bottom))] outline-none"><div aria-hidden="true" className="mx-auto mt-3 h-1 w-10 rounded-full bg-[var(--app-line)]" /><Drawer.Title className="px-5 pt-4 text-lg font-semibold">{editingProfile ? labels.editProfile : labels.addProfile}</Drawer.Title><Drawer.Description className="px-5 pt-1 text-xs text-muted-foreground">{labels.profileDescription}</Drawer.Description>{profileForm}</Drawer.Content></Drawer.Portal></Drawer.Root> : <Dialog open={profileOpen} onOpenChange={handleProfileOpenChange}><DialogContent className="liquid-glass-menu max-h-[min(90dvh,52rem)] w-[min(52rem,calc(100vw-2rem))] max-w-none overflow-y-auto rounded-[1.5rem] border border-[var(--app-line)] bg-[var(--app-card)] p-0"><DialogHeader className="px-6 pt-6"><DialogTitle>{editingProfile ? labels.editProfile : labels.addProfile}</DialogTitle><DialogDescription>{labels.profileDescription}</DialogDescription></DialogHeader>{profileForm}</DialogContent></Dialog>}
   </div>
 }

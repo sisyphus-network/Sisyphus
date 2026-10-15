@@ -24,6 +24,8 @@
     "unavailable": "Proceso local no disponible",
     "load": "Cargar modelos",
     "choose": "Elegir modelo",
+    "loadingModels": "Conectando y cargando modelos…",
+    "modelsAvailable": "Conectado · {count} modelos disponibles",
     "noTools": "Sin herramientas",
     "apiKey": "Clave API",
     "model": "Modelo",
