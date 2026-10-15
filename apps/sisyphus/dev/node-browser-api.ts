@@ -90,29 +90,8 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
       path: `${requestURL.pathname}${requestURL.search}`,
       headers: upstreamHeaders,
     }, (upstreamResponse) => {
-      const pairingResponse = requestURL.pathname === '/pairing' && upstreamResponse.statusCode === 200 && upstreamResponse.headers['content-type']?.includes('application/json')
-      if (!pairingResponse) {
-        response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers)
-        upstreamResponse.pipe(response)
-        return
-      }
-      const chunks: Buffer[] = []
-      upstreamResponse.on('data', (chunk: Buffer) => chunks.push(chunk))
-      upstreamResponse.on('end', () => {
-        const body = Buffer.concat(chunks)
-        try {
-          const result = JSON.parse(body.toString()) as { code?: string; pairUrl?: string }
-          if (result.code && /^\d{8}$/.test(result.code)) result.pairUrl = `${requestOrigin}/#pair=${result.code}`
-          const rewritten = Buffer.from(JSON.stringify(result))
-          const headers = { ...upstreamResponse.headers, 'content-length': String(rewritten.length) }
-          delete headers['content-encoding']
-          response.writeHead(upstreamResponse.statusCode ?? 502, headers)
-          response.end(rewritten)
-        } catch {
-          response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers)
-          response.end(body)
-        }
-      })
+      response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers)
+      upstreamResponse.pipe(response)
     })
     upstream.on('error', (error) => {
       if (response.headersSent) { response.destroy(error); return }

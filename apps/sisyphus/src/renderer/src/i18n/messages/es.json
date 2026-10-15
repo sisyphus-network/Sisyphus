@@ -1,4 +1,5 @@
 {
+  "accessUi": { "override": "Sobrescribir", "sameAs": "Igual que", "on": "Act.", "off": "Des." },
   "networkInterfacePicker": { "choose": "Elegir interfaces de red", "search": "Buscar interfaces o direcciones…", "none": "No se encontraron interfaces de red disponibles.", "noMatches": "No hay interfaces coincidentes.", "current": "Dirección configurada anteriormente", "refresh": "Actualizar", "loading": "Cargando interfaces…", "port": "Puerto", "done": "Listo", "loadFailed": "No se pudieron cargar las interfaces de red" },
   "webAccess": { "title": "Acceso", "exposureTitle": "Acceso remoto", "exposureDescription": "Elige si los navegadores de otros dispositivos pueden acceder al nodo. El acceso permanece desactivado hasta que lo habilites y guardes.", "enabled": "El acceso remoto está activado", "disabled": "El acceso remoto está desactivado", "enable": "Activar acceso remoto", "disable": "Desactivar acceso remoto", "listenAddress": "Dirección de interfaz del nodo", "listenAddressHint": "Una IP concreta asignada a este equipo y un puerto, por ejemplo 192.168.1.20:50052. No se permiten direcciones wildcard.", "publicUrl": "Dirección del navegador", "publicUrlHint": "Dirección HTTPS que abrirán los navegadores vinculados. Para acceder por Internet mediante el router, usa el host y puerto externos.", "httpsNotice": "HTTPS es obligatorio. Sisyphus crea un certificado autofirmado; quizá debas aceptar la advertencia en cada navegador antes de que funcionen el vínculo y las llamadas API.", "certificateFingerprint": "Huella SHA-256 del certificado", "save": "Guardar ajustes de acceso", "saved": "Ajustes de acceso actualizados", "saveFailed": "No se pudieron actualizar los ajustes de acceso", "configLoadFailed": "No se pudieron cargar los ajustes de acceso", "pairingTitle": "Vincular navegador", "devicesTitle": "Dispositivos vinculados" },
   "chatAttachmentsNeedNodeUpdate": "Actualiza el nodo antes de enviar adjuntos. Este daemon no admite la gestión segura de archivos del chat.",
@@ -110,12 +111,13 @@
   "nodeIdentity": "IDENTIDAD DEL NODO",
   "waitingHandshake": "Esperando el saludo del demonio",
   "connectedPeers": "NODOS CONECTADOS",
+  "peers": "Nodos",
   "activeKnownPeers": "Conexiones activas / nodos conocidos",
   "peerRevision": "REVISIÓN DE NODOS",
   "stream": "FLUJO",
   "listeningSnapshot": "Esperando la primera actualización",
   "updated": "Actualizado: {time}",
-  "daemon": "DEMONIO",
+  "daemon": "Demonio",
   "nodeDetails": "Detalles del nodo",
   "peerId": "ID del nodo",
   "daemonVersion": "Versión del demonio",
@@ -343,5 +345,7 @@
   },
   "deleteChatTitle": "¿Eliminar este chat?",
   "deleteChatDescription": "Esta conversación se eliminará permanentemente. Esta acción no se puede deshacer.",
-  "deletingChat": "Eliminando..."
+  "deletingChat": "Eliminando...",
+  "revokeDeviceTitle": "¿Revocar el acceso de este dispositivo?",
+  "revokeDeviceDescription": "Este navegador perderá el acceso al nodo y tendrá que vincularse de nuevo para conectarse."
 }

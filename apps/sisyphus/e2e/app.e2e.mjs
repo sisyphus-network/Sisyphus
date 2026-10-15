@@ -11,14 +11,22 @@ async function openSettingsCategory(page, category) {
   await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: new RegExp(category, 'i') }).click()
 }
 
+// Whether the window says its node is connected: a badge in the header of a
+// narrow window, and in a wide one the daemon status in the sidebar, whose
+// dot alone does not say it.
+function connectionState(page, label) {
+  return page.getByRole('banner').getByText(label, { exact: true })
+    .or(page.getByRole('complementary').getByRole('status', { name: `Daemon: ${label}` }))
+}
+
 async function selectProvider(page, name) {
-  await page.getByRole('textbox', { name: 'Provider' }).click()
+  await page.getByRole('button', { name: 'Provider', exact: true }).click()
   await page.getByRole('dialog', { name: 'Provider' }).getByRole('button', { name: new RegExp(`^${name}`, 'i') }).click()
 }
 
 async function selectLoadedModel(page, name) {
   await page.getByText(/^Connected · \d+ models available$/).waitFor()
-  await page.getByRole('textbox', { name: 'Model' }).click()
+  await page.getByRole('button', { name: 'Model', exact: true }).click()
   await page.getByRole('dialog', { name: 'Model' }).getByRole('button', { name, exact: true }).click()
 }
 
@@ -29,7 +37,7 @@ test('the window shows the node it is connected to', async () => {
     await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
     await open(page, 'Node overview')
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
-    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+    await connectionState(page, 'Connected').waitFor()
     await page.getByText('Daemon version dev', { exact: true }).waitFor()
     // The node the window describes is the one it was started against,
     // and that node's own worker is listed with what it can run.
@@ -482,7 +490,7 @@ test('an active conversation survives desktop and compact workspace remounts', a
   try {
     await wide(app, page)
     await open(page, 'Node overview')
-    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+    await connectionState(page, 'Connected').waitFor()
     await page.getByRole('complementary').getByRole('link', { name: 'Workspace', exact: true }).click()
     await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
     const composer = page.getByRole('textbox', { name: 'Message your Sisyphus planner…' })
@@ -637,7 +645,7 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
 
     await openSettingsCategory(page, 'Theme')
     await page.getByRole('heading', { name: 'Theme', level: 1 }).waitFor()
-    const accentPicker = page.getByRole('textbox', { name: 'Accent' })
+    const accentPicker = page.getByRole('button', { name: 'Accent', exact: true })
     await accentPicker.scrollIntoViewIfNeeded()
     await accentPicker.click()
     const accentMenu = page.getByRole('dialog', { name: 'Accent' })
@@ -907,13 +915,13 @@ test('a node that stops is said to be gone, and the window finds it again when i
   const { app, page } = await launch(node, profile)
   try {
     await open(page, 'Node overview')
-    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+    await connectionState(page, 'Connected').waitFor()
     await node.stop()
     await page.getByText('Daemon unavailable').first().waitFor({ timeout: 30000 })
     // The window keeps its frame: the sidebar is still there to use.
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).waitFor()
     await node.start()
-    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor({ timeout: 60000 })
+    await connectionState(page, 'Connected').waitFor({ timeout: 60000 })
     await page.getByText(node.id(), { exact: true }).waitFor()
   } finally {
     await app.close()
@@ -928,7 +936,7 @@ test('Operations recovers in place when its node disconnects and reconnects', as
   try {
     await open(page, 'Operations')
     await page.getByRole('textbox', { name: 'Workload' }).waitFor()
-    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+    await connectionState(page, 'Connected').waitFor()
 
     await node.stop()
     await page.getByText('Daemon unavailable').first().waitFor({ timeout: 30000 })
@@ -936,7 +944,7 @@ test('Operations recovers in place when its node disconnects and reconnects', as
     await page.getByRole('complementary').getByRole('link', { name: 'Operations', exact: true }).waitFor()
 
     await node.start()
-    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor({ timeout: 60000 })
+    await connectionState(page, 'Connected').waitFor({ timeout: 60000 })
     // Recovery returns to the same route and restores its interactive form
     // without a reload or a manual reconnect action.
     await page.getByRole('textbox', { name: 'Workload' }).waitFor({ timeout: 30000 })
@@ -954,7 +962,7 @@ test('Settings replaces stale content while offline and restores its form after 
   try {
     await openSettingsCategory(page, 'Model provider')
     await page.getByRole('button', { name: 'Add provider' }).first().waitFor()
-    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor()
+    await connectionState(page, 'Connected').waitFor()
 
     await node.stop()
     await page.getByText('Daemon unavailable').first().waitFor({ timeout: 30000 })
@@ -962,10 +970,10 @@ test('Settings replaces stale content while offline and restores its form after 
     assert.equal(await page.getByRole('button', { name: 'Add provider' }).count(), 0, 'stale model settings remain interactive while the daemon is offline')
 
     await node.start()
-    await page.getByRole('banner').getByText('Connected', { exact: true }).waitFor({ timeout: 60000 })
+    await connectionState(page, 'Connected').waitFor({ timeout: 60000 })
     await page.getByRole('button', { name: 'Add provider' }).first().waitFor({ timeout: 30000 })
     await page.getByRole('button', { name: 'Add provider' }).first().click()
-    await page.getByRole('textbox', { name: 'Provider' }).waitFor({ timeout: 30000 })
+    await page.getByRole('button', { name: 'Provider', exact: true }).waitFor({ timeout: 30000 })
   } finally {
     await app.close()
     profile.remove()

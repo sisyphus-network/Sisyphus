@@ -16,7 +16,19 @@ export function LanguagePicker({
   onChange: (value: AppLocale) => void;
   loading?: boolean;
 }) {
-  const options = localeOptions.map((option) => ({ value: option.code, label: option.nativeName }));
+  const options = localeOptions
+    .map((option) => ({ value: option.code, label: option.nativeName, direction: option.direction }))
+    .sort((a, b) => {
+      const preferredOrder = ["he", "ar", "en"];
+      const aPreferred = preferredOrder.indexOf(a.value);
+      const bPreferred = preferredOrder.indexOf(b.value);
+      if (aPreferred !== -1 || bPreferred !== -1) {
+        if (aPreferred === -1) return 1;
+        if (bPreferred === -1) return -1;
+        return aPreferred - bPreferred;
+      }
+      return a.label.localeCompare(b.label, a.value);
+    });
   const selectedLabel = options.find((option) => option.value === value)?.label;
 
   return (
@@ -31,15 +43,6 @@ export function LanguagePicker({
           readOnly
           role="button"
           onClick={() => setOpen((current) => !current)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " " || event.key === "ArrowDown") {
-              event.preventDefault();
-              setOpen(true);
-            } else if (event.key === "Escape" && open) {
-              event.preventDefault();
-              setOpen(false);
-            }
-          }}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-busy={loading}
@@ -56,16 +59,17 @@ export function LanguagePicker({
               type="button"
               key={option.value}
               disabled={loading}
+              dir={option.direction}
               onClick={() => {
                 if (option.value !== value) onChange(option.value);
                 setOpen(false);
               }}
               className={cn(
-                "flex w-full items-center justify-between rounded-xl px-3 py-3 text-sm transition-colors hover:bg-[var(--app-wash)] disabled:pointer-events-none disabled:opacity-60",
+                "flex w-full flex-row items-center justify-between rounded-xl px-3 py-3 text-start text-sm transition-colors hover:bg-[var(--app-wash)] disabled:pointer-events-none disabled:opacity-60",
                 value === option.value && "bg-[var(--app-wash)] font-semibold",
               )}
             >
-              <span className="flex min-w-0 items-center gap-3">
+              <span className="flex min-w-0 flex-row items-center gap-3">
                 <LocaleFlag locale={option.value} size="m" label={option.label} />
                 <span>{option.label}</span>
               </span>

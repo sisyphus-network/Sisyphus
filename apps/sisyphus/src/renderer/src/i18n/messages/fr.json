@@ -1,4 +1,5 @@
 {
+  "accessUi": { "override": "Remplacer", "sameAs": "Identique à", "on": "Activé", "off": "Désactivé" },
   "networkInterfacePicker": { "choose": "Choisir des interfaces réseau", "search": "Rechercher des interfaces ou des adresses…", "none": "Aucune interface réseau utilisable trouvée.", "noMatches": "Aucune interface correspondante.", "current": "Adresse configurée précédemment", "refresh": "Actualiser", "loading": "Chargement des interfaces…", "port": "Port", "done": "Terminé", "loadFailed": "Impossible de charger les interfaces réseau" },
   "webAccess": { "title": "Accès", "exposureTitle": "Accès à distance", "exposureDescription": "Choisissez si les navigateurs d’autres appareils peuvent accéder à ce nœud. L’accès reste désactivé tant que vous ne l’activez pas et n’enregistrez pas ce choix.", "enabled": "L’accès à distance est activé", "disabled": "L’accès à distance est désactivé", "enable": "Activer l’accès à distance", "disable": "Désactiver l’accès à distance", "listenAddress": "Adresse réseau du nœud", "listenAddressHint": "Une adresse IP précise attribuée à cet ordinateur et un port, par exemple 192.168.1.20:50052. Les adresses wildcard sont refusées.", "publicUrl": "Adresse du navigateur", "publicUrlHint": "Adresse HTTPS ouverte par les navigateurs associés. Pour l’accès Internet via un routeur, indiquez l’hôte et le port externes.", "httpsNotice": "HTTPS est toujours obligatoire. Sisyphus crée un certificat autosigné ; chaque navigateur peut demander d’accepter son avertissement avant que l’association et les appels API fonctionnent.", "certificateFingerprint": "Empreinte SHA-256 du certificat", "save": "Enregistrer les paramètres d’accès", "saved": "Paramètres d’accès mis à jour", "saveFailed": "Impossible de mettre à jour les paramètres d’accès", "configLoadFailed": "Impossible de charger les paramètres d’accès", "pairingTitle": "Associer un navigateur", "devicesTitle": "Appareils associés" },
   "chatAttachmentsNeedNodeUpdate": "Mettez le nœud à jour avant d’envoyer des pièces jointes. Ce daemon ne prend pas en charge la gestion sûre des fichiers du chat.",
@@ -110,12 +111,13 @@
   "nodeIdentity": "IDENTITÉ DU NŒUD",
   "waitingHandshake": "En attente de la réponse du démon",
   "connectedPeers": "NŒUDS CONNECTÉS",
+  "peers": "Nœuds",
   "activeKnownPeers": "Connexions actives / nœuds connus",
   "peerRevision": "RÉVISION DES NŒUDS",
   "stream": "FLUX",
   "listeningSnapshot": "En attente du premier état",
   "updated": "Mis à jour à {time}",
-  "daemon": "DÉMON",
+  "daemon": "Démon",
   "nodeDetails": "Détails du nœud",
   "peerId": "ID du nœud",
   "daemonVersion": "Version du démon",
@@ -343,5 +345,7 @@
   },
   "deleteChatTitle": "Supprimer cette conversation ?",
   "deleteChatDescription": "Cette conversation sera supprimée définitivement. Cette action est irréversible.",
-  "deletingChat": "Suppression en cours..."
+  "deletingChat": "Suppression en cours...",
+  "revokeDeviceTitle": "Révoquer l’accès de cet appareil ?",
+  "revokeDeviceDescription": "Ce navigateur perdra l’accès au nœud et devra être associé à nouveau pour se reconnecter."
 }
