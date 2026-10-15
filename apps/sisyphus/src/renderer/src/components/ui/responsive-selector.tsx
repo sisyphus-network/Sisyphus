@@ -81,6 +81,7 @@ export function ResponsiveSelector({ label, direction, trigger, children, classN
                 role="dialog"
                 tabIndex={-1}
                 aria-label={label}
+                dir={direction}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
                     event.preventDefault();
