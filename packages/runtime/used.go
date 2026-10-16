@@ -32,7 +32,8 @@ func WithModelUse(ctx context.Context, said func(ModelUse)) context.Context {
 
 // tellModelUse says what the request body, as sent to the server at url,
 // runs with, to whoever ctx says is listening. Where nobody is, or there is
-// no server, it asks nothing and says nothing.
+// no server, it asks nothing and says nothing. The version and tags lookups
+// run together under one bounded deadline; failures leave those fields empty.
 func tellModelUse(ctx context.Context, url string, body []byte) {
 	said, listening := ctx.Value(modelUseKey{}).(func(ModelUse))
 	if !listening || url == "" {
@@ -45,14 +46,41 @@ func tellModelUse(ctx context.Context, url string, body []byte) {
 	json.Unmarshal(body, &sent) // toOllama wrote it, so it is an object
 	use := ModelUse{Server: "ollama", Model: sent.Model, Options: sent.Options}
 	asker := Chat{URL: url}
-	if reply, err := asker.ask(ctx, "/api/version"); err == nil {
+	type metadataReply struct {
+		path string
+		body []byte
+		err  error
+	}
+	metadataCtx, cancel := context.WithTimeout(ctx, tagsWait)
+	defer cancel()
+	replies := make(chan metadataReply, 2)
+	for _, path := range []string{"/api/version", "/api/tags"} {
+		go func(path string) {
+			body, err := asker.askAt(metadataCtx, url, path)
+			replies <- metadataReply{path: path, body: body, err: err}
+		}(path)
+	}
+	var versionReply, tagsReply []byte
+	for range 2 {
+		reply := <-replies
+		if reply.err != nil {
+			continue
+		}
+		switch reply.path {
+		case "/api/version":
+			versionReply = reply.body
+		case "/api/tags":
+			tagsReply = reply.body
+		}
+	}
+	if len(versionReply) > 0 {
 		var version struct {
 			Version string `json:"version"`
 		}
-		json.Unmarshal(reply, &version) // a reply that is not a version says none
+		json.Unmarshal(versionReply, &version) // a reply that is not a version says none
 		use.Version = version.Version
 	}
-	if reply, err := asker.ask(ctx, "/api/tags"); err == nil {
+	if len(tagsReply) > 0 {
 		var listed struct {
 			Models []struct {
 				Name    string `json:"name"`
@@ -62,7 +90,7 @@ func tellModelUse(ctx context.Context, url string, body []byte) {
 				} `json:"details"`
 			} `json:"models"`
 		}
-		json.Unmarshal(reply, &listed) // a reply that is not a list lists nothing
+		json.Unmarshal(tagsReply, &listed) // a reply that is not a list lists nothing
 		for _, m := range listed.Models {
 			// Ollama takes a name without a tag to mean the latest.
 			if m.Name == sent.Model || m.Name == sent.Model+":latest" {

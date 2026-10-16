@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // usedServer stands in for an Ollama that says which version it is and
@@ -140,6 +141,62 @@ func TestATaskWithNoModelServerSaysNothingOfOne(t *testing.T) {
 		t.Fatal("prompts ran with no model server")
 	}
 	if len(*heard) != 0 {
+		t.Fatalf("heard %+v", *heard)
+	}
+}
+
+func TestAModelMetadataRequestsShareOneBoundedDeadlineAndRunTogether(t *testing.T) {
+	oldWait := tagsWait
+	tagsWait = 500 * time.Millisecond
+	t.Cleanup(func() { tagsWait = oldWait })
+
+	var mu sync.Mutex
+	var inFlight, maxInFlight int
+	var canceledAt []time.Time
+	var metadataHandlers sync.WaitGroup
+	metadataHandlers.Add(2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/version" || r.URL.Path == "/api/tags" {
+			defer metadataHandlers.Done()
+			mu.Lock()
+			inFlight++
+			if inFlight > maxInFlight {
+				maxInFlight = inFlight
+			}
+			mu.Unlock()
+			<-r.Context().Done()
+			mu.Lock()
+			canceledAt = append(canceledAt, time.Now())
+			inFlight--
+			mu.Unlock()
+			return
+		}
+		io.WriteString(w, `{"model":"llama3.1:8b","message":{"role":"assistant","content":"Hi."},"done":true}`)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, heard := listen()
+	if _, err := (Chat{URL: server.URL}).Execute(ctx, nil, []byte(`{"model":"llama3.1:8b","messages":[{"role":"user","content":"Hi"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	metadataHandlers.Wait()
+	mu.Lock()
+	max, cancellations := maxInFlight, append([]time.Time(nil), canceledAt...)
+	mu.Unlock()
+	if max != 2 {
+		t.Fatalf("maximum simultaneous metadata requests = %d, want 2", max)
+	}
+	if len(cancellations) != 2 {
+		t.Fatalf("metadata request cancellations = %d, want 2", len(cancellations))
+	}
+	delta := cancellations[0].Sub(cancellations[1])
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta >= tagsWait/2 {
+		t.Fatalf("metadata requests were canceled %s apart, want a shared deadline", delta)
+	}
+	if len(*heard) != 1 || (*heard)[0].Version != "" || (*heard)[0].Digest != "" {
 		t.Fatalf("heard %+v", *heard)
 	}
 }
