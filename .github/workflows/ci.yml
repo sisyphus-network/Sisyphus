@@ -184,7 +184,9 @@ jobs:
             goos: darwin
             goarch: amd64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    # The build itself takes minutes, but a hosted macOS runner has spent
+    # eleven of them only checking the code out over a slow network.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
