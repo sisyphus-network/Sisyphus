@@ -73,6 +73,25 @@ message TaskResult {
   // uses them to keep a job's data for as long as the job needs it.
   repeated string read_blobs = 5;
   repeated string written_blobs = 6;
+  // What a model task says it ran with, whether it succeeded or failed;
+  // unset for work that asks no model server.
+  ModelUse used = 7;
+}
+
+// ModelUse is what a model task's worker says it ran with. It is the
+// worker's own account, kept so that an owner's settings show and a later
+// check has something to check against. It proves nothing.
+message ModelUse {
+  // The kind of model server, "ollama", and the version it says it is.
+  string server = 1;
+  string version = 2;
+  // The model as the request named it, and what the server says of the
+  // model it has by that name. Empty where it would not say.
+  string model = 3;
+  string digest = 4;
+  string quantization = 5;
+  // The options sent to the server, as JSON, the owner's own included.
+  bytes options = 6;
 }
 
 message CoordinatorMessage {
