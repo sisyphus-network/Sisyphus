@@ -145,7 +145,14 @@ func invite(t *testing.T, addr, role string) string {
 // waitForOutput reruns a command until its output contains want.
 func waitForOutput(t *testing.T, want string, args ...string) string {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	return waitForOutputWithin(t, 15*time.Second, want, args...)
+}
+
+// waitForOutputWithin is waitForOutput for something that can take longer
+// than most, giving up after within.
+func waitForOutputWithin(t *testing.T, within time.Duration, want string, args ...string) string {
+	t.Helper()
+	deadline := time.Now().Add(within)
 	for {
 		out, err := cli(t, args...)
 		if err == nil && strings.Contains(out, want) {

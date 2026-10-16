@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
@@ -47,7 +48,10 @@ func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 	// write to.
 	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "docker-host", "--slots", "3", "--containers", "--container-runtime", "runc", "--containers-read-only")
 	waitForOutput(t, "docker-host", "nodes", "--addr", addr)
-	out := waitForOutput(t, "succeeded in", "job", "get", "--addr", addr, id)
+	// Three containers started at once are slow to start on a machine busy
+	// with the rest of the tests: alone this takes seconds, but with the
+	// whole suite running it has taken over twenty.
+	out := waitForOutputWithin(t, time.Minute, "succeeded in", "job", "get", "--addr", addr, id)
 	if strings.Contains(out, "on plain") {
 		t.Errorf("a container task ran on the worker that does not run them:\n%s", out)
 	}
