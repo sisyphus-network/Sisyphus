@@ -123,6 +123,12 @@ type Config struct {
 	// the rest. The steps of a job are not counted apart from it, and the
 	// node's own jobs, which have no submitter, not at all.
 	MaxJobsPerClient int
+	// MaxTasksPerClient, if not zero, is how many unfinished tasks, waiting
+	// or running, one client may have across all its jobs and their steps:
+	// a job that would take it past that is refused whole. It bounds what
+	// one client can queue, which a count of jobs does not when one job has
+	// many tasks. The node's own jobs are not counted.
+	MaxTasksPerClient int
 	// HardenedContainers has every job whose tasks run in containers go
 	// only to workers that run them hardened: runtime.HardenedLabels. For a pool that
 	// takes container work from people its workers' owners do not know.
@@ -156,15 +162,16 @@ type Coordinator struct {
 	addressOf func(ctx context.Context) string
 	// hardened is whether container jobs need hardened workers.
 	hardened bool
-	// perClient is how many unfinished jobs one client may have.
-	perClient int
-	addresses map[string]string
-	store     Store
-	journal   Journal
-	standings Standings
-	retain    time.Duration
-	keepJobs  time.Duration
-	log       *slog.Logger
+	// perClient is how many unfinished jobs one client may have, and
+	// tasksPerClient how many unfinished tasks.
+	perClient, tasksPerClient int
+	addresses                 map[string]string
+	store                     Store
+	journal                   Journal
+	standings                 Standings
+	retain                    time.Duration
+	keepJobs                  time.Duration
+	log                       *slog.Logger
 
 	// ctx bounds the aggregations still running when the coordinator closes.
 	ctx         context.Context
@@ -301,31 +308,32 @@ func New(cfg Config) *Coordinator {
 		cfg.Standings = noStandings{}
 	}
 	c := &Coordinator{
-		id:        cfg.ID,
-		sign:      cfg.Sign,
-		workloads: cfg.Workloads,
-		audits:    cfg.Audits,
-		distinct:  cfg.DistinctAddresses,
-		hardened:  cfg.HardenedContainers,
-		perClient: cfg.MaxJobsPerClient,
-		addressOf: cfg.AddressOf,
-		addresses: make(map[string]string),
-		store:     cfg.Store,
-		journal:   cfg.Journal,
-		standings: cfg.Standings,
-		retain:    cfg.Retain,
-		keepJobs:  cfg.KeepJobs,
-		log:       cfg.Log,
-		ctx:       ctx,
-		cancel:    cancel,
-		jobs:      make(map[string]*jobmodel.Job),
-		workers:   make(map[string]*worker),
-		standing:  make(map[string]jobmodel.Standing),
-		changed:   make(map[string]chan struct{}),
-		events:    make(map[string][]jobmodel.Event),
-		seqs:      make(map[string]uint64),
-		logged:    make(map[string]int),
-		keys:      make(map[string]*pb.TaskAssignment),
+		id:             cfg.ID,
+		sign:           cfg.Sign,
+		workloads:      cfg.Workloads,
+		audits:         cfg.Audits,
+		distinct:       cfg.DistinctAddresses,
+		hardened:       cfg.HardenedContainers,
+		perClient:      cfg.MaxJobsPerClient,
+		tasksPerClient: cfg.MaxTasksPerClient,
+		addressOf:      cfg.AddressOf,
+		addresses:      make(map[string]string),
+		store:          cfg.Store,
+		journal:        cfg.Journal,
+		standings:      cfg.Standings,
+		retain:         cfg.Retain,
+		keepJobs:       cfg.KeepJobs,
+		log:            cfg.Log,
+		ctx:            ctx,
+		cancel:         cancel,
+		jobs:           make(map[string]*jobmodel.Job),
+		workers:        make(map[string]*worker),
+		standing:       make(map[string]jobmodel.Standing),
+		changed:        make(map[string]chan struct{}),
+		events:         make(map[string][]jobmodel.Event),
+		seqs:           make(map[string]uint64),
+		logged:         make(map[string]int),
+		keys:           make(map[string]*pb.TaskAssignment),
 	}
 	if c.addressOf == nil {
 		c.addressOf = callersAddress
@@ -792,9 +800,13 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	if able := c.ableLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs); verify >= 2 && !steps && able < verify {
 		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job%s", verify, able, c.apart())
 	}
-	if parent == "" && submitter != "" && c.perClient > 0 {
-		if held := c.unfinishedOfLocked(submitter); held >= c.perClient {
-			return nil, status.Errorf(codes.ResourceExhausted, "this client has %d jobs unfinished, as many as this coordinator lets one client have; submit again once one is over", held)
+	if parent == "" && submitter != "" {
+		jobs, tasks := c.unfinishedOfLocked(submitter)
+		if c.perClient > 0 && jobs >= c.perClient {
+			return nil, status.Errorf(codes.ResourceExhausted, "this client has %d jobs unfinished, as many as this coordinator lets one client have; submit again once one is over", jobs)
+		}
+		if c.tasksPerClient > 0 && !steps && tasks+len(payloads) > c.tasksPerClient {
+			return nil, status.Errorf(codes.ResourceExhausted, "this job has %d tasks and this client has %d unfinished, more between them than the %d this coordinator lets one client have; submit it once some are over, or split it smaller", len(payloads), tasks, c.tasksPerClient)
 		}
 	}
 	job := jobmodel.New(id, workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
@@ -1339,15 +1351,27 @@ func withKey(blobs runtime.Blobs, key []byte, jobID string) runtime.Blobs {
 }
 
 // unfinishedOfLocked is how many unfinished jobs, not counting steps, the
-// client submitter has.
-func (c *Coordinator) unfinishedOfLocked(submitter string) int {
-	n := 0
+// client submitter has, and how many unfinished tasks, steps' included.
+func (c *Coordinator) unfinishedOfLocked(submitter string) (jobs, tasks int) {
 	for _, job := range c.active {
-		if job.Submitter == submitter && job.Parent == "" {
-			n++
+		if job.Submitter != submitter {
+			continue
+		}
+		if job.Parent == "" {
+			jobs++
+		}
+		// The tasks of a job of jobs are its steps, whose own tasks are
+		// counted with them.
+		if _, steps := c.composite(job); steps {
+			continue
+		}
+		for _, task := range job.Tasks {
+			if task.State == jobmodel.Pending || task.State == jobmodel.Running {
+				tasks++
+			}
 		}
 	}
-	return n
+	return jobs, tasks
 }
 
 // needs is what a worker must have to be given the tasks of a job: what
