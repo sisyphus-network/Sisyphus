@@ -1497,7 +1497,8 @@ func decode(cids []string) []cid.Cid {
 // goes to the task of whichever submitter has the fewest tasks running, of
 // that submitter's oldest job, so that one client's job of many tasks does
 // not hold every slot while another's waits; with only one submitter
-// waiting, it has every slot there is.
+// waiting, it has every slot there is. Each copy of a verified job's task
+// takes a slot, and is shared out the same way.
 func (c *Coordinator) scheduleLocked() {
 	c.active = slices.DeleteFunc(c.active, func(job *jobmodel.Job) bool { return job.Terminal() })
 	var waiting []*waitingJob
@@ -1507,13 +1508,15 @@ func (c *Coordinator) scheduleLocked() {
 			c.stepsLocked(job, composite)
 			continue
 		}
-		if c.replicated(job) {
+		next := &waitingJob{job: job, copies: c.replicated(job)}
+		if next.copies {
 			// Each of its tasks goes to several workers at once.
-			c.copiesLocked(job)
-			continue
+			next.tasks = wanted(job)
+		} else {
+			next.tasks = job.Assignable()
 		}
-		if tasks := job.Assignable(); len(tasks) > 0 {
-			waiting = append(waiting, &waitingJob{job: job, tasks: tasks})
+		if len(next.tasks) > 0 {
+			waiting = append(waiting, next)
 		}
 	}
 	running := c.runningBySubmitterLocked()
@@ -1527,26 +1530,52 @@ func (c *Coordinator) scheduleLocked() {
 		}
 		next := waiting[i]
 		task := next.tasks[0]
-		w := c.pickWorkerLocked(next.job, task)
-		if w == nil {
+		switch w := c.pickWorkerLocked(next.job, task); {
+		case w == nil && next.copies:
+			// Every free worker has this task already; another of the
+			// job's tasks may still have one it has not asked.
+			next.tasks = next.tasks[1:]
+		case w == nil:
 			// Nowhere to put it now; the rest of the job waits with it.
-			waiting = slices.Delete(waiting, i, i+1)
-			continue
+			next.tasks = nil
+		case next.copies:
+			running[next.job.Submitter]++
+			if c.copyLocked(next.job, task, w) {
+				// Tasks it had done enough of want more copies now.
+				next.tasks = wanted(next.job)
+			} else if next.job.Wanted(task) == 0 {
+				next.tasks = next.tasks[1:]
+			}
+		default:
+			now := time.Now()
+			next.job.Start(task, w.id, w.name, now)
+			c.handLocked(w, assignment{job: next.job, task: task, attempt: task.Attempt, started: now})
+			running[next.job.Submitter]++
+			next.tasks = next.tasks[1:]
 		}
-		now := time.Now()
-		next.job.Start(task, w.id, w.name, now)
-		c.handLocked(w, assignment{job: next.job, task: task, attempt: task.Attempt, started: now})
-		running[next.job.Submitter]++
-		if next.tasks = next.tasks[1:]; len(next.tasks) == 0 {
+		if len(next.tasks) == 0 {
 			waiting = slices.Delete(waiting, i, i+1)
 		}
 	}
 }
 
-// waitingJob is a job with tasks to hand out, and those tasks.
+// wanted is the tasks of a verified job that want more copies.
+func wanted(job *jobmodel.Job) []*jobmodel.Task {
+	var tasks []*jobmodel.Task
+	for _, task := range job.Tasks {
+		if job.Wanted(task) > 0 {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks
+}
+
+// waitingJob is a job with tasks to hand out, and those tasks. copies says
+// that each of them goes to several workers, as long as it wants more.
 type waitingJob struct {
-	job   *jobmodel.Job
-	tasks []*jobmodel.Task
+	job    *jobmodel.Job
+	tasks  []*jobmodel.Task
+	copies bool
 }
 
 // runningBySubmitterLocked is how many tasks each submitter has running on
