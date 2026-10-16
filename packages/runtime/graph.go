@@ -33,6 +33,10 @@ type Composite interface {
 	// given the outputs of the job's tasks so far, in task order, those
 	// not yet done being empty.
 	Child(payload []byte, outputs [][]byte) (ChildJob, error)
+	// Asks returns the name of the task with this payload, and how many
+	// tasks its job asks to be split into, before it begins: zero if it
+	// leaves that to the pool.
+	Asks(payload []byte) (name string, tasks int)
 	// Output returns what the task's output is, its job having succeeded
 	// with this result and these stored outputs.
 	Output(payload []byte, jobID string, result []byte, stored []string) []byte
@@ -208,6 +212,12 @@ func (Graph) After(payload []byte) []int {
 	var task graphTask
 	json.Unmarshal(payload, &task) // a payload this workload made
 	return task.After
+}
+
+func (Graph) Asks(payload []byte) (string, int) {
+	var task graphTask
+	json.Unmarshal(payload, &task) // a payload this workload made
+	return task.Step.Name, task.Step.Tasks
 }
 
 func (Graph) Output(payload []byte, jobID string, result []byte, stored []string) []byte {

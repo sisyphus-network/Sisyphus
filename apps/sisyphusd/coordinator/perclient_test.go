@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -112,5 +113,40 @@ func TestAClientsGraphCountsTheTasksOfItsStepsOnce(t *testing.T) {
 	}
 	if _, err := c.submit(ctx, primes, "", "", "carol"); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("a fifth task: %v", err)
+	}
+}
+
+// A graph's steps are held to the client's tasks too: a graph with a step
+// that asks for more than a client may have is refused whole, and a step
+// that would take the client past it when it begins fails the graph.
+func TestAClientsGraphIsHeldToItsTasks(t *testing.T) {
+	c := New(Config{Workloads: runtime.Builtin().With(runtime.Graph{}), Store: storage.NewMemory(), MaxTasksPerClient: 4, Log: slog.New(slog.DiscardHandler)})
+	defer c.Close()
+	ctx := context.Background()
+	graph := func(tasks int) *pb.JobSpec {
+		return &pb.JobSpec{Workload: "graph", Params: []byte(fmt.Sprintf(`{"steps":[{"name":"low","workload":"primes","params":{"from":0,"to":1000},"tasks":%d}]}`, tasks))}
+	}
+	if _, err := c.submit(ctx, graph(5), "", "", "carol"); status.Code(err) != codes.ResourceExhausted || !strings.Contains(err.Error(), "step low asks for 5 tasks, more than the 4") {
+		t.Fatalf("a graph with a step of more tasks than a client may have: %v", err)
+	}
+	if _, err := c.submit(ctx, graph(5), "", "", ""); err != nil {
+		t.Fatalf("a graph of the node's own: %v", err)
+	}
+
+	// With two tasks of the client's waiting, a step of three does not fit
+	// when it begins, and the graph fails for it.
+	if _, err := c.submit(ctx, &pb.JobSpec{Workload: "primes", Params: []byte(`{"from":1,"to":10}`), MaxTasks: 2}, "", "", "carol"); err != nil {
+		t.Fatal(err)
+	}
+	submitted, err := c.submit(ctx, graph(3), "", "", "carol")
+	if err != nil {
+		t.Fatalf("a graph whose step fits on its own: %v", err)
+	}
+	var ended *pb.Job
+	if err := c.Watch(ctx, submitted.GetJobId(), func(now *pb.Job) error { ended = now; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if ended.GetState() != pb.JobState_JOB_STATE_FAILED || !strings.Contains(ended.GetError(), "this job has 3 tasks and this client has 2 unfinished") {
+		t.Fatalf("the graph ended %s: %s", ended.GetState(), ended.GetError())
 	}
 }
