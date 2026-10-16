@@ -62,6 +62,20 @@ type Confinement struct {
 	// it no task can, whatever its job asks: whoever submits a job does
 	// not decide what this machine's network is used for.
 	Network bool
+	// MemoryMB and CPUs, if not zero, are the most memory and processors a
+	// task may use. A task whose job asks for less is held to what it asks;
+	// one whose job asks for more, or for no limit, is held to these.
+	MemoryMB int
+	CPUs     float64
+}
+
+// heldTo is what a task asking for asked of something is given where its
+// worker's owner allows at most most, zero for either being no limit.
+func heldTo[N int | float64](asked, most N) N {
+	if most > 0 && (asked <= 0 || asked > most) {
+		return most
+	}
+	return asked
 }
 
 // NetworkLabel marks a worker whose owner lets the pool's containers reach
@@ -278,11 +292,12 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	if !task.Network {
 		args = append(args, "--network", "none")
 	}
-	if task.MemoryMB > 0 {
-		args = append(args, "--memory", strconv.Itoa(task.MemoryMB)+"m")
+	// The job may ask for less than the worker's owner allows, never more.
+	if memory := heldTo(task.MemoryMB, c.Confined.MemoryMB); memory > 0 {
+		args = append(args, "--memory", strconv.Itoa(memory)+"m")
 	}
-	if task.CPUs > 0 {
-		args = append(args, "--cpus", strconv.FormatFloat(task.CPUs, 'f', -1, 64))
+	if cpus := heldTo(task.CPUs, c.Confined.CPUs); cpus > 0 {
+		args = append(args, "--cpus", strconv.FormatFloat(cpus, 'f', -1, 64))
 	}
 	if task.GPUs > 0 {
 		args = append(args, "--gpus", strconv.Itoa(task.GPUs))

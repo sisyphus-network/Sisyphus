@@ -617,3 +617,27 @@ func TestTheNetworkIsTheWorkerOwnersToOffer(t *testing.T) {
 		t.Errorf("a worker whose owner allows the network offers %v", offers)
 	}
 }
+
+// A worker's owner sets the most memory and processors a task may use. A job
+// may ask for less, and gets it; asking for more, or for nothing, gets the
+// owner's.
+func TestAWorkersOwnerSetsTheMostATaskMayUse(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+	engine := &pretend{do: func([]string, io.Writer, io.Writer) (int, error) { return 0, nil }}
+	c := Container{Engine: engine.engine, Confined: Confinement{MemoryMB: 512, CPUs: 2}}
+	for params, want := range map[string]string{
+		`{"image":"alpine:3.20","memory_mb":256,"cpus":1.5}`: "--memory 256m --cpus 1.5",
+		`{"image":"alpine:3.20","memory_mb":4096,"cpus":8}`:  "--memory 512m --cpus 2",
+		`{"image":"alpine:3.20"}`:                            "--memory 512m --cpus 2",
+		`{"image":"alpine:3.20","memory_mb":-1,"cpus":-1}`:   "--memory 512m --cpus 2",
+	} {
+		payloads, _ := c.Split(ctx, store, []byte(params), 1)
+		if _, err := c.Execute(ctx, store, payloads[0]); err != nil {
+			t.Fatal(err)
+		}
+		if args := strings.Join(engine.asked[len(engine.asked)-1], " "); !strings.Contains(args, want) {
+			t.Errorf("%s was run as %q, without %q", params, args, want)
+		}
+	}
+}
