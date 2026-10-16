@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -234,6 +235,69 @@ func TestWorkerSendsWhatAModelTaskRanWith(t *testing.T) {
 		if used.GetServer() != "ollama" || used.GetVersion() != "0.12.11" || used.GetModel() != "llama3.1:8b" || used.GetDigest() != "46e0c10c039e" || used.GetQuantization() != "Q4_K_M" ||
 			!strings.Contains(string(used.GetOptions()), `"num_ctx":8192`) || !strings.Contains(string(used.GetOptions()), `"temperature":0`) {
 			t.Errorf("%s: sent %v", name, used)
+		}
+	}
+}
+
+// welcomingCoordinator welcomes a worker, telling it the address it sees it
+// at, and keeps the connection until the worker goes.
+type welcomingCoordinator struct {
+	pb.UnimplementedCoordinatorServiceServer
+	observed string
+	hello    chan *pb.Hello
+}
+
+func (c *welcomingCoordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, pb.CoordinatorMessage]) error {
+	first, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	c.hello <- first.GetHello()
+	stream.Send(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Welcome{Welcome: &pb.Welcome{CoordinatorId: "welcoming", ObservedAddress: c.observed}}})
+	for {
+		if _, err := stream.Recv(); err != nil {
+			return nil
+		}
+	}
+}
+
+// A worker says where it reached its coordinator, and while it is
+// connected, is where its coordinator sees it, if that is a global address.
+func TestAWorkerIsWhereItsCoordinatorSeesIt(t *testing.T) {
+	for observed, want := range map[string]netip.Addr{
+		"193.0.6.139":    netip.MustParseAddr("193.0.6.139"),
+		"10.0.0.5":       {},
+		"100.64.0.9":     {},
+		"":               {},
+		"not an address": {},
+	} {
+		coordinator := &welcomingCoordinator{observed: observed, hello: make(chan *pb.Hello, 1)}
+		srv := newServer()
+		pb.RegisterCoordinatorServiceServer(srv, coordinator)
+		addr, _ := serve(t, srv)
+		w := &worker.Worker{Name: "w", Coordinator: addr, Credentials: workerCreds, Slots: 1, Workloads: runtime.Builtin(), Blobs: storage.NewMemory(), Log: quiet()}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			w.Run(ctx)
+		}()
+		// It reached the coordinator at the address it was given, here a
+		// loopback one, which the coordinator would take as nowhere.
+		if hello := <-coordinator.hello; hello.GetDialledAddress() != "127.0.0.1" {
+			t.Errorf("the worker says it reached its coordinator at %q", hello.GetDialledAddress())
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for !w.Connected() && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if got := w.Observed(); got != want {
+			t.Errorf("told it is at %q, the worker is at %v, want %v", observed, got, want)
+		}
+		cancel()
+		<-done
+		if got := w.Observed(); got.IsValid() {
+			t.Errorf("no longer connected, the worker is still at %v", got)
 		}
 	}
 }

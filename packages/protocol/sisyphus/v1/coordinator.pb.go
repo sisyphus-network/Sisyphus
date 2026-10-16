@@ -217,6 +217,11 @@ type Hello struct {
 	// pool's members: multiaddresses ending in /p2p/ and its ID. Empty for a
 	// node that does not relay.
 	RelayAddresses []string `protobuf:"bytes,5,rep,name=relay_addresses,json=relayAddresses,proto3" json:"relay_addresses,omitempty"`
+	// The coordinator's address as this worker reached it: the remote address
+	// of the connection it made, not the name it was given. The coordinator
+	// places itself by what most of its workers say here, and only if that is
+	// a global unicast address; it is for display, never for reachability.
+	DialledAddress string `protobuf:"bytes,6,opt,name=dialled_address,json=dialledAddress,proto3" json:"dialled_address,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -277,6 +282,13 @@ func (x *Hello) GetRelayAddresses() []string {
 		return x.RelayAddresses
 	}
 	return nil
+}
+
+func (x *Hello) GetDialledAddress() string {
+	if x != nil {
+		return x.DialledAddress
+	}
+	return ""
 }
 
 type Heartbeat struct {
@@ -788,8 +800,12 @@ type Welcome struct {
 	// away; empty if the pool has no such network. A worker whose own Kubo is
 	// on a different key should ask PoolService.Swarm for the current one.
 	SwarmFingerprint string `protobuf:"bytes,2,opt,name=swarm_fingerprint,json=swarmFingerprint,proto3" json:"swarm_fingerprint,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The worker's address as the coordinator sees it: the source address of
+	// its connection. The worker places itself by it, if it is a global
+	// unicast address; it is for display, never for reachability.
+	ObservedAddress string `protobuf:"bytes,3,opt,name=observed_address,json=observedAddress,proto3" json:"observed_address,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Welcome) Reset() {
@@ -832,6 +848,13 @@ func (x *Welcome) GetCoordinatorId() string {
 func (x *Welcome) GetSwarmFingerprint() string {
 	if x != nil {
 		return x.SwarmFingerprint
+	}
+	return ""
+}
+
+func (x *Welcome) GetObservedAddress() string {
+	if x != nil {
+		return x.ObservedAddress
 	}
 	return ""
 }
@@ -1063,12 +1086,13 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x1a\n" +
 	"\bprogress\x18\x03 \x01(\x01R\bprogress\x12\x10\n" +
-	"\x03log\x18\x04 \x03(\tR\x03log\"\xb2\x01\n" +
+	"\x03log\x18\x04 \x03(\tR\x03log\"\xdb\x01\n" +
 	"\x05Hello\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12#\n" +
 	"\rserve_address\x18\x04 \x01(\tR\fserveAddress\x12'\n" +
-	"\x0frelay_addresses\x18\x05 \x03(\tR\x0erelayAddressesJ\x04\b\x01\x10\x02\"\xb3\x01\n" +
+	"\x0frelay_addresses\x18\x05 \x03(\tR\x0erelayAddresses\x12'\n" +
+	"\x0fdialled_address\x18\x06 \x01(\tR\x0edialledAddressJ\x04\b\x01\x10\x02\"\xb3\x01\n" +
 	"\tHeartbeat\x12#\n" +
 	"\rrunning_tasks\x18\x01 \x01(\rR\frunningTasks\x12/\n" +
 	"\x13relayed_connections\x18\x02 \x01(\x04R\x12relayedConnections\x12#\n" +
@@ -1105,10 +1129,11 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\n" +
 	"TaskCancel\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
-	"\aattempt\x18\x02 \x01(\rR\aattempt\"]\n" +
+	"\aattempt\x18\x02 \x01(\rR\aattempt\"\x88\x01\n" +
 	"\aWelcome\x12%\n" +
 	"\x0ecoordinator_id\x18\x01 \x01(\tR\rcoordinatorId\x12+\n" +
-	"\x11swarm_fingerprint\x18\x02 \x01(\tR\x10swarmFingerprint\":\n" +
+	"\x11swarm_fingerprint\x18\x02 \x01(\tR\x10swarmFingerprint\x12)\n" +
+	"\x10observed_address\x18\x03 \x01(\tR\x0fobservedAddress\":\n" +
 	"\vSwarmUpdate\x12+\n" +
 	"\x11swarm_fingerprint\x18\x01 \x01(\tR\x10swarmFingerprint\"\xe5\x01\n" +
 	"\x0eTaskAssignment\x12\x17\n" +

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/netip"
 	"os"
 	goruntime "runtime"
 	"slices"
@@ -20,8 +22,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/sisyphus-network/Sisyphus/packages/geo"
 	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
@@ -77,6 +81,9 @@ type Worker struct {
 	// connected is whether the coordinator has this node in its pool right
 	// now.
 	connected atomic.Bool
+	// observed is the worker's address as its coordinator sees it, while it
+	// is connected and that is a global address.
+	observed atomic.Pointer[netip.Addr]
 	// offered is what the worker last told its coordinator it has.
 	offered atomic.Pointer[[]string]
 	// HeartbeatInterval is how often the coordinator hears from this node
@@ -163,6 +170,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 		Name:         w.Name,
 		Capabilities: hello,
 		ServeAddress: w.ServeAddress, RelayAddresses: w.RelayAddresses,
+		DialledAddress: dialled(stream.Context()),
 	}}})
 
 	var running atomic.Int32
@@ -211,6 +219,12 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 			w.connected.Store(true)
 			defer w.connected.Store(false)
 			w.swarmChanged(kind.Welcome.GetSwarmFingerprint())
+			// Only an address that is someone's on the internet says
+			// where this node is.
+			if seen, err := netip.ParseAddr(kind.Welcome.GetObservedAddress()); err == nil && geo.Global(seen) {
+				w.observed.Store(&seen)
+				defer w.observed.Store(nil)
+			}
 			w.Log.Info("joined pool", "node", w.Name, "coordinator", kind.Welcome.GetCoordinatorId(), "slots", w.Slots)
 		case *pb.CoordinatorMessage_Cancel:
 			// A task that has already finished is no longer there to stop.
@@ -268,6 +282,32 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 // has been welcomed into the pool.
 func (w *Worker) Connected() bool {
 	return w.connected.Load()
+}
+
+// Observed returns this node's address as its coordinator sees it, while it
+// is connected and that is a global address, and otherwise the zero
+// address. Behind a VPN it is the VPN's: it says where the node's traffic
+// comes from, not where the machine is, and is for display only.
+func (w *Worker) Observed() netip.Addr {
+	if seen := w.observed.Load(); seen != nil {
+		return *seen
+	}
+	return netip.Addr{}
+}
+
+// dialled is the address of the other end of a stream's connection, as
+// this node reached it, or nothing if it has none: one carried over a
+// tunnel or a relay has no address of its own that it could give.
+func dialled(ctx context.Context) string {
+	to, ok := peer.FromContext(ctx)
+	if !ok {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(to.Addr.String())
+	if err != nil {
+		return ""
+	}
+	return host
 }
 
 func (w *Worker) swarmChanged(fingerprint string) {

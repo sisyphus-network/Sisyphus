@@ -411,9 +411,9 @@ func TestANodeWithNoAddressBook(t *testing.T) {
 }
 
 func TestANodeSaysWhichCountryItIsInOnlyIfItKnows(t *testing.T) {
-	plain := &localService{cfg: LocalConfig{Listen: func() []string { return nil }, Country: func() string { return "NL" }}}
-	if info, _ := plain.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{}); info.GetCountryCode() != "NL" {
-		t.Errorf("country code %q", info.GetCountryCode())
+	plain := &localService{cfg: LocalConfig{Listen: func() []string { return nil }, Country: func() (string, string) { return "NL", "pool" }}}
+	if info, _ := plain.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{}); info.GetCountryCode() != "NL" || info.GetCountrySource() != "pool" {
+		t.Errorf("country code %q, found by %q", info.GetCountryCode(), info.GetCountrySource())
 	}
 }
 

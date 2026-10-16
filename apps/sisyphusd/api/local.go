@@ -62,8 +62,10 @@ type LocalConfig struct {
 	Book      AddressBook
 	Bootstrap func(ctx context.Context, addresses []string)
 	// Country returns the two-letter code of the country the node is in,
-	// if it has been allowed to find out, and otherwise nothing.
-	Country func() string
+	// if it has been allowed to find out, and otherwise nothing, and how it
+	// was found: from the node's own addresses, as the pool sees it, or by
+	// looking it up.
+	Country func() (code, source string)
 	// Jobs, if set, is the pool this node coordinates, for the calls about
 	// its workers and jobs. Workloads are the workloads the node knows.
 	Jobs      JobControl
@@ -194,7 +196,7 @@ func normal(cfg LocalConfig) LocalConfig {
 		cfg.Poll = time.Second
 	}
 	if cfg.Country == nil {
-		cfg.Country = func() string { return "" }
+		cfg.Country = func() (string, string) { return "", "" }
 	}
 	return cfg
 }
@@ -304,8 +306,9 @@ type attachmentAssistant interface {
 
 func (s *localService) GetNodeInfo(context.Context, *nodepb.GetNodeInfoRequest) (*nodepb.GetNodeInfoResponse, error) {
 	info := &nodepb.GetNodeInfoResponse{
-		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, ListenAddresses: s.cfg.Listen(), CountryCode: s.cfg.Country(), Workloads: s.cfg.Workloads,
+		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, ListenAddresses: s.cfg.Listen(), Workloads: s.cfg.Workloads,
 	}
+	info.CountryCode, info.CountrySource = s.cfg.Country()
 	if _, ok := s.cfg.Assistant.(attachmentAssistant); ok && s.cfg.Store != nil && s.cfg.Files != nil {
 		info.Capabilities = append(info.Capabilities, "chat-file-references-v1")
 		info.Capabilities = append(info.Capabilities, "chat-attachment-retention-v1")

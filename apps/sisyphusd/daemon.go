@@ -459,6 +459,11 @@ func runDaemon(ctx context.Context, args []string) error {
 	// would leave waiting. It is set where there is a pool to plan for.
 	var offered func(workload string) bool
 	worksFor := func(string) bool { return false }
+	// seenAs is this node's address as the pool it is in sees it, if that
+	// is a global one: as its workers reach it, for a coordinator, or as
+	// its coordinator sees it, for a worker. Every node is one or the
+	// other, and it is set below for each.
+	var seenAs func() netip.Addr
 	// takes is the other side of trust: the nodes this one will take tasks
 	// from, whatever else it does.
 	takes, err := openWilling(db)
@@ -531,6 +536,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: *maxJobsPerClient, MaxTasksPerClient: *maxTasksPerClient, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
+		seenAs = coord.Observed
 		unfinished, err := coord.Recover()
 		if err == nil {
 			_, err = coord.Prune(time.Now())
@@ -808,6 +814,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			}
 		}
 		if !isCoordinator {
+			seenAs = w.Observed
 			// A worker's pool, as far as it knows, is its coordinator.
 			coordinatorAddr := *join
 			local.Peers = func() []*nodepb.Peer {
@@ -886,12 +893,9 @@ func runDaemon(ctx context.Context, args []string) error {
 			asked.Store(lookUpCountry(looking))
 		}()
 	}
-	local.Country = func() string {
-		if code := placed(host.Addrs()); code != "" {
-			return code
-		}
+	local.Country = func() (string, string) {
 		code, _ := asked.Load().(string)
-		return code
+		return countryFrom(host.Addrs(), seenAs(), code)
 	}
 
 	if *inferenceListen != "" {
@@ -1171,6 +1175,24 @@ func placed(multiaddrs []string) string {
 		}
 	}
 	return ""
+}
+
+// countryFrom says which country a node is in, and how that was found: by
+// the first of its own addresses that has a place in the world; failing
+// that, behind a NAT, by its address as the pool sees it (see
+// coordinator/observed.go); and failing that, by what an outside service
+// said, if it was asked.
+func countryFrom(own []string, seen netip.Addr, lookedUp string) (code, source string) {
+	if code := placed(own); code != "" {
+		return code, "interface"
+	}
+	if code := countryOf(seen); code != "" {
+		return code, "pool"
+	}
+	if lookedUp != "" {
+		return lookedUp, "lookup"
+	}
+	return "", ""
 }
 
 // countryURL is the service asked which country this node's address is in.

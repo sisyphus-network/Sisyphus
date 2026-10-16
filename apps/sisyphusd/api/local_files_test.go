@@ -378,7 +378,7 @@ func TestAttachmentOwnershipIsNotAdvertisedByAnUnsupportedPlanner(t *testing.T) 
 		{Store: storage.NewMemory(), Files: newFileList(t), Assistant: absent{}},
 	} {
 		cfg.Listen = func() []string { return nil }
-		cfg.Country = func() string { return "" }
+		cfg.Country = func() (string, string) { return "", "" }
 		client := serveLocal(t, cfg)
 		info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
 		if err != nil {
