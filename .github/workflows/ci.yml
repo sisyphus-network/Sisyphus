@@ -56,10 +56,13 @@ jobs:
   test:
     needs: scope
     if: needs.scope.outputs.changed == 'true'
-    # On GitHub's runners, which run every pull request's checks at once,
-    # each on a machine of its own. The project's self-hosted runner ran them
-    # one at a time, behind a lock, and every pull request queued for it.
-    runs-on: ubuntu-26.04
+    # On the project's disposable runners (sisyphus-ci): each job gets a fresh
+    # container of its own, with its own network, /tmp and Docker, so jobs run
+    # side by side rather than queuing behind one host-wide lock, and none of
+    # them counts against the account's 20 hosted jobs. Fork and Dependabot
+    # pull requests stay on GitHub's runners, so only this repository's own
+    # code runs on the project's machine.
+    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-26.04' || 'sisyphus-ci' }}
     env:
       # Harmless on a machine of the job's own, and still what keeps the
       # integration steps from sharing ports with each other.
@@ -295,7 +298,9 @@ jobs:
   rehearsal:
     needs: scope
     if: needs.scope.outputs.changed == 'true'
-    runs-on: ubuntu-26.04
+    # Where test runs, and for the same reasons; the container's own Docker
+    # keeps the rehearsal's fixed container names off every other job's.
+    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-26.04' || 'sisyphus-ci' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
