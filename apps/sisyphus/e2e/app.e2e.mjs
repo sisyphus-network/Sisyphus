@@ -856,6 +856,23 @@ test('model settings save an OpenAI-compatible API key on the node and use it fo
   }
 })
 
+test('development-only sample provider profiles are absent from the production app', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.evaluate(() => { window.location.hash = '/settings/models' })
+    await page.getByRole('heading', { name: 'Model provider', level: 1 }).waitFor()
+
+    for (const sample of ['Ollama Local', 'Ollama Remote', 'OpenAI Production', 'OpenAI Compatible', 'Anthropic Cloud', 'Anthropic Gateway']) {
+      assert.equal(await page.getByRole('heading', { name: sample, exact: true }).count(), 0, `${sample} is a development preview, not a production profile`)
+    }
+    await page.getByRole('button', { name: 'Add provider' }).first().waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('desktop Settings keeps the shell fixed and restores its own scroll position', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
