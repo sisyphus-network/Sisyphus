@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -387,5 +388,38 @@ func TestWorkersAreToldWhichSwarmKeyIsCurrent(t *testing.T) {
 		if err != nil || msg.GetSwarmUpdate().GetSwarmFingerprint() != want {
 			t.Errorf("received %v, %v; want word of %s", msg, err, want)
 		}
+	}
+}
+
+// What a worker says each attempt ran with is kept with that attempt,
+// whether it failed or succeeded, and an attempt that says nothing keeps
+// nothing. It is the worker's word: the coordinator keeps it, not checks it.
+func TestEachAttemptKeepsWhatItsWorkerSaysItRanWith(t *testing.T) {
+	db := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
+	p := startPoolWith(t, runtime.Builtin(), sameStore, db)
+	w := p.connectRaw(hello("rig", 1, "primes"))
+	w.welcome()
+	job := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED, 1))
+	used := &pb.ModelUse{Server: "ollama", Version: "0.12.11", Model: "llama3.1:8b", Digest: "46e0c10c039e", Quantization: "Q4_K_M", Options: []byte(`{"seed":7}`)}
+	task := w.assignment()
+	w.reply(&pb.TaskResult{TaskId: task.GetTaskId(), Attempt: task.GetAttempt(), Outcome: &pb.TaskResult_Error{Error: "the model server went away"}, Used: used})
+	task = w.assignment()
+	w.reply(&pb.TaskResult{TaskId: task.GetTaskId(), Attempt: task.GetAttempt(), Outcome: &pb.TaskResult_Error{Error: "out of memory"}})
+	task = w.assignment()
+	w.reply(&pb.TaskResult{TaskId: task.GetTaskId(), Attempt: task.GetAttempt(), Outcome: &pb.TaskResult_Output{Output: []byte(`{"count":4}`)}, Used: &pb.ModelUse{Server: "ollama", Model: "llama3.1:8b"}})
+	p.wait(job.GetJobId())
+
+	attempts, err := db.Attempts(job.GetJobId())
+	if err != nil || len(attempts) != 3 {
+		t.Fatalf("attempts %+v, %v", attempts, err)
+	}
+	if got := attempts[0].Used; got == nil || got.Digest != "46e0c10c039e" || got.Quantization != "Q4_K_M" || string(got.Options) != `{"seed":7}` {
+		t.Errorf("the failed attempt kept %+v", got)
+	}
+	if got := attempts[1].Used; got != nil {
+		t.Errorf("an attempt that said nothing kept %+v", got)
+	}
+	if got := attempts[2].Used; got == nil || got.Model != "llama3.1:8b" || got.Digest != "" {
+		t.Errorf("the attempt that succeeded kept %+v", got)
 	}
 }

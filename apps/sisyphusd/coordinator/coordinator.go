@@ -1116,6 +1116,15 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	}
 	delete(w.running, a.task.ID)
 	defer c.scheduleLocked()
+	// What a model task says it ran with stays with its attempt however
+	// the attempt ends. It is the worker's word, kept, not checked.
+	if used := result.GetUsed(); used != nil {
+		a.job.Used(a.task, a.attempt, jobmodel.ModelUse{
+			Server: used.GetServer(), Version: used.GetVersion(),
+			Model: used.GetModel(), Digest: used.GetDigest(), Quantization: used.GetQuantization(),
+			Options: used.GetOptions(),
+		})
+	}
 
 	// A job that is over has had its tasks taken off every worker's hands,
 	// so a task found here belongs to one that is still going.

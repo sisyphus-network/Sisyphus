@@ -525,6 +525,7 @@ func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	const (
 		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify, verify_share, audit_share"
 		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error, verify, audit"
+		usedColumns = "used_server, used_version, used_model, used_digest, used_quantization, used_options"
 	)
 	for _, tt := range []struct {
 		table, columns, want string
@@ -534,7 +535,7 @@ func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 		{"job_blobs", "job_id, role, cid", "load job blobs"},
 		{"job_commitments", "job_id DEFAULT 'j1', name, commitment", "load job commitments"},
 		// A row for the one task there is, with nothing else in it.
-		{"task_attempts", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, state, error", "load attempts"},
+		{"task_attempts", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, state, error, " + usedColumns, "load attempts"},
 		{"task_results", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, output, blobs", "load task results"},
 	} {
 		db, _ := newDB(t)
@@ -546,7 +547,7 @@ func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	}
 
 	db, _ := newDB(t)
-	loosen(t, db, "task_attempts", "job_id DEFAULT 'j1', task_index, attempt, node_id, node_name, state, error")
+	loosen(t, db, "task_attempts", "job_id DEFAULT 'j1', task_index, attempt, node_id, node_name, state, error, "+usedColumns)
 	if _, err := db.Attempts("j1"); err == nil || !strings.Contains(err.Error(), "load attempts") {
 		t.Errorf("with a damaged attempts table: %v", err)
 	}
@@ -639,6 +640,12 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	// Put the database back as it was before the migration that added the
 	// column, and so before those that came after it, and open it again.
 	for _, statement := range []string{
+		`ALTER TABLE task_attempts DROP COLUMN used_server`,
+		`ALTER TABLE task_attempts DROP COLUMN used_version`,
+		`ALTER TABLE task_attempts DROP COLUMN used_model`,
+		`ALTER TABLE task_attempts DROP COLUMN used_digest`,
+		`ALTER TABLE task_attempts DROP COLUMN used_quantization`,
+		`ALTER TABLE task_attempts DROP COLUMN used_options`,
 		`ALTER TABLE jobs DROP COLUMN audit_share`,
 		`DROP TABLE worker_standing`,
 		`DROP TABLE file_pin_operations`,
@@ -814,5 +821,34 @@ func TestTheTasksOfAJobFromBeforeSpotChecksAreEachVerifiedAsTheJobIs(t *testing.
 	}
 	if plain.Verify != 0 || plain.Tasks[0].Verify != 0 {
 		t.Errorf("a job from before that was not verified: by %d, its task by %d", plain.Verify, plain.Tasks[0].Verify)
+	}
+}
+
+// What a worker says an attempt ran with is kept with the attempt, said
+// after the attempt was first saved, and read back by both readers; an
+// attempt at work that asks no model server reads back as saying nothing.
+func TestAnAttemptKeepsWhatItRanWith(t *testing.T) {
+	db, file := newDB(t)
+	job := jobmodel.New("j1", "chat", nil, jobmodel.Distributed, 1, [][]byte{nil, nil}, submitted)
+	job.Start(job.Tasks[0], "n1", "rig", submitted)
+	job.Start(job.Tasks[1], "n1", "rig", submitted)
+	save(t, db, job)
+	use := jobmodel.ModelUse{Server: "ollama", Version: "0.12.11", Model: "llama3.1:8b", Digest: "46e0c10c039e", Quantization: "Q4_K_M", Options: []byte(`{"seed":7,"num_ctx":8192}`)}
+	job.Used(job.Tasks[0], 1, use)
+	save(t, db, job)
+
+	db = reopen(t, db, file)
+	attempts, err := db.Attempts("j1")
+	if err != nil || len(attempts) != 2 {
+		t.Fatalf("Attempts = %+v, %v", attempts, err)
+	}
+	loaded := load(t, db)[0]
+	for name, got := range map[string][]jobmodel.Attempt{"Attempts": attempts, "LoadJobs": {loaded.Tasks[0].History[0], loaded.Tasks[1].History[0]}} {
+		if got[0].Used == nil || !reflect.DeepEqual(*got[0].Used, use) {
+			t.Errorf("%s: the model task's attempt says %+v", name, got[0].Used)
+		}
+		if got[1].Used != nil {
+			t.Errorf("%s: an attempt nobody said anything of says %+v", name, got[1].Used)
+		}
 	}
 }

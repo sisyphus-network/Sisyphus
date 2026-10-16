@@ -47,7 +47,9 @@ func (j *Job) touch(t *Task) {
 	for len(t.History) < t.Attempt {
 		t.History = append(t.History, Attempt{TaskIndex: t.Index, Number: len(t.History) + 1})
 	}
-	t.History[t.Attempt-1] = Attempt{TaskIndex: t.Index, Number: t.Attempt, NodeID: t.NodeID, NodeName: t.NodeName, State: t.State, Err: t.Err}
+	// What the attempt ran with is the worker's to say, and stays said.
+	used := t.History[t.Attempt-1].Used
+	t.History[t.Attempt-1] = Attempt{TaskIndex: t.Index, Number: t.Attempt, NodeID: t.NodeID, NodeName: t.NodeName, State: t.State, Err: t.Err, Used: used}
 }
 
 // mark notes that a task has changed, and leaves its history as it is: the

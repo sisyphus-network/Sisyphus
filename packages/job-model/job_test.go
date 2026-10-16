@@ -212,3 +212,39 @@ func TestProgressAndEventsAsTheProtocolGivesThem(t *testing.T) {
 		t.Errorf("the event as the protocol gives it: %v", e)
 	}
 }
+
+// What a model task's worker says it ran with stays with its attempt as the
+// task goes on, and an attempt the job has no record of takes nothing.
+func TestAnAttemptKeepsWhatItsWorkerSaysItRanWith(t *testing.T) {
+	j := newJob(1)
+	task := j.Tasks[0]
+	j.Start(task, "a", "node a", now)
+	j.MarkSaved()
+	use := ModelUse{Server: "ollama", Version: "0.12.11", Model: "llama3.1:8b", Digest: "46e0c10c039e", Quantization: "Q4_K_M", Options: []byte(`{"seed":7}`)}
+	j.Used(task, 1, use)
+	if changed := j.Unsaved().Tasks; len(changed) != 1 || changed[0] != task {
+		t.Fatalf("after Used, the unsaved tasks are %v", changed)
+	}
+
+	// The attempt fails and a second begins: the first keeps what it said.
+	j.Fail(task, "the model server went away", 3, now)
+	j.Start(task, "b", "node b", now)
+	if first := task.History[0]; first.Used == nil || first.Used.Digest != "46e0c10c039e" || string(first.Used.Options) != `{"seed":7}` || first.State != Pending {
+		t.Fatalf("the first attempt is %+v", first)
+	}
+	if second := task.History[1]; second.Used != nil {
+		t.Fatalf("the second attempt says %+v before its worker has", second.Used)
+	}
+	j.Used(task, 2, ModelUse{Server: "ollama", Model: "llama3.1:8b"})
+	j.Succeed(task, []byte("answer"))
+	if second := task.History[1]; second.Used == nil || second.Used.Model != "llama3.1:8b" || second.State != Succeeded {
+		t.Fatalf("the second attempt is %+v", second)
+	}
+
+	for _, attempt := range []int{0, 3} {
+		j.Used(task, attempt, use)
+	}
+	if len(task.History) != 2 || task.History[1].Used.Digest != "" {
+		t.Errorf("an attempt the job has no record of changed it: %+v", task.History)
+	}
+}
