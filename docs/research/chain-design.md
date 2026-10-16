@@ -78,6 +78,19 @@ Both descend from Bitcoin Core at different versions, and both have changed tran
 
 The effort of each has not been measured. That needs both codebases built and run, which is the issue's fifth task and has not been done.
 
+### How `sisyphusd` could talk to a chain node
+
+This is an interface sketch for a Dash-based prototype, not a decision to fork Dash or an implementation contract. Evrmore compatibility has not been checked.
+
+Dash Core exposes two different local interfaces:
+
+- **JSON-RPC for queries and commands.** `dashd` accepts authenticated HTTP JSON-RPC requests. The default bind is loopback; the RPC protocol is not encrypted, and Dash warns against exposing it to the public Internet. RPC access can include wallet and administrative operations, so the Sisyphus adapter should use a dedicated local credential, keep it out of job input and logs, and call only the methods the feature needs. See the [RPC guide](https://docs.dash.org/projects/core/en/develop/docs/api/remote-procedure-calls.html) and [RPC security notes](https://github.com/dashpay/dash/blob/develop/doc/JSON-RPC-interface.md#security).
+- **ZeroMQ for event notifications.** Dash Core can publish block, transaction, ChainLock and other notifications. This channel is read-only but unauthenticated; Dash says to expose it only to trusted local clients and notes that notifications can be lost. A block-tip change may report only the new tip, leaving the subscriber to retrieve the missing chain range. See the [Dash ZMQ reference](https://docs.dash.org/en/develop/docs/core/api/zmq.html).
+
+**Proposed split:** use RPC as the authority for reading chain state and submitting an explicitly constructed transaction. Treat ZMQ as a low-latency wake-up signal only: after startup, reconnect, or a sequence gap, reconcile from the last persisted block hash through RPC, including reorganisations. Never finalize a reward from a notification alone. This is an inference from the documented interfaces; it still needs a regtest prototype against a pinned Dash release.
+
+Before implementation, decide whether Sisyphus connects only to an already-running local node or may manage its lifecycle; whether that node's wallet is enabled; which RPC methods and credential scope are necessary; and which specific ZMQ topics and recovery behavior the chosen Dash release supports. Keep the RPC and ZMQ listeners loopback/IPC-only unless a separately secured private transport is designed. Do not forward either listener through the pool's public port.
+
 ## Open, and what would close it
 
 | Question | What would answer it |
@@ -86,7 +99,7 @@ The effort of each has not been measured. That needs both codebases built and ru
 | Can collateral be taken, not only banned? | Reading Dash's masternode payment and collateral code, and a design for a slashing transaction. |
 | What exactly does a quorum attest? | The dispute window and stake design from #19, written as a message format. |
 | Which of the three ways to have assets? | Both chains built and run in regtest; a spike of option 2. |
-| How does `sisyphusd` talk to the chain? | Dash Core's RPC and ZMQ are documented; a small client that watches for reward transactions would settle it. |
+| How does `sisyphusd` talk to the chain? | This interface sketch separates authenticated RPC from local, unauthenticated ZMQ notifications. A regtest prototype against a pinned Dash release should verify reconnect recovery, reorganisation handling and the wallet/credential boundary. |
 | How much of upstream can be tracked? | A count of Dash's releases over two years and of what a fork would have to carry across each. |
 
 None of this costs money. All of it costs time with two large C++ codebases, and belongs to whoever knows them best.
