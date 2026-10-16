@@ -166,6 +166,8 @@ What that does not do:
 
 So a worker with `--containers` must trust every client of every pool it works for, and those pools' coordinators, as it would someone it lets run programs of their choosing in a Docker container with default settings, and with `--containers-network` on its network if they ask. A node that takes work from several pools ([Trust](../apps/sisyphusd/README.md#trust)) keeps their stores apart, not their containers.
 
+**What a worker checks of its coordinator.** Each task comes with the labels its job was matched on, and a worker runs it only if it has every one of them, other than its own name, which the coordinator gives it. So a coordinator cannot have a worker run a job that asks for the network, or for anything else, that the worker's owner did not offer (`apps/sisyphusd/worker/worker.go`, `lacking`). It can still send a job that does not say what it needs, as any client can.
+
 **What a malicious job can do to a worker:** with containers, the above. Without, it can spend the worker's slots, fill its cache where `--max-cache-bytes` is not set, and feed crafted input to the built-in workloads and to ffmpeg.
 
 **What a malicious worker can do to a job:** read every input, payload and key it is handed and keep them; return a wrong result; name blobs as stored that it did not store, which are no longer taken as stored unless the coordinator's store holds them, and at most 4,096 for a task; fail tasks, or hold them for as long as it likes where the job set no `--timeout`; claim hardware, models and a name it does not have to attract tasks; fetch any other blob in the pool it learns the CID of; and upload without limit unless the coordinator sets `--max-store-bytes`.

@@ -1474,6 +1474,7 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 		Payload:  a.task.Payload,
 		Key:      keys.GetKey(),
 		Keys:     keys.GetKeys(),
+		Needs:    a.job.Needs,
 	}}})
 	c.notifyLocked(a.job)
 }

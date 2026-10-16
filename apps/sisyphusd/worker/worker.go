@@ -11,6 +11,7 @@ import (
 	"os"
 	goruntime "runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -76,6 +77,8 @@ type Worker struct {
 	// connected is whether the coordinator has this node in its pool right
 	// now.
 	connected atomic.Bool
+	// offered is what the worker last told its coordinator it has.
+	offered atomic.Pointer[[]string]
 	// HeartbeatInterval is how often the coordinator hears from this node
 	// while it is idle. Zero means five seconds.
 	HeartbeatInterval time.Duration
@@ -155,6 +158,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	// heartbeat.
 	hello := w.capabilities()
 	offered := hello.GetLabels()
+	w.offered.Store(&offered)
 	send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
 		Name:         w.Name,
 		Capabilities: hello,
@@ -181,6 +185,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				// owner fetches a model, or removes one.
 				if now := w.labels(); !slices.Equal(now, offered) {
 					offered = now
+					w.offered.Store(&now)
 					heartbeat.Labels = &pb.Labels{Labels: now}
 				}
 				if w.Relayed != nil {
@@ -290,6 +295,12 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 	workload, err := w.Workloads.Get(a.GetWorkload())
 	if err != nil {
 		fail(err)
+		return result
+	}
+	// The coordinator may be anyone's: a task it gives this worker for
+	// having something the worker does not have is refused, not run.
+	if lacks := w.lacking(a.GetNeeds()); lacks != "" {
+		fail(fmt.Sprintf("this worker does not have %s, which the task's job needs", lacks))
 		return result
 	}
 	started := []any{"job", a.GetJobId(), "task", a.GetTaskId(), "workload", a.GetWorkload(), "attempt", a.GetAttempt()}
@@ -408,6 +419,23 @@ func keyring(a *pb.TaskAssignment) (*sealed.Ring, sealed.Grant, error) {
 		return nil, sealed.Grant{}, fmt.Errorf("the task came with a key of %d bytes, which is not a key", len(a.GetKey()))
 	}
 	return ring, grants[0], nil
+}
+
+// lacking returns the first of needs that the worker has not offered, or
+// "" if it has them all. Its own name is the coordinator's to give it, and
+// is not checked.
+func (w *Worker) lacking(needs []string) string {
+	offered := w.offered.Load()
+	if offered == nil {
+		labels := w.labels()
+		offered = &labels
+	}
+	for _, need := range needs {
+		if !strings.HasPrefix(need, runtime.WorkerLabel) && !slices.Contains(*offered, need) {
+			return need
+		}
+	}
+	return ""
 }
 
 // labels is what the worker has that a job may ask for by name: itself,
