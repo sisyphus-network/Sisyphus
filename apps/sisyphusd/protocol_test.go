@@ -423,3 +423,27 @@ func TestEachAttemptKeepsWhatItsWorkerSaysItRanWith(t *testing.T) {
 		t.Errorf("the attempt that succeeded kept %+v", got)
 	}
 }
+
+// A container job that asks for the network waits for a worker whose owner
+// lets the pool's containers reach it, and is given to no other, however
+// free it is.
+func TestAJobThatAsksForTheNetworkGoesOnlyWhereTheNetworkIsAllowed(t *testing.T) {
+	p := startPool(t, runtime.WithContainers())
+	closed := p.connectRaw(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{Name: "closed",
+		Capabilities: &pb.NodeCapabilities{TaskSlots: 4, Workloads: []string{"container"}, Labels: []string{runtime.SealingLabel}}}}})
+	closed.welcome()
+	job := p.submit(&pb.JobSpec{Workload: "container", MaxTasks: 1, Params: []byte(`{"image":"alpine:3.20","network":true}`)})
+	// The closed worker has four free slots and is told of nothing to do.
+	time.Sleep(200 * time.Millisecond)
+	got, err := p.client.GetJob(p.ctx, &pb.GetJobRequest{JobId: job.GetJobId()})
+	if err != nil || got.GetJob().GetTasks()[0].GetState() != pb.TaskState_TASK_STATE_PENDING {
+		t.Fatalf("with only a worker that does not allow the network, the job is %v, %v", got, err)
+	}
+
+	open := p.connectRaw(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{Name: "open",
+		Capabilities: &pb.NodeCapabilities{TaskSlots: 1, Workloads: []string{"container"}, Labels: []string{runtime.SealingLabel, runtime.NetworkLabel}}}}})
+	open.welcome()
+	if task := open.assignment(); task.GetJobId() != job.GetJobId() {
+		t.Errorf("the worker that allows the network was given %v", task)
+	}
+}

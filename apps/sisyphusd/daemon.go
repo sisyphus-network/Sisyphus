@@ -85,6 +85,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
 	containerRuntime := fs.String("container-runtime", "", "with --containers: have Docker run the pool's tasks with this runtime in place of its usual, such as runsc (gVisor) or kata-runtime, which keep a task further from this machine than an ordinary container does; it must be installed and known to Docker")
 	containersReadOnly := fs.Bool("containers-read-only", false, "with --containers: give a task nowhere to write but /output and /tmp, the second held in memory; an image that writes anywhere else will fail")
+	containersNetwork := fs.Bool("containers-network", false, "with --containers: let a task reach the network when its job asks to. Without it no task can, and a job that asks for the network is given to workers that allow it, or waits")
 	distinctAddresses := fs.Bool("verify-distinct-addresses", false, "coordinator: for jobs submitted with --verify, hand each task's copies only to workers at different network addresses, so that two workers on one machine or behind one router cannot vouch for each other. For a pool with strangers in it: in a pool whose workers share an address it leaves too few to verify with")
 	maxConnections := fs.Int("max-connections", 0, "how many connections to take at once from other nodes and their command lines, on --listen; 0 takes as many as half the files the system lets this program have open, which on most machines is far more than a pool needs. An eighth of them, and at least 256, may come from one address")
 	containers := fs.Bool("containers", false, "worker role: run container images for the pool's jobs, with Docker. This lets whoever may submit jobs to the pool run what they like on this machine")
@@ -234,9 +235,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	// A node can take in, split and combine any workload, since that needs
 	// nothing but itself. What it will run as a worker is another matter:
 	// container images only if its owner has said so.
-	confined := runtime.Confinement{Runtime: *containerRuntime, ReadOnly: *containersReadOnly}
+	confined := runtime.Confinement{Runtime: *containerRuntime, ReadOnly: *containersReadOnly, Network: *containersNetwork}
 	if confined != (runtime.Confinement{}) && !*containers {
-		return errors.New("--container-runtime and --containers-read-only say how containers are run, and need --containers")
+		return errors.New("--container-runtime, --containers-read-only and --containers-network say how containers are run, and need --containers")
 	}
 	workloads, runs := runtime.WithContainers(), runtime.Builtin()
 	if *containers {

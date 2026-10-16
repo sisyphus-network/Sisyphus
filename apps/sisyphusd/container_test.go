@@ -94,11 +94,11 @@ func TestANodeToldToRunContainersChecksThatItCan(t *testing.T) {
 		asked = confined
 		return errors.New("Docker here has no runtime called runsc")
 	}
-	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--container-runtime", "runsc", "--containers-read-only")
-	if err == nil || !strings.Contains(err.Error(), "--containers: Docker here has no runtime called runsc") || asked != (runtime.Confinement{Runtime: "runsc", ReadOnly: true}) {
+	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--container-runtime", "runsc", "--containers-read-only", "--containers-network")
+	if err == nil || !strings.Contains(err.Error(), "--containers: Docker here has no runtime called runsc") || asked != (runtime.Confinement{Runtime: "runsc", ReadOnly: true, Network: true}) {
 		t.Errorf("error %v, asked for %+v, want the node not started for want of the runtime", err, asked)
 	}
-	for _, flags := range [][]string{{"--container-runtime", "runsc"}, {"--containers-read-only"}} {
+	for _, flags := range [][]string{{"--container-runtime", "runsc"}, {"--containers-read-only"}, {"--containers-network"}} {
 		if _, err := cli(t, append([]string{"run", "--data-dir", t.TempDir(), "--listen", freeAddr(t)}, flags...)...); err == nil || !strings.Contains(err.Error(), "need --containers") {
 			t.Errorf("%v without --containers: %v", flags, err)
 		}

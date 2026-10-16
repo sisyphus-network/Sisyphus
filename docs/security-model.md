@@ -103,7 +103,7 @@ The desktop app's "private" is one key per node, `private.key`, made on first us
 - The coordinator finds a job's inputs by reading its parameters for CIDs. A sealed blob a task reaches some other way, through a list inside another blob for one, is not found, and the task fails to open it.
 - Equality of blobs and of aligned chunks shows across everything the node has sealed.
 - The desktop app stores a file attached to a planner conversation as a private file. Its name and CID go to the model service in the message; its content does not. Every job the planner runs in that conversation is made private (`apps/sisyphusd/planner/planner.go`, `hasPrivateAttachments`), so the workers get `private.key`, and the job's result goes back to the model service unsealed.
-- The model chooses the jobs. A model service, or text that steers the model, can have a `container` job with `"network": true` run over an attached file on a worker that allows containers.
+- The model chooses the jobs. A model service, or text that steers the model, can have a `container` job with `"network": true` run over an attached file on a worker that allows containers and the network.
 
 ### Conversations with the pool's models
 
@@ -152,9 +152,10 @@ Detail: [Running containers](../apps/sisyphusd/README.md#running-containers).
 | --- | --- |
 | `--rm`, a random name | The image, pulled from wherever its name says |
 | `/input` read-only, `/output` writable, each a temporary directory | The command and environment |
-| `--user` as the node's own user and group, and with it `--cap-drop ALL` and `HOME=/tmp` | `--network none`, unless the job says `"network": true` |
+| `--user` as the node's own user and group, and with it `--cap-drop ALL` and `HOME=/tmp` | `--network none`, unless the job says `"network": true` and the worker allows it |
 | `--security-opt no-new-privileges` | `--memory` and `--cpus`, absent unless the job sets them |
 | `--pids-limit 4096` | `--gpus` |
+| Whether the network can be had at all: only with `--containers-network`, and a job that asks for it goes to no other worker | |
 
 What that does not do:
 
@@ -163,7 +164,7 @@ What that does not do:
 - **Limits are the submitter's, not the worker's.** A worker's `--offer-memory-mb` is what it advertises and is not enforced.
 - **Output is bounded, loosely.** What the command prints is kept up to 16 MiB as the task's output. Each line of it is also a log line, cut at 4 KiB by the worker and again by the coordinator, which keeps 20,000 lines for a job and then says once that it keeps no more (`coordinator.go`, `logLocked`). Files left in `/output` are stored up to 4 GiB and 1,024 files for a task, beyond which the task fails; the limit is on what is stored, not on what the command may write while it runs.
 
-So a worker with `--containers` must trust every client of every pool it works for, and those pools' coordinators, as it would someone it lets run programs of their choosing in a Docker container with default settings, on its network if they ask. A node that takes work from several pools ([Trust](../apps/sisyphusd/README.md#trust)) keeps their stores apart, not their containers.
+So a worker with `--containers` must trust every client of every pool it works for, and those pools' coordinators, as it would someone it lets run programs of their choosing in a Docker container with default settings, and with `--containers-network` on its network if they ask. A node that takes work from several pools ([Trust](../apps/sisyphusd/README.md#trust)) keeps their stores apart, not their containers.
 
 **What a malicious job can do to a worker:** with containers, the above. Without, it can spend the worker's slots, fill its cache where `--max-cache-bytes` is not set, and feed crafted input to the built-in workloads and to ffmpeg.
 
