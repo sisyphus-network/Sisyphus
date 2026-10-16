@@ -94,17 +94,17 @@ func TestANodeToldToRunContainersChecksThatItCan(t *testing.T) {
 		asked = confined
 		return errors.New("Docker here has no runtime called runsc")
 	}
-	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--container-runtime", "runsc", "--containers-read-only", "--containers-network", "--containers-memory-mb", "512", "--containers-cpus", "1.5")
-	if err == nil || !strings.Contains(err.Error(), "--containers: Docker here has no runtime called runsc") || asked != (runtime.Confinement{Runtime: "runsc", ReadOnly: true, Network: true, MemoryMB: 512, CPUs: 1.5}) {
+	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--container-runtime", "runsc", "--containers-read-only", "--containers-network", "--containers-memory-mb", "512", "--containers-cpus", "1.5", "--containers-timeout", "1h")
+	if err == nil || !strings.Contains(err.Error(), "--containers: Docker here has no runtime called runsc") || asked != (runtime.Confinement{Runtime: "runsc", ReadOnly: true, Network: true, MemoryMB: 512, CPUs: 1.5, Timeout: time.Hour}) {
 		t.Errorf("error %v, asked for %+v, want the node not started for want of the runtime", err, asked)
 	}
-	for _, flags := range [][]string{{"--container-runtime", "runsc"}, {"--containers-read-only"}, {"--containers-memory-mb", "512"}, {"--containers-cpus", "2"}, {"--containers-network"}} {
+	for _, flags := range [][]string{{"--container-runtime", "runsc"}, {"--containers-read-only"}, {"--containers-memory-mb", "512"}, {"--containers-cpus", "2"}, {"--containers-timeout", "1h"}, {"--containers-network"}} {
 		if _, err := cli(t, append([]string{"run", "--data-dir", t.TempDir(), "--listen", freeAddr(t)}, flags...)...); err == nil || !strings.Contains(err.Error(), "need --containers") {
 			t.Errorf("%v without --containers: %v", flags, err)
 		}
 	}
 	// What a task may use is at most something.
-	for _, flags := range [][]string{{"--containers-memory-mb", "-1"}, {"--containers-cpus", "-0.5"}} {
+	for _, flags := range [][]string{{"--containers-memory-mb", "-1"}, {"--containers-cpus", "-0.5"}, {"--containers-timeout", "-1s"}} {
 		if _, err := cli(t, append([]string{"run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers"}, flags...)...); err == nil || !strings.Contains(err.Error(), "cannot be less than nothing") {
 			t.Errorf("%v: %v", flags, err)
 		}

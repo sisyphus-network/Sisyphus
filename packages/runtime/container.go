@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/ipfs/go-cid"
@@ -67,6 +68,10 @@ type Confinement struct {
 	// one whose job asks for more, or for no limit, is held to these.
 	MemoryMB int
 	CPUs     float64
+	// Timeout, if not zero, is the longest a task may run before the worker
+	// stops it, whatever its job allows: a coordinator's timeout is the
+	// job's to set, and this one is the owner's.
+	Timeout time.Duration
 }
 
 // heldTo is what a task asking for asked of something is given where its
@@ -314,13 +319,22 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	var printed capped
 	stdout := &lineWriter{each: report.Log, also: &printed}
 	stderr := &lineWriter{each: report.Log}
-	status, err := engine(ctx, args, stdout, stderr)
+	run := ctx
+	if c.Confined.Timeout > 0 {
+		var cancel context.CancelFunc
+		run, cancel = context.WithTimeout(ctx, c.Confined.Timeout)
+		defer cancel()
+	}
+	status, err := engine(run, args, stdout, stderr)
 	stdout.flush()
 	stderr.flush()
-	if ctx.Err() != nil {
+	if run.Err() != nil {
 		// Stopping the engine's command does not stop the container.
 		engine(context.WithoutCancel(ctx), []string{"kill", name}, io.Discard, io.Discard)
-		return nil, ctx.Err()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("the task ran for longer than the %s this worker's owner allows a task, and was stopped", c.Confined.Timeout)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("run the container: %w", err)
