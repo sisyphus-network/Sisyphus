@@ -142,10 +142,13 @@ func invite(t *testing.T, addr, role string) string {
 	return strings.TrimSpace(waitForOutput(t, ":", "pool", "invite", "--addr", addr, "--role", role))
 }
 
-// waitForOutput reruns a command until its output contains want.
+// waitForOutput reruns a command until its output contains want. It
+// returns as soon as it does, so the deadline costs a passing test
+// nothing; it is long enough for a job to finish on a runner busy with
+// other tests (#314).
 func waitForOutput(t *testing.T, want string, args ...string) string {
 	t.Helper()
-	return waitForOutputWithin(t, 15*time.Second, want, args...)
+	return waitForOutputWithin(t, 30*time.Second, want, args...)
 }
 
 // waitForOutputWithin is waitForOutput for something that can take longer
