@@ -88,28 +88,20 @@ func (c *Coordinator) replicated(job *jobmodel.Job) bool {
 	return job.Verify >= 2 && !steps
 }
 
-// copiesLocked hands each task of a verified job to as many more workers as
-// it wants now, as far as there are workers free that it has not asked.
-func (c *Coordinator) copiesLocked(job *jobmodel.Job) {
-	for _, task := range job.Tasks {
-		for job.Wanted(task) > 0 {
-			w := c.pickWorkerLocked(job, task)
-			if w == nil {
-				// Another task may still have a worker it can ask.
-				break
-			}
-			now := time.Now()
-			c.handLocked(w, assignment{job: job, task: task, attempt: job.StartCopy(task, w.id, w.name, now), started: now})
-			switch owed := c.standing[w.id].Probation; {
-			case job.Outvoted(w.id):
-				// Its word alone is not taken again in this job.
-				c.recheckLocked(job, w.id, w.name, outvotedHere)
-			case owed > 0:
-				// Nor is that of a worker another job found wrong, yet.
-				c.recheckLocked(job, w.id, w.name, fmt.Sprintf("was outvoted in another job and has %d more %s to agree on before its word is taken alone", owed, plural(owed, "result")))
-			}
-		}
+// copyLocked hands a worker one more copy of a task of a verified job, and
+// reports whether that had others of the job's tasks verified after all.
+func (c *Coordinator) copyLocked(job *jobmodel.Job, task *jobmodel.Task, w *worker) (reopened bool) {
+	now := time.Now()
+	c.handLocked(w, assignment{job: job, task: task, attempt: job.StartCopy(task, w.id, w.name, now), started: now})
+	switch owed := c.standing[w.id].Probation; {
+	case job.Outvoted(w.id):
+		// Its word alone is not taken again in this job.
+		return c.recheckLocked(job, w.id, w.name, outvotedHere)
+	case owed > 0:
+		// Nor is that of a worker another job found wrong, yet.
+		return c.recheckLocked(job, w.id, w.name, fmt.Sprintf("was outvoted in another job and has %d more %s to agree on before its word is taken alone", owed, plural(owed, "result")))
 	}
+	return false
 }
 
 // recheckLocked has the tasks a worker ran unverified, or is running so,
