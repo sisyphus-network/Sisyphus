@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -33,6 +34,10 @@ type Composite interface {
 	// given the outputs of the job's tasks so far, in task order, those
 	// not yet done being empty.
 	Child(payload []byte, outputs [][]byte) (ChildJob, error)
+	// Asks returns the name of the task with this payload, and how many
+	// tasks its job asks to be split into, before it begins: zero if it
+	// leaves that to the pool.
+	Asks(payload []byte) (name string, tasks int)
 	// Output returns what the task's output is, its job having succeeded
 	// with this result and these stored outputs.
 	Output(payload []byte, jobID string, result []byte, stored []string) []byte
@@ -128,6 +133,11 @@ func (Graph) Split(_ context.Context, _ Blobs, params []byte, _ int) ([][]byte, 
 		if step.Workload == "" {
 			return nil, fmt.Errorf("step %q names no workload", step.Name)
 		}
+		// A job's task count and timeout are counts that fit in 32 bits;
+		// anything else would be wrapped into one it did not ask for.
+		if step.Tasks < 0 || uint64(step.Tasks) > math.MaxUint32 || step.TimeoutSeconds < 0 || uint64(step.TimeoutSeconds) > math.MaxUint32 {
+			return nil, fmt.Errorf("step %q asks for %d tasks and a timeout of %d seconds, and each is a count from 0 to %d", step.Name, step.Tasks, step.TimeoutSeconds, uint32(math.MaxUint32))
+		}
 		index[step.Name] = i
 	}
 	tasks := make([]graphTask, len(graph.Steps))
@@ -208,6 +218,12 @@ func (Graph) After(payload []byte) []int {
 	var task graphTask
 	json.Unmarshal(payload, &task) // a payload this workload made
 	return task.After
+}
+
+func (Graph) Asks(payload []byte) (string, int) {
+	var task graphTask
+	json.Unmarshal(payload, &task) // a payload this workload made
+	return task.Step.Name, task.Step.Tasks
 }
 
 func (Graph) Output(payload []byte, jobID string, result []byte, stored []string) []byte {

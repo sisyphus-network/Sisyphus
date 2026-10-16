@@ -125,7 +125,8 @@ type Config struct {
 	MaxJobsPerClient int
 	// MaxTasksPerClient, if not zero, is how many unfinished tasks, waiting
 	// or running, one client may have across all its jobs and their steps:
-	// a job that would take it past that is refused whole. It bounds what
+	// a job that would take it past that is refused whole, and so is a
+	// step of a graph when it begins, which fails the graph. It bounds what
 	// one client can queue, which a count of jobs does not when one job has
 	// many tasks. The node's own jobs are not counted.
 	MaxTasksPerClient int
@@ -796,16 +797,28 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	}
 	// A job cannot be verified by fewer workers than it asks to agree. The
 	// steps of a job whose tasks are jobs are held to that as each begins.
-	_, steps := workload.(runtime.Composite)
+	composite, steps := workload.(runtime.Composite)
 	if able := c.ableLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs); verify >= 2 && !steps && able < verify {
 		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job%s", verify, able, c.apart())
 	}
-	if parent == "" && submitter != "" {
+	if submitter != "" {
 		jobs, tasks := c.unfinishedOfLocked(submitter)
-		if c.perClient > 0 && jobs >= c.perClient {
+		if parent == "" && c.perClient > 0 && jobs >= c.perClient {
 			return nil, status.Errorf(codes.ResourceExhausted, "this client has %d jobs unfinished, as many as this coordinator lets one client have; submit again once one is over", jobs)
 		}
-		if c.tasksPerClient > 0 && !steps && tasks+len(payloads) > c.tasksPerClient {
+		switch {
+		case c.tasksPerClient == 0:
+		case steps:
+			// The tasks of a job of jobs are its steps', counted as each
+			// step begins and is split, like any job; the step then fails
+			// the job if it does not fit. One that asks for more tasks
+			// than a client may have could never fit.
+			for _, payload := range payloads {
+				if name, asks := composite.Asks(payload); asks > c.tasksPerClient {
+					return nil, status.Errorf(codes.ResourceExhausted, "step %s asks for %d tasks, more than the %d this coordinator lets one client have; split it smaller", name, asks, c.tasksPerClient)
+				}
+			}
+		case tasks+len(payloads) > c.tasksPerClient:
 			return nil, status.Errorf(codes.ResourceExhausted, "this job has %d tasks and this client has %d unfinished, more between them than the %d this coordinator lets one client have; submit it once some are over, or split it smaller", len(payloads), tasks, c.tasksPerClient)
 		}
 	}
