@@ -1,0 +1,1 @@
+Provider marks are monochrome SVG variants from [theSVG](https://thesvg.org/): Ollama (MIT), Anthropic (CC0-1.0), and OpenAI (MIT). They are included locally so profile cards remain fully offline-capable. Brand marks are used only to identify the configured service.

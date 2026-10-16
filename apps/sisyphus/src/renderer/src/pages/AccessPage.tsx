@@ -14,6 +14,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { useDialogValue } from '@/hooks/use-dialog-value'
 import { NetworkInterfacePicker, type NetworkInterfaceAddress } from '@/components/network-interface-picker'
 import { getNodeApi } from '@/lib/node-api'
+import { formatRelativeDate } from '@/lib/relative-date'
 import { toast } from 'sonner'
 import type { PairedBrowser } from '@sisyphus/client'
 
@@ -341,7 +342,7 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
               <span className="paired-device-icon"><DeviceIcon className="size-[18px]" /></span>
               <div className="paired-device-details">
                 <div className="paired-device-title"><span className="paired-device-platform">{platform}</span>{browser && <><span aria-hidden="true" className="paired-device-separator">·</span><span className="paired-device-browser">{browser}</span></>}</div>
-                <time className="paired-device-date" dateTime={device.createdAt}>{formatRelativePairingDate(device.createdAt, now, document.documentElement.lang)}</time>
+                <time className="paired-device-date" dateTime={device.createdAt}>{formatRelativeDate(device.createdAt, now, document.documentElement.lang)}</time>
               </div>
               <Button type="button" variant="ghost" size="icon" className="paired-device-revoke" aria-label={`${access.revoke} ${device.name}`} title={access.revoke} onClick={() => setRevokeTarget(device)}><X className="size-4" /></Button>
             </li>
@@ -384,19 +385,6 @@ export const BrowserAccessPage = AccessPage
 function parseBrowserDeviceName(name: string) {
   const match = /^(.+?)\s+on\s+(.+)$/i.exec(name.trim())
   return match ? { browser: match[1], platform: match[2] } : { browser: '', platform: name }
-}
-
-function formatRelativePairingDate(value: string, now: number, locale: string) {
-  const timestamp = Date.parse(value)
-  if (!Number.isFinite(timestamp)) return value
-  const elapsedSeconds = (timestamp - now) / 1000
-  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['year', 31_536_000], ['month', 2_592_000], ['week', 604_800],
-    ['day', 86_400], ['hour', 3_600], ['minute', 60], ['second', 1],
-  ]
-  const [unit, secondsPerUnit] = units.find(([, seconds]) => Math.abs(elapsedSeconds) >= seconds) ?? ['second', 1]
-  try { return new Intl.RelativeTimeFormat(locale || undefined, { numeric: 'auto' }).format(Math.round(elapsedSeconds / secondsPerUnit), unit) }
-  catch { return new Date(timestamp).toLocaleString() }
 }
 
 function AccessPageSkeleton() {

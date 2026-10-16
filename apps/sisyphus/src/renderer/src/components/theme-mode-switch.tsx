@@ -1,7 +1,7 @@
 "use client";
 
 import { Monitor, Moon, Sun } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { useEffect, useSyncExternalStore } from "react";
 
 type ThemeMode = "system" | "light" | "dark";
@@ -80,26 +80,16 @@ export function ThemeModeSwitch({ labels, direction }: { labels: ThemeLabels; di
     return () => media.removeEventListener("change", syncSystemTheme);
   }, [mode]);
 
-  function cycleTheme() {
-    const nextMode = modes[(modes.indexOf(mode) + 1) % modes.length];
-    setThemeMode(nextMode);
-  }
-
-  const textOffset = direction === "rtl" ? -8 : 8;
-  const textAlignment = direction === "rtl" ? "text-right" : "text-left";
   return (
-    <button type="button" onClick={cycleTheme} aria-label={`${labels.switchTheme}: ${labels[mode]}`} title={labels[mode]} className={`liquid-glass-avatar group relative inline-flex h-9 items-center gap-2 overflow-hidden rounded-full px-2.5 text-xs text-[var(--app-muted)] transition-[transform,color] hover:scale-[1.02] hover:text-[var(--app-ink)] focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]/60 active:scale-[0.97] ${direction === "rtl" ? "flex-row-reverse" : ""}`}>
-      <span className="relative grid size-6 place-items-center overflow-hidden rounded-full text-[var(--app-ink)]">
-        <span data-theme-mode="system" className="theme-mode-preload-icon absolute"><ModeIcon mode="system" /></span>
-        <span data-theme-mode="light" className="theme-mode-preload-icon absolute"><ModeIcon mode="light" /></span>
-        <span data-theme-mode="dark" className="theme-mode-preload-icon absolute"><ModeIcon mode="dark" /></span>
-        <AnimatePresence mode="wait" initial={false}><motion.span key={mode} initial={{ opacity: 0, y: 8, rotate: -24, scale: 0.72 }} animate={{ opacity: 1, y: 0, rotate: 0, scale: 1 }} exit={{ opacity: 0, y: -8, rotate: 24, scale: 0.72 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }} className="theme-mode-react absolute inline-flex"><ModeIcon mode={mode} /></motion.span></AnimatePresence>
-      </span>
-      <span data-theme-mode="system" className={`theme-mode-preload-label hidden min-w-12 sm:inline ${textAlignment}`}>{labels.system}</span>
-      <span data-theme-mode="light" className={`theme-mode-preload-label hidden min-w-12 sm:inline ${textAlignment}`}>{labels.light}</span>
-      <span data-theme-mode="dark" className={`theme-mode-preload-label hidden min-w-12 sm:inline ${textAlignment}`}>{labels.dark}</span>
-      <AnimatePresence mode="wait" initial={false}><motion.span key={mode} initial={{ opacity: 0, x: textOffset }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -textOffset }} transition={{ duration: 0.2 }} className={`theme-mode-react hidden min-w-12 sm:inline ${textAlignment}`}>{labels[mode]}</motion.span></AnimatePresence>
-    </button>
+    <div dir={direction} role="group" aria-label={`${labels.switchTheme}: ${labels[mode]}`} className="grid w-full min-w-0 grid-cols-3 rounded-full border border-[var(--app-line)] bg-[var(--app-wash)]/70 p-1">
+      {modes.map((option) => {
+        const active = option === mode;
+        return <button key={option} type="button" aria-label={labels[option]} aria-pressed={active} title={labels[option]} onClick={() => setThemeMode(option)} className={`relative z-0 flex h-10 min-w-0 items-center justify-center gap-2 rounded-full px-2 text-xs font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]/60 ${active ? "text-[var(--app-accent-ink)]" : "text-[var(--app-muted)] hover:text-[var(--app-ink)]"}`}>
+          {active && <motion.span layoutId="theme-mode-slider" aria-hidden="true" className="absolute inset-0 -z-10 rounded-full bg-[var(--app-accent)]" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
+          <span className="relative shrink-0"><ModeIcon mode={option} /></span><span aria-hidden="true" className="relative hidden truncate min-[768px]:inline">{labels[option]}</span>
+        </button>
+      })}
+    </div>
   );
 }
 

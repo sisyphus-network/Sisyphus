@@ -6,7 +6,7 @@
 }
 .app-shell--workspace { height: 100dvh; min-height: 0; overflow: hidden; }
 .app-shell--workspace .app-main { position: relative; height: 100%; overflow: hidden; padding: 0; }
-.app-shell--advanced .app-main { position: relative; }
+.app-shell--advanced .app-main { position: relative; scrollbar-gutter: stable; }
 /* Keep the mounted workspace at viewport size even behind the advanced shell.
    Otherwise its narrower content column triggers panel resize transitions. */
 .workspace-persistent { position: fixed; inset: 0; min-width: 0; min-height: 0; }
@@ -247,11 +247,11 @@
   #root:has(.app-shell--advanced) { height: 100dvh; min-height: 0; overflow: hidden; }
   .app-shell--advanced .app-main { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; max-width: none; height: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   .app-shell--advanced .route-transition { flex: 0 0 auto; min-height: 100%; }
-  .app-shell--settings .app-main { overflow: hidden; }
-  .app-shell--settings .route-transition { flex: 1 1 auto; min-height: 0; overflow: hidden; }
-  .settings-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .app-shell--settings .app-main { overflow-y: auto; }
+  .app-shell--settings .route-transition { flex: 0 0 auto; min-height: 100%; overflow: visible; }
+  .settings-page { display: flex; flex-direction: column; height: auto; min-height: 100%; }
   .settings-page__heading { flex: 0 0 auto; }
-  .settings-page__scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; scrollbar-gutter: stable; padding-bottom: 28px; }
+  .settings-page__scroll { flex: 0 0 auto; min-height: 0; overflow: visible; padding-bottom: 28px; }
 }
 @media (max-width: 900px) {
   .app-shell--advanced { position: relative; display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
