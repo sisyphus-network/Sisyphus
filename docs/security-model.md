@@ -133,6 +133,7 @@ What none of it catches:
 | Workers that agree on a wrong result | `N` matching results are believed. |
 | One operator with several nodes at several addresses | Different node IDs are not different people, and the owner admits whom it likes. `--verify-distinct-addresses` stops several nodes at one address from vouching for each other; an operator with machines in two places, or two exits to connect through, is not stopped. |
 | A wrong result in a task a spot check did not pick | A share `s` catches a single wrong result with probability `s`. |
+| A wrong answer from a model or a container | Their results differ between honest runs, so verification and audits, which compare bytes, are refused for `chat`, `prompts`, `embed` and `container` jobs. The worker's word is taken. |
 | Honest non-determinism | Models, `transcode`, and containers that use time, randomness or the network differ between honest workers; the job fails. |
 | The coordinator | It splits the job and combines the outputs itself (`Split` and `Aggregate` run on the coordinator, `packages/runtime/workload.go`). A wrong split, a wrong combination or an altered result is not detectable by anyone. |
 | A lying worker's cost | Probation, which costs it nothing but being checked. No stake and no ban, and it is handed tasks like any other. Removal is by hand. An honest worker outvoted by ones that agreed to lie lands on probation too. |

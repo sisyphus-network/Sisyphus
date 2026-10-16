@@ -123,6 +123,9 @@ type answersShare struct {
 	Answers []string `json:"answers"`
 }
 
+// Varies says that Prompts results can differ between runs.
+func (Prompts) Varies() bool { return true }
+
 func (Prompts) Name() string { return "prompts" }
 
 func (Prompts) Describe() string {
@@ -277,6 +280,9 @@ func (w Embed) settings() (string, Owner) {
 // MaxEmbedInputs is how many texts one embed job takes: what comes back
 // for each is a thousand numbers or so, and a job's result is one message.
 const MaxEmbedInputs = 128
+
+// Varies says that Embed results can differ between runs.
+func (Embed) Varies() bool { return true }
 
 func (Embed) Name() string { return "embed" }
 
