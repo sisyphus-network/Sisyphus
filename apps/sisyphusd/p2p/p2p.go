@@ -110,11 +110,13 @@ type Host struct {
 	// table is the distributed hash table, on a host that discovers.
 	table *dht.IpfsDHT
 	// ctx ends, through stop, when the host closes; kept counts what it has
-	// running until then.
-	ctx  context.Context
-	stop context.CancelFunc
-	kept sync.WaitGroup
-	mu   sync.Mutex
+	// running until then. Once closed is set, under mu, nothing more is
+	// counted in kept, which Close is then waiting on.
+	ctx    context.Context
+	stop   context.CancelFunc
+	kept   sync.WaitGroup
+	mu     sync.Mutex
+	closed bool
 	// renew is when the host's place on each relay is next due for
 	// renewal. A relay it has no place on is absent.
 	renew map[peer.ID]time.Time
@@ -353,6 +355,13 @@ type found struct{ host *Host }
 
 func (f found) HandlePeerFound(info peer.AddrInfo) {
 	h := f.host
+	// The network may announce a node while the host is closing, and what
+	// Close is waiting for must not grow while it waits.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
 	h.kept.Add(1)
 	go func() {
 		defer h.kept.Done()
@@ -518,6 +527,9 @@ func multiaddrsOf(hostport string) ([]string, error) {
 
 // Close stops the host and everything using it.
 func (h *Host) Close() error {
+	h.mu.Lock()
+	h.closed = true
+	h.mu.Unlock()
 	h.stop()
 	h.kept.Wait()
 	if h.table != nil {

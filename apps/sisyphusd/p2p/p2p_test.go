@@ -1017,3 +1017,43 @@ func TestAHostsRoomComesOfWhatItsMachineCanHoldOpen(t *testing.T) {
 		t.Errorf("this machine is said to allow %d open files", files)
 	}
 }
+
+// A node announced on the network while the host is closing is not called:
+// what Close waits for cannot grow while it waits, which the race detector
+// caught it doing.
+func TestAClosingHostTakesUpNoNodeAnnouncedOnItsNetwork(t *testing.T) {
+	var told mdns.Notifee
+	old := announce
+	announce = func(_ host.Host, each mdns.Notifee) (io.Closer, error) { told = each; return io.NopCloser(nil), nil }
+	t.Cleanup(func() { announce = old })
+	p := newPool(t)
+	a := p.start(Config{Discover: true})
+	other := p.start(Config{Listen: "127.0.0.1:0"})
+	info, err := peer.AddrInfoFromString(other.Addrs()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nodes are announced all the while the host closes.
+	closed, announcing := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(announcing)
+		for {
+			select {
+			case <-closed:
+				return
+			default:
+				told.HandlePeerFound(*info)
+			}
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	a.Close()
+	close(closed)
+	<-announcing
+	// And after it has closed, one announced is not called.
+	told.HandlePeerFound(*info)
+	if a.host.Network().Connectedness(info.ID) == network.Connected {
+		t.Error("a closed host connected to a node announced to it")
+	}
+}
