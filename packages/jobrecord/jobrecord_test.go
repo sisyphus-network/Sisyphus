@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -650,6 +651,64 @@ func TestTheRecordOfAPrivateJobThatWasVerifiedCommitsToWhatEachWorkerReturned(t 
 	for _, check := range CheckCommitments(job, jobKey) {
 		if check.Matches != (check.Name != "receipts/0/results/1/digest_commitment") {
 			t.Errorf("after a result changed, %s matches: %v", check.Name, check.Matches)
+		}
+	}
+}
+
+// used adds to a finished job what the worker of the second attempt at its
+// first task said that attempt ran with.
+func used(job *jobmodel.Job) *jobmodel.Job {
+	job.Tasks[0].History[1].Used = &jobmodel.ModelUse{Server: "ollama", Version: "0.12.11", Model: "llama3.1:8b", Digest: "46e0c10c039e", Quantization: "Q4_K_M", Options: []byte(`{"seed":7}`)}
+	return job
+}
+
+func TestARecordSaysWhatAWorkerSaidAnAttemptRanWith(t *testing.T) {
+	// A job none of whose workers said anything has the record it always
+	// had, so that a record made before there was anything to say is
+	// worked out again the same.
+	if plain, said := Build(finished(), nil, named), Build(used(finished()), nil, named); plain.Root.Equals(said.Root) {
+		t.Fatal("what a worker said changed nothing in the record")
+	}
+	attempts := parsed(t, Build(used(finished()), nil, named))["receipt 0"]["attempts"].([]any)
+	if _, has := attempts[0].(map[string]any)["used"]; has {
+		t.Errorf("an attempt whose worker said nothing has used: %v", attempts[0])
+	}
+	got, _ := attempts[1].(map[string]any)["used"].(map[string]any)
+	want := map[string]any{"server": "ollama", "version": "0.12.11", "model": "llama3.1:8b", "digest": "46e0c10c039e", "quantization": "Q4_K_M",
+		"options": map[string]any{"/": map[string]any{"bytes": base64.RawStdEncoding.EncodeToString([]byte(`{"seed":7}`))}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("used is %v, want %v", got, want)
+	}
+}
+
+func TestAPrivateJobsRecordCommitsToWhatAWorkerSaidItRanWith(t *testing.T) {
+	job := used(secret())
+	job.Tasks[0].History[1].Used.Model = "SECRET model"
+	job.Commitments = Commit(job, jobKey)
+	record := Build(job, nil, named)
+	for _, node := range record.Nodes {
+		if bytes.Contains(node.Data, []byte("SECRET")) || bytes.Contains(node.Data, []byte("46e0c10c039e")) {
+			t.Errorf("node %s of a private job's record holds what a worker said: %s", node.CID, node.JSON())
+		}
+	}
+	attempts := parsed(t, record)["receipt 0"]["attempts"].([]any)
+	if _, has := attempts[0].(map[string]any)["used_commitment"]; has {
+		t.Errorf("an attempt whose worker said nothing commits to it: %v", attempts[0])
+	}
+	if got := commitmentIn(t, attempts[1].(map[string]any), "used_commitment"); !bytes.Equal(got, job.Commitments["receipts/0/attempts/1/used_commitment"]) {
+		t.Errorf("the record holds %x, the job's commitment is %x", got, job.Commitments["receipts/0/attempts/1/used_commitment"])
+	}
+
+	// The key shows it is what the worker said, and finds it changed.
+	for _, check := range CheckCommitments(job, jobKey) {
+		if !check.Matches {
+			t.Errorf("%s does not match before anything changed", check.Name)
+		}
+	}
+	job.Tasks[0].History[1].Used.Digest = "a different model"
+	for _, check := range CheckCommitments(job, jobKey) {
+		if check.Matches == (check.Name == "receipts/0/attempts/1/used_commitment") {
+			t.Errorf("after what the worker said was changed, %s matches: %v", check.Name, check.Matches)
 		}
 	}
 }

@@ -122,6 +122,10 @@ func attemptErrorCommitment(task, attempt int) string {
 	return fmt.Sprintf("receipts/%d/attempts/%d/error_commitment", task, attempt)
 }
 
+func usedCommitment(task, attempt int) string {
+	return fmt.Sprintf("receipts/%d/attempts/%d/used_commitment", task, attempt)
+}
+
 func digestCommitment(task, result int) string {
 	return fmt.Sprintf("receipts/%d/results/%d/digest_commitment", task, result)
 }
@@ -141,6 +145,11 @@ func committedValues(job *jobmodel.Job) []committed {
 		values = append(values, committed{outputCommitment(i), task.Output})
 		for n, attempt := range task.History {
 			values = append(values, committed{attemptErrorCommitment(i, n), []byte(attempt.Err)})
+			// Only an attempt whose worker said what it ran with has this,
+			// so that the record of every other attempt is as it was.
+			if attempt.Used != nil {
+				values = append(values, committed{usedCommitment(i, n), encode(usedNode(attempt.Used))})
+			}
 		}
 		for n, result := range task.Results {
 			values = append(values, committed{digestCommitment(i, n), []byte(result.Digest())})
@@ -151,7 +160,8 @@ func committedValues(job *jobmodel.Job) []committed {
 
 // Commit returns a commitment to each value the record of a private job
 // leaves out, by name: the job's parameters, its result and its error, each
-// task's output, the error of each attempt, and the digest of each result a
+// task's output, the error of each attempt, what the worker of an attempt
+// said it ran with where it said anything, and the digest of each result a
 // worker returned for a task that was verified. A value that is empty is
 // committed to like any other, so a commitment does not say whether there
 // was one.
@@ -380,6 +390,17 @@ func (b *builder) receipt(index int, task *jobmodel.Task, spot bool) datamodel.N
 					m.AssembleEntry("name").AssignString(attempt.NodeName)
 					m.AssembleEntry("state").AssignString(attempt.State.String())
 					b.message(m, "error", attempt.Err, attemptErrorCommitment(index, n))
+					// What the worker said a model task ran with, where it
+					// said anything: its own account, kept and not checked.
+					// A private job's record commits to it, since the model
+					// and its options can say what the job was doing.
+					if attempt.Used != nil {
+						if b.private {
+							b.commit(m, "used", usedCommitment(index, n))
+						} else {
+							m.AssembleEntry("used").AssignNode(usedNode(attempt.Used))
+						}
+					}
 				})
 			}
 		})
@@ -409,6 +430,20 @@ func (b *builder) receipt(index int, task *jobmodel.Task, spot bool) datamodel.N
 				})
 			}
 		})
+	})
+}
+
+// usedNode is what a worker said an attempt ran with, as a record holds it:
+// the model server and its version, the model and what the server said of
+// it, and the options sent, as the worker gave them.
+func usedNode(used *jobmodel.ModelUse) datamodel.Node {
+	return fluent.MustBuildMap(basicnode.Prototype.Map, 6, func(m fluent.MapAssembler) {
+		m.AssembleEntry("server").AssignString(used.Server)
+		m.AssembleEntry("version").AssignString(used.Version)
+		m.AssembleEntry("model").AssignString(used.Model)
+		m.AssembleEntry("digest").AssignString(used.Digest)
+		m.AssembleEntry("quantization").AssignString(used.Quantization)
+		m.AssembleEntry("options").AssignBytes(used.Options)
 	})
 }
 
