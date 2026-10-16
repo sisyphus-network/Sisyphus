@@ -12,7 +12,16 @@ test('all model settings locales contain every nonempty label', () => {
   for (const locale of locales) {
     const labels = dictionaries[locale].modelSettings
     assert.deepEqual(Object.keys(labels).sort(), keys, locale)
-    for (const [key, value] of Object.entries(labels)) assert.ok(typeof value === 'string' && value.trim(), `${locale}.${key}`)
+    const assertLocalized = (value, key) => {
+      if (typeof value === 'string') {
+        assert.ok(value.trim(), `${locale}.${key}`)
+        return
+      }
+      assert.ok(value && typeof value === 'object' && !Array.isArray(value), `${locale}.${key}`)
+      assert.deepEqual(Object.keys(value).sort(), Object.keys(dictionaries.en.modelSettings[key]).sort(), `${locale}.${key}`)
+      for (const [nestedKey, nestedValue] of Object.entries(value)) assertLocalized(nestedValue, `${key}.${nestedKey}`)
+    }
+    for (const [key, value] of Object.entries(labels)) assertLocalized(value, key)
   }
 })
 test('model technical example stays unchanged across translations', () => {

@@ -266,7 +266,7 @@ function NavItem({ to, icon: Icon, label, end = false }: { to: string; icon: typ
 function Breadcrumb({ messages, direction }: { messages: ReturnType<typeof getMessages>; direction: 'ltr' | 'rtl' }) {
   const location = useLocation()
   const settingsCategory = location.pathname.startsWith('/settings/') ? location.pathname.split('/')[2] : undefined
-  const categoryLabels: Record<string, string> = { node: messages.localNodeSettings, access: messages.webAccess.title, language: messages.languageSettings, models: messages.modelSettings.title, appearance: messages.theme }
+  const categoryLabels: Record<string, string> = { general: messages.general, node: messages.localNodeSettings, access: messages.webAccess.title, language: messages.general, models: messages.modelSettings.title, appearance: messages.general }
   const label = settingsCategory ? categoryLabels[settingsCategory] ?? messages.settings : location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/operations' ? messages.operations : location.pathname === '/settings' ? messages.settings : location.pathname === '/pairing' ? messages.browserAccess.title : messages.workspace
   const backHref = settingsCategory ? '/settings' : '/'
   const backLabel = settingsCategory ? messages.settings : messages.workspace

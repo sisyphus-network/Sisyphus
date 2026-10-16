@@ -744,9 +744,6 @@ body::before {
 .sisyphus-edge-fade { background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--app-bg) 82%, transparent) 44%, color-mix(in srgb, var(--app-bg) 98%, transparent)); }
 .sisyphus-composer { max-width: 48rem; box-shadow: none; transition: border-color 220ms cubic-bezier(0.22, 1, 0.36, 1), background-color 220ms ease; }
 .sisyphus-composer:focus-within { border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-line)); box-shadow: none; }
-.sisyphus-chat-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--app-muted) 45%, transparent) transparent; }
-.sisyphus-chat-scroll::-webkit-scrollbar { width: 7px; }
-.sisyphus-chat-scroll::-webkit-scrollbar-thumb { border-radius: 99px; background: color-mix(in srgb, var(--app-muted) 38%, transparent); }
 .sisyphus-agent-chat > .sisyphus-chat-toolbar { background: transparent; }
 @keyframes sisyphus-agent-pulse { 0%, 100% { opacity: .48; transform: scale(.92); } 50% { opacity: .95; transform: scale(1.12); } }
 
@@ -811,12 +808,12 @@ body::before {
   opacity: 0.72;
 }
 
-/* Keep native scrolling and let explicit scrollbar-hiding utilities take precedence. */
+/* Startly-style scrollbars: transparent track, slim rounded neutral thumb. */
 @layer base {
   @media (forced-colors: none) {
     * {
       scrollbar-width: thin;
-      scrollbar-color: color-mix(in srgb, var(--app-muted) 65%, var(--app-accent)) transparent;
+      scrollbar-color: var(--app-border) transparent;
     }
 
     @supports selector(::-webkit-scrollbar) {
@@ -827,8 +824,8 @@ body::before {
       }
 
       *::-webkit-scrollbar {
-        width: 10px;
-        height: 10px;
+        width: 8px;
+        height: 8px;
       }
 
       *::-webkit-scrollbar-track,
@@ -839,18 +836,18 @@ body::before {
       *::-webkit-scrollbar-thumb {
         min-height: 32px;
         min-width: 32px;
-        border: 3px solid transparent;
+        border: 2px solid transparent;
         border-radius: 999px;
-        background: color-mix(in srgb, var(--app-muted) 65%, var(--app-accent));
+        background: var(--app-border);
         background-clip: padding-box;
       }
 
       *::-webkit-scrollbar-thumb:hover {
-        background-color: color-mix(in srgb, var(--app-muted) 30%, var(--app-accent));
+        background-color: var(--app-muted);
       }
 
       *::-webkit-scrollbar-thumb:active {
-        background-color: var(--app-accent);
+        background-color: var(--app-muted);
       }
     }
   }

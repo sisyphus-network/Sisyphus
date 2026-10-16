@@ -23,6 +23,7 @@ type FloatingLabelInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "size
   validate?: (value: string) => string | undefined;
   containerClassName?: string;
   uiDirection?: "ltr" | "rtl";
+  iconDirection?: "ltr" | "rtl";
 };
 
 export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInputProps>(function FloatingLabelInput(
@@ -38,6 +39,7 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
     validate,
     containerClassName,
     uiDirection,
+    iconDirection,
     className,
     value,
     defaultValue,
@@ -84,15 +86,15 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
   const showSuccess = !hasError && !loading && (success || (touched && hasValue && Boolean(inputRef.current?.validity.valid)));
   const isDisabled = disabled || loading;
 
-  const directionalPadding = uiDirection
-    ? uiDirection === "rtl"
+  const directionalPadding = uiDirection || iconDirection
+    ? (iconDirection ?? uiDirection) === "rtl"
       ? icon ? "pr-16 pl-12" : "pr-4 pl-12"
       : icon ? "pl-16 pr-12" : "pl-4 pr-12"
     : icon ? "ps-16 pe-12" : "ps-4 pe-12";
 
   return <div dir={uiDirection} className={cn("group/floating-input", containerClassName)}>
     <div className="relative">
-      {icon && <span aria-hidden="true" className={cn("pointer-events-none absolute start-3.5 top-1/2 z-10 -translate-y-1/2 text-[var(--app-muted)] transition-colors", focused && "text-[var(--app-accent)]", isDisabled && "opacity-55")}>{icon}</span>}
+      {icon && <span aria-hidden="true" className={cn("pointer-events-none absolute top-1/2 z-10 -translate-y-1/2 text-[var(--app-muted)] transition-colors", iconDirection === "ltr" ? "left-3.5" : iconDirection === "rtl" ? "right-3.5" : "start-3.5", focused && "text-[var(--app-accent)]", isDisabled && "opacity-55")}>{icon}</span>}
       <input
         {...props}
         ref={inputRef}
@@ -156,7 +158,7 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
           hasError && "text-red-500",
         )}
       >{label}</label>
-      <span aria-live="polite" className={cn("pointer-events-none absolute end-3.5 top-1/2 z-10 grid size-6 -translate-y-1/2 place-items-center text-[var(--app-muted)]", hasError && "text-red-500")}>
+      <span aria-live="polite" className={cn("pointer-events-none absolute top-1/2 z-10 grid size-6 -translate-y-1/2 place-items-center text-[var(--app-muted)]", iconDirection === "ltr" ? "right-3.5" : iconDirection === "rtl" ? "left-3.5" : "end-3.5", hasError && "text-red-500")}>
         {loading ? <LoaderCircle className="size-4 animate-spin" /> : hasError ? <CircleAlert className="size-4" /> : showSuccess ? <CircleCheck className="size-4 text-[var(--app-ink)]" /> : null}
       </span>
     </div>

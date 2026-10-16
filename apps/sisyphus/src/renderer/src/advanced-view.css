@@ -1,5 +1,5 @@
 .app-shell--advanced { min-height: 100dvh; }
-.app-shell--advanced .app-main { position: relative; flex: 1 1 auto; min-height: 0; }
+.app-shell--advanced .app-main { position: relative; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .app-mobile-dock { display: none; }
 @media (min-width: 901px) {
   .app-shell--advanced { display: flex; flex-direction: row; width: 100%; height: 100dvh; min-height: 0; overflow: hidden; padding: 0; }
@@ -14,11 +14,11 @@
   #root:has(.app-shell--advanced) { height: 100dvh; min-height: 0; overflow: hidden; }
   .app-shell--advanced .app-main { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; max-width: none; height: 0; min-height: 0; margin: 0; padding: 0 2rem 1.75rem; overflow-y: auto; overscroll-behavior: contain; }
   .app-shell--advanced .route-transition { flex: 0 0 auto; min-height: 100%; }
-  .app-shell--settings .app-main { overflow: hidden; }
-  .app-shell--settings .route-transition { flex: 1 1 auto; min-height: 0; overflow: hidden; }
-  .settings-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .app-shell--settings .app-main { overflow-y: auto; }
+  .app-shell--settings .route-transition { flex: 0 0 auto; min-height: 100%; overflow: visible; }
+  .settings-page { display: flex; flex-direction: column; height: auto; min-height: 100%; }
   .settings-page__heading { flex: 0 0 auto; }
-  .settings-page__scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-bottom: 28px; }
+  .settings-page__scroll { flex: 0 0 auto; min-height: 0; overflow: visible; padding-bottom: 28px; }
 }
 @media (max-width: 900px) {
   .app-shell--advanced { position: relative; display: flex; flex-direction: column; height: 100dvh; overflow: hidden; padding: 0; }
@@ -71,6 +71,13 @@
 .settings-row__icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 1px solid var(--app-line); border-radius: 12px; color: var(--app-muted); }
 .settings-status { flex: 0 0 auto; border: 1px solid color-mix(in srgb, #10b981 24%, var(--app-line)); border-radius: 999px; background: color-mix(in srgb, #10b981 7%, var(--app-card)); padding: 6px 10px; color: color-mix(in srgb, #059669 75%, var(--app-ink)); font-size: 11px; white-space: normal; }
 .settings-card--wide { grid-column: 1 / -1; }
+.settings-provider-toolbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 0; padding-block: 8px 14px; background: transparent; }
+.settings-provider-toolbar .devices-add-button { transition: background-color 160ms ease, backdrop-filter 160ms ease, box-shadow 160ms ease; }
+.settings-provider-toolbar .devices-add-button.is-stuck { background: color-mix(in srgb, var(--app-bg) 82%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 1px 8px color-mix(in srgb, var(--app-ink) 5%, transparent); }
+.settings-provider-count { box-sizing: border-box; display: inline-flex; height: 42px; min-width: 54px; align-items: center; justify-content: center; gap: 9px; border: 1px solid color-mix(in srgb, var(--app-line) 75%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--app-card) 65%, transparent); padding: 0 15px; color: var(--app-ink); font-size: 15px; line-height: 1; }
+.settings-provider-count > svg { display: block; flex: none; }
+.settings-provider-count.is-stuck { border-color: color-mix(in srgb, var(--app-line) 85%, transparent); background: color-mix(in srgb, var(--app-bg) 82%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 1px 8px color-mix(in srgb, var(--app-ink) 5%, transparent); }
+.settings-provider-status { box-sizing: border-box; min-width: 0; flex: 0 0 auto; justify-content: center; white-space: nowrap; }
 @media (max-width: 600px) {
   .settings-page__heading > header { padding-block: 18px 14px; }
   .settings-category-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 8px 5px 16px; }
