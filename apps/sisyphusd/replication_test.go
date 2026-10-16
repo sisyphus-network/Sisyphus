@@ -160,7 +160,11 @@ func TestPinnedDataEndsUpOnAsManyFollowersAsAsked(t *testing.T) {
 }
 
 func TestALostFollowerIsReplacedAfterTheGracePeriod(t *testing.T) {
-	replicateQuickly(t, 500*time.Millisecond)
+	// Leave enough time for the worker stream's disconnect to reach the
+	// coordinator even when the test process is under load. Replication still
+	// counts the lost follower until this longer grace period expires.
+	const grace = 5 * time.Second
+	replicateQuickly(t, grace)
 	p := startPoolKeeping(t, runtime.Builtin(), func(store *storage.Store) coordinator.Store { return store }, nil, 2)
 	stops := make(map[string]func())
 	for _, name := range []string{"a", "b", "c"} {
@@ -176,6 +180,13 @@ func TestALostFollowerIsReplacedAfterTheGracePeriod(t *testing.T) {
 	lost := p.copiesOf(kept[0])[0]
 	stops[lost]()
 	lostAt := time.Now()
+	// Stopping the worker returns before the coordinator's stream handler has
+	// necessarily processed EOF. Wait for that observable state before asking
+	// Locate, which should no longer direct a fetch to a disconnected worker.
+	waitFor(t, func() bool {
+		listed, err := p.client.ListNodes(p.ctx, &pb.ListNodesRequest{})
+		return err == nil && len(listed.GetNodes()) == 2
+	})
 	// It is still counted on, but nobody is sent to it for a blob.
 	_, asker := p.admit(access.Worker)
 	if holders := p.locate(asker, kept[0]); len(holders) != 1 || slices.Contains(holders, p.addresses[lost]) {
@@ -196,8 +207,9 @@ func TestALostFollowerIsReplacedAfterTheGracePeriod(t *testing.T) {
 	})
 	// The grace period runs from when the follower was last heard from,
 	// which is some while before it was stopped: an interval at least, and
-	// more on a machine that is busy. Well short of it is too soon.
-	if waited := time.Since(lostAt); waited < 250*time.Millisecond {
+	// more on a machine that is busy. Well short of it is too soon, and
+	// what is well short of it grows with it.
+	if waited := time.Since(lostAt); waited < grace/2 {
 		t.Errorf("the lost follower's share was handed on after %v, long before the grace period was over", waited)
 	}
 	p.waitForCopies(2)
