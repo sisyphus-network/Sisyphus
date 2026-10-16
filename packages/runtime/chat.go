@@ -297,7 +297,9 @@ func (c Chat) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, err
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return nil, fmt.Errorf("chat task: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(url, "/")+"/api/chat", bytes.NewReader(toOllama(request, owner, true)))
+	sent := toOllama(request, owner, true)
+	tellModelUse(ctx, url, sent)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(url, "/")+"/api/chat", bytes.NewReader(sent))
 	if err != nil {
 		return nil, fmt.Errorf("model server address: %w", err)
 	}

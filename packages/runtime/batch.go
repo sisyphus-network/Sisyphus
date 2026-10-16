@@ -205,7 +205,12 @@ func (w Prompts) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, 
 			messages = append([]map[string]string{{"role": "system", "content": share.System}}, messages...)
 		}
 		request["messages"] = mustJSON(messages)
-		said, err := askServer(ctx, url, "/api/chat", toOllama(request, owner, false))
+		sent := toOllama(request, owner, false)
+		if i == 0 {
+			// Every prompt of a share is asked of one model with one set of options.
+			tellModelUse(ctx, url, sent)
+		}
+		said, err := askServer(ctx, url, "/api/chat", sent)
 		if err != nil {
 			return nil, fmt.Errorf("prompt %d: %w", share.Start+i+1, err)
 		}
@@ -350,7 +355,9 @@ func (w Embed) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, er
 	if err := owner.refuses(model); err != nil {
 		return nil, err
 	}
-	said, err := askServer(ctx, url, "/api/embed", toOllama(share.Request, owner, false))
+	sent := toOllama(share.Request, owner, false)
+	tellModelUse(ctx, url, sent)
+	said, err := askServer(ctx, url, "/api/embed", sent)
 	if err != nil {
 		return nil, err
 	}
