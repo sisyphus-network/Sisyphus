@@ -47,7 +47,7 @@ Three kinds of work are in the daemon that verification cannot touch today: mode
 - **Transcoding** gives different bytes from different encoders. Livepeer gave up exact comparison and compares perceptual hashes. A cheaper first step that catches the lazy cheat: check that the output is a valid stream of the asked length, size and frame count. That is a check of form, not of quality, and should be called that.
 - **Chat that a person reads** has no ground truth. Render's answer is that the person judges. For Sisyphus that is the planner's user already.
 
-The honest summary: approximate comparison is buildable for embeddings now, structural checks for transcoding now, and the rest wants either real hardware to measure on or trusted hardware.
+The honest summary: approximate comparison is buildable for embeddings now, structural checks for transcoding now, and the rest wants either real hardware to measure on or trusted hardware. For models, what a second worker could check and what the serving software would have to expose is in [verifying model inference](verifying-inference.md).
 
 ### Determinism of the workloads in the current source
 
