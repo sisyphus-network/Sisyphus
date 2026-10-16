@@ -131,9 +131,15 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 		}
 	}
 
-	// A job that asks for the network gets it, and one with no limits has none.
+	// A job that asks for the network is refused it by a worker whose owner
+	// does not allow it, and gets it from one that does; one with no limits
+	// has none.
 	engine.do = func([]string, io.Writer, io.Writer) (int, error) { return 0, nil }
 	open, _ := c.Split(ctx, store, []byte(`{"image":"alpine:3.20","network":true}`), 1)
+	if _, err := c.Execute(ctx, store, open[0]); err == nil || !strings.Contains(err.Error(), "does not let the pool's containers reach it") || len(engine.asked) != 1 {
+		t.Fatalf("a job asking for the network on a worker that does not allow it: %v, %d asked", err, len(engine.asked))
+	}
+	c.Confined.Network = true
 	if _, err := c.Execute(ctx, store, open[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -589,5 +595,25 @@ func TestTasksOfAJobOnOneMachineShareOneCopyOfItsInput(t *testing.T) {
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-such-directory"))
 	if _, _, err := inputs.take(ctx, store, "job", input.String()); err == nil || len(inputs.held) != 0 {
 		t.Errorf("with no temporary directory: %v, holding %v", err, inputs.held)
+	}
+}
+
+// A job that asks for the network needs a worker that offers it, and only a
+// worker whose owner allows it offers it.
+func TestTheNetworkIsTheWorkerOwnersToOffer(t *testing.T) {
+	ctx := context.Background()
+	if needs := (Container{}).Needs([]byte(`{"image":"alpine:3.20","network":true}`)); !slices.Equal(needs, []string{NetworkLabel}) {
+		t.Errorf("a job asking for the network needs %v", needs)
+	}
+	for _, params := range []string{`{"image":"alpine:3.20"}`, `not json`} {
+		if needs := (Container{}).Needs([]byte(params)); needs != nil {
+			t.Errorf("%s needs %v", params, needs)
+		}
+	}
+	if offers := (Container{}).Offers(ctx); offers != nil {
+		t.Errorf("a worker whose owner said nothing offers %v", offers)
+	}
+	if offers := ContainersConfined(Confinement{Network: true}).Offers(ctx); !slices.Contains(offers, NetworkLabel) {
+		t.Errorf("a worker whose owner allows the network offers %v", offers)
 	}
 }

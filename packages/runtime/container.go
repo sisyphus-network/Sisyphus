@@ -58,7 +58,16 @@ type Confinement struct {
 	// is then held in memory: nothing of the image can be changed, and
 	// nothing written anywhere else.
 	ReadOnly bool
+	// Network lets a task reach the network when its job asks to. Without
+	// it no task can, whatever its job asks: whoever submits a job does
+	// not decide what this machine's network is used for.
+	Network bool
 }
+
+// NetworkLabel marks a worker whose owner lets the pool's containers reach
+// the network. A container job that asks for the network is given only to
+// workers that have it.
+const NetworkLabel = "container-network"
 
 // args is what Confinement adds to the engine's command.
 func (c Confinement) args() []string {
@@ -128,13 +137,31 @@ type ContainerResult struct {
 	Tasks []ContainerOutput `json:"tasks"`
 }
 
+// Needs says that a job that asks for the network needs a worker whose
+// owner allows it.
+func (Container) Needs(params []byte) []string {
+	var p ContainerParams
+	if json.Unmarshal(params, &p) != nil || !p.Network {
+		return nil
+	}
+	return []string{NetworkLabel}
+}
+
+// Offers is the network, where the worker's owner allows it.
+func (c Container) Offers(context.Context) []string {
+	if !c.Confined.Network {
+		return nil
+	}
+	return []string{NetworkLabel}
+}
+
 // Varies says that Container results can differ between runs.
 func (Container) Varies() bool { return true }
 
 func (Container) Name() string { return "container" }
 
 func (Container) Describe() string {
-	return `Runs a container image, once for each task, with no network unless asked. Parameters: {"image": "<image>", "command": ["<program>", "<argument>", ...], "tasks": <how many copies>, "input": "<optional CID of a stored file, given to each task at /input/data>", "network": <true to allow network access>, "gpus": <how many graphics cards each task needs, if any>}. Each task has SISYPHUS_TASK_INDEX (from 0) and SISYPHUS_TASK_COUNT in its environment. Result: {"tasks": [{"index": <n>, "stdout": "<CID of what it printed>", "files": {"<name>": "<CID of a file it wrote to /output>"}}]}.`
+	return `Runs a container image, once for each task, with no network unless asked. Parameters: {"image": "<image>", "command": ["<program>", "<argument>", ...], "tasks": <how many copies>, "input": "<optional CID of a stored file, given to each task at /input/data>", "network": <true to allow network access, which only workers whose owner allows it give>, "gpus": <how many graphics cards each task needs, if any>}. Each task has SISYPHUS_TASK_INDEX (from 0) and SISYPHUS_TASK_COUNT in its environment. Result: {"tasks": [{"index": <n>, "stdout": "<CID of what it printed>", "files": {"<name>": "<CID of a file it wrote to /output>"}}]}.`
 }
 
 func (Container) Split(_ context.Context, _ Blobs, params []byte, parts int) ([][]byte, error) {
@@ -192,6 +219,11 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	// network, and the image is put among the engine's own arguments.
 	if err := checkImage(task.Image); err != nil {
 		return nil, fmt.Errorf("container payload: %w", err)
+	}
+	// A coordinator gives a job that asks for the network only to workers
+	// that offer it, but this worker does not rely on that.
+	if task.Network && !c.Confined.Network {
+		return nil, errors.New("the job asks for the network, and this worker's owner does not let the pool's containers reach it")
 	}
 	engine := c.Engine
 	if engine == nil {
