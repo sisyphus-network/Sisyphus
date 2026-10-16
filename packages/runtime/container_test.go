@@ -678,3 +678,39 @@ func TestAWorkersOwnerSetsTheLongestATaskMayRun(t *testing.T) {
 		t.Fatalf("a task whose job was cancelled: %v, killed %v", err, killed)
 	}
 }
+
+// A worker says its containers are hardened only where they are: written
+// to nowhere but a sized /tmp and /output, and run by a runtime that
+// sandboxes.
+func TestAWorkerSaysItsContainersAreHardenedOnlyWhereTheyAre(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		confined Confinement
+		want     []string
+	}{
+		{Confinement{}, nil},
+		{Confinement{ReadOnly: true}, nil},
+		{Confinement{Runtime: "runc", ReadOnly: true, TmpMB: 64}, []string{BoundedTmpLabel}},
+		{Confinement{Runtime: "runsc"}, []string{SandboxedLabel}},
+		{Confinement{Runtime: "runsc-kvm"}, []string{SandboxedLabel}},
+		{Confinement{Runtime: "io.containerd.kata.v2", ReadOnly: true, TmpMB: 64, Network: true}, []string{NetworkLabel, BoundedTmpLabel, SandboxedLabel}},
+	} {
+		if got := (Container{Confined: tc.confined}).Offers(ctx); !slices.Equal(got, tc.want) {
+			t.Errorf("%+v offers %v, want %v", tc.confined, got, tc.want)
+		}
+	}
+	// Every workload that runs in a container is known as one, and is held
+	// in as its worker's owner said.
+	owners := Confinement{Runtime: "runsc", ReadOnly: true, TmpMB: 64}
+	for _, name := range []string{"container", "transcode"} {
+		if got := ContainersConfined(owners).workloads[name].(contained).confinement(); got != owners {
+			t.Errorf("%s is held in as %+v", name, got)
+		}
+	}
+	r := WithContainers()
+	for name, want := range map[string]bool{"container": true, "transcode": true, "primes": false, "chat": false, "no such": false} {
+		if r.InContainers(name) != want {
+			t.Errorf("%s runs in containers: %v", name, !want)
+		}
+	}
+}
