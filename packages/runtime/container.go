@@ -110,7 +110,7 @@ var HardenedLabels = []string{BoundedTmpLabel, SandboxedLabel}
 // sandboxed reports whether the runtime asked for is one that sandboxes:
 // gVisor's runsc, under any of the names it is installed as, or Kata's.
 func (c Confinement) sandboxed() bool {
-	return strings.HasPrefix(c.Runtime, "runsc") || strings.Contains(c.Runtime, "kata")
+	return strings.HasPrefix(c.Runtime, "runsc") || strings.HasPrefix(c.Runtime, "io.containerd.runsc.") || strings.Contains(c.Runtime, "kata")
 }
 
 // args is what Confinement adds to the engine's command.

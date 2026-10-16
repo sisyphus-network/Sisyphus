@@ -693,6 +693,7 @@ func TestAWorkerSaysItsContainersAreHardenedOnlyWhereTheyAre(t *testing.T) {
 		{Confinement{Runtime: "runc", ReadOnly: true, TmpMB: 64}, []string{BoundedTmpLabel}},
 		{Confinement{Runtime: "runsc"}, []string{SandboxedLabel}},
 		{Confinement{Runtime: "runsc-kvm"}, []string{SandboxedLabel}},
+		{Confinement{Runtime: "io.containerd.runsc.v1"}, []string{SandboxedLabel}},
 		{Confinement{Runtime: "io.containerd.kata.v2", ReadOnly: true, TmpMB: 64, Network: true}, []string{NetworkLabel, BoundedTmpLabel, SandboxedLabel}},
 	} {
 		if got := (Container{Confined: tc.confined}).Offers(ctx); !slices.Equal(got, tc.want) {
