@@ -59,6 +59,10 @@ type Confinement struct {
 	// is then held in memory: nothing of the image can be changed, and
 	// nothing written anywhere else.
 	ReadOnly bool
+	// TmpMB, if not zero, is how many megabytes /tmp may hold where the
+	// root is read-only. Without it /tmp may grow until the task runs out
+	// of memory, or the machine does where the task's memory has no limit.
+	TmpMB int
 	// Network lets a task reach the network when its job asks to. Without
 	// it no task can, whatever its job asks: whoever submits a job does
 	// not decide what this machine's network is used for.
@@ -95,7 +99,11 @@ func (c Confinement) args() []string {
 		args = append(args, "--runtime", c.Runtime)
 	}
 	if c.ReadOnly {
-		args = append(args, "--read-only", "--tmpfs", "/tmp")
+		tmp := "/tmp"
+		if c.TmpMB > 0 {
+			tmp += ":size=" + strconv.Itoa(c.TmpMB) + "m"
+		}
+		args = append(args, "--read-only", "--tmpfs", tmp)
 	}
 	return args
 }

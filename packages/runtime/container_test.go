@@ -640,6 +640,16 @@ func TestAWorkersOwnerSetsTheMostATaskMayUse(t *testing.T) {
 			t.Errorf("%s was run as %q, without %q", params, args, want)
 		}
 	}
+
+	// And how much a read-only task may write to /tmp.
+	c.Confined.ReadOnly, c.Confined.TmpMB = true, 64
+	payloads, _ := c.Split(ctx, store, []byte(`{"image":"alpine:3.20"}`), 1)
+	if _, err := c.Execute(ctx, store, payloads[0]); err != nil {
+		t.Fatal(err)
+	}
+	if args := strings.Join(engine.asked[len(engine.asked)-1], " "); !strings.Contains(args, "--read-only --tmpfs /tmp:size=64m") {
+		t.Errorf("a task with a sized /tmp was run as %q", args)
+	}
 }
 
 // A worker's owner sets the longest a task may run, and the worker stops a
