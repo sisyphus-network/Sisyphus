@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -131,6 +132,11 @@ func (Graph) Split(_ context.Context, _ Blobs, params []byte, _ int) ([][]byte, 
 		}
 		if step.Workload == "" {
 			return nil, fmt.Errorf("step %q names no workload", step.Name)
+		}
+		// A job's task count and timeout are counts that fit in 32 bits;
+		// anything else would be wrapped into one it did not ask for.
+		if step.Tasks < 0 || step.Tasks > math.MaxUint32 || step.TimeoutSeconds < 0 || step.TimeoutSeconds > math.MaxUint32 {
+			return nil, fmt.Errorf("step %q asks for %d tasks and a timeout of %d seconds, and each is a count from 0 to %d", step.Name, step.Tasks, step.TimeoutSeconds, uint32(math.MaxUint32))
 		}
 		index[step.Name] = i
 	}

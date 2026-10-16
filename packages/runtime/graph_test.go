@@ -93,6 +93,10 @@ func TestAGraphThatCannotBeRunIsRefused(t *testing.T) {
 		`{"steps":[{"name":"a","workload":"primes"},{"name":"a","workload":"primes"}]}`: `two steps are called "a"`,
 		`{"steps":[{"name":"a"}]}`:                                                      `step "a" names no workload`,
 		`{"steps":[{"name":"a","workload":"primes","after":["b"]}]}`:                    `waits for a step "b" that there is none of`,
+		`{"steps":[{"name":"a","workload":"primes","tasks":-4294967290}]}`:              `step "a" asks for -4294967290 tasks`,
+		`{"steps":[{"name":"a","workload":"primes","tasks":4294967297}]}`:               `step "a" asks for 4294967297 tasks`,
+		`{"steps":[{"name":"a","workload":"primes","timeout_seconds":-1}]}`:             `a timeout of -1 seconds`,
+		`{"steps":[{"name":"a","workload":"primes","timeout_seconds":4294967296}]}`:     `a timeout of 4294967296 seconds`,
 		`{"steps":[{"name":"a","workload":"primes","params":{"to":"${a.result}"}}]}`:    `step "a" waits for itself`,
 		`{"steps":[{"name":"a","workload":"primes","after":["c"]},{"name":"b","workload":"primes","after":["a"]},{"name":"c","workload":"primes","after":["b"]}]}`: "waits for a step that waits for it",
 	} {

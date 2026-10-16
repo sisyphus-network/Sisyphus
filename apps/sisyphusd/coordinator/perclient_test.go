@@ -150,3 +150,41 @@ func TestAClientsGraphIsHeldToItsTasks(t *testing.T) {
 		t.Fatalf("the graph ended %s: %s", ended.GetState(), ended.GetError())
 	}
 }
+
+// Steps that run side by side share the client's tasks: when the second
+// to begin does not fit beside the first, the graph fails, and the first,
+// a step of a graph that is over, is cancelled and counts no more.
+func TestAClientsStepsSideBySideShareItsTasks(t *testing.T) {
+	c := New(Config{Workloads: runtime.Builtin().With(runtime.Graph{}), Store: storage.NewMemory(), MaxTasksPerClient: 5, Log: slog.New(slog.DiscardHandler)})
+	defer c.Close()
+	ctx := context.Background()
+	graph, err := c.submit(ctx, &pb.JobSpec{Workload: "graph", Params: []byte(`{"steps":[` +
+		`{"name":"low","workload":"primes","params":{"from":0,"to":1000},"tasks":3},` +
+		`{"name":"high","workload":"primes","params":{"from":1000,"to":2000},"tasks":3}]}`)}, "", "", "carol")
+	if err != nil {
+		t.Fatalf("a graph each of whose steps fits on its own: %v", err)
+	}
+	var ended *pb.Job
+	if err := c.Watch(ctx, graph.GetJobId(), func(now *pb.Job) error { ended = now; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if ended.GetState() != pb.JobState_JOB_STATE_FAILED || !strings.Contains(ended.GetError(), "this job has 3 tasks and this client has 3 unfinished, more between them than the 5") {
+		t.Fatalf("the graph ended %s: %s", ended.GetState(), ended.GetError())
+	}
+	steps := 0
+	for _, job := range c.Jobs() {
+		if job.GetParentJobId() != graph.GetJobId() {
+			continue
+		}
+		steps++
+		if job.GetState() != pb.JobState_JOB_STATE_CANCELLED {
+			t.Errorf("step job %s is %s, with the graph over", job.GetJobId(), job.GetState())
+		}
+	}
+	if steps != 1 {
+		t.Errorf("%d steps began, want the one that fitted", steps)
+	}
+	if _, err := c.submit(ctx, &pb.JobSpec{Workload: "primes", Params: []byte(`{"from":1,"to":10}`), MaxTasks: 5}, "", "", "carol"); err != nil {
+		t.Errorf("the client's tasks once the graph and its steps were over: %v", err)
+	}
+}
