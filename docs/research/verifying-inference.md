@@ -45,7 +45,16 @@ A second worker does not generate again. It feeds the prompt and the claimed ans
 
 A job can already be kept to a pool's own members and, for private jobs, to workers that hold the key. Choosing a worker you trust is placement and privacy. It is not a check that the answer is right, and should never be presented as one.
 
-Trusted hardware is the version of this that does check. An H100 or newer GPU in confidential-computing mode signs what it runs, and if the attested image pins the model's hash, both substitution and reading the prompt are ruled out, at a reported overhead under a tenth (summary: [NVIDIA attestation](https://docs.nvidia.com/attestation/quick-start-guide/latest/attestation-examples/hopper_single_gpu.html), [Phala's measurements](https://arxiv.org/html/2409.03992v2)). It needs data-centre GPUs, so none of the graphics cards people would lend (unconfirmed, but widely stated), and it trusts NVIDIA and the processor's own enclave.
+Trusted hardware is the version of this that can check, under assumptions about how it is deployed. An H100 or newer GPU in confidential-computing mode produces signed evidence of its own state: measurements from the device, its certificates, and its architecture, versions and configuration (read: [NVIDIA, collecting evidence](https://docs.nvidia.com/attestation/quick-start-guide/latest/attestation-examples/collecting_evidence.html)). That evidence is about the GPU. It does not attest the virtual machine around it or the workload, and it does not tie any model's weights to an approved image.
+
+The claim that substitution and reading the prompt are ruled out holds only for the whole chain:
+- the confidential VM on the processor's enclave (TDX or SEV-SNP) attested together with the GPU;
+- the model's hash included in the measured, approved workload;
+- the keys for the prompt and the weights released only to a workload that passed both.
+
+NVIDIA describes that flow separately from the GPU's evidence (as pointed out in review: [attestation and key release](https://docs.nvidia.com/enterprise-reference-architectures/deploying-proprietary-models-securely-with-nvidia-confidential-compute-self-hosted-kubernetes/latest/attestation-and-key-release-flow.html), which did not load when checked). So it is a deployment assumption, not something a GPU's attestation gives on its own.
+
+The reported overhead is under a tenth (summary: [Phala's measurements](https://arxiv.org/html/2409.03992v2)). It needs data-centre GPUs, so none of the graphics cards people would lend (unconfirmed, but widely stated), and it trusts NVIDIA, the processor's maker and whoever runs the key release.
 
 ## What is out of reach
 
@@ -55,7 +64,7 @@ Trusted hardware is the version of this that does check. An H100 or newer GPU in
 
 ## Privacy
 
-Every scheme that recomputes hands the prompt and the answer to a second worker, which a private job may not want. Byte comparison, the second-worker check and reference answers all do it. Only trusted hardware keeps both from the operator, and zero-knowledge proofs only in part. A private model job checked by a second worker should go only to workers that already hold the job's key, and the job should say so.
+Every scheme that recomputes hands the prompt and the answer to a second worker, which a private job may not want. Byte comparison, the second-worker check and reference answers all do it. Only trusted hardware keeps both from the operator, and only when the whole attestation and key-release chain above is in place; zero-knowledge proofs do so in part. A private model job checked by a second worker should go only to workers that already hold the job's key, and the job should say so.
 
 ## Who is at fault
 
@@ -67,6 +76,6 @@ A mismatch from a tolerance check is not the same as an outvoted exact result. U
 2. **Measure.** On the hardware we have, run the same prompts on Ollama at temperature zero with a seed, and embeddings, and see how often honest runs differ. That decides whether `embed` can be compared within a tolerance (as [verification-next](verification-next.md) proposes) and whether same-machine replay means anything.
 3. **A checking worker.** A worker type that runs vLLM or llama.cpp directly and scores a claimed answer in one pass, first as evidence on the job only. TOPLOC is the candidate to evaluate, since it is published, has a package, and was built for workers on mixed GPUs.
 4. **A deterministic class**, opt-in, once there are machines of one kind to fill it.
-5. **Trusted hardware**, if someone lends a GPU that has it.
+5. **Trusted hardware**, if someone lends a GPU that has it, with the whole chain: VM and GPU attested together, the model's hash in the approved workload, keys released only to it.
 
 Steps 1 and 2 can be done now. Step 3 needs a GPU worker running something other than Ollama.
