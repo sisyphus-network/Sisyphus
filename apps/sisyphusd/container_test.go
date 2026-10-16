@@ -46,7 +46,7 @@ func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 	// A worker whose owner allows it takes the job, and holds its tasks in
 	// as its owner asked: by the runtime named, with a root they cannot
 	// write to.
-	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "docker-host", "--slots", "3", "--containers", "--container-runtime", "runc", "--containers-read-only")
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "docker-host", "--slots", "3", "--containers", "--container-runtime", "runc", "--containers-read-only", "--containers-tmp-mb", "64")
 	waitForOutput(t, "docker-host", "nodes", "--addr", addr)
 	// Three containers started at once are slow to start on a machine busy
 	// with the rest of the tests: alone this takes seconds, but with the
@@ -94,19 +94,23 @@ func TestANodeToldToRunContainersChecksThatItCan(t *testing.T) {
 		asked = confined
 		return errors.New("Docker here has no runtime called runsc")
 	}
-	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--container-runtime", "runsc", "--containers-read-only", "--containers-network", "--containers-memory-mb", "512", "--containers-cpus", "1.5", "--containers-timeout", "1h")
-	if err == nil || !strings.Contains(err.Error(), "--containers: Docker here has no runtime called runsc") || asked != (runtime.Confinement{Runtime: "runsc", ReadOnly: true, Network: true, MemoryMB: 512, CPUs: 1.5, Timeout: time.Hour}) {
+	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--container-runtime", "runsc", "--containers-read-only", "--containers-tmp-mb", "32", "--containers-network", "--containers-memory-mb", "512", "--containers-cpus", "1.5", "--containers-timeout", "1h")
+	if err == nil || !strings.Contains(err.Error(), "--containers: Docker here has no runtime called runsc") || asked != (runtime.Confinement{Runtime: "runsc", ReadOnly: true, TmpMB: 32, Network: true, MemoryMB: 512, CPUs: 1.5, Timeout: time.Hour}) {
 		t.Errorf("error %v, asked for %+v, want the node not started for want of the runtime", err, asked)
 	}
-	for _, flags := range [][]string{{"--container-runtime", "runsc"}, {"--containers-read-only"}, {"--containers-memory-mb", "512"}, {"--containers-cpus", "2"}, {"--containers-timeout", "1h"}, {"--containers-network"}} {
+	for _, flags := range [][]string{{"--container-runtime", "runsc"}, {"--containers-read-only"}, {"--containers-memory-mb", "512"}, {"--containers-cpus", "2"}, {"--containers-timeout", "1h"}, {"--containers-tmp-mb", "64"}, {"--containers-network"}} {
 		if _, err := cli(t, append([]string{"run", "--data-dir", t.TempDir(), "--listen", freeAddr(t)}, flags...)...); err == nil || !strings.Contains(err.Error(), "need --containers") {
 			t.Errorf("%v without --containers: %v", flags, err)
 		}
 	}
 	// What a task may use is at most something.
-	for _, flags := range [][]string{{"--containers-memory-mb", "-1"}, {"--containers-cpus", "-0.5"}, {"--containers-timeout", "-1s"}} {
+	for _, flags := range [][]string{{"--containers-memory-mb", "-1"}, {"--containers-cpus", "-0.5"}, {"--containers-timeout", "-1s"}, {"--containers-tmp-mb", "-1"}} {
 		if _, err := cli(t, append([]string{"run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers"}, flags...)...); err == nil || !strings.Contains(err.Error(), "cannot be less than nothing") {
 			t.Errorf("%v: %v", flags, err)
 		}
+	}
+	// A sized /tmp means something only where the root cannot be written.
+	if _, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--containers-tmp-mb", "64"); err == nil || !strings.Contains(err.Error(), "needs it") {
+		t.Errorf("--containers-tmp-mb without --containers-read-only: %v", err)
 	}
 }
