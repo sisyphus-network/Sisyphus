@@ -13,6 +13,8 @@ npm install
 npm run dev
 ```
 
+The Model provider page in the development build includes six sample profiles for previewing card layouts. They are gated to development and are not persisted or included in the production app; the end-to-end suite checks their absence from the built app.
+
 Build the Go daemon from the repository root before starting the desktop:
 
 ```sh
