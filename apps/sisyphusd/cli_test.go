@@ -126,7 +126,27 @@ func startDaemon(t *testing.T, args ...string) (stop func()) {
 		}
 	})
 	t.Cleanup(stop)
+	for _, flag := range []string{"--api-listen", "--gateway-listen", "--inference-listen", "--web-listen"} {
+		if slices.Contains(args, flag) {
+			waitForSecretFile(t, filepath.Join(dataDir, "api.token"))
+			break
+		}
+	}
+	if slices.Contains(args, "--pinning-listen") {
+		waitForSecretFile(t, filepath.Join(dataDir, "pinning.token"))
+	}
 	return stop
+}
+
+// waitForSecretFile waits until a service has finished creating its token.
+// The daemon binds its listener before it creates the file, so a ready node
+// or an open TCP port is not sufficient readiness for tests that read it.
+func waitForSecretFile(t *testing.T, path string) {
+	t.Helper()
+	waitFor(t, func() bool {
+		secret, err := os.ReadFile(path)
+		return err == nil && strings.TrimSpace(string(secret)) != ""
+	})
 }
 
 // joined reports whether the node in dataDir has joined anything before.
