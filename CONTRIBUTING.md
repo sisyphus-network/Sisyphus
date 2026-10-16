@@ -11,6 +11,7 @@ Sisyphus is an early prototype built in the open. Issues, questions and pull req
 
 - Branch from `dev` and open the pull request against `dev`. Nothing is pushed to `dev` directly.
 - A pull request merges by squash once its checks are green, so each commit on `dev` has passed.
+- Commits and pull requests carry no AI-tool attribution: no `Co-authored-by` trailer for an assistant, no "generated with" footer. `.claude/settings.json` turns Claude Code's off for everyone working in the repo; with other tools, remove it by hand.
 - Commit and pull request titles use a conventional prefix: `feat:`, `fix:`, `docs:`, `test:`, `chore:`.
 - A pull request is labelled by area from the files it changes (`.github/labeler.yml`); the maintainers add the milestone.
 - Keep documentation current in the same pull request: the root README, `apps/sisyphusd/README.md` and the files under `docs/`.
