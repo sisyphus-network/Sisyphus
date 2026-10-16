@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -27,11 +28,33 @@ func TestAWorkerRefusesATaskItDoesNotHaveWhatItNeedsFor(t *testing.T) {
 	}
 	// And afterwards by what it told the coordinator it has.
 	offered := []string{runtime.SealingLabel, runtime.NetworkLabel}
-	w.offered.Store(&offered)
+	w.storeOffered(offered)
 	if got := primes(runtime.NetworkLabel); got.GetError() != "" {
 		t.Fatalf("a task needing what the worker said it has: %v", got.GetError())
 	}
 	if got := primes("model:llama3.1:8b"); got.GetError() == "" {
 		t.Fatal("a task needing what the worker did not say it has was run")
 	}
+}
+
+func TestAWorkerPublishesAnIndependentSnapshotOfItsLabels(t *testing.T) {
+	w := &Worker{}
+	source := []string{runtime.NetworkLabel}
+	w.storeOffered(source)
+
+	var writers sync.WaitGroup
+	writers.Add(1)
+	go func() {
+		defer writers.Done()
+		for i := 0; i < 10_000; i++ {
+			source[0] = "changing-label"
+			source[0] = runtime.NetworkLabel
+		}
+	}()
+	for i := 0; i < 10_000; i++ {
+		if lacking := w.lacking([]string{runtime.NetworkLabel}); lacking != "" {
+			t.Fatalf("a published label changed with its source slice: %s", lacking)
+		}
+	}
+	writers.Wait()
 }

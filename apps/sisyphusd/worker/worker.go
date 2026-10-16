@@ -158,7 +158,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	// heartbeat.
 	hello := w.capabilities()
 	offered := hello.GetLabels()
-	w.offered.Store(&offered)
+	w.storeOffered(offered)
 	send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
 		Name:         w.Name,
 		Capabilities: hello,
@@ -185,7 +185,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				// owner fetches a model, or removes one.
 				if now := w.labels(); !slices.Equal(now, offered) {
 					offered = now
-					w.offered.Store(&now)
+					w.storeOffered(now)
 					heartbeat.Labels = &pb.Labels{Labels: now}
 				}
 				if w.Relayed != nil {
@@ -436,6 +436,13 @@ func (w *Worker) lacking(needs []string) string {
 		}
 	}
 	return ""
+}
+
+// storeOffered keeps a private snapshot. The session replaces its offered
+// slice as labels change, while task execution may read it concurrently.
+func (w *Worker) storeOffered(labels []string) {
+	snapshot := slices.Clone(labels)
+	w.offered.Store(&snapshot)
 }
 
 // labels is what the worker has that a job may ask for by name: itself,
