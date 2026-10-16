@@ -21,6 +21,7 @@ jobs:
   scope:
     if: github.event.action != 'labeled' || github.event.label.name == 'all-platforms'
     runs-on: ubuntu-26.04
+    timeout-minutes: 5
     outputs:
       changed: ${{ steps.scope.outputs.changed }}
     steps:
@@ -53,6 +54,7 @@ jobs:
         # twenty runners at a time to share between every pull request.
         os: ${{ fromJSON((github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'all-platforms')) && '["ubuntu-26.04","ubuntu-26.04-arm","windows-2025","windows-11-arm","macos-26","macos-26-intel"]' || '["ubuntu-26.04","windows-2025","macos-26"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: apps/sisyphus
