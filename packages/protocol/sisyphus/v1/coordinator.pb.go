@@ -896,7 +896,12 @@ type TaskAssignment struct {
 	// For a private job: the keys its tasks may use, each derived from the
 	// submitter's sealing key. The first is the job's own, which what a task
 	// stores is sealed with; the rest open the sealed inputs the job names.
-	Keys          []*SealingKey `protobuf:"bytes,7,rep,name=keys,proto3" json:"keys,omitempty"`
+	Keys []*SealingKey `protobuf:"bytes,7,rep,name=keys,proto3" json:"keys,omitempty"`
+	// What the coordinator gave the task to this worker for having: the
+	// labels its job needs. A worker that does not have one of them, other
+	// than its own name, which the coordinator gives it, refuses the task,
+	// whatever the coordinator is.
+	Needs         []string `protobuf:"bytes,8,rep,name=needs,proto3" json:"needs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -976,6 +981,13 @@ func (x *TaskAssignment) GetKey() []byte {
 func (x *TaskAssignment) GetKeys() []*SealingKey {
 	if x != nil {
 		return x.Keys
+	}
+	return nil
+}
+
+func (x *TaskAssignment) GetNeeds() []string {
+	if x != nil {
+		return x.Needs
 	}
 	return nil
 }
@@ -1098,7 +1110,7 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\x0ecoordinator_id\x18\x01 \x01(\tR\rcoordinatorId\x12+\n" +
 	"\x11swarm_fingerprint\x18\x02 \x01(\tR\x10swarmFingerprint\":\n" +
 	"\vSwarmUpdate\x12+\n" +
-	"\x11swarm_fingerprint\x18\x01 \x01(\tR\x10swarmFingerprint\"\xcf\x01\n" +
+	"\x11swarm_fingerprint\x18\x01 \x01(\tR\x10swarmFingerprint\"\xe5\x01\n" +
 	"\x0eTaskAssignment\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x15\n" +
 	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x12\x18\n" +
@@ -1106,7 +1118,8 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\bworkload\x18\x04 \x01(\tR\bworkload\x12\x18\n" +
 	"\apayload\x18\x05 \x01(\fR\apayload\x12\x10\n" +
 	"\x03key\x18\x06 \x01(\fR\x03key\x12+\n" +
-	"\x04keys\x18\a \x03(\v2\x17.sisyphus.v1.SealingKeyR\x04keys\".\n" +
+	"\x04keys\x18\a \x03(\v2\x17.sisyphus.v1.SealingKeyR\x04keys\x12\x14\n" +
+	"\x05needs\x18\b \x03(\tR\x05needs\".\n" +
 	"\n" +
 	"SealingKey\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x10\n" +

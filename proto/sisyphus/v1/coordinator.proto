@@ -138,6 +138,11 @@ message TaskAssignment {
   // submitter's sealing key. The first is the job's own, which what a task
   // stores is sealed with; the rest open the sealed inputs the job names.
   repeated SealingKey keys = 7;
+  // What the coordinator gave the task to this worker for having: the
+  // labels its job needs. A worker that does not have one of them, other
+  // than its own name, which the coordinator gives it, refuses the task,
+  // whatever the coordinator is.
+  repeated string needs = 8;
 }
 
 // SealingKey is one key derived from a sealing key, and its ID.
