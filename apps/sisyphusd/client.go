@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -404,6 +405,9 @@ func listNodes(ctx context.Context, args []string) error {
 		if serving := servingOf(node.GetName(), c.GetLabels()); serving != "" {
 			standings = append(standings, serving)
 		}
+		if held := containersOf(node.GetName(), c.GetLabels()); held != "" {
+			standings = append(standings, held)
+		}
 		if standing := standingOf(node); standing != "" {
 			standings = append(standings, standing)
 		}
@@ -445,6 +449,27 @@ func servingOf(name string, labels []string) string {
 		}
 	}
 	return fmt.Sprintf("%s serves %s", name, strings.Join(models, ", "))
+}
+
+// containersOf says how a node's owner lets it run the pool's containers,
+// so far as that decides which container jobs it is given: whether a task
+// may reach the network, and whether the node runs them hardened. It says
+// nothing of a node that allows none of these.
+func containersOf(name string, labels []string) string {
+	var held []string
+	for _, label := range []struct{ label, said string }{
+		{runtime.NetworkLabel, "with the network allowed"},
+		{runtime.SandboxedLabel, "sandboxed"},
+		{runtime.BoundedTmpLabel, "with a read-only root and a sized /tmp"},
+	} {
+		if slices.Contains(labels, label.label) {
+			held = append(held, label.said)
+		}
+	}
+	if len(held) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s runs containers %s", name, strings.Join(held, ", "))
 }
 
 // standingOf says how a node's results for verified tasks have come out, in

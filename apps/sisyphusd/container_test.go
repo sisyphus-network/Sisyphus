@@ -47,7 +47,8 @@ func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 	// as its owner asked: by the runtime named, with a root they cannot
 	// write to.
 	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "docker-host", "--slots", "3", "--containers", "--container-runtime", "runc", "--containers-read-only", "--containers-tmp-mb", "64")
-	waitForOutput(t, "docker-host", "nodes", "--addr", addr)
+	// And the pool is told how it holds them in.
+	waitForOutput(t, "docker-host runs containers with a read-only root and a sized /tmp", "nodes", "--addr", addr)
 	// Three containers started at once are slow to start on a machine busy
 	// with the rest of the tests: alone this takes seconds, but with the
 	// whole suite running it has taken over twenty.
@@ -112,5 +113,20 @@ func TestANodeToldToRunContainersChecksThatItCan(t *testing.T) {
 	// A sized /tmp means something only where the root cannot be written.
 	if _, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--containers-tmp-mb", "64"); err == nil || !strings.Contains(err.Error(), "needs it") {
 		t.Errorf("--containers-tmp-mb without --containers-read-only: %v", err)
+	}
+}
+
+// What a worker's owner allows of the pool's containers is said beside the
+// table of nodes, so that whoever runs the pool can see which take what.
+func TestTheNodesSayHowEachRunsContainers(t *testing.T) {
+	for labels, want := range map[string]string{
+		"":                   "",
+		runtime.SealingLabel: "",
+		runtime.NetworkLabel: "laptop runs containers with the network allowed",
+		runtime.SandboxedLabel + " " + runtime.BoundedTmpLabel + " " + runtime.NetworkLabel: "laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp",
+	} {
+		if got := containersOf("laptop", strings.Fields(labels)); got != want {
+			t.Errorf("%q: %q, want %q", labels, got, want)
+		}
 	}
 }
