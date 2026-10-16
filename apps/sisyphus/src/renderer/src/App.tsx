@@ -108,12 +108,10 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
   const scrollPathRef = useRef(location.pathname)
   scrollPathRef.current = location.pathname
   const scrollPositionsRef = useRef<Record<string, number>>(readScrollPositions())
+  const scrollWriteTimerRef = useRef<number | undefined>(undefined)
   const advanced = location.pathname !== '/'
   const compact = useBreakpoint('(max-width: 900px)')
   useLayoutEffect(() => {
-    // Every desktop settings route owns an internal scroller so its shell and
-    // header can stay fixed. SettingsPage persists that scroller's position.
-    if (advanced && !compact && location.pathname.startsWith('/settings')) return
     const mainScroller = advanced ? document.querySelector<HTMLElement>('.app-shell--advanced .app-main') : null
     const scrollTarget: Window | HTMLElement = mainScroller ?? window
     const getTop = () => mainScroller ? mainScroller.scrollTop : window.scrollY
@@ -131,16 +129,15 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
       if (!restored) return
       scrollPositionsRef.current[location.pathname] = latestTop
       try {
-        // Settings owns a separate desktop scroller but shares this storage key.
         // Merge with the persisted map so a stale AppRoutes ref cannot erase
-        // the position Settings saved while another route is active.
+        // a position another route saved while it was active.
         const positions = { ...scrollPositionsRef.current, ...readScrollPositions(), [location.pathname]: latestTop }
         scrollPositionsRef.current = positions
         window.localStorage.setItem(scrollPositionsStorageKey, JSON.stringify(positions))
       } catch { /* Storage can be unavailable in restricted browser contexts. */ }
     }
     const onScroll = () => {
-      if (!restored || scrollPathRef.current !== location.pathname) return
+      if (!restored) return
       const nextTop = getTop()
       // Focus/route changes can jump an offscreen navigation target into view. Do not
       // mistake that programmatic reset for the user's new position on this page.
@@ -223,7 +220,18 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
 
       <div className={`app-content-column flex min-h-0 min-w-0 flex-1 flex-col ${advanced ? 'app-content-column--advanced' : ''}`}>
       {advanced && <header className="app-global-header flex h-[68px] w-full shrink-0 items-center justify-between border-b border-[var(--app-line)] px-8 max-[1000px]:px-5 max-[900px]:h-[58px] max-[900px]:px-4"><Breadcrumb messages={messages} direction={direction} />{compact && <NodeStatusBadge status={snapshot.status} label={statusLabel} icon={StatusIcon} />}</header>}
-      <main className={`app-main mx-auto min-w-0 w-full ${advanced ? 'max-w-[1440px] px-8 pb-7 max-[1000px]:px-5 max-[900px]:px-4' : 'max-w-none max-[760px]:px-0'}`}>
+      <main onScroll={advanced ? (event) => {
+        const pathname = location.pathname
+        const top = event.currentTarget.scrollTop
+        if (scrollWriteTimerRef.current) window.clearTimeout(scrollWriteTimerRef.current)
+        scrollWriteTimerRef.current = window.setTimeout(() => {
+          try {
+            const positions = { ...readScrollPositions(), [pathname]: top }
+            scrollPositionsRef.current = positions
+            window.localStorage.setItem(scrollPositionsStorageKey, JSON.stringify(positions))
+          } catch { /* Storage can be unavailable in restricted browser contexts. */ }
+        }, 120)
+      } : undefined} className={`app-main mx-auto min-w-0 w-full ${advanced ? 'max-w-[1440px] px-8 pb-7 max-[1000px]:px-5 max-[900px]:px-4' : 'max-w-none max-[760px]:px-0'}`}>
         <motion.div
           className="workspace-persistent"
           aria-hidden={advanced}

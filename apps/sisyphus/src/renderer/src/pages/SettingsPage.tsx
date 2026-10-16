@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Check, CheckCircle2, ChevronRight, CircleAlert, Cpu, Download, Globe, Globe2, GlobeX, KeyRound, Languages, Link2, LoaderCircle, Network, Palette, Pencil, Plus, QrCode, Radar, RefreshCw, Search, ServerCog, Settings2, SunMoon, Trash2, UserRound, Wifi } from 'lucide-react'
 import { Link, useLocation, useParams } from 'react-router-dom'
@@ -371,65 +371,6 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
     setPulling(false)
     setPullStatus(labels.cancelled)
   }
-  useLayoutEffect(() => {
-    if (!window.matchMedia('(min-width: 761px)').matches) return
-    const scroller = scrollRef.current
-    if (!scroller) return
-    const key = 'sisyphus-page-scroll-positions'
-    let disposed = false
-    let restorePending = false
-    let savedTop = 0
-    const resizeObserver = new ResizeObserver(() => restore())
-    const mutationObserver = new MutationObserver(() => {
-      observeChildren()
-      restore()
-    })
-    const save = () => {
-      if (restorePending) return
-      try {
-        const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
-        const stored = positions && typeof positions === 'object' ? positions as Record<string, unknown> : {}
-        window.localStorage.setItem(key, JSON.stringify({ ...stored, [location.pathname]: scroller.scrollTop }))
-      } catch { /* Storage may be unavailable in restricted contexts. */ }
-    }
-    const finishRestore = () => {
-      restorePending = false
-      resizeObserver.disconnect()
-      mutationObserver.disconnect()
-    }
-    const observeChildren = () => {
-      for (const child of scroller.children) resizeObserver.observe(child)
-    }
-    const restore = () => {
-      if (disposed || !restorePending) return
-      const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      scroller.scrollTop = Math.min(savedTop, maxTop)
-      // Settings data can hydrate after the route mounts. Keep the original
-      // position pending until the content is tall enough to restore it.
-      if (scroller.scrollTop >= savedTop - 1) finishRestore()
-    }
-    try {
-      const positions: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}')
-      const value = positions && typeof positions === 'object' ? (positions as Record<string, unknown>)[location.pathname] : undefined
-      savedTop = typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
-    } catch { /* Ignore malformed saved scroll positions. */ }
-    restorePending = savedTop > 0
-    if (restorePending) {
-      resizeObserver.observe(scroller)
-      observeChildren()
-      mutationObserver.observe(scroller, { childList: true, characterData: true, subtree: true })
-    }
-    restore()
-    scroller.addEventListener('scroll', save, { passive: true })
-    return () => {
-      disposed = true
-      resizeObserver.disconnect()
-      mutationObserver.disconnect()
-      save()
-      scroller.removeEventListener('scroll', save)
-    }
-  }, [location.pathname])
-
   const profileForm = <div className="flex min-h-0 flex-1 flex-col">
     <AnimatedStepper steps={profileSteps} currentIndex={Math.min(profileStep, finalProfileStep)} direction={direction} navigationDirection={profileNavigationDirection} className="min-h-0 flex-1 px-5 sm:px-8 lg:px-10">
       <div className="h-full overflow-y-auto py-5">

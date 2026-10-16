@@ -8,7 +8,7 @@ after(async () => { await node?.remove() })
 
 async function openSettingsCategory(page, category) {
   await open(page, 'Settings')
-  await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: new RegExp(category, 'i') }).click()
+  await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: new RegExp(`^${category}`, 'i') }).click()
 }
 
 // Whether the window says its node is connected: a badge in the header of a
@@ -616,7 +616,7 @@ test('a language chosen with the keyboard turns the window round, and is still c
   const profile = testProfile()
   let { app, page } = await launch(node, profile)
   try {
-    await openSettingsCategory(page, 'Interface language')
+    await openSettingsCategory(page, 'General')
     assert.equal(await page.locator('html').getAttribute('dir'), 'ltr')
     await page.getByRole('button', { name: 'Language' }).focus()
     await page.keyboard.press('Enter')
@@ -656,8 +656,8 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
     const initialAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim())
     assert.equal(initialAccent, '#f59ac4')
 
-    await openSettingsCategory(page, 'Theme')
-    await page.getByRole('heading', { name: 'Theme', level: 1 }).waitFor()
+    await openSettingsCategory(page, 'General')
+    await page.getByRole('heading', { name: 'General', level: 1 }).waitFor()
     const accentPicker = page.getByRole('button', { name: 'Accent', exact: true })
     await accentPicker.scrollIntoViewIfNeeded()
     await accentPicker.click()
@@ -739,7 +739,7 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
-    await openSettingsCategory(page, 'Local node')
+    await openSettingsCategory(page, 'This node')
     await page.getByText('Lend Ollama models to the pool', { exact: true }).waitFor()
     await page.getByRole('textbox', { name: 'Ollama address' }).fill(ollama.url)
     await page.getByRole('button', { name: 'Check connection' }).click()
@@ -753,7 +753,7 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
     await page.getByRole('button', { name: 'Save lending settings' }).click()
     await page.getByText('Restart to apply lending or address changes', { exact: true }).first().waitFor()
     await page.reload()
-    await openSettingsCategory(page, 'Local node')
+    await openSettingsCategory(page, 'This node')
     await page.getByRole('button', { name: 'Check connection' }).click()
     await page.getByRole('checkbox', { name: 'Make models from this Ollama endpoint available to the pool', checked: true }).waitFor()
     await page.getByRole('checkbox', { name: 'test-model', checked: true }).waitFor()
@@ -829,9 +829,9 @@ test('model settings save an OpenAI-compatible API key on the node and use it fo
     await page.getByText('Model configuration saved').waitFor()
 
     // The UI receives only hasApiKey, never the stored secret itself.
-    await page.locator('[data-slot="card"].rounded-2xl')
+    await page.locator('[data-slot="card"]')
       .filter({ hasText: 'OpenAI test provider' })
-      .getByRole('button', { name: 'Edit', exact: true })
+      .getByRole('button', { name: 'Edit OpenAI test provider', exact: true })
       .click()
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
     const apiKeyInput = page.getByLabel('API key')
@@ -870,7 +870,7 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     const header = page.locator('.app-global-header')
     const main = page.locator('.app-shell--settings .app-main')
     const settings = page.locator('.settings-page')
-    const settingsScroller = page.locator('.settings-page__scroll')
+    const settingsScroller = main
     await settingsScroller.waitFor()
     // The access card hydrates asynchronously; wait for its saved OFF-state
     // content before measuring or setting the scroll position.
@@ -891,7 +891,7 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
         mainLeft: mainRect.left,
         mainRight: mainRect.right,
         contentLeft: mainRect.left + Number.parseFloat(mainStyle.paddingLeft),
-        contentRight: mainRect.right - Number.parseFloat(mainStyle.paddingRight),
+        contentRight: mainRect.left + mainElement.clientWidth - Number.parseFloat(mainStyle.paddingRight),
         settingsLeft: settingsRect.left,
         settingsRight: settingsRect.right,
         documentHeight: document.documentElement.scrollHeight,
@@ -906,20 +906,24 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     assert.ok(Math.abs(layout.headerRight - layout.mainRight) <= 1, 'the header does not span the full content column')
     assert.ok(Math.abs(layout.settingsLeft - layout.contentLeft) <= 1 && Math.abs(layout.settingsRight - layout.contentRight) <= 1, 'Settings is narrower than the full padded content width')
     assert.ok(layout.documentHeight <= layout.viewportHeight + 2, 'the desktop document itself scrolls')
-    assert.ok(layout.mainScrollHeight <= layout.mainClientHeight + 2, 'the Settings main shell scrolls instead of its inner list')
-    assert.ok(layout.settingsScrollHeight > layout.settingsClientHeight, 'the settings list has no independent scroll area')
+    assert.ok(layout.mainScrollHeight > layout.mainClientHeight, 'the shared main content area does not scroll')
+    assert.ok(layout.settingsScrollHeight <= layout.settingsClientHeight + 2, 'Settings has an unnecessary nested scroll area')
 
-    await settingsScroller.evaluate((element) => { element.scrollTop = Math.min(180, element.scrollHeight - element.clientHeight) })
-    await page.waitForFunction(() => Number(document.querySelector('.settings-page__scroll')?.scrollTop) > 40)
-    const savedSettingsTop = await page.locator('.settings-page__scroll').evaluate((element) => element.scrollTop)
-    await page.waitForFunction(() => Number(JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings/access']) > 40)
+    await main.hover()
+    await page.mouse.wheel(0, 180)
+    await page.waitForFunction(() => Number(document.querySelector('.app-shell--settings .app-main')?.scrollTop) > 40)
+    const savedSettingsTop = await settingsScroller.evaluate((element) => element.scrollTop)
+    await page.waitForFunction(() => Number(JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings/access']) > 40, null, { timeout: 20000 }).catch(async () => {
+      const state = await page.evaluate(() => ({ hash: location.hash, path: location.hash.slice(1), positions: localStorage.getItem('sisyphus-page-scroll-positions'), scrollTop: document.querySelector('.app-shell--settings .app-main')?.scrollTop }))
+      throw new Error(`Settings scroll position was not saved: ${JSON.stringify(state)}`)
+    })
     await page.getByRole('complementary').getByRole('link', { name: 'Node overview', exact: true }).click()
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
     await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: /^Access/ }).click()
     await settingsScroller.waitFor()
     try {
-      await page.waitForFunction((top) => Math.abs(Number(document.querySelector('.settings-page__scroll')?.scrollTop) - top) < 2, savedSettingsTop)
+      await page.waitForFunction((top) => Math.abs(Number(document.querySelector('.app-shell--settings .app-main')?.scrollTop) - top) < 2, savedSettingsTop)
     } catch (error) {
       const scrollState = await settingsScroller.evaluate((element) => ({
         top: element.scrollTop,
