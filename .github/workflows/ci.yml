@@ -115,17 +115,21 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           rm -rf ipfs-cluster-service "ipfs-cluster-service_${CLUSTER_VERSION}_linux-amd64.tar.gz"
           ipfs-cluster-service --version
-      - name: Pull the object store image
-        # The S3 tests start this image. Pulled here, a download Docker Hub
-        # cuts off is tried again rather than failing whichever test asked
-        # first, and the tests find the image already on the machine.
+      - name: Pull the images the tests start
+        # The S3 tests start the object store; the container and transcode
+        # tests start alpine:3.20. A self-hosted runner's Docker begins each
+        # job empty, so pulled here, a download Docker Hub cuts off or stalls
+        # is tried again rather than failing whichever test asked first, and
+        # the tests find the images already on the machine.
         run: |
-          for attempt in 1 2 3 4 5; do
-            docker pull chrislusf/seaweedfs:latest && exit 0
-            echo "pull attempt $attempt failed; trying again"
-            sleep $((attempt * 10))
+          for image in chrislusf/seaweedfs:latest alpine:3.20; do
+            for attempt in 1 2 3 4 5; do
+              timeout 300 docker pull "$image" && continue 2
+              echo "pull of $image, attempt $attempt, failed; trying again"
+              sleep $((attempt * 10))
+            done
+            exit 1
           done
-          exit 1
       - name: Check formatting
         run: test -z "$(gofmt -l apps packages)" || { gofmt -l apps packages; exit 1; }
       - run: go vet ./...
