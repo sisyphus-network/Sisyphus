@@ -1493,10 +1493,14 @@ func decode(cids []string) []cid.Cid {
 	return decoded
 }
 
-// scheduleLocked hands pending tasks to workers with free slots, oldest job
-// first.
+// scheduleLocked hands pending tasks to workers with free slots. A free slot
+// goes to the task of whichever submitter has the fewest tasks running, of
+// that submitter's oldest job, so that one client's job of many tasks does
+// not hold every slot while another's waits; with only one submitter
+// waiting, it has every slot there is.
 func (c *Coordinator) scheduleLocked() {
 	c.active = slices.DeleteFunc(c.active, func(job *jobmodel.Job) bool { return job.Terminal() })
+	var waiting []*waitingJob
 	for _, job := range c.active {
 		if composite, is := c.composite(job); is {
 			// Its tasks are jobs, which the coordinator submits itself.
@@ -1508,16 +1512,53 @@ func (c *Coordinator) scheduleLocked() {
 			c.copiesLocked(job)
 			continue
 		}
-		for _, task := range job.Assignable() {
-			w := c.pickWorkerLocked(job, task)
-			if w == nil {
-				break
-			}
-			now := time.Now()
-			job.Start(task, w.id, w.name, now)
-			c.handLocked(w, assignment{job: job, task: task, attempt: task.Attempt, started: now})
+		if tasks := job.Assignable(); len(tasks) > 0 {
+			waiting = append(waiting, &waitingJob{job: job, tasks: tasks})
 		}
 	}
+	running := c.runningBySubmitterLocked()
+	for len(waiting) > 0 {
+		// The first of the fewest is the oldest job of that submitter.
+		i := 0
+		for j, w := range waiting {
+			if running[w.job.Submitter] < running[waiting[i].job.Submitter] {
+				i = j
+			}
+		}
+		next := waiting[i]
+		task := next.tasks[0]
+		w := c.pickWorkerLocked(next.job, task)
+		if w == nil {
+			// Nowhere to put it now; the rest of the job waits with it.
+			waiting = slices.Delete(waiting, i, i+1)
+			continue
+		}
+		now := time.Now()
+		next.job.Start(task, w.id, w.name, now)
+		c.handLocked(w, assignment{job: next.job, task: task, attempt: task.Attempt, started: now})
+		running[next.job.Submitter]++
+		if next.tasks = next.tasks[1:]; len(next.tasks) == 0 {
+			waiting = slices.Delete(waiting, i, i+1)
+		}
+	}
+}
+
+// waitingJob is a job with tasks to hand out, and those tasks.
+type waitingJob struct {
+	job   *jobmodel.Job
+	tasks []*jobmodel.Task
+}
+
+// runningBySubmitterLocked is how many tasks each submitter has running on
+// workers now; the node's own jobs are counted under "".
+func (c *Coordinator) runningBySubmitterLocked() map[string]int {
+	running := make(map[string]int)
+	for _, w := range c.workers {
+		for _, a := range w.running {
+			running[a.job.Submitter]++
+		}
+	}
+	return running
 }
 
 // handLocked gives a worker an attempt at a task.
