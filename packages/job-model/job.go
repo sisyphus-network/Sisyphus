@@ -332,6 +332,31 @@ type Attempt struct {
 	// if it was the task's last, or cancelled if the job ended without it.
 	State State
 	Err   string
+	// Used is what the worker says a model task ran with on this attempt;
+	// nil for work that asks no model server.
+	Used *ModelUse
+}
+
+// ModelUse is what a model task's worker says it ran with: the server
+// that answered, its version, the model, and the options sent. It is the
+// worker's own account, kept so that an owner's settings show and a later
+// check has something to check against. It proves nothing.
+type ModelUse struct {
+	Server, Version             string
+	Model, Digest, Quantization string
+	// Options are the options sent, as the worker gave them: JSON from an
+	// honest one, but nothing here relies on it.
+	Options []byte
+}
+
+// Used notes what the worker of the given attempt at a task says it ran
+// with. It is kept with the attempt however the attempt ends.
+func (j *Job) Used(t *Task, attempt int, use ModelUse) {
+	if attempt < 1 || attempt > len(t.History) {
+		return // an attempt the job has no record of
+	}
+	t.History[attempt-1].Used = &use
+	j.mark(t)
 }
 
 // Event is one thing that happened to a job: a step in its life, or a line

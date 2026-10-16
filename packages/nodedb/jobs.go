@@ -44,10 +44,18 @@ func (db *DB) SaveJob(job *jobmodel.Job) error {
 			// Every attempt, not only the latest, so that one whose save
 			// failed is written with the next.
 			for _, a := range t.History {
-				b.exec(`INSERT INTO task_attempts (job_id, task_index, attempt, node_id, node_name, state, error)
-					VALUES (?, ?, ?, ?, ?, ?, ?)
-					ON CONFLICT (job_id, task_index, attempt) DO UPDATE SET state = excluded.state, error = excluded.error`,
-					job.ID, a.TaskIndex, a.Number, a.NodeID, a.NodeName, int(a.State), a.Err)
+				used := a.Used
+				if used == nil {
+					used = &jobmodel.ModelUse{}
+				}
+				b.exec(`INSERT INTO task_attempts (job_id, task_index, attempt, node_id, node_name, state, error,
+						used_server, used_version, used_model, used_digest, used_quantization, used_options)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					ON CONFLICT (job_id, task_index, attempt) DO UPDATE SET state = excluded.state, error = excluded.error,
+						used_server = excluded.used_server, used_version = excluded.used_version, used_model = excluded.used_model,
+						used_digest = excluded.used_digest, used_quantization = excluded.used_quantization, used_options = excluded.used_options`,
+					job.ID, a.TaskIndex, a.Number, a.NodeID, a.NodeName, int(a.State), a.Err,
+					used.Server, used.Version, used.Model, used.Digest, used.Quantization, used.Options)
 			}
 			// What a worker returned does not change once it is in.
 			for _, r := range t.Results {
@@ -121,13 +129,17 @@ func (db *DB) LoadJobs() ([]*jobmodel.Job, error) {
 	err = db.read(func(rows *sql.Rows) error {
 		var jobID string
 		var a jobmodel.Attempt
-		if err := rows.Scan(&jobID, &a.TaskIndex, &a.Number, &a.NodeID, &a.NodeName, &a.State, &a.Err); err != nil {
+		var used jobmodel.ModelUse
+		if err := rows.Scan(&jobID, &a.TaskIndex, &a.Number, &a.NodeID, &a.NodeName, &a.State, &a.Err,
+			&used.Server, &used.Version, &used.Model, &used.Digest, &used.Quantization, &used.Options); err != nil {
 			return err
 		}
+		a.Used = usedOrNone(used)
 		t := tasks[taskKey{jobID, a.TaskIndex}]
 		t.History = append(t.History, a)
 		return nil
-	}, `SELECT job_id, task_index, a.attempt, a.node_id, a.node_name, a.state, a.error
+	}, `SELECT job_id, task_index, a.attempt, a.node_id, a.node_name, a.state, a.error,
+			a.used_server, a.used_version, a.used_model, a.used_digest, a.used_quantization, a.used_options
 		FROM task_attempts a JOIN tasks USING (job_id, task_index) JOIN jobs USING (job_id) ORDER BY job_id, task_index, a.attempt`)
 	if err != nil {
 		return nil, fmt.Errorf("load attempts: %w", err)
@@ -249,12 +261,17 @@ func (db *DB) Attempts(jobID string) ([]Attempt, error) {
 	var attempts []Attempt
 	err := db.read(func(rows *sql.Rows) error {
 		var a Attempt
-		if err := rows.Scan(&a.TaskIndex, &a.Number, &a.NodeID, &a.NodeName, &a.State, &a.Err); err != nil {
+		var used jobmodel.ModelUse
+		if err := rows.Scan(&a.TaskIndex, &a.Number, &a.NodeID, &a.NodeName, &a.State, &a.Err,
+			&used.Server, &used.Version, &used.Model, &used.Digest, &used.Quantization, &used.Options); err != nil {
 			return err
 		}
+		a.Used = usedOrNone(used)
 		attempts = append(attempts, a)
 		return nil
-	}, `SELECT task_index, attempt, node_id, node_name, state, error FROM task_attempts WHERE job_id = ? ORDER BY task_index, attempt`, jobID)
+	}, `SELECT task_index, attempt, node_id, node_name, state, error,
+			used_server, used_version, used_model, used_digest, used_quantization, used_options
+		FROM task_attempts WHERE job_id = ? ORDER BY task_index, attempt`, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("load attempts: %w", err)
 	}
@@ -262,6 +279,15 @@ func (db *DB) Attempts(jobID string) ([]Attempt, error) {
 }
 
 // blob is b as a column that is never NULL.
+// usedOrNone is what an attempt's columns say it ran with, or nil where
+// they say nothing, as for work that asks no model server.
+func usedOrNone(used jobmodel.ModelUse) *jobmodel.ModelUse {
+	if used.Server == "" && used.Version == "" && used.Model == "" && used.Digest == "" && used.Quantization == "" && len(used.Options) == 0 {
+		return nil
+	}
+	return &used
+}
+
 func blob(b []byte) []byte {
 	if b == nil {
 		return []byte{}
