@@ -118,6 +118,11 @@ type Config struct {
 	// worker making a call is, and is the call's own address if left nil.
 	DistinctAddresses bool
 	AddressOf         func(ctx context.Context) string
+	// MaxJobsPerClient, if not zero, is how many unfinished jobs one client
+	// may have at once, so that one cannot fill the coordinator for all
+	// the rest. The steps of a job are not counted apart from it, and the
+	// node's own jobs, which have no submitter, not at all.
+	MaxJobsPerClient int
 	// HardenedContainers has every job whose tasks run in containers go
 	// only to workers that run them hardened: runtime.HardenedLabels. For a pool that
 	// takes container work from people its workers' owners do not know.
@@ -150,7 +155,9 @@ type Coordinator struct {
 	distinct  bool
 	addressOf func(ctx context.Context) string
 	// hardened is whether container jobs need hardened workers.
-	hardened  bool
+	hardened bool
+	// perClient is how many unfinished jobs one client may have.
+	perClient int
 	addresses map[string]string
 	store     Store
 	journal   Journal
@@ -300,6 +307,7 @@ func New(cfg Config) *Coordinator {
 		audits:    cfg.Audits,
 		distinct:  cfg.DistinctAddresses,
 		hardened:  cfg.HardenedContainers,
+		perClient: cfg.MaxJobsPerClient,
 		addressOf: cfg.AddressOf,
 		addresses: make(map[string]string),
 		store:     cfg.Store,
@@ -783,6 +791,11 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	_, steps := workload.(runtime.Composite)
 	if able := c.ableLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs); verify >= 2 && !steps && able < verify {
 		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job%s", verify, able, c.apart())
+	}
+	if parent == "" && submitter != "" && c.perClient > 0 {
+		if held := c.unfinishedOfLocked(submitter); held >= c.perClient {
+			return nil, status.Errorf(codes.ResourceExhausted, "this client has %d jobs unfinished, as many as this coordinator lets one client have; submit again once one is over", held)
+		}
 	}
 	job := jobmodel.New(id, workload.Name(), spec.GetParams(), mode, int(spec.GetMaxTasks()), payloads, time.Now())
 	switch {
@@ -1323,6 +1336,18 @@ func withKey(blobs runtime.Blobs, key []byte, jobID string) runtime.Blobs {
 	// was sealed with any key derived from it. What it stores for the job
 	// it seals as the job's workers do, with the job's own.
 	return runtime.Sealed(blobs, sealed.Key(key), sealed.Key(key).ForJob(jobID))
+}
+
+// unfinishedOfLocked is how many unfinished jobs, not counting steps, the
+// client submitter has.
+func (c *Coordinator) unfinishedOfLocked(submitter string) int {
+	n := 0
+	for _, job := range c.active {
+		if job.Submitter == submitter && job.Parent == "" {
+			n++
+		}
+	}
+	return n
 }
 
 // needs is what a worker must have to be given the tasks of a job: what
