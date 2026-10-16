@@ -1,0 +1,33 @@
+# Abuse in an open network
+
+A focused research note for [#22](https://github.com/sisyphus-network/Sisyphus/issues/22). It maps abuse cases to the controls in the current code and records decisions needed before strangers can submit work. It is not a content policy, legal opinion, or claim that the current V0 admission model is safe for a public network.
+
+## What changes when admission is public
+
+V0 relies on an owner inviting people they know. TLS identity and role checks keep outsiders out, but do not make an admitted member harmless. A public network removes that trust assumption: a valid identity can still submit abusive work, and one person may operate several identities. Authentication answers *who connected*; it does not answer *whether this work is acceptable* or *how much of a shared resource that identity may consume*.
+
+## Abuse cases and current boundaries
+
+| Abuse case | Current boundary | Gap before public admission |
+| --- | --- | --- |
+| Exhaust coordinator CPU, workers, or storage | Jobs can request task counts and resource requirements. A coordinator can set a whole-store `--max-store-bytes`; task attempts can have a caller-supplied timeout. | No per-member job, task, upload, pin, or concurrency quotas or rate limits. A whole-store cap does not allocate capacity fairly; remote pin fetches are checked before, not during, a fetch and one fetch can exceed the cap. A caller can omit a task timeout. |
+| Run unwanted programs on workers | Container execution is opt-in with `--containers`; the image and command are checked, Docker arguments are built by the worker, capabilities are dropped where user IDs are available, privilege gain is blocked, and processes are capped. Network is off unless the job asks for it. | The job may ask for network access. There is no default wall-clock timeout, no disk-write cap while a command runs, and no sandboxed runtime by default. A container still shares the worker's kernel. |
+| Use a worker as network infrastructure | A container task has no network by default; network-enabled tasks use the network available to the worker's Docker daemon. | There is no project-level egress policy or destination allowlist. An operator must decide whether to accept network-enabled work and what network boundary to enforce. |
+| Store or distribute harmful content | Blobs are content-addressed; a whole-store size cap is available. Private-job sealing protects stored bytes from some pool members. | The project has no abuse-reporting or content-review flow. A CID is an identifier, not proof of what a blob contains. Sealed data cannot be inspected by a coordinator without the relevant key. |
+| Evade limits with multiple identities | Node keys identify connections; owners admit and remove members. | Identity alone does not establish one person per node. Per-identity quotas can be multiplied by an operator with several identities unless admission or another scarce resource constrains them. |
+
+The exact current limitations are documented in the [security model](../security-model.md#not-protected-against-today) and in the [container workload](../../apps/sisyphusd/README.md#running-containers). In particular, a submitter's requested limits are not a substitute for worker-enforced policy: the worker has to validate and enforce every bound itself.
+
+## Decisions to settle
+
+1. **Allowed work:** Which workload classes may a public pool accept? Is container execution excluded, operator-approved, or available only under a stronger sandbox? Is network-enabled execution ever permitted?
+2. **Resource budgets:** Which limits are mandatory and enforced at both coordinator and worker: submitted jobs, concurrent tasks, wall-clock time, CPU, memory, GPUs, bytes stored, bytes uploaded, output size, and network egress? What happens when a limit is reached?
+3. **Fairness and identity:** Are limits per node, per admitted operator, or both? What prevents one operator from multiplying an allowance with extra identities? A token or paid identity is not assumed by this note.
+4. **Reports and response:** How can a requester or worker report abuse? What evidence is retained, for how long, and who can see it? What can an operator pause or remove, and how can a mistaken report be challenged?
+5. **Privacy boundary:** What can be acted on from metadata and signed records alone? What is deliberately not inspected because job inputs are private or sealed? Do not promise content review that the architecture cannot perform.
+
+## Suggested order
+
+Before public admission, settle the allowed-work policy and the minimum enforceable resource budgets. Then define reporting, evidence retention, and an operator response path that respects the privacy boundary. Treat reputation, collateral, or economic penalties as separate design work; they do not replace immediate worker-side limits or an abuse response process.
+
+Until those decisions and controls exist, the safe product boundary remains an invited pool whose operators trust its members. This note does not mark the abuse item in #22 complete; it makes the remaining decisions concrete for review.
