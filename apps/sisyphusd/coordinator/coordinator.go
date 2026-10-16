@@ -731,6 +731,9 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	case audit > 0 && !composite && !c.runsItself(workload.Name()):
 		return nil, status.Errorf(codes.FailedPrecondition, "audit_share has this node run tasks of the job again itself, and it cannot run %s: it is not a worker for that workload", workload.Name())
 	}
+	if varying, ok := workload.(runtime.Varying); ok && varying.Varies() && (verify >= 2 || audit > 0) {
+		return nil, status.Errorf(codes.InvalidArgument, "%s gives results that can differ from one run to the next, and verify and audit_share check a task by comparing what two runs returned, so honest workers would be taken for wrong ones: they are for work that gives the same result every time", workload.Name())
+	}
 	needs := c.needs(workload.Name(), spec.GetParams(), len(spec.GetKey()) > 0)
 
 	parts := 1

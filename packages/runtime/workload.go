@@ -48,6 +48,17 @@ type Described interface {
 	Describe() string
 }
 
+// Varying is a workload whose output for one payload may differ from one
+// run to the next, or from one machine to another: a model's reply, which
+// is sampled and whose arithmetic differs between a processor and a
+// graphics card, or whatever a container's image does. Its work cannot be
+// checked by comparing the bytes two runs return, which is how a job is
+// verified or audited, since honest workers would disagree. Varies says
+// whether that is so.
+type Varying interface {
+	Varies() bool
+}
+
 // Needy is a workload whose tasks cannot run on just any worker that has
 // the workload: they need something more of it, which depends on the job.
 type Needy interface {

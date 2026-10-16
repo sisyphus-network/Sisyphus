@@ -102,6 +102,9 @@ func (o Owner) refuses(model string) error {
 	return fmt.Errorf("this worker's owner does not offer the model %q", model)
 }
 
+// Varies says that Chat results can differ between runs.
+func (Chat) Varies() bool { return true }
+
 func (Chat) Name() string { return "chat" }
 
 func (Chat) Describe() string {
