@@ -69,6 +69,11 @@ func newModel(t *testing.T, replies ...string) *model {
 			}
 			io.WriteString(w, `{"models":[{"name":"test-model","size":4900000000},{"name":"another-model"}]}`)
 			return
+		case "/api/version":
+			// What a worker asks before each model task, to say what the
+			// task ran with.
+			io.WriteString(w, `{"version":"0.12.11"}`)
+			return
 		case "/api/ps":
 			// One of them is in memory, three quarters of it on a card.
 			io.WriteString(w, `{"models":[{"name":"test-model","size":4000,"size_vram":3000}]}`)

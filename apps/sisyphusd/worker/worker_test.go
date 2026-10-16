@@ -3,7 +3,10 @@ package worker_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -172,5 +175,65 @@ func TestWorkerStopsAtOnceWhenAlreadyCancelled(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a cancelled worker kept running")
+	}
+}
+
+// A model task's result says what the worker's model server ran it with,
+// whether the task succeeds or fails; other work's says nothing of models.
+func TestWorkerSendsWhatAModelTaskRanWith(t *testing.T) {
+	ollama := func(answers int) *httptest.Server {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/version":
+				io.WriteString(w, `{"version":"0.12.11"}`)
+			case "/api/tags":
+				io.WriteString(w, `{"models":[{"name":"llama3.1:8b","digest":"46e0c10c039e","details":{"quantization_level":"Q4_K_M"}}]}`)
+			default:
+				w.WriteHeader(answers)
+				io.WriteString(w, `{"model":"llama3.1:8b","message":{"role":"assistant","content":"Hi."},"done":true}`)
+			}
+		}))
+		t.Cleanup(server.Close)
+		return server
+	}
+	for name, tt := range map[string]struct {
+		workload, payload string
+		answers           int
+		failed            bool
+		used              bool
+	}{
+		"a model task that succeeds": {"chat", `{"model":"llama3.1:8b","temperature":0,"messages":[{"role":"user","content":"Hi"}]}`, http.StatusOK, false, true},
+		"a model task that fails":    {"chat", `{"model":"llama3.1:8b","temperature":0,"messages":[{"role":"user","content":"Hi"}]}`, http.StatusInternalServerError, true, true},
+		"work that asks no model":    {"primes", `{"from":0,"to":10}`, http.StatusOK, false, false},
+	} {
+		coordinator := &scriptedCoordinator{
+			assignment: &pb.TaskAssignment{TaskId: "job/0", JobId: "job", Attempt: 1, Workload: tt.workload, Payload: []byte(tt.payload)},
+			hello:      make(chan *pb.Hello, 1),
+			result:     make(chan *pb.TaskResult, 1),
+		}
+		srv := newServer()
+		pb.RegisterCoordinatorServiceServer(srv, coordinator)
+		addr, _ := serve(t, srv)
+		runWorker(t, &worker.Worker{
+			Name: "w", Coordinator: addr, Credentials: workerCreds, Slots: 1,
+			Workloads: runtime.Builtin().With(runtime.Chat{URL: ollama(tt.answers).URL, Owner: runtime.Owner{Options: map[string]any{"num_ctx": 8192}}}),
+			Blobs:     storage.NewMemory(), Log: quiet(),
+		})
+		<-coordinator.hello
+		result := <-coordinator.result
+		if failed := result.GetError() != ""; failed != tt.failed {
+			t.Errorf("%s: result %v", name, result)
+		}
+		used := result.GetUsed()
+		if !tt.used {
+			if used != nil {
+				t.Errorf("%s: sent %v", name, used)
+			}
+			continue
+		}
+		if used.GetServer() != "ollama" || used.GetVersion() != "0.12.11" || used.GetModel() != "llama3.1:8b" || used.GetDigest() != "46e0c10c039e" || used.GetQuantization() != "Q4_K_M" ||
+			!strings.Contains(string(used.GetOptions()), `"num_ctx":8192`) || !strings.Contains(string(used.GetOptions()), `"temperature":0`) {
+			t.Errorf("%s: sent %v", name, used)
+		}
 	}
 }

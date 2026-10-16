@@ -321,6 +321,15 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 		}
 		blobs = runtime.Sealed(touched, ring, own)
 	}
+	// A model task says what it ran with before it asks its server
+	// anything, so that goes with the result however the task ends.
+	ctx = runtime.WithModelUse(ctx, func(use runtime.ModelUse) {
+		result.Used = &pb.ModelUse{
+			Server: use.Server, Version: use.Version,
+			Model: use.Model, Digest: use.Digest, Quantization: use.Quantization,
+			Options: use.Options,
+		}
+	})
 	output, err := workload.Execute(ctx, blobs, a.GetPayload())
 	if err != nil {
 		fail(err)
