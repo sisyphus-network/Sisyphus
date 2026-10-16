@@ -1014,7 +1014,7 @@ examples/render.sh                                                       # a pic
 - **Holding tasks in further.** A container shares this machine's kernel, which is the weak point when the work is a stranger's. Two more flags on the worker ask more of Docker:
   - `--container-runtime runsc` runs every task with the runtime named in place of Docker's usual: [gVisor](https://gvisor.dev)'s `runsc`, which stands between the task and the kernel, or Kata Containers' runtime, which gives each task a small virtual machine. The runtime is installed and made known to Docker by you; the node checks Docker has it and does not start otherwise, so it never runs tasks less held in than you asked. Neither has been tried here: this machine has only Docker's own runtime, and a graphics card complicates both.
   - `--containers-read-only` gives a task nowhere to write but `/output` and `/tmp`, with `/tmp` held in memory and counted against the task's memory. Nothing in the image can be changed. An image that writes elsewhere fails; `transcode` and what the examples run do not.
-- **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container.
+- **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container. So does a task running past the worker's own `--containers-timeout`, which its owner sets whatever the job allows; the attempt then fails and is tried again like any other.
 - **A job is taken in by any coordinator**, and waits until a worker that runs containers is connected, and one that allows the network if the job asks for it.
 - **Tasks of a job that run on one machine share one copy of its input**, fetched once. Tasks of different jobs share nothing.
 

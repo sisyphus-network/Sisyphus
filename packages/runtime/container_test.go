@@ -641,3 +641,30 @@ func TestAWorkersOwnerSetsTheMostATaskMayUse(t *testing.T) {
 		}
 	}
 }
+
+// A worker's owner sets the longest a task may run, and the worker stops a
+// task that runs longer, container and all, whatever its job allows.
+func TestAWorkersOwnerSetsTheLongestATaskMayRun(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+	var killed []string
+	c := Container{Confined: Confinement{Timeout: 50 * time.Millisecond}, Engine: func(ctx context.Context, args []string, _, _ io.Writer) (int, error) {
+		if args[0] == "kill" {
+			killed = append(killed, args[1])
+			return 0, nil
+		}
+		<-ctx.Done()
+		return -1, ctx.Err()
+	}}
+	payloads, _ := c.Split(ctx, store, []byte(`{"image":"alpine:3.20","command":["sleep","3600"]}`), 1)
+	if _, err := c.Execute(ctx, store, payloads[0]); err == nil || !strings.Contains(err.Error(), "longer than the 50ms this worker's owner allows a task") || len(killed) != 1 {
+		t.Fatalf("a task that ran too long: %v, killed %v", err, killed)
+	}
+
+	// A task stopped for its job's own sake is stopped for that reason.
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := c.Execute(stopped, store, payloads[0]); !errors.Is(err, context.Canceled) || len(killed) != 2 {
+		t.Fatalf("a task whose job was cancelled: %v, killed %v", err, killed)
+	}
+}
