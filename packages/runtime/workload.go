@@ -83,6 +83,20 @@ func (r *Registry) Needs(name string, params []byte) []string {
 	return nil
 }
 
+// contained is a workload whose tasks run in containers, held in as its
+// worker's owner says.
+type contained interface{ confinement() Confinement }
+
+func (c Container) confinement() Confinement { return c.Confined }
+func (t Transcode) confinement() Confinement { return t.Confined }
+
+// InContainers reports whether the named workload runs its tasks in
+// containers: on a stranger's image, or on a stranger's input.
+func (r *Registry) InContainers(name string) bool {
+	_, ok := r.workloads[name].(contained)
+	return ok
+}
+
 // Offers returns the labels a worker has by running these workloads.
 func (r *Registry) Offers(ctx context.Context) []string {
 	var labels []string

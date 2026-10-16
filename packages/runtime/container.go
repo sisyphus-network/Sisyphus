@@ -92,6 +92,27 @@ func heldTo[N int | float64](asked, most N) N {
 // workers that have it.
 const NetworkLabel = "container-network"
 
+// BoundedTmpLabel marks a worker whose containers can write nowhere but
+// /output, which is capped, and a /tmp of a size its owner set: one whose
+// tasks cannot fill its disk or its memory with what they write.
+// SandboxedLabel marks one that runs them with a runtime that stands
+// between a task and the machine's kernel, gVisor's or Kata's, which the
+// worker found Docker has before it started.
+const (
+	BoundedTmpLabel = "container-bounded-tmp"
+	SandboxedLabel  = "container-sandboxed"
+)
+
+// HardenedLabels are what a coordinator that hands container work only to
+// hardened workers needs of each.
+var HardenedLabels = []string{BoundedTmpLabel, SandboxedLabel}
+
+// sandboxed reports whether the runtime asked for is one that sandboxes:
+// gVisor's runsc, under any of the names it is installed as, or Kata's.
+func (c Confinement) sandboxed() bool {
+	return strings.HasPrefix(c.Runtime, "runsc") || strings.HasPrefix(c.Runtime, "io.containerd.runsc.") || strings.Contains(c.Runtime, "kata")
+}
+
 // args is what Confinement adds to the engine's command.
 func (c Confinement) args() []string {
 	var args []string
@@ -176,10 +197,17 @@ func (Container) Needs(params []byte) []string {
 
 // Offers is the network, where the worker's owner allows it.
 func (c Container) Offers(context.Context) []string {
-	if !c.Confined.Network {
-		return nil
+	var offers []string
+	if c.Confined.Network {
+		offers = append(offers, NetworkLabel)
 	}
-	return []string{NetworkLabel}
+	if c.Confined.ReadOnly && c.Confined.TmpMB > 0 {
+		offers = append(offers, BoundedTmpLabel)
+	}
+	if c.Confined.sandboxed() {
+		offers = append(offers, SandboxedLabel)
+	}
+	return offers
 }
 
 // Varies says that Container results can differ between runs.

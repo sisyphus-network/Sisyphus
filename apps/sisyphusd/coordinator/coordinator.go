@@ -118,6 +118,10 @@ type Config struct {
 	// worker making a call is, and is the call's own address if left nil.
 	DistinctAddresses bool
 	AddressOf         func(ctx context.Context) string
+	// HardenedContainers has every job whose tasks run in containers go
+	// only to workers that run them hardened: runtime.HardenedLabels. For a pool that
+	// takes container work from people its workers' owners do not know.
+	HardenedContainers bool
 	// Journal, if set, is where jobs are kept across restarts; see Recover.
 	Journal Journal
 	// Standings, if set, is where the standing of workers is kept across
@@ -145,6 +149,8 @@ type Coordinator struct {
 	// where each worker that has connected was when it last did.
 	distinct  bool
 	addressOf func(ctx context.Context) string
+	// hardened is whether container jobs need hardened workers.
+	hardened  bool
 	addresses map[string]string
 	store     Store
 	journal   Journal
@@ -293,6 +299,7 @@ func New(cfg Config) *Coordinator {
 		workloads: cfg.Workloads,
 		audits:    cfg.Audits,
 		distinct:  cfg.DistinctAddresses,
+		hardened:  cfg.HardenedContainers,
 		addressOf: cfg.AddressOf,
 		addresses: make(map[string]string),
 		store:     cfg.Store,
@@ -1319,12 +1326,16 @@ func withKey(blobs runtime.Blobs, key []byte, jobID string) runtime.Blobs {
 }
 
 // needs is what a worker must have to be given the tasks of a job: what
-// its workload asks for, and, for a private job, that it takes keys as
-// they are now given.
+// its workload asks for; for a private job, that it takes keys as they are
+// now given; and for a job whose tasks run in containers, on a coordinator
+// that asks it, that it runs containers hardened.
 func (c *Coordinator) needs(workload string, params []byte, private bool) []string {
 	needs := c.workloads.Needs(workload, params)
 	if private {
 		needs = append(needs, runtime.SealingLabel)
+	}
+	if c.hardened && c.workloads.InContainers(workload) {
+		needs = append(needs, runtime.HardenedLabels...)
 	}
 	return needs
 }
