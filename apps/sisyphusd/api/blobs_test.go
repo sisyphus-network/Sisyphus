@@ -29,6 +29,8 @@ type brokenStore struct {
 	*storage.Store
 	failPut, failOpen, failRead bool
 	failPin, failGC, failSize   bool
+	// failUnpin fails only taking pins back.
+	failUnpin bool
 	// used, if set, is what the store claims to occupy on disk.
 	used uint64
 }
@@ -41,7 +43,7 @@ func (b brokenStore) Pin(ctx context.Context, owner string, expires time.Time, c
 }
 
 func (b brokenStore) Unpin(owner string, cids ...cid.Cid) error {
-	if b.failPin {
+	if b.failPin || b.failUnpin {
 		return errDisk
 	}
 	return b.Store.Unpin(owner, cids...)
@@ -301,5 +303,69 @@ func TestUploadsAreRefusedOnceTheStoreIsFull(t *testing.T) {
 	unlimited := &blobService{store: brokenStore{Store: storage.NewMemory(), failSize: true}}
 	if err := unlimited.Put(&upload{chunks: [][]byte{data}}); err != nil {
 		t.Errorf("upload with no limit: %v", err)
+	}
+}
+
+// asClient has every call in a test come from the client named, which
+// the service takes for one of its clients.
+func asClient(t *testing.T, s *blobService, client string) {
+	t.Helper()
+	before := caller
+	caller = func(context.Context) string { return client }
+	t.Cleanup(func() { caller = before })
+	s.clients = func(id string) bool { return id == client }
+}
+
+// A client's share that cannot be measured is no share it can be held
+// to, so what it asks is refused as the node's own failure, and a pin
+// that was taken is given back.
+func TestAShareThatCannotBeMeasuredRefusesItsClient(t *testing.T) {
+	ctx := context.Background()
+	store, held := storeWithBlob(t)
+	service := &blobService{store: store, owner: "node", perClient: 100, stored: func(context.Context) (map[string]uint64, error) { return nil, errDisk }}
+	asClient(t, service, "alice")
+
+	if err := service.Put(&upload{chunks: [][]byte{[]byte("hi")}}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "measure what this client keeps") {
+		t.Errorf("an upload: %v", err)
+	}
+	if _, err := service.Pin(ctx, &pb.PinBlobRequest{Cid: held}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "measure what this client keeps") {
+		t.Errorf("a pin: %v", err)
+	}
+	for _, pin := range store.Pins() {
+		if pin.Owner == clientOwner+"alice" {
+			t.Errorf("a pin that was refused was left in place: %v", pin)
+		}
+	}
+}
+
+// What a client uploads counts towards it from the start; a store that
+// will not count it fails the upload rather than let it go uncounted.
+func TestAnUploadThatCannotBeCountedFails(t *testing.T) {
+	service := &blobService{store: brokenStore{Store: storage.NewMemory(), failPin: true}, owner: "node"}
+	asClient(t, service, "alice")
+	if err := service.Put(&upload{chunks: [][]byte{[]byte("hi")}}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "count the upload towards its client") {
+		t.Errorf("an upload that could not be counted: %v", err)
+	}
+}
+
+// A pin over a client's share that cannot be taken back is still in
+// place, so the client is told the node failed, not that it was refused.
+func TestAPinThatCannotBeTakenBackIsSaidSo(t *testing.T) {
+	store, held := storeWithBlob(t)
+	over := func(context.Context) (map[string]uint64, error) { return map[string]uint64{"alice": 101}, nil }
+	service := &blobService{store: brokenStore{Store: store, failUnpin: true}, owner: "node", perClient: 100, stored: over}
+	asClient(t, service, "alice")
+
+	if _, err := service.Pin(context.Background(), &pb.PinBlobRequest{Cid: held}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "would have this client keep 101 bytes here, and it may keep 100, and its pin could not be taken back") {
+		t.Errorf("a pin: %v", err)
+	}
+	// An upload is let in with room to spare, and found over once stored.
+	measured := 0
+	service.stored = func(context.Context) (map[string]uint64, error) {
+		measured++
+		return map[string]uint64{"alice": uint64(measured) * 60}, nil
+	}
+	if err := service.Put(&upload{chunks: [][]byte{[]byte("hi")}}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "uploading") || !strings.Contains(err.Error(), "its pin could not be taken back") {
+		t.Errorf("an upload: %v", err)
 	}
 }

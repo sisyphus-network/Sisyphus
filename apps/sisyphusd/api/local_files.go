@@ -82,7 +82,7 @@ func (s *localService) keep(ctx context.Context, name string, private, attachmen
 		}
 		as = func(sent io.Reader) io.Reader { return sealed.Encrypt(key, sent) }
 	}
-	c, size, err := storeUpload(ctx, s.cfg.Store, s.cfg.MaxStoreBytes, as, recv)
+	c, size, err := storeUpload(ctx, s.cfg.Store, s.cfg.MaxStoreBytes, 0, as, recv)
 	if err != nil {
 		return nil, err
 	}

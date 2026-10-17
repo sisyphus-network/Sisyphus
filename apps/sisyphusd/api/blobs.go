@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,6 +41,42 @@ type blobService struct {
 	// owner is the ID of the node itself, whose pins are the user's own and
 	// which may see and release everyone's.
 	owner string
+	// clients says whether a caller is a client, as the access list has
+	// it; nil takes no caller for one.
+	clients func(id string) bool
+	// perClient is the most a client may keep in the store, as stored
+	// says it keeps; zero means no limit.
+	perClient uint64
+	stored    func(ctx context.Context) (map[string]uint64, error)
+}
+
+// uploadOwner begins the name a client's uploads are held under until
+// they are pinned or collected, so that what it has sent counts towards
+// it from the start.
+const uploadOwner = "upload:"
+
+// client returns the client making a call, if a client is making it.
+func (s *blobService) client(ctx context.Context) (string, bool) {
+	id, is := guest(ctx, s.owner)
+	return id, is && s.clients != nil && s.clients(id)
+}
+
+// leftFor says how many more bytes a client may keep, and refuses it any
+// at all once it keeps its share. A caller that is no client, or a store
+// with no share for clients, has no limit here: zero.
+func (s *blobService) leftFor(ctx context.Context, client string) (uint64, error) {
+	if s.perClient == 0 {
+		return 0, nil
+	}
+	stored, err := s.stored(ctx)
+	if err != nil {
+		return 0, status.Errorf(codes.Internal, "measure what this client keeps: %v", err)
+	}
+	used := stored[client]
+	if used >= s.perClient {
+		return 0, status.Errorf(codes.ResourceExhausted, "this client keeps %d bytes here, and may keep %d; unpin some first", used, s.perClient)
+	}
+	return s.perClient - used, nil
 }
 
 // pinOwner is who a caller's pins are held for: the user, for the node
@@ -55,11 +92,13 @@ func (s *blobService) pinOwner(ctx context.Context) string {
 // clientOwner begins the name a client's pins are held under.
 const clientOwner = userOwner + ":"
 
-// clientOf returns the client whose own pins an owner holds, or nothing
-// for an owner that is no client's.
+// clientOf returns the client whose own pins, or uploads, an owner holds,
+// or nothing for an owner that is no client's.
 func clientOf(owner string) string {
-	if client, found := strings.CutPrefix(owner, clientOwner); found {
-		return client
+	for _, prefix := range []string{clientOwner, uploadOwner} {
+		if client, found := strings.CutPrefix(owner, prefix); found {
+			return client
+		}
 	}
 	return ""
 }
@@ -82,22 +121,44 @@ type blobStore interface {
 }
 
 func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]) error {
-	c, size, err := storeUpload(stream.Context(), s.store, s.quota, plain, func() ([]byte, error) {
+	ctx := stream.Context()
+	client, isClient := s.client(ctx)
+	var left uint64
+	if isClient {
+		var err error
+		if left, err = s.leftFor(ctx, client); err != nil {
+			return err
+		}
+	}
+	c, size, err := storeUpload(ctx, s.store, s.quota, left, plain, func() ([]byte, error) {
 		msg, err := stream.Recv()
 		return msg.GetData(), err
 	})
 	if err != nil {
 		return err
 	}
+	if isClient {
+		// What a client sent counts towards it until it is pinned, when
+		// the pin does, or collected.
+		if err := s.store.Pin(ctx, uploadOwner+client, time.Now().Add(storage.GracePeriod), c); err != nil {
+			return status.Errorf(codes.Internal, "count the upload towards its client: %v", err)
+		}
+		// What is stored takes a little more than what was sent, so
+		// the share is checked again as the store counts it.
+		if err := s.within(ctx, uploadOwner+client, client, c, "uploading"); err != nil {
+			return err
+		}
+	}
 	return stream.SendAndClose(&pb.PutBlobResponse{Cid: c.String(), Size: size})
 }
 
 // storeUpload stores what recv returns, piece by piece until it returns io.EOF,
 // and says what CID it was stored under and how much there was. With a
-// quota, it refuses what would not fit. What is stored is what as makes of
+// quota, it refuses what would not fit, and with a share left to its
+// sender, what would not fit in that. What is stored is what as makes of
 // what was sent.
-func storeUpload(ctx context.Context, store FileStore, quota uint64, as func(io.Reader) io.Reader, recv func() ([]byte, error)) (cid.Cid, uint64, error) {
-	upload := &uploadReader{recv: recv}
+func storeUpload(ctx context.Context, store FileStore, quota, share uint64, as func(io.Reader) io.Reader, recv func() ([]byte, error)) (cid.Cid, uint64, error) {
+	upload := &uploadReader{recv: recv, limit: share, of: "this client's share"}
 	if quota > 0 {
 		used, err := store.Size(ctx)
 		if err != nil {
@@ -106,7 +167,9 @@ func storeUpload(ctx context.Context, store FileStore, quota uint64, as func(io.
 		if used >= quota {
 			return cid.Undef, 0, status.Errorf(codes.ResourceExhausted, "store is full: %d of %d bytes used", used, quota)
 		}
-		upload.limit = quota - used
+		if left := quota - used; share == 0 || left < share {
+			upload.limit, upload.of = left, "the store"
+		}
 	}
 	c, err := store.Put(ctx, as(upload))
 	if err != nil {
@@ -126,8 +189,10 @@ type uploadReader struct {
 	recv func() ([]byte, error)
 	rest []byte
 	size uint64
-	// limit is the most bytes the upload may carry; zero means no limit.
+	// limit is the most bytes the upload may carry, of what is left of
+	// what; zero means no limit.
 	limit uint64
+	of    string
 }
 
 func (r *uploadReader) Read(p []byte) (int, error) {
@@ -144,7 +209,7 @@ func (r *uploadReader) Read(p []byte) (int, error) {
 	// What was stored before the limit was passed is unpinned, so the next
 	// collection removes it.
 	if r.limit > 0 && r.size > r.limit {
-		return 0, status.Errorf(codes.ResourceExhausted, "upload exceeds the %d bytes left in the store", r.limit)
+		return 0, status.Errorf(codes.ResourceExhausted, "upload exceeds the %d bytes left of %s", r.limit, r.of)
 	}
 	return n, nil
 }
@@ -234,14 +299,47 @@ func (s *blobService) Pin(ctx context.Context, req *pb.PinBlobRequest) (*pb.PinB
 	if ttl := req.GetTtlSeconds(); ttl > 0 {
 		expires = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
-	err = s.store.Pin(ctx, s.pinOwner(ctx), expires, c)
+	owner := s.pinOwner(ctx)
+	client, isClient := s.client(ctx)
+	// A pin the client already holds keeps nothing more; one it does not
+	// is held to its share, and taken back if it goes past it.
+	held := slices.ContainsFunc(s.store.Pins(), func(p storage.Pin) bool { return p.Owner == owner && p.CID == c })
+	err = s.store.Pin(ctx, owner, expires, c)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, status.Errorf(codes.NotFound, "blob %s not found", c)
 	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "pin blob: %v", err)
 	}
+	if isClient && !held {
+		if err := s.within(ctx, owner, client, c, "pinning"); err != nil {
+			return nil, err
+		}
+	}
 	return &pb.PinBlobResponse{}, nil
+}
+
+// within checks that a client keeps no more than its share now that owner
+// holds a pin on c for it, and takes the pin back if it does, or if what
+// it keeps cannot be measured. A pin that cannot be taken back is said so,
+// since it is then still in place.
+func (s *blobService) within(ctx context.Context, owner, client string, c cid.Cid, doing string) error {
+	if s.perClient == 0 {
+		return nil
+	}
+	stored, err := s.stored(ctx)
+	if err == nil && stored[client] <= s.perClient {
+		return nil
+	}
+	if err != nil {
+		err = status.Errorf(codes.Internal, "measure what this client keeps: %v", err)
+	} else {
+		err = status.Errorf(codes.ResourceExhausted, "%s %s would have this client keep %d bytes here, and it may keep %d", doing, c, stored[client], s.perClient)
+	}
+	if unpinErr := s.store.Unpin(owner, c); unpinErr != nil {
+		return status.Errorf(codes.Internal, "%v, and its pin could not be taken back: %v", status.Convert(err).Message(), unpinErr)
+	}
+	return err
 }
 
 func (s *blobService) Unpin(ctx context.Context, req *pb.UnpinBlobRequest) (*pb.UnpinBlobResponse, error) {
