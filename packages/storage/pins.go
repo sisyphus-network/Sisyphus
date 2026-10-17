@@ -42,6 +42,35 @@ type pinKey struct {
 // Pin pins blobs the store holds for owner until expires, or until released
 // if expires is the zero time. Pinning again replaces the earlier expiry.
 func (s *Store) Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error {
+	return s.pin(ctx, owner, expires, 0, cids)
+}
+
+// OverShareError is returned by PinWithin for pins that would have the
+// owner's group keep more than it may.
+type OverShareError struct {
+	Group string
+	// Keeps is what the group would have kept with the pins, and May what
+	// it may keep.
+	Keeps, May uint64
+}
+
+func (e *OverShareError) Error() string {
+	return fmt.Sprintf("%s would keep %d bytes, and may keep %d", e.Group, e.Keeps, e.May)
+}
+
+// PinWithin pins as Pin does, unless that would have the group owner's pins
+// count towards keep more than limit bytes, as Usage counts it, and more
+// than it kept before; then it pins nothing and returns an
+// *OverShareError. Pins that add nothing, such as one placed again, are
+// never refused. The pins are checked and
+// placed in one step, so pins placed together cannot together go past the
+// limit. A limit of zero, or an owner whose pins count towards no group,
+// is held to none; so is every owner until GroupPins has named the groups.
+func (s *Store) PinWithin(ctx context.Context, owner string, expires time.Time, limit uint64, cids ...cid.Cid) error {
+	return s.pin(ctx, owner, expires, limit, cids)
+}
+
+func (s *Store) pin(ctx context.Context, owner string, expires time.Time, limit uint64, cids []cid.Cid) error {
 	if len(cids) == 0 {
 		return nil
 	}
@@ -82,11 +111,47 @@ func (s *Store) Pin(ctx context.Context, owner string, expires time.Time, cids .
 		}
 	}
 	defer s.pinMu.Unlock()
+	// What the owner's group keeps before these pins, if it is held to a
+	// limit: pins that add nothing to it, such as one placed again, are
+	// never refused, even for a group already past its limit.
+	var group string
+	var keptBefore uint64
+	if limit > 0 && s.index != nil {
+		if group = s.index.group(owner); group != "" {
+			s.index.lapseLocked(time.Now())
+			keptBefore = s.index.kept(group)
+		}
+	}
+	type before struct {
+		expires time.Time
+		held    bool
+	}
+	was := make(map[pinKey]before, len(cids))
 	for _, c := range cids {
 		key := pinKey{c, owner}
+		if _, seen := was[key]; !seen {
+			expires, held := s.pins[key]
+			was[key] = before{expires, held}
+		}
 		s.pins[key] = expires
 		if s.index != nil {
 			s.index.chargeLocked(key, expires, reached[c])
+		}
+	}
+	if group != "" {
+		s.index.lapseLocked(time.Now())
+		if keeps := s.index.kept(group); keeps > limit && keeps > keptBefore {
+			// Put back what the pins were before.
+			for key, b := range was {
+				if b.held {
+					s.pins[key] = b.expires
+					s.index.retimeLocked(key, b.expires)
+				} else {
+					delete(s.pins, key)
+					s.index.unchargeLocked(key)
+				}
+			}
+			return &OverShareError{Group: group, Keeps: keeps, May: limit}
 		}
 	}
 	s.tellPinsChangedLocked()

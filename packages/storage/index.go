@@ -48,6 +48,15 @@ type groupUse struct {
 	bytes uint64
 }
 
+// kept is the bytes a group keeps: nothing for a group with no counted
+// pin, which has no use.
+func (ix *usageIndex) kept(group string) uint64 {
+	if use := ix.groups[group]; use != nil {
+		return use.bytes
+	}
+	return 0
+}
+
 // charge is the group a pin is counted towards, and when it lapses.
 type charge struct {
 	group   string

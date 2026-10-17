@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"slices"
 	"strings"
 	"time"
 
@@ -119,6 +118,7 @@ type blobStore interface {
 	FileStore
 	Pins() []storage.Pin
 	GC(ctx context.Context, now time.Time) (storage.Collected, error)
+	PinWithin(ctx context.Context, owner string, expires time.Time, limit uint64, cids ...cid.Cid) error
 }
 
 func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]) error {
@@ -141,12 +141,9 @@ func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, p
 	if isClient {
 		// What a client sent counts towards it until it is pinned, when
 		// the pin does, or collected.
-		if err := s.store.Pin(ctx, uploadOwner+client, time.Now().Add(storage.GracePeriod), c); err != nil {
-			return status.Errorf(codes.Internal, "count the upload towards its client: %v", err)
-		}
-		// What is stored takes a little more than what was sent, so
-		// the share is checked again as the store counts it.
-		if err := s.within(ctx, uploadOwner+client, client, c, "uploading"); err != nil {
+		// What is stored takes a little more than what was sent, so the
+		// share is held to as the store counts it.
+		if err := s.pinWithin(ctx, uploadOwner+client, time.Now().Add(storage.GracePeriod), c, "uploading"); err != nil {
 			return err
 		}
 	}
@@ -301,10 +298,14 @@ func (s *blobService) Pin(ctx context.Context, req *pb.PinBlobRequest) (*pb.PinB
 		expires = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	owner := s.pinOwner(ctx)
-	client, isClient := s.client(ctx)
-	// A pin the client already holds keeps nothing more; one it does not
-	// is held to its share, and taken back if it goes past it.
-	held := slices.ContainsFunc(s.store.Pins(), func(p storage.Pin) bool { return p.Owner == owner && p.CID == c })
+	// A client's pin is held to its share, which a pin it already holds
+	// adds nothing to.
+	if _, isClient := s.client(ctx); isClient {
+		if err := s.pinWithin(ctx, owner, expires, c, "pinning"); err != nil {
+			return nil, err
+		}
+		return &pb.PinBlobResponse{}, nil
+	}
 	err = s.store.Pin(ctx, owner, expires, c)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, status.Errorf(codes.NotFound, "blob %s not found", c)
@@ -312,35 +313,32 @@ func (s *blobService) Pin(ctx context.Context, req *pb.PinBlobRequest) (*pb.PinB
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "pin blob: %v", err)
 	}
-	if isClient && !held {
-		if err := s.within(ctx, owner, client, c, "pinning"); err != nil {
-			return nil, err
-		}
-	}
 	return &pb.PinBlobResponse{}, nil
 }
 
-// within checks that a client keeps no more than its share now that owner
-// holds a pin on c for it, and takes the pin back if it does, or if what
-// it keeps cannot be measured. A pin that cannot be taken back is said so,
-// since it is then still in place.
-func (s *blobService) within(ctx context.Context, owner, client string, c cid.Cid, doing string) error {
-	if s.perClient == 0 {
+// pinWithin pins c for a client's owner, held to the client's share: the
+// store checks the share and places the pin in one step, so pins placed
+// together cannot together take the client past it, and a pin that would
+// is not placed at all.
+func (s *blobService) pinWithin(ctx context.Context, owner string, expires time.Time, c cid.Cid, doing string) error {
+	if s.perClient > 0 {
+		// Asking what clients keep has the store start counting it, if it
+		// has not already.
+		if _, err := s.stored(ctx); err != nil {
+			return status.Errorf(codes.Internal, "measure what this client keeps: %v", err)
+		}
+	}
+	err := s.store.PinWithin(ctx, owner, expires, s.perClient, c)
+	var over *storage.OverShareError
+	switch {
+	case err == nil:
 		return nil
+	case errors.As(err, &over):
+		return status.Errorf(codes.ResourceExhausted, "%s %s would have this client keep %d bytes here, and it may keep %d", doing, c, over.Keeps, over.May)
+	case errors.Is(err, storage.ErrNotFound):
+		return status.Errorf(codes.NotFound, "blob %s not found", c)
 	}
-	stored, err := s.stored(ctx)
-	if err == nil && stored[client] <= s.perClient {
-		return nil
-	}
-	if err != nil {
-		err = status.Errorf(codes.Internal, "measure what this client keeps: %v", err)
-	} else {
-		err = status.Errorf(codes.ResourceExhausted, "%s %s would have this client keep %d bytes here, and it may keep %d", doing, c, stored[client], s.perClient)
-	}
-	if unpinErr := s.store.Unpin(owner, c); unpinErr != nil {
-		return status.Errorf(codes.Internal, "%v, and its pin could not be taken back: %v", status.Convert(err).Message(), unpinErr)
-	}
-	return err
+	return status.Errorf(codes.Internal, "%s %s for its client: %v", doing, c, err)
 }
 
 func (s *blobService) Unpin(ctx context.Context, req *pb.UnpinBlobRequest) (*pb.UnpinBlobResponse, error) {
