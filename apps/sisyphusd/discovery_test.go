@@ -294,6 +294,62 @@ func TestAHomeNetworkUsingPublicAddressSpaceIsNotPlacedByItsLanAddress(t *testin
 	}
 }
 
+func TestPublicAddressOnOwnInterfaceIsUsedWithoutNATEvidence(t *testing.T) {
+	oldCountry, oldLocal := countryOf, interfacePrefixes
+	countryOf = func(netip.Addr) string { return "US" }
+	interfacePrefixes = func() []netip.Prefix {
+		return []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}
+	}
+	defer func() { countryOf, interfacePrefixes = oldCountry, oldLocal }()
+
+	own := []string{"/ip4/203.0.113.7/tcp/7700"}
+	if code, source := countryFrom(own, netip.Addr{}, netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
+		t.Errorf("countryFrom without NAT evidence = %q from %q; want US from interface", code, source)
+	}
+	if code, source := countryFrom(own, netip.MustParseAddr("198.51.100.8"), netip.Addr{}, netip.Addr{}, "CA"); code != "US" || source != "pool" {
+		t.Errorf("countryFrom with a distinct observed address = %q from %q; want US from pool", code, source)
+	}
+
+	interfacePrefixes = func() []netip.Prefix {
+		return []netip.Prefix{netip.MustParsePrefix("2001:db8::/64")}
+	}
+	own = []string{"/ip6/2001:db8::7/tcp/7700"}
+	if code, source := countryFrom(own, netip.MustParseAddr("198.51.100.8"), netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
+		t.Errorf("IPv4 observation suppressed an own IPv6 address: got %q from %q; want US from interface", code, source)
+	}
+}
+
+func TestLocalInterfacePrefixesHandlesEnumerationFailuresAndMalformedAddresses(t *testing.T) {
+	oldList, oldAddrs := listInterfaces, interfaceAddrs
+	t.Cleanup(func() { listInterfaces, interfaceAddrs = oldList, oldAddrs })
+
+	listInterfaces = func() ([]net.Interface, error) { return nil, errors.New("interfaces unavailable") }
+	if got := localInterfacePrefixes(); got != nil {
+		t.Errorf("prefixes when interfaces cannot be listed = %v; want nil", got)
+	}
+
+	listInterfaces = func() ([]net.Interface, error) { return []net.Interface{{Index: 1}, {Index: 2}}, nil }
+	interfaceAddrs = func(network net.Interface) ([]net.Addr, error) {
+		if network.Index == 1 {
+			return nil, errors.New("addresses unavailable")
+		}
+		return []net.Addr{
+			fakeNetAddr("not an IP prefix"),
+			fakeNetAddr("12.0.0.48/24"),
+		}, nil
+	}
+	got := localInterfacePrefixes()
+	want := []netip.Prefix{netip.MustParsePrefix("12.0.0.0/24")}
+	if !slices.Equal(got, want) {
+		t.Errorf("localInterfacePrefixes() = %v; want %v", got, want)
+	}
+}
+
+type fakeNetAddr string
+
+func (a fakeNetAddr) Network() string { return "test" }
+func (a fakeNetAddr) String() string  { return string(a) }
+
 // The gateway is asked only for its external address, and a gateway that
 // is not there, or does not answer, places the node nowhere.
 func TestTheGatewayIsAskedWhereTheNodeShowsTheInternet(t *testing.T) {

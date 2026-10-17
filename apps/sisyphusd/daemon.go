@@ -1371,16 +1371,20 @@ var countryOf = geo.Country
 // routers use globally allocated IPv4 space on their LAN, so geo.Global alone
 // cannot tell that those addresses are local and must not place a peer on the
 // map. Tests replace this lookup with a known interface network.
-var interfacePrefixes = localInterfacePrefixes
+var (
+	interfacePrefixes = localInterfacePrefixes
+	listInterfaces    = net.Interfaces
+	interfaceAddrs    = func(network net.Interface) ([]net.Addr, error) { return network.Addrs() }
+)
 
 func localInterfacePrefixes() []netip.Prefix {
-	interfaces, err := net.Interfaces()
+	interfaces, err := listInterfaces()
 	if err != nil {
 		return nil
 	}
 	var prefixes []netip.Prefix
 	for _, network := range interfaces {
-		addresses, err := network.Addrs()
+		addresses, err := interfaceAddrs(network)
 		if err != nil {
 			continue
 		}
@@ -1468,7 +1472,7 @@ func (b *background) stop() {
 // an outside service said, if it was asked.
 func countryFrom(own []string, seen, gateway, stunned netip.Addr, lookedUp string) (code, source string) {
 	local := interfacePrefixes()
-	if code := placedOn(own, local); code != "" {
+	if code := placedOwnOn(own, local, seen, gateway, stunned); code != "" {
 		return code, "interface"
 	}
 	if code := countryAt(seen, local); code != "" {
@@ -1484,6 +1488,54 @@ func countryFrom(own []string, seen, gateway, stunned netip.Addr, lookedUp strin
 		return lookedUp, "lookup"
 	}
 	return "", ""
+}
+
+// placedOwnOn ignores an interface prefix as evidence of a LAN only when an
+// independent observer saw this node at a different address. Without that
+// NAT evidence, a public address on a directly connected interface is the
+// best location evidence available (for example, on a VPS).
+func placedOwnOn(multiaddrs []string, local []netip.Prefix, observed ...netip.Addr) string {
+	for _, multiaddr := range multiaddrs {
+		parts := strings.Split(multiaddr, "/")
+		if len(parts) < 3 || (parts[1] != "ip4" && parts[1] != "ip6") {
+			continue
+		}
+		addr, err := netip.ParseAddr(parts[2])
+		if err != nil {
+			continue
+		}
+		addr = addr.Unmap()
+		if inLocalPrefix(addr, local) {
+			seenElsewhere := false
+			for _, external := range observed {
+				external = external.Unmap()
+				if external.IsValid() && external.Is4() == addr.Is4() && external != addr {
+					seenElsewhere = true
+					break
+				}
+			}
+			if seenElsewhere {
+				continue
+			}
+			if code := countryOf(addr); code != "" {
+				return code
+			}
+			continue
+		}
+		if code := countryAt(addr, local); code != "" {
+			return code
+		}
+	}
+	return ""
+}
+
+func inLocalPrefix(addr netip.Addr, local []netip.Prefix) bool {
+	for _, prefix := range local {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // findGateway and askGateway find the default gateway and ask it for its
