@@ -295,7 +295,7 @@ func TestQueuedAttachmentPinsAreTriedAgainUntilTheyAreApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := chatWithFile(t, c.String())
-	a := &assistant{store: db, filePins: store}
+	a := &assistant{store: db, filePins: store, filePinChanges: make(chan struct{}, 1)}
 	if err := a.replayFilePins(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestQueuedAttachmentPinsAreTriedAgainUntilTheyAreApplied(t *testing.T) {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		replayFilePinsPeriodically(replaying, a, 5*time.Millisecond, slog.New(slog.NewTextHandler(logs, nil)))
+		replayFilePinsOnChanges(replaying, a, 5*time.Millisecond, slog.New(slog.NewTextHandler(logs, nil)))
 	}()
 	const warning = `msg="attachment pins could not be applied and will be retried" error="temporary pin store failure"`
 	waitFor(t, func() bool { return strings.Contains(logs.String(), warning) })
@@ -340,8 +340,42 @@ func TestQueuedAttachmentPinsAreTriedAgainUntilTheyAreApplied(t *testing.T) {
 
 	// Stopped before its first round is over, it says nothing.
 	logs = new(syncBuffer)
-	replayFilePinsPeriodically(replaying, &assistant{store: &flakyPinQueue{DB: db, failPending: true}, filePins: store}, time.Hour, slog.New(slog.NewTextHandler(logs, nil)))
+	replayFilePinsOnChanges(replaying, &assistant{store: &flakyPinQueue{DB: db, failPending: true}, filePins: store}, time.Hour, slog.New(slog.NewTextHandler(logs, nil)))
 	if logs.String() != "" {
 		t.Errorf("a replay that was stopped logged:\n%s", logs.String())
 	}
+}
+
+func TestQueuedAttachmentPinChangeWakesReplay(t *testing.T) {
+	ctx := context.Background()
+	store := &failingAttachmentPins{Store: storage.NewMemory()}
+	c, err := store.Put(ctx, strings.NewReader("an attachment"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := chatWithFile(t, c.String())
+	a := &assistant{store: db, filePins: store, filePinChanges: make(chan struct{}, 1)}
+	if err := a.replayFilePins(ctx); err != nil {
+		t.Fatal(err)
+	}
+	replaying, stop := context.WithCancel(ctx)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		replayFilePinsOnChanges(replaying, a, time.Hour, slog.New(slog.NewTextHandler(new(syncBuffer), nil)))
+	}()
+	if err := db.DeleteChat("owner"); err != nil {
+		t.Fatal(err)
+	}
+	a.notifyFilePinsChanged()
+	waitFor(t, func() bool {
+		for _, pin := range store.Pins() {
+			if pin.Owner == "chat:owner" && pin.CID.Equals(c) {
+				return false
+			}
+		}
+		return true
+	})
+	stop()
+	<-stopped
 }
