@@ -93,6 +93,8 @@ func (unreadableBlob) Read([]byte) (int, error) { return 0, errDisk }
 // upload is the server's side of a client's upload.
 type upload struct {
 	grpc.ServerStream
+	// first, if set, is the first message, before the chunks.
+	first   *pb.PutBlobRequest
 	chunks  [][]byte
 	recvErr error // returned after the chunks instead of a clean end
 }
@@ -100,6 +102,10 @@ type upload struct {
 func (u *upload) Context() context.Context { return context.Background() }
 
 func (u *upload) Recv() (*pb.PutBlobRequest, error) {
+	if first := u.first; first != nil {
+		u.first = nil
+		return first, nil
+	}
 	if len(u.chunks) > 0 {
 		chunk := u.chunks[0]
 		u.chunks = u.chunks[1:]
@@ -363,5 +369,67 @@ func TestAClientsPinOfAMissingBlobIsNotFound(t *testing.T) {
 	_, missing := storeWithBlob(t) // in another store
 	if _, err := service.Pin(context.Background(), &pb.PinBlobRequest{Cid: missing}); status.Code(err) != codes.NotFound {
 		t.Errorf("a pin of a missing blob: %v", err)
+	}
+}
+
+// What a worker uploads for an attempt is kept for it, unless the store
+// cannot pin it, or the attempt ended while it was on its way, when the pin
+// is let go of again.
+func TestWhatAWorkerUploadsIsKeptOnlyWhileItsAttemptLasts(t *testing.T) {
+	store, id := storeWithBlob(t)
+	c, err := cid.Decode(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	first := &pb.PutBlobRequest{TaskId: "j/0", Attempt: 1}
+	ended := &blobService{store: store, uploading: func(string, string, uint32) (string, bool) { return "", false }}
+	if err := ended.keepForAttempt(ctx, "job:j#0@1.", c, first); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "ended while") {
+		t.Errorf("an attempt that ended during the upload: %v", err)
+	}
+	for _, pin := range store.Pins() {
+		if pin.Owner == "job:j#0@1." {
+			t.Errorf("left held for an attempt that had ended")
+		}
+	}
+	failing := &blobService{store: brokenStore{Store: store, failPin: true}}
+	if err := failing.keepForAttempt(ctx, "job:j#0@1.", c, first); status.Code(err) != codes.Internal {
+		t.Errorf("a store that cannot pin: %v", err)
+	}
+}
+
+// An upload of nothing at all is an empty blob; one whose first message
+// cannot be read is not stored.
+func TestAnUploadOfNoMessagesIsAnEmptyBlob(t *testing.T) {
+	service := &blobService{store: storage.NewMemory(), owner: "node"}
+	if err := service.Put(&upload{}); err != nil {
+		t.Errorf("an upload with no messages: %v", err)
+	}
+	if err := service.Put(&upload{recvErr: errDisk}); !errors.Is(err, errDisk) {
+		t.Errorf("an upload whose first message fails: %v", err)
+	}
+}
+
+// A worker's upload for an attempt that ends while it is on its way is
+// refused, and nothing is kept for the attempt.
+func TestAnUploadForAnAttemptThatEndsMeanwhileIsRefused(t *testing.T) {
+	before := caller
+	caller = func(context.Context) string { return "worker" }
+	t.Cleanup(func() { caller = before })
+	store := storage.NewMemory()
+	asked := 0
+	service := &blobService{store: store, owner: "node", workers: func(string) bool { return true },
+		uploading: func(node, task string, attempt uint32) (string, bool) {
+			asked++
+			return "job:j#0@1.", asked == 1
+		}}
+	err := service.Put(&upload{first: &pb.PutBlobRequest{TaskId: "j/0", Attempt: 1, Data: []byte("half")}})
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "ended while") {
+		t.Errorf("an upload for an attempt that ended meanwhile: %v", err)
+	}
+	for _, pin := range store.Pins() {
+		if pin.Owner == "job:j#0@1." {
+			t.Error("kept for the attempt")
+		}
 	}
 }

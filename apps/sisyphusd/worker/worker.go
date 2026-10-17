@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
 	"github.com/sisyphus-network/Sisyphus/packages/geo"
 	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -381,6 +382,10 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 			Options: use.Options,
 		}
 	})
+	// What the task stores on the coordinator is stored for this attempt,
+	// which the coordinator lets go of when the attempt ends unless the
+	// result names it.
+	ctx = blobclient.ForAttempt(ctx, a.GetTaskId(), a.GetAttempt())
 	output, err := workload.Execute(ctx, blobs, a.GetPayload())
 	if err != nil {
 		fail(err)

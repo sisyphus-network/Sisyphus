@@ -509,6 +509,7 @@ func (c *Coordinator) Expire(now time.Time) {
 				continue
 			}
 			delete(w.running, id)
+			c.releaseLocked(a)
 			w.send.add(cancelOf(a))
 			reason := "timed out after " + a.job.TaskTimeout.String()
 			c.recordLocked(a.job, eventTaskTimedOut, a.task.Index, w.name, reason)
@@ -533,6 +534,7 @@ func (c *Coordinator) stopTasksLocked(job *jobmodel.Job) {
 		for id, a := range w.running {
 			if a.job == job {
 				delete(w.running, id)
+				c.releaseLocked(a)
 				w.send.add(cancelOf(a))
 			}
 		}
@@ -1202,6 +1204,10 @@ func (c *Coordinator) disconnect(w *worker) {
 			c.recordLocked(a.job, eventTaskLost, a.task.Index, w.name, "its worker disconnected")
 			c.failLocked(a, "worker "+w.id+" disconnected", now)
 		}
+		// Either way the attempt is over, and what it uploaded with it:
+		// a stopping coordinator takes in no more results, so nothing it
+		// uploaded can be named by one.
+		c.releaseLocked(a)
 		c.settleLocked(a.job)
 		c.notifyLocked(a.job)
 	}
@@ -1231,6 +1237,9 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 	}
 	delete(w.running, a.task.ID)
 	defer c.scheduleLocked()
+	// What the attempt uploaded is kept further only if its result names
+	// it, which keep does below.
+	defer c.releaseLocked(a)
 	// What a model task says it ran with stays with its attempt however
 	// the attempt ends. It is the worker's word, kept, not checked.
 	if used := result.GetUsed(); used != nil {
@@ -1655,6 +1664,40 @@ const ownerPrefix = "job:"
 // owner is the name a job's pins are held under.
 func owner(job *jobmodel.Job) string {
 	return ownerPrefix + job.ID
+}
+
+// Uploading names the owner what a worker uploads for an attempt at a task
+// is held under, if the worker holds that attempt now, and reports whether
+// it does. It is the coordinator's own record of the attempt, not the
+// worker's word, that a worker's upload is kept by.
+func (c *Coordinator) Uploading(nodeID, taskID string, attempt uint32) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	w, ok := c.workers[nodeID]
+	if !ok {
+		return "", false
+	}
+	a, ok := w.running[taskID]
+	if !ok || uint32(a.attempt) != attempt {
+		return "", false
+	}
+	return uploads(a), true
+}
+
+// uploads is the name what a worker uploads for an attempt is held under
+// while the attempt lasts. It is staged for the attempt's task, so that it
+// counts for no client, a job that is still going holds it, and the job lets
+// go of it when it ends. The name ends in a dot so that, as a prefix, it is
+// no other attempt's.
+func uploads(a assignment) string {
+	return staging(a.job, a.task) + "@" + strconv.Itoa(a.attempt) + "."
+}
+
+// releaseLocked lets go of what was uploaded for an attempt that has ended.
+func (c *Coordinator) releaseLocked(a assignment) {
+	if err := c.store.UnpinPrefix(uploads(a)); err != nil {
+		c.log.Warn("could not let go of what an attempt uploaded", "task", a.task.ID, "attempt", a.attempt, "error", err)
+	}
 }
 
 // staging is the name what the results of one of a job's tasks stored is
