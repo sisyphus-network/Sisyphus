@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -85,19 +84,21 @@ func TestTheTableOfMembersSaysWhatEachClientKeeps(t *testing.T) {
 	}
 }
 
-type usageFails struct{ *storage.Store }
+type groupingFails struct{ *storage.Store }
 
-func (usageFails) Usage(context.Context, time.Time, func(string) string) (map[string]uint64, error) {
-	return nil, errors.New("a pinned blob is missing")
+func (g groupingFails) GroupPins(ctx context.Context, group func(string) string) error {
+	g.Store.GroupPins(ctx, group)
+	return errors.New("a pinned blob is missing")
 }
 
-// A store that cannot say what it keeps is said to have failed, rather
-// than every client keeping nothing.
-func TestMembersAreNotListedWithUsageThatCannotBeMeasured(t *testing.T) {
-	p := startPoolOver(t, runtime.Builtin(), func(store *storage.Store) coordinator.Store { return usageFails{store} })
-	_, err := pb.NewPoolServiceClient(p.conn).ListMembers(p.ctx, &pb.ListMembersRequest{})
-	if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "a pinned blob is missing") {
-		t.Errorf("members with usage that cannot be measured: %v", err)
+// Pins that cannot be counted are left out, and said so in the log; the
+// members are listed all the same, with what can be counted.
+func TestMembersAreListedWhenSomePinsCannotBeCounted(t *testing.T) {
+	p := startPoolOver(t, runtime.Builtin(), func(store *storage.Store) coordinator.Store { return groupingFails{store} })
+	p.newClient()
+	members, err := pb.NewPoolServiceClient(p.conn).ListMembers(p.ctx, &pb.ListMembersRequest{})
+	if err != nil || len(members.GetMembers()) == 0 {
+		t.Errorf("members %v, %v", members, err)
 	}
 }
 

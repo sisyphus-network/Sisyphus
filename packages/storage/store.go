@@ -71,6 +71,10 @@ type Store struct {
 	// pinsChanged, if set, is told whenever the blobs that pins keep may
 	// have changed.
 	pinsChanged func()
+	// index counts what each group of owners keeps, once GroupPins has
+	// named the groups. It is set with both gcMu and pinMu held, so either
+	// is enough to read it.
+	index *usageIndex
 }
 
 // OpenLocal opens, creating if needed, a durable store kept in dir on this

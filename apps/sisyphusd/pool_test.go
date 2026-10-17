@@ -191,7 +191,7 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 	standings, _ := journal.(coordinator.Standings)
 	coord := coordinator.New(coordinator.Config{
 		DistinctAddresses: workersAt != nil, AddressOf: workersAt, SourceOf: workersFrom,
-		ID: ident.ID(), Workloads: workloads, Audits: workloads, Store: wrap(store), Journal: journal, Standings: standings, Retain: testRetain,
+		ID: ident.ID(), Workloads: workloads, Audits: workloads, Store: wrap(store), ClientOf: api.ClientOf, Journal: journal, Standings: standings, Retain: testRetain,
 		Log: slog.New(slog.NewTextHandler(logs, nil)),
 	})
 	if _, err := coord.Recover(); err != nil {

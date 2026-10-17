@@ -542,7 +542,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			audits = runs
 		}
 		coord = coordinator.New(coordinator.Config{
-			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: *maxJobsPerClient, MaxTasksPerClient: *maxTasksPerClient, MaxTaskTimeout: *maxTaskTimeout, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: *maxJobsPerClient, MaxTasksPerClient: *maxTasksPerClient, MaxTaskTimeout: *maxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
 		seenAs = coord.Observed

@@ -57,9 +57,10 @@ type Store interface {
 	Unpin(owner string, cids ...cid.Cid) error
 	PutNodes(ctx context.Context, root []byte, linked ...[]byte) (cid.Cid, error)
 	GetNode(ctx context.Context, c cid.Cid) ([]byte, error)
-	// Usage says how many bytes the pins of each group of owners keep;
-	// see storage.Store.Usage.
-	Usage(ctx context.Context, now time.Time, group func(owner string) string) (map[string]uint64, error)
+	// GroupPins has the store count what each group of owners keeps, and
+	// Usage says it; see storage.Store.GroupPins.
+	GroupPins(ctx context.Context, group func(owner string) string) error
+	Usage(now time.Time) map[string]uint64
 }
 
 // Journal keeps jobs somewhere that outlasts the coordinator. A nodedb.DB is
@@ -117,6 +118,10 @@ type Config struct {
 	// run a task again to check what a worker returned for it. Nil is none.
 	Audits *runtime.Registry
 	Store  Store
+	// ClientOf names the client a pin owner other than a job holds pins
+	// for, or nothing for one that holds them for none. It is how Stored
+	// counts a client's own pins.
+	ClientOf func(owner string) string
 	// DistinctAddresses has a verified task's copies go only to workers at
 	// different network addresses; see verify.go. AddressOf says where the
 	// worker making a call is, and is the call's own address if left nil.
@@ -186,11 +191,17 @@ type Coordinator struct {
 	maxTaskTimeout time.Duration
 	addresses      map[string]string
 	store          Store
-	journal        Journal
-	standings      Standings
-	retain         time.Duration
-	keepJobs       time.Duration
-	log            *slog.Logger
+	clientOf       func(owner string) string
+	// submitters has the client each client job's pins are held for, by
+	// the name they are held under. It is read with the store's pins
+	// locked, so it has a lock of its own and not the coordinator's.
+	submitters sync.Map
+	grouping   sync.Once
+	journal    Journal
+	standings  Standings
+	retain     time.Duration
+	keepJobs   time.Duration
+	log        *slog.Logger
 
 	// ctx bounds the aggregations still running when the coordinator closes.
 	ctx         context.Context
@@ -343,6 +354,7 @@ func New(cfg Config) *Coordinator {
 		sourceOf:       cfg.SourceOf,
 		addresses:      make(map[string]string),
 		store:          cfg.Store,
+		clientOf:       cfg.ClientOf,
 		journal:        cfg.Journal,
 		standings:      cfg.Standings,
 		retain:         cfg.Retain,
@@ -598,6 +610,7 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 			c.seqs[job.ID] = events[len(events)-1].Seq
 		}
 		c.jobs[job.ID] = job
+		c.noteSubmitter(job)
 		c.changed[job.ID] = make(chan struct{})
 	}
 	// Every job is known before any is taken up, so that one which ends
@@ -668,6 +681,7 @@ func (c *Coordinator) Prune(now time.Time) (int, error) {
 		if err := c.store.Unpin(recordOwner(id), decode([]string{c.jobs[id].Record})...); err != nil {
 			c.log.Warn("could not release a job's record", "job", id, "error", err)
 		}
+		c.submitters.Delete(owner(c.jobs[id]))
 		delete(c.jobs, id)
 		delete(c.changed, id)
 		delete(c.events, id)
@@ -879,6 +893,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		return nil, status.Errorf(codes.Internal, "could not record the job: %v", err)
 	}
 	c.jobs[job.ID] = job
+	c.noteSubmitter(job)
 	c.active = append(c.active, job)
 	c.changed[job.ID] = make(chan struct{})
 	// Hold the job's inputs until it is over, however long that takes.

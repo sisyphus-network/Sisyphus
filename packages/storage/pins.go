@@ -58,10 +58,36 @@ func (s *Store) Pin(ctx context.Context, owner string, expires time.Time, cids .
 			return fmt.Errorf("pin %s: %w", c, ErrNotFound)
 		}
 	}
-	s.pinMu.Lock()
+	// What a counted pin keeps is found before the pins are locked, since
+	// that reads the blocks.
+	reached := make(map[cid.Cid]*reach)
+	for {
+		s.pinMu.Lock()
+		var unknown []cid.Cid
+		for _, c := range cids {
+			if s.index != nil && reached[c] == nil && !s.index.knowsLocked(owner, c) {
+				unknown = append(unknown, c)
+			}
+		}
+		if len(unknown) == 0 {
+			break // with the pins locked
+		}
+		s.pinMu.Unlock()
+		for _, c := range unknown {
+			r, err := s.reachOf(ctx, c)
+			if err != nil {
+				return fmt.Errorf("pin %s: %w", c, err)
+			}
+			reached[c] = r
+		}
+	}
 	defer s.pinMu.Unlock()
 	for _, c := range cids {
-		s.pins[pinKey{c, owner}] = expires
+		key := pinKey{c, owner}
+		s.pins[key] = expires
+		if s.index != nil {
+			s.index.chargeLocked(key, expires, reached[c])
+		}
 	}
 	s.tellPinsChangedLocked()
 	return s.savePinsLocked()
@@ -77,6 +103,9 @@ func (s *Store) Unpin(owner string, cids ...cid.Cid) error {
 	defer s.pinMu.Unlock()
 	for _, c := range cids {
 		delete(s.pins, pinKey{c, owner})
+		if s.index != nil {
+			s.index.unchargeLocked(pinKey{c, owner})
+		}
 	}
 	s.tellPinsChangedLocked()
 	return s.savePinsLocked()
@@ -91,6 +120,9 @@ func (s *Store) ExpireOpenPins(orphaned func(owner string) bool, at time.Time) e
 	for key, expires := range s.pins {
 		if expires.IsZero() && orphaned(key.owner) {
 			s.pins[key] = at
+			if s.index != nil {
+				s.index.retimeLocked(key, at)
+			}
 		}
 	}
 	return s.savePinsLocked()
@@ -181,6 +213,9 @@ func (s *Store) GC(ctx context.Context, now time.Time) (Collected, error) {
 	for key, expires := range s.pins {
 		if !expires.IsZero() && expires.Before(now) {
 			delete(s.pins, key)
+			if s.index != nil {
+				s.index.unchargeLocked(key)
+			}
 			done.ExpiredPins++
 			continue
 		}

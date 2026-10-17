@@ -270,11 +270,7 @@ func TestAClientsJobCountsTowardsItUntilItsDataLapses(t *testing.T) {
 	defer func() { c.Close() }()
 	alices := func() uint64 {
 		t.Helper()
-		stored, err := c.Stored(ctx, func(string) string { return "" })
-		if err != nil {
-			t.Fatal(err)
-		}
-		return stored["alice"]
+		return c.Stored()["alice"]
 	}
 	if got := alices(); got != uint64(len("what alice's job produced")) {
 		t.Fatalf("alice keeps %d bytes", got)
