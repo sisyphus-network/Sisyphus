@@ -38,10 +38,13 @@ function fixture(overrides = {}) {
 
 test('launches once with separate arguments and loopback-only networking', async () => {
   const { daemon, launches, signals } = fixture()
+  assert.equal(daemon.managesDaemon, false)
   await Promise.all([daemon.ensureStarted(), daemon.ensureStarted()])
+  assert.equal(daemon.managesDaemon, true)
   await daemon.ensureStarted()
   assert.deepEqual(launches, [{ executable: '/test path/sisyphusd', args: ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '127.0.0.1:7700', '--discovery', 'off'] }])
   await daemon.stop()
+  assert.equal(daemon.managesDaemon, true)
   assert.deepEqual(signals, ['SIGTERM'])
   await daemon.stop()
   await daemon.ensureStarted()
@@ -50,7 +53,7 @@ test('launches once with separate arguments and loopback-only networking', async
 })
 
 test('passes only explicitly enabled location discovery flags to the managed daemon', async () => {
-  const { daemon, launches } = fixture({ locationDiscovery: { locateGateway: true, locateCountry: false } })
+  const { daemon, launches } = fixture({ locationDiscovery: { locateGateway: true, locateCountry: false, stunServer: '' } })
   assert.equal(daemon.ownsProcess, false)
   await daemon.ensureStarted()
   assert.equal(daemon.ownsProcess, true)
@@ -58,10 +61,15 @@ test('passes only explicitly enabled location discovery flags to the managed dae
   await daemon.stop()
   assert.equal(daemon.ownsProcess, false)
 
-  const both = fixture({ locationDiscovery: { locateGateway: true, locateCountry: true } })
+  const both = fixture({ locationDiscovery: { locateGateway: true, locateCountry: true, stunServer: '' } })
   await both.daemon.ensureStarted()
   assert.deepEqual(both.launches[0].args.slice(-2), ['--locate-gateway', '--locate-country'])
   await both.daemon.stop()
+
+  const namedStun = fixture({ locationDiscovery: { locateGateway: false, locateCountry: false, stunServer: 'stun.example.org:3478' } })
+  await namedStun.daemon.ensureStarted()
+  assert.deepEqual(namedStun.launches[0].args.slice(-2), ['--stun-server', 'stun.example.org:3478'])
+  await namedStun.daemon.stop()
 })
 
 test('occupied default pool port falls back without taking over its service', async () => {
@@ -102,6 +110,7 @@ test('external, disabled and remote daemons are never started or stopped', async
     await daemon.stop()
     assert.equal(launches.length, 0)
     assert.deepEqual(signals, [])
+    assert.equal(daemon.managesDaemon, false)
   }
 })
 
@@ -127,6 +136,8 @@ test('launch failure and unexpected exit are reported without a restart storm', 
   const other = fixture()
   await other.daemon.ensureStarted()
   other.child.emit('exit', 1, null)
+  assert.equal(other.daemon.ownsProcess, false)
+  assert.equal(other.daemon.managesDaemon, true)
   await other.daemon.ensureStarted()
   assert.match(other.errors[0], /stopped \(1\)/)
   assert.equal(other.launches.length, 1)
