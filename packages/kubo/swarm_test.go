@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -337,5 +338,39 @@ func TestAFailedRekeyLeavesTheDaemonStopped(t *testing.T) {
 	}
 	if _, err := d.ID(ctx); err == nil {
 		t.Error("the daemon still answers after a failed Rekey")
+	}
+}
+
+// A daemon on a private network stops in a moment after being used, not
+// after waiting out connections its own client left open (#385).
+func TestADaemonStopsPromptlyAfterUse(t *testing.T) {
+	requireKubo(t)
+	d, err := Start(ctx, Config{
+		Repo: filepath.Join(t.TempDir(), "ipfs"), Identity: newIdentity(t),
+		Swarm: &Swarm{Key: NewSwarmKey(), Loopback: true}, APISecret: "a-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Stop)
+	// Calls made side by side have the client open connections, some of
+	// which a call finishing elsewhere leaves with nothing to carry.
+	for range 30 {
+		var calls sync.WaitGroup
+		for range 16 {
+			calls.Go(func() {
+				if _, err := d.ID(ctx); err != nil {
+					t.Error(err)
+				}
+			})
+		}
+		calls.Wait()
+	}
+	// Kubo waits five seconds for a connection that carried no call; it
+	// can take a while to stop for other reasons on a busy machine.
+	start := time.Now()
+	d.Stop()
+	if took := time.Since(start); took > 4*time.Second {
+		t.Errorf("stopping took %s", took)
 	}
 }

@@ -95,7 +95,10 @@ func Start(ctx context.Context, cfg Config) (*Daemon, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubo: %w", err)
 	}
-	d := &Daemon{Client: &Client{http: &http.Client{}, secret: cfg.APISecret}, cfg: cfg, binary: binary}
+	// The client has connections of its own, not ones shared with the rest
+	// of the program, so that stop can close them all.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	d := &Daemon{Client: &Client{http: &http.Client{Transport: transport}, secret: cfg.APISecret}, cfg: cfg, binary: binary}
 	if d.cfg.ReadyTimeout == 0 {
 		d.cfg.ReadyTimeout = time.Minute
 	}
@@ -186,7 +189,7 @@ func (d *Daemon) launch(ctx context.Context) error {
 				// Not listening yet; the address file appears when it is.
 				if addr, ok := apiAddress(apiFile); ok {
 					probe = NewClient(addr)
-					probe.secret = cfg.APISecret
+					probe.http, probe.secret = d.Client.http, cfg.APISecret
 				}
 				continue
 			}
@@ -218,6 +221,12 @@ func (d *Daemon) Stop() {
 }
 
 func (d *Daemon) stop() {
+	// Kubo finishes the calls in progress before it exits, and counts a
+	// connection that has not yet carried a call as one for five seconds.
+	// The client can leave such a connection open, dialled for a call that
+	// an earlier connection came free for, so its connections are closed
+	// first. No call is in progress: the caller holds the client.
+	d.Client.http.CloseIdleConnections()
 	d.cmd.Process.Signal(os.Interrupt)
 	select {
 	case <-d.exited:
