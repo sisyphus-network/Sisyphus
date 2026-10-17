@@ -111,8 +111,12 @@ func TestAClientKeepsNoMoreThanItsShare(t *testing.T) {
 	defer func() { clientShare = 0 }()
 	p := startPool(t, runtime.Builtin())
 	alice, bob := p.newClient(), p.newClient()
+	// Each client uploads its own letter, so that alice's and bob's blobs
+	// of one size are never the same blob. (Taking a letter from their IDs
+	// made them the same whenever the IDs happened to end alike.)
+	fill := map[*guest]string{alice: "a", bob: "b"}
 	upload := func(g *guest, size int) (string, error) {
-		c, err := blobclient.Upload(p.ctx, g.blobs, strings.NewReader(strings.Repeat(g.id[len(g.id)-1:], size)))
+		c, err := blobclient.Upload(p.ctx, g.blobs, strings.NewReader(strings.Repeat(fill[g], size)))
 		return c.String(), err
 	}
 
