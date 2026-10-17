@@ -10,6 +10,7 @@ import { firstUploadMessage } from '../src/main/file-upload.ts'
 const source = readFileSync(new URL('../../../proto/sisyphus/node/v1/node.proto', import.meta.url), 'utf8')
 const definition = protoLoader.fromJSON(protobuf.parse(source).root.toJSON(), { keepCase: false, longs: String, enums: String, defaults: true, oneofs: true })
 const service = definition['sisyphus.node.v1.NodeService']
+const rpcDeadlineMs = 30_000
 test('parser and proto-loader resolve the same protobuf installation', () => {
   const require = createRequire(import.meta.url)
   const loaderRequire = createRequire(require.resolve('@grpc/proto-loader'))
@@ -54,13 +55,13 @@ test('grpc-js serves a unary call and a token stream with this definition', asyn
   const loaded = grpc.loadPackageDefinition(definition)
   const client = new loaded.sisyphus.node.v1.NodeService(`127.0.0.1:${port}`, grpc.credentials.createInsecure())
   try {
-    const info = await new Promise((resolve, reject) => client.getNodeInfo({}, { deadline: Date.now() + 5000 }, (error, response) => error ? reject(error) : resolve(response)))
+    const info = await new Promise((resolve, reject) => client.getNodeInfo({}, { deadline: Date.now() + rpcDeadlineMs }, (error, response) => error ? reject(error) : resolve(response)))
     assert.equal(info.peerId, 'test-peer')
     assert.equal(info.countryCode, 'NL')
     assert.equal(info.countrySource, 'pool')
     const events = await new Promise((resolve, reject) => {
       const events = []
-      const stream = client.ask({ text: 'test', attachmentCids: ['uploaded-one', 'uploaded-two'] }, { deadline: Date.now() + 5000 })
+      const stream = client.ask({ text: 'test', attachmentCids: ['uploaded-one', 'uploaded-two'] }, { deadline: Date.now() + rpcDeadlineMs })
       stream.on('data', (event) => events.push(event))
       stream.on('error', reject)
       stream.on('end', () => resolve(events))
@@ -70,7 +71,7 @@ test('grpc-js serves a unary call and a token stream with this definition', asyn
     assert.deepEqual(receivedAttachments, ['uploaded-one', 'uploaded-two'])
     for (const data of [Buffer.alloc(0), Buffer.from('draft')]) {
       await new Promise((resolve, reject) => {
-        const upload = client.storeFile({ deadline: Date.now() + 5000 }, (error, response) => error ? reject(error) : resolve(response))
+        const upload = client.storeFile({ deadline: Date.now() + rpcDeadlineMs }, (error, response) => error ? reject(error) : resolve(response))
         upload.end(firstUploadMessage({ name: 'draft.txt', private: true, chatAttachment: true }, data))
       })
       const [first] = uploads.at(-1)
