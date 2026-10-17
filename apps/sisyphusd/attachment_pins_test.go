@@ -10,7 +10,13 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
+	"github.com/sisyphus-network/Sisyphus/packages/ai"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
@@ -295,7 +301,7 @@ func TestQueuedAttachmentPinsAreTriedAgainUntilTheyAreApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := chatWithFile(t, c.String())
-	a := &assistant{store: db, filePins: store}
+	a := &assistant{store: db, filePins: store, filePinChanges: make(chan struct{}, 1)}
 	if err := a.replayFilePins(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +316,7 @@ func TestQueuedAttachmentPinsAreTriedAgainUntilTheyAreApplied(t *testing.T) {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		replayFilePinsPeriodically(replaying, a, 5*time.Millisecond, slog.New(slog.NewTextHandler(logs, nil)))
+		replayFilePinsOnChanges(replaying, a, 5*time.Millisecond, slog.New(slog.NewTextHandler(logs, nil)))
 	}()
 	const warning = `msg="attachment pins could not be applied and will be retried" error="temporary pin store failure"`
 	waitFor(t, func() bool { return strings.Contains(logs.String(), warning) })
@@ -340,8 +346,85 @@ func TestQueuedAttachmentPinsAreTriedAgainUntilTheyAreApplied(t *testing.T) {
 
 	// Stopped before its first round is over, it says nothing.
 	logs = new(syncBuffer)
-	replayFilePinsPeriodically(replaying, &assistant{store: &flakyPinQueue{DB: db, failPending: true}, filePins: store}, time.Hour, slog.New(slog.NewTextHandler(logs, nil)))
+	replayFilePinsOnChanges(replaying, &assistant{store: &flakyPinQueue{DB: db, failPending: true}, filePins: store}, time.Hour, slog.New(slog.NewTextHandler(logs, nil)))
 	if logs.String() != "" {
 		t.Errorf("a replay that was stopped logged:\n%s", logs.String())
+	}
+}
+
+func TestQueuedAttachmentPinChangeWakesReplay(t *testing.T) {
+	ctx := context.Background()
+	store := &failingAttachmentPins{Store: storage.NewMemory()}
+	c, err := store.Put(ctx, strings.NewReader("an attachment"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := chatWithFile(t, c.String())
+	a := &assistant{store: db, filePins: store, filePinChanges: make(chan struct{}, 1)}
+	if err := a.replayFilePins(ctx); err != nil {
+		t.Fatal(err)
+	}
+	replaying, stop := context.WithCancel(ctx)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		replayFilePinsOnChanges(replaying, a, time.Hour, slog.New(slog.NewTextHandler(new(syncBuffer), nil)))
+	}()
+	if err := db.DeleteChat("owner"); err != nil {
+		t.Fatal(err)
+	}
+	a.notifyFilePinsChanged()
+	waitFor(t, func() bool {
+		for _, pin := range store.Pins() {
+			if pin.Owner == "chat:owner" && pin.CID.Equals(c) {
+				return false
+			}
+		}
+		return true
+	})
+	stop()
+	<-stopped
+}
+
+// refusingAttachmentPins is a pin store that holds files but, for now,
+// cannot pin them.
+type refusingAttachmentPins struct{ *storage.Store }
+
+func (s *refusingAttachmentPins) Pin(context.Context, string, time.Time, ...cid.Cid) error {
+	return errors.New("temporary pin store failure")
+}
+
+// An attachment the pin store cannot pin yet fails the question, stays
+// queued, and wakes the replay to try it again. Wakings while one is still
+// unheard come to one.
+func TestAnAttachmentThatCannotBePinnedYetWakesTheReplay(t *testing.T) {
+	ctx := context.Background()
+	served := newModel(t)
+	db := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
+	pins := &refusingAttachmentPins{Store: storage.NewMemory()}
+	c, err := pins.Put(ctx, strings.NewReader("an attachment"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AddFile(nodedb.File{CID: c.String()}); err != nil {
+		t.Fatal(err)
+	}
+	p := startPool(t, runtime.Builtin())
+	a := &assistant{store: db, pool: p.coord, workloads: runtime.Builtin(), offered: func(string) bool { return true }, filePins: pins, filePinChanges: make(chan struct{}, 1)}
+	if err := a.SetModelConfig(nodedb.ModelConfig{Provider: ai.Ollama, BaseURL: served.URL, Model: "test-model"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AskWithFiles(ctx, "", "Question", []string{c.String()}, func(string, planner.Event) {}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("AskWithFiles: %v, want failed precondition", err)
+	}
+	if ops, err := db.PendingFilePins(); err != nil || len(ops) != 1 || !ops[0].Keep || ops[0].CID != c.String() {
+		t.Errorf("the queue holds %v, %v; want the attachment's pin", ops, err)
+	}
+	if len(a.filePinChanges) != 1 {
+		t.Fatal("the replay was not woken")
+	}
+	a.notifyFilePinsChanged()
+	if len(a.filePinChanges) != 1 {
+		t.Errorf("%d wakings waiting, want one", len(a.filePinChanges))
 	}
 }

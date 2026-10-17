@@ -21,13 +21,12 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
-// quickRecords has nodes started after it look at their own record every
-// few milliseconds, until the test and its nodes are over.
+// quickRecords lets tests retry failed record publications promptly.
 func quickRecords(t *testing.T) {
 	t.Helper()
-	old := recordCheck
-	recordCheck = 20 * time.Millisecond
-	t.Cleanup(func() { recordCheck = old })
+	old := recordRetry
+	recordRetry = 20 * time.Millisecond
+	t.Cleanup(func() { recordRetry = old })
 }
 
 // describedAt returns the description a node's name stands for, as the node
@@ -179,6 +178,63 @@ func TestANodesRecordIsRenewedBeforeItExpiresAndReplacedWhenTheNodeChanges(t *te
 		if record, err := held.Held(ident.ID()); err != nil || record.Sequence != 2 {
 			t.Errorf("the name after a failure when %s: %+v, %v", about, record, err)
 		}
+	}
+}
+
+func TestANodesRecordPublishesOnChangeAndRenewsByDeadline(t *testing.T) {
+	old := recordLifetime
+	recordLifetime = 120 * time.Millisecond
+	t.Cleanup(func() { recordLifetime = old })
+
+	ident := newIdentity(t)
+	store := storage.NewMemory()
+	held := api.NewNames(&nameShelf{records: make(map[string][]byte)}, func(string) bool { return true })
+	description := "first"
+	keeper := &recordKeeper{
+		ident: ident, store: store, names: held, log: quiet,
+		changed:  make(chan struct{}, 1),
+		describe: func() []byte { return []byte(description) },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		keeper.run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	waitFor(t, func() bool {
+		record, err := held.Held(ident.ID())
+		return err == nil && record.Sequence == 0
+	})
+	description = "changed"
+	keeper.nudge()
+	waitFor(t, func() bool {
+		record, err := held.Held(ident.ID())
+		if err != nil || record.Sequence != 1 {
+			return false
+		}
+		return string(stored(t, store, record.Value)) == "changed"
+	})
+	// With no further state changes, the expiry deadline still renews it.
+	waitFor(t, func() bool {
+		record, err := held.Held(ident.ID())
+		return err == nil && record.Sequence >= 2
+	})
+}
+
+// Nudging a keeper never blocks: not one that has not started, and not one
+// already told of a change it has yet to act on.
+func TestNudgingARecordKeeperNeverBlocks(t *testing.T) {
+	(&recordKeeper{}).nudge()
+	keeper := &recordKeeper{changed: make(chan struct{}, 1)}
+	keeper.nudge()
+	keeper.nudge()
+	if len(keeper.changed) != 1 {
+		t.Errorf("%d changes waiting, want the two nudges as one", len(keeper.changed))
 	}
 }
 

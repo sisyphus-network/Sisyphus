@@ -518,6 +518,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	held := api.NewNames(db, func(string) bool { return false })
 
 	if isCoordinator {
+		recordChanges := make(chan struct{}, 1)
 		admitted, err := access.Open(db, ident.ID())
 		if err == nil {
 			// Earlier versions kept the list in a file of its own.
@@ -526,7 +527,13 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		admitted.OnChange(trustChanged.tell)
+		admitted.OnChange(func(id string) {
+			trustChanged.tell(id)
+			select {
+			case recordChanges <- struct{}{}:
+			default:
+			}
+		})
 		// And a node that ran the Rust daemon before this one keeps what
 		// that one knew.
 		if err := importRustState(*dataDir, db, admitted, takes, log); err != nil {
@@ -665,9 +672,14 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("coordinator listening", "addr", lis.Addr().String(), "name", *name)
 		go func() { stopped <- srv.Serve(lis) }()
 		if *publishRecord {
-			keeper := &recordKeeper{ident: ident, store: store, names: held, log: log, describe: func() []byte {
+			keeper := &recordKeeper{ident: ident, store: store, names: held, log: log, changed: recordChanges, describe: func() []byte {
 				return describeNode(ident.ID(), version, workloads.Names(), admitted.Members())
 			}}
+			held.OnChange(func(id string) {
+				if id == ident.ID() {
+					keeper.nudge()
+				}
+			})
 			described := make(chan struct{})
 			// The store and the database must outlive the keeper.
 			defer func() {
@@ -884,7 +896,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// The node's planner is there whatever its role, so that its model can
 	// be set and its conversations read; it has something to compute on
 	// only where the node coordinates a pool.
-	planning := &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey, filePins: local.Store}
+	planning := &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey, filePins: local.Store, filePinChanges: make(chan struct{}, 1)}
 	local.Assistant = planning
 	// What a conversation's attachments ask of the store is queued with the
 	// conversation, and applied here: at once, for what a stop left
@@ -894,7 +906,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	defer func() { stopPins(); <-pinDone }()
 	go func() {
 		defer close(pinDone)
-		replayFilePinsPeriodically(pinCtx, planning, filePinInterval, log)
+		replayFilePinsOnChanges(pinCtx, planning, filePinRetryInterval, log)
 	}()
 
 	// Whatever its role, the node is connected to the nodes in its address
@@ -1486,7 +1498,8 @@ func (w *whereabouts) country() (string, string) {
 	}
 	if w.lookUp && w.stunAnswered.Load() && w.lookups.begin(time.Now()) {
 		w.start(func() {
-			w.lookups.end(time.Now(), lookUpCountry(w.ctx))
+			answer := lookUpCountry(w.ctx)
+			w.lookups.end(time.Now(), answer)
 			w.notify()
 		})
 	}
@@ -2221,21 +2234,24 @@ func warnOfKeyInTheClear(log *slog.Logger, addr net.Addr, service, key string) {
 		"addr", addr.String())
 }
 
-// filePinInterval is how often queued attachment pin changes are tried
-// again, and filePinTimeout how long one round of them may take.
+// filePinRetryInterval is the first retry delay after a failed attachment
+// pin operation. Successful/idle replay waits for a queue-change event.
 const (
-	filePinInterval = 2 * time.Second
-	filePinTimeout  = 10 * time.Second
+	filePinRetryInterval = 2 * time.Second
+	filePinMaxRetry      = time.Minute
+	filePinTimeout       = 10 * time.Second
 )
 
-// replayFilePinsPeriodically applies the attachment pin changes a node has
-// queued, now and every interval until ctx ends. A round that fails is
-// logged once, not every interval, and so is the round that then succeeds.
-func replayFilePinsPeriodically(ctx context.Context, planning *assistant, interval time.Duration, log *slog.Logger) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// replayFilePinsOnChanges replays persisted work at startup and thereafter
+// only when a queue mutation occurs. Failures use bounded exponential retry,
+// since the external pinning service has no change notification of its own.
+func replayFilePinsOnChanges(ctx context.Context, planning *assistant, retryInterval time.Duration, log *slog.Logger) {
 	failing := false
+	backoff := retryInterval
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		attempt, cancel := context.WithTimeout(ctx, filePinTimeout)
 		err := planning.replayFilePins(attempt)
 		cancel()
@@ -2248,8 +2264,22 @@ func replayFilePinsPeriodically(ctx context.Context, planning *assistant, interv
 			log.Info("attachment pins applied")
 		}
 		failing = err != nil
+		// Since Go 1.23 a timer nothing refers to any longer is collected
+		// whether or not it fired, so one left behind by a change or by ctx
+		// ending costs nothing.
+		var retry <-chan time.Time
+		if err != nil {
+			retry = time.After(backoff)
+			backoff = min(backoff*2, filePinMaxRetry)
+		} else {
+			backoff = retryInterval
+		}
 		select {
-		case <-ticker.C:
+		case <-planning.filePinChanges:
+			if err != nil {
+				backoff = retryInterval
+			}
+		case <-retry:
 		case <-ctx.Done():
 			return
 		}

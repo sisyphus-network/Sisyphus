@@ -53,9 +53,8 @@ var (
 	// recordLifetime is how long each record a node publishes of itself is
 	// good for. It publishes another when half of that has gone.
 	recordLifetime = names.DefaultLifetime
-	// recordCheck is how often a node looks at whether its description has
-	// changed, or its record needs renewing.
-	recordCheck = 30 * time.Second
+	// recordRetry is how long a node waits before retrying a failed publication.
+	recordRetry = 30 * time.Second
 )
 
 // recordPins owns the pins that keep a node's descriptions in its store for
@@ -82,6 +81,8 @@ type recordKeeper struct {
 	store    recordStore
 	names    ownNames
 	log      *slog.Logger
+	// changed is nudged when the node's description or held name changes.
+	changed chan struct{}
 
 	// published is the description last published, and at the content ID
 	// it was stored under.
@@ -92,17 +93,39 @@ type recordKeeper struct {
 // run publishes the description, and again whenever it changes or its
 // record is half way to expiring, until ctx ends.
 func (k *recordKeeper) run(ctx context.Context) {
-	ticker := time.NewTicker(recordCheck)
-	defer ticker.Stop()
+	if k.changed == nil {
+		k.changed = make(chan struct{}, 1)
+	}
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
-		if err := k.publish(ctx, time.Now()); err != nil {
-			k.log.Warn("could not publish this node's record under its name; trying again", "in", recordCheck.String(), "error", err)
-		}
 		select {
-		case <-ticker.C:
+		case <-k.changed:
+			// Since Go 1.23, Reset also drops a tick the timer has already
+			// made, so a change can never be followed by a stale one.
+			timer.Reset(0)
+		case <-timer.C:
+			if err := k.publish(ctx, time.Now()); err != nil {
+				k.log.Warn("could not publish this node's record under its name; trying again", "in", recordRetry.String(), "error", err)
+				timer.Reset(recordRetry)
+			} else {
+				timer.Reset(recordLifetime / 2)
+			}
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// nudge asks the keeper to publish after a relevant state change, without
+// blocking the mutation that reported it. Multiple changes may coalesce.
+func (k *recordKeeper) nudge() {
+	if k.changed == nil {
+		return
+	}
+	select {
+	case k.changed <- struct{}{}:
+	default:
 	}
 }
 

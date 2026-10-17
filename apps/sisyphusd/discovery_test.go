@@ -797,6 +797,7 @@ func TestCountryLookupsAreRetriedOnlyWhenTransient(t *testing.T) {
 func TestARateLimitsRetryAfterIsWaitedOut(t *testing.T) {
 	shortRetries(t, time.Millisecond, 5*time.Second)
 	var times []time.Time
+	var responseAt time.Time
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
@@ -804,6 +805,12 @@ func TestARateLimitsRetryAfterIsWaitedOut(t *testing.T) {
 		first := len(times) == 1
 		mu.Unlock()
 		if first {
+			// A delayed response shows that Retry-After starts when the
+			// service answers, not when the request begins.
+			time.Sleep(100 * time.Millisecond)
+			mu.Lock()
+			responseAt = time.Now()
+			mu.Unlock()
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
@@ -823,8 +830,8 @@ func TestARateLimitsRetryAfterIsWaitedOut(t *testing.T) {
 	searches.stop()
 	mu.Lock()
 	defer mu.Unlock()
-	if len(times) != 2 || times[1].Sub(times[0]) < time.Second {
-		t.Errorf("asked at %v, want twice, a second apart", times)
+	if len(times) != 2 || times[1].Sub(responseAt) < time.Second {
+		t.Errorf("asked at %v after response at %v, want twice with a second after the response", times, responseAt)
 	}
 }
 
