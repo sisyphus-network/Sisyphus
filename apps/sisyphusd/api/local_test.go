@@ -409,6 +409,33 @@ func TestWatchPairedBrowsersReportsListFailures(t *testing.T) {
 	}
 }
 
+// A paired-browser watcher ends at once when its first list cannot be read
+// or sent, and a node without browser access lists no browsers.
+func TestWatchPairedBrowsersEndsWhenTheFirstListFails(t *testing.T) {
+	owner := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	store := &mutableBrowserAccess{volatileBrowserAccess: volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}}
+	store.setError(errors.New("device database unavailable"))
+	service := &localService{cfg: LocalConfig{Token: "the-token", BrowserAccess: store}}
+	if err := service.WatchPairedBrowsers(&nodepb.WatchPairedBrowsersRequest{}, &pairedBrowserWatch{ctx: owner}); status.Code(err) != codes.Internal {
+		t.Errorf("unreadable first list: %v, want Internal", err)
+	}
+	store.setError(nil)
+	if err := service.WatchPairedBrowsers(&nodepb.WatchPairedBrowsersRequest{}, &pairedBrowserWatch{ctx: owner, failOn: 1}); status.Code(err) != codes.Unavailable {
+		t.Errorf("unsendable first list: %v, want the send failure", err)
+	}
+
+	ended, end := context.WithCancel(owner)
+	end()
+	watch := &pairedBrowserWatch{ctx: ended}
+	bare := &localService{cfg: LocalConfig{Token: "the-token"}}
+	if err := bare.WatchPairedBrowsers(&nodepb.WatchPairedBrowsersRequest{}, watch); err != nil || watch.sent != 1 {
+		t.Errorf("node without browser access: %v after %d lists, want one empty list", err, watch.sent)
+	}
+	if devices, err := bare.pairedBrowsers(); err != nil || len(devices.GetDevices()) != 0 {
+		t.Errorf("node without browser access listed %v, %v", devices.GetDevices(), err)
+	}
+}
+
 func TestWatchPairedBrowsersStopsWhenTheWatcherCannotBeSentTo(t *testing.T) {
 	store := &mutableBrowserAccess{volatileBrowserAccess: volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}}
 	changes := NewNodeInfoChanges()
