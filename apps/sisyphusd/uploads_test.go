@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -88,6 +89,17 @@ func TestAWorkerUploadsOnlyForAnAttemptItHolds(t *testing.T) {
 		if held := p.heldFor(blob); slices.Contains(held, attempt) {
 			t.Errorf("still held for the attempt once it ended: %s %v", blob, held)
 		}
+	}
+	// Nor is what the result did not name kept for a grace period, as an
+	// upload of the node's own would be: it goes at the next collection.
+	if held := p.heldFor(unnamed); len(held) != 0 {
+		t.Errorf("what the result did not name is still held for %v", held)
+	}
+	if _, err := p.store.GC(p.ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if has, _ := p.store.Has(p.ctx, mustCID(t, unnamed)); has {
+		t.Error("what the result did not name was not collected")
 	}
 
 	// A worker that is admitted but not connected holds nothing.

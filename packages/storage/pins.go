@@ -79,6 +79,11 @@ func (s *Store) pin(ctx context.Context, owner string, expires time.Time, limit 
 	// cannot be swept between the check and the pin.
 	s.gcMu.RLock()
 	defer s.gcMu.RUnlock()
+	return s.pinHeld(ctx, owner, expires, limit, cids)
+}
+
+// pinHeld is pin with collection already held off.
+func (s *Store) pinHeld(ctx context.Context, owner string, expires time.Time, limit uint64, cids []cid.Cid) error {
 	for _, c := range cids {
 		has, err := s.blocks.Has(ctx, c)
 		if err != nil {

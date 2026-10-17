@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/ipfs/boxo/blockstore"
@@ -649,5 +650,65 @@ func TestUnpinPrefixReleasesEveryPinOfThoseOwners(t *testing.T) {
 	}
 	if got := s.Usage(time.Now())["alice"]; got != uint64(len("kept for the job")) {
 		t.Errorf("alice keeps %d bytes", got)
+	}
+}
+
+// PutFor stores a blob pinned for its owner and nobody else, not kept for a
+// grace period: it counts for the owner's group at once, and once the owner
+// lets go of it the next collection takes it.
+func TestPutForKeepsABlobOnlyForItsOwner(t *testing.T) {
+	s := NewMemory()
+	if err := s.GroupPins(ctx, func(owner string) string {
+		if owner == "mine" {
+			return "alice"
+		}
+		return ""
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data := "kept for one owner only"
+	c, err := s.PutFor(ctx, "mine", strings.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var owners []string
+	for _, pin := range s.Pins() {
+		if pin.CID == c {
+			owners = append(owners, pin.Owner)
+		}
+	}
+	if !slices.Equal(owners, []string{"mine"}) {
+		t.Errorf("held for %v", owners)
+	}
+	if got := s.Usage(time.Now())["alice"]; got != uint64(len(data)) {
+		t.Errorf("alice keeps %d bytes", got)
+	}
+	// Put again for one whose pins count for nobody, it is held for both,
+	// and counted once.
+	if _, err := s.PutFor(ctx, "other", strings.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Unpin("mine", c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Unpin("other", c); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Usage(time.Now())["alice"]; got != 0 {
+		t.Errorf("alice still keeps %d bytes", got)
+	}
+	if _, err := s.GC(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if has, _ := s.Has(ctx, c); has {
+		t.Error("a blob nobody holds was not collected")
+	}
+}
+
+// PutFor fails as Put does when what it is given cannot be read.
+func TestPutForFailsOnAnUnreadableBlob(t *testing.T) {
+	s := NewMemory()
+	if _, err := s.PutFor(ctx, "mine", iotest.ErrReader(errors.New("disk gone"))); err == nil {
+		t.Error("an unreadable blob was stored")
 	}
 }
