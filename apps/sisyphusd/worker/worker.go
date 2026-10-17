@@ -243,8 +243,8 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				defer tasks.Done()
 				defer running.Add(-1)
 				defer stops.Delete(assigned.GetTaskId())
-				// What the task reports of itself is passed on a few times a
-				// second while it runs, and once more when it ends.
+				// What the task reports of itself is passed on as it changes,
+				// no more than a few times a second, and once more when it ends.
 				said := &reports{private: private(assigned), changed: make(chan struct{}, 1)}
 				pass := func() {
 					if update := said.take(assigned); update != nil {
@@ -254,14 +254,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				passing := make(chan struct{})
 				go func() {
 					defer close(passing)
-					for {
-						select {
-						case <-said.changed:
-							pass()
-						case <-taskCtx.Done():
-							return
-						}
-					}
+					passOn(said.changed, taskCtx.Done(), updateGap, pass)
 				}()
 				result := w.execute(runtime.WithReporter(taskCtx, said), assigned)
 				stop()
@@ -494,6 +487,38 @@ func (w *Worker) storeOffered(labels []string) {
 // coordinator from before it did.
 func (w *Worker) labels() []string {
 	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.Workloads.Offers(context.Background())...)
+}
+
+// updateGap is the least time between two updates a worker sends of how a
+// running task is getting on, so that a task that logs in a tight loop
+// costs its coordinator no more than a few messages a second.
+const updateGap = 250 * time.Millisecond
+
+// passOn calls pass when changed says something has, until done ends. A
+// change after a quiet spell is passed on at once; one sooner than gap after
+// the last pass waits out the rest of it, and those that come in the
+// meantime go with it.
+func passOn(changed, done <-chan struct{}, gap time.Duration, pass func()) {
+	var last time.Time
+	var due <-chan time.Time
+	for {
+		select {
+		case <-changed:
+			if due != nil {
+				continue
+			}
+			if wait := gap - time.Since(last); wait > 0 {
+				due = time.After(wait)
+				continue
+			}
+		case <-due:
+			due = nil
+		case <-done:
+			return
+		}
+		pass()
+		last = time.Now()
+	}
 }
 
 // maxLogLine is the longest line of a task's log that is passed on whole.
