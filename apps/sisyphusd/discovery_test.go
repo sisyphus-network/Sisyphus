@@ -793,8 +793,10 @@ func TestCountryLookupsAreRetriedOnlyWhenTransient(t *testing.T) {
 	}
 }
 
-// A rate limit's Retry-After is waited out, though the backoff is shorter.
+// A rate limit's Retry-After is waited out, though the backoff is shorter,
+// and counted from when the answer came, not from when it was asked for.
 func TestARateLimitsRetryAfterIsWaitedOut(t *testing.T) {
+	const answering = 200 * time.Millisecond
 	shortRetries(t, time.Millisecond, 5*time.Second)
 	var times []time.Time
 	var mu sync.Mutex
@@ -804,6 +806,7 @@ func TestARateLimitsRetryAfterIsWaitedOut(t *testing.T) {
 		first := len(times) == 1
 		mu.Unlock()
 		if first {
+			time.Sleep(answering)
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
@@ -823,8 +826,8 @@ func TestARateLimitsRetryAfterIsWaitedOut(t *testing.T) {
 	searches.stop()
 	mu.Lock()
 	defer mu.Unlock()
-	if len(times) != 2 || times[1].Sub(times[0]) < time.Second {
-		t.Errorf("asked at %v, want twice, a second apart", times)
+	if len(times) != 2 || times[1].Sub(times[0]) < time.Second+answering {
+		t.Errorf("asked at %v, want twice, a second apart once the first was answered %v after it was asked", times, answering)
 	}
 }
 
