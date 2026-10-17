@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"slices"
 	"strings"
 	"time"
 
@@ -299,11 +298,9 @@ func (s *blobService) Pin(ctx context.Context, req *pb.PinBlobRequest) (*pb.PinB
 		expires = time.Now().Add(time.Duration(ttl) * time.Second)
 	}
 	owner := s.pinOwner(ctx)
-	_, isClient := s.client(ctx)
-	// A pin the client already holds keeps nothing more; one it does not
-	// is held to its share.
-	held := slices.ContainsFunc(s.store.Pins(), func(p storage.Pin) bool { return p.Owner == owner && p.CID == c })
-	if isClient && !held {
+	// A client's pin is held to its share, which a pin it already holds
+	// adds nothing to.
+	if _, isClient := s.client(ctx); isClient {
 		if err := s.pinWithin(ctx, owner, expires, c, "pinning"); err != nil {
 			return nil, err
 		}

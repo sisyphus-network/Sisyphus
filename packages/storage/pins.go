@@ -59,8 +59,10 @@ func (e *OverShareError) Error() string {
 }
 
 // PinWithin pins as Pin does, unless that would have the group owner's pins
-// count towards keep more than limit bytes, as Usage counts it; then it
-// pins nothing and returns an *OverShareError. The pins are checked and
+// count towards keep more than limit bytes, as Usage counts it, and more
+// than it kept before; then it pins nothing and returns an
+// *OverShareError. Pins that add nothing, such as one placed again, are
+// never refused. The pins are checked and
 // placed in one step, so pins placed together cannot together go past the
 // limit. A limit of zero, or an owner whose pins count towards no group,
 // is held to none; so is every owner until GroupPins has named the groups.
@@ -109,6 +111,17 @@ func (s *Store) pin(ctx context.Context, owner string, expires time.Time, limit 
 		}
 	}
 	defer s.pinMu.Unlock()
+	// What the owner's group keeps before these pins, if it is held to a
+	// limit: pins that add nothing to it, such as one placed again, are
+	// never refused, even for a group already past its limit.
+	var group string
+	var keptBefore uint64
+	if limit > 0 && s.index != nil {
+		if group = s.index.group(owner); group != "" {
+			s.index.lapseLocked(time.Now())
+			keptBefore = s.index.kept(group)
+		}
+	}
 	type before struct {
 		expires time.Time
 		held    bool
@@ -125,25 +138,20 @@ func (s *Store) pin(ctx context.Context, owner string, expires time.Time, limit 
 			s.index.chargeLocked(key, expires, reached[c])
 		}
 	}
-	if limit > 0 && s.index != nil {
-		if name := s.index.group(owner); name != "" {
-			s.index.lapseLocked(time.Now())
-			// A pin that has lapsed already keeps nothing, and a group
-			// keeping nothing has no use.
-			if use := s.index.groups[name]; use != nil && use.bytes > limit {
-				keeps := use.bytes
-				// Put back what the pins were before.
-				for key, b := range was {
-					if b.held {
-						s.pins[key] = b.expires
-						s.index.retimeLocked(key, b.expires)
-					} else {
-						delete(s.pins, key)
-						s.index.unchargeLocked(key)
-					}
+	if group != "" {
+		s.index.lapseLocked(time.Now())
+		if keeps := s.index.kept(group); keeps > limit && keeps > keptBefore {
+			// Put back what the pins were before.
+			for key, b := range was {
+				if b.held {
+					s.pins[key] = b.expires
+					s.index.retimeLocked(key, b.expires)
+				} else {
+					delete(s.pins, key)
+					s.index.unchargeLocked(key)
 				}
-				return &OverShareError{Group: name, Keeps: keeps, May: limit}
 			}
+			return &OverShareError{Group: group, Keeps: keeps, May: limit}
 		}
 	}
 	s.tellPinsChangedLocked()

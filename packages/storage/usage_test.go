@@ -404,3 +404,22 @@ func TestPinsPlacedTogetherStayWithinTheLimit(t *testing.T) {
 		t.Errorf("alice keeps %d with a limit of %d", got, limit)
 	}
 }
+
+// A group already past its limit, as when the limit is lowered, may still
+// pin again what it keeps, which adds nothing, but nothing more.
+func TestAGroupPastItsLimitMayPinAgainWhatItKeeps(t *testing.T) {
+	s := NewMemory()
+	if err := s.GroupPins(ctx, clientOf); err != nil {
+		t.Fatal(err)
+	}
+	a, b := put(t, s, bytes.Repeat([]byte{1}, chunkSize)), put(t, s, bytes.Repeat([]byte{2}, chunkSize))
+	pinFor(t, s, "user:alice", time.Time{}, a)
+	limit := s.Usage(time.Now())["alice"] / 2
+	if err := s.PinWithin(ctx, "user:alice", time.Now().Add(time.Hour), limit, a); err != nil {
+		t.Errorf("pinning again what alice keeps: %v", err)
+	}
+	var over *OverShareError
+	if err := s.PinWithin(ctx, "user:alice", time.Time{}, limit, a, b); !errors.As(err, &over) {
+		t.Errorf("pinning more with alice past her limit: %v", err)
+	}
+}
