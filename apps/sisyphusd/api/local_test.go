@@ -339,6 +339,59 @@ func TestWatchNodeStatePublishesNodeAndPeerChanges(t *testing.T) {
 	}
 }
 
+// A state watcher stops at the first snapshot it cannot send, whether the
+// first or a later one, and says why.
+func TestWatchNodeStateStopsWhenASnapshotCannotBeSent(t *testing.T) {
+	gone := errors.New("the client went away")
+	state := func(country string) func() *nodepb.NodeState {
+		return func() *nodepb.NodeState {
+			return &nodepb.NodeState{Info: &nodepb.GetNodeInfoResponse{CountryCode: country}}
+		}
+	}
+	if err := watchNodeState(context.Background(), time.Hour, nil, state(""), func(*nodepb.NodeState) error { return gone }); !errors.Is(err, gone) {
+		t.Errorf("the first snapshot: %v, want %v", err, gone)
+	}
+	changes := make(chan struct{}, 1)
+	country := ""
+	sent := 0
+	err := watchNodeState(context.Background(), time.Hour, changes, func() *nodepb.NodeState { return state(country)() }, func(*nodepb.NodeState) error {
+		sent++
+		if sent > 1 {
+			return gone
+		}
+		country = "IL"
+		changes <- struct{}{}
+		return nil
+	})
+	if !errors.Is(err, gone) || sent != 2 {
+		t.Errorf("a later snapshot: %v after %d sent, want %v after 2", err, sent, gone)
+	}
+}
+
+// Changes a watcher has not yet taken are folded into the one it will: a
+// slow watcher is not queued a snapshot per change, and does not hold up
+// the node announcing them.
+func TestNodeInfoChangesFoldIntoOneForASlowWatcher(t *testing.T) {
+	changes := NewNodeInfoChanges()
+	watching, stop := changes.subscribe()
+	defer stop()
+	changes.Notify()
+	changes.Notify()
+	<-watching
+	select {
+	case <-watching:
+		t.Error("two changes the watcher had not taken were announced twice")
+	default:
+	}
+	stop()
+	changes.Notify() // Nobody is watching any more; nothing is announced.
+	select {
+	case <-watching:
+		t.Error("a watcher that stopped was still told of changes")
+	default:
+	}
+}
+
 func TestChangingTrustAdmitsAndRemovesWorkers(t *testing.T) {
 	n := startLocal(t, true)
 	const peer = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
