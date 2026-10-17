@@ -253,3 +253,17 @@ func TestAPinOfABlobThatIsMissingABlockIsNotCounted(t *testing.T) {
 	// One that counts towards nobody is pinned as before.
 	pinFor(t, s, "user", time.Time{}, whole)
 }
+
+// A blob made of the same chunk again and again keeps that chunk once.
+func TestABlobKeepsARepeatedChunkOnce(t *testing.T) {
+	s := NewMemory()
+	if err := s.GroupPins(ctx, clientOf); err != nil {
+		t.Fatal(err)
+	}
+	chunk := pattern(chunkSize)
+	c := put(t, s, append(append(append([]byte{}, chunk...), chunk...), chunk...))
+	pinFor(t, s, "user:alice", time.Time{}, c)
+	if got, want := s.Usage(time.Now())["alice"], uint64(chunkSize)+rootSize(t, s, c); got != want {
+		t.Errorf("alice keeps %d, want %d", got, want)
+	}
+}
