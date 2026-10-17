@@ -156,6 +156,11 @@ type Config struct {
 	// its outputs are not kept, the task is not tried again, and its
 	// worker is not blamed. The node's own jobs are not counted.
 	MaxStoreBytesPerClient uint64
+	// MaxUploadBytesPerAttempt, if not zero, is the most a worker may
+	// upload to the coordinator for one attempt at a task, counted as it
+	// arrives across all the attempt's uploads. An upload that would take
+	// the attempt past it is refused.
+	MaxUploadBytesPerAttempt uint64
 	// MaxTaskTimeout, if not zero, is the longest one attempt at a task of
 	// a client's job may run: a job may ask for less, never more, and one
 	// that names no timeout gets this. Without it, a task that never ends
@@ -211,6 +216,14 @@ type Coordinator struct {
 	// the name they are held under. It is read with the store's pins
 	// locked, so it has a lock of its own and not the coordinator's.
 	submitters sync.Map
+	// perAttempt is the most a worker may upload for one attempt, and
+	// uploaded how much each attempt has while it lasts, by the name
+	// Uploading gives it.
+	// They have a lock of their own, as uploads are counted piece by piece
+	// as they arrive.
+	perAttempt uint64
+	uploadMu   sync.Mutex
+	uploaded   map[string]uint64
 	grouping   sync.Once
 	journal    Journal
 	standings  Standings
@@ -365,6 +378,8 @@ func New(cfg Config) *Coordinator {
 		perClient:      cfg.MaxJobsPerClient,
 		tasksPerClient: cfg.MaxTasksPerClient,
 		storePerClient: cfg.MaxStoreBytesPerClient,
+		perAttempt:     cfg.MaxUploadBytesPerAttempt,
+		uploaded:       make(map[string]uint64),
 		maxTaskTimeout: cfg.MaxTaskTimeout,
 		addressOf:      cfg.AddressOf,
 		sourceOf:       cfg.SourceOf,
@@ -1693,8 +1708,41 @@ func uploads(a assignment) string {
 	return staging(a.job, a.task) + "@" + strconv.Itoa(a.attempt) + "."
 }
 
+// ChargeUpload counts n more bytes uploaded for the attempt Uploading named
+// owner, and refuses them if they would take the attempt past what one may
+// upload. Each piece is counted as it arrives, so uploads made for one
+// attempt at the same time cannot together go past it. An attempt is counted
+// from when it is handed out until it ends, so a piece that arrives after
+// that, for an upload begun while it lasted, is refused rather than counted
+// afresh.
+func (c *Coordinator) ChargeUpload(owner string, n uint64) error {
+	c.uploadMu.Lock()
+	defer c.uploadMu.Unlock()
+	used, ok := c.uploaded[owner]
+	if !ok {
+		return status.Error(codes.FailedPrecondition, "the attempt this upload is for has ended")
+	}
+	if c.perAttempt != 0 && used+n > c.perAttempt {
+		return status.Errorf(codes.ResourceExhausted, "this attempt has uploaded %d bytes, and an attempt may upload %d", used, c.perAttempt)
+	}
+	c.uploaded[owner] = used + n
+	return nil
+}
+
+// Uploaded reports how much the attempt Uploading named owner has uploaded,
+// and whether it is still counted, that is, whether it has not ended.
+func (c *Coordinator) Uploaded(owner string) (uint64, bool) {
+	c.uploadMu.Lock()
+	defer c.uploadMu.Unlock()
+	used, ok := c.uploaded[owner]
+	return used, ok
+}
+
 // releaseLocked lets go of what was uploaded for an attempt that has ended.
 func (c *Coordinator) releaseLocked(a assignment) {
+	c.uploadMu.Lock()
+	delete(c.uploaded, uploads(a))
+	c.uploadMu.Unlock()
 	if err := c.store.UnpinPrefix(uploads(a)); err != nil {
 		c.log.Warn("could not let go of what an attempt uploaded", "task", a.task.ID, "attempt", a.attempt, "error", err)
 	}
@@ -1822,6 +1870,9 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 	c.recordLocked(a.job, eventTaskStarted, a.task.Index, w.name, fmt.Sprintf("attempt %d", a.attempt))
 	c.log.Info("task given", "task", a.task.ID, "worker", w.name, "attempt", a.attempt)
 	w.running[a.task.ID] = a
+	c.uploadMu.Lock()
+	c.uploaded[uploads(a)] = 0
+	c.uploadMu.Unlock()
 	keys := c.keys[a.job.ID]
 	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
 		TaskId:   a.task.ID,

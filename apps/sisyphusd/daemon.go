@@ -112,6 +112,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
+	maxUploadPerAttempt := fs.Uint64("max-upload-bytes-per-attempt", 0, "coordinator role: the most a worker may upload here for one attempt at a task, across all the attempt's uploads; an upload that would take it past is refused. 0 means no limit")
 	maxStorePerClient := fs.Uint64("max-store-bytes-per-client", 0, "coordinator role: the most one client may keep here, its uploads, pins and jobs' data counted as pool members shows; uploads and pins past it are refused, and so is a task of its job whose outputs would take it past, which fails the job. 0 means no limit. The node's own are not counted")
 	maxCache := fs.Uint64("max-cache-bytes", 0, "worker-only node: evict the least recently used cached blobs once the cache uses this much disk; 0 means no limit")
 	s3Endpoint := fs.String("s3-endpoint", "", "coordinator: keep stored data in a bucket of the S3-style object store at this address, such as https://s3.wasabisys.com or http://127.0.0.1:9000, instead of on this machine's disk")
@@ -555,7 +556,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			audits = runs
 		}
 		coord = coordinator.New(coordinator.Config{
-			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: *maxJobsPerClient, MaxTasksPerClient: *maxTasksPerClient, MaxStoreBytesPerClient: *maxStorePerClient, MaxTaskTimeout: *maxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: *maxJobsPerClient, MaxTasksPerClient: *maxTasksPerClient, MaxStoreBytesPerClient: *maxStorePerClient, MaxUploadBytesPerAttempt: *maxUploadPerAttempt, MaxTaskTimeout: *maxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
 		seenAs = coord.Observed
