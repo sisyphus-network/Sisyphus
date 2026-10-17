@@ -342,28 +342,46 @@ func TestPrimaryWebListenAddressWithoutSelection(t *testing.T) {
 
 func TestWebAccessStartClosesEarlierListenersOnLaterFailure(t *testing.T) {
 	ips := nonLoopbackInterfaceIPs(t)
-	firstPort := unusedTCPPort(t, ips[0])
-	firstAddress := net.JoinHostPort(ips[0].String(), strconv.Itoa(firstPort))
-	occupied, err := net.Listen("tcp", net.JoinHostPort(ips[0].String(), "0"))
-	if err != nil {
-		t.Skipf("cannot reserve secondary listener: %v", err)
+	firstAddress := net.JoinHostPort(ips[0].String(), "1")
+	secondAddress := net.JoinHostPort(ips[0].String(), "2")
+	var first *closeTrackingListener
+	listenCalls := 0
+	runtime := &webAccessRuntime{
+		dataDir: t.TempDir(), local: &api.LocalConfig{Token: "token"},
+		listen: func(network, address string) (net.Listener, error) {
+			listenCalls++
+			if listenCalls == 2 {
+				return nil, errors.New("address already in use")
+			}
+			listener, err := net.Listen(network, net.JoinHostPort(ips[0].String(), "0"))
+			if err != nil {
+				return nil, err
+			}
+			first = &closeTrackingListener{Listener: listener}
+			return first, nil
+		},
 	}
-	defer occupied.Close()
-	secondAddress := occupied.Addr().String()
-	runtime := &webAccessRuntime{dataDir: t.TempDir(), local: &api.LocalConfig{Token: "token"}}
 	config := nodedb.WebAccessConfig{
 		ListenAddress: firstAddress, ListenAddresses: []string{firstAddress, secondAddress},
 		PublicURL: "https://" + ips[0].String(),
 	}
-	err = runtime.start(config)
+	err := runtime.start(config)
 	if err == nil || !strings.Contains(err.Error(), "listen for remote browser access") {
 		t.Fatalf("secondary listen error = %v", err)
 	}
-	probe, err := net.Listen("tcp", firstAddress)
-	if err != nil {
-		t.Fatalf("first listener leaked after the second listener failed: %v", err)
+	if first == nil || first.closeCalls != 1 {
+		t.Fatalf("first listener close calls = %v, want 1", first)
 	}
-	probe.Close()
+}
+
+type closeTrackingListener struct {
+	net.Listener
+	closeCalls int
+}
+
+func (l *closeTrackingListener) Close() error {
+	l.closeCalls++
+	return l.Listener.Close()
 }
 
 func TestWebAccessStartClosesEarlierListenersOnValidationFailure(t *testing.T) {
