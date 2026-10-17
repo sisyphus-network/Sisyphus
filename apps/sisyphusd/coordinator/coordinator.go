@@ -217,7 +217,8 @@ type Coordinator struct {
 	// locked, so it has a lock of its own and not the coordinator's.
 	submitters sync.Map
 	// perAttempt is the most a worker may upload for one attempt, and
-	// uploaded how much each attempt has, by the name Uploading gives it.
+	// uploaded how much each attempt has while it lasts, by the name
+	// Uploading gives it.
 	// They have a lock of their own, as uploads are counted piece by piece
 	// as they arrive.
 	perAttempt uint64
@@ -1710,19 +1711,31 @@ func uploads(a assignment) string {
 // ChargeUpload counts n more bytes uploaded for the attempt Uploading named
 // owner, and refuses them if they would take the attempt past what one may
 // upload. Each piece is counted as it arrives, so uploads made for one
-// attempt at the same time cannot together go past it.
+// attempt at the same time cannot together go past it. An attempt is counted
+// from when it is handed out until it ends, so a piece that arrives after
+// that, for an upload begun while it lasted, is refused rather than counted
+// afresh.
 func (c *Coordinator) ChargeUpload(owner string, n uint64) error {
-	if c.perAttempt == 0 {
-		return nil
-	}
 	c.uploadMu.Lock()
 	defer c.uploadMu.Unlock()
-	used := c.uploaded[owner]
-	if used+n > c.perAttempt {
+	used, ok := c.uploaded[owner]
+	if !ok {
+		return status.Error(codes.FailedPrecondition, "the attempt this upload is for has ended")
+	}
+	if c.perAttempt != 0 && used+n > c.perAttempt {
 		return status.Errorf(codes.ResourceExhausted, "this attempt has uploaded %d bytes, and an attempt may upload %d", used, c.perAttempt)
 	}
 	c.uploaded[owner] = used + n
 	return nil
+}
+
+// Uploaded reports how much the attempt Uploading named owner has uploaded,
+// and whether it is still counted, that is, whether it has not ended.
+func (c *Coordinator) Uploaded(owner string) (uint64, bool) {
+	c.uploadMu.Lock()
+	defer c.uploadMu.Unlock()
+	used, ok := c.uploaded[owner]
+	return used, ok
 }
 
 // releaseLocked lets go of what was uploaded for an attempt that has ended.
@@ -1857,6 +1870,9 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 	c.recordLocked(a.job, eventTaskStarted, a.task.Index, w.name, fmt.Sprintf("attempt %d", a.attempt))
 	c.log.Info("task given", "task", a.task.ID, "worker", w.name, "attempt", a.attempt)
 	w.running[a.task.ID] = a
+	c.uploadMu.Lock()
+	c.uploaded[uploads(a)] = 0
+	c.uploadMu.Unlock()
 	keys := c.keys[a.job.ID]
 	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
 		TaskId:   a.task.ID,

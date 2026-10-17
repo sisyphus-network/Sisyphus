@@ -182,3 +182,46 @@ func TestAWorkerUploadsOnlySoMuchForOneAttempt(t *testing.T) {
 	w.returns(again, `{"count":5}`)
 	p.wait(id)
 }
+
+// An upload begun while its attempt lasted may not go on once the attempt
+// has ended: the next piece is refused, rather than counted against an
+// allowance begun afresh.
+func TestAnUploadMayNotGoOnOnceItsAttemptHasEnded(t *testing.T) {
+	attemptAllowance = 1000
+	defer func() { attemptAllowance = 0 }()
+	p := startPool(t, runtime.Builtin())
+	w := p.connectRaw(hello("rig", 1, "primes"))
+	w.welcome()
+	id := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER, 0)).GetJobId()
+	a := w.assignment()
+	owner, ok := p.coord.Uploading(p.rawIdents[w].ID(), a.GetTaskId(), a.GetAttempt())
+	if !ok {
+		t.Fatal("the worker holds no attempt")
+	}
+	conn, err := grpc.NewClient(p.addr, grpc.WithTransportCredentials(p.credentialsFor(p.rawIdents[w])))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream, err := pb.NewBlobServiceClient(conn).Put(p.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&pb.PutBlobRequest{TaskId: a.GetTaskId(), Attempt: a.GetAttempt(), Data: []byte(strings.Repeat("a", 600))}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { used, _ := p.coord.Uploaded(owner); return used == 600 })
+	w.fails(a, "gave up")
+	waitFor(t, func() bool { _, counted := p.coord.Uploaded(owner); return !counted })
+	if err := stream.Send(&pb.PutBlobRequest{Data: []byte(strings.Repeat("b", 600))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.CloseAndRecv(); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "the attempt this upload is for has ended") {
+		t.Fatalf("a piece sent after the attempt ended: %v", err)
+	}
+	if _, counted := p.coord.Uploaded(owner); counted {
+		t.Error("an attempt that had ended is counted again")
+	}
+	w.returns(w.assignment(), `{"count":5}`)
+	p.wait(id)
+}
