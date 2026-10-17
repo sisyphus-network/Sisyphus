@@ -92,9 +92,10 @@ func (s *blobService) pinOwner(ctx context.Context) string {
 // clientOwner begins the name a client's pins are held under.
 const clientOwner = userOwner + ":"
 
-// clientOf returns the client whose own pins, or uploads, an owner holds,
-// or nothing for an owner that is no client's.
-func clientOf(owner string) string {
+// ClientOf returns the client whose own pins, or uploads, an owner holds,
+// or nothing for an owner that is no client's. A coordinator counts a
+// client's own pins by it.
+func ClientOf(owner string) string {
 	for _, prefix := range []string{clientOwner, uploadOwner} {
 		if client, found := strings.CutPrefix(owner, prefix); found {
 			return client

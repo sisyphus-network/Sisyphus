@@ -150,10 +150,7 @@ func (s *poolService) ListMembers(ctx context.Context, _ *pb.ListMembersRequest)
 	// anything for clients.
 	var stored map[string]uint64
 	if s.coordinator != nil {
-		var err error
-		if stored, err = s.coordinator.Stored(ctx, clientOf); err != nil {
-			return nil, status.Errorf(codes.Internal, "measure what each client keeps: %v", err)
-		}
+		stored = s.coordinator.Stored()
 	}
 	var res pb.ListMembersResponse
 	for _, m := range s.access.Members() {
