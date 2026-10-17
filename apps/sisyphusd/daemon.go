@@ -91,6 +91,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	containersTimeout := fs.Duration("containers-timeout", 0, "with --containers: the longest a task may run before this worker stops it, whatever its job allows; 0 leaves it to the job's --timeout")
 	containersNetwork := fs.Bool("containers-network", false, "with --containers: let a task reach the network when its job asks to. Without it no task can, and a job that asks for the network is given to workers that allow it, or waits")
 	maxJobsPerClient := fs.Int("max-jobs-per-client", 0, "coordinator: how many unfinished jobs one client may have at once; more are refused until one is over. 0 means no limit. The node's own jobs are not counted")
+	maxTaskTimeout := fs.Duration("max-task-timeout", 0, "coordinator: the longest one attempt at a task of a client's job may run before it is stopped and tried again; a job may ask for less, and one that names no timeout gets this. 0 means no limit. The node's own jobs are not held to it")
 	maxTasksPerClient := fs.Int("max-tasks-per-client", 0, "coordinator: how many unfinished tasks, waiting or running, one client may have across its jobs; a job that would take it past that is refused. 0 means no limit. The node's own jobs are not counted")
 	hardenedContainers := fs.Bool("containers-hardened", false, "coordinator: give container jobs only to workers that run them hardened, with a sandboxing --container-runtime and --containers-read-only with a --containers-tmp-mb; such a job waits while none is connected. For a pool that takes container work from strangers")
 	distinctAddresses := fs.Bool("verify-distinct-addresses", false, "coordinator: for jobs submitted with --verify, hand each task's copies only to workers at different network addresses, so that two workers on one machine or behind one router cannot vouch for each other. For a pool with strangers in it: in a pool whose workers share an address it leaves too few to verify with")
@@ -533,7 +534,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			audits = runs
 		}
 		coord = coordinator.New(coordinator.Config{
-			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: *maxJobsPerClient, MaxTasksPerClient: *maxTasksPerClient, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: *maxJobsPerClient, MaxTasksPerClient: *maxTasksPerClient, MaxTaskTimeout: *maxTaskTimeout, Store: kept, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
 		seenAs = coord.Observed

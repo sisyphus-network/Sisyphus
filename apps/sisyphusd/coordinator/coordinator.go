@@ -135,6 +135,12 @@ type Config struct {
 	// one client can queue, which a count of jobs does not when one job has
 	// many tasks. The node's own jobs are not counted.
 	MaxTasksPerClient int
+	// MaxTaskTimeout, if not zero, is the longest one attempt at a task of
+	// a client's job may run: a job may ask for less, never more, and one
+	// that names no timeout gets this. Without it, a task that never ends
+	// holds its worker's slot until the worker goes. The node's own jobs
+	// keep what they ask for.
+	MaxTaskTimeout time.Duration
 	// HardenedContainers has every job whose tasks run in containers go
 	// only to workers that run them hardened: runtime.HardenedLabels. For a pool that
 	// takes container work from people its workers' owners do not know.
@@ -172,13 +178,15 @@ type Coordinator struct {
 	// perClient is how many unfinished jobs one client may have, and
 	// tasksPerClient how many unfinished tasks.
 	perClient, tasksPerClient int
-	addresses                 map[string]string
-	store                     Store
-	journal                   Journal
-	standings                 Standings
-	retain                    time.Duration
-	keepJobs                  time.Duration
-	log                       *slog.Logger
+	// maxTaskTimeout is the longest an attempt at a client's task may run.
+	maxTaskTimeout time.Duration
+	addresses      map[string]string
+	store          Store
+	journal        Journal
+	standings      Standings
+	retain         time.Duration
+	keepJobs       time.Duration
+	log            *slog.Logger
 
 	// ctx bounds the aggregations still running when the coordinator closes.
 	ctx         context.Context
@@ -326,6 +334,7 @@ func New(cfg Config) *Coordinator {
 		hardened:       cfg.HardenedContainers,
 		perClient:      cfg.MaxJobsPerClient,
 		tasksPerClient: cfg.MaxTasksPerClient,
+		maxTaskTimeout: cfg.MaxTaskTimeout,
 		addressOf:      cfg.AddressOf,
 		sourceOf:       cfg.SourceOf,
 		addresses:      make(map[string]string),
@@ -846,6 +855,9 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	job.Key, job.Private, job.Submitter = spec.GetKey(), len(spec.GetKey()) > 0, submitter
 	job.AuditShare = audit
 	job.TaskTimeout = time.Duration(spec.GetTaskTimeoutSeconds()) * time.Second
+	if submitter != "" && c.maxTaskTimeout > 0 && (job.TaskTimeout == 0 || job.TaskTimeout > c.maxTaskTimeout) {
+		job.TaskTimeout = c.maxTaskTimeout
+	}
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
 	job.Needs = needs
 	job.Parent, job.Step = parent, step

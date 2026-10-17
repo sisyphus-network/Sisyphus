@@ -188,3 +188,32 @@ func TestAClientsStepsSideBySideShareItsTasks(t *testing.T) {
 		t.Errorf("the client's tasks once the graph and its steps were over: %v", err)
 	}
 }
+
+// An attempt at a client's task may run no longer than the coordinator
+// allows: a job may ask for less, never more, and one that asks for no
+// limit gets the coordinator's. The node's own jobs keep what they ask.
+func TestAClientsTasksRunNoLongerThanTheCoordinatorAllows(t *testing.T) {
+	c := New(Config{Workloads: runtime.Builtin(), Store: storage.NewMemory(), MaxTaskTimeout: time.Minute, Log: slog.New(slog.DiscardHandler)})
+	defer c.Close()
+	ctx := context.Background()
+	for _, tt := range []struct {
+		submitter string
+		asks      uint32
+		want      time.Duration
+	}{
+		{"alice", 0, time.Minute},
+		{"alice", 30, 30 * time.Second},
+		{"alice", 60, time.Minute},
+		{"alice", 3600, time.Minute},
+		{"", 0, 0},
+		{"", 3600, time.Hour},
+	} {
+		submitted, err := c.submit(ctx, &pb.JobSpec{Workload: "primes", Params: []byte(`{"from":1,"to":10}`), TaskTimeoutSeconds: tt.asks}, "", "", tt.submitter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := time.Duration(submitted.GetSpec().GetTaskTimeoutSeconds()) * time.Second; got != tt.want {
+			t.Errorf("a job of %q's asking for %ds has tasks run for at most %v, want %v", tt.submitter, tt.asks, got, tt.want)
+		}
+	}
+}

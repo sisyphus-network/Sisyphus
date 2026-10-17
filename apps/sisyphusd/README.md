@@ -705,7 +705,7 @@ bin/sisyphusd job submit --timeout 10m ...      # stop and retry any attempt at 
 - **Logs.** A task can log lines as it runs, and those appear among the job's events with the task and worker they came from. The two built-in workloads log one line each.
 - **Progress.** A task can say how far along it is. `job get` and the desktop's API give it for each task, from 0 to 1, and for the job as the mean of its tasks. It is as true as the workload makes it, and is not kept across a restart.
 - **Cancelling** stops the job at once: its running tasks are told to stop, their slots are free again, and nothing more of it is handed out. A cancelled job is over, like one that succeeded or failed, and stays on record.
-- **Timeouts.** With `--timeout`, an attempt at a task that runs longer is stopped and counts as a failure, so it is tried again up to the usual three times.
+- **Timeouts.** With `--timeout`, an attempt at a task that runs longer is stopped and counts as a failure, so it is tried again up to the usual three times. A coordinator started with `--max-task-timeout` holds its clients' jobs to that: a job may ask for less, never more, and one that names no timeout gets the coordinator's, so no client's task holds a worker's slot for ever. `job get` shows the timeout a job was given. The coordinator's own jobs keep what they ask for.
 - **A job that fails stops its other tasks** the same way, rather than leaving them to finish for nothing.
 
 ## Verifying results
