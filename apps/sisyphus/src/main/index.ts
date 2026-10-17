@@ -180,6 +180,7 @@ type NodeSnapshot = {
 type GrpcNodeService = {
   getNodeInfo(request: object, options: grpc.CallOptions, callback: (error: grpc.ServiceError | null, value?: NodeInfo) => void): void
   watchPeers(request: object): grpc.ClientReadableStream<{ peers: Peer[]; revision: string | number | { toString(): string } }>
+  watchNodeState(request: object): grpc.ClientReadableStream<{ info: NodeInfo; peers: Peer[]; revision: string | number | { toString(): string } }>
   connectPeer(request: { address: string }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { peerId: string }) => void): void
   setPeerComputeTrust(request: { peerId: string; trusted: boolean }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { trusted: boolean }) => void): void
   setPeerComputePermissions(request: { peerId: string; givesWork: boolean; takesWork: boolean }, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, value?: { givesWork: boolean; takesWork: boolean }) => void): void
@@ -201,7 +202,8 @@ const initialSnapshot = (): NodeSnapshot => ({
 
 let snapshot = initialSnapshot()
 let client: GrpcNodeService | null = null
-let peerStream: grpc.ClientReadableStream<unknown> | null = null
+let nodeStateStream: grpc.ClientReadableStream<unknown> | null = null
+let legacyPeerStream: grpc.ClientReadableStream<unknown> | null = null
 let retryTimer: NodeJS.Timeout | null = null
 let retryDelayMs = 1_000
 let reconnecting = false
@@ -263,12 +265,15 @@ function publish(next: Partial<NodeSnapshot>) {
 
 function clearConnection() {
   connectionGeneration += 1
-  const previousStream = peerStream
+  const previousStream = nodeStateStream
+  const previousLegacyPeerStream = legacyPeerStream
   const previousClient = client
-  peerStream = null
+  nodeStateStream = null
+  legacyPeerStream = null
   client = null
   activeStreams.clearAll()
   previousStream?.cancel()
+  previousLegacyPeerStream?.cancel()
   previousClient?.close()
 }
 
@@ -315,20 +320,34 @@ function connectToNode() {
       retryDelayMs = 1_000
       daemonStartupError = null
       publish({ status: 'connected', info, error: null })
-      const stream = nextClient.watchPeers({})
-      peerStream = stream
-      stream.on('data', (update: { peers?: Peer[]; revision?: string | number | { toString(): string } }) => {
+      const stateStream = nextClient.watchNodeState({})
+      nodeStateStream = stateStream
+      stateStream.on('data', (update) => {
         if (generation !== connectionGeneration) return
         publish({
-          status: 'connected',
-          peers: update.peers ?? [],
-          revision: update.revision?.toString() ?? '0',
-          lastUpdated: new Date().toISOString(),
-          error: null,
+          status: 'connected', info: update.info, peers: update.peers ?? [],
+          revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), error: null,
         })
       })
-      stream.on('error', (streamError: Error) => scheduleReconnect(streamError.message, generation))
-      stream.on('end', () => scheduleReconnect('The peer stream ended.', generation))
+      stateStream.on('error', (streamError: grpc.ServiceError) => {
+        if (generation === connectionGeneration && streamError.code === grpc.status.UNIMPLEMENTED) {
+          stateStream.cancel()
+          nodeStateStream = null
+          const stream = nextClient.watchPeers({})
+          legacyPeerStream = stream
+          stream.on('data', (update: { peers?: Peer[]; revision?: string | number | { toString(): string } }) => {
+            if (generation !== connectionGeneration) return
+            publish({ status: 'connected', peers: update.peers ?? [], revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), error: null })
+          })
+          stream.on('error', (legacyError: Error) => scheduleReconnect(legacyError.message, generation))
+          stream.on('end', () => scheduleReconnect('The peer stream ended.', generation))
+          return
+        }
+        scheduleReconnect(streamError.message, generation)
+      })
+      stateStream.on('end', () => {
+        if (nodeStateStream === stateStream) scheduleReconnect('The node state stream ended.', generation)
+      })
     })
   } catch (error) {
     reconnecting = false

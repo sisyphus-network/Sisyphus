@@ -294,7 +294,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	stopped := make(chan error, 2)
 
 	// local is what the desktop client on this machine is told and may do.
-	local := api.LocalConfig{NodeID: ident.ID(), Version: version, Workloads: workloads.Names()}
+	local := api.LocalConfig{NodeID: ident.ID(), Version: version, Workloads: workloads.Names(), NodeInfoChanges: api.NewNodeInfoChanges()}
 
 	// coordinatorID is the ID of the node this one's worker answers to: the
 	// node itself, or for a worker-only node the coordinator it joined.
@@ -933,6 +933,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		searches.start(func() {
 			gateway.Store(gatewaysAddress(looking, log))
 			gatewayAnswered.Store(true)
+			local.NodeInfoChanges.Notify()
 		})
 	}
 	stunAnswered.Store(locationDiscoveryRunning.StunServer == "")
@@ -955,12 +956,16 @@ func runDaemon(ctx context.Context, args []string) error {
 				searches.start(func() {
 					stunned.Store(stunnedAddress(looking, locationDiscoveryRunning.StunServer, log))
 					stunAnswered.Store(true)
+					local.NodeInfoChanges.Notify()
 				})
 			})
 		}
 		if locationDiscoveryRunning.LocateCountry && stunAnswered.Load() {
 			lookingUp.Do(func() {
-				searches.start(func() { asked.Store(lookUpCountry(looking)) })
+				searches.start(func() {
+					asked.Store(lookUpCountry(looking))
+					local.NodeInfoChanges.Notify()
+				})
 			})
 		}
 		return country, source

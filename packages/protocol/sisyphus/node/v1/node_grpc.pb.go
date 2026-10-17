@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	NodeService_GetNodeInfo_FullMethodName                  = "/sisyphus.node.v1.NodeService/GetNodeInfo"
+	NodeService_WatchNodeState_FullMethodName               = "/sisyphus.node.v1.NodeService/WatchNodeState"
 	NodeService_GetLocationDiscoverySettings_FullMethodName = "/sisyphus.node.v1.NodeService/GetLocationDiscoverySettings"
 	NodeService_SetLocationDiscoverySettings_FullMethodName = "/sisyphus.node.v1.NodeService/SetLocationDiscoverySettings"
 	NodeService_GetPoolLimits_FullMethodName                = "/sisyphus.node.v1.NodeService/GetPoolLimits"
@@ -72,6 +73,9 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeServiceClient interface {
 	GetNodeInfo(ctx context.Context, in *GetNodeInfoRequest, opts ...grpc.CallOption) (*GetNodeInfoResponse, error)
+	// WatchNodeState sends a complete node-and-peer snapshot at once and
+	// again whenever node details or peers change.
+	WatchNodeState(ctx context.Context, in *GetNodeInfoRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NodeState], error)
 	// Location discovery is opt-in. Changes are saved by the node and take
 	// effect after it restarts, whether the desktop starts it or not.
 	GetLocationDiscoverySettings(ctx context.Context, in *GetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error)
@@ -195,6 +199,25 @@ func (c *nodeServiceClient) GetNodeInfo(ctx context.Context, in *GetNodeInfoRequ
 	return out, nil
 }
 
+func (c *nodeServiceClient) WatchNodeState(ctx context.Context, in *GetNodeInfoRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NodeState], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[0], NodeService_WatchNodeState_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetNodeInfoRequest, NodeState]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchNodeStateClient = grpc.ServerStreamingClient[NodeState]
+
 func (c *nodeServiceClient) GetLocationDiscoverySettings(ctx context.Context, in *GetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LocationDiscoverySettingsState)
@@ -277,7 +300,7 @@ func (c *nodeServiceClient) ListPeers(ctx context.Context, in *ListPeersRequest,
 
 func (c *nodeServiceClient) WatchPeers(ctx context.Context, in *WatchPeersRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListPeersResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[0], NodeService_WatchPeers_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[1], NodeService_WatchPeers_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +409,7 @@ func (c *nodeServiceClient) ListJobs(ctx context.Context, in *ListJobsRequest, o
 
 func (c *nodeServiceClient) WatchJobs(ctx context.Context, in *WatchJobsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListJobsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[1], NodeService_WatchJobs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[2], NodeService_WatchJobs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +438,7 @@ func (c *nodeServiceClient) CancelJob(ctx context.Context, in *CancelJobRequest,
 
 func (c *nodeServiceClient) WatchJobEvents(ctx context.Context, in *WatchJobEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JobEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[2], NodeService_WatchJobEvents_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[3], NodeService_WatchJobEvents_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +557,7 @@ func (c *nodeServiceClient) ListModels(ctx context.Context, in *ListModelsReques
 
 func (c *nodeServiceClient) PullModel(ctx context.Context, in *PullModelRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PullModelProgress], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[3], NodeService_PullModel_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[4], NodeService_PullModel_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -563,7 +586,7 @@ func (c *nodeServiceClient) RemoveModel(ctx context.Context, in *RemoveModelRequ
 
 func (c *nodeServiceClient) Ask(ctx context.Context, in *AskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[4], NodeService_Ask_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[5], NodeService_Ask_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -612,7 +635,7 @@ func (c *nodeServiceClient) DeleteChat(ctx context.Context, in *DeleteChatReques
 
 func (c *nodeServiceClient) StoreFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[StoreFileRequest, File], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[5], NodeService_StoreFile_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[6], NodeService_StoreFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -625,7 +648,7 @@ type NodeService_StoreFileClient = grpc.ClientStreamingClient[StoreFileRequest, 
 
 func (c *nodeServiceClient) FetchFile(ctx context.Context, in *FetchFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FetchFileResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[6], NodeService_FetchFile_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[7], NodeService_FetchFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -707,6 +730,9 @@ func (c *nodeServiceClient) JoinPool(ctx context.Context, in *JoinPoolRequest, o
 // for forward compatibility.
 type NodeServiceServer interface {
 	GetNodeInfo(context.Context, *GetNodeInfoRequest) (*GetNodeInfoResponse, error)
+	// WatchNodeState sends a complete node-and-peer snapshot at once and
+	// again whenever node details or peers change.
+	WatchNodeState(*GetNodeInfoRequest, grpc.ServerStreamingServer[NodeState]) error
 	// Location discovery is opt-in. Changes are saved by the node and take
 	// effect after it restarts, whether the desktop starts it or not.
 	GetLocationDiscoverySettings(context.Context, *GetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error)
@@ -822,6 +848,9 @@ type UnimplementedNodeServiceServer struct{}
 
 func (UnimplementedNodeServiceServer) GetNodeInfo(context.Context, *GetNodeInfoRequest) (*GetNodeInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNodeInfo not implemented")
+}
+func (UnimplementedNodeServiceServer) WatchNodeState(*GetNodeInfoRequest, grpc.ServerStreamingServer[NodeState]) error {
+	return status.Error(codes.Unimplemented, "method WatchNodeState not implemented")
 }
 func (UnimplementedNodeServiceServer) GetLocationDiscoverySettings(context.Context, *GetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetLocationDiscoverySettings not implemented")
@@ -996,6 +1025,17 @@ func _NodeService_GetNodeInfo_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _NodeService_WatchNodeState_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetNodeInfoRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).WatchNodeState(m, &grpc.GenericServerStream[GetNodeInfoRequest, NodeState]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchNodeStateServer = grpc.ServerStreamingServer[NodeState]
 
 func _NodeService_GetLocationDiscoverySettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetLocationDiscoverySettingsRequest)
@@ -1919,6 +1959,11 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "WatchNodeState",
+			Handler:       _NodeService_WatchNodeState_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "WatchPeers",
 			Handler:       _NodeService_WatchPeers_Handler,

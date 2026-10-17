@@ -19,6 +19,7 @@ type Snapshot = {
 type NodeClient = {
   getNodeInfo(request: object, callback: (error: grpc.ServiceError | null, value?: NodeInfo) => void): void
   watchPeers(request: object): grpc.ClientReadableStream<{ peers?: Peer[]; revision?: string | number | { toString(): string } }>
+  watchNodeState(request: object): grpc.ClientReadableStream<{ info?: NodeInfo; peers?: Peer[]; revision?: string | number | { toString(): string } }>
   close(): void
 }
 
@@ -33,6 +34,7 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
   let snapshot: Snapshot = { status: 'connecting', endpoint, info: null, peers: [], revision: '0', lastUpdated: null, error: null }
   let client: NodeClient | null = null
   let stream: grpc.ClientReadableStream<unknown> | null = null
+  let legacyPeerStream: grpc.ClientReadableStream<unknown> | null = null
   let retryTimer: NodeJS.Timeout | null = null
   let retryDelay = 1_000
   let generation = 0
@@ -114,8 +116,10 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
   function closeConnection() {
     generation += 1
     stream?.cancel()
+    legacyPeerStream?.cancel()
     client?.close()
     stream = null
+    legacyPeerStream = null
     client = null
   }
 
@@ -150,14 +154,34 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
         }
         retryDelay = 1_000
         publish({ status: 'connected', info, error: null })
-        const peerStream = nextClient.watchPeers({})
-        stream = peerStream
-        peerStream.on('data', (update) => {
+        const nextStateStream = nextClient.watchNodeState({})
+        stream = nextStateStream
+        nextStateStream.on('data', (update) => {
           if (currentGeneration !== generation) return
-          publish({ status: 'connected', peers: update.peers ?? [], revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), error: null })
+          publish({
+            status: 'connected', info: update.info ?? info, peers: update.peers ?? [],
+            revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), error: null,
+          })
         })
-        peerStream.on('error', (streamError: Error) => scheduleReconnect(streamError.message, currentGeneration))
-        peerStream.on('end', () => scheduleReconnect('The peer stream ended.', currentGeneration))
+        nextStateStream.on('error', (streamError: grpc.ServiceError) => {
+          if (currentGeneration === generation && streamError.code === grpc.status.UNIMPLEMENTED) {
+            nextStateStream.cancel()
+            stream = null
+            const peerStream = nextClient.watchPeers({})
+            legacyPeerStream = peerStream
+            peerStream.on('data', (update) => {
+              if (currentGeneration !== generation) return
+              publish({ status: 'connected', peers: update.peers ?? [], revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), error: null })
+            })
+            peerStream.on('error', (legacyError: Error) => scheduleReconnect(legacyError.message, currentGeneration))
+            peerStream.on('end', () => scheduleReconnect('The peer stream ended.', currentGeneration))
+            return
+          }
+          scheduleReconnect(streamError.message, currentGeneration)
+        })
+        nextStateStream.on('end', () => {
+          if (stream === nextStateStream) scheduleReconnect('The node state stream ended.', currentGeneration)
+        })
       })
     } catch (error) {
       scheduleReconnect(error instanceof Error ? error.message : String(error), currentGeneration)

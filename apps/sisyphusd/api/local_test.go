@@ -238,6 +238,160 @@ func TestWatchPeersSendsAFullListWheneverItChanges(t *testing.T) {
 	}
 }
 
+func TestWatchNodeStatePublishesNodeAndPeerChanges(t *testing.T) {
+	var mu sync.Mutex
+	country := ""
+	var peers []*nodepb.Peer
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{
+		Poll: 5 * time.Millisecond, NodeInfoChanges: changes,
+		Peers: func() []*nodepb.Peer {
+			mu.Lock()
+			defer mu.Unlock()
+			return peers
+		},
+		Country: func() (string, string) {
+			mu.Lock()
+			defer mu.Unlock()
+			return country, ""
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.WatchNodeState(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.GetInfo().GetCountryCode() != "" || first.GetRevision() != 1 {
+		t.Fatalf("initial state = %v; want pending discovery at revision 1", first)
+	}
+	secondStream, err := client.WatchNodeState(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial, err := secondStream.Recv(); err != nil || initial.GetInfo().GetCountryCode() != "" {
+		t.Fatalf("second watcher initial snapshot = %v, %v", initial, err)
+	}
+	mu.Lock()
+	country = "IL"
+	peers = []*nodepb.Peer{peerEntry("12D3KooWa", true, true)}
+	mu.Unlock()
+	changes.Notify()
+	updates := make(chan *nodepb.NodeState, 1)
+	errors := make(chan error, 1)
+	go func() {
+		update, err := stream.Recv()
+		if err != nil {
+			errors <- err
+			return
+		}
+		updates <- update
+	}()
+	select {
+	case update := <-updates:
+		if update.GetInfo().GetCountryCode() != "IL" || len(update.GetPeers()) != 1 || update.GetRevision() != 2 {
+			t.Fatalf("updated state = %v; want country IL, one peer, revision 2", update)
+		}
+	case err := <-errors:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("country discovery event was not streamed")
+	}
+	secondUpdate, err := secondStream.Recv()
+	if err != nil || secondUpdate.GetInfo().GetCountryCode() != "IL" || len(secondUpdate.GetPeers()) != 1 || secondUpdate.GetRevision() != 2 {
+		t.Fatalf("second watcher update = %v, %v; want same state", secondUpdate, err)
+	}
+	mu.Lock()
+	peers = []*nodepb.Peer{peerEntry("12D3KooWa", true, true), peerEntry("12D3KooWb", true, true)}
+	mu.Unlock()
+	go func() {
+		update, err := stream.Recv()
+		if err != nil {
+			errors <- err
+			return
+		}
+		updates <- update
+	}()
+	select {
+	case update := <-updates:
+		if len(update.GetPeers()) != 2 || update.GetRevision() != 3 {
+			t.Fatalf("peer-only update = %v; want two peers at revision 3", update)
+		}
+	case err := <-errors:
+		t.Fatal(err)
+	case <-time.After(time.Second):
+		t.Fatal("peer change was not detected by the state stream")
+	}
+	thirdUpdate, err := secondStream.Recv()
+	if err != nil || len(thirdUpdate.GetPeers()) != 2 || thirdUpdate.GetRevision() != 3 {
+		t.Fatalf("second watcher peer update = %v, %v; want two peers at revision 3", thirdUpdate, err)
+	}
+	changes.Notify() // No duplicate snapshot when a source did not change.
+	cancel()
+	if _, err := stream.Recv(); status.Code(err) != codes.Canceled {
+		t.Errorf("after cancelling: %v", err)
+	}
+}
+
+// A state watcher stops at the first snapshot it cannot send, whether the
+// first or a later one, and says why.
+func TestWatchNodeStateStopsWhenASnapshotCannotBeSent(t *testing.T) {
+	gone := errors.New("the client went away")
+	state := func(country string) func() *nodepb.NodeState {
+		return func() *nodepb.NodeState {
+			return &nodepb.NodeState{Info: &nodepb.GetNodeInfoResponse{CountryCode: country}}
+		}
+	}
+	if err := watchNodeState(context.Background(), time.Hour, nil, state(""), func(*nodepb.NodeState) error { return gone }); !errors.Is(err, gone) {
+		t.Errorf("the first snapshot: %v, want %v", err, gone)
+	}
+	changes := make(chan struct{}, 1)
+	country := ""
+	sent := 0
+	err := watchNodeState(context.Background(), time.Hour, changes, func() *nodepb.NodeState { return state(country)() }, func(*nodepb.NodeState) error {
+		sent++
+		if sent > 1 {
+			return gone
+		}
+		country = "IL"
+		changes <- struct{}{}
+		return nil
+	})
+	if !errors.Is(err, gone) || sent != 2 {
+		t.Errorf("a later snapshot: %v after %d sent, want %v after 2", err, sent, gone)
+	}
+}
+
+// Changes a watcher has not yet taken are folded into the one it will: a
+// slow watcher is not queued a snapshot per change, and does not hold up
+// the node announcing them.
+func TestNodeInfoChangesFoldIntoOneForASlowWatcher(t *testing.T) {
+	changes := NewNodeInfoChanges()
+	watching, stop := changes.subscribe()
+	defer stop()
+	changes.Notify()
+	changes.Notify()
+	<-watching
+	select {
+	case <-watching:
+		t.Error("two changes the watcher had not taken were announced twice")
+	default:
+	}
+	stop()
+	changes.Notify() // Nobody is watching any more; nothing is announced.
+	select {
+	case <-watching:
+		t.Error("a watcher that stopped was still told of changes")
+	default:
+	}
+}
+
 func TestChangingTrustAdmitsAndRemovesWorkers(t *testing.T) {
 	n := startLocal(t, true)
 	const peer = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
