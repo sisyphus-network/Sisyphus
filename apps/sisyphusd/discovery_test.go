@@ -225,6 +225,29 @@ func TestTheCountryIsLookedUpOnlyWhenAsked(t *testing.T) {
 	})
 }
 
+// A node with an address of its own in the world is placed by it; one
+// behind a NAT by its address as the pool sees it; and only then by an
+// outside service, if that was asked.
+func TestWhereANodeIsComesFirstFromItsOwnAddresses(t *testing.T) {
+	own, private := []string{"/ip4/8.8.8.8/tcp/7700"}, []string{"/ip4/192.168.1.4/tcp/7700"}
+	seen := netip.MustParseAddr("193.0.6.139")
+	for _, tt := range []struct {
+		own                []string
+		seen               netip.Addr
+		lookedUp           string
+		wantCode, wantFrom string
+	}{
+		{own, seen, "FR", "US", "interface"},
+		{private, seen, "FR", "NL", "pool"},
+		{private, netip.Addr{}, "FR", "FR", "lookup"},
+		{private, netip.MustParseAddr("100.64.0.9"), "", "", ""},
+	} {
+		if code, from := countryFrom(tt.own, tt.seen, tt.lookedUp); code != tt.wantCode || from != tt.wantFrom {
+			t.Errorf("countryFrom(%v, %v, %q) = %q, %q; want %q, %q", tt.own, tt.seen, tt.lookedUp, code, from, tt.wantCode, tt.wantFrom)
+		}
+	}
+}
+
 func TestCountryLookupsThatGiveNothing(t *testing.T) {
 	ctx := context.Background()
 	for name, body := range map[string]string{

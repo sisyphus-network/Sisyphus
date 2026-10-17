@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net/netip"
 	"slices"
 	"sort"
 	"strings"
@@ -118,6 +119,10 @@ type Config struct {
 	// worker making a call is, and is the call's own address if left nil.
 	DistinctAddresses bool
 	AddressOf         func(ctx context.Context) string
+	// SourceOf says, in full, the address the worker making a call connects
+	// from, and is the call's own source address if left nil. A worker is
+	// told it, if it is a global address; see observed.go.
+	SourceOf func(ctx context.Context) netip.Addr
 	// MaxJobsPerClient, if not zero, is how many unfinished jobs one client
 	// may have at once, so that one cannot fill the coordinator for all
 	// the rest. The steps of a job are not counted apart from it, and the
@@ -161,6 +166,7 @@ type Coordinator struct {
 	// where each worker that has connected was when it last did.
 	distinct  bool
 	addressOf func(ctx context.Context) string
+	sourceOf  func(ctx context.Context) netip.Addr
 	// hardened is whether container jobs need hardened workers.
 	hardened bool
 	// perClient is how many unfinished jobs one client may have, and
@@ -232,6 +238,9 @@ type worker struct {
 	// relayed what it last said it had carried.
 	relayAddresses                   []string
 	relayedConnections, relayedBytes uint64
+	// dialled is the coordinator's address as the worker reached it, if
+	// that is a global address.
+	dialled netip.Addr
 	// removed is closed, once, to make the worker's connection end.
 	removed chan struct{}
 	remove  sync.Once
@@ -318,6 +327,7 @@ func New(cfg Config) *Coordinator {
 		perClient:      cfg.MaxJobsPerClient,
 		tasksPerClient: cfg.MaxTasksPerClient,
 		addressOf:      cfg.AddressOf,
+		sourceOf:       cfg.SourceOf,
 		addresses:      make(map[string]string),
 		store:          cfg.Store,
 		journal:        cfg.Journal,
@@ -338,6 +348,9 @@ func New(cfg Config) *Coordinator {
 	}
 	if c.addressOf == nil {
 		c.addressOf = callersAddress
+	}
+	if c.sourceOf == nil {
+		c.sourceOf = callersSource
 	}
 	// Attempts that have run past their time are looked for once a second.
 	c.aggregating.Add(1)
@@ -990,6 +1003,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 		name:           hello.GetName(),
 		serveAddress:   hello.GetServeAddress(),
 		relayAddresses: hello.GetRelayAddresses(),
+		dialled:        global(hello.GetDialledAddress()),
 		holds:          make(map[string]struct{}),
 		capabilities:   capabilities,
 		connectedAt:    now,
@@ -1007,6 +1021,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	c.workers[w.id] = w
 	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Welcome{Welcome: &pb.Welcome{
 		CoordinatorId: c.id, SwarmFingerprint: c.swarmFingerprint,
+		ObservedAddress: seenAt(c.sourceOf(stream.Context())),
 	}}})
 	c.scheduleLocked()
 	c.mu.Unlock()

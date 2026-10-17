@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -189,7 +190,7 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 	// database can, keeps that too.
 	standings, _ := journal.(coordinator.Standings)
 	coord := coordinator.New(coordinator.Config{
-		DistinctAddresses: workersAt != nil, AddressOf: workersAt,
+		DistinctAddresses: workersAt != nil, AddressOf: workersAt, SourceOf: workersFrom,
 		ID: ident.ID(), Workloads: workloads, Audits: workloads, Store: wrap(store), Journal: journal, Standings: standings, Retain: testRetain,
 		Log: slog.New(slog.NewTextHandler(logs, nil)),
 	})
@@ -245,6 +246,10 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 // task's copies to workers at different addresses, and says where the
 // worker making a call is.
 var workersAt func(ctx context.Context) string
+
+// workersFrom, if set, says what address the workers of the pools a test
+// goes on to start connect from, in place of where they really do.
+var workersFrom func(ctx context.Context) netip.Addr
 
 // startWorker runs a worker until the test ends or the returned stop function
 // is called, whichever comes first. stop waits for the worker to exit.

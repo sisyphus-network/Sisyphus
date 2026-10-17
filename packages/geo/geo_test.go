@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"math"
 	"net/netip"
 	"strings"
 	"testing"
@@ -28,6 +29,42 @@ func TestTheBuiltInTablePlacesWellKnownAddresses(t *testing.T) {
 	}
 	if v4, v6 := builtin().Size(); v4 < 100000 || v6 < 50000 {
 		t.Errorf("the built-in table has %d and %d boundaries", v4, v6)
+	}
+}
+
+// Only an address that can be someone's on the internet says where they
+// are; the rest are refused whatever a table says of them.
+func TestOnlyAGlobalAddressSaysWhereAnythingIs(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"8.8.8.8": true, "2001:4860:4860::8888": true, "::ffff:8.8.8.8": true,
+		"127.0.0.1": false, "::1": false, // loopback
+		"0.0.0.0": false, "::": false, "0.1.2.3": false, // this network
+		"10.1.2.3": false, "172.16.0.1": false, "192.168.1.10": false, "fd00::1": false, // private
+		"100.64.0.1": false, "100.127.255.254": false, // shared by a carrier's NAT
+		"169.254.0.5": false, "fe80::1": false, // link-local
+		"224.0.0.1": false, "ff02::1": false, // multicast
+		"255.255.255.255": false, "240.0.0.1": false, // reserved
+		"192.0.0.8": false,                                                                    // the protocols' own
+		"192.0.2.1": false, "198.51.100.1": false, "203.0.113.1": false, "2001:db8::1": false, // documentation
+		"198.18.0.1": false, "198.19.255.1": false, // benchmarks
+		"192.88.99.1": false, // the old 6to4 relays
+		// IPv6 set aside: translation, discard, dummy, the protocols' own
+		// block and those within it, documentation, segment routing.
+		"64:ff9b::808:808": false, "64:ff9b:1::1": false, "100::1": false, "100:0:0:1::1": false,
+		"2002:808:808::1": false, "2002::1": false, // 6to4, which carries an IPv4 address
+		"2001::1": false, "2001:1ff::1": false, "2001:2::1": false, "2001:10::1": false,
+		"3fff::1": false, "5f00::1": false,
+		// And IPv6 outside the space the internet's addresses come from.
+		"4000::1": false, "1::1": false,
+		// Just past the blocks set aside, an address is anyone's again.
+		"2001:200::1": true, "192.88.100.1": true, "100.128.0.1": true, "2003::1": true, "2001:ffff::1": true,
+	} {
+		if got := Global(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("Global(%s) = %v, want %v", addr, got, want)
+		}
+	}
+	if Global(netip.Addr{}) {
+		t.Error("no address at all is global")
 	}
 }
 
@@ -61,12 +98,16 @@ func TestATableIsCompiledFromWhatRegistriesPublish(t *testing.T) {
 		"5.0.0.0": "FR", "5.0.1.255": "FR", "5.0.2.0": "DE", "5.0.3.255": "DE",
 		"5.0.4.0": "", "5.0.8.255": "", "5.0.9.7": "IT", "5.0.10.0": "",
 		"4.255.255.255": "", "5.1.0.1": "", "5.2.0.1": "", "5.3.0.1": "", "5.5.0.0": "",
-		"255.255.255.255": "US",
+		"255.255.255.255": "", // in a block, but nobody's address
 		"2a00:1::1":       "BR", "2a00:1:ffff:ffff:ffff::": "BR", "2a00:2::1": "", "2a00:0::1": "",
 	} {
 		if got := table.Country(netip.MustParseAddr(addr)); got != want {
 			t.Errorf("Country(%s) = %q, want %q", addr, got, want)
 		}
+	}
+	// A block can run to the very end of the addresses.
+	if got := find(table, table.v4, math.MaxUint32); got != "US" {
+		t.Errorf("the last address is in %q", got)
 	}
 	// Two blocks of one country side by side are one stretch.
 	if v4, v6 := table.Size(); v4 != 6 || v6 != 3 {
