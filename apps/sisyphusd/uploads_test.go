@@ -154,3 +154,31 @@ func TestWhatAnAttemptUploadedIsLetGoOfWhenTheCoordinatorStops(t *testing.T) {
 		t.Errorf("still held for the attempt after the coordinator stopped: %v", held)
 	}
 }
+
+// A worker may upload only so much for one attempt, counted across all its
+// uploads as they arrive; the next attempt has an allowance of its own.
+func TestAWorkerUploadsOnlySoMuchForOneAttempt(t *testing.T) {
+	attemptAllowance = 1000
+	defer func() { attemptAllowance = 0 }()
+	p := startPool(t, runtime.Builtin())
+	w := p.connectRaw(hello("rig", 1, "primes"))
+	w.welcome()
+	id := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER, 0)).GetJobId()
+	a := w.assignment()
+	if _, err := p.uploadAs(w, strings.Repeat("a", 600), a); err != nil {
+		t.Fatalf("an upload within the allowance: %v", err)
+	}
+	if _, err := p.uploadAs(w, strings.Repeat("b", 500), a); status.Code(err) != codes.ResourceExhausted || !strings.Contains(err.Error(), "has uploaded 600 bytes, and an attempt may upload 1000") {
+		t.Fatalf("an upload past the allowance: %v", err)
+	}
+	if _, err := p.uploadAs(w, strings.Repeat("c", 300), a); err != nil {
+		t.Fatalf("an upload that still fits: %v", err)
+	}
+	w.fails(a, "ran out of room")
+	again := w.assignment()
+	if _, err := p.uploadAs(w, strings.Repeat("d", 900), again); err != nil {
+		t.Fatalf("the next attempt's allowance: %v", err)
+	}
+	w.returns(again, `{"count":5}`)
+	p.wait(id)
+}

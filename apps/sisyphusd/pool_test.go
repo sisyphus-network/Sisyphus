@@ -191,7 +191,7 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 	standings, _ := journal.(coordinator.Standings)
 	coord := coordinator.New(coordinator.Config{
 		DistinctAddresses: workersAt != nil, AddressOf: workersAt, SourceOf: workersFrom,
-		ID: ident.ID(), Workloads: workloads, Audits: workloads, Store: wrap(store), ClientOf: api.ClientOf, MaxStoreBytesPerClient: clientShare, Journal: journal, Standings: standings, Retain: testRetain,
+		ID: ident.ID(), Workloads: workloads, Audits: workloads, Store: wrap(store), ClientOf: api.ClientOf, MaxStoreBytesPerClient: clientShare, MaxUploadBytesPerAttempt: attemptAllowance, Journal: journal, Standings: standings, Retain: testRetain,
 		Log: slog.New(slog.NewTextHandler(logs, nil)),
 	})
 	if _, err := coord.Recover(); err != nil {
@@ -250,6 +250,10 @@ var workersAt func(ctx context.Context) string
 // clientShare, if set, is the most each client of the pools a test goes
 // on to start may keep in the coordinator's store.
 var clientShare uint64
+
+// attemptAllowance, if set, is the most a worker of the pools a test goes
+// on to start may upload for one attempt.
+var attemptAllowance uint64
 
 // workersFrom, if set, says what address the workers of the pools a test
 // goes on to start connect from, in place of where they really do.

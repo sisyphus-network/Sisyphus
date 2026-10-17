@@ -49,6 +49,9 @@ type blobService struct {
 	// workers takes no caller for one.
 	workers   func(id string) bool
 	uploading func(nodeID, taskID string, attempt uint32) (string, bool)
+	// chargeUpload counts what arrives for an attempt against what one
+	// may upload; see Coordinator.ChargeUpload.
+	chargeUpload func(owner string, n uint64) error
 	// perClient is the most a client may keep in the store, as stored
 	// says it keeps; zero means no limit.
 	perClient uint64
@@ -168,12 +171,17 @@ func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, p
 	}
 	pending := first
 	c, size, err := storeUpload(ctx, target, s.quota, left, plain, func() ([]byte, error) {
+		msg, err := pending, error(nil)
 		if pending != nil {
-			data := pending.GetData()
 			pending = nil
-			return data, nil
+		} else {
+			msg, err = stream.Recv()
 		}
-		msg, err := stream.Recv()
+		// What arrives for an attempt counts against what it may upload,
+		// piece by piece.
+		if err == nil && attemptOwner != "" && s.chargeUpload != nil {
+			err = s.chargeUpload(attemptOwner, uint64(len(msg.GetData())))
+		}
 		return msg.GetData(), err
 	})
 	if err != nil {
