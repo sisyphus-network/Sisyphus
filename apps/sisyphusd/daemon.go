@@ -250,6 +250,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	if confined.MemoryMB < 0 || confined.CPUs < 0 || confined.Timeout < 0 || confined.TmpMB < 0 {
 		return errors.New("--containers-memory-mb, --containers-cpus, --containers-timeout and --containers-tmp-mb are the most a task may use, and cannot be less than nothing")
 	}
+	if *maxTaskTimeout < 0 {
+		return errors.New("--max-task-timeout cannot be negative")
+	}
 	if confined.TmpMB > 0 && !confined.ReadOnly {
 		return errors.New("--containers-tmp-mb sizes the /tmp that --containers-read-only gives a task, and needs it: without it a task can write anywhere in its image")
 	}
