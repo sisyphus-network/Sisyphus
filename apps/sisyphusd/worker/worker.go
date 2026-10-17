@@ -245,7 +245,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				defer stops.Delete(assigned.GetTaskId())
 				// What the task reports of itself is passed on a few times a
 				// second while it runs, and once more when it ends.
-				said := &reports{private: private(assigned)}
+				said := &reports{private: private(assigned), changed: make(chan struct{}, 1)}
 				pass := func() {
 					if update := said.take(assigned); update != nil {
 						send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskUpdate{TaskUpdate: update}})
@@ -254,11 +254,9 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				passing := make(chan struct{})
 				go func() {
 					defer close(passing)
-					tick := time.NewTicker(updateInterval)
-					defer tick.Stop()
 					for {
 						select {
-						case <-tick.C:
+						case <-said.changed:
 							pass()
 						case <-taskCtx.Done():
 							return
@@ -498,20 +496,18 @@ func (w *Worker) labels() []string {
 	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.Workloads.Offers(context.Background())...)
 }
 
-// updateInterval is how often the coordinator is told how a running task
-// is getting on.
-const updateInterval = 250 * time.Millisecond
-
 // maxLogLine is the longest line of a task's log that is passed on whole.
 const maxLogLine = 4 << 10
 
-// reports collects what a running task says of itself until it is next
-// passed on to the coordinator.
+// reports collects what a running task says of itself until it is passed on
+// to the coordinator. changed coalesces bursts without losing the latest
+// progress or any non-private log lines.
 type reports struct {
 	mu       sync.Mutex
 	progress float64
 	lines    []string
 	fresh    bool
+	changed  chan struct{}
 	// private says the task is of a private job. What such a task logs may
 	// be the data the job seals, a container's every printed line for one,
 	// and a log is passed on and kept unsealed: so it is not passed on.
@@ -527,6 +523,7 @@ func (r *reports) Progress(done float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.progress, r.fresh = done, true
+	r.notifyLocked()
 }
 
 func (r *reports) Log(line string) {
@@ -536,6 +533,7 @@ func (r *reports) Log(line string) {
 		if !r.withheld {
 			r.withheld, r.fresh = true, true
 			r.lines = append(r.lines, withheldLine)
+			r.notifyLocked()
 		}
 		return
 	}
@@ -543,6 +541,14 @@ func (r *reports) Log(line string) {
 		line = line[:maxLogLine] + " [cut short]"
 	}
 	r.lines, r.fresh = append(r.lines, line), true
+	r.notifyLocked()
+}
+
+func (r *reports) notifyLocked() {
+	select {
+	case r.changed <- struct{}{}:
+	default:
+	}
 }
 
 // take returns what has been said since it was last called, as an update for
