@@ -50,6 +50,7 @@ export type NodeSnapshot = {
   peers: Peer[]
   revision: string
   lastUpdated: string | null
+  stateTransport: 'initial-daemon-fetch' | 'realtime' | null
   error: string | null
   authRequired?: boolean
 }
@@ -93,9 +94,11 @@ const api = {
   listPairedBrowsers: (): Promise<{ devices: PairedBrowser[] }> => ipcRenderer.invoke('node:browser:list-paired'),
   revokePairedBrowser: (id: string): Promise<void> => ipcRenderer.invoke('node:browser:revoke-paired', id),
   onSnapshot: (callback: (snapshot: NodeSnapshot) => void) => {
+    let active = true
     const listener = (_event: Electron.IpcRendererEvent, snapshot: NodeSnapshot) => callback(snapshot)
     ipcRenderer.on('node:snapshot', listener)
-    return () => { ipcRenderer.removeListener('node:snapshot', listener) }
+    void ipcRenderer.invoke('node:get-snapshot').then((snapshot: NodeSnapshot) => { if (active) callback(snapshot) }).catch(() => {})
+    return () => { active = false; ipcRenderer.removeListener('node:snapshot', listener) }
   },
 }
 

@@ -14,6 +14,7 @@ type Snapshot = {
   peers: Peer[]
   revision: string
   lastUpdated: string | null
+  stateTransport: 'initial-daemon-fetch' | 'realtime' | null
   error: string | null
 }
 type NodeClient = {
@@ -31,7 +32,7 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
   if (!(webApiHost === '::1' || /^127\./.test(webApiHost)) || webApiURL.username || webApiURL.password || webApiURL.pathname !== '/' || webApiURL.search || webApiURL.hash) {
     throw new Error('SISYPHUS_WEB_API_ADDRESS must point to a loopback-only sisyphusd web listener.')
   }
-  let snapshot: Snapshot = { status: 'connecting', endpoint, info: null, peers: [], revision: '0', lastUpdated: null, error: null }
+  let snapshot: Snapshot = { status: 'connecting', endpoint, info: null, peers: [], revision: '0', lastUpdated: null, stateTransport: null, error: null }
   let client: NodeClient | null = null
   let stream: grpc.ClientReadableStream<unknown> | null = null
   let legacyPeerStream: grpc.ClientReadableStream<unknown> | null = null
@@ -126,7 +127,7 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
   function scheduleReconnect(error: string, currentGeneration: number) {
     if (stopping || retryTimer || currentGeneration !== generation) return
     closeConnection()
-    publish({ status: 'disconnected', error })
+    publish({ status: 'disconnected', stateTransport: null, error })
     retryTimer = setTimeout(() => {
       retryTimer = null
       connect()
@@ -138,7 +139,7 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
     if (stopping) return
     closeConnection()
     const currentGeneration = generation
-    publish({ status: 'connecting', error: null })
+    publish({ status: 'connecting', stateTransport: null, error: null })
     try {
       const definition = protoLoader.loadSync(protoPath, { keepCase: false, longs: String, enums: String, defaults: true, oneofs: true })
       const loaded = grpc.loadPackageDefinition(definition) as unknown as {
@@ -153,14 +154,14 @@ export function nodeBrowserApiPlugin(protoPath: string): Plugin {
           return
         }
         retryDelay = 1_000
-        publish({ status: 'connected', info, error: null })
+        publish({ status: 'connected', info, stateTransport: 'initial-daemon-fetch', error: null })
         const nextStateStream = nextClient.watchNodeState({})
         stream = nextStateStream
         nextStateStream.on('data', (update) => {
           if (currentGeneration !== generation) return
           publish({
             status: 'connected', info: update.info ?? info, peers: update.peers ?? [],
-            revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), error: null,
+            revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), stateTransport: 'realtime', error: null,
           })
         })
         nextStateStream.on('error', (streamError: grpc.ServiceError) => {

@@ -157,6 +157,8 @@
   "knownPeers": "Известные узлы",
   "geoCountry": "Примерная страна (по IP)",
   "geoCountryAsSeenByPool": "Примерная страна (как её видит пул)",
+  "geoInitialDaemonFetch": "Первичная загрузка демона",
+  "geoRealtime": "В реальном времени",
   "geoUnavailable": "Недоступно",
   "countryEstimateDisclaimer": "Оценка по сетевым адресам; возможна неточность",
   "peerMultiaddress": "Multiaddr узла",

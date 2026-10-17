@@ -28,7 +28,7 @@ function fixture(overrides = {}) {
   const launches = []
   const errors = []
   const daemon = new DesktopDaemon({
-    executable: '/test path/sisyphusd', endpoint: '127.0.0.1:50051', dataDir: '/test path/data', enabled: true,
+    executable: '/test path/sisyphusd', endpoint: '127.0.0.1:50051', webListenAddress: '127.0.0.1:50052', dataDir: '/test path/data', enabled: true,
     unused: async () => true,
     launch: (executable, args) => { launches.push({ executable, args }); return child },
     onError: (error) => errors.push(error), ...overrides,
@@ -42,7 +42,7 @@ test('launches once with separate arguments and loopback-only networking', async
   await Promise.all([daemon.ensureStarted(), daemon.ensureStarted()])
   assert.equal(daemon.managesDaemon, true)
   await daemon.ensureStarted()
-  assert.deepEqual(launches, [{ executable: '/test path/sisyphusd', args: ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '127.0.0.1:7700', '--discovery', 'off'] }])
+  assert.deepEqual(launches, [{ executable: '/test path/sisyphusd', args: ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '127.0.0.1:7700', '--discovery', 'off', '--web-listen', '127.0.0.1:50052'] }])
   await daemon.stop()
   assert.equal(daemon.managesDaemon, true)
   assert.deepEqual(signals, ['SIGTERM'])
@@ -72,12 +72,26 @@ test('passes only explicitly enabled location discovery flags to the managed dae
   await namedStun.daemon.stop()
 })
 
+test('refuses an invalid or occupied web API address without spawning the daemon', async () => {
+  for (const options of [
+    { webListenAddress: '0.0.0.0:50052' },
+    { webListenAddress: 'localhost:50052' },
+    { unused: async address => Promise.resolve(address !== '127.0.0.1:50052') },
+  ]) {
+    const { daemon, launches, errors } = fixture(options)
+    await daemon.ensureStarted()
+    assert.equal(launches.length, 0)
+    assert.match(errors[0], /browser API address/)
+    await daemon.stop()
+  }
+})
+
 test('occupied default pool port falls back without taking over its service', async () => {
   const server = createServer(socket => socket.end())
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
   const occupied = `127.0.0.1:${server.address().port}`
   try {
-    const { daemon, launches } = fixture({ unused: endpoint => endpoint.endsWith(':50051') ? Promise.resolve(true) : portIsUnused(occupied) })
+    const { daemon, launches } = fixture({ unused: endpoint => endpoint === '127.0.0.1:50051' || endpoint === '127.0.0.1:50052' ? Promise.resolve(true) : portIsUnused(occupied) })
     await daemon.ensureStarted()
     assert.equal(launches[0].args[6], '127.0.0.1:0')
     assert.equal(await portIsUnused(occupied), false)

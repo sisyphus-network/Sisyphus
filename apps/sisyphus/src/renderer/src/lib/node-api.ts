@@ -65,7 +65,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
   let devSessionVerified = false
   const offlineSnapshot = (error: unknown): NodeSnapshot => ({
     status: 'disconnected', endpoint: baseUrl, info: null, peers: [], revision: '0', lastUpdated: null,
-    error: error instanceof Error ? error.message : String(error), authRequired: isAuthenticationError(error),
+    stateTransport: null, error: error instanceof Error ? error.message : String(error), authRequired: isAuthenticationError(error),
   })
   const getSnapshot = async (): Promise<NodeSnapshot> => {
     if (devPreview) {
@@ -94,7 +94,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
         trustedForCompute: peer.trustedForCompute, worksForThisNode: peer.worksForThisNode,
         thisNodeWorksFor: peer.thisNodeWorksFor, givesWork: peer.givesWork, takesWork: peer.takesWork, countryCode: peer.countryCode,
       })),
-      revision: String(peerList.revision), lastUpdated: new Date().toISOString(), error: null,
+      revision: String(peerList.revision), lastUpdated: new Date().toISOString(), stateTransport: 'initial-daemon-fetch', error: null,
     }
   }
 
@@ -194,7 +194,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
                       trustedForCompute: peer.trustedForCompute, worksForThisNode: peer.worksForThisNode,
                       thisNodeWorksFor: peer.thisNodeWorksFor, givesWork: peer.givesWork, takesWork: peer.takesWork, countryCode: peer.countryCode,
                     })),
-                    revision: String(state.revision), lastUpdated: new Date().toISOString(), error: null,
+                    revision: String(state.revision), lastUpdated: new Date().toISOString(), stateTransport: 'realtime', error: null,
                   }
                   callback(latest)
                 }

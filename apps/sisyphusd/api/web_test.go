@@ -352,6 +352,30 @@ func TestNodeServesTheWebAppAndUsesAnHttpOnlySession(t *testing.T) {
 	}
 }
 
+// The desktop recognises this node's own browser API, before it sends the
+// node's token there, by the exact answer an unauthenticated request for
+// /devices gets (apps/sisyphus/src/main/index.ts, requestBrowserManagement).
+// Changing this answer stops the desktop managing paired devices, so it is
+// held fixed here.
+func TestAnUnauthenticatedDevicesRequestIdentifiesTheNode(t *testing.T) {
+	cfg := LocalConfig{NodeID: "12D3KooWnode", Token: "owner-token", Listen: func() []string { return nil }}
+	server := httptest.NewServer(NewWebAppHandler(cfg, nil, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}))
+	t.Cleanup(server.Close)
+	res, err := http.Get(server.URL + "/devices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var answer struct{ Code, Message string }
+	if err := json.NewDecoder(res.Body).Decode(&answer); err != nil {
+		t.Fatal(err)
+	}
+	want := struct{ Code, Message string }{"Unauthorized", "connect this browser before managing paired devices"}
+	if res.StatusCode != http.StatusUnauthorized || answer != want {
+		t.Fatalf("unauthenticated /devices = %d %+v, want 401 %+v", res.StatusCode, answer, want)
+	}
+}
+
 func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	db, err := nodedb.Open(filepath.Join(t.TempDir(), "node.db"))
 	if err != nil {

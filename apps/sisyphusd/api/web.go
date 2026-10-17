@@ -529,6 +529,9 @@ func webControl(w http.ResponseWriter, r *http.Request, cfg LocalConfig, session
 	bearer := validBearer(r, cfg.Token)
 	cookieSession := validSession(r, sessions) || validPairedSession(r, devices)
 	if !bearer && !cookieSession {
+		// The desktop knows this node's browser API by this exact answer
+		// before it sends the node's token; see
+		// TestAnUnauthenticatedDevicesRequestIdentifiesTheNode.
 		refuseWeb(w, http.StatusUnauthorized, "connect this browser before managing paired devices")
 		return
 	}

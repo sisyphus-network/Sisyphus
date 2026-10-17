@@ -157,6 +157,8 @@
   "knownPeers": "Znane węzły",
   "geoCountry": "Przybliżony kraj (na podstawie IP)",
   "geoCountryAsSeenByPool": "Przybliżony kraj (widziany przez pulę)",
+  "geoInitialDaemonFetch": "Początkowe pobranie z demona",
+  "geoRealtime": "W czasie rzeczywistym",
   "geoUnavailable": "Niedostępne",
   "countryEstimateDisclaimer": "Szacunek na podstawie adresu sieciowego; może być niedokładny",
   "peerMultiaddress": "Multiaddr węzła",

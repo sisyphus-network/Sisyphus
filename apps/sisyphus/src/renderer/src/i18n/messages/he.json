@@ -157,6 +157,8 @@
   "knownPeers": "עמיתים מוכרים",
   "geoCountry": "מדינה משוערת (לפי IP)",
   "geoCountryAsSeenByPool": "מדינה משוערת (כפי שה־pool רואה אותה)",
+  "geoInitialDaemonFetch": "שליפה ראשונית מהדיימון",
+  "geoRealtime": "זמן אמת",
   "geoUnavailable": "לא זמין",
   "countryEstimateDisclaimer": "הערכה לפי נתוני כתובת רשת; ייתכן חוסר דיוק",
   "peerMultiaddress": "כתובת Multiaddr של עמית",
