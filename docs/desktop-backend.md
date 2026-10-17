@@ -67,6 +67,8 @@ Anything on the machine can **read** what the node is, who it knows and who work
 
 The two `Watch` calls are the ones to build live views on. Each message carries a `revision` that counts up from one.
 
+Location discovery preferences are stored by the daemon and apply after restart. On startup, an explicitly supplied `--locate-gateway`, `--locate-country` (including `=false`), or `--stun-server` overrides that field; an omitted flag uses the saved value, then its default. This means an operator can enforce an opt-out on the command line, while a paired browser or Electron can manage saved preferences through the authenticated local API. `GetLocationDiscoverySettings` reports both the saved and effective running values, with `restart_needed` showing when they differ.
+
 ## What a peer tells you
 
 Each `Peer` has four flags worth showing, in two pairs.

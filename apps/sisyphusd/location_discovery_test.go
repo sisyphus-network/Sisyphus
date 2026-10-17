@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"flag"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,7 +39,7 @@ func TestStartupLocationDiscovery(t *testing.T) {
 	saved := nodedb.LocationDiscovery{LocateGateway: false, LocateCountry: false, StunServer: "saved"}
 
 	t.Run("uses defaults when not configured", func(t *testing.T) {
-		got, err := startupLocationDiscovery(fakeLocationDiscoveryStore{}, defaults, true)
+		got, err := startupLocationDiscovery(fakeLocationDiscoveryStore{}, defaults, true, locationDiscoveryFlagOverrides{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +49,7 @@ func TestStartupLocationDiscovery(t *testing.T) {
 	})
 
 	t.Run("uses saved settings when configured", func(t *testing.T) {
-		got, err := startupLocationDiscovery(fakeLocationDiscoveryStore{settings: saved, configured: true}, defaults, true)
+		got, err := startupLocationDiscovery(fakeLocationDiscoveryStore{settings: saved, configured: true}, defaults, true, locationDiscoveryFlagOverrides{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +59,7 @@ func TestStartupLocationDiscovery(t *testing.T) {
 	})
 
 	t.Run("disables unsupported gateway discovery", func(t *testing.T) {
-		got, err := startupLocationDiscovery(fakeLocationDiscoveryStore{settings: defaults, configured: true}, defaults, false)
+		got, err := startupLocationDiscovery(fakeLocationDiscoveryStore{settings: defaults, configured: true}, defaults, false, locationDiscoveryFlagOverrides{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,10 +73,61 @@ func TestStartupLocationDiscovery(t *testing.T) {
 
 	t.Run("returns storage errors", func(t *testing.T) {
 		wantErr := errors.New("database unavailable")
-		if _, err := startupLocationDiscovery(fakeLocationDiscoveryStore{err: wantErr}, defaults, true); !errors.Is(err, wantErr) {
+		if _, err := startupLocationDiscovery(fakeLocationDiscoveryStore{err: wantErr}, defaults, true, locationDiscoveryFlagOverrides{}); !errors.Is(err, wantErr) {
 			t.Fatalf("error = %v, want %v", err, wantErr)
 		}
 	})
+
+	t.Run("explicit flags override saved settings", func(t *testing.T) {
+		locateGateway := false
+		locateCountry := true
+		stunServer := ""
+		got, err := startupLocationDiscovery(fakeLocationDiscoveryStore{settings: saved, configured: true}, defaults, true, locationDiscoveryFlagOverrides{
+			LocateGateway: &locateGateway,
+			LocateCountry: &locateCountry,
+			StunServer:    &stunServer,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := nodedb.LocationDiscovery{LocateGateway: false, LocateCountry: true, StunServer: ""}
+		if got != want {
+			t.Fatalf("settings = %#v, want explicit overrides %#v", got, want)
+		}
+	})
+}
+
+func TestLocationDiscoveryFlagOverridesTrackOnlyExplicitFlags(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	locateGateway := fs.Bool("locate-gateway", false, "")
+	locateCountry := fs.Bool("locate-country", false, "")
+	stunServer := fs.String("stun-server", "default", "")
+	if err := fs.Parse([]string{"--locate-gateway=false", "--locate-country", "--stun-server="}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := locationDiscoveryFlagOverridesFrom(fs, locateGateway, locateCountry, stunServer)
+	if got.LocateGateway == nil || *got.LocateGateway {
+		t.Errorf("explicit false gateway flag = %v, want pointer to false", got.LocateGateway)
+	}
+	if got.LocateCountry == nil || !*got.LocateCountry {
+		t.Errorf("explicit true country flag = %v, want pointer to true", got.LocateCountry)
+	}
+	if got.StunServer == nil || *got.StunServer != "" {
+		t.Errorf("explicit empty STUN flag = %v, want pointer to empty string", got.StunServer)
+	}
+
+	omitted := flag.NewFlagSet("omitted", flag.ContinueOnError)
+	omittedGateway := omitted.Bool("locate-gateway", false, "")
+	omittedCountry := omitted.Bool("locate-country", false, "")
+	omittedSTUN := omitted.String("stun-server", "default", "")
+	if err := omitted.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	got = locationDiscoveryFlagOverridesFrom(omitted, omittedGateway, omittedCountry, omittedSTUN)
+	if got.LocateGateway != nil || got.LocateCountry != nil || got.StunServer != nil {
+		t.Fatalf("omitted flags = %#v, want no overrides", got)
+	}
 }
 
 // A node whose saved discovery settings cannot be read does not start with
