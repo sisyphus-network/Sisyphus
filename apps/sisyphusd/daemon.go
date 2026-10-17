@@ -896,7 +896,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// The node's planner is there whatever its role, so that its model can
 	// be set and its conversations read; it has something to compute on
 	// only where the node coordinates a pool.
-	planning := &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey, filePins: local.Store}
+	planning := &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey, filePins: local.Store, filePinChanges: make(chan struct{}, 1)}
 	local.Assistant = planning
 	// What a conversation's attachments ask of the store is queued with the
 	// conversation, and applied here: at once, for what a stop left
@@ -906,7 +906,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	defer func() { stopPins(); <-pinDone }()
 	go func() {
 		defer close(pinDone)
-		replayFilePinsPeriodically(pinCtx, planning, filePinInterval, log)
+		replayFilePinsOnChanges(pinCtx, planning, filePinRetryInterval, log)
 	}()
 
 	// Whatever its role, the node is connected to the nodes in its address
@@ -2233,21 +2233,27 @@ func warnOfKeyInTheClear(log *slog.Logger, addr net.Addr, service, key string) {
 		"addr", addr.String())
 }
 
-// filePinInterval is how often queued attachment pin changes are tried
-// again, and filePinTimeout how long one round of them may take.
+// filePinRetryInterval is the first retry delay after a failed attachment
+// pin operation. Successful/idle replay waits for a queue-change event.
 const (
-	filePinInterval = 2 * time.Second
-	filePinTimeout  = 10 * time.Second
+	filePinRetryInterval = 2 * time.Second
+	filePinMaxRetry      = time.Minute
+	filePinTimeout       = 10 * time.Second
 )
 
-// replayFilePinsPeriodically applies the attachment pin changes a node has
-// queued, now and every interval until ctx ends. A round that fails is
-// logged once, not every interval, and so is the round that then succeeds.
-func replayFilePinsPeriodically(ctx context.Context, planning *assistant, interval time.Duration, log *slog.Logger) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// replayFilePinsOnChanges replays persisted work at startup and thereafter
+// only when a queue mutation occurs. Failures use bounded exponential retry,
+// since the external pinning service has no change notification of its own.
+func replayFilePinsOnChanges(ctx context.Context, planning *assistant, retryInterval time.Duration, log *slog.Logger) {
+	if retryInterval <= 0 {
+		retryInterval = filePinRetryInterval
+	}
 	failing := false
+	backoff := retryInterval
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		attempt, cancel := context.WithTimeout(ctx, filePinTimeout)
 		err := planning.replayFilePins(attempt)
 		cancel()
@@ -2260,10 +2266,32 @@ func replayFilePinsPeriodically(ctx context.Context, planning *assistant, interv
 			log.Info("attachment pins applied")
 		}
 		failing = err != nil
+		var timer *time.Timer
+		var retry <-chan time.Time
+		if err != nil {
+			timer = time.NewTimer(backoff)
+			retry = timer.C
+			backoff *= 2
+			if backoff > filePinMaxRetry {
+				backoff = filePinMaxRetry
+			}
+		} else {
+			backoff = retryInterval
+		}
 		select {
-		case <-ticker.C:
+		case <-planning.filePinChanges:
+			if err != nil {
+				backoff = retryInterval
+			}
+		case <-retry:
 		case <-ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
 			return
+		}
+		if timer != nil {
+			timer.Stop()
 		}
 	}
 }

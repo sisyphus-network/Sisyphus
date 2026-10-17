@@ -33,10 +33,23 @@ type assistant struct {
 	pool      planner.Pool
 	workloads *runtime.Registry
 	// offered says whether the pool has a worker that runs a workload now.
-	offered    func(workload string) bool
-	sealingKey func() (sealed.Key, error)
-	filePins   attachmentPinStore
-	filePinMu  sync.Mutex
+	offered        func(workload string) bool
+	sealingKey     func() (sealed.Key, error)
+	filePins       attachmentPinStore
+	filePinMu      sync.Mutex
+	filePinChanges chan struct{}
+}
+
+// notifyFilePinsChanged wakes the replay worker without making queue writes
+// wait for the external pinning service. The buffer coalesces bursts.
+func (a *assistant) notifyFilePinsChanged() {
+	if a.filePinChanges == nil {
+		return
+	}
+	select {
+	case a.filePinChanges <- struct{}{}:
+	default:
+	}
 }
 
 type attachmentPinStore interface {
@@ -253,7 +266,9 @@ func (a *assistant) DeleteChat(id string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), filePinTimeout)
 	defer cancel()
-	a.flushFilePins(ctx)
+	if err := a.flushFilePins(ctx); err != nil {
+		a.notifyFilePinsChanged()
+	}
 	return nil
 }
 
@@ -336,6 +351,9 @@ func (a *assistant) AskWithFiles(ctx context.Context, chatID, text string, cids 
 		err := a.store.RetainChatFiles(chatID, cids)
 		if err == nil {
 			err = a.flushFilePins(ctx)
+			if err != nil {
+				a.notifyFilePinsChanged()
+			}
 		}
 		a.filePinMu.Unlock()
 		if err != nil {
