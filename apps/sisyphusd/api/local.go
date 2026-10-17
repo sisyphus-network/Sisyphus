@@ -66,6 +66,9 @@ type LocalConfig struct {
 	// was found: from the node's own addresses, as the pool sees it, or by
 	// looking it up.
 	Country func() (code, source string)
+	// NodeInfoChanges publishes changes to node-info values discovered while
+	// the daemon is running. It is shared by all API clients watching node info.
+	NodeInfoChanges *NodeInfoChanges
 	// Jobs, if set, is the pool this node coordinates, for the calls about
 	// its workers and jobs. Workloads are the workloads the node knows.
 	Jobs      JobControl
@@ -319,15 +322,109 @@ type attachmentAssistant interface {
 }
 
 func (s *localService) GetNodeInfo(context.Context, *nodepb.GetNodeInfoRequest) (*nodepb.GetNodeInfoResponse, error) {
+	return s.nodeInfo(), nil
+}
+
+func (s *localService) nodeInfo() *nodepb.GetNodeInfoResponse {
 	info := &nodepb.GetNodeInfoResponse{
-		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, ListenAddresses: s.cfg.Listen(), Workloads: s.cfg.Workloads,
+		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, Workloads: s.cfg.Workloads,
 	}
-	info.CountryCode, info.CountrySource = s.cfg.Country()
+	if s.cfg.Listen != nil {
+		info.ListenAddresses = s.cfg.Listen()
+	}
+	if s.cfg.Country != nil {
+		info.CountryCode, info.CountrySource = s.cfg.Country()
+	}
 	if _, ok := s.cfg.Assistant.(attachmentAssistant); ok && s.cfg.Store != nil && s.cfg.Files != nil {
 		info.Capabilities = append(info.Capabilities, "chat-file-references-v1")
 		info.Capabilities = append(info.Capabilities, "chat-attachment-retention-v1")
 	}
-	return info, nil
+	return info
+}
+
+// WatchNodeState streams complete node-and-peer snapshots, triggered by node
+// discovery events and checked for peer changes at the local API poll interval.
+func (s *localService) WatchNodeState(_ *nodepb.GetNodeInfoRequest, stream grpc.ServerStreamingServer[nodepb.NodeState]) error {
+	var changes <-chan struct{}
+	var unsubscribe func()
+	if s.cfg.NodeInfoChanges != nil {
+		changes, unsubscribe = s.cfg.NodeInfoChanges.subscribe()
+		defer unsubscribe()
+	}
+	return watchNodeState(stream.Context(), s.cfg.Poll, changes, s.nodeState, stream.Send)
+}
+
+func (s *localService) nodeState() *nodepb.NodeState {
+	state := &nodepb.NodeState{Info: s.nodeInfo()}
+	if s.cfg.Peers != nil {
+		state.Peers = s.cfg.Peers()
+	}
+	return state
+}
+
+func watchNodeState(ctx context.Context, every time.Duration, changes <-chan struct{}, current func() *nodepb.NodeState, send func(*nodepb.NodeState) error) error {
+	last := current()
+	revision := uint64(1)
+	initial := proto.Clone(last).(*nodepb.NodeState)
+	initial.Revision = revision
+	if err := send(initial); err != nil {
+		return err
+	}
+	poll := time.NewTicker(every)
+	defer poll.Stop()
+	for {
+		select {
+		case <-changes:
+		case <-poll.C:
+		case <-ctx.Done():
+			return nil
+		}
+		now := current()
+		if proto.Equal(now, last) {
+			continue
+		}
+		revision++
+		update := proto.Clone(now).(*nodepb.NodeState)
+		update.Revision = revision
+		if err := send(update); err != nil {
+			return err
+		}
+		last = now
+	}
+}
+
+// NodeInfoChanges broadcasts coalesced node-info changes to independent
+// subscribers, so one local or remote client cannot consume another's event.
+type NodeInfoChanges struct {
+	mu          sync.Mutex
+	subscribers map[chan struct{}]struct{}
+}
+
+func NewNodeInfoChanges() *NodeInfoChanges {
+	return &NodeInfoChanges{subscribers: make(map[chan struct{}]struct{})}
+}
+
+func (c *NodeInfoChanges) Notify() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for subscriber := range c.subscribers {
+		select {
+		case subscriber <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (c *NodeInfoChanges) subscribe() (<-chan struct{}, func()) {
+	subscriber := make(chan struct{}, 1)
+	c.mu.Lock()
+	c.subscribers[subscriber] = struct{}{}
+	c.mu.Unlock()
+	return subscriber, func() {
+		c.mu.Lock()
+		delete(c.subscribers, subscriber)
+		c.mu.Unlock()
+	}
 }
 
 func (s *localService) ListPeers(context.Context, *nodepb.ListPeersRequest) (*nodepb.ListPeersResponse, error) {

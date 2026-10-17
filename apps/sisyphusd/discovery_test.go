@@ -219,12 +219,24 @@ func TestTheCountryIsLookedUpOnlyWhenAsked(t *testing.T) {
 	}
 
 	apiAddr = freeAddr(t)
-	startDaemon(t, "--listen", freeAddr(t), "--api-listen", apiAddr, "--locate-country")
+	stop = startDaemon(t, "--listen", freeAddr(t), "--api-listen", apiAddr, "--locate-country")
 	client = desktop(t, apiAddr)
-	waitFor(t, func() bool {
-		info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
-		return err == nil && info.GetCountryCode() == "NL"
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := client.WatchNodeState(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		state, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("waiting for the live location update: %v", err)
+		}
+		if state.GetInfo().GetCountryCode() == "NL" {
+			break
+		}
+	}
+	stop()
 }
 
 // A node with an address of its own in the world is placed by it; one

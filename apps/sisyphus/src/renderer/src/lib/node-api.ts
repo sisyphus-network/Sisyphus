@@ -178,21 +178,46 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
         void (async () => {
           while (!controller.signal.aborted) {
             try {
-              const info = await node.getNodeInfo({}, { signal: controller.signal })
-              for await (const update of node.watchPeers({}, { signal: controller.signal })) {
-                if (controller.signal.aborted) break
-                callback({
-                  status: 'connected', endpoint: baseUrl,
-                  info: { peerId: info.peerId, daemonVersion: info.daemonVersion, listenAddresses: info.listenAddresses, countryCode: info.countryCode, countrySource: info.countrySource },
-                  peers: update.peers.map((peer) => ({
-                    peerId: peer.peerId, connectionState: peer.connectionState, knownAddresses: peer.knownAddresses,
-                    trustedForCompute: peer.trustedForCompute, worksForThisNode: peer.worksForThisNode,
-                    thisNodeWorksFor: peer.thisNodeWorksFor, givesWork: peer.givesWork, takesWork: peer.takesWork, countryCode: peer.countryCode,
-                  })),
-                  revision: String(update.revision), lastUpdated: new Date().toISOString(), error: null,
-                })
+              let latest = await getSnapshot()
+              if (controller.signal.aborted) break
+              callback(latest)
+              try {
+                for await (const state of node.watchNodeState({}, { signal: controller.signal })) {
+                  if (controller.signal.aborted) break
+                  if (!state.info) throw new Error('The node state stream returned no node details.')
+                  latest = {
+                    ...latest,
+                    status: 'connected',
+                    info: { peerId: state.info.peerId, daemonVersion: state.info.daemonVersion, listenAddresses: state.info.listenAddresses, countryCode: state.info.countryCode, countrySource: state.info.countrySource },
+                    peers: state.peers.map((peer) => ({
+                      peerId: peer.peerId, connectionState: peer.connectionState, knownAddresses: peer.knownAddresses,
+                      trustedForCompute: peer.trustedForCompute, worksForThisNode: peer.worksForThisNode,
+                      thisNodeWorksFor: peer.thisNodeWorksFor, givesWork: peer.givesWork, takesWork: peer.takesWork, countryCode: peer.countryCode,
+                    })),
+                    revision: String(state.revision), lastUpdated: new Date().toISOString(), error: null,
+                  }
+                  callback(latest)
+                }
+                if (!controller.signal.aborted) throw new Error('The node state stream ended.')
+              } catch (error) {
+                // Older daemons predate the combined stream; keep their
+                // unary node snapshot and peer stream working.
+                if (!(error instanceof Error && /UNIMPLEMENTED|unimplemented/i.test(error.message))) throw error
+                for await (const update of node.watchPeers({}, { signal: controller.signal })) {
+                  if (controller.signal.aborted) break
+                  latest = {
+                    ...latest,
+                    peers: update.peers.map((peer) => ({
+                      peerId: peer.peerId, connectionState: peer.connectionState, knownAddresses: peer.knownAddresses,
+                      trustedForCompute: peer.trustedForCompute, worksForThisNode: peer.worksForThisNode,
+                      thisNodeWorksFor: peer.thisNodeWorksFor, givesWork: peer.givesWork, takesWork: peer.takesWork, countryCode: peer.countryCode,
+                    })),
+                    revision: String(update.revision), lastUpdated: new Date().toISOString(), error: null,
+                  }
+                  callback(latest)
+                }
+                if (!controller.signal.aborted) throw new Error('The peer stream ended.')
               }
-              if (!controller.signal.aborted) throw new Error('The node update stream ended.')
             } catch (error) {
               if (controller.signal.aborted) break
               callback(offlineSnapshot(error))

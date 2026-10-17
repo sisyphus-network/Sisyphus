@@ -6,6 +6,9 @@ option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisy
 
 service NodeService {
   rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
+  // WatchNodeState sends a complete node-and-peer snapshot at once and
+  // again whenever node details or peers change.
+  rpc WatchNodeState(GetNodeInfoRequest) returns (stream NodeState);
   // Location discovery is opt-in. Changes are saved by the node and take
   // effect after it restarts, whether the desktop starts it or not.
   rpc GetLocationDiscoverySettings(GetLocationDiscoverySettingsRequest) returns (LocationDiscoverySettingsState);
@@ -830,3 +833,9 @@ message PoolLimitsState {
 
 message GetPoolLimitsRequest {}
 message SetPoolLimitsRequest { PoolLimits limits = 1; }
+
+message NodeState {
+  GetNodeInfoResponse info = 1;
+  repeated Peer peers = 2;
+  uint64 revision = 3;
+}

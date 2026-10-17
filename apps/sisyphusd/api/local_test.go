@@ -238,6 +238,107 @@ func TestWatchPeersSendsAFullListWheneverItChanges(t *testing.T) {
 	}
 }
 
+func TestWatchNodeStatePublishesNodeAndPeerChanges(t *testing.T) {
+	var mu sync.Mutex
+	country := ""
+	var peers []*nodepb.Peer
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{
+		Poll: 5 * time.Millisecond, NodeInfoChanges: changes,
+		Peers: func() []*nodepb.Peer {
+			mu.Lock()
+			defer mu.Unlock()
+			return peers
+		},
+		Country: func() (string, string) {
+			mu.Lock()
+			defer mu.Unlock()
+			return country, ""
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.WatchNodeState(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.GetInfo().GetCountryCode() != "" || first.GetRevision() != 1 {
+		t.Fatalf("initial state = %v; want pending discovery at revision 1", first)
+	}
+	secondStream, err := client.WatchNodeState(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial, err := secondStream.Recv(); err != nil || initial.GetInfo().GetCountryCode() != "" {
+		t.Fatalf("second watcher initial snapshot = %v, %v", initial, err)
+	}
+	mu.Lock()
+	country = "IL"
+	peers = []*nodepb.Peer{peerEntry("12D3KooWa", true, true)}
+	mu.Unlock()
+	changes.Notify()
+	updates := make(chan *nodepb.NodeState, 1)
+	errors := make(chan error, 1)
+	go func() {
+		update, err := stream.Recv()
+		if err != nil {
+			errors <- err
+			return
+		}
+		updates <- update
+	}()
+	select {
+	case update := <-updates:
+		if update.GetInfo().GetCountryCode() != "IL" || len(update.GetPeers()) != 1 || update.GetRevision() != 2 {
+			t.Fatalf("updated state = %v; want country IL, one peer, revision 2", update)
+		}
+	case err := <-errors:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("country discovery event was not streamed")
+	}
+	secondUpdate, err := secondStream.Recv()
+	if err != nil || secondUpdate.GetInfo().GetCountryCode() != "IL" || len(secondUpdate.GetPeers()) != 1 || secondUpdate.GetRevision() != 2 {
+		t.Fatalf("second watcher update = %v, %v; want same state", secondUpdate, err)
+	}
+	mu.Lock()
+	peers = []*nodepb.Peer{peerEntry("12D3KooWa", true, true), peerEntry("12D3KooWb", true, true)}
+	mu.Unlock()
+	go func() {
+		update, err := stream.Recv()
+		if err != nil {
+			errors <- err
+			return
+		}
+		updates <- update
+	}()
+	select {
+	case update := <-updates:
+		if len(update.GetPeers()) != 2 || update.GetRevision() != 3 {
+			t.Fatalf("peer-only update = %v; want two peers at revision 3", update)
+		}
+	case err := <-errors:
+		t.Fatal(err)
+	case <-time.After(time.Second):
+		t.Fatal("peer change was not detected by the state stream")
+	}
+	thirdUpdate, err := secondStream.Recv()
+	if err != nil || len(thirdUpdate.GetPeers()) != 2 || thirdUpdate.GetRevision() != 3 {
+		t.Fatalf("second watcher peer update = %v, %v; want two peers at revision 3", thirdUpdate, err)
+	}
+	changes.Notify() // No duplicate snapshot when a source did not change.
+	cancel()
+	if _, err := stream.Recv(); status.Code(err) != codes.Canceled {
+		t.Errorf("after cancelling: %v", err)
+	}
+}
+
 func TestChangingTrustAdmitsAndRemovesWorkers(t *testing.T) {
 	n := startLocal(t, true)
 	const peer = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
