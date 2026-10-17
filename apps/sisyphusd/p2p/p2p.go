@@ -453,6 +453,12 @@ func containsRelay(relays []peer.AddrInfo, id peer.ID) bool {
 }
 
 func (h *Host) takePlace(r peer.AddrInfo) {
+	// A relay that did not answer is otherwise not called again for five
+	// seconds, and longer each time after, up to five minutes: a relay
+	// that was down for a while, as a coordinator being restarted is, would
+	// be back long before it was called again. This is called no more often
+	// than once a placeCheck, which is wait enough between calls.
+	h.host.Network().(*swarm.Swarm).Backoff().Clear(r.ID)
 	err := h.host.Connect(h.ctx, r)
 	var place *client.Reservation
 	if err == nil {
