@@ -21,6 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	ma "github.com/multiformats/go-multiaddr"
 
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
@@ -780,6 +781,41 @@ func TestANodeTakesItsPlaceOnTheRelayAgainAfterLosingIt(t *testing.T) {
 	}
 	defer conn.Close()
 	roundTrip(t, conn, 1<<16)
+}
+
+func TestANodeTakesItsPlaceOnARelayThatIsBackWithoutWaitingOutTheBackoff(t *testing.T) {
+	old := PlaceCheck
+	PlaceCheck = 20 * time.Millisecond
+	defer func() { PlaceCheck = old }()
+
+	p := newPool(t)
+	port, ident := freePort(t), newIdentity(t)
+	p.admit(ident.ID())
+	startRelay := func() *Host {
+		h, err := New(Config{Identity: ident, Listen: "127.0.0.1:" + port, Relay: true, Allow: p.allow, Log: quiet})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { h.Close() })
+		return h
+	}
+	relay := startRelay()
+	b := p.behind(relay)
+
+	// The relay goes down, and b, calling it while it is, is refused and
+	// told by libp2p not to call it again for some seconds.
+	addr := relay.host.Addrs()[0]
+	relay.Close()
+	waitFor(t, func() bool { return !b.Relayed() })
+	waitFor(t, func() bool { return b.host.Network().(*swarm.Swarm).Backoff().Backoff(relay.host.ID(), addr) })
+
+	// It comes back, and b has its place again well before then.
+	startRelay()
+	started := time.Now()
+	waitFor(t, b.Relayed)
+	if took := time.Since(started); took >= swarm.BackoffBase/2 {
+		t.Errorf("b took its place on the relay again %v after it was back", took)
+	}
 }
 
 // knows reports whether a host knows of another and, if it must be, is

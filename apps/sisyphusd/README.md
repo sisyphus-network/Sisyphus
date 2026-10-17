@@ -251,7 +251,7 @@ That one port carries everything:
 - **A tunnel to the coordinator's Kubo**, for pools that use `--kubo`, inside that same TLS connection, and another to its cluster peer for pools that use `--cluster`.
 - **libp2p**, by which the pool's nodes reach each other. The coordinator tells the two kinds of caller apart by how they begin.
 
-**Workers reach each other through the coordinator.** Every node runs a libp2p host under its own ID. A worker keeps a place on the coordinator, which relays: when one worker wants a blob another has cached, it asks for that worker by ID, and the coordinator joins the two. Having met, the two try each other's own addresses, and if either can reach the other, on the same network for instance, they connect directly and the coordinator carries nothing more. Only the pool's members are let in or relayed for.
+**Workers reach each other through the coordinator.** Every node runs a libp2p host under its own ID. A worker keeps a place on the coordinator, which relays: when one worker wants a blob another has cached, it asks for that worker by ID, and the coordinator joins the two. Having met, the two try each other's own addresses, and if either can reach the other, on the same network for instance, they connect directly and the coordinator carries nothing more. A worker that loses its place, because the coordinator restarted or the network broke, asks for it again every ten seconds, however long the coordinator was away, so it has its place back within ten seconds of the coordinator's return. Only the pool's members are let in or relayed for.
 
 Opening more is optional, and buys speed:
 
