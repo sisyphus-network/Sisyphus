@@ -341,7 +341,10 @@ func TestWatchNodeStatePublishesNodeAndPeerChanges(t *testing.T) {
 }
 
 func TestWatchPairedBrowsersPublishesChanges(t *testing.T) {
-	store := &volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}
+	store := &mutableBrowserAccess{volatileBrowserAccess: volatileBrowserAccess{devices: map[string]nodedb.BrowserDevice{
+		"device-b": {ID: "device-b", Name: "Second"},
+		"device-a": {ID: "device-a", Name: "First"},
+	}}}
 	changes := NewNodeInfoChanges()
 	client := serveLocal(t, LocalConfig{
 		Token: "the-token", BrowserAccess: store, BrowserDeviceChanges: changes,
@@ -353,16 +356,17 @@ func TestWatchPairedBrowsersPublishesChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial, err := stream.Recv()
-	if err != nil || initial.GetRevision() != 1 || len(initial.GetDevices()) != 0 {
+	if err != nil || initial.GetRevision() != 1 || len(initial.GetDevices()) != 2 || initial.GetDevices()[0].GetId() != "device-a" {
 		t.Fatalf("initial devices = %v, %v", initial, err)
 	}
+	changes.Notify() // An unchanged state does not produce another snapshot.
 	createdAt := time.Now().UTC().Truncate(time.Millisecond)
 	store.mu.Lock()
-	store.devices["device-1"] = nodedb.BrowserDevice{ID: "device-1", Name: "Phone", CreatedAt: createdAt}
+	store.devices["device-c"] = nodedb.BrowserDevice{ID: "device-c", Name: "Phone", CreatedAt: createdAt}
 	store.mu.Unlock()
 	changes.Notify()
 	updated, err := stream.Recv()
-	if err != nil || updated.GetRevision() != 2 || len(updated.GetDevices()) != 1 || updated.GetDevices()[0].GetName() != "Phone" || updated.GetDevices()[0].GetCreatedAtMs() != createdAt.UnixMilli() {
+	if err != nil || updated.GetRevision() != 2 || len(updated.GetDevices()) != 3 || updated.GetDevices()[2].GetName() != "Phone" || updated.GetDevices()[2].GetCreatedAtMs() != createdAt.UnixMilli() {
 		t.Fatalf("updated devices = %v, %v", updated, err)
 	}
 
@@ -372,6 +376,55 @@ func TestWatchPairedBrowsersPublishesChanges(t *testing.T) {
 	}
 	if _, err := unauthorized.Recv(); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("unauthorized watcher error = %v, want permission denied", err)
+	}
+}
+
+func TestWatchPairedBrowsersReportsListFailures(t *testing.T) {
+	store := &mutableBrowserAccess{volatileBrowserAccess: volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}}
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{Token: "the-token", BrowserAccess: store, BrowserDeviceChanges: changes})
+	ctx, cancel := context.WithCancel(withToken("the-token"))
+	defer cancel()
+	stream, err := client.WatchPairedBrowsers(ctx, &nodepb.WatchPairedBrowsersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	store.setError(errors.New("device database unavailable"))
+	changes.Notify()
+	if _, err := stream.Recv(); status.Code(err) != codes.Internal {
+		t.Fatalf("watch error = %v, want Internal", err)
+	}
+
+	store.setError(errors.New("device database unavailable"))
+	service := &localService{cfg: LocalConfig{Token: "the-token", BrowserAccess: store}}
+	if _, err := service.pairedBrowsers(); err == nil {
+		t.Fatal("paired browser list hid the store error")
+	}
+	unauthorized := &pairedBrowserWatch{ctx: context.Background()}
+	if err := service.WatchPairedBrowsers(&nodepb.WatchPairedBrowsersRequest{}, unauthorized); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("unauthorized watch error = %v, want PermissionDenied", err)
+	}
+}
+
+func TestWatchPairedBrowsersStopsWhenTheWatcherCannotBeSentTo(t *testing.T) {
+	store := &mutableBrowserAccess{volatileBrowserAccess: volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}}
+	changes := NewNodeInfoChanges()
+	service := &localService{cfg: LocalConfig{Token: "the-token", BrowserAccess: store, BrowserDeviceChanges: changes}}
+	watch := &pairedBrowserWatch{ctx: metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token")), failOn: 2, first: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		done <- service.WatchPairedBrowsers(&nodepb.WatchPairedBrowsersRequest{}, watch)
+	}()
+	<-watch.first
+	store.mu.Lock()
+	store.devices["device"] = nodedb.BrowserDevice{ID: "device", Name: "Phone"}
+	store.mu.Unlock()
+	changes.Notify()
+	if err := <-done; status.Code(err) != codes.Unavailable {
+		t.Fatalf("watch error = %v, want Unavailable", err)
 	}
 }
 
@@ -395,6 +448,67 @@ func TestWatchWorkersPublishesChanges(t *testing.T) {
 	if err != nil || updated.GetRevision() != 2 || len(updated.GetWorkers()) != 1 || updated.GetWorkers()[0].GetName() != "Worker" {
 		t.Fatalf("updated workers = %v, %v", updated, err)
 	}
+}
+
+func TestWatchWorkersRequiresAccessAndCoordinator(t *testing.T) {
+	withoutCoordinator := serveLocal(t, LocalConfig{Token: "the-token"})
+	stream, err := withoutCoordinator.WatchWorkers(withToken("the-token"), &nodepb.ListWorkersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("watch without coordinator error = %v, want FailedPrecondition", err)
+	}
+	withCoordinator := serveLocal(t, LocalConfig{Token: "the-token", Jobs: &office{}})
+	stream, err = withCoordinator.WatchWorkers(context.Background(), &nodepb.ListWorkersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("unauthorized watch error = %v, want PermissionDenied", err)
+	}
+}
+
+type mutableBrowserAccess struct {
+	volatileBrowserAccess
+	listErr error
+}
+
+func (s *mutableBrowserAccess) BrowserDevices() ([]nodedb.BrowserDevice, error) {
+	s.mu.Lock()
+	err := s.listErr
+	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return s.volatileBrowserAccess.BrowserDevices()
+}
+
+func (s *mutableBrowserAccess) setError(err error) {
+	s.mu.Lock()
+	s.listErr = err
+	s.mu.Unlock()
+}
+
+type pairedBrowserWatch struct {
+	grpc.ServerStream
+	ctx    context.Context
+	failOn int
+	sent   int
+	first  chan struct{}
+}
+
+func (w *pairedBrowserWatch) Context() context.Context { return w.ctx }
+
+func (w *pairedBrowserWatch) Send(*nodepb.PairedBrowsersState) error {
+	w.sent++
+	if w.sent >= w.failOn && w.failOn != 0 {
+		return status.Error(codes.Unavailable, "watcher went away")
+	}
+	if w.sent == 1 && w.first != nil {
+		close(w.first)
+	}
+	return nil
 }
 
 // A state watcher stops at the first snapshot it cannot send, whether the
