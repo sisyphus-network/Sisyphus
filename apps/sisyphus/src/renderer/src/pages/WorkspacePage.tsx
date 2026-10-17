@@ -220,6 +220,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, peers, nodeLabel,
       pointColor="color"
       pointAltitude={0.012}
       pointRadius={0.32}
+      pointsTransitionDuration={0}
       pointLabel="label"
       ringsData={rings}
       ringLat="lat"
