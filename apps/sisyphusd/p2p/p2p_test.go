@@ -543,9 +543,9 @@ func TestAConnectionNobodyHadTakenIsClosedWithTheListener(t *testing.T) {
 }
 
 func TestANodeKeepsAPlaceOnTheRelaysItIsToldOf(t *testing.T) {
-	old := placeCheck
-	placeCheck = 20 * time.Millisecond
-	defer func() { placeCheck = old }()
+	old := PlaceCheck
+	PlaceCheck = 20 * time.Millisecond
+	defer func() { PlaceCheck = old }()
 	oldDial := directDial
 	directDial = 0
 	defer func() { directDial = oldDial }()
@@ -759,9 +759,9 @@ func TestConnectThroughStopsAfterContextCancellation(t *testing.T) {
 }
 
 func TestANodeTakesItsPlaceOnTheRelayAgainAfterLosingIt(t *testing.T) {
-	old := placeCheck
-	placeCheck = 20 * time.Millisecond
-	defer func() { placeCheck = old }()
+	old := PlaceCheck
+	PlaceCheck = 20 * time.Millisecond
+	defer func() { PlaceCheck = old }()
 
 	p := newPool(t)
 	relay := p.relay()

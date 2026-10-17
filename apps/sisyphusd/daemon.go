@@ -786,7 +786,8 @@ func runDaemon(ctx context.Context, args []string) error {
 			Slots: *slots, Workloads: runsAs(*name, runs), Blobs: blobs, Log: log,
 			ServeAddress: *advertise,
 			// What the machine has, as far as its owner offers it.
-			Hardware: hardware.Detect(ctx).Offer(*maxMemory<<20, *maxGPUs),
+			Hardware:          hardware.Detect(ctx).Offer(*maxMemory<<20, *maxGPUs),
+			HeartbeatInterval: workerHeartbeat,
 		}
 		if *reciprocate {
 			// The node works for each node it has said it will take tasks
@@ -1227,6 +1228,11 @@ func waitForDaemonStop(ctx context.Context, local *api.LocalConfig, webAccess *w
 		return nil
 	}
 }
+
+// workerHeartbeat is how often a node's worker reports in to its coordinator
+// while idle, saying among other things what models it now serves. Zero
+// leaves it to the worker. Tests put a shorter time in its place.
+var workerHeartbeat time.Duration
 
 // reciprocityCheck is how often a node looks over the nodes it trusts and
 // asks those it does not yet work for whether they trust it, in case word

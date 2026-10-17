@@ -237,7 +237,7 @@ func New(cfg Config) (*Host, error) {
 			return nil, err
 		}
 	}
-	h := &Host{renew: make(map[peer.ID]time.Time), relayStart: rand.Uint64(), placeCheck: placeCheck, preferredRelayWait: 2 * time.Second, directDial: directDial}
+	h := &Host{renew: make(map[peer.ID]time.Time), relayStart: rand.Uint64(), placeCheck: PlaceCheck, preferredRelayWait: 2 * time.Second, directDial: directDial}
 	for _, address := range cfg.Via {
 		info, err := peer.AddrInfoFromString(address)
 		if err != nil {
@@ -395,9 +395,10 @@ func (h *Host) Bootstrap(ctx context.Context, addresses []string) (answered int)
 	return answered
 }
 
-// placeCheck is how often a host looks to see that it still has its place
-// on a relay.
-var placeCheck = 10 * time.Second
+// PlaceCheck is how often a host looks to see that it still has its place
+// on a relay, and so how soon after losing it, as when the relay restarts,
+// it has it again. Tests put a shorter time in its place.
+var PlaceCheck = 10 * time.Second
 
 // keepPlaces keeps the host connected to its relays and holding a place on
 // each, which is what lets a relay bring other nodes to this one, until the

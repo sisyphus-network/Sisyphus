@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/metadata"
 
@@ -33,7 +34,17 @@ func asksFor(tool, arguments string) string {
 // replies is a worker's model answering in words.
 func replies(text string) string { return says(text) }
 
+// reportQuickly has the workers of the nodes a test starts report in to
+// their coordinators as often as a test needs, not as a real pool does.
+func reportQuickly(t *testing.T) {
+	t.Helper()
+	every := workerHeartbeat
+	workerHeartbeat = 100 * time.Millisecond
+	t.Cleanup(func() { workerHeartbeat = every })
+}
+
 func TestThePoolThinksOnAWorkersModelAndThePlannerPlansWithIt(t *testing.T) {
+	reportQuickly(t)
 	served := newModel(t,
 		asksFor("run_job", `"{\"workload\":\"primes\",\"params\":{\"from\":0,\"to\":100}}"`),
 		replies("There are 25 primes below 100."),
