@@ -870,10 +870,10 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 	looking, stopLooking := context.WithCancel(ctx)
-	var searches sync.WaitGroup
+	var searches background
 	defer func() {
 		stopLooking()
-		searches.Wait()
+		searches.stop()
 	}()
 	local.Connect, local.Listen, local.Book = host.Connect, host.Addrs, db
 	local.Bootstrap = func(ctx context.Context, addresses []string) {
@@ -881,11 +881,9 @@ func runDaemon(ctx context.Context, args []string) error {
 			log.Info("connected to the nodes this one starts from", "answered", answered, "of", len(addresses))
 		}
 	}
-	searches.Add(1)
-	go func() {
-		defer searches.Done()
+	searches.start(func() {
 		local.Bootstrap(looking, startingPoints(book, *bootstrap))
-	}()
+	})
 	// The desktop client is shown the node's pool and, beside it, the nodes
 	// its host has found.
 	pool := local.Peers
@@ -896,31 +894,34 @@ func runDaemon(ctx context.Context, args []string) error {
 	// table it carries. Only if told to does it ask anyone.
 	var asked, gateway, stunned atomic.Value
 	if *locate {
-		searches.Add(1)
-		go func() {
-			defer searches.Done()
+		searches.start(func() {
 			asked.Store(lookUpCountry(looking))
-		}()
+		})
 	}
+	var gatewayAnswered atomic.Bool
+	gatewayAnswered.Store(!*byGateway)
 	if *byGateway {
-		searches.Add(1)
-		go func() {
-			defer searches.Done()
+		searches.start(func() {
 			gateway.Store(gatewaysAddress(looking, log))
-		}()
+			gatewayAnswered.Store(true)
+		})
 	}
-	if *stunServer != "" {
-		searches.Add(1)
-		go func() {
-			defer searches.Done()
-			stunned.Store(stunnedAddress(looking, *stunServer, log))
-		}()
-	}
+	// The STUN server learns the node's address, so it is asked only once
+	// the node is asked where it is and nothing nearer has placed it: not
+	// its own addresses, nor its pool, nor its gateway once that has
+	// answered or given up. It is asked once.
+	var askingSTUN sync.Once
 	local.Country = func() (string, string) {
 		code, _ := asked.Load().(string)
 		external, _ := gateway.Load().(netip.Addr)
 		reflexive, _ := stunned.Load().(netip.Addr)
-		return countryFrom(host.Addrs(), seenAs(), external, reflexive, code)
+		country, source := countryFrom(host.Addrs(), seenAs(), external, reflexive, code)
+		if *stunServer != "" && (source == "" || source == "lookup") && gatewayAnswered.Load() {
+			askingSTUN.Do(func() {
+				searches.start(func() { stunned.Store(stunnedAddress(looking, *stunServer, log)) })
+			})
+		}
+		return country, source
 	}
 
 	if *inferenceListen != "" {
@@ -1200,6 +1201,35 @@ func placed(multiaddrs []string) string {
 		}
 	}
 	return ""
+}
+
+// background runs a node's searches, and waits for them when it stops. A
+// search started once it is stopping is not run, since nothing would wait
+// for it.
+type background struct {
+	mu      sync.Mutex
+	over    bool
+	running sync.WaitGroup
+}
+
+func (b *background) start(f func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.over {
+		return
+	}
+	b.running.Add(1)
+	go func() {
+		defer b.running.Done()
+		f()
+	}()
+}
+
+func (b *background) stop() {
+	b.mu.Lock()
+	b.over = true
+	b.mu.Unlock()
+	b.running.Wait()
 }
 
 // countryFrom says which country a node is in, and how that was found: by

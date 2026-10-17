@@ -303,8 +303,10 @@ func TestANamedSTUNServerIsAskedWhereTheNodeComesFrom(t *testing.T) {
 	}
 
 	var asked atomic.Value
+	var times atomic.Int32
 	askSTUN = func(_ context.Context, server string) (netip.Addr, error) {
 		asked.Store(server)
+		times.Add(1)
 		return netip.MustParseAddr("193.0.6.139"), nil
 	}
 	apiAddr := freeAddr(t)
@@ -317,6 +319,65 @@ func TestANamedSTUNServerIsAskedWhereTheNodeComesFrom(t *testing.T) {
 	if got, _ := asked.Load().(string); got != "stun.example.org:19302" {
 		t.Errorf("asked %q, not the server named", got)
 	}
+	if n := times.Load(); n != 1 {
+		t.Errorf("asked %d times, however often the node was asked where it is", n)
+	}
+}
+
+// The STUN server learns the node's address, so it is not asked when
+// something nearer has placed the node: here, the gateway, which it waits
+// for.
+func TestNoSTUNServerIsAskedWhenTheNodeIsPlacedWithout(t *testing.T) {
+	oldSTUN, oldFind, oldAsk := askSTUN, findGateway, askGateway
+	defer func() { askSTUN, findGateway, askGateway = oldSTUN, oldFind, oldAsk }()
+	answer := make(chan struct{})
+	findGateway = func() (netip.Addr, error) { return netip.MustParseAddr("192.168.1.1"), nil }
+	askGateway = func(ctx context.Context, _ netip.Addr) (netip.Addr, error) {
+		select {
+		case <-answer:
+			return netip.MustParseAddr("193.0.6.139"), nil
+		case <-ctx.Done():
+			return netip.Addr{}, ctx.Err()
+		}
+	}
+	var times atomic.Int32
+	askSTUN = func(context.Context, string) (netip.Addr, error) {
+		times.Add(1)
+		return netip.MustParseAddr("8.8.8.8"), nil
+	}
+	apiAddr := freeAddr(t)
+	startDaemon(t, "--listen", freeAddr(t), "--api-listen", apiAddr, "--locate-gateway", "--stun-server", "stun.example.org")
+	client := desktop(t, apiAddr)
+	// While the gateway has yet to answer, the node is placed nowhere, and
+	// still the STUN server waits.
+	if info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{}); err != nil || info.GetCountrySource() != "" {
+		t.Fatalf("before the gateway answered: %v, %v", info, err)
+	}
+	close(answer)
+	waitFor(t, func() bool {
+		info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+		return err == nil && info.GetCountrySource() == "gateway"
+	})
+	client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+	if n := times.Load(); n != 0 {
+		t.Errorf("the STUN server was asked %d times", n)
+	}
+}
+
+// A search started once the node is stopping is not run, and stopping
+// waits for those that are running.
+func TestSearchesAreWaitedForAndNoneStartsAfter(t *testing.T) {
+	var b background
+	var done atomic.Bool
+	release := make(chan struct{})
+	b.start(func() { <-release; done.Store(true) })
+	go close(release)
+	b.stop()
+	if !done.Load() {
+		t.Error("stopping did not wait for a search")
+	}
+	b.start(func() { t.Error("a search ran after stopping") })
+	b.stop()
 }
 
 func TestCountryLookupsThatGiveNothing(t *testing.T) {
