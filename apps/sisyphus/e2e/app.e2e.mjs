@@ -94,6 +94,100 @@ test('location discovery controls configure an independently managed daemon and 
   }
 })
 
+function poolLimitsCard(page) {
+  return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Pool limits' }) })
+}
+
+test('pool limits configure an independently managed daemon and persist across restart', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'This node')
+    await page.getByRole('heading', { name: 'Pool limits' }).waitFor()
+    const card = poolLimitsCard(page)
+    const jobs = page.getByRole('textbox', { name: 'Jobs per member' })
+    const tasks = page.getByRole('textbox', { name: 'Tasks per member' })
+    const timeout = page.getByRole('textbox', { name: 'Longest task run' })
+    const store = page.getByRole('textbox', { name: 'Storage per member' })
+    const upload = page.getByRole('textbox', { name: 'Upload per task attempt' })
+    await jobs.waitFor()
+    for (const field of [jobs, tasks, timeout, store, upload]) {
+      assert.equal(await field.isDisabled(), false)
+      assert.equal(await field.inputValue(), '')
+      assert.equal(await field.getAttribute('placeholder'), 'No limit')
+    }
+    // The test node runs the coordinator role, so nothing says the limits do nothing.
+    assert.equal(await page.getByText(/does not run the coordinator role/).count(), 0)
+    const save = page.getByRole('button', { name: 'Save pool limits' })
+    assert.equal(await save.isEnabled(), false)
+
+    // A count past what the daemon keeps is refused here, before saving.
+    await jobs.fill('2147483648')
+    await page.getByText('Enter a whole number from 0 to 2147483647, or leave it empty for no limit.', { exact: true }).waitFor()
+    assert.equal(await save.isEnabled(), false)
+    // A byte limit that fits 64 bits but not the daemon's store is refused by
+    // the daemon, and its reason is shown.
+    await jobs.fill('3')
+    await store.fill('10000000')
+    await page.getByRole('combobox', { name: 'Unit for Storage per member' }).selectOption('TB')
+    await save.click()
+    await page.getByText('Could not save pool limits', { exact: true }).waitFor()
+    await page.getByText(/max_store_bytes_per_client may be at most 9223372036854775807/).waitFor()
+
+    await tasks.fill('40')
+    await timeout.fill('90')
+    await page.getByRole('combobox', { name: 'Unit for Longest task run' }).selectOption('minutes')
+    await store.fill('1.5')
+    await page.getByRole('combobox', { name: 'Unit for Storage per member' }).selectOption('GB')
+    await upload.fill('250')
+    await page.getByRole('combobox', { name: 'Unit for Upload per task attempt' }).selectOption('MB')
+    await save.click()
+    await page.getByText('Pool limits saved', { exact: true }).waitFor()
+    await card.getByText('Saved. Restart the daemon to apply these changes.', { exact: true }).waitFor()
+    await card.getByText('In effect until restart: No limit').first().waitFor()
+
+    await node.stop()
+    await node.start()
+    // Once restarted, the daemon runs with what was saved: nothing is left to restart for.
+    await card.getByText('Changes take effect the next time the daemon starts.', { exact: true }).waitFor({ timeout: 30000 })
+    assert.equal(await card.getByText(/^In effect until restart:/).count(), 0)
+    assert.equal(await jobs.inputValue(), '3')
+    assert.equal(await tasks.inputValue(), '40')
+    assert.equal(await timeout.inputValue(), '90')
+    assert.equal(await page.getByRole('combobox', { name: 'Unit for Longest task run' }).inputValue(), 'minutes')
+    assert.equal(await store.inputValue(), '1.5')
+    assert.equal(await upload.inputValue(), '250')
+    assert.equal(await save.isEnabled(), false)
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+
+  // A fresh window reads the saved limits from the daemon, the only place they are kept.
+  const second = testProfile()
+  const reopened = await launch(node, second)
+  try {
+    await openSettingsCategory(reopened.page, 'This node')
+    const store = reopened.page.getByRole('textbox', { name: 'Storage per member' })
+    await reopened.page.waitForFunction(() => [...document.querySelectorAll('input')].some((input) => input.value === '1.5'))
+    assert.equal(await store.inputValue(), '1.5')
+    assert.equal(await reopened.page.getByRole('combobox', { name: 'Unit for Storage per member' }).inputValue(), 'GB')
+    assert.equal(await reopened.page.getByRole('textbox', { name: 'Longest task run' }).inputValue(), '90')
+    // Leave the shared node as it was found: no limits, running.
+    for (const name of ['Jobs per member', 'Tasks per member', 'Longest task run', 'Storage per member', 'Upload per task attempt']) {
+      await reopened.page.getByRole('textbox', { name }).fill('')
+    }
+    await reopened.page.getByRole('button', { name: 'Save pool limits' }).click()
+    await reopened.page.getByText('Pool limits saved', { exact: true }).waitFor()
+    await node.stop()
+    await node.start()
+    await poolLimitsCard(reopened.page).getByText('Changes take effect the next time the daemon starts.', { exact: true }).waitFor({ timeout: 30000 })
+  } finally {
+    await reopened.app.close()
+    second.remove()
+  }
+})
+
 // The topology is a globe drawn with WebGL. A window that has none is not
 // offered it: no pane, no handle to open one, no entry in the dock of a
 // narrow window. What is left fills the window and works.

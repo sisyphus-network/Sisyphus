@@ -8,6 +8,7 @@ import { WindowStreams } from './window-streams'
 import { createIpcLogEntry } from './ipc-logger'
 import { DesktopDaemon } from './daemon-process'
 import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, normalizeLocationDiscoverySettings, supportsGatewayDiscovery } from './location-discovery-settings'
+import { normalizePoolLimits, validatePoolLimits } from '../shared/pool-limits.ts'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
 import { firstUploadMessage } from './file-upload'
@@ -94,6 +95,22 @@ function locationDiscoveryState(value: Record<string, unknown>) {
     gatewaySupported: value.gatewaySupported === true,
     saved,
     running,
+  }
+}
+
+// The daemon's database is the only place pool limits are kept, so the
+// desktop reads and saves them through the API whichever daemon it is
+// connected to: one it started, or a separately managed one reached with
+// its endpoint and token.
+function poolLimitsState(value: Record<string, unknown>) {
+  return {
+    managed: desktopDaemon.managesDaemon,
+    configurable: true,
+    configured: value.configured === true,
+    restartNeeded: value.restartNeeded === true,
+    coordinator: value.coordinator === true,
+    saved: normalizePoolLimits(value.saved),
+    running: normalizePoolLimits(value.running),
   }
 }
 
@@ -218,7 +235,7 @@ function handleNode(channel: string, handler: (event: IpcMainInvokeEvent, ...arg
 }
 const unaryRpcMethods = new Set([
   'getNodeInfo', 'listPeers', 'getBootstrapPeers', 'setBootstrapPeers', 'listWorkers', 'submitJob', 'getJob', 'listJobs', 'cancelJob',
-  'getModelConfig', 'setModelConfig', 'listModelProfiles', 'saveModelProfile', 'deleteModelProfile', 'listProviders', 'listModels', 'removeModel', 'getWebAccessConfig', 'setWebAccessConfig', 'listNetworkInterfaces', 'getModelLending', 'setModelLending', 'inspectOllama', 'getLocationDiscoverySettings', 'setLocationDiscoverySettings', 'listChats', 'getChat', 'deleteChat',
+  'getModelConfig', 'setModelConfig', 'listModelProfiles', 'saveModelProfile', 'deleteModelProfile', 'listProviders', 'listModels', 'removeModel', 'getWebAccessConfig', 'setWebAccessConfig', 'listNetworkInterfaces', 'getModelLending', 'setModelLending', 'inspectOllama', 'getLocationDiscoverySettings', 'setLocationDiscoverySettings', 'getPoolLimits', 'setPoolLimits', 'listChats', 'getChat', 'deleteChat',
   'listFiles', 'removeFile', 'createInvitation', 'listMembers', 'removeMember', 'joinPool',
 ])
 const streamingRpcMethods = new Set(['watchJobs', 'watchJobEvents', 'ask', 'pullModel'])
@@ -399,6 +416,20 @@ app.whenReady().then(() => {
     const settings = validateLocationDiscoverySettings(value)
     const result = await callUnary('setLocationDiscoverySettings', { settings }) as Record<string, unknown>
     return locationDiscoveryState(result)
+  })
+  handleNode('node:get-pool-limits', async () => {
+    try {
+      return poolLimitsState(await callUnary('getPoolLimits', {}) as Record<string, unknown>)
+    } catch (error) {
+      if (error instanceof Error && /does not implement getPoolLimits|UNIMPLEMENTED/.test(error.message)) {
+        return { managed: desktopDaemon.managesDaemon, configurable: false, configured: false, restartNeeded: false, coordinator: false, saved: normalizePoolLimits({}), running: normalizePoolLimits({}) }
+      }
+      throw error
+    }
+  })
+  handleNode('node:save-pool-limits', async (_event, value: unknown) => {
+    const limits = validatePoolLimits(value)
+    return poolLimitsState(await callUnary('setPoolLimits', { limits }) as Record<string, unknown>)
   })
   handleNode('node:reconnect', () => {
     if (retryTimer) clearTimeout(retryTimer)
