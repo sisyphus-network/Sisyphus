@@ -226,6 +226,18 @@ func TestANodesRecordPublishesOnChangeAndRenewsByDeadline(t *testing.T) {
 	})
 }
 
+// Nudging a keeper never blocks: not one that has not started, and not one
+// already told of a change it has yet to act on.
+func TestNudgingARecordKeeperNeverBlocks(t *testing.T) {
+	(&recordKeeper{}).nudge()
+	keeper := &recordKeeper{changed: make(chan struct{}, 1)}
+	keeper.nudge()
+	keeper.nudge()
+	if len(keeper.changed) != 1 {
+		t.Errorf("%d changes waiting, want the two nudges as one", len(keeper.changed))
+	}
+}
+
 func TestANodeKeepsTryingToPublishItsRecord(t *testing.T) {
 	quickRecords(t)
 	ident := newIdentity(t)
