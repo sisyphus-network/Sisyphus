@@ -107,7 +107,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	bootstrap := fs.String("bootstrap", "", "addresses of nodes to connect to at startup, besides those in the address book: comma-separated, each ending in /p2p/<node ID>")
 	stunServer := fs.String("stun-server", "", "if the node cannot tell which country it is in from its own addresses, its pool's view of it or its gateway, ask this STUN server, host or host:port (port 3478 if none is given), which address its traffic comes from. The server learns that address, so none is asked unless named here. Only a Binding request is sent; no port is opened")
 	byGateway := fs.Bool("locate-gateway", false, "if the node cannot tell which country it is in from its own addresses or its pool's view of it, ask its default gateway for its external address by NAT-PMP. Only that read-only request is sent, and only to the gateway; no port is opened. Linux only, so far")
-	locate := fs.Bool("locate-country", false, "if the node cannot tell which country it is in from its own addresses, ask ipapi.co, which thereby learns its address. Without this nothing is asked of anyone")
+	locate := fs.Bool("locate-country", false, "if the node cannot tell which country it is in from its own addresses, its pool's view of it, its gateway or a STUN server, ask ipapi.co, which thereby learns its address; it is asked only when the node is asked where it is and nothing else has placed it, and only once. Without this nothing is asked of anyone")
 	keepJobs := fs.Duration("keep-jobs", 30*24*time.Hour, "coordinator role: how long a finished job can still be asked after; 0 keeps them for good. A client's job is kept at least as long as --retain, since its record says whose its data is")
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
@@ -893,12 +893,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// The node places itself by the addresses it is reached at, from a
 	// table it carries. Only if told to does it ask anyone.
 	var asked, gateway, stunned atomic.Value
-	if *locate {
-		searches.start(func() {
-			asked.Store(lookUpCountry(looking))
-		})
-	}
-	var gatewayAnswered atomic.Bool
+	var gatewayAnswered, stunAnswered atomic.Bool
 	gatewayAnswered.Store(!*byGateway)
 	if *byGateway {
 		searches.start(func() {
@@ -906,19 +901,32 @@ func runDaemon(ctx context.Context, args []string) error {
 			gatewayAnswered.Store(true)
 		})
 	}
-	// The STUN server learns the node's address, so it is asked only once
-	// the node is asked where it is and nothing nearer has placed it: not
-	// its own addresses, nor its pool, nor its gateway once that has
-	// answered or given up. It is asked once.
-	var askingSTUN sync.Once
+	stunAnswered.Store(*stunServer == "")
+	// A STUN server, and the lookup service after it, learn the node's
+	// address, so each is asked only once the node is asked where it is
+	// and nothing nearer has placed it: not its own addresses, nor its
+	// pool, nor its gateway once that has answered or given up, nor, for
+	// the lookup, the STUN server once that has. Each is asked once.
+	var askingSTUN, lookingUp sync.Once
 	local.Country = func() (string, string) {
 		code, _ := asked.Load().(string)
 		external, _ := gateway.Load().(netip.Addr)
 		reflexive, _ := stunned.Load().(netip.Addr)
 		country, source := countryFrom(host.Addrs(), seenAs(), external, reflexive, code)
-		if *stunServer != "" && (source == "" || source == "lookup") && gatewayAnswered.Load() {
+		if source != "" || !gatewayAnswered.Load() {
+			return country, source
+		}
+		if *stunServer != "" {
 			askingSTUN.Do(func() {
-				searches.start(func() { stunned.Store(stunnedAddress(looking, *stunServer, log)) })
+				searches.start(func() {
+					stunned.Store(stunnedAddress(looking, *stunServer, log))
+					stunAnswered.Store(true)
+				})
+			})
+		}
+		if *locate && stunAnswered.Load() {
+			lookingUp.Do(func() {
+				searches.start(func() { asked.Store(lookUpCountry(looking)) })
 			})
 		}
 		return country, source

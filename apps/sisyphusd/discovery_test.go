@@ -380,6 +380,62 @@ func TestSearchesAreWaitedForAndNoneStartsAfter(t *testing.T) {
 	b.stop()
 }
 
+// The lookup service learns the node's address, so it is not asked when
+// something nearer has placed the node, and is asked, once, only after a
+// STUN server that was named has answered or given up.
+func TestTheCountryIsLookedUpOnlyWhenNothingNearerPlacesTheNode(t *testing.T) {
+	var looked atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		looked.Add(1)
+		w.Write([]byte(`{"country_code":"fr"}`))
+	}))
+	defer server.Close()
+	oldURL, oldSTUN := countryURL, askSTUN
+	defer func() { countryURL, askSTUN = oldURL, oldSTUN }()
+	countryURL = server.URL
+
+	// A STUN server that places the node is the last one asked.
+	askSTUN = func(context.Context, string) (netip.Addr, error) { return netip.MustParseAddr("193.0.6.139"), nil }
+	apiAddr := freeAddr(t)
+	stop := startDaemon(t, "--listen", freeAddr(t), "--api-listen", apiAddr, "--stun-server", "stun.example.org", "--locate-country")
+	client := desktop(t, apiAddr)
+	waitFor(t, func() bool {
+		info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+		return err == nil && info.GetCountrySource() == "stun"
+	})
+	client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+	stop()
+	if n := looked.Load(); n != 0 {
+		t.Errorf("with the node placed by STUN, the lookup service was asked %d times", n)
+	}
+
+	// One that does not answer is waited for, and then the service asked.
+	answer := make(chan struct{})
+	askSTUN = func(ctx context.Context, _ string) (netip.Addr, error) {
+		select {
+		case <-answer:
+		case <-ctx.Done():
+		}
+		return netip.Addr{}, errors.New("no answer")
+	}
+	apiAddr = freeAddr(t)
+	startDaemon(t, "--listen", freeAddr(t), "--api-listen", apiAddr, "--stun-server", "stun.example.org", "--locate-country")
+	client = desktop(t, apiAddr)
+	client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+	if n := looked.Load(); n != 0 {
+		t.Errorf("before the STUN server answered, the lookup service was asked %d times", n)
+	}
+	close(answer)
+	waitFor(t, func() bool {
+		info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+		return err == nil && info.GetCountrySource() == "lookup" && info.GetCountryCode() == "FR"
+	})
+	client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+	if n := looked.Load(); n != 1 {
+		t.Errorf("the lookup service was asked %d times", n)
+	}
+}
+
 func TestCountryLookupsThatGiveNothing(t *testing.T) {
 	ctx := context.Background()
 	for name, body := range map[string]string{
