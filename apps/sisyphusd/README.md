@@ -904,6 +904,8 @@ The database also records every attempt at every task: which node, and how it we
 
 What it shows, in this daemon's terms:
 
+Country markers ignore addresses inside this machine's directly connected interface networks, even when an address block is globally allocated. A LAN-only address cannot reliably place a peer on the world map.
+
 | The desktop's word | What it is here |
 | --- | --- |
 | peer | A node of this node's pool, or one its libp2p host has found: on the same network, through nodes it knows, or because it was given the address. |
