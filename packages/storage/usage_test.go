@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"bytes"
+	"errors"
 	"maps"
 	"math/rand/v2"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -302,5 +305,102 @@ func TestPinsPlacedWhileGroupingAreCounted(t *testing.T) {
 	now := time.Now()
 	if got, want := s.Usage(now), walked(t, s, now, clientOf); !maps.Equal(got, want) {
 		t.Errorf("index %v, walk %v", got, want)
+	}
+}
+
+// PinWithin pins what fits a group's limit and refuses, pinning nothing,
+// what would not; a pin that was held before is put back as it was.
+func TestPinsAreHeldToAGroupsLimit(t *testing.T) {
+	s := NewMemory()
+	a, b := put(t, s, pattern(2*chunkSize)), put(t, s, append(pattern(chunkSize), 'b'))
+	// Before the groups are named, nobody is held to a limit.
+	if err := s.PinWithin(ctx, "user:alice", time.Time{}, 1, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Unpin("user:alice", b); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.GroupPins(ctx, clientOf); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := s.PinWithin(ctx, "user:alice", time.Time{}, 1<<30, a); err != nil {
+		t.Fatalf("a pin within the limit: %v", err)
+	}
+	keeps := s.Usage(now)["alice"]
+	err := s.PinWithin(ctx, "user:alice", time.Time{}, keeps, b)
+	var over *OverShareError
+	if !errors.As(err, &over) || over.Group != "alice" || over.May != keeps || over.Keeps <= keeps || !strings.Contains(err.Error(), "alice would keep") {
+		t.Fatalf("a pin past the limit: %v", err)
+	}
+	if got := s.Usage(now)["alice"]; got != keeps {
+		t.Errorf("a refused pin left alice keeping %d, not %d", got, keeps)
+	}
+	for _, pin := range s.Pins() {
+		if pin.CID == b && pin.Owner == "user:alice" {
+			t.Errorf("a refused pin was left: %v", pin)
+		}
+	}
+
+	// A pin held already is put back with its expiry when a re-pin of it,
+	// with another, is refused.
+	expires := now.Add(time.Hour)
+	pinFor(t, s, "user:alice", expires, a)
+	if err := s.PinWithin(ctx, "user:alice", time.Time{}, keeps, a, b, b); !errors.As(err, &over) {
+		t.Fatalf("a re-pin past the limit: %v", err)
+	}
+	for _, pin := range s.Pins() {
+		if pin.Owner == "user:alice" && (pin.CID == a && !pin.Expires.Equal(expires) || pin.CID == b) {
+			t.Errorf("after a refused re-pin: %v", pin)
+		}
+	}
+	if got := s.Usage(now.Add(2 * time.Hour))["alice"]; got != 0 {
+		t.Errorf("the put-back pin did not lapse by its old expiry: alice keeps %d", got)
+	}
+
+	// No limit, an owner of no group, and a pin that has lapsed already
+	// are held to nothing.
+	for _, tt := range []struct {
+		owner   string
+		expires time.Time
+		limit   uint64
+	}{
+		{"user:bob", time.Time{}, 0},
+		{"user", time.Time{}, 1},
+		{"user:carol", now.Add(-time.Minute), 1},
+	} {
+		if err := s.PinWithin(ctx, tt.owner, tt.expires, tt.limit, a, b); err != nil {
+			t.Errorf("%s: %v", tt.owner, err)
+		}
+	}
+}
+
+// Pins placed at once cannot together take a group past its limit.
+func TestPinsPlacedTogetherStayWithinTheLimit(t *testing.T) {
+	s := NewMemory()
+	if err := s.GroupPins(ctx, clientOf); err != nil {
+		t.Fatal(err)
+	}
+	var blobs []cid.Cid
+	for i := range 16 {
+		blobs = append(blobs, put(t, s, bytes.Repeat([]byte{byte(i)}, chunkSize)))
+	}
+	pinFor(t, s, "user:probe", time.Time{}, blobs[0])
+	one := s.Usage(time.Now())["probe"]
+	limit := 4 * one
+	var wg sync.WaitGroup
+	for _, c := range blobs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var over *OverShareError
+			if err := s.PinWithin(ctx, "user:alice", time.Time{}, limit, c); err != nil && !errors.As(err, &over) {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := s.Usage(time.Now())["alice"]; got > limit || got < limit-one {
+		t.Errorf("alice keeps %d with a limit of %d", got, limit)
 	}
 }
