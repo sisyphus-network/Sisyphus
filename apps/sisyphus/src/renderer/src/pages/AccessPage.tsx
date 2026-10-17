@@ -114,7 +114,7 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
       }
     }
     catch (error) {
-      if (reportError) toast.error(access.loadFailed, { description: error instanceof Error ? error.message : String(error) })
+      if (reportError) toast.error(access.loadFailed, { id: 'paired-devices-load', description: error instanceof Error ? error.message : String(error) })
     } finally { setInitialDevicesLoaded(true) }
   }, [access.loadFailed, pairingOpen])
   useEffect(() => {

@@ -157,6 +157,8 @@
   "knownPeers": "Known peers",
   "geoCountry": "Approximate country (IP-based)",
   "geoCountryAsSeenByPool": "Approximate country (as seen by the pool)",
+  "geoInitialDaemonFetch": "Initial daemon fetch",
+  "geoRealtime": "Realtime",
   "geoUnavailable": "Not available",
   "countryEstimateDisclaimer": "An estimate from network address data; may be inaccurate",
   "peerMultiaddress": "Peer multiaddress",

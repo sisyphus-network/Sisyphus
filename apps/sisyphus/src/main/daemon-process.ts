@@ -30,6 +30,7 @@ export function portIsUnused(endpoint: string): Promise<boolean> {
 type Options = {
   executable: string
   endpoint: string
+  webListenAddress?: string
   dataDir: string
   enabled: boolean
   locationDiscovery?: { locateGateway: boolean; locateCountry: boolean; stunServer: string }
@@ -73,6 +74,16 @@ export class DesktopDaemon {
       if (this.stopping) return
       const args = ['run', '--api-listen', this.options.endpoint, '--data-dir', this.options.dataDir,
         '--listen', listen, '--discovery', 'off']
+      if (this.options.webListenAddress) {
+        const webAddress = localApiAddress(this.options.webListenAddress)
+        if (!webAddress || webAddress.host === 'localhost') {
+          throw new Error('The local browser API address must use a loopback address and a valid port.')
+        }
+        if (!await unused(this.options.webListenAddress)) {
+          throw new Error(`The local browser API address is already in use: ${this.options.webListenAddress}`)
+        }
+        args.push('--web-listen', this.options.webListenAddress)
+      }
       if (this.options.locationDiscovery?.locateGateway) args.push('--locate-gateway')
       if (this.options.locationDiscovery?.locateCountry) args.push('--locate-country')
       if (this.options.locationDiscovery?.stunServer) args.push('--stun-server', this.options.locationDiscovery.stunServer)

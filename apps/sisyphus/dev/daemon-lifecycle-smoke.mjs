@@ -14,8 +14,12 @@ const reservation = createServer()
 await new Promise((accept) => reservation.listen(0, '127.0.0.1', accept))
 const endpoint = `127.0.0.1:${reservation.address().port}`
 await new Promise((accept) => reservation.close(accept))
+const webReservation = createServer()
+await new Promise((accept) => webReservation.listen(0, '127.0.0.1', accept))
+const webListenAddress = `127.0.0.1:${webReservation.address().port}`
+await new Promise((accept) => webReservation.close(accept))
 const diagnostics = []
-const daemon = new DesktopDaemon({ executable, endpoint, dataDir: directory, enabled: true, onError: (error) => diagnostics.push(error) })
+const daemon = new DesktopDaemon({ executable, endpoint, webListenAddress, dataDir: directory, enabled: true, onError: (error) => diagnostics.push(error) })
 const proto = resolve('../../proto/sisyphus/node/v1/node.proto')
 const definition = protoLoader.loadSync(proto, { keepCase: false, longs: String, enums: String, defaults: true })
 const service = grpc.loadPackageDefinition(definition).sisyphus.node.v1.NodeService
@@ -27,7 +31,15 @@ try {
   const info = await getInfo()
   assert.ok(info.peerId)
   if (process.argv[3]) assert.equal(info.daemonVersion, process.argv[3])
-  assert.ok((await readFile(join(directory, 'api.token'), 'utf8')).trim())
+  const token = (await readFile(join(directory, 'api.token'), 'utf8')).trim()
+  assert.ok(token)
+  const webBase = `http://${webListenAddress}`
+  const unauthenticated = await fetch(`${webBase}/devices`)
+  assert.equal(unauthenticated.status, 401)
+  assert.deepEqual(await unauthenticated.json(), { code: 'Unauthorized', message: 'connect this browser before managing paired devices' })
+  const devices = await fetch(`${webBase}/devices`, { headers: { Authorization: `Bearer ${token}` } })
+  assert.equal(devices.status, 200)
+  assert.deepEqual(await devices.json(), { devices: [] })
   // A second desktop attaching to the same live node cannot acquire ownership.
   const other = new DesktopDaemon({ executable, endpoint, dataDir: directory, enabled: true, onError: (error) => diagnostics.push(error) })
   await other.ensureStarted()
@@ -36,7 +48,7 @@ try {
   await daemon.stop()
   assert.equal(await portIsUnused(endpoint), true)
   assert.deepEqual(diagnostics, [])
-  console.log('Real daemon startup, existing-node reuse and owned-process shutdown passed.')
+  console.log('Real daemon startup, loopback browser API, existing-node reuse and owned-process shutdown passed.')
 } finally {
   client.close()
   await daemon.stop()

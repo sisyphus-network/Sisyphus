@@ -157,6 +157,8 @@
   "knownPeers": "الأقران المعروفون",
   "geoCountry": "الدولة التقريبية (حسب IP)",
   "geoCountryAsSeenByPool": "الدولة التقريبية (كما تراها الشبكة)",
+  "geoInitialDaemonFetch": "الجلب الأولي من الخدمة",
+  "geoRealtime": "تحديث مباشر",
   "geoUnavailable": "غير متاح",
   "countryEstimateDisclaimer": "تقدير استناداً إلى بيانات عنوان الشبكة وقد لا يكون دقيقاً",
   "peerMultiaddress": "عنوان Multiaddr للنظير",

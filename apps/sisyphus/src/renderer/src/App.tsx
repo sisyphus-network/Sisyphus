@@ -26,7 +26,7 @@ import { ToasterResponsive } from '@/components/toaster-responsive'
 import { NodeConnectionState } from '@/components/node-connection-state'
 
 const initialSnapshot: NodeSnapshot = {
-  status: 'connecting', endpoint: '127.0.0.1:50051', info: null, peers: [], revision: '0', lastUpdated: null, error: null, authRequired: false,
+  status: 'connecting', endpoint: '127.0.0.1:50051', info: null, peers: [], revision: '0', lastUpdated: null, stateTransport: null, error: null, authRequired: false,
 }
 const scrollPositionsStorageKey = 'sisyphus-page-scroll-positions'
 
@@ -65,9 +65,6 @@ function App() {
     let active = true
     const api = getNodeApi()
     const unsubscribe = api.onSnapshot((next) => { if (active) setSnapshot(next) })
-    void api.getSnapshot().then((next) => { if (active) setSnapshot(next) }).catch((error: unknown) => {
-      if (active) setSnapshot((current) => ({ ...current, status: 'disconnected', error: error instanceof Error ? error.message : String(error), authRequired: !isDesktopApp() && isAuthenticationError(error) }))
-    })
     return () => { active = false; unsubscribe() }
   }, [])
 

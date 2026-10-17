@@ -157,6 +157,8 @@
   "knownPeers": "Nodos conocidos",
   "geoCountry": "País aproximado (por IP)",
   "geoCountryAsSeenByPool": "País aproximado (según lo ve el pool)",
+  "geoInitialDaemonFetch": "Carga inicial del daemon",
+  "geoRealtime": "Tiempo real",
   "geoUnavailable": "No disponible",
   "countryEstimateDisclaimer": "Estimación basada en la dirección de red; puede ser inexacta",
   "peerMultiaddress": "Multiaddr del nodo",

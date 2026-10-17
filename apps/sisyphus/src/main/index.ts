@@ -20,6 +20,7 @@ import nodeProtoSource from '../../../../proto/sisyphus/node/v1/node.proto?raw'
 const here = fileURLToPath(new URL('.', import.meta.url))
 const nodeProtoJson = protobuf.parse(nodeProtoSource).root.toJSON()
 const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
+const webApiAddress = process.env.SISYPHUS_WEB_API_ADDRESS ?? '127.0.0.1:50052'
 const autoStartManagedDaemon = process.env.SISYPHUS_AUTO_START_DAEMON !== '0' && !process.env.SISYPHUS_API_ADDRESS && !process.env.SISYPHUS_API_TOKEN_FILE
 const locationDiscoveryPath = join(app.getPath('userData'), 'location-discovery.json')
 const initialLocationDiscoverySettings = loadLocationDiscoverySettings(locationDiscoveryPath)
@@ -33,6 +34,7 @@ const desktopDaemon = new DesktopDaemon({
     ? join(process.resourcesPath, 'bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')
     : join(here, '../../../../bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')),
   endpoint,
+  webListenAddress: autoStartManagedDaemon ? webApiAddress : undefined,
   dataDir: daemonDataDir(),
   // A custom endpoint/token belongs to its operator, not this desktop process.
   enabled: autoStartManagedDaemon,
@@ -118,13 +120,23 @@ type BrowserPairingInvitation = { code: string; expiresAt: string; pairUrl: stri
 type PairedBrowser = { id: string; name: string; createdAt: string }
 
 async function requestBrowserManagement<T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown): Promise<T> {
-  const address = process.env.SISYPHUS_WEB_API_ADDRESS ?? '127.0.0.1:50052'
   let base: URL
-  try { base = new URL(`http://${address}`) }
+  try { base = new URL(`http://${webApiAddress}`) }
   catch { throw new Error('The local web API address is invalid.') }
   const host = base.hostname.replace(/^\[|\]$/g, '')
   if ((host !== '::1' && !(isIP(host) === 4 && host.startsWith('127.'))) || base.username || base.password || base.pathname !== '/' || base.search || base.hash) {
     throw new Error('Browser management is restricted to the node web API on this machine.')
+  }
+  // Do not send the node token to an unrelated process that happens to own
+  // the configured loopback port. The node's own paired-device API has a
+  // distinctive unauthenticated response; only send credentials after it
+  // proves it is the expected service.
+  let probe: Response
+  try { probe = await fetch(new URL('/devices', base)) }
+  catch { throw new Error('The local node browser API is not running. Restart the app-managed node and try again.') }
+  const probeDetail = await probe.json().catch(() => null) as { code?: unknown; message?: unknown } | null
+  if (probe.status !== 401 || probeDetail?.code !== 'Unauthorized' || probeDetail.message !== 'connect this browser before managing paired devices') {
+    throw new Error('The local node browser API is unavailable at the configured address.')
   }
   let token: string
   try { token = readApiToken() }
@@ -174,6 +186,7 @@ type NodeSnapshot = {
   peers: Peer[]
   revision: string
   lastUpdated: string | null
+  stateTransport: 'initial-daemon-fetch' | 'realtime' | null
   error: string | null
 }
 
@@ -197,6 +210,7 @@ const initialSnapshot = (): NodeSnapshot => ({
   peers: [],
   revision: '0',
   lastUpdated: null,
+  stateTransport: null,
   error: null,
 })
 
@@ -280,7 +294,7 @@ function clearConnection() {
 function scheduleReconnect(error: string, generation: number) {
   if (isQuitting || retryTimer || generation !== connectionGeneration) return
   clearConnection()
-  publish({ status: 'disconnected', error: daemonStartupError ? `${error} ${daemonStartupError}` : error })
+  publish({ status: 'disconnected', stateTransport: null, error: daemonStartupError ? `${error} ${daemonStartupError}` : error })
   retryTimer = setTimeout(() => {
     retryTimer = null
     connectToNode()
@@ -292,7 +306,7 @@ function connectToNode() {
   if (reconnecting || isQuitting) return
   reconnecting = true
   const generation = ++connectionGeneration
-  publish({ status: 'connecting', error: null })
+  publish({ status: 'connecting', stateTransport: null, error: null })
 
   try {
     const definition = protoLoader.fromJSON(nodeProtoJson, {
@@ -319,14 +333,14 @@ function connectToNode() {
 
       retryDelayMs = 1_000
       daemonStartupError = null
-      publish({ status: 'connected', info, error: null })
+      publish({ status: 'connected', info, stateTransport: 'initial-daemon-fetch', error: null })
       const stateStream = nextClient.watchNodeState({})
       nodeStateStream = stateStream
       stateStream.on('data', (update) => {
         if (generation !== connectionGeneration) return
         publish({
           status: 'connected', info: update.info, peers: update.peers ?? [],
-          revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), error: null,
+          revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), stateTransport: 'realtime', error: null,
         })
       })
       stateStream.on('error', (streamError: grpc.ServiceError) => {
