@@ -10,7 +10,7 @@ The same goes for the tests of `--cluster`, which run real cluster peers and nee
 
 ```sh
 make build   # bin/sisyphusd
-make test    # go vet, then the tests under the race detector
+make test    # go vet, then the tests under the race detector, allowing each package 25 minutes
 make cover   # fails unless the tests execute every statement of hand-written code
 make lint    # go vet and staticcheck, for mistakes the compiler lets through
 make demo    # a three-node pool and a few jobs on this machine, in one terminal

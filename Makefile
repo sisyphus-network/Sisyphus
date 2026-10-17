@@ -10,7 +10,7 @@ build:
 
 test:
 	go vet ./...
-	go test -race ./...
+	go test -race -timeout 25m ./...
 
 # Fails unless the tests execute every statement of hand-written code.
 # Generated protocol code is not counted. The tests that need Kubo, IPFS
@@ -21,7 +21,7 @@ cover: export SISYPHUS_REQUIRE_KUBO ?= 1
 cover: export SISYPHUS_REQUIRE_CLUSTER ?= 1
 cover: export SISYPHUS_REQUIRE_DOCKER ?= 1
 cover:
-	go test -count=1 -coverpkg=$(COVERED) -coverprofile=coverage.out ./...
+	go test -count=1 -timeout 25m -coverpkg=$(COVERED) -coverprofile=coverage.out ./...
 	./scripts/check-coverage.sh coverage.out
 
 # Runs a three-node pool and a job on this machine, in one terminal.

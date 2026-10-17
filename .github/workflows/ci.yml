@@ -140,8 +140,11 @@ jobs:
       - name: Test against real local services
         # Each Go package test process has its own test-only port allocator.
         # Keep packages sequential as well as keeping this step exclusive with
-        # other localhost-heavy workflows on the shared host.
-        run: flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race -p 1 ./...
+        # other localhost-heavy workflows on the shared host. The daemon's
+        # package runs whole pools under the race detector and outgrew go
+        # test's default of 10 minutes per package; the job's own limit still
+        # bounds the step.
+        run: flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race -p 1 -timeout 25m ./...
       - name: Check every statement is tested
         run: |
           flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" bash -euo pipefail -c '
