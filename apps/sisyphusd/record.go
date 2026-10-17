@@ -101,12 +101,8 @@ func (k *recordKeeper) run(ctx context.Context) {
 	for {
 		select {
 		case <-k.changed:
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+			// Since Go 1.23, Reset also drops a tick the timer has already
+			// made, so a change can never be followed by a stale one.
 			timer.Reset(0)
 		case <-timer.C:
 			if err := k.publish(ctx, time.Now()); err != nil {
