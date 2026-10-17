@@ -1049,7 +1049,10 @@ func runDaemon(ctx context.Context, args []string) error {
 			lis.Close()
 			return err
 		}
-		pages := &http.Server{Handler: api.NewWebAppHandler(local, allowedWebOrigins, webUI)}
+		if webAccess.browserAccess == nil {
+			webAccess.browserAccess = api.NewBrowserAccessManager(local)
+		}
+		pages := &http.Server{Handler: api.NewWebAppHandlerWithBrowserAccess(local, allowedWebOrigins, webUI, webAccess.browserAccess)}
 		defer pages.Close()
 		log.Info("local API listening for development web pages", "addr", lis.Addr().String(), "origins", allowedWebOrigins, "ui", *webUIDir != "")
 		go pages.Serve(lis)

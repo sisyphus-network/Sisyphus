@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -60,14 +61,22 @@ const browserPairingLifetime = 5 * time.Minute
 const pairedBrowserLifetime = 30 * 24 * time.Hour
 
 type browserAccess struct {
-	mu      sync.Mutex
-	store   BrowserAccessStore
-	pepper  []byte
-	random  io.Reader
-	devices map[string]nodedb.BrowserDevice
-	failed  map[string]int
-	blocked map[string]time.Time
-	changes *NodeInfoChanges
+	mu       sync.Mutex
+	store    BrowserAccessStore
+	pepper   []byte
+	random   io.Reader
+	devices  map[string]nodedb.BrowserDevice
+	failed   map[string]int
+	blocked  map[string]time.Time
+	changes  *NodeInfoChanges
+	active   map[string]map[uint64]context.CancelFunc
+	nextCall uint64
+}
+
+// BrowserAccessManager shares paired-device credentials and active request
+// cancellation across the daemon's local and remote web listeners.
+type BrowserAccessManager struct {
+	devices *browserAccess
 }
 
 type volatileBrowserAccess struct {
@@ -113,13 +122,19 @@ func newBrowserAccess(store BrowserAccessStore, pepper string) *browserAccess {
 	if store == nil {
 		store = &volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}
 	}
-	access := &browserAccess{store: store, pepper: []byte(pepper), random: rand.Reader, devices: make(map[string]nodedb.BrowserDevice), failed: make(map[string]int), blocked: make(map[string]time.Time)}
+	access := &browserAccess{store: store, pepper: []byte(pepper), random: rand.Reader, devices: make(map[string]nodedb.BrowserDevice), failed: make(map[string]int), blocked: make(map[string]time.Time), active: make(map[string]map[uint64]context.CancelFunc)}
 	if devices, err := store.BrowserDevices(); err == nil {
 		for _, device := range devices {
 			access.devices[device.ID] = device
 		}
 	}
 	return access
+}
+
+func NewBrowserAccessManager(cfg LocalConfig) *BrowserAccessManager {
+	devices := newBrowserAccess(cfg.BrowserAccess, cfg.Token)
+	devices.changes = cfg.BrowserDeviceChanges
+	return &BrowserAccessManager{devices: devices}
 }
 
 func (a *browserAccess) issuePairing(now time.Time) (string, time.Time, error) {
@@ -202,14 +217,55 @@ func (a *browserAccess) valid(cookie string) bool {
 	return exists && device.ExpiresAt.After(time.Now()) && len(device.TokenHash) == len(tokenHash) && subtle.ConstantTimeCompare(device.TokenHash, tokenHash[:]) == 1
 }
 
+// authorizeRequest ties an in-flight request (including a long-lived stream)
+// to its paired device. Revoking that device cancels the request context so
+// the HTTP handler and any underlying RPC stream terminate immediately.
+func (a *browserAccess) authorizeRequest(cookie string, parent context.Context) (context.Context, func(), bool) {
+	id, token, ok := strings.Cut(cookie, ".")
+	if !ok || id == "" || token == "" {
+		return nil, nil, false
+	}
+	tokenHash := sha256.Sum256([]byte(token))
+	a.mu.Lock()
+	device, exists := a.devices[id]
+	if !exists || !device.ExpiresAt.After(time.Now()) || len(device.TokenHash) != len(tokenHash) || subtle.ConstantTimeCompare(device.TokenHash, tokenHash[:]) != 1 {
+		a.mu.Unlock()
+		return nil, nil, false
+	}
+	ctx, cancel := context.WithCancel(parent)
+	a.nextCall++
+	callID := a.nextCall
+	if a.active[id] == nil {
+		a.active[id] = make(map[uint64]context.CancelFunc)
+	}
+	a.active[id][callID] = cancel
+	a.mu.Unlock()
+
+	return ctx, func() {
+		cancel()
+		a.mu.Lock()
+		delete(a.active[id], callID)
+		if len(a.active[id]) == 0 {
+			delete(a.active, id)
+		}
+		a.mu.Unlock()
+	}, true
+}
+
 func (a *browserAccess) list() ([]nodedb.BrowserDevice, error) { return a.store.BrowserDevices() }
 func (a *browserAccess) revoke(id string) error {
+	a.mu.Lock()
 	if err := a.store.DeleteBrowserDevice(id); err != nil {
+		a.mu.Unlock()
 		return err
 	}
-	a.mu.Lock()
 	delete(a.devices, id)
+	cancels := a.active[id]
+	delete(a.active, id)
 	a.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
 	if a.changes != nil {
 		a.changes.Notify()
 	}
@@ -271,12 +327,27 @@ func NewWebAppHandler(cfg LocalConfig, origins []string, ui fs.FS) http.Handler 
 	return newWebAppHandler(cfg, origins, ui, rand.Reader)
 }
 
+// NewWebAppHandlerWithBrowserAccess serves the web app using a shared browser
+// access manager. Daemons with multiple listeners must use one manager for all
+// of them so that revocation takes effect across listeners immediately.
+func NewWebAppHandlerWithBrowserAccess(cfg LocalConfig, origins []string, ui fs.FS, manager *BrowserAccessManager) http.Handler {
+	return newWebAppHandlerWithBrowserAccess(cfg, origins, ui, rand.Reader, manager)
+}
+
 func newWebAppHandler(cfg LocalConfig, origins []string, ui fs.FS, random io.Reader) http.Handler {
+	manager := NewBrowserAccessManager(cfg)
+	manager.devices.random = random
+	return newWebAppHandlerWithBrowserAccess(cfg, origins, ui, random, manager)
+}
+
+func newWebAppHandlerWithBrowserAccess(cfg LocalConfig, origins []string, ui fs.FS, random io.Reader, manager *BrowserAccessManager) http.Handler {
 	sessions := newWebSessions()
 	sessions.random = random
-	devices := newBrowserAccess(cfg.BrowserAccess, cfg.Token)
-	devices.random = random
-	devices.changes = cfg.BrowserDeviceChanges
+	if manager == nil || manager.devices == nil {
+		manager = NewBrowserAccessManager(cfg)
+		manager.devices.random = random
+	}
+	devices := manager.devices
 	service := &localService{cfg: normal(cfg)}
 	server := grpc.NewServer()
 	nodepb.RegisterNodeServiceServer(server, service)
@@ -384,7 +455,12 @@ func newWebAppHandler(cfg LocalConfig, origins []string, ui fs.FS, random io.Rea
 			return
 		}
 		bearerAuthenticated := validBearer(r, cfg.Token)
-		sessionAuthenticated := validSession(r, sessions) || validPairedSession(r, devices)
+		pairedContext, finishPairedRequest, pairedAuthenticated := devices.authorizeRequest(cookieValue(r), r.Context())
+		if pairedAuthenticated {
+			defer finishPairedRequest()
+			r = r.Clone(pairedContext)
+		}
+		sessionAuthenticated := validSession(r, sessions) || pairedAuthenticated
 		if !bearerAuthenticated && !sessionAuthenticated {
 			refuseWeb(w, http.StatusUnauthorized, "every call from a web page needs the node's API token, which is in api.token in its data directory")
 			return
@@ -483,6 +559,14 @@ func validBearer(r *http.Request, token string) bool {
 func validSession(r *http.Request, sessions *webSessions) bool {
 	cookie, err := r.Cookie(webSessionCookie)
 	return err == nil && sessions.valid(cookie.Value)
+}
+
+func cookieValue(r *http.Request) string {
+	cookie, err := r.Cookie(webSessionCookie)
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
 }
 
 func validPairedSession(r *http.Request, devices *browserAccess) bool {
