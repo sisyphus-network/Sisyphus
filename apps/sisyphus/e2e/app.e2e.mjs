@@ -64,6 +64,25 @@ test('the window shows the node it is connected to', async () => {
   }
 })
 
+test('location discovery controls stay read-only for an independently managed daemon', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'This node')
+    await page.getByRole('heading', { name: 'Location discovery' }).waitFor()
+    await page.getByText(/This node is connected to a daemon managed outside this app\./).waitFor()
+    for (const label of ['Ask my gateway', 'Use ipapi.co as a last resort']) {
+      const toggle = page.getByRole('switch', { name: label })
+      await toggle.waitFor()
+      assert.equal(await toggle.isDisabled(), true, `${label} must not change an independently managed daemon`)
+    }
+    assert.equal(await page.getByRole('button', { name: 'Save discovery settings' }).count(), 0)
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 // The topology is a globe drawn with WebGL. A window that has none is not
 // offered it: no pane, no handle to open one, no entry in the dock of a
 // narrow window. What is left fills the window and works.

@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WindowStreams } from './window-streams'
 import { createIpcLogEntry } from './ipc-logger'
 import { DesktopDaemon } from './daemon-process'
+import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, saveLocationDiscoverySettings } from './location-discovery-settings'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
 import { firstUploadMessage } from './file-upload'
@@ -18,6 +19,12 @@ import nodeProtoSource from '../../../../proto/sisyphus/node/v1/node.proto?raw'
 const here = fileURLToPath(new URL('.', import.meta.url))
 const nodeProtoJson = protobuf.parse(nodeProtoSource).root.toJSON()
 const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
+const autoStartManagedDaemon = process.env.SISYPHUS_AUTO_START_DAEMON !== '0' && !process.env.SISYPHUS_API_ADDRESS && !process.env.SISYPHUS_API_TOKEN_FILE
+const locationDiscoveryPath = join(app.getPath('userData'), 'location-discovery.json')
+const initialLocationDiscoverySettings = loadLocationDiscoverySettings(locationDiscoveryPath)
+const gatewayDiscoverySupported = process.platform === 'linux'
+const runningLocationDiscoverySettings = effectiveLocationDiscoverySettings(initialLocationDiscoverySettings, gatewayDiscoverySupported)
+let savedLocationDiscoverySettings = initialLocationDiscoverySettings
 // The daemon lets anything on this machine read from its local API, but only
 // a holder of its token change it. The token is in the daemon's data
 // directory, readable by the user who runs the daemon.
@@ -30,7 +37,8 @@ const desktopDaemon = new DesktopDaemon({
   endpoint,
   dataDir: daemonDataDir(),
   // A custom endpoint/token belongs to its operator, not this desktop process.
-  enabled: process.env.SISYPHUS_AUTO_START_DAEMON !== '0' && !process.env.SISYPHUS_API_ADDRESS && !process.env.SISYPHUS_API_TOKEN_FILE,
+  enabled: autoStartManagedDaemon,
+  locationDiscovery: runningLocationDiscoverySettings,
   onError: (message) => { daemonStartupError = message },
 })
 
@@ -355,6 +363,22 @@ app.whenReady().then(() => {
     window?.focus()
   })
   handleNode('node:get-snapshot', () => snapshot)
+  handleNode('node:get-location-discovery-settings', () => ({
+    managed: desktopDaemon.ownsProcess || desktopDaemon.isStarting,
+    gatewaySupported: gatewayDiscoverySupported,
+    saved: savedLocationDiscoverySettings,
+    running: runningLocationDiscoverySettings,
+  }))
+  handleNode('node:save-location-discovery-settings', (_event, value: unknown) => {
+    if (!desktopDaemon.ownsProcess && !desktopDaemon.isStarting) throw new Error('Location discovery settings are controlled by the daemon operator.')
+    savedLocationDiscoverySettings = saveLocationDiscoverySettings(locationDiscoveryPath, value)
+    return {
+      managed: desktopDaemon.ownsProcess || desktopDaemon.isStarting,
+      gatewaySupported: gatewayDiscoverySupported,
+      saved: savedLocationDiscoverySettings,
+      running: runningLocationDiscoverySettings,
+    }
+  })
   handleNode('node:reconnect', () => {
     if (retryTimer) clearTimeout(retryTimer)
     retryTimer = null
