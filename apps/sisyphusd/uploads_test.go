@@ -294,6 +294,35 @@ func TestAClientsAttemptsShareWhatIsLeftOfItsShare(t *testing.T) {
 
 // What a client keeps already leaves less of its share for its attempts to
 // upload.
+// The copies of a verified task each count towards the client's share, and
+// a refusal says so, since the client asked for one task and may not see
+// why it ran out of room.
+func TestARefusalSaysAVerifiedTasksCopiesEachCount(t *testing.T) {
+	clientShare = 1000
+	defer func() { clientShare = 0 }()
+	p := startPool(t, runtime.Builtin())
+	one := p.connectRaw(hello("one", 1, "primes"))
+	one.welcome()
+	two := p.connectRaw(hello("two", 1, "primes"))
+	two.welcome()
+	alice := p.newClient()
+	spec := primesJob(pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER, 0)
+	spec.Verify = 2
+	id := p.submitFor(alice, spec)
+	a, b := one.assignment(), two.assignment()
+	if _, err := p.uploadAs(one, strings.Repeat("a", 600), a); err != nil {
+		t.Fatalf("the first copy's upload: %v", err)
+	}
+	if _, err := p.uploadAs(two, strings.Repeat("b", 600), b); status.Code(err) != codes.ResourceExhausted || !strings.Contains(err.Error(), "has 600 more on their way, and may keep 1000; each of this task's 2 verified copies counts towards it") {
+		t.Fatalf("the second copy's upload past the share: %v", err)
+	}
+	one.returns(a, `{"count":5}`)
+	two.returns(b, `{"count":5}`)
+	if job := p.wait(id); job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("the verified job: %v", job.GetState())
+	}
+}
+
 func TestWhatAClientKeepsLeavesItsAttemptsLessToUpload(t *testing.T) {
 	clientShare = 1000
 	defer func() { clientShare = 0 }()
