@@ -46,6 +46,6 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 Two anti-entropy loops have an event that could take over their normal case. Each would keep its timer as a backstop, so neither is urgent:
 
 - **Relay places.** libp2p reports a lost connection to a relay (`EvtPeerConnectednessChanged`). Taking the place back on that event would make recovery immediate instead of up to 10 s late. The timer would stay for a reservation that lapses while the connection survives.
-- **Follower lists.** A coordinator already holds a stream to each worker. Sending a "your list changed" notice on it would let a follower ask straight away instead of within the minute. The minute would stay for a coordinator that restarts.
+- **Follower lists.** A coordinator already holds a stream to each worker. Sending a "your list changed" notice on it would let a follower ask straight away instead of within the minute. That needs a stream contract first, one that keeps what the minute gives today: signed-list recovery, blob challenges, convergence after a reconnect, and follower liveness. It is a design question for after V0 ([#413](https://github.com/sisyphus-network/Sisyphus/issues/413)), and the minute stays until it is settled.
 
-Each would be its own small PR, with tests for the event and for the backstop.
+Relay places are being moved to events in [#410](https://github.com/sisyphus-network/Sisyphus/issues/410). Each change is its own PR, with tests for the event and for the backstop.
