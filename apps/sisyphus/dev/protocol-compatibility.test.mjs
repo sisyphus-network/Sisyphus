@@ -42,7 +42,7 @@ test('grpc-js serves a unary call and a token stream with this definition', asyn
   let receivedAttachments
   const uploads = []
   server.addService(service, {
-    getNodeInfo: (_, callback) => callback(null, { peerId: 'test-peer' }),
+    getNodeInfo: (_, callback) => callback(null, { peerId: 'test-peer', countryCode: 'NL', countrySource: 'pool' }),
     ask: (call) => { receivedAttachments = call.request.attachmentCids; call.write({ chatId: 'chat', kind: 'text', text: 'שלום' }); call.write({ chatId: 'chat', kind: 'done' }); call.end() },
     storeFile: (call, callback) => {
       const chunks = []
@@ -56,6 +56,8 @@ test('grpc-js serves a unary call and a token stream with this definition', asyn
   try {
     const info = await new Promise((resolve, reject) => client.getNodeInfo({}, { deadline: Date.now() + 5000 }, (error, response) => error ? reject(error) : resolve(response)))
     assert.equal(info.peerId, 'test-peer')
+    assert.equal(info.countryCode, 'NL')
+    assert.equal(info.countrySource, 'pool')
     const events = await new Promise((resolve, reject) => {
       const events = []
       const stream = client.ask({ text: 'test', attachmentCids: ['uploaded-one', 'uploaded-two'] }, { deadline: Date.now() + 5000 })

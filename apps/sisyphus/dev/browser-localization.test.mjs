@@ -4,7 +4,7 @@ import test from 'node:test'
 
 const locales = ['en', 'he', 'ar', 'ru', 'pl', 'es', 'fr']
 const dictionaries = Object.fromEntries(locales.map((locale) => [locale, JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8'))]))
-const topLevelKeys = ['browserAuthTitle', 'browserAuthWaiting', 'browserAuthDescription', 'browserHttpWarning', 'browserAuthTokenLabel', 'browserAuthConnect', 'browserPairCodeLabel', 'browserPair', 'browserTokenAlternative']
+const topLevelKeys = ['browserAuthTitle', 'browserAuthWaiting', 'browserAuthDescription', 'browserHttpWarning', 'browserAuthTokenLabel', 'browserAuthConnect', 'browserPairCodeLabel', 'browserPair', 'browserTokenAlternative', 'geoCountryAsSeenByPool', 'countryEstimateDisclaimer']
 
 test('all browser access locales contain every nonempty label', () => {
   const accessKeys = Object.keys(dictionaries.en.browserAccess).sort()
