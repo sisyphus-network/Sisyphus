@@ -50,13 +50,14 @@ func TestOnlyAGlobalAddressSaysWhereAnythingIs(t *testing.T) {
 		"192.88.99.1": false, // the old 6to4 relays
 		// IPv6 set aside: translation, discard, dummy, the protocols' own
 		// block and those within it, documentation, segment routing.
-		"64:ff9b:1::1": false, "100::1": false, "100:0:0:1::1": false,
+		"64:ff9b::808:808": false, "64:ff9b:1::1": false, "100::1": false, "100:0:0:1::1": false,
+		"2002:808:808::1": false, "2002::1": false, // 6to4, which carries an IPv4 address
 		"2001::1": false, "2001:1ff::1": false, "2001:2::1": false, "2001:10::1": false,
 		"3fff::1": false, "5f00::1": false,
 		// And IPv6 outside the space the internet's addresses come from.
 		"4000::1": false, "1::1": false,
 		// Just past the blocks set aside, an address is anyone's again.
-		"2001:200::1": true, "192.88.100.1": true, "100.128.0.1": true,
+		"2001:200::1": true, "192.88.100.1": true, "100.128.0.1": true, "2003::1": true, "2001:ffff::1": true,
 	} {
 		if got := Global(netip.MustParseAddr(addr)); got != want {
 			t.Errorf("Global(%s) = %v, want %v", addr, got, want)

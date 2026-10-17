@@ -85,7 +85,9 @@ var unicast6 = netip.MustParsePrefix("2000::/3")
 // special-purpose registries say are not reachable on the internet, or set
 // aside for something other than a node's own address: shared by a
 // carrier's NAT, for documentation, for benchmarks, for the protocols
-// themselves, for relays and translators, or reserved. A block with
+// themselves, for relays, tunnels and translators (an address in one
+// carries another's, and says where the relay is, if anywhere), or
+// reserved. A block with
 // narrower exceptions in it is refused whole: unknown is better than a
 // wrong place.
 var special = []netip.Prefix{
@@ -98,11 +100,13 @@ var special = []netip.Prefix{
 	netip.MustParsePrefix("198.51.100.0/24"),
 	netip.MustParsePrefix("203.0.113.0/24"),
 	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("64:ff9b::/96"),
 	netip.MustParsePrefix("64:ff9b:1::/48"),
 	netip.MustParsePrefix("100::/64"),
 	netip.MustParsePrefix("100:0:0:1::/64"),
 	netip.MustParsePrefix("2001::/23"),
 	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"),
 	netip.MustParsePrefix("3fff::/20"),
 	netip.MustParsePrefix("5f00::/16"),
 }
