@@ -518,6 +518,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	held := api.NewNames(db, func(string) bool { return false })
 
 	if isCoordinator {
+		recordChanges := make(chan struct{}, 1)
 		admitted, err := access.Open(db, ident.ID())
 		if err == nil {
 			// Earlier versions kept the list in a file of its own.
@@ -526,7 +527,13 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		admitted.OnChange(trustChanged.tell)
+		admitted.OnChange(func(id string) {
+			trustChanged.tell(id)
+			select {
+			case recordChanges <- struct{}{}:
+			default:
+			}
+		})
 		// And a node that ran the Rust daemon before this one keeps what
 		// that one knew.
 		if err := importRustState(*dataDir, db, admitted, takes, log); err != nil {
@@ -665,9 +672,14 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("coordinator listening", "addr", lis.Addr().String(), "name", *name)
 		go func() { stopped <- srv.Serve(lis) }()
 		if *publishRecord {
-			keeper := &recordKeeper{ident: ident, store: store, names: held, log: log, describe: func() []byte {
+			keeper := &recordKeeper{ident: ident, store: store, names: held, log: log, changed: recordChanges, describe: func() []byte {
 				return describeNode(ident.ID(), version, workloads.Names(), admitted.Members())
 			}}
+			held.OnChange(func(id string) {
+				if id == ident.ID() {
+					keeper.nudge()
+				}
+			})
 			described := make(chan struct{})
 			// The store and the database must outlive the keeper.
 			defer func() {
