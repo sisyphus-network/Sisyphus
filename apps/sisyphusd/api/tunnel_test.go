@@ -82,11 +82,10 @@ func TestATunnelReachesTheNodesKubo(t *testing.T) {
 }
 
 func TestTunnelsThatCannotBeMade(t *testing.T) {
-	closed, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	closed.Close()
+	// Nothing listens on port 0, and no one can take it in the meantime as
+	// they could the port of a listener closed here, so a dial to it is
+	// always refused.
+	const nowhere = "127.0.0.1:0"
 
 	for _, tt := range []struct {
 		name  string
@@ -94,11 +93,11 @@ func TestTunnelsThatCannotBeMade(t *testing.T) {
 		first *pb.TunnelData
 		want  codes.Code
 	}{
-		{"no target named", at(closed.Addr().String()), &pb.TunnelData{Data: []byte("hello")}, codes.InvalidArgument},
+		{"no target named", at(nowhere), &pb.TunnelData{Data: []byte("hello")}, codes.InvalidArgument},
 		{"a node with no private network", nil, &pb.TunnelData{Target: pb.TunnelTarget_TUNNEL_TARGET_SWARM}, codes.FailedPrecondition},
 		{"a Kubo that cannot be found", func(context.Context) (string, error) { return "", errors.New("kubo is restarting") },
 			&pb.TunnelData{Target: pb.TunnelTarget_TUNNEL_TARGET_SWARM}, codes.Unavailable},
-		{"a Kubo that is not listening", at(closed.Addr().String()), &pb.TunnelData{Target: pb.TunnelTarget_TUNNEL_TARGET_SWARM}, codes.Unavailable},
+		{"a Kubo that is not listening", at(nowhere), &pb.TunnelData{Target: pb.TunnelTarget_TUNNEL_TARGET_SWARM}, codes.Unavailable},
 	} {
 		stream, err := startTunnels(t, tt.swarm).Open(context.Background())
 		if err != nil {
@@ -113,7 +112,7 @@ func TestTunnelsThatCannotBeMade(t *testing.T) {
 	}
 
 	// A caller that opens a tunnel and says nothing at all.
-	stream, err := startTunnels(t, at(closed.Addr().String())).Open(context.Background())
+	stream, err := startTunnels(t, at(nowhere)).Open(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
