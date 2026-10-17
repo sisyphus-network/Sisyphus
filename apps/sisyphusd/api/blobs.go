@@ -55,6 +55,15 @@ func (s *blobService) pinOwner(ctx context.Context) string {
 // clientOwner begins the name a client's pins are held under.
 const clientOwner = userOwner + ":"
 
+// clientOf returns the client whose own pins an owner holds, or nothing
+// for an owner that is no client's.
+func clientOf(owner string) string {
+	if client, found := strings.CutPrefix(owner, clientOwner); found {
+		return client
+	}
+	return ""
+}
+
 // FileStore is the part of a storage.Store needed to put things in it,
 // read them back, and keep them there.
 type FileStore interface {

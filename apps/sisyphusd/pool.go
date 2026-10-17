@@ -210,10 +210,10 @@ func poolMembers(ctx context.Context, args []string) error {
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	if len(listed.GetMembers()) > 0 {
-		fmt.Fprintln(tw, "NODE\tROLE\tJOINED")
+		fmt.Fprintln(tw, "NODE\tROLE\tJOINED\tSTORED")
 	}
 	for _, m := range listed.GetMembers() {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", m.GetNodeId(), roleNames[m.GetRole()], m.GetJoinedAt().AsTime().UTC().Format(time.RFC3339))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", m.GetNodeId(), roleNames[m.GetRole()], m.GetJoinedAt().AsTime().UTC().Format(time.RFC3339), storedOf(m))
 	}
 	tw.Flush()
 	// The other side of trust: whom this node will take tasks from.
@@ -293,4 +293,13 @@ func poolRekey(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintf(stdout, "the pool's private IPFS network has a new key (%s)\n", rekeyed.GetSwarmFingerprint())
 	return nil
+}
+
+// storedOf is what a member keeps in the coordinator's store, for a
+// client: a worker keeps nothing there of its own.
+func storedOf(m *pb.Member) string {
+	if m.GetRole() != pb.Role_ROLE_CLIENT {
+		return "-"
+	}
+	return byteCount(m.GetStoredBytes())
 }

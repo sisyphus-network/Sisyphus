@@ -119,11 +119,13 @@ Anyone else can complete the handshake and is then refused.
 **Joining.** An invitation is the inviting node's ID and a one-time token. The ID is what makes joining safe: the joiner will only talk to the node named in it, so nobody in between can pose as that node. It lasts an hour unless `--ttl` says otherwise, and is still good if the inviting node restarts before it is used. Once joined, a node remembers which node it expects at that address in `known.json` and refuses any other.
 
 ```sh
-bin/sisyphusd pool members            # who has been admitted, and as what
+bin/sisyphusd pool members            # who has been admitted, as what, and what each client keeps here
 bin/sisyphusd pool remove <node-id>   # take a node off the list and disconnect it
 bin/sisyphusd pool rekey              # change the key of the pool's private IPFS network
 bin/sisyphusd pool cluster            # with --cluster: which nodes hold each thing pinned
 ```
+
+`pool members` says, for each client, how much it keeps in the coordinator's store. That covers what it pinned and what its jobs keep. A blob it keeps several ways counts once, and a blob that several clients keep counts in full for each, so the figures add up to more than the disk holds when clients share data. The disk itself is what `--max-store-bytes` limits. Nothing is refused on these figures yet; they are the accounting a per-client storage limit will use ([discussion #341](https://github.com/sisyphus-network/Sisyphus/discussions/341)). The coordinator's own jobs count for nobody.
 
 ## Storing data
 

@@ -57,6 +57,9 @@ type Store interface {
 	Unpin(owner string, cids ...cid.Cid) error
 	PutNodes(ctx context.Context, root []byte, linked ...[]byte) (cid.Cid, error)
 	GetNode(ctx context.Context, c cid.Cid) ([]byte, error)
+	// Usage says how many bytes the pins of each group of owners keep;
+	// see storage.Store.Usage.
+	Usage(ctx context.Context, now time.Time, group func(owner string) string) (map[string]uint64, error)
 }
 
 // Journal keeps jobs somewhere that outlasts the coordinator. A nodedb.DB is

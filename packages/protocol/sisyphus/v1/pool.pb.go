@@ -722,10 +722,14 @@ func (*SetWorkForResponse) Descriptor() ([]byte, []int) {
 }
 
 type Member struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Role          Role                   `protobuf:"varint,2,opt,name=role,proto3,enum=sisyphus.v1.Role" json:"role,omitempty"`
-	JoinedAt      *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=joined_at,json=joinedAt,proto3" json:"joined_at,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	NodeId   string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Role     Role                   `protobuf:"varint,2,opt,name=role,proto3,enum=sisyphus.v1.Role" json:"role,omitempty"`
+	JoinedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=joined_at,json=joinedAt,proto3" json:"joined_at,omitempty"`
+	// For a client, how many bytes it keeps in the coordinator's store: what
+	// its own pins and its jobs' pins keep, each blob counted once however
+	// many ways it keeps it, and in full though others keep it too.
+	StoredBytes   uint64 `protobuf:"varint,4,opt,name=stored_bytes,json=storedBytes,proto3" json:"stored_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -779,6 +783,13 @@ func (x *Member) GetJoinedAt() *timestamppb.Timestamp {
 		return x.JoinedAt
 	}
 	return nil
+}
+
+func (x *Member) GetStoredBytes() uint64 {
+	if x != nil {
+		return x.StoredBytes
+	}
+	return 0
 }
 
 type RemoveMemberRequest struct {
@@ -1263,11 +1274,12 @@ const file_sisyphus_v1_pool_proto_rawDesc = "" +
 	"\x11SetWorkForRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
 	"\awilling\x18\x02 \x01(\bR\awilling\"\x14\n" +
-	"\x12SetWorkForResponse\"\x81\x01\n" +
+	"\x12SetWorkForResponse\"\xa4\x01\n" +
 	"\x06Member\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12%\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x11.sisyphus.v1.RoleR\x04role\x127\n" +
-	"\tjoined_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bjoinedAt\".\n" +
+	"\tjoined_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bjoinedAt\x12!\n" +
+	"\fstored_bytes\x18\x04 \x01(\x04R\vstoredBytes\".\n" +
 	"\x13RemoveMemberRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"\x16\n" +
 	"\x14RemoveMemberResponse\"\x0e\n" +

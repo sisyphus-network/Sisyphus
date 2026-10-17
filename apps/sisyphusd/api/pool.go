@@ -145,10 +145,19 @@ func (s *poolService) Invite(_ context.Context, req *pb.InviteRequest) (*pb.Invi
 	return &pb.InviteResponse{Invitation: s.id + ":" + token, ExpiresAt: timestamppb.New(now.Add(ttl))}, nil
 }
 
-func (s *poolService) ListMembers(context.Context, *pb.ListMembersRequest) (*pb.ListMembersResponse, error) {
+func (s *poolService) ListMembers(ctx context.Context, _ *pb.ListMembersRequest) (*pb.ListMembersResponse, error) {
+	// What each client keeps, on a node that coordinates and so keeps
+	// anything for clients.
+	var stored map[string]uint64
+	if s.coordinator != nil {
+		var err error
+		if stored, err = s.coordinator.Stored(ctx, clientOf); err != nil {
+			return nil, status.Errorf(codes.Internal, "measure what each client keeps: %v", err)
+		}
+	}
 	var res pb.ListMembersResponse
 	for _, m := range s.access.Members() {
-		res.Members = append(res.Members, &pb.Member{NodeId: m.ID, Role: fromRole[m.Role], JoinedAt: timestamppb.New(m.Joined)})
+		res.Members = append(res.Members, &pb.Member{NodeId: m.ID, Role: fromRole[m.Role], JoinedAt: timestamppb.New(m.Joined), StoredBytes: stored[m.ID]})
 	}
 	if s.workFor != nil {
 		res.WorksFor = s.workFor.List()
