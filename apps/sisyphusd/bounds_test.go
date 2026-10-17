@@ -138,6 +138,17 @@ func (pinFails) Pin(context.Context, string, time.Time, ...cid.Cid) error {
 	return errors.New("pin file is read-only")
 }
 
+func (pinFails) PinWithin(context.Context, string, time.Time, uint64, ...cid.Cid) error {
+	return errors.New("pin file is read-only")
+}
+
+// unaskable is a store that can neither pin nor say what it holds.
+type unaskable struct{ pinFails }
+
+func (unaskable) Has(context.Context, cid.Cid) (bool, error) {
+	return false, errors.New("disk unreadable")
+}
+
 // A store that cannot pin is not the worker's doing: what it stored is
 // still taken as stored.
 func TestJobSucceedsEvenIfWhatItsTasksStoredCannotBePinned(t *testing.T) {
@@ -152,6 +163,23 @@ func TestJobSucceedsEvenIfWhatItsTasksStoredCannotBePinned(t *testing.T) {
 		t.Errorf("result %s (%s)", done.GetResult(), done.GetError())
 	}
 	if !strings.Contains(p.logs.String(), "could not pin a job's blobs") || strings.Contains(p.logs.String(), "does not hold") {
+		t.Errorf("the log:\n%s", p.logs.String())
+	}
+}
+
+// Nor is a store that cannot say whether it holds what a task stored.
+func TestJobSucceedsEvenIfTheStoreCannotSayWhatItsTasksStored(t *testing.T) {
+	p := startPoolOver(t, runtime.Builtin(), func(store *storage.Store) coordinator.Store { return unaskable{pinFails{store}} })
+	w := p.connectRaw(hello("honest", 1, "primes"))
+	w.welcome()
+	stored := p.upload("what the task stored")
+	job := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED, 1))
+	task := w.assignment()
+	w.reply(&pb.TaskResult{TaskId: task.GetTaskId(), Attempt: task.GetAttempt(), Outcome: &pb.TaskResult_Output{Output: []byte(`{"count":5}`)}, WrittenBlobs: []string{stored}})
+	if done := p.wait(job.GetJobId()); string(done.GetResult()) != `{"count":5}` {
+		t.Errorf("result %s (%s)", done.GetResult(), done.GetError())
+	}
+	if !strings.Contains(p.logs.String(), "could not ask the store for a job's blob") || strings.Contains(p.logs.String(), "does not hold") {
 		t.Errorf("the log:\n%s", p.logs.String())
 	}
 }

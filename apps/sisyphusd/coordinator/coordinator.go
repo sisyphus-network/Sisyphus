@@ -53,7 +53,11 @@ const (
 // is over. A storage.Store is one.
 type Store interface {
 	runtime.Blobs
+	Has(ctx context.Context, c cid.Cid) (bool, error)
 	Pin(ctx context.Context, owner string, expires time.Time, cids ...cid.Cid) error
+	// PinWithin pins as Pin does, unless that would take the owner's group
+	// past limit; see storage.Store.PinWithin.
+	PinWithin(ctx context.Context, owner string, expires time.Time, limit uint64, cids ...cid.Cid) error
 	Unpin(owner string, cids ...cid.Cid) error
 	PutNodes(ctx context.Context, root []byte, linked ...[]byte) (cid.Cid, error)
 	GetNode(ctx context.Context, c cid.Cid) ([]byte, error)
@@ -143,6 +147,12 @@ type Config struct {
 	// one client can queue, which a count of jobs does not when one job has
 	// many tasks. The node's own jobs are not counted.
 	MaxTasksPerClient int
+	// MaxStoreBytesPerClient, if not zero, is the most one client may keep
+	// in the store, as Stored counts it. A task of the client's job whose
+	// outputs would take it past that fails, and its job with it, at once:
+	// its outputs are not kept, the task is not tried again, and its
+	// worker is not blamed. The node's own jobs are not counted.
+	MaxStoreBytesPerClient uint64
 	// MaxTaskTimeout, if not zero, is the longest one attempt at a task of
 	// a client's job may run: a job may ask for less, never more, and one
 	// that names no timeout gets this. Without it, a task that never ends
@@ -187,6 +197,8 @@ type Coordinator struct {
 	// perClient is how many unfinished jobs one client may have, and
 	// tasksPerClient how many unfinished tasks.
 	perClient, tasksPerClient int
+	// storePerClient is the most one client may keep in the store.
+	storePerClient uint64
 	// maxTaskTimeout is the longest an attempt at a client's task may run.
 	maxTaskTimeout time.Duration
 	addresses      map[string]string
@@ -349,6 +361,7 @@ func New(cfg Config) *Coordinator {
 		hardened:       cfg.HardenedContainers,
 		perClient:      cfg.MaxJobsPerClient,
 		tasksPerClient: cfg.MaxTasksPerClient,
+		storePerClient: cfg.MaxStoreBytesPerClient,
 		maxTaskTimeout: cfg.MaxTaskTimeout,
 		addressOf:      cfg.AddressOf,
 		sourceOf:       cfg.SourceOf,
@@ -1237,7 +1250,25 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 		// What the task stored must outlive the hour a new blob is kept
 		// for, since the job may run longer than that. Only what the store
 		// holds is taken as stored: the worker's word for it is not enough.
-		read, written := wellFormed(result.GetReadBlobs()), c.keep(a.job, w, result.GetWrittenBlobs())
+		// A task that is audited is picked before its outputs are kept, since
+		// what it stored is held to its client's share only if its result
+		// is taken on the worker's word.
+		replicated := c.replicated(a.job)
+		picked := !replicated && c.pickedLocked(a.job)
+		var limit uint64
+		if !replicated && !picked {
+			limit = c.shareOf(a.job)
+		}
+		written, over := c.keep(a.job, w, result.GetWrittenBlobs(), limit)
+		if over != nil {
+			// The same task would store the same again, so it is not tried
+			// again, and the worker did what it was asked.
+			reason := fmt.Sprintf("its outputs would have this client keep %d bytes here, and it may keep %d; free some and submit the job again", over.Keeps, over.May)
+			c.recordLocked(a.job, eventTaskFailed, a.task.Index, w.name, reason)
+			a.job.Refuse(a.task, reason, now)
+			break
+		}
+		read := wellFormed(result.GetReadBlobs())
 		a.job.NoteRead(read...)
 		a.job.NoteTaskOutput(written...)
 		// Who holds what is a worker's word for where a blob may be
@@ -1246,11 +1277,11 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 			w.holds[held] = struct{}{}
 		}
 		done := false
-		if c.replicated(a.job) {
+		if replicated {
 			// One result among several, which settles the task only if
 			// enough of them are the same.
 			done = c.returnedLocked(w, a, outcome.Output, written)
-		} else if c.pickedLocked(a.job) {
+		} else if picked {
 			// Not taken yet: this node runs the task itself first, and
 			// the task is over when it has.
 			c.recordLocked(a.job, eventTaskResult, a.task.Index, w.name, "returned a result, which the coordinator checks by running the task itself")
@@ -1372,27 +1403,50 @@ func (c *Coordinator) pin(job *jobmodel.Job, expires time.Time, cids []string) {
 // not hold was not stored, whatever the worker says, and what is no CID is
 // no blob: neither is noted with the job. A pin that fails for another
 // reason is the store's trouble and not the worker's, so the blob is still
-// noted, as it was before the store was asked one blob at a time.
-func (c *Coordinator) keep(job *jobmodel.Job, w *worker, cids []string) []string {
-	if all := decode(cids); len(all) == len(cids) && c.store.Pin(c.ctx, owner(job), time.Time{}, all...) == nil {
-		return cids
+// noted. With a limit, the blobs are pinned only if that keeps the job's
+// client within it; if not, none are, and keep returns why.
+func (c *Coordinator) keep(job *jobmodel.Job, w *worker, cids []string, limit uint64) ([]string, *storage.OverShareError) {
+	if limit > 0 {
+		c.count()
 	}
+	if all := decode(cids); len(all) == len(cids) {
+		err := c.store.PinWithin(c.ctx, owner(job), time.Time{}, limit, all...)
+		if over := (*storage.OverShareError)(nil); errors.As(err, &over) {
+			return nil, over
+		}
+		if err == nil {
+			return cids, nil
+		}
+	}
+	// Some are not stored blobs, or the store could not pin them: ask
+	// which it holds, and pin those.
 	var stored []string
+	var held []cid.Cid
 	for _, named := range cids {
 		blob, err := cid.Decode(named)
 		if err == nil {
-			if err = c.store.Pin(c.ctx, owner(job), time.Time{}, blob); err != nil && !errors.Is(err, storage.ErrNotFound) {
-				c.log.Warn("could not pin a job's blobs", "job", job.ID, "error", err)
+			var has bool
+			if has, err = c.store.Has(c.ctx, blob); err != nil {
+				c.log.Warn("could not ask the store for a job's blob", "job", job.ID, "blob", named, "error", err)
 				err = nil
+			} else if !has {
+				err = storage.ErrNotFound
 			}
 		}
 		if err != nil {
 			c.log.Warn("a worker named a blob as stored by its task that the pool does not hold", "job", job.ID, "node", w.id, "blob", named)
 			continue
 		}
-		stored = append(stored, named)
+		stored, held = append(stored, named), append(held, blob)
 	}
-	return stored
+	err := c.store.PinWithin(c.ctx, owner(job), time.Time{}, limit, held...)
+	if over := (*storage.OverShareError)(nil); errors.As(err, &over) {
+		return nil, over
+	}
+	if err != nil {
+		c.log.Warn("could not pin a job's blobs", "job", job.ID, "error", err)
+	}
+	return stored, nil
 }
 
 // wellFormed returns those of cids that are CIDs.

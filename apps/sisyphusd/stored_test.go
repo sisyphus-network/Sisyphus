@@ -180,3 +180,54 @@ func TestAClientsShareCountsWhatIsStored(t *testing.T) {
 		t.Errorf("a refused upload has alice keep %d bytes", got)
 	}
 }
+
+// What a client's job stores counts towards its share too. A task whose
+// outputs would take the client past it fails, and its job with it, at
+// once: the same task would store the same again, so it is not tried
+// again, and none of what it stored is kept for the client.
+func TestAClientsJobStoresNoMoreThanItsShare(t *testing.T) {
+	clientShare = 1000
+	defer func() { clientShare = 0 }()
+	p := startPool(t, runtime.Builtin())
+	w := p.connectRaw(hello("rig", 1, "primes"))
+	w.welcome()
+	alice := p.newClient()
+	run := func(stored ...string) *pb.Job {
+		t.Helper()
+		submitted, err := alice.jobs.SubmitJob(p.ctx, &pb.SubmitJobRequest{Spec: primesJob(pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER, 0)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		task := w.assignment()
+		w.reply(&pb.TaskResult{TaskId: task.GetTaskId(), Attempt: task.GetAttempt(), Outcome: &pb.TaskResult_Output{Output: []byte(`{"count":5}`)}, WrittenBlobs: stored})
+		return p.wait(submitted.GetJob().GetJobId())
+	}
+
+	if job := run(p.upload(strings.Repeat("s", 600))); job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("a job storing what fits alice's share: %v %s", job.GetState(), job.GetError())
+	}
+	large := p.upload(strings.Repeat("l", 1500))
+	// Named beside what is no blob, it is refused all the same.
+	if job := run("not a CID at all", large); job.GetState() != pb.JobState_JOB_STATE_FAILED || !strings.Contains(job.GetError(), "may keep 1000") {
+		t.Fatalf("a job storing more than alice's share, beside what is no blob: %v %s", job.GetState(), job.GetError())
+	}
+	job := run(large)
+	if job.GetState() != pb.JobState_JOB_STATE_FAILED || job.GetError() != "task 0 failed: its outputs would have this client keep 1500 bytes here, and it may keep 1000; free some and submit the job again" {
+		t.Fatalf("a job storing more than alice's share: %v %s", job.GetState(), job.GetError())
+	}
+	if pins := p.jobPins(job.GetJobId()); len(pins) != 0 {
+		t.Errorf("the job that was refused keeps %v", pins)
+	}
+	if got := p.storedBy()[alice.id]; got != 0 {
+		t.Errorf("alice keeps %d bytes", got)
+	}
+	failed := 0
+	for _, e := range p.events(job.GetJobId(), 0) {
+		if e.GetKind() == "task-failed" {
+			failed++
+		}
+	}
+	if failed != 1 {
+		t.Errorf("the task failed %d times", failed)
+	}
+}
