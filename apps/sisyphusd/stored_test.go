@@ -235,13 +235,7 @@ func TestAClientsJobStoresNoMoreThanItsShare(t *testing.T) {
 // staged lists what is staged for a job's tasks: what their results stored,
 // kept until each task is settled.
 func (p *pool) staged(jobID string) []string {
-	var staged []string
-	for _, pin := range p.store.Pins() {
-		if strings.HasPrefix(pin.Owner, "job:"+jobID+"#") {
-			staged = append(staged, pin.Owner+" "+pin.CID.String())
-		}
-	}
-	return staged
+	return p.stagedIn(p.store, jobID)
 }
 
 // What the copies of a verified task store counts towards its client's

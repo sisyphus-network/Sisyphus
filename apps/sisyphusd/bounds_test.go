@@ -227,6 +227,10 @@ func (stuck) Unpin(string, ...cid.Cid) error {
 	return errors.New("pin file is read-only")
 }
 
+func (stuck) UnpinPrefix(string) error {
+	return errors.New("pin file is read-only")
+}
+
 // Nor is a store that cannot keep what a verified task was settled with,
 // or let go of what its copies staged.
 func TestAVerifiedJobSucceedsEvenIfTheStoreCannotPinOrUnpin(t *testing.T) {
@@ -240,7 +244,7 @@ func TestAVerifiedJobSucceedsEvenIfTheStoreCannotPinOrUnpin(t *testing.T) {
 	if done := p.wait(id); done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
 		t.Fatalf("the job: %v %s", done.GetState(), done.GetError())
 	}
-	for _, said := range []string{"could not pin a job's blobs", "could not release what a task's results staged"} {
+	for _, said := range []string{"could not pin a job's blobs", "could not release what a task's results staged", "could not release what a job's results staged"} {
 		if !strings.Contains(p.logs.String(), said) {
 			t.Errorf("the log does not say %q:\n%s", said, p.logs.String())
 		}

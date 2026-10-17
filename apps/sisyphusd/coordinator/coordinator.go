@@ -60,6 +60,8 @@ type Store interface {
 	// past limit; see storage.Store.PinWithin.
 	PinWithin(ctx context.Context, owner string, expires time.Time, limit uint64, cids ...cid.Cid) error
 	Unpin(owner string, cids ...cid.Cid) error
+	// UnpinPrefix releases every pin whose owner's name begins with prefix.
+	UnpinPrefix(prefix string) error
 	PutNodes(ctx context.Context, root []byte, linked ...[]byte) (cid.Cid, error)
 	GetNode(ctx context.Context, c cid.Cid) ([]byte, error)
 	// GroupPins has the store count what each group of owners keeps, and
@@ -1383,8 +1385,10 @@ func (c *Coordinator) settleLocked(job *jobmodel.Job) {
 	c.recordLocked(job, job.State.String(), whole, "", job.Err)
 	keep := append(job.InputBlobs(), job.OutputBlobs()...)
 	c.pin(job, job.FinishedAt.Add(c.retain), keep)
-	for _, task := range job.Tasks {
-		c.unstage(job, task, staged(task))
+	// Whatever its tasks' results staged, including any a stop left
+	// behind before it was noted with a result, is of no use now.
+	if err := c.store.UnpinPrefix(owner(job) + stagingSeparator); err != nil {
+		c.log.Warn("could not release what a job's results staged", "job", job.ID, "error", err)
 	}
 	if err := c.store.Unpin(owner(job), decode(job.IntermediateBlobs())...); err != nil {
 		c.log.Warn("could not release a job's intermediate blobs", "job", job.ID, "error", err)
