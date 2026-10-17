@@ -49,6 +49,21 @@ test('launches once with separate arguments and loopback-only networking', async
   assert.deepEqual(signals, ['SIGTERM'])
 })
 
+test('passes only explicitly enabled location discovery flags to the managed daemon', async () => {
+  const { daemon, launches } = fixture({ locationDiscovery: { locateGateway: true, locateCountry: false } })
+  assert.equal(daemon.ownsProcess, false)
+  await daemon.ensureStarted()
+  assert.equal(daemon.ownsProcess, true)
+  assert.deepEqual(launches[0].args.slice(-1), ['--locate-gateway'])
+  await daemon.stop()
+  assert.equal(daemon.ownsProcess, false)
+
+  const both = fixture({ locationDiscovery: { locateGateway: true, locateCountry: true } })
+  await both.daemon.ensureStarted()
+  assert.deepEqual(both.launches[0].args.slice(-2), ['--locate-gateway', '--locate-country'])
+  await both.daemon.stop()
+})
+
 test('occupied default pool port falls back without taking over its service', async () => {
   const server = createServer(socket => socket.end())
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })

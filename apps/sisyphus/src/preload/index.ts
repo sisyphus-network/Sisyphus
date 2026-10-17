@@ -55,6 +55,8 @@ export type NodeSnapshot = {
 
 export type BrowserPairingInvitation = { code: string; expiresAt: string; pairUrl: string }
 export type PairedBrowser = { id: string; name: string; createdAt: string }
+export type LocationDiscoverySettings = { locateGateway: boolean; locateCountry: boolean }
+export type LocationDiscoveryState = { managed: boolean; gatewaySupported: boolean | null; saved: LocationDiscoverySettings; running: LocationDiscoverySettings }
 
 export type NodeRpcMethod =
   | 'getBootstrapPeers' | 'setBootstrapPeers' | 'listWorkers' | 'listPeers' | 'getNodeInfo'
@@ -70,6 +72,8 @@ export type NodeStreamMethod = 'watchJobs' | 'watchJobEvents' | 'ask' | 'pullMod
 
 const api = {
   getSnapshot: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:get-snapshot'),
+  getLocationDiscoverySettings: (): Promise<LocationDiscoveryState> => ipcRenderer.invoke('node:get-location-discovery-settings'),
+  saveLocationDiscoverySettings: (settings: LocationDiscoverySettings): Promise<LocationDiscoveryState> => ipcRenderer.invoke('node:save-location-discovery-settings', settings),
   reconnect: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:reconnect'),
   connectPeer: (address: string): Promise<string> => ipcRenderer.invoke('node:connect-peer', address),
   setPeerComputeTrust: (peerId: string, trusted: boolean): Promise<void> => ipcRenderer.invoke('node:set-peer-compute-trust', { peerId, trusted }),

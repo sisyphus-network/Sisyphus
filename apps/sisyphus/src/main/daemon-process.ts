@@ -32,6 +32,7 @@ type Options = {
   endpoint: string
   dataDir: string
   enabled: boolean
+  locationDiscovery?: { locateGateway: boolean; locateCountry: boolean }
   unused?: (endpoint: string) => Promise<boolean>
   launch?: (executable: string, args: string[]) => ChildProcess
   onError: (message: string) => void
@@ -48,6 +49,9 @@ export class DesktopDaemon {
   private pending: Promise<void> | null = null
   private readonly options: Options
   constructor(options: Options) { this.options = options }
+
+  get ownsProcess(): boolean { return this.child !== null }
+  get isStarting(): boolean { return this.pending !== null }
 
   ensureStarted(): Promise<void> {
     if (this.pending) return this.pending
@@ -66,6 +70,8 @@ export class DesktopDaemon {
       if (this.stopping) return
       const args = ['run', '--api-listen', this.options.endpoint, '--data-dir', this.options.dataDir,
         '--listen', listen, '--discovery', 'off']
+      if (this.options.locationDiscovery?.locateGateway) args.push('--locate-gateway')
+      if (this.options.locationDiscovery?.locateCountry) args.push('--locate-country')
       const child = (this.options.launch ?? ((executable, arguments_) => spawn(executable, arguments_, { stdio: 'ignore', windowsHide: true, shell: false })))(this.options.executable, args)
       this.child = child
       child.once('error', (error) => {

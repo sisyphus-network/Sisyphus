@@ -1,4 +1,4 @@
-import type { NodeSnapshot, SisyphusBridge } from '../../../preload'
+import type { LocationDiscoverySettings, LocationDiscoveryState, NodeSnapshot, SisyphusBridge } from '../../../preload'
 import { createBrowserPairing, createSisyphusClient, isAuthenticationError, listPairedBrowsers, revokePairedBrowser, type NodeServiceClient, type SisyphusClient } from '@sisyphus/client'
 
 let runtimeClient: SisyphusClient | undefined
@@ -61,6 +61,8 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
 
   return {
     getSnapshot,
+    getLocationDiscoverySettings: async (): Promise<LocationDiscoveryState> => ({ managed: false, gatewaySupported: null, saved: { locateGateway: false, locateCountry: false }, running: { locateGateway: false, locateCountry: false } }),
+    saveLocationDiscoverySettings: async (_settings: LocationDiscoverySettings): Promise<LocationDiscoveryState> => { throw new Error('Location discovery settings are available in the desktop app only.') },
     reconnect: getSnapshot,
     connectPeer: async (address) => (await node.connectPeer({ address })).peerId,
     setPeerComputeTrust: async (peerId, trusted) => { await node.setPeerComputeTrust({ peerId, trusted }) },
