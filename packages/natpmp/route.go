@@ -62,3 +62,55 @@ func gatewayIn(table io.Reader) (netip.Addr, error) {
 	}
 	return best, nil
 }
+
+// gatewayInNetstat reads the IPv4 default gateway from what
+// `netstat -rn -f inet` prints on macOS and the BSDs: a row a route, the
+// destination, gateway and flags first. It is the gateway of the first
+// default route that is up (U) and goes through a gateway (G), which is
+// the one the system prefers; a route through an interface rather than an
+// address, such as a VPN's "link#12", has no gateway to ask.
+func gatewayInNetstat(table io.Reader) (netip.Addr, error) {
+	lines := bufio.NewScanner(table)
+	for lines.Scan() {
+		fields := strings.Fields(lines.Text())
+		if len(fields) < 3 || fields[0] != "default" || !strings.Contains(fields[2], "U") || !strings.Contains(fields[2], "G") {
+			continue
+		}
+		if gateway, err := netip.ParseAddr(fields[1]); err == nil && gateway.Is4() && !gateway.IsUnspecified() {
+			return gateway, nil
+		}
+	}
+	return netip.Addr{}, ErrNoGateway
+}
+
+// gatewayInRoutePrint reads the IPv4 default gateway from what Windows
+// prints for `route print -4 0.0.0.0`. Its headers are in the system's
+// language, so only the rows of active routes are read, five columns
+// each: destination, mask, gateway, interface and metric. Persistent
+// routes have four and are passed over, as is a route "On-link", which has
+// no gateway. It is the gateway of the default route of lowest metric, the
+// first if they tie.
+func gatewayInRoutePrint(table io.Reader) (netip.Addr, error) {
+	lines := bufio.NewScanner(table)
+	var best netip.Addr
+	var bestMetric uint64
+	for lines.Scan() {
+		fields := strings.Fields(lines.Text())
+		if len(fields) != 5 || fields[0] != "0.0.0.0" || fields[1] != "0.0.0.0" {
+			continue
+		}
+		gateway, err := netip.ParseAddr(fields[2])
+		if err != nil || !gateway.Is4() || gateway.IsUnspecified() {
+			continue
+		}
+		metric, err := strconv.ParseUint(fields[4], 10, 32)
+		if err != nil || (best.IsValid() && metric >= bestMetric) {
+			continue
+		}
+		best, bestMetric = gateway, metric
+	}
+	if !best.IsValid() {
+		return netip.Addr{}, ErrNoGateway
+	}
+	return best, nil
+}
