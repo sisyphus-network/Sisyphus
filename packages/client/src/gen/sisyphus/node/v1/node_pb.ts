@@ -66,8 +66,9 @@ export type GetNodeInfoResponse = Message<"sisyphus.node.v1.GetNodeInfoResponse"
 
   /**
    * How country_code was found: "interface" from an address the node has
-   * itself, "pool" from its address as the pool sees it, "lookup" from the
-   * outside service it was allowed to ask, or empty if it is not known. A
+   * itself, "pool" from its address as the pool sees it, "gateway" from the
+   * external address its gateway gave when asked by NAT-PMP, "lookup" from
+   * the outside service it was allowed to ask, or empty if it is not known. A
    * country found by the pool is where the node's traffic comes from, as
    * the pool sees it, which behind a VPN is not where the machine is.
    *
