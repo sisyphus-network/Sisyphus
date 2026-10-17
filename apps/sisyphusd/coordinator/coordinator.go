@@ -57,6 +57,9 @@ type Store interface {
 	Unpin(owner string, cids ...cid.Cid) error
 	PutNodes(ctx context.Context, root []byte, linked ...[]byte) (cid.Cid, error)
 	GetNode(ctx context.Context, c cid.Cid) ([]byte, error)
+	// Usage says how many bytes the pins of each group of owners keep;
+	// see storage.Store.Usage.
+	Usage(ctx context.Context, now time.Time, group func(owner string) string) (map[string]uint64, error)
 }
 
 // Journal keeps jobs somewhere that outlasts the coordinator. A nodedb.DB is
@@ -154,7 +157,8 @@ type Config struct {
 	// finishes.
 	Retain time.Duration
 	// KeepJobs is how long a finished job stays on record; see Prune. Zero
-	// keeps them for good.
+	// keeps them for good. A client's job stays at least as long as Retain
+	// too, since its record is what says whose its data is.
 	KeepJobs time.Duration
 	Log      *slog.Logger
 }
@@ -638,7 +642,14 @@ func (c *Coordinator) Prune(now time.Time) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	aged := func(job *jobmodel.Job) bool {
-		return c.keepJobs > 0 && job.Terminal() && now.Sub(job.FinishedAt) > c.keepJobs
+		kept := c.keepJobs
+		if job.Submitter != "" {
+			// What a client's job keeps counts towards the client for as
+			// long as it is kept, and only the job's record says whose it
+			// is: the record stays until its data has lapsed too.
+			kept = max(kept, c.retain)
+		}
+		return c.keepJobs > 0 && job.Terminal() && now.Sub(job.FinishedAt) > kept
 	}
 	var old []string
 	for id, job := range c.jobs {

@@ -119,11 +119,13 @@ Anyone else can complete the handshake and is then refused.
 **Joining.** An invitation is the inviting node's ID and a one-time token. The ID is what makes joining safe: the joiner will only talk to the node named in it, so nobody in between can pose as that node. It lasts an hour unless `--ttl` says otherwise, and is still good if the inviting node restarts before it is used. Once joined, a node remembers which node it expects at that address in `known.json` and refuses any other.
 
 ```sh
-bin/sisyphusd pool members            # who has been admitted, and as what
+bin/sisyphusd pool members            # who has been admitted, as what, and what each client keeps here
 bin/sisyphusd pool remove <node-id>   # take a node off the list and disconnect it
 bin/sisyphusd pool rekey              # change the key of the pool's private IPFS network
 bin/sisyphusd pool cluster            # with --cluster: which nodes hold each thing pinned
 ```
+
+`pool members` says, for each client, how much it keeps in the coordinator's store. That covers what it pinned and what its jobs keep. A blob it keeps several ways counts once, and a blob that several clients keep counts in full for each, so the figures add up to more than the disk holds when clients share data. The disk itself is what `--max-store-bytes` limits. Nothing is refused on these figures yet; they are the accounting a per-client storage limit will use ([discussion #341](https://github.com/sisyphus-network/Sisyphus/discussions/341)). The coordinator's own jobs count for nobody.
 
 ## Storing data
 
@@ -884,7 +886,7 @@ A job's arrival and its finish are written through to the disk before anyone is 
 
 The database holds the rest of what a coordinator must not forget as well: which nodes have been admitted, and the invitations issued and not yet used, so an invitation is still good after a restart. Invitations are recorded by a hash of their token, so reading the database admits nobody. A coordinator from before this was so finds its old `access.json`, takes its members in, and sets the file aside as `access.json.imported`.
 
-A finished job can be asked after for 30 days, or whatever `--keep-jobs` says; `--keep-jobs 0` keeps them for good. That is about the record of the job. How long its data is kept is `--retain`, described under [How long data is kept](#how-long-data-is-kept).
+A finished job can be asked after for 30 days, or whatever `--keep-jobs` says; `--keep-jobs 0` keeps them for good. A client's job is kept at least as long as `--retain` too: its record is what says whose its data is, so that data counts towards the client in `pool members` until it lapses, across restarts. That is about the record of the job. How long its data is kept is `--retain`, described under [How long data is kept](#how-long-data-is-kept).
 
 A node's own record of the coordinators it has joined, `known.json`, stays a file. Every command reads it, on machines that run no coordinator and have no database, and it is small enough to mend by hand when a coordinator's address changes.
 

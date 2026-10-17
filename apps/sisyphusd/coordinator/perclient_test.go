@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
@@ -215,5 +217,85 @@ func TestAClientsTasksRunNoLongerThanTheCoordinatorAllows(t *testing.T) {
 		if got := time.Duration(submitted.GetSpec().GetTaskTimeoutSeconds()) * time.Second; got != tt.want {
 			t.Errorf("a job of %q's asking for %ds has tasks run for at most %v, want %v", tt.submitter, tt.asks, got, tt.want)
 		}
+	}
+}
+
+// What a client's finished job keeps counts towards the client until it
+// lapses, though the job's record would otherwise be forgotten sooner, and
+// across a restart: the record that says whose the data is stays as long.
+func TestAClientsJobCountsTowardsItUntilItsDataLapses(t *testing.T) {
+	db, err := nodedb.Open(filepath.Join(t.TempDir(), "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := storage.NewMemory()
+	start := func() *Coordinator {
+		c := New(Config{Workloads: runtime.Builtin(), Store: store, Journal: db, KeepJobs: time.Hour, Retain: 24 * time.Hour, Log: slog.New(slog.DiscardHandler)})
+		if _, err := c.Recover(); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	c := start()
+	ctx := context.Background()
+	spec := &pb.JobSpec{Workload: "primes", Params: []byte(`{"from":1,"to":10}`), MaxTasks: 1}
+	theirs, err := c.submit(ctx, spec, "", "", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ours, err := c.submit(ctx, spec, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Alice's job has finished and keeps its data for the retention
+	// period, as a finished job does.
+	data, err := store.Put(ctx, strings.NewReader("what alice's job produced"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := time.Now()
+	if err := store.Pin(ctx, ownerPrefix+theirs.GetJobId(), finished.Add(24*time.Hour), data); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	saved, _ := db.LoadJobs()
+	for _, job := range saved {
+		job.Finish([]byte("done"), nil, finished)
+		if err := db.SaveJob(job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c = start()
+	defer func() { c.Close() }()
+	alices := func() uint64 {
+		t.Helper()
+		stored, err := c.Stored(ctx, func(string) string { return "" })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored["alice"]
+	}
+	if got := alices(); got != uint64(len("what alice's job produced")) {
+		t.Fatalf("alice keeps %d bytes", got)
+	}
+
+	// Past the keeping period the node's own job is forgotten, and hers is
+	// not, since its data is still kept: it still counts, and still does
+	// after a restart.
+	if n, err := c.Prune(finished.Add(2 * time.Hour)); n != 1 || err != nil {
+		t.Fatalf("pruned %d jobs two hours on, %v; want the node's own", n, err)
+	}
+	if _, err := c.Get(ours.GetJobId()); status.Code(err) != codes.NotFound {
+		t.Errorf("the node's own job: %v, want it forgotten", err)
+	}
+	c.Close()
+	c = start()
+	if got := alices(); got != uint64(len("what alice's job produced")) {
+		t.Errorf("after a restart, alice keeps %d bytes", got)
+	}
+	// Once her data has lapsed, her job goes too.
+	if n, err := c.Prune(finished.Add(25 * time.Hour)); n != 1 || err != nil {
+		t.Errorf("pruned %d jobs a day on, %v; want hers", n, err)
 	}
 }
