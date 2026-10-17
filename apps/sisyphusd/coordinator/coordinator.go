@@ -1778,8 +1778,8 @@ func (c *Coordinator) releaseLocked(a assignment) {
 	// What it uploaded is no longer on its way for its client: it is let
 	// go of, or kept for the job, and counted as the job's pins are.
 	if up := c.uploaded[uploads(a)]; up.client != "" {
-		if left := c.inFlight[up.client] - up.used; left > 0 {
-			c.inFlight[up.client] = left
+		if flying := c.inFlight[up.client]; flying > up.used {
+			c.inFlight[up.client] = flying - up.used
 		} else {
 			delete(c.inFlight, up.client)
 		}
