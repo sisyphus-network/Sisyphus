@@ -10,6 +10,12 @@ service NodeService {
   // effect after it restarts, whether the desktop starts it or not.
   rpc GetLocationDiscoverySettings(GetLocationDiscoverySettingsRequest) returns (LocationDiscoverySettingsState);
   rpc SetLocationDiscoverySettings(SetLocationDiscoverySettingsRequest) returns (LocationDiscoverySettingsState);
+  // The limits a coordinator holds each member to. Changes are saved by the
+  // node and take effect after it restarts, whether the desktop starts it
+  // or not; a node that does not run the coordinator role holds no one to
+  // them.
+  rpc GetPoolLimits(GetPoolLimitsRequest) returns (PoolLimitsState);
+  rpc SetPoolLimits(SetPoolLimitsRequest) returns (PoolLimitsState);
   // Browser access is disabled until explicitly enabled by the node owner.
   rpc GetWebAccessConfig(GetWebAccessConfigRequest) returns (WebAccessConfig);
   rpc SetWebAccessConfig(SetWebAccessConfigRequest) returns (WebAccessConfig);
@@ -794,3 +800,33 @@ message LocationDiscoverySettingsState {
 
 message GetLocationDiscoverySettingsRequest {}
 message SetLocationDiscoverySettingsRequest { LocationDiscoverySettings settings = 1; }
+
+// PoolLimits are what a coordinator lets one member use. 0 means no limit
+// in each field. The node's own jobs are not held to the per-client ones.
+message PoolLimits {
+  // How many unfinished jobs one client may have at once.
+  uint32 max_jobs_per_client = 1;
+  // How many unfinished tasks, waiting or running, one client may have
+  // across its jobs.
+  uint32 max_tasks_per_client = 2;
+  // The longest one attempt at a task of a client's job may run, in
+  // seconds.
+  uint64 max_task_timeout_seconds = 3;
+  // The most one client may keep in the coordinator's store, in bytes.
+  uint64 max_store_bytes_per_client = 4;
+  // The most a worker may upload for one attempt at a task, in bytes.
+  uint64 max_upload_bytes_per_attempt = 5;
+}
+
+message PoolLimitsState {
+  PoolLimits saved = 1;
+  PoolLimits running = 2;
+  bool restart_needed = 3;
+  bool configured = 4;
+  // Whether this node runs the coordinator role; without it the limits
+  // hold no one to anything.
+  bool coordinator = 5;
+}
+
+message GetPoolLimitsRequest {}
+message SetPoolLimitsRequest { PoolLimits limits = 1; }
