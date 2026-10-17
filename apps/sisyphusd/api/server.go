@@ -32,6 +32,10 @@ type Config struct {
 	// MaxStoreBytes is the most disk the store may use before uploads are
 	// refused. Zero means no limit.
 	MaxStoreBytes uint64
+	// MaxStoreBytesPerClient is the most one client may keep in the store,
+	// counted as Coordinator.Stored counts it: uploads and pins that would
+	// take it past that are refused. Zero means no limit.
+	MaxStoreBytesPerClient uint64
 	// Swarm is the private IPFS network admitted nodes are told how to
 	// join, if this node runs one.
 	Swarm Swarm
@@ -75,6 +79,12 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 			return mergeHolders(cfg.Coordinator.Holders(blob, asker), cfg.Replication.Holders(blob, asker))
 		},
 		replication: cfg.Replication, owner: cfg.Identity.ID(),
+		clients: func(id string) bool {
+			role, admitted := cfg.Access.Role(id)
+			return admitted && role == access.Client
+		},
+		perClient: cfg.MaxStoreBytesPerClient,
+		stored:    func(ctx context.Context) (map[string]uint64, error) { return cfg.Coordinator.Stored(ctx, clientOf) },
 	})
 	pb.RegisterPoolServiceServer(srv, &poolService{
 		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, cluster: cfg.Cluster, workFor: cfg.WorkFor,
@@ -106,11 +116,14 @@ type nodeService struct {
 	owner string
 }
 
+// caller is who is making a call, as the access package found out.
+var caller = access.Caller
+
 // guest returns the ID of whoever is calling, if it is a node admitted to
 // the pool and not the node itself: someone to be kept to what is theirs.
 // A call that did not come through the access package is the node's own.
 func guest(ctx context.Context, owner string) (id string, is bool) {
-	id = access.Caller(ctx)
+	id = caller(ctx)
 	return id, id != "" && id != owner
 }
 

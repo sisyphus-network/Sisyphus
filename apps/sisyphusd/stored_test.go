@@ -100,3 +100,62 @@ func TestMembersAreNotListedWithUsageThatCannotBeMeasured(t *testing.T) {
 		t.Errorf("members with usage that cannot be measured: %v", err)
 	}
 }
+
+// A client may keep no more than its share: what it uploads counts
+// towards it at once, and an upload or a pin that would take it past its
+// share is refused. Each client has a share of its own, and the node's own
+// uploads are not held to one.
+func TestAClientKeepsNoMoreThanItsShare(t *testing.T) {
+	clientShare = 1000
+	defer func() { clientShare = 0 }()
+	p := startPool(t, runtime.Builtin())
+	alice, bob := p.newClient(), p.newClient()
+	upload := func(g *guest, size int) (string, error) {
+		c, err := blobclient.Upload(p.ctx, g.blobs, strings.NewReader(strings.Repeat(g.id[len(g.id)-1:], size)))
+		return c.String(), err
+	}
+
+	first, err := upload(alice, 600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.storedBy()[alice.id]; got != 600 {
+		t.Fatalf("an upload not yet pinned has alice keep %d bytes", got)
+	}
+	if _, err := upload(alice, 500); status.Code(err) != codes.ResourceExhausted || !strings.Contains(err.Error(), "400 bytes left of this client's share") {
+		t.Fatalf("an upload past alice's share: %v", err)
+	}
+	if _, err := upload(alice, 400); err != nil {
+		t.Fatalf("an upload to alice's share exactly: %v", err)
+	}
+	if _, err := upload(alice, 1); status.Code(err) != codes.ResourceExhausted || !strings.Contains(err.Error(), "keeps 1000 bytes here") {
+		t.Fatalf("an upload with alice's share used: %v", err)
+	}
+
+	// Pinning what she sent keeps nothing more; pinning another's blob
+	// would, and is refused, and leaves no pin behind.
+	if _, err := alice.blobs.Pin(p.ctx, &pb.PinBlobRequest{Cid: first}); err != nil {
+		t.Fatalf("alice pinning her own upload: %v", err)
+	}
+	theirs, err := upload(bob, 600)
+	if err != nil {
+		t.Fatalf("bob's share is his own: %v", err)
+	}
+	if _, err := alice.blobs.Pin(p.ctx, &pb.PinBlobRequest{Cid: theirs}); status.Code(err) != codes.ResourceExhausted || !strings.Contains(err.Error(), "would have this client keep 1600 bytes") {
+		t.Fatalf("alice pinning bob's blob past her share: %v", err)
+	}
+	pins, err := alice.blobs.ListPins(p.ctx, &pb.ListPinsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pin := range pins.GetPins() {
+		if pin.GetCid() == theirs {
+			t.Errorf("a pin that was refused was left in place")
+		}
+	}
+
+	// The node's own uploads are not held to a client's share.
+	if _, err := blobclient.Upload(p.ctx, p.blobs, strings.NewReader(strings.Repeat("n", 5000))); err != nil {
+		t.Errorf("the node's own upload: %v", err)
+	}
+}

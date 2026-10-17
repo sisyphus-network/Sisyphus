@@ -303,3 +303,45 @@ func TestUploadsAreRefusedOnceTheStoreIsFull(t *testing.T) {
 		t.Errorf("upload with no limit: %v", err)
 	}
 }
+
+// asClient has every call in a test come from the client named, which
+// the service takes for one of its clients.
+func asClient(t *testing.T, s *blobService, client string) {
+	t.Helper()
+	before := caller
+	caller = func(context.Context) string { return client }
+	t.Cleanup(func() { caller = before })
+	s.clients = func(id string) bool { return id == client }
+}
+
+// A client's share that cannot be measured is no share it can be held
+// to, so what it asks is refused as the node's own failure, and a pin
+// that was taken is given back.
+func TestAShareThatCannotBeMeasuredRefusesItsClient(t *testing.T) {
+	ctx := context.Background()
+	store, held := storeWithBlob(t)
+	service := &blobService{store: store, owner: "node", perClient: 100, stored: func(context.Context) (map[string]uint64, error) { return nil, errDisk }}
+	asClient(t, service, "alice")
+
+	if err := service.Put(&upload{chunks: [][]byte{[]byte("hi")}}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "measure what this client keeps") {
+		t.Errorf("an upload: %v", err)
+	}
+	if _, err := service.Pin(ctx, &pb.PinBlobRequest{Cid: held}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "measure what this client keeps") {
+		t.Errorf("a pin: %v", err)
+	}
+	for _, pin := range store.Pins() {
+		if pin.Owner == clientOwner+"alice" {
+			t.Errorf("a pin that was refused was left in place: %v", pin)
+		}
+	}
+}
+
+// What a client uploads counts towards it from the start; a store that
+// will not count it fails the upload rather than let it go uncounted.
+func TestAnUploadThatCannotBeCountedFails(t *testing.T) {
+	service := &blobService{store: brokenStore{Store: storage.NewMemory(), failPin: true}, owner: "node"}
+	asClient(t, service, "alice")
+	if err := service.Put(&upload{chunks: [][]byte{[]byte("hi")}}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "count the upload towards its client") {
+		t.Errorf("an upload that could not be counted: %v", err)
+	}
+}

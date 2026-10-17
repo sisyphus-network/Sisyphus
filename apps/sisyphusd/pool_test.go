@@ -207,7 +207,7 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 	}
 	replicated := replication.New(copies)
 	srv := api.NewServer(
-		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Replication: replicated, Names: api.NewNames(kept, func(id string) bool {
+		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Replication: replicated, MaxStoreBytesPerClient: clientShare, Names: api.NewNames(kept, func(id string) bool {
 			_, admitted := admitted.Role(id)
 			return admitted
 		})},
@@ -246,6 +246,10 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 // task's copies to workers at different addresses, and says where the
 // worker making a call is.
 var workersAt func(ctx context.Context) string
+
+// clientShare, if set, is the most each client of the pools a test goes
+// on to start may keep in the coordinator's store.
+var clientShare uint64
 
 // workersFrom, if set, says what address the workers of the pools a test
 // goes on to start connect from, in place of where they really do.
