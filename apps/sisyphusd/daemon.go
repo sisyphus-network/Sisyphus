@@ -1285,6 +1285,7 @@ func startingPoints(book []nodedb.BootstrapPeer, flag string) []string {
 // alone knows is no part of the pool and so is not trusted for compute.
 func withFound(pool []*nodepb.Peer, found []p2p.Peer) []*nodepb.Peer {
 	listed := make(map[string]*nodepb.Peer, len(pool))
+	local := interfacePrefixes()
 	for _, member := range pool {
 		listed[member.GetPeerId()] = member
 	}
@@ -1304,7 +1305,7 @@ func withFound(pool []*nodepb.Peer, found []p2p.Peer) []*nodepb.Peer {
 			entry.ConnectionState = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
 		}
 		// Where it is connected from says most about where it is.
-		entry.CountryCode = placed(append(slices.Clone(f.Conns), f.Addrs...))
+		entry.CountryCode = placedOn(append(slices.Clone(f.Conns), f.Addrs...), local)
 	}
 	sort.Slice(pool, func(a, b int) bool { return pool[a].GetPeerId() < pool[b].GetPeerId() })
 	return pool
@@ -1366,9 +1367,53 @@ func clusterHolders(copies int) int {
 // table the daemon carries; tests put another here.
 var countryOf = geo.Country
 
+// interfacePrefixes are the networks attached to this machine. Some home
+// routers use globally allocated IPv4 space on their LAN, so geo.Global alone
+// cannot tell that those addresses are local and must not place a peer on the
+// map. Tests replace this lookup with a known interface network.
+var interfacePrefixes = localInterfacePrefixes
+
+func localInterfacePrefixes() []netip.Prefix {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var prefixes []netip.Prefix
+	for _, network := range interfaces {
+		addresses, err := network.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			prefix, err := netip.ParsePrefix(address.String())
+			if err == nil {
+				prefixes = append(prefixes, prefix.Masked())
+			}
+		}
+	}
+	return prefixes
+}
+
+func countryAt(addr netip.Addr, local []netip.Prefix) string {
+	if !addr.IsValid() {
+		return ""
+	}
+	addr = addr.Unmap()
+	for _, prefix := range local {
+		if prefix.Contains(addr) {
+			return ""
+		}
+	}
+	return countryOf(addr)
+}
+
 // placed returns the country of the first of some multiaddresses that has
 // a place in the world, or nothing if none has.
 func placed(multiaddrs []string) string {
+	return placedOn(multiaddrs, interfacePrefixes())
+}
+
+func placedOn(multiaddrs []string, local []netip.Prefix) string {
 	for _, multiaddr := range multiaddrs {
 		parts := strings.Split(multiaddr, "/")
 		if len(parts) < 3 || (parts[1] != "ip4" && parts[1] != "ip6") {
@@ -1378,7 +1423,7 @@ func placed(multiaddrs []string) string {
 		if err != nil {
 			continue
 		}
-		if code := countryOf(addr); code != "" {
+		if code := countryAt(addr, local); code != "" {
 			return code
 		}
 	}
@@ -1422,16 +1467,17 @@ func (b *background) stop() {
 // STUN server the user named saw it come from; and failing that, by what
 // an outside service said, if it was asked.
 func countryFrom(own []string, seen, gateway, stunned netip.Addr, lookedUp string) (code, source string) {
-	if code := placed(own); code != "" {
+	local := interfacePrefixes()
+	if code := placedOn(own, local); code != "" {
 		return code, "interface"
 	}
-	if code := countryOf(seen); code != "" {
+	if code := countryAt(seen, local); code != "" {
 		return code, "pool"
 	}
-	if code := countryOf(gateway); code != "" {
+	if code := countryAt(gateway, local); code != "" {
 		return code, "gateway"
 	}
-	if code := countryOf(stunned); code != "" {
+	if code := countryAt(stunned, local); code != "" {
 		return code, "stun"
 	}
 	if lookedUp != "" {

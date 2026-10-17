@@ -244,6 +244,9 @@ func TestTheCountryIsLookedUpOnlyWhenAsked(t *testing.T) {
 // gateway says, if that was asked; then by what a STUN server saw, if one
 // was named; and only then by an outside service, if that was asked.
 func TestWhereANodeIsComesFirstFromItsOwnAddresses(t *testing.T) {
+	oldLocal := interfacePrefixes
+	interfacePrefixes = func() []netip.Prefix { return nil }
+	defer func() { interfacePrefixes = oldLocal }()
 	own, private := []string{"/ip4/8.8.8.8/tcp/7700"}, []string{"/ip4/192.168.1.4/tcp/7700"}
 	seen, gateway, stunned := netip.MustParseAddr("193.0.6.139"), netip.MustParseAddr("8.8.4.4"), netip.MustParseAddr("2001:67c:2e8:22::c100:68b")
 	none := netip.Addr{}
@@ -264,6 +267,30 @@ func TestWhereANodeIsComesFirstFromItsOwnAddresses(t *testing.T) {
 		if code, from := countryFrom(tt.own, tt.seen, tt.gateway, tt.stunned, tt.lookedUp); code != tt.wantCode || from != tt.wantFrom {
 			t.Errorf("countryFrom(%v, %v, %v, %v, %q) = %q, %q; want %q, %q", tt.own, tt.seen, tt.gateway, tt.stunned, tt.lookedUp, code, from, tt.wantCode, tt.wantFrom)
 		}
+	}
+}
+
+func TestAHomeNetworkUsingPublicAddressSpaceIsNotPlacedByItsLanAddress(t *testing.T) {
+	oldCountry, oldLocal := countryOf, interfacePrefixes
+	countryOf = func(netip.Addr) string { return "US" }
+	interfacePrefixes = func() []netip.Prefix {
+		return []netip.Prefix{netip.MustParsePrefix("12.0.0.0/24")}
+	}
+	defer func() {
+		countryOf, interfacePrefixes = oldCountry, oldLocal
+	}()
+
+	localPeer := []string{"/ip4/12.0.0.48/tcp/7700"}
+	if got := placed(localPeer); got != "" {
+		t.Errorf("local-network address placed a peer in %q", got)
+	}
+	if got := placed(append(localPeer, "/ip4/8.8.8.8/tcp/7700")); got != "US" {
+		t.Errorf("a public peer address after the local one was placed in %q", got)
+	}
+
+	code, source := countryFrom(localPeer, netip.MustParseAddr("12.0.0.49"), netip.Addr{}, netip.Addr{}, "IL")
+	if code != "IL" || source != "lookup" {
+		t.Errorf("local-network addresses placed this node as %q from %q; want IL from lookup", code, source)
 	}
 }
 
@@ -567,14 +594,15 @@ func TestHowANodeIsConnectedToAnother(t *testing.T) {
 func TestANodePlacesItselfAndItsPeersWithoutAskingAnyone(t *testing.T) {
 	// The table here has this machine's own address in a country of its
 	// own, where the real one has it nowhere.
-	old := countryOf
+	old, oldLocal := countryOf, interfacePrefixes
 	countryOf = func(addr netip.Addr) string {
 		if addr.IsLoopback() {
 			return "XT"
 		}
 		return ""
 	}
-	defer func() { countryOf = old }()
+	interfacePrefixes = func() []netip.Prefix { return nil }
+	defer func() { countryOf, interfacePrefixes = old, oldLocal }()
 
 	addr, apiAddr := freeAddr(t), freeAddr(t)
 	startDaemon(t, "--data-dir", t.TempDir(), "--listen", addr, "--api-listen", apiAddr)
