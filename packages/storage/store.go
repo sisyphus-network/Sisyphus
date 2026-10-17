@@ -188,26 +188,7 @@ func (s *Store) PutFor(ctx context.Context, owner string, r io.Reader) (cid.Cid,
 	if err != nil {
 		return cid.Undef, err
 	}
-	// What the pin keeps is found before the pins are locked, as Pin does,
-	// if the owner's pins are counted at all.
-	s.pinMu.Lock()
-	counted := s.index != nil && !s.index.knowsLocked(owner, root)
-	s.pinMu.Unlock()
-	var reached *reach
-	if counted {
-		if reached, err = s.reachOf(ctx, root); err != nil {
-			return cid.Undef, err
-		}
-	}
-	s.pinMu.Lock()
-	defer s.pinMu.Unlock()
-	key := pinKey{root, owner}
-	s.pins[key] = time.Time{}
-	if s.index != nil {
-		s.index.chargeLocked(key, time.Time{}, reached)
-	}
-	s.tellPinsChangedLocked()
-	return root, s.savePinsLocked()
+	return root, s.pinHeld(ctx, owner, time.Time{}, 0, []cid.Cid{root})
 }
 
 // layout stores everything read from r as a blob and returns its CID.
