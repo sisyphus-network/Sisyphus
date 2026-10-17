@@ -580,6 +580,25 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	}
 }
 
+// A web app given no browser access manager, or an empty one, makes its own
+// and still serves.
+func TestWebAppWithoutABrowserAccessManagerMakesItsOwn(t *testing.T) {
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}
+	for name, manager := range map[string]*BrowserAccessManager{"none": nil, "empty": {}} {
+		server := httptest.NewServer(NewWebAppHandlerWithBrowserAccess(LocalConfig{Token: "owner-token"}, nil, ui, manager))
+		res, err := http.Get(server.URL + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		server.Close()
+		if res.StatusCode != http.StatusOK || string(body) != "UI" {
+			t.Errorf("%s manager: %d %q, want the UI", name, res.StatusCode, body)
+		}
+	}
+}
+
 func TestRevocationIsSharedAcrossLocalAndRemoteWebListeners(t *testing.T) {
 	db, err := nodedb.Open(filepath.Join(t.TempDir(), "node.db"))
 	if err != nil {
