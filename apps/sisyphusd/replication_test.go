@@ -20,6 +20,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/p2p"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/replication"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -38,6 +39,16 @@ func replicateQuickly(t *testing.T, grace time.Duration) {
 	interval, usual := replication.Interval, replication.Grace
 	replication.Interval, replication.Grace = 20*time.Millisecond, grace
 	t.Cleanup(func() { replication.Interval, replication.Grace = interval, usual })
+}
+
+// relayQuickly has the nodes a test starts look to their place on a relay
+// as often as a test needs, not as a real pool does, so that a worker is
+// back on its coordinator's relay soon after the coordinator restarts.
+func relayQuickly(t *testing.T) {
+	t.Helper()
+	every := p2p.PlaceCheck
+	p2p.PlaceCheck = 20 * time.Millisecond
+	t.Cleanup(func() { p2p.PlaceCheck = every })
 }
 
 // startReplicatedPool starts a pool whose coordinator wants so many copies
@@ -409,6 +420,7 @@ func TestACoordinatorFetchesBackABlobItsStoreHasLost(t *testing.T) {
 
 func TestACoordinatorThatLostItsStoreTakesItBackFromAFollower(t *testing.T) {
 	replicateQuickly(t, time.Minute)
+	relayQuickly(t)
 	addr, coordinatorDir, copies := freeAddr(t), t.TempDir(), filepath.Join(t.TempDir(), "copies")
 	stop := startDaemon(t, "--listen", addr, "--data-dir", coordinatorDir, "--replicas", "1", "--slots", "1")
 	// The follower has no port open: the coordinator reaches it by name.
@@ -443,8 +455,9 @@ func TestACoordinatorThatLostItsStoreTakesItBackFromAFollower(t *testing.T) {
 	startDaemon(t, "--listen", addr, "--data-dir", coordinatorDir, "--replicas", "1", "--slots", "1")
 
 	// Nobody runs anything. Once the follower has found its way to the
-	// restarted node again, which is looked to every ten seconds, the node
-	// takes back what it had signed for, each blob until when it was kept.
+	// restarted node again, which a real pool looks to every ten seconds, the
+	// node takes back what it had signed for, each blob until when it was
+	// kept.
 	waitFor(t, func() bool {
 		out, err := cli(t, "blob", "pins", "--addr", addr)
 		return err == nil && strings.Count(out, "  restored  ") == 2
