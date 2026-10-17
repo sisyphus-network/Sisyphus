@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
@@ -23,6 +24,30 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
+
+func TestRevokingPairedBrowserCancelsActiveRequests(t *testing.T) {
+	const deviceID, token = "browser-id", "browser-secret"
+	store := &volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}
+	hash := sha256.Sum256([]byte(token))
+	store.devices[deviceID] = nodedb.BrowserDevice{ID: deviceID, TokenHash: hash[:], ExpiresAt: time.Now().Add(time.Hour)}
+	devices := newBrowserAccess(store, "")
+	ctx, finish, ok := devices.authorizeRequest(deviceID+"."+token, context.Background())
+	if !ok {
+		t.Fatal("paired browser request was not authorized")
+	}
+	defer finish()
+	if err := devices.revoke(deviceID); err != nil {
+		t.Fatalf("revoke paired browser: %v", err)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("revoking the browser did not cancel its active request immediately")
+	}
+	if _, _, ok := devices.authorizeRequest(deviceID+"."+token, context.Background()); ok {
+		t.Fatal("revoked browser authorized a new request")
+	}
+}
 
 type failingBrowserAccessStore struct {
 	devices                                 []nodedb.BrowserDevice
@@ -552,6 +577,89 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("revoked cookie remains active: %d %s", res.StatusCode, body)
+	}
+}
+
+func TestRevocationIsSharedAcrossLocalAndRemoteWebListeners(t *testing.T) {
+	db, err := nodedb.Open(filepath.Join(t.TempDir(), "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cfg := LocalConfig{NodeID: "12D3KooWnode", Token: "owner-token", Listen: func() []string { return nil }, BrowserAccess: db}
+	manager := NewBrowserAccessManager(cfg)
+	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}
+	local := httptest.NewServer(NewWebAppHandlerWithBrowserAccess(cfg, nil, ui, manager))
+	defer local.Close()
+	remote := httptest.NewServer(NewWebAppHandlerWithBrowserAccess(cfg, nil, ui, manager))
+	defer remote.Close()
+	request := func(server *httptest.Server, method, route, body string, cookie *http.Cookie, owner bool) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(method, server.URL+route, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", server.URL)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Connect-Protocol-Version", "1")
+		if owner {
+			req.Header.Set("Authorization", "Bearer owner-token")
+		}
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	res := request(local, http.MethodPost, "/pairing", "{}", nil, true)
+	var invitation struct {
+		Code string `json:"code"`
+	}
+	if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&invitation) != nil {
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		t.Fatalf("create pairing invitation: %d %s", res.StatusCode, body)
+	}
+	res.Body.Close()
+	res = request(remote, http.MethodPost, "/pair", `{"code":"`+invitation.Code+`","name":"Phone"}`, nil, false)
+	var cookie *http.Cookie
+	for _, item := range res.Cookies() {
+		if item.Name == webSessionCookie {
+			cookie = item
+		}
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent || cookie == nil {
+		t.Fatalf("pair through remote listener: status %d, cookie present %t", res.StatusCode, cookie != nil)
+	}
+	res = request(remote, http.MethodPost, nodeInfo, `{}`, cookie, false)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("paired browser was not authorized by remote listener: %d", res.StatusCode)
+	}
+	deviceID, _, _ := strings.Cut(cookie.Value, ".")
+	ctx, finish, ok := manager.devices.authorizeRequest(cookie.Value, context.Background())
+	if !ok {
+		t.Fatal("could not track active remote-listener request")
+	}
+	defer finish()
+	res = request(local, http.MethodDelete, "/devices/"+deviceID, "", nil, true)
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke through local listener: %d", res.StatusCode)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("local-listener revocation did not cancel the remote-listener request")
+	}
+	res = request(remote, http.MethodPost, nodeInfo, `{}`, cookie, false)
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("remote listener accepted revoked browser: %d", res.StatusCode)
 	}
 }
 
