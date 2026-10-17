@@ -57,6 +57,12 @@ service BlobService {
 
 message PutBlobRequest {
   bytes data = 1;
+  // A worker uploads only for an attempt at a task that it holds, and names
+  // it in the first message of the upload: what it stores is kept for that
+  // attempt, and let go when the attempt ends unless its result names it.
+  // A client or the node's owner names none.
+  string task_id = 2;
+  uint32 attempt = 3;
 }
 
 message PutBlobResponse {

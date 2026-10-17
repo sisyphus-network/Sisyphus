@@ -23,8 +23,14 @@ const (
 )
 
 type PutBlobRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Data  []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	// A worker uploads only for an attempt at a task that it holds, and names
+	// it in the first message of the upload: what it stores is kept for that
+	// attempt, and let go when the attempt ends unless its result names it.
+	// A client or the node's owner names none.
+	TaskId        string `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Attempt       uint32 `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -64,6 +70,20 @@ func (x *PutBlobRequest) GetData() []byte {
 		return x.Data
 	}
 	return nil
+}
+
+func (x *PutBlobRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *PutBlobRequest) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
 }
 
 type PutBlobResponse struct {
@@ -1618,9 +1638,11 @@ var File_sisyphus_v1_blob_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_blob_proto_rawDesc = "" +
 	"\n" +
-	"\x16sisyphus/v1/blob.proto\x12\vsisyphus.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"$\n" +
+	"\x16sisyphus/v1/blob.proto\x12\vsisyphus.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"W\n" +
 	"\x0ePutBlobRequest\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\"7\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x18\n" +
+	"\aattempt\x18\x03 \x01(\rR\aattempt\"7\n" +
 	"\x0fPutBlobResponse\x12\x10\n" +
 	"\x03cid\x18\x01 \x01(\tR\x03cid\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x04R\x04size\"\"\n" +

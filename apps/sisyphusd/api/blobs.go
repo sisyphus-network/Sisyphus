@@ -43,6 +43,12 @@ type blobService struct {
 	// clients says whether a caller is a client, as the access list has
 	// it; nil takes no caller for one.
 	clients func(id string) bool
+	// workers says whether a caller is a worker, as the access list has
+	// it, and uploading names the owner what a worker uploads for an
+	// attempt it holds is held under; see Coordinator.Uploading. A nil
+	// workers takes no caller for one.
+	workers   func(id string) bool
+	uploading func(nodeID, taskID string, attempt uint32) (string, bool)
 	// perClient is the most a client may keep in the store, as stored
 	// says it keeps; zero means no limit.
 	perClient uint64
@@ -123,22 +129,45 @@ type blobStore interface {
 
 func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]) error {
 	ctx := stream.Context()
+	// The first message says what the upload is for, if it is a worker's.
+	first, err := stream.Recv()
+	if errors.Is(err, io.EOF) {
+		first, err = &pb.PutBlobRequest{}, nil
+	}
+	if err != nil {
+		return err
+	}
+	attemptOwner, err := s.attemptOf(ctx, first)
+	if err != nil {
+		return err
+	}
 	client, isClient := s.client(ctx)
+	isClient = isClient && attemptOwner == ""
 	var left uint64
 	if isClient {
-		var err error
 		if left, err = s.leftFor(ctx, client); err != nil {
 			return err
 		}
 	}
+	pending := first
 	c, size, err := storeUpload(ctx, s.store, s.quota, left, plain, func() ([]byte, error) {
+		if pending != nil {
+			data := pending.GetData()
+			pending = nil
+			return data, nil
+		}
 		msg, err := stream.Recv()
 		return msg.GetData(), err
 	})
 	if err != nil {
 		return err
 	}
-	if isClient {
+	switch {
+	case attemptOwner != "":
+		if err := s.keepForAttempt(ctx, attemptOwner, c, first); err != nil {
+			return err
+		}
+	case isClient:
 		// What a client sent counts towards it until it is pinned, when
 		// the pin does, or collected.
 		// What is stored takes a little more than what was sent, so the
@@ -148,6 +177,44 @@ func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, p
 		}
 	}
 	return stream.SendAndClose(&pb.PutBlobResponse{Cid: c.String(), Size: size})
+}
+
+// attemptOf says what owner a worker's upload is held under: that of the
+// attempt its first message names, which the worker must hold now. An
+// upload that names no attempt has none, and is a worker's only if the
+// worker is also something else; a worker uploads for its tasks and for
+// nothing else.
+func (s *blobService) attemptOf(ctx context.Context, first *pb.PutBlobRequest) (string, error) {
+	caller, isGuest := guest(ctx, s.owner)
+	if first.GetTaskId() == "" {
+		if isGuest && s.workers != nil && s.workers(caller) {
+			return "", status.Error(codes.FailedPrecondition, "a worker uploads only for an attempt at a task it holds, and this upload names none")
+		}
+		return "", nil
+	}
+	owner, holds := "", false
+	if isGuest && s.uploading != nil {
+		owner, holds = s.uploading(caller, first.GetTaskId(), first.GetAttempt())
+	}
+	if !holds {
+		return "", status.Errorf(codes.FailedPrecondition, "this node holds no attempt %d at task %s to upload for", first.GetAttempt(), first.GetTaskId())
+	}
+	return owner, nil
+}
+
+// keepForAttempt pins what a worker uploaded for an attempt. If the attempt
+// ended while the upload was on its way, the pin is let go of again, since
+// nothing else will.
+func (s *blobService) keepForAttempt(ctx context.Context, owner string, c cid.Cid, first *pb.PutBlobRequest) error {
+	if err := s.store.Pin(ctx, owner, time.Time{}, c); err != nil {
+		return status.Errorf(codes.Internal, "keep %s for its attempt: %v", c, err)
+	}
+	caller, _ := guest(ctx, s.owner)
+	if _, holds := s.uploading(caller, first.GetTaskId(), first.GetAttempt()); !holds {
+		s.store.Unpin(owner, c)
+		return status.Errorf(codes.FailedPrecondition, "attempt %d at task %s ended while %s was uploaded for it", first.GetAttempt(), first.GetTaskId(), c)
+	}
+	return nil
 }
 
 // storeUpload stores what recv returns, piece by piece until it returns io.EOF,

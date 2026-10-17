@@ -83,6 +83,11 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 			role, admitted := cfg.Access.Role(id)
 			return admitted && role == access.Client
 		},
+		workers: func(id string) bool {
+			role, admitted := cfg.Access.Role(id)
+			return admitted && role == access.Worker
+		},
+		uploading: cfg.Coordinator.Uploading,
 		perClient: cfg.MaxStoreBytesPerClient,
 		stored:    func(ctx context.Context) (map[string]uint64, error) { return cfg.Coordinator.Stored(), nil },
 	})

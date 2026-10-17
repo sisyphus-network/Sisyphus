@@ -80,7 +80,10 @@ func startCoordinator(t *testing.T, store *storage.Store) (addr string, stop fun
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := admitted.Admit(workerIdent.ID(), access.Worker, time.Now()); err != nil {
+	// Admitted as a client: these tests store blobs outside any task, which
+	// a coordinator takes from a client but not from a worker. What a
+	// worker uploads for a task is tested with the daemon.
+	if err := admitted.Admit(workerIdent.ID(), access.Client, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	coord := coordinator.New(coordinator.Config{ID: coordinatorIdent.ID(), Workloads: runtime.Builtin(), Store: store, Log: quiet()})

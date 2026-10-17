@@ -365,3 +365,29 @@ func TestAClientsPinOfAMissingBlobIsNotFound(t *testing.T) {
 		t.Errorf("a pin of a missing blob: %v", err)
 	}
 }
+
+// What a worker uploads for an attempt is kept for it, unless the store
+// cannot pin it, or the attempt ended while it was on its way, when the pin
+// is let go of again.
+func TestWhatAWorkerUploadsIsKeptOnlyWhileItsAttemptLasts(t *testing.T) {
+	store, id := storeWithBlob(t)
+	c, err := cid.Decode(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	first := &pb.PutBlobRequest{TaskId: "j/0", Attempt: 1}
+	ended := &blobService{store: store, uploading: func(string, string, uint32) (string, bool) { return "", false }}
+	if err := ended.keepForAttempt(ctx, "job:j#0@1.", c, first); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "ended while") {
+		t.Errorf("an attempt that ended during the upload: %v", err)
+	}
+	for _, pin := range store.Pins() {
+		if pin.Owner == "job:j#0@1." {
+			t.Errorf("left held for an attempt that had ended")
+		}
+	}
+	failing := &blobService{store: brokenStore{Store: store, failPin: true}}
+	if err := failing.keepForAttempt(ctx, "job:j#0@1.", c, first); status.Code(err) != codes.Internal {
+		t.Errorf("a store that cannot pin: %v", err)
+	}
+}

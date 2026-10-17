@@ -20,23 +20,49 @@ import (
 // gRPC's default 4 MiB message limit.
 const chunkSize = 256 << 10
 
+// attemptKey is the context key ForAttempt keeps an attempt under.
+type attemptKey struct{}
+
+// attempt is an attempt at a task, as a worker names it.
+type attempt struct {
+	task   string
+	number uint32
+}
+
+// ForAttempt returns ctx with uploads made under it named as made for the
+// given attempt at a task, as a worker's uploads must be.
+func ForAttempt(ctx context.Context, taskID string, number uint32) context.Context {
+	return context.WithValue(ctx, attemptKey{}, attempt{taskID, number})
+}
+
 // Upload sends everything read from r to the node as one blob and returns
 // its CID. It fails if the node reports a CID other than that of the bytes
-// sent.
+// sent. Under a context from ForAttempt, the upload names the attempt.
 func Upload(ctx context.Context, client pb.BlobServiceClient, r io.Reader) (cid.Cid, error) {
 	stream, err := client.Put(ctx)
 	if err != nil {
 		return cid.Undef, err
 	}
+	first := &pb.PutBlobRequest{}
+	if on, ok := ctx.Value(attemptKey{}).(attempt); ok {
+		first.TaskId, first.Attempt = on.task, on.number
+	}
 	hasher := storage.NewHasher(ctx)
 	buf := make([]byte, chunkSize)
-	for {
+	// The first message goes even for an empty blob, since it names the
+	// attempt.
+	for sent := false; ; {
 		n, readErr := io.ReadFull(r, buf)
-		if n > 0 {
+		if n > 0 || !sent {
 			if _, err := hasher.Write(buf[:n]); err != nil {
 				return cid.Undef, err
 			}
-			if err := stream.Send(&pb.PutBlobRequest{Data: buf[:n]}); err != nil {
+			msg := &pb.PutBlobRequest{Data: buf[:n]}
+			if !sent {
+				first.Data, msg = buf[:n], first
+			}
+			sent = true
+			if err := stream.Send(msg); err != nil {
 				// The node's reason for ending the upload comes from
 				// CloseAndRecv, not Send.
 				break
