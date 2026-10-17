@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defaultLocationDiscoverySettings, effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, normalizeLocationDiscoverySettings, saveLocationDiscoverySettings } from '../src/main/location-discovery-settings.ts'
+import { defaultLocationDiscoverySettings, effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, normalizeLocationDiscoverySettings, saveLocationDiscoverySettings, supportsGatewayDiscovery } from '../src/main/location-discovery-settings.ts'
 import { normalizeStunServer } from '../src/shared/stun-server.ts'
 
 test('location discovery defaults to disabled and ignores malformed preferences', () => {
@@ -30,7 +30,13 @@ test('saved preferences are strict booleans and round-trip independently', () =>
   } finally { rmSync(directory, { recursive: true, force: true }) }
 })
 
-test('gateway discovery is only passed to platforms that implement the gateway lookup', () => {
+test('gateway discovery is enabled on every platform with a daemon route lookup', () => {
+  for (const platform of ['linux', 'darwin', 'win32', 'freebsd', 'openbsd', 'netbsd', 'dragonfly']) {
+    assert.equal(supportsGatewayDiscovery(platform), true, `${platform} should support gateway discovery`)
+  }
+  for (const platform of ['aix', 'android', 'plan9', 'solaris']) {
+    assert.equal(supportsGatewayDiscovery(platform), false, `${platform} should not support gateway discovery`)
+  }
   assert.deepEqual(effectiveLocationDiscoverySettings({ locateGateway: true, locateCountry: true, stunServer: 'stun.example.org' }, false), { locateGateway: false, locateCountry: true, stunServer: 'stun.example.org' })
   assert.deepEqual(effectiveLocationDiscoverySettings({ locateGateway: true, locateCountry: false, stunServer: '' }, true), { locateGateway: true, locateCountry: false, stunServer: '' })
 })

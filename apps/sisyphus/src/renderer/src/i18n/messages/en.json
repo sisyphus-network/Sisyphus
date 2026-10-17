@@ -232,7 +232,7 @@
     "description": "Optional sources can help estimate this node’s network location when its own public addresses are unknown.",
     "gatewayTitle": "Ask my gateway",
     "gatewayDescription": "Allow a read-only NAT-PMP request to this computer’s default gateway for its external IPv4 address. No port mapping is created; only your gateway receives the request.",
-    "gatewayUnavailable": "This gateway lookup is currently supported on Linux only.",
+    "gatewayUnavailable": "Gateway lookup is not available on this operating system.",
     "lookupTitle": "Use ipapi.co as a last resort",
     "lookupDescription": "If local, pool, gateway, and configured STUN sources cannot place this node, send its public IP address to ipapi.co. ipapi.co then says which country that address is in.",
     "stunTitle": "Ask a STUN server",

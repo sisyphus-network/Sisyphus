@@ -11,6 +11,12 @@ export const defaultLocationDiscoverySettings: LocationDiscoverySettings = {
   stunServer: '',
 }
 
+const gatewayDiscoveryPlatforms = new Set(['linux', 'darwin', 'win32', 'freebsd', 'openbsd', 'netbsd', 'dragonfly'])
+
+export function supportsGatewayDiscovery(platform: string): boolean {
+  return gatewayDiscoveryPlatforms.has(platform)
+}
+
 function safeStunServer(value: unknown): string {
   try { return normalizeStunServer(value) } catch { return '' }
 }

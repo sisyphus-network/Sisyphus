@@ -232,7 +232,7 @@
     "description": "Las fuentes opcionales ayudan a estimar la ubicación de red de este nodo cuando se desconocen sus direcciones públicas.",
     "gatewayTitle": "Consultar mi puerta de enlace",
     "gatewayDescription": "Permitir una solicitud NAT-PMP de solo lectura a la puerta de enlace predeterminada de este equipo para conocer su IPv4 externa. No se crea ninguna asignación de puertos; solo la puerta de enlace recibe la solicitud.",
-    "gatewayUnavailable": "La consulta de la puerta de enlace solo está disponible actualmente en Linux.",
+    "gatewayUnavailable": "La consulta de la puerta de enlace no está disponible en este sistema operativo.",
     "lookupTitle": "Usar ipapi.co como último recurso",
     "lookupDescription": "Si las direcciones locales, el pool, la puerta de enlace y los servidores STUN configurados no bastan, se envía la IP pública a ipapi.co. ipapi.co indica entonces en qué país está esa dirección.",
     "stunTitle": "Consultar un servidor STUN",
