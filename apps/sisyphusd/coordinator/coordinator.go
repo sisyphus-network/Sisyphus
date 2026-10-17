@@ -68,6 +68,8 @@ type Store interface {
 	// Usage says it; see storage.Store.GroupPins.
 	GroupPins(ctx context.Context, group func(owner string) string) error
 	Usage(now time.Time) map[string]uint64
+	// GroupUsage says what one group keeps, as Usage does.
+	GroupUsage(group string, now time.Time) uint64
 }
 
 // Journal keeps jobs somewhere that outlasts the coordinator. A nodedb.DB is
@@ -218,12 +220,15 @@ type Coordinator struct {
 	submitters sync.Map
 	// perAttempt is the most a worker may upload for one attempt, and
 	// uploaded how much each attempt has while it lasts, by the name
-	// Uploading gives it.
+	// Uploading gives it. inFlight is how much the attempts at each
+	// client's jobs have uploaded between them, while they last, for a
+	// coordinator that holds clients to a share.
 	// They have a lock of their own, as uploads are counted piece by piece
 	// as they arrive.
 	perAttempt uint64
 	uploadMu   sync.Mutex
-	uploaded   map[string]uint64
+	uploaded   map[string]attemptUploads
+	inFlight   map[string]uint64
 	grouping   sync.Once
 	journal    Journal
 	standings  Standings
@@ -379,7 +384,8 @@ func New(cfg Config) *Coordinator {
 		tasksPerClient: cfg.MaxTasksPerClient,
 		storePerClient: cfg.MaxStoreBytesPerClient,
 		perAttempt:     cfg.MaxUploadBytesPerAttempt,
-		uploaded:       make(map[string]uint64),
+		uploaded:       make(map[string]attemptUploads),
+		inFlight:       make(map[string]uint64),
 		maxTaskTimeout: cfg.MaxTaskTimeout,
 		addressOf:      cfg.AddressOf,
 		sourceOf:       cfg.SourceOf,
@@ -1686,6 +1692,10 @@ func owner(job *jobmodel.Job) string {
 // it does. It is the coordinator's own record of the attempt, not the
 // worker's word, that a worker's upload is kept by.
 func (c *Coordinator) Uploading(nodeID, taskID string, attempt uint32) (string, bool) {
+	if c.storePerClient > 0 {
+		// What the upload is held to counts what the client keeps.
+		c.count()
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	w, ok := c.workers[nodeID]
@@ -1708,24 +1718,48 @@ func uploads(a assignment) string {
 	return staging(a.job, a.task) + "@" + strconv.Itoa(a.attempt) + "."
 }
 
+// attemptUploads is what an attempt has uploaded while it lasts, and the
+// client it is held to the share of: its job's submitter, or nobody for the
+// node's own jobs or a coordinator that holds clients to no share.
+type attemptUploads struct {
+	used   uint64
+	client string
+}
+
 // ChargeUpload counts n more bytes uploaded for the attempt Uploading named
 // owner, and refuses them if they would take the attempt past what one may
-// upload. Each piece is counted as it arrives, so uploads made for one
-// attempt at the same time cannot together go past it. An attempt is counted
-// from when it is handed out until it ends, so a piece that arrives after
-// that, for an upload begun while it lasted, is refused rather than counted
-// afresh.
+// upload, or its job's client past its share. Until the attempt's task is
+// settled what it uploads counts for no client in the store, so it is
+// counted here instead, with what the client's other attempts have
+// uploaded: those of one client's jobs that run at once share what is left
+// of its share, and cannot each spend all of it. Each piece is counted as it
+// arrives, so uploads made at the same time cannot together go past either.
+// An attempt is counted from when it is handed out until it ends, so a
+// piece that arrives after that, for an upload begun while it lasted, is
+// refused rather than counted afresh.
+//
+// What a client keeps is as the store counts it, which Uploading has it
+// start doing: it cannot start while an upload is being stored, as each
+// piece of one is counted here.
 func (c *Coordinator) ChargeUpload(owner string, n uint64) error {
 	c.uploadMu.Lock()
 	defer c.uploadMu.Unlock()
-	used, ok := c.uploaded[owner]
+	up, ok := c.uploaded[owner]
 	if !ok {
 		return status.Error(codes.FailedPrecondition, "the attempt this upload is for has ended")
 	}
-	if c.perAttempt != 0 && used+n > c.perAttempt {
-		return status.Errorf(codes.ResourceExhausted, "this attempt has uploaded %d bytes, and an attempt may upload %d", used, c.perAttempt)
+	if c.perAttempt != 0 && up.used+n > c.perAttempt {
+		return status.Errorf(codes.ResourceExhausted, "this attempt has uploaded %d bytes, and an attempt may upload %d", up.used, c.perAttempt)
 	}
-	c.uploaded[owner] = used + n
+	if up.client != "" {
+		kept, flying := c.store.GroupUsage(up.client, time.Now()), c.inFlight[up.client]
+		if kept+flying+n > c.storePerClient {
+			return status.Errorf(codes.ResourceExhausted, "the client this job is for keeps %d bytes here and has %d more on their way, and may keep %d", kept, flying, c.storePerClient)
+		}
+		c.inFlight[up.client] = flying + n
+	}
+	up.used += n
+	c.uploaded[owner] = up
 	return nil
 }
 
@@ -1734,13 +1768,22 @@ func (c *Coordinator) ChargeUpload(owner string, n uint64) error {
 func (c *Coordinator) Uploaded(owner string) (uint64, bool) {
 	c.uploadMu.Lock()
 	defer c.uploadMu.Unlock()
-	used, ok := c.uploaded[owner]
-	return used, ok
+	up, ok := c.uploaded[owner]
+	return up.used, ok
 }
 
 // releaseLocked lets go of what was uploaded for an attempt that has ended.
 func (c *Coordinator) releaseLocked(a assignment) {
 	c.uploadMu.Lock()
+	// What it uploaded is no longer on its way for its client: it is let
+	// go of, or kept for the job, and counted as the job's pins are.
+	if up := c.uploaded[uploads(a)]; up.client != "" {
+		if flying := c.inFlight[up.client]; flying > up.used {
+			c.inFlight[up.client] = flying - up.used
+		} else {
+			delete(c.inFlight, up.client)
+		}
+	}
 	delete(c.uploaded, uploads(a))
 	c.uploadMu.Unlock()
 	if err := c.store.UnpinPrefix(uploads(a)); err != nil {
@@ -1871,7 +1914,11 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 	c.log.Info("task given", "task", a.task.ID, "worker", w.name, "attempt", a.attempt)
 	w.running[a.task.ID] = a
 	c.uploadMu.Lock()
-	c.uploaded[uploads(a)] = 0
+	up := attemptUploads{}
+	if c.shareOf(a.job) > 0 {
+		up.client = a.job.Submitter
+	}
+	c.uploaded[uploads(a)] = up
 	c.uploadMu.Unlock()
 	keys := c.keys[a.job.ID]
 	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Assignment{Assignment: &pb.TaskAssignment{
