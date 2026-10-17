@@ -258,9 +258,12 @@ func TestOnlyUnfinishedJobsHoldPinsOpen(t *testing.T) {
 	for owner, want := range map[string]bool{
 		"job:" + running.GetJobId():  true,
 		"job:" + finished.GetJobId(): false,
-		"job:never-heard-of-it":      false,
-		running.GetJobId():           false, // a job's ID is not the name its pins are under
-		"user":                       false,
+		// What its tasks' results staged is held as long as the job is.
+		"job:" + running.GetJobId() + "#0":  true,
+		"job:" + finished.GetJobId() + "#0": false,
+		"job:never-heard-of-it":             false,
+		running.GetJobId():                  false, // a job's ID is not the name its pins are under
+		"user":                              false,
 	} {
 		if got := p.coord.Holds(owner); got != want {
 			t.Errorf("Holds(%q) = %v, want %v", owner, got, want)

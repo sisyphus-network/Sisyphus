@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -706,12 +707,13 @@ func (c *Coordinator) Prune(now time.Time) (int, error) {
 }
 
 // Holds reports whether owner is the name an unfinished job holds its pins
-// under. Pins held open under any other job's name have nobody left to
+// under, or stages its tasks' results under. Pins held open under any other job's name have nobody left to
 // release them.
 func (c *Coordinator) Holds(owner string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	job, ok := c.jobs[strings.TrimPrefix(owner, ownerPrefix)]
+	id, _, _ := strings.Cut(strings.TrimPrefix(owner, ownerPrefix), stagingSeparator)
+	job, ok := c.jobs[id]
 	return ok && strings.HasPrefix(owner, ownerPrefix) && !job.Terminal()
 }
 
@@ -1250,22 +1252,20 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 		// What the task stored must outlive the hour a new blob is kept
 		// for, since the job may run longer than that. Only what the store
 		// holds is taken as stored: the worker's word for it is not enough.
-		// A task that is audited is picked before its outputs are kept, since
-		// what it stored is held to its client's share only if its result
-		// is taken on the worker's word.
+		// What a task stored is held to its client's share once it is the
+		// task's result: at once if the worker's word is taken for it, and
+		// otherwise when the task is settled. Until then it is staged: kept
+		// for the task, and counted for nobody, so that a result that is
+		// not taken costs the client nothing.
 		replicated := c.replicated(a.job)
 		picked := !replicated && c.pickedLocked(a.job)
-		var limit uint64
-		if !replicated && !picked {
-			limit = c.shareOf(a.job)
+		pinOwner, limit := owner(a.job), c.shareOf(a.job)
+		if replicated || picked {
+			pinOwner, limit = staging(a.job, a.task), 0
 		}
-		written, over := c.keep(a.job, w, result.GetWrittenBlobs(), limit)
+		written, over := c.keep(a.job, w, pinOwner, result.GetWrittenBlobs(), limit)
 		if over != nil {
-			// The same task would store the same again, so it is not tried
-			// again, and the worker did what it was asked.
-			reason := fmt.Sprintf("its outputs would have this client keep %d bytes here, and it may keep %d; free some and submit the job again", over.Keeps, over.May)
-			c.recordLocked(a.job, eventTaskFailed, a.task.Index, w.name, reason)
-			a.job.Refuse(a.task, reason, now)
+			c.refuseLocked(a.job, a.task, w.name, over, now)
 			break
 		}
 		read := wellFormed(result.GetReadBlobs())
@@ -1383,6 +1383,9 @@ func (c *Coordinator) settleLocked(job *jobmodel.Job) {
 	c.recordLocked(job, job.State.String(), whole, "", job.Err)
 	keep := append(job.InputBlobs(), job.OutputBlobs()...)
 	c.pin(job, job.FinishedAt.Add(c.retain), keep)
+	for _, task := range job.Tasks {
+		c.unstage(job, task, staged(task))
+	}
 	if err := c.store.Unpin(owner(job), decode(job.IntermediateBlobs())...); err != nil {
 		c.log.Warn("could not release a job's intermediate blobs", "job", job.ID, "error", err)
 	}
@@ -1403,14 +1406,14 @@ func (c *Coordinator) pin(job *jobmodel.Job, expires time.Time, cids []string) {
 // not hold was not stored, whatever the worker says, and what is no CID is
 // no blob: neither is noted with the job. A pin that fails for another
 // reason is the store's trouble and not the worker's, so the blob is still
-// noted. With a limit, the blobs are pinned only if that keeps the job's
-// client within it; if not, none are, and keep returns why.
-func (c *Coordinator) keep(job *jobmodel.Job, w *worker, cids []string, limit uint64) ([]string, *storage.OverShareError) {
+// noted. They are pinned under pinOwner, and with a limit, only if that
+// keeps the job's client within it; if not, none are, and keep returns why.
+func (c *Coordinator) keep(job *jobmodel.Job, w *worker, pinOwner string, cids []string, limit uint64) ([]string, *storage.OverShareError) {
 	if limit > 0 {
 		c.count()
 	}
 	if all := decode(cids); len(all) == len(cids) {
-		err := c.store.PinWithin(c.ctx, owner(job), time.Time{}, limit, all...)
+		err := c.store.PinWithin(c.ctx, pinOwner, time.Time{}, limit, all...)
 		if over := (*storage.OverShareError)(nil); errors.As(err, &over) {
 			return nil, over
 		}
@@ -1439,7 +1442,7 @@ func (c *Coordinator) keep(job *jobmodel.Job, w *worker, cids []string, limit ui
 		}
 		stored, held = append(stored, named), append(held, blob)
 	}
-	err := c.store.PinWithin(c.ctx, owner(job), time.Time{}, limit, held...)
+	err := c.store.PinWithin(c.ctx, pinOwner, time.Time{}, limit, held...)
 	if over := (*storage.OverShareError)(nil); errors.As(err, &over) {
 		return nil, over
 	}
@@ -1447,6 +1450,55 @@ func (c *Coordinator) keep(job *jobmodel.Job, w *worker, cids []string, limit ui
 		c.log.Warn("could not pin a job's blobs", "job", job.ID, "error", err)
 	}
 	return stored, nil
+}
+
+// refuseLocked fails a task whose outputs would take its job's client past
+// its share, and the job with it. The same task would store the same again,
+// so it is not tried again, and its workers did what they were asked.
+func (c *Coordinator) refuseLocked(job *jobmodel.Job, task *jobmodel.Task, by string, over *storage.OverShareError, now time.Time) {
+	reason := fmt.Sprintf("its outputs would have this client keep %d bytes here, and it may keep %d; free some and submit the job again", over.Keeps, over.May)
+	c.recordLocked(job, eventTaskFailed, task.Index, by, reason)
+	job.Refuse(task, reason, now)
+}
+
+// chargeLocked holds what a task was settled with to its job's client's
+// share, as keep does what a worker's word is taken for, and releases what
+// was staged for the task. It reports whether the client may keep it; if
+// not, nothing more is kept for the client, and the task fails.
+func (c *Coordinator) chargeLocked(job *jobmodel.Job, task *jobmodel.Task, taken, staged []string, now time.Time) bool {
+	defer c.unstage(job, task, staged)
+	limit := c.shareOf(job)
+	if limit > 0 {
+		c.count()
+	}
+	err := c.store.PinWithin(c.ctx, owner(job), time.Time{}, limit, decode(taken)...)
+	if over := (*storage.OverShareError)(nil); errors.As(err, &over) {
+		c.refuseLocked(job, task, "", over, now)
+		return false
+	}
+	if err != nil {
+		c.log.Warn("could not pin a job's blobs", "job", job.ID, "error", err)
+	}
+	return true
+}
+
+// unstage releases what was staged for a task.
+func (c *Coordinator) unstage(job *jobmodel.Job, task *jobmodel.Task, cids []string) {
+	if len(cids) == 0 {
+		return
+	}
+	if err := c.store.Unpin(staging(job, task), decode(cids)...); err != nil {
+		c.log.Warn("could not release what a task's results staged", "job", job.ID, "task", task.Index, "error", err)
+	}
+}
+
+// staged is every blob the results a task took in stored.
+func staged(task *jobmodel.Task) []string {
+	var cids []string
+	for _, r := range task.Results {
+		cids = append(cids, r.Blobs...)
+	}
+	return cids
 }
 
 // wellFormed returns those of cids that are CIDs.
@@ -1600,6 +1652,14 @@ const ownerPrefix = "job:"
 func owner(job *jobmodel.Job) string {
 	return ownerPrefix + job.ID
 }
+
+// staging is the name what the results of one of a job's tasks stored is
+// held under until the task is settled. It counts for no client.
+func staging(job *jobmodel.Job, task *jobmodel.Task) string {
+	return owner(job) + stagingSeparator + strconv.Itoa(task.Index)
+}
+
+const stagingSeparator = "#"
 
 // decode parses CIDs, dropping any that are malformed. They can come from
 // workers, which may send anything.

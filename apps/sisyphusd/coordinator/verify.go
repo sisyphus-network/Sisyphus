@@ -226,6 +226,11 @@ func (c *Coordinator) returnedLocked(w *worker, a assignment, output []byte, sto
 				}
 			}
 		}
+		// What the results it was settled by stored is now the task's, and
+		// is held to the client's share.
+		if !c.chargeLocked(job, task, sides[0][0].Blobs, staged(task), time.Now()) {
+			allDone = false
+		}
 	case len(sides) > 1:
 		c.log.Warn("workers returned different results for a task", "task", task.ID, "results", describe(sides))
 		c.recordLocked(job, eventTaskDisagreed, task.Index, "", describe(sides))
@@ -434,6 +439,7 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 	if c.ctx.Err() != nil || job.Terminal() || task.State != jobmodel.Running || task.Attempt != a.attempt {
 		// Stopped, cancelled, or handed out again meanwhile: the task is
 		// no longer this result's to settle.
+		c.unstage(job, task, stored)
 		return
 	}
 	sorted := func(blobs []string) []string { return slices.Compact(slices.Sorted(slices.Values(blobs))) }
@@ -442,7 +448,7 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 	who := cmp.Or(nodeName, nodeID)
 	standing := c.standing[nodeID]
 	standing.NodeID = nodeID
-	taken := output
+	taken, kept := output, theirs.Blobs
 	switch {
 	case err != nil:
 		// Nothing to compare with. The worker did not fail, so its result
@@ -456,10 +462,9 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 	default:
 		standing.Outvote()
 		job.NoteAudit(task, jobmodel.AuditCaught)
-		taken = own
+		taken, kept = own, mine.Blobs
 		job.NoteRead(touched.Read()...)
 		job.NoteTaskOutput(touched.Written()...)
-		c.pin(job, time.Time{}, touched.Written())
 		c.log.Warn("a worker returned another result for a task than this node got by running it itself", "task", task.ID, "node", nodeID, "returned", short(theirs), "got", short(mine))
 		c.recordLocked(job, eventTaskDisagreed, task.Index, "", fmt.Sprintf("%s returned %s; the coordinator ran the task itself and got %s", who, short(theirs), short(mine)))
 		c.recordLocked(job, eventTaskSucceeded, task.Index, "", "the coordinator's own result is taken, and not "+who+"'s")
@@ -470,7 +475,7 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 			c.log.Warn("could not save a worker's standing; it will be lost if the coordinator stops now", "node", nodeID, "error", err)
 		}
 	}
-	if job.Succeed(task, taken) {
+	if c.chargeLocked(job, task, kept, theirs.Blobs, time.Now()) && job.Succeed(task, taken) {
 		c.aggregating.Add(1)
 		go c.aggregate(job)
 	}
