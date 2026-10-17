@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
@@ -86,6 +87,17 @@ func TestAWorkerUploadsOnlyForAnAttemptItHolds(t *testing.T) {
 		if held := p.heldFor(blob); slices.Contains(held, attempt) {
 			t.Errorf("still held for the attempt once it ended: %s %v", blob, held)
 		}
+	}
+
+	// A worker that is admitted but not connected holds nothing.
+	_, away := p.admit(access.Worker)
+	conn, err := grpc.NewClient(p.addr, grpc.WithTransportCredentials(away))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := blobclient.Upload(blobclient.ForAttempt(p.ctx, a.GetTaskId(), a.GetAttempt()), pb.NewBlobServiceClient(conn), strings.NewReader("from afar")); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("an upload from a worker that is not connected: %v", err)
 	}
 }
 
