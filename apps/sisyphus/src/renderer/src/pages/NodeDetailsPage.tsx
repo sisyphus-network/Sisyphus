@@ -10,7 +10,6 @@ import { formatMessage, type getMessages } from '@/i18n/messages'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { toast } from 'sonner'
 import { EmptyState, PageHeading } from '@/components/ui/page-layout'
-import { startPolling } from '@/lib/polling'
 import { displayDaemonVersion } from '@/lib/daemon-version'
 
 type Messages = ReturnType<typeof getMessages>
@@ -37,17 +36,33 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
   useEffect(() => {
     if (snapshot.status !== 'connected') { setWorkers([]); return }
     let active = true
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
     setWorkersState('loading')
-    const stop = startPolling(async () => {
-      if (document.hidden) return
-      try {
-        const result = await getNodeApi().call<{ workers?: typeof workers }>('listWorkers')
-        if (active) { setWorkers(result.workers ?? []); setWorkersState('ready') }
-      } catch {
-        if (active) { setWorkers([]); setWorkersState('error') }
-      }
-    })
-    return () => { active = false; stop() }
+    const connect = () => {
+      if (!active) return
+      cancel = getNodeApi().stream<{ workers?: typeof workers }>('watchWorkers', {}, (result) => {
+        attempt = 0
+        setWorkers(result.workers ?? [])
+        setWorkersState('ready')
+      }, () => {
+        cancel = undefined
+        if (active) {
+          setWorkersState('error')
+          retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        }
+      }, () => {
+        cancel = undefined
+        if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+      })
+    }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
   }, [snapshot.status, snapshot.endpoint])
   async function reconnect() {
     setRefreshing(true)

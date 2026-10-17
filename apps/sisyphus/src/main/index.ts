@@ -254,7 +254,7 @@ const unaryRpcMethods = new Set([
   'getModelConfig', 'setModelConfig', 'listModelProfiles', 'saveModelProfile', 'deleteModelProfile', 'listProviders', 'listModels', 'removeModel', 'getWebAccessConfig', 'setWebAccessConfig', 'listNetworkInterfaces', 'getModelLending', 'setModelLending', 'inspectOllama', 'getLocationDiscoverySettings', 'setLocationDiscoverySettings', 'getPoolLimits', 'setPoolLimits', 'listChats', 'getChat', 'deleteChat',
   'listFiles', 'removeFile', 'createInvitation', 'listMembers', 'removeMember', 'joinPool',
 ])
-const streamingRpcMethods = new Set(['watchJobs', 'watchJobEvents', 'ask', 'pullModel'])
+const streamingRpcMethods = new Set(['watchJobs', 'watchJobEvents', 'watchPairedBrowsers', 'watchWorkers', 'ask', 'pullModel'])
 
 function callUnary(method: string, request: Record<string, unknown>): Promise<unknown> {
   return new Promise((resolve, reject) => {

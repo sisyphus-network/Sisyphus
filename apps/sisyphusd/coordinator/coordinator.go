@@ -186,6 +186,10 @@ type Config struct {
 	// too, since its record is what says whose its data is.
 	KeepJobs time.Duration
 	Log      *slog.Logger
+	// WorkersChanged is called after a worker joins or leaves this pool.
+	WorkersChanged func()
+	// JobsChanged is called whenever a job's published snapshot changes.
+	JobsChanged func()
 }
 
 type Coordinator struct {
@@ -225,16 +229,18 @@ type Coordinator struct {
 	// coordinator that holds clients to a share.
 	// They have a lock of their own, as uploads are counted piece by piece
 	// as they arrive.
-	perAttempt uint64
-	uploadMu   sync.Mutex
-	uploaded   map[string]attemptUploads
-	inFlight   map[string]uint64
-	grouping   sync.Once
-	journal    Journal
-	standings  Standings
-	retain     time.Duration
-	keepJobs   time.Duration
-	log        *slog.Logger
+	perAttempt     uint64
+	uploadMu       sync.Mutex
+	uploaded       map[string]attemptUploads
+	inFlight       map[string]uint64
+	grouping       sync.Once
+	journal        Journal
+	standings      Standings
+	retain         time.Duration
+	keepJobs       time.Duration
+	log            *slog.Logger
+	workersChanged func()
+	jobsChanged    func()
 
 	// ctx bounds the aggregations still running when the coordinator closes.
 	ctx         context.Context
@@ -399,6 +405,8 @@ func New(cfg Config) *Coordinator {
 		retain:         cfg.Retain,
 		keepJobs:       cfg.KeepJobs,
 		log:            cfg.Log,
+		workersChanged: cfg.WorkersChanged,
+		jobsChanged:    cfg.JobsChanged,
 		ctx:            ctx,
 		cancel:         cancel,
 		jobs:           make(map[string]*jobmodel.Job),
@@ -1165,6 +1173,9 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	}}})
 	c.scheduleLocked()
 	c.mu.Unlock()
+	if c.workersChanged != nil {
+		c.workersChanged()
+	}
 	c.log.Info("worker connected", "node", w.id, "name", w.name, "slots", capabilities.GetTaskSlots())
 
 	// One goroutine writes to the stream and one reads from it, so that this
@@ -1194,13 +1205,20 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 			case *pb.WorkerMessage_Heartbeat:
 				c.mu.Lock()
 				w.lastSeen = time.Now()
-				w.relayedConnections, w.relayedBytes = kind.Heartbeat.GetRelayedConnections(), kind.Heartbeat.GetRelayedBytes()
+				relayedConnections, relayedBytes := kind.Heartbeat.GetRelayedConnections(), kind.Heartbeat.GetRelayedBytes()
+				workerStateChanged := w.relayedConnections != relayedConnections || w.relayedBytes != relayedBytes
+				w.relayedConnections, w.relayedBytes = relayedConnections, relayedBytes
 				if changed := kind.Heartbeat.GetLabels(); changed != nil {
 					// What it has now may be what a waiting job needs.
-					w.capabilities.Labels = labelsOf(w.id, w.name, changed.GetLabels())
+					labels := labelsOf(w.id, w.name, changed.GetLabels())
+					workerStateChanged = workerStateChanged || !slices.Equal(w.capabilities.GetLabels(), labels)
+					w.capabilities.Labels = labels
 					c.scheduleLocked()
 				}
 				c.mu.Unlock()
+				if workerStateChanged && c.workersChanged != nil {
+					c.workersChanged()
+				}
 			case *pb.WorkerMessage_TaskResult:
 				c.handleResult(w, kind.TaskResult)
 			case *pb.WorkerMessage_TaskUpdate:
@@ -1276,7 +1294,6 @@ func (c *Coordinator) Remove(id string) {
 
 func (c *Coordinator) disconnect(w *worker) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	delete(c.workers, w.id)
 	now := time.Now()
 	for _, a := range w.running {
@@ -1301,6 +1318,10 @@ func (c *Coordinator) disconnect(w *worker) {
 	w.running = make(map[string]assignment)
 	c.notifyExpiryChangedLocked()
 	c.scheduleLocked()
+	c.mu.Unlock()
+	if c.workersChanged != nil {
+		c.workersChanged()
+	}
 }
 
 func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
@@ -2154,6 +2175,9 @@ func (c *Coordinator) notifyLocked(job *jobmodel.Job) {
 func (c *Coordinator) wakeLocked(job *jobmodel.Job) {
 	close(c.changed[job.ID])
 	c.changed[job.ID] = make(chan struct{})
+	if c.jobsChanged != nil {
+		c.jobsChanged()
+	}
 }
 
 func newID() string {

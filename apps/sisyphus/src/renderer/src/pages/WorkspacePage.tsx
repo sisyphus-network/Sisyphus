@@ -172,14 +172,17 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, peers, nodeLabel,
   }, [active, applyHologramStyle, fitCameraToViewport])
 
   const location = countryCode ? countryCentroids.get(countryCode.toUpperCase()) : undefined
+  const peerLocations = peers.flatMap((peer) => {
+    const peerLocation = peer.countryCode ? countryCentroids.get(peer.countryCode.toUpperCase()) : undefined
+    return peerLocation ? [{ peerId: peer.peerId, ...peerLocation, countryCode: peer.countryCode }] : []
+  }).sort((a, b) => a.peerId.localeCompare(b.peerId))
+  const peerLocationsKey = JSON.stringify(peerLocations.map(({ peerId, countryCode }) => [peerId, countryCode]))
+  const stablePeerLocations = useMemo(() => peerLocations, [peerLocationsKey])
   const points = useMemo(() => {
     const own = location ? [{ ...location, label: nodeLabel, color: theme.accent }] : []
-    const known = peers.flatMap((peer) => {
-      const peerLocation = peer.countryCode ? countryCentroids.get(peer.countryCode.toUpperCase()) : undefined
-      return peerLocation ? [{ ...peerLocation, label: `${peer.peerId.slice(0, 12)} · ${peer.countryCode}`, color: theme.accent }] : []
-    })
+    const known = stablePeerLocations.map((peer) => ({ ...peer, label: `${peer.peerId.slice(0, 12)} · ${peer.countryCode}`, color: theme.accent }))
     return [...own, ...known]
-  }, [location, nodeLabel, peers, theme.accent])
+  }, [location, nodeLabel, stablePeerLocations, theme.accent])
   const rings = useMemo(() => location ? [{ ...location, maxRadius: 5, propagationSpeed: 2, repeatPeriod: 1200 }] : [], [location])
   const polygonCapColor = useCallback(() => 'rgba(0,0,0,0)', [])
   const polygonSideColor = useCallback(() => 'rgba(0,0,0,0)', [])
@@ -494,12 +497,11 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const countrySource = snapshot.info?.countrySource
   const countryPosition = countryCode ? countryCentroids.get(countryCode) : undefined
   const countryLabel = countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry
-  const transportLabel = snapshot.stateTransport === 'realtime' ? messages.geoRealtime : messages.geoInitialDaemonFetch
   const networkPane = <section className="workspace-network workspace-glass liquid-glass-menu relative flex h-full min-h-0 items-center justify-center overflow-hidden rounded-[22px]">
           <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={visible && topologyOpen && (!compact || mobileView === 'network')} />}</div>
           <div className="absolute inset-x-5 top-5 z-[2] flex items-center justify-between gap-3 text-[10px]">
             <div className="rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-muted-foreground shadow-sm backdrop-blur"><span className="font-mono text-foreground">{connectedPeers.length}</span> {messages.connectedPeers.toLowerCase()}</div>
-            <div className="max-w-[62%] rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-end text-muted-foreground shadow-sm backdrop-blur"><span className="me-1.5 inline-block size-1.5 rounded-full bg-[var(--app-accent)] align-middle" />{messages.thisNode}{countryFlag(countryCode) ? ` · ${countryFlag(countryCode)}` : ''}{countryPosition ? <span className="ms-1.5">{countryCode}</span> : null}{countryPosition && snapshot.stateTransport && <div className="mt-0.5 text-[9px]">{transportLabel}</div>}</div>
+            <div className="max-w-[62%] rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-end text-muted-foreground shadow-sm backdrop-blur"><span className="me-1.5 inline-block size-1.5 rounded-full bg-[var(--app-accent)] align-middle" />{messages.thisNode}{countryFlag(countryCode) ? ` · ${countryFlag(countryCode)}` : ''}{countryPosition ? <span className="ms-1.5">{countryCode}</span> : null}</div>
           </div>
     </section>
   return <div className={`workspace-shell ${compact ? 'workspace-shell--compact' : ''}`}>

@@ -103,34 +103,53 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
   }, [interfaceLabels.loadFailed])
   useEffect(() => { void loadNetworkInterfaces() }, [loadNetworkInterfaces])
 
-  const refreshDevices = useCallback(async (reportError = false) => {
-    try {
-      const nextDevices = (await getNodeApi().listPairedBrowsers()).devices
-      setDevices(nextDevices)
-      if (pairingOpen && pairingBaselineReady.current && nextDevices.some((device) => !pairingBaseline.current.has(device.id))) {
-        setPairingOpen(false)
-        pairingBaselineReady.current = false
-        setInvitation(null)
-      }
+  useEffect(() => {
+    let active = true
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    let firstUpdate = true
+    const connect = () => {
+      if (!active) return
+      cancel = getNodeApi().stream<{ devices: { id: string; name: string; createdAtMs: number | string }[] }>(
+        'watchPairedBrowsers', {}, (state) => {
+          attempt = 0
+          const nextDevices: PairedBrowser[] = state.devices.map((device) => ({
+            id: device.id, name: device.name, createdAt: new Date(Number(device.createdAtMs)).toISOString(),
+          }))
+          setDevices(nextDevices)
+          setInitialDevicesLoaded(true)
+          if (pairingOpen && pairingBaselineReady.current && nextDevices.some((device) => !pairingBaseline.current.has(device.id))) {
+            setPairingOpen(false)
+            pairingBaselineReady.current = false
+            setInvitation(null)
+          }
+          firstUpdate = false
+        }, (error) => {
+          cancel = undefined
+          if (firstUpdate) {
+            setInitialDevicesLoaded(true)
+            toast.error(access.loadFailed, { description: error })
+            firstUpdate = false
+          }
+          if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        }, () => {
+          cancel = undefined
+          if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        },
+      )
     }
-    catch (error) {
-      if (reportError) toast.error(access.loadFailed, { id: 'paired-devices-load', description: error instanceof Error ? error.message : String(error) })
-    } finally { setInitialDevicesLoaded(true) }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
   }, [access.loadFailed, pairingOpen])
   useEffect(() => {
-    void refreshDevices(true)
-    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void refreshDevices() }
-    const poll = window.setInterval(refreshWhenVisible, 5000)
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    window.addEventListener('focus', refreshWhenVisible)
-    document.addEventListener('visibilitychange', refreshWhenVisible)
-    return () => {
-      window.clearInterval(poll)
-      window.clearInterval(timer)
-      window.removeEventListener('focus', refreshWhenVisible)
-      document.removeEventListener('visibilitychange', refreshWhenVisible)
-    }
-  }, [refreshDevices])
+    const timer = window.setInterval(() => setNow(Date.now()), invitation ? 1000 : 60_000)
+    return () => window.clearInterval(timer)
+  }, [invitation])
   async function createInvitation() {
     setBusy(true)
     try {
@@ -143,19 +162,12 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
     finally { setBusy(false) }
   }
   async function openPairing() {
-    pairingBaselineReady.current = false
+    pairingBaseline.current = new Set(devices.map((device) => device.id))
+    pairingBaselineReady.current = true
     setInvitation(null)
     setCodeCopied(false)
     setPairingOpen(true)
     setBusy(true)
-    try {
-      const current = await getNodeApi().listPairedBrowsers()
-      setDevices(current.devices)
-      pairingBaseline.current = new Set(current.devices.map((device) => device.id))
-    } catch {
-      pairingBaseline.current = new Set(devices.map((device) => device.id))
-    }
-    pairingBaselineReady.current = true
     await createInvitation()
   }
   async function copyInvitationCode(code: string) {

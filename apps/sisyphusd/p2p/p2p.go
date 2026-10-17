@@ -84,6 +84,8 @@ type Config struct {
 	// AddrsFactory overrides which listening addresses this host advertises.
 	// Nil keeps libp2p's default address selection.
 	AddrsFactory func([]ma.Multiaddr) []ma.Multiaddr
+	// PeerChanged is called when a peer connects or disconnects.
+	PeerChanged func()
 	// MaxConnections is how many connections the host takes at once, from
 	// everyone. Zero leaves it to what the machine can hold open.
 	MaxConnections int
@@ -327,11 +329,21 @@ func New(cfg Config) (*Host, error) {
 	}
 	// A place on a relay is lost with the connection to it, whatever its
 	// time had left to run.
-	started.Network().Notify(&network.NotifyBundle{DisconnectedF: func(_ network.Network, conn network.Conn) {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		delete(h.renew, conn.RemotePeer())
-	}})
+	started.Network().Notify(&network.NotifyBundle{
+		ConnectedF: func(network.Network, network.Conn) {
+			if cfg.PeerChanged != nil {
+				cfg.PeerChanged()
+			}
+		},
+		DisconnectedF: func(_ network.Network, conn network.Conn) {
+			h.mu.Lock()
+			delete(h.renew, conn.RemotePeer())
+			h.mu.Unlock()
+			if cfg.PeerChanged != nil {
+				cfg.PeerChanged()
+			}
+		},
+	})
 	if len(h.relays) > 0 {
 		h.kept.Add(1)
 		go h.keepPlaces(cfg.MoreRelays)

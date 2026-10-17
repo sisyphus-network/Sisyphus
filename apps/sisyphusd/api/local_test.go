@@ -29,9 +29,10 @@ import (
 
 // localNode is a node as its desktop client sees it.
 type localNode struct {
-	t      *testing.T
-	client nodepb.NodeServiceClient
-	list   *access.List
+	t       *testing.T
+	client  nodepb.NodeServiceClient
+	list    *access.List
+	changes *NodeInfoChanges
 
 	mu    sync.Mutex
 	peers []*nodepb.Peer
@@ -59,17 +60,18 @@ func (s *webAccessControllerStub) Set(_ context.Context, config nodedb.WebAccess
 
 func (n *localNode) setPeers(peers ...*nodepb.Peer) {
 	n.mu.Lock()
-	defer n.mu.Unlock()
 	n.peers = peers
+	n.mu.Unlock()
+	n.changes.Notify()
 }
 
 // startLocal serves the local API for a node. With coordinating set the node
 // runs a pool whose membership the API can change.
 func startLocal(t *testing.T, coordinating bool) *localNode {
 	t.Helper()
-	n := &localNode{t: t}
+	n := &localNode{t: t, changes: NewNodeInfoChanges()}
 	cfg := LocalConfig{
-		NodeID: "12D3KooWnode", Version: "v1.2.3", Token: "the-token", Poll: 5 * time.Millisecond,
+		NodeID: "12D3KooWnode", Version: "v1.2.3", Token: "the-token", NodeInfoChanges: n.changes,
 		Listen: func() []string { return []string{"/ip4/10.0.0.5/tcp/7700"} },
 		Peers: func() []*nodepb.Peer {
 			n.mu.Lock()
@@ -218,9 +220,7 @@ func TestWatchPeersSendsAFullListWheneverItChanges(t *testing.T) {
 	if first.GetRevision() != 1 || len(first.GetPeers()) != 1 || first.GetPeers()[0].GetConnectionState() != nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED {
 		t.Fatalf("first update: %v", first)
 	}
-	// Several polls pass with nothing new, and nothing is sent. Then the
-	// peer connects.
-	time.Sleep(30 * time.Millisecond)
+	// No update is sent until the peer-change event arrives.
 	n.setPeers(peerEntry("12D3KooWa", true, true))
 	second := next()
 	if second.GetRevision() != 2 || second.GetPeers()[0].GetConnectionState() != nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED {
@@ -244,7 +244,7 @@ func TestWatchNodeStatePublishesNodeAndPeerChanges(t *testing.T) {
 	var peers []*nodepb.Peer
 	changes := NewNodeInfoChanges()
 	client := serveLocal(t, LocalConfig{
-		Poll: 5 * time.Millisecond, NodeInfoChanges: changes,
+		NodeInfoChanges: changes,
 		Peers: func() []*nodepb.Peer {
 			mu.Lock()
 			defer mu.Unlock()
@@ -310,6 +310,7 @@ func TestWatchNodeStatePublishesNodeAndPeerChanges(t *testing.T) {
 	mu.Lock()
 	peers = []*nodepb.Peer{peerEntry("12D3KooWa", true, true), peerEntry("12D3KooWb", true, true)}
 	mu.Unlock()
+	changes.Notify()
 	go func() {
 		update, err := stream.Recv()
 		if err != nil {
@@ -339,6 +340,63 @@ func TestWatchNodeStatePublishesNodeAndPeerChanges(t *testing.T) {
 	}
 }
 
+func TestWatchPairedBrowsersPublishesChanges(t *testing.T) {
+	store := &volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{
+		Token: "the-token", BrowserAccess: store, BrowserDeviceChanges: changes,
+	})
+	ctx, cancel := context.WithCancel(withToken("the-token"))
+	defer cancel()
+	stream, err := client.WatchPairedBrowsers(ctx, &nodepb.WatchPairedBrowsersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := stream.Recv()
+	if err != nil || initial.GetRevision() != 1 || len(initial.GetDevices()) != 0 {
+		t.Fatalf("initial devices = %v, %v", initial, err)
+	}
+	createdAt := time.Now().UTC().Truncate(time.Millisecond)
+	store.mu.Lock()
+	store.devices["device-1"] = nodedb.BrowserDevice{ID: "device-1", Name: "Phone", CreatedAt: createdAt}
+	store.mu.Unlock()
+	changes.Notify()
+	updated, err := stream.Recv()
+	if err != nil || updated.GetRevision() != 2 || len(updated.GetDevices()) != 1 || updated.GetDevices()[0].GetName() != "Phone" || updated.GetDevices()[0].GetCreatedAtMs() != createdAt.UnixMilli() {
+		t.Fatalf("updated devices = %v, %v", updated, err)
+	}
+
+	unauthorized, err := client.WatchPairedBrowsers(context.Background(), &nodepb.WatchPairedBrowsersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unauthorized.Recv(); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("unauthorized watcher error = %v, want permission denied", err)
+	}
+}
+
+func TestWatchWorkersPublishesChanges(t *testing.T) {
+	pool := &office{}
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{Token: "the-token", Jobs: pool, NodeInfoChanges: changes})
+	ctx, cancel := context.WithCancel(withToken("the-token"))
+	defer cancel()
+	stream, err := client.WatchWorkers(ctx, &nodepb.ListWorkersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := stream.Recv()
+	if err != nil || initial.GetRevision() != 1 || len(initial.GetWorkers()) != 0 {
+		t.Fatalf("initial workers = %v, %v", initial, err)
+	}
+	pool.nodes = []*pb.NodeInfo{{NodeId: "12D3KooWworker", Name: "Worker", Capabilities: &pb.NodeCapabilities{TaskSlots: 4}}}
+	changes.Notify()
+	updated, err := stream.Recv()
+	if err != nil || updated.GetRevision() != 2 || len(updated.GetWorkers()) != 1 || updated.GetWorkers()[0].GetName() != "Worker" {
+		t.Fatalf("updated workers = %v, %v", updated, err)
+	}
+}
+
 // A state watcher stops at the first snapshot it cannot send, whether the
 // first or a later one, and says why.
 func TestWatchNodeStateStopsWhenASnapshotCannotBeSent(t *testing.T) {
@@ -348,13 +406,13 @@ func TestWatchNodeStateStopsWhenASnapshotCannotBeSent(t *testing.T) {
 			return &nodepb.NodeState{Info: &nodepb.GetNodeInfoResponse{CountryCode: country}}
 		}
 	}
-	if err := watchNodeState(context.Background(), time.Hour, nil, state(""), func(*nodepb.NodeState) error { return gone }); !errors.Is(err, gone) {
+	if err := watchNodeState(context.Background(), nil, state(""), func(*nodepb.NodeState) error { return gone }); !errors.Is(err, gone) {
 		t.Errorf("the first snapshot: %v, want %v", err, gone)
 	}
 	changes := make(chan struct{}, 1)
 	country := ""
 	sent := 0
-	err := watchNodeState(context.Background(), time.Hour, changes, func() *nodepb.NodeState { return state(country)() }, func(*nodepb.NodeState) error {
+	err := watchNodeState(context.Background(), changes, func() *nodepb.NodeState { return state(country)() }, func(*nodepb.NodeState) error {
 		sent++
 		if sent > 1 {
 			return gone
@@ -645,8 +703,8 @@ func (b *brokenWatch) Send(*nodepb.ListPeersResponse) error {
 }
 
 func TestWatchPeersEndsWhenTheWatcherCannotBeSentTo(t *testing.T) {
-	n := &localNode{}
-	service := &localService{cfg: LocalConfig{Poll: time.Millisecond, Peers: func() []*nodepb.Peer {
+	n := &localNode{changes: NewNodeInfoChanges()}
+	service := &localService{cfg: LocalConfig{NodeInfoChanges: n.changes, Peers: func() []*nodepb.Peer {
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		return n.peers
@@ -838,17 +896,22 @@ type office struct {
 	nodes     []*pb.NodeInfo
 	submitted []*pb.JobSpec
 	err       error
+	changed   func()
 }
 
 func (o *office) Submit(_ context.Context, spec *pb.JobSpec) (*pb.Job, error) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	if o.err != nil {
+		o.mu.Unlock()
 		return nil, o.err
 	}
 	o.submitted = append(o.submitted, spec)
 	job := &pb.Job{JobId: fmt.Sprintf("job-%d", len(o.jobs)+1), Spec: spec, State: pb.JobState_JOB_STATE_PENDING, CreatedAt: timestamppb.New(time.UnixMilli(1_700_000_000_000))}
 	o.jobs = append([]*pb.Job{job}, o.jobs...)
+	o.mu.Unlock()
+	if o.changed != nil {
+		o.changed()
+	}
 	return job, nil
 }
 
@@ -873,15 +936,19 @@ func (o *office) Nodes() []*pb.NodeInfo { return o.nodes }
 
 func (o *office) Cancel(id string) (*pb.Job, error) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	for i, job := range o.jobs {
 		if job.GetJobId() == id {
 			stopped := proto.Clone(job).(*pb.Job)
 			stopped.State = pb.JobState_JOB_STATE_CANCELLED
 			o.jobs[i] = stopped
+			o.mu.Unlock()
+			if o.changed != nil {
+				o.changed()
+			}
 			return stopped, nil
 		}
 	}
+	o.mu.Unlock()
 	return nil, status.Errorf(codes.NotFound, "job %q not found", id)
 }
 
@@ -905,7 +972,7 @@ func (o *office) WatchEvents(_ context.Context, id string, after uint64, fn func
 // finish marks a job done, as the pool would.
 func (o *office) finish(id string, result []byte) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
+	changed := false
 	for i, job := range o.jobs {
 		if job.GetJobId() == id {
 			done := proto.Clone(job).(*pb.Job)
@@ -913,7 +980,12 @@ func (o *office) finish(id string, result []byte) {
 			done.Tasks = []*pb.Task{{Index: 0, State: pb.TaskState_TASK_STATE_SUCCEEDED, Attempt: 2, NodeId: "12D3KooWworker", NodeName: "rig", Error: "first try failed", Verify: 2}}
 			done.InputBlobs, done.OutputBlobs = []string{"bafy-in"}, []string{"bafy-out"}
 			o.jobs[i] = done
+			changed = true
 		}
+	}
+	o.mu.Unlock()
+	if changed && o.changed != nil {
+		o.changed()
 	}
 }
 
@@ -921,9 +993,14 @@ func (o *office) finish(id string, result []byte) {
 // pool, or none.
 func startOffice(t *testing.T, pool JobControl) nodepb.NodeServiceClient {
 	t.Helper()
+	changes := NewNodeInfoChanges()
+	if simulated, ok := pool.(*office); ok {
+		simulated.changed = changes.Notify
+	}
 	cfg := LocalConfig{
-		NodeID: "12D3KooWnode", Token: "the-token", Poll: 5 * time.Millisecond, Workloads: []string{"primes", "wordcount"},
-		Listen: func() []string { return nil }, Peers: func() []*nodepb.Peer { return nil },
+		NodeID: "12D3KooWnode", Token: "the-token", Workloads: []string{"primes", "wordcount"},
+		NodeInfoChanges: changes,
+		Listen:          func() []string { return nil }, Peers: func() []*nodepb.Peer { return nil },
 	}
 	if pool != nil {
 		cfg.Jobs = pool

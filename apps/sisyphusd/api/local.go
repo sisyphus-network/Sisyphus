@@ -69,6 +69,8 @@ type LocalConfig struct {
 	// NodeInfoChanges publishes changes to node-info values discovered while
 	// the daemon is running. It is shared by all API clients watching node info.
 	NodeInfoChanges *NodeInfoChanges
+	// BrowserDeviceChanges publishes changes to the enrolled browser list.
+	BrowserDeviceChanges *NodeInfoChanges
 	// Jobs, if set, is the pool this node coordinates, for the calls about
 	// its workers and jobs. Workloads are the workloads the node knows.
 	Jobs      JobControl
@@ -127,9 +129,6 @@ type LocalConfig struct {
 	LiveLending *runtime.ModelServer
 	// PairingOrigin is the LAN URL peers should open, without a trailing slash.
 	PairingOrigin string
-	// Poll is how often a peer watcher is checked for news. Zero means once
-	// a second.
-	Poll time.Duration
 }
 
 // BrowserAccessStore is the durable part of browser pairing. Credentials
@@ -209,9 +208,6 @@ func NewLocalServer(cfg LocalConfig) *grpc.Server {
 
 // normal fills in what a configuration may leave out.
 func normal(cfg LocalConfig) LocalConfig {
-	if cfg.Poll == 0 {
-		cfg.Poll = time.Second
-	}
 	if cfg.Country == nil {
 		cfg.Country = func() (string, string) { return "", "" }
 	}
@@ -343,7 +339,7 @@ func (s *localService) nodeInfo() *nodepb.GetNodeInfoResponse {
 }
 
 // WatchNodeState streams complete node-and-peer snapshots, triggered by node
-// discovery events and checked for peer changes at the local API poll interval.
+// discovery and peer events, with a slow reconciliation check as a safeguard.
 func (s *localService) WatchNodeState(_ *nodepb.GetNodeInfoRequest, stream grpc.ServerStreamingServer[nodepb.NodeState]) error {
 	var changes <-chan struct{}
 	var unsubscribe func()
@@ -351,7 +347,63 @@ func (s *localService) WatchNodeState(_ *nodepb.GetNodeInfoRequest, stream grpc.
 		changes, unsubscribe = s.cfg.NodeInfoChanges.subscribe()
 		defer unsubscribe()
 	}
-	return watchNodeState(stream.Context(), s.cfg.Poll, changes, s.nodeState, stream.Send)
+	return watchNodeState(stream.Context(), changes, s.nodeState, stream.Send)
+}
+
+// WatchPairedBrowsers streams the authorized paired-device list on changes.
+func (s *localService) WatchPairedBrowsers(_ *nodepb.WatchPairedBrowsersRequest, stream grpc.ServerStreamingServer[nodepb.PairedBrowsersState]) error {
+	if err := s.authorize(stream.Context()); err != nil {
+		return err
+	}
+	var changes <-chan struct{}
+	var unsubscribe func()
+	if s.cfg.BrowserDeviceChanges != nil {
+		changes, unsubscribe = s.cfg.BrowserDeviceChanges.subscribe()
+		defer unsubscribe()
+	}
+	state, err := s.pairedBrowsers()
+	if err != nil {
+		return status.Errorf(codes.Internal, "list paired browsers: %v", err)
+	}
+	revision := uint64(1)
+	if err := stream.Send(&nodepb.PairedBrowsersState{Devices: state.Devices, Revision: revision}); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-changes:
+		case <-stream.Context().Done():
+			return nil
+		}
+		next, err := s.pairedBrowsers()
+		if err != nil {
+			return status.Errorf(codes.Internal, "list paired browsers: %v", err)
+		}
+		if proto.Equal(state, next) {
+			continue
+		}
+		revision++
+		if err := stream.Send(&nodepb.PairedBrowsersState{Devices: next.Devices, Revision: revision}); err != nil {
+			return err
+		}
+		state = next
+	}
+}
+
+func (s *localService) pairedBrowsers() (*nodepb.PairedBrowsersState, error) {
+	state := &nodepb.PairedBrowsersState{}
+	if s.cfg.BrowserAccess == nil {
+		return state, nil
+	}
+	devices, err := s.cfg.BrowserAccess.BrowserDevices()
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(devices, func(i, j int) bool { return devices[i].ID < devices[j].ID })
+	for _, device := range devices {
+		state.Devices = append(state.Devices, &nodepb.PairedBrowser{Id: device.ID, Name: device.Name, CreatedAtMs: device.CreatedAt.UnixMilli()})
+	}
+	return state, nil
 }
 
 func (s *localService) nodeState() *nodepb.NodeState {
@@ -362,20 +414,23 @@ func (s *localService) nodeState() *nodepb.NodeState {
 	return state
 }
 
-func watchNodeState(ctx context.Context, every time.Duration, changes <-chan struct{}, current func() *nodepb.NodeState, send func(*nodepb.NodeState) error) error {
+func watchNodeState(ctx context.Context, changes <-chan struct{}, current func() *nodepb.NodeState, send func(*nodepb.NodeState) error) error {
+	return watchWithChanges(ctx, changes, current, func(now *nodepb.NodeState, revision uint64) error {
+		update := proto.Clone(now).(*nodepb.NodeState)
+		update.Revision = revision
+		return send(update)
+	})
+}
+
+func watchWithChanges[T proto.Message](ctx context.Context, changes <-chan struct{}, current func() T, send func(T, uint64) error) error {
 	last := current()
 	revision := uint64(1)
-	initial := proto.Clone(last).(*nodepb.NodeState)
-	initial.Revision = revision
-	if err := send(initial); err != nil {
+	if err := send(last, revision); err != nil {
 		return err
 	}
-	poll := time.NewTicker(every)
-	defer poll.Stop()
 	for {
 		select {
 		case <-changes:
-		case <-poll.C:
 		case <-ctx.Done():
 			return nil
 		}
@@ -384,9 +439,7 @@ func watchNodeState(ctx context.Context, every time.Duration, changes <-chan str
 			continue
 		}
 		revision++
-		update := proto.Clone(now).(*nodepb.NodeState)
-		update.Revision = revision
-		if err := send(update); err != nil {
+		if err := send(now, revision); err != nil {
 			return err
 		}
 		last = now
@@ -434,38 +487,17 @@ func (s *localService) ListPeers(context.Context, *nodepb.ListPeersRequest) (*no
 // WatchPeers sends the peers as they stand and again, in full, whenever
 // they change, with a revision that counts up from one.
 func (s *localService) WatchPeers(_ *nodepb.WatchPeersRequest, stream grpc.ServerStreamingServer[nodepb.ListPeersResponse]) error {
-	return watch(stream.Context(), s.cfg.Poll,
+	var changes <-chan struct{}
+	var unsubscribe func()
+	if s.cfg.NodeInfoChanges != nil {
+		changes, unsubscribe = s.cfg.NodeInfoChanges.subscribe()
+		defer unsubscribe()
+	}
+	return watchWithChanges(stream.Context(), changes,
 		func() *nodepb.ListPeersResponse { return &nodepb.ListPeersResponse{Peers: s.cfg.Peers()} },
 		func(now *nodepb.ListPeersResponse, revision uint64) error {
 			return stream.Send(&nodepb.ListPeersResponse{Peers: now.GetPeers(), Revision: revision})
 		})
-}
-
-// watch sends what current returns at once and again whenever it has
-// changed, numbering what it sends from one, until ctx ends or a send fails.
-func watch[T proto.Message](ctx context.Context, every time.Duration, current func() T, send func(now T, revision uint64) error) error {
-	last, revision := current(), uint64(1)
-	if err := send(last, revision); err != nil {
-		return err
-	}
-	poll := time.NewTicker(every)
-	defer poll.Stop()
-	for {
-		select {
-		case <-poll.C:
-			now := current()
-			if proto.Equal(now, last) {
-				continue
-			}
-			revision++
-			if err := send(now, revision); err != nil {
-				return err
-			}
-			last = now
-		case <-ctx.Done():
-			return nil
-		}
-	}
 }
 
 // errNoPool is the answer to a call about a pool on a node that runs none.
@@ -476,6 +508,31 @@ func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) 
 	if s.cfg.Jobs == nil {
 		return nil, errNoPool
 	}
+	return s.workerList(), nil
+}
+
+// WatchWorkers streams worker state when the coordinator reports changes.
+func (s *localService) WatchWorkers(_ *nodepb.ListWorkersRequest, stream grpc.ServerStreamingServer[nodepb.ListWorkersResponse]) error {
+	if err := s.authorize(stream.Context()); err != nil {
+		return err
+	}
+	if s.cfg.Jobs == nil {
+		return errNoPool
+	}
+	var changes <-chan struct{}
+	var unsubscribe func()
+	if s.cfg.NodeInfoChanges != nil {
+		changes, unsubscribe = s.cfg.NodeInfoChanges.subscribe()
+		defer unsubscribe()
+	}
+	return watchWithChanges(stream.Context(), changes, s.workerList, func(now *nodepb.ListWorkersResponse, revision uint64) error {
+		update := proto.Clone(now).(*nodepb.ListWorkersResponse)
+		update.Revision = revision
+		return stream.Send(update)
+	})
+}
+
+func (s *localService) workerList() *nodepb.ListWorkersResponse {
 	res := new(nodepb.ListWorkersResponse)
 	for _, node := range s.cfg.Jobs.Nodes() {
 		c := node.GetCapabilities()
@@ -489,7 +546,7 @@ func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) 
 			VerifiedAgreed: node.GetVerifiedAgreed(), VerifiedOutvoted: node.GetVerifiedOutvoted(), Probation: node.GetProbation(),
 		})
 	}
-	return res, nil
+	return res
 }
 
 // SubmitJob gives the pool a job. It spends the pool's time, so it needs
@@ -590,7 +647,13 @@ func (s *localService) WatchJobs(_ *nodepb.WatchJobsRequest, stream grpc.ServerS
 	if s.cfg.Jobs == nil {
 		return errNoPool
 	}
-	return watch(stream.Context(), s.cfg.Poll,
+	var changes <-chan struct{}
+	var unsubscribe func()
+	if s.cfg.NodeInfoChanges != nil {
+		changes, unsubscribe = s.cfg.NodeInfoChanges.subscribe()
+		defer unsubscribe()
+	}
+	return watchWithChanges(stream.Context(), changes,
 		func() *nodepb.ListJobsResponse { return &nodepb.ListJobsResponse{Jobs: s.jobs()} },
 		func(now *nodepb.ListJobsResponse, revision uint64) error {
 			return stream.Send(&nodepb.ListJobsResponse{Jobs: now.GetJobs(), Revision: revision})
