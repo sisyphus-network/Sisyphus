@@ -382,10 +382,13 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	changes := NewNodeInfoChanges()
+	deviceChanges, unsubscribe := changes.subscribe()
+	defer unsubscribe()
 	cfg := LocalConfig{
 		NodeID: "12D3KooWnode", Token: "owner-token", Listen: func() []string { return nil },
 		BrowserAccess: db, LocationDiscovery: db, GatewayDiscoverySupported: true,
-		PoolLimits: db, RunsCoordinator: true,
+		BrowserDeviceChanges: changes, PoolLimits: db, RunsCoordinator: true,
 	}
 	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}
 	server := httptest.NewServer(NewWebAppHandler(cfg, nil, ui))
@@ -432,6 +435,11 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 		body, _ = io.ReadAll(res.Body)
 		res.Body.Close()
 		t.Fatalf("complete pairing: %d %s", res.StatusCode, body)
+	}
+	select {
+	case <-deviceChanges:
+	case <-time.After(time.Second):
+		t.Fatal("pairing did not notify paired-device subscribers")
 	}
 	var cookie *http.Cookie
 	for _, item := range res.Cookies() {
@@ -533,6 +541,11 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("revoke paired device: %d", res.StatusCode)
+	}
+	select {
+	case <-deviceChanges:
+	case <-time.After(time.Second):
+		t.Fatal("revocation did not notify paired-device subscribers")
 	}
 	res = request(http.MethodPost, nodeInfo, `{}`, cookie, false)
 	body, _ = io.ReadAll(res.Body)

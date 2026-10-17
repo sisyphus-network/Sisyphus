@@ -67,6 +67,7 @@ type browserAccess struct {
 	devices map[string]nodedb.BrowserDevice
 	failed  map[string]int
 	blocked map[string]time.Time
+	changes *NodeInfoChanges
 }
 
 type volatileBrowserAccess struct {
@@ -183,6 +184,9 @@ func (a *browserAccess) pair(code, name, remote string, now time.Time) (string, 
 	}
 	delete(a.failed, remote)
 	a.devices[id] = device
+	if a.changes != nil {
+		a.changes.Notify()
+	}
 	return id, token, true, nil
 }
 
@@ -206,6 +210,9 @@ func (a *browserAccess) revoke(id string) error {
 	a.mu.Lock()
 	delete(a.devices, id)
 	a.mu.Unlock()
+	if a.changes != nil {
+		a.changes.Notify()
+	}
 	return nil
 }
 
@@ -269,6 +276,7 @@ func newWebAppHandler(cfg LocalConfig, origins []string, ui fs.FS, random io.Rea
 	sessions.random = random
 	devices := newBrowserAccess(cfg.BrowserAccess, cfg.Token)
 	devices.random = random
+	devices.changes = cfg.BrowserDeviceChanges
 	service := &localService{cfg: normal(cfg)}
 	server := grpc.NewServer()
 	nodepb.RegisterNodeServiceServer(server, service)

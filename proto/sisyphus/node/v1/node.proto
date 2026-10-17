@@ -9,6 +9,9 @@ service NodeService {
   // WatchNodeState sends a complete node-and-peer snapshot at once and
   // again whenever node details or peers change.
   rpc WatchNodeState(GetNodeInfoRequest) returns (stream NodeState);
+  // WatchPairedBrowsers sends the authorized device list at once and whenever
+  // a browser is paired or revoked.
+  rpc WatchPairedBrowsers(WatchPairedBrowsersRequest) returns (stream PairedBrowsersState);
   // Location discovery is opt-in. Changes are saved by the node and take
   // effect after it restarts, whether the desktop starts it or not.
   rpc GetLocationDiscoverySettings(GetLocationDiscoverySettingsRequest) returns (LocationDiscoverySettingsState);
@@ -41,6 +44,9 @@ service NodeService {
 
   // ListWorkers lists the nodes connected to this one as its workers.
   rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+  // WatchWorkers sends the connected workers at once and when their published
+  // state changes.
+  rpc WatchWorkers(ListWorkersRequest) returns (stream ListWorkersResponse);
   // SubmitJob gives the pool a job and returns it as it stands at once.
   rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
   rpc GetJob(GetJobRequest) returns (GetJobResponse);
@@ -263,6 +269,7 @@ message ListWorkersRequest {}
 
 message ListWorkersResponse {
   repeated Worker workers = 1;
+  uint64 revision = 2;
 }
 
 message Worker {
@@ -838,4 +845,15 @@ message NodeState {
   GetNodeInfoResponse info = 1;
   repeated Peer peers = 2;
   uint64 revision = 3;
+}
+
+message WatchPairedBrowsersRequest {}
+message PairedBrowser {
+  string id = 1;
+  string name = 2;
+  int64 created_at_ms = 3;
+}
+message PairedBrowsersState {
+  repeated PairedBrowser devices = 1;
+  uint64 revision = 2;
 }

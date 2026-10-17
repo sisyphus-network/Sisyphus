@@ -294,7 +294,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	stopped := make(chan error, 2)
 
 	// local is what the desktop client on this machine is told and may do.
-	local := api.LocalConfig{NodeID: ident.ID(), Version: version, Workloads: workloads.Names(), NodeInfoChanges: api.NewNodeInfoChanges()}
+	local := api.LocalConfig{NodeID: ident.ID(), Version: version, Workloads: workloads.Names(), NodeInfoChanges: api.NewNodeInfoChanges(), BrowserDeviceChanges: api.NewNodeInfoChanges()}
 
 	// coordinatorID is the ID of the node this one's worker answers to: the
 	// node itself, or for a worker-only node the coordinator it joined.
@@ -533,6 +533,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			case recordChanges <- struct{}{}:
 			default:
 			}
+			local.NodeInfoChanges.Notify()
 		})
 		// And a node that ran the Rust daemon before this one keeps what
 		// that one knew.
@@ -584,6 +585,8 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		coord = coordinator.New(coordinator.Config{
 			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: poolLimits.MaxJobsPerClient, MaxTasksPerClient: poolLimits.MaxTasksPerClient, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, MaxUploadBytesPerAttempt: poolLimits.MaxUploadBytesPerAttempt, MaxTaskTimeout: poolLimits.MaxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			WorkersChanged: local.NodeInfoChanges.Notify,
+			JobsChanged:    local.NodeInfoChanges.Notify,
 		})
 		defer coord.Close()
 		seenAs = coord.Observed
@@ -610,7 +613,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// for which it relays so that two of them with no port open can
 		// still reach each other. The nodes whose work this one takes are
 		// let in too: it is in their pools, if not they in its own.
-		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *listen, Relay: true, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
+		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *listen, Relay: true, Discover: *discovery == "on", Log: log, PeerChanged: local.NodeInfoChanges.Notify, Allow: func(id string) bool {
 			_, admitted := admitted.Role(id)
 			return admitted || slices.Contains(takes.List(), id)
 		}})
@@ -765,7 +768,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// do. Only the coordinator and the pool's members are let in.
 		// One that has a port open for the purpose relays as the coordinator
 		// does, and every worker keeps a place on each member that relays.
-		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, Discover: *discovery == "on", Log: log, Allow: func(id string) bool {
+		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, Discover: *discovery == "on", Log: log, PeerChanged: local.NodeInfoChanges.Notify, Allow: func(id string) bool {
 			if id == coordinatorID || slices.Contains(takes.List(), id) {
 				return true
 			}
