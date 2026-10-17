@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -226,26 +227,67 @@ func TestTheCountryIsLookedUpOnlyWhenAsked(t *testing.T) {
 }
 
 // A node with an address of its own in the world is placed by it; one
-// behind a NAT by its address as the pool sees it; and only then by an
-// outside service, if that was asked.
+// behind a NAT by its address as the pool sees it; then by what its
+// gateway says, if that was asked; and only then by an outside service,
+// if that was asked.
 func TestWhereANodeIsComesFirstFromItsOwnAddresses(t *testing.T) {
 	own, private := []string{"/ip4/8.8.8.8/tcp/7700"}, []string{"/ip4/192.168.1.4/tcp/7700"}
-	seen := netip.MustParseAddr("193.0.6.139")
+	seen, gateway := netip.MustParseAddr("193.0.6.139"), netip.MustParseAddr("8.8.4.4")
+	none := netip.Addr{}
 	for _, tt := range []struct {
 		own                []string
-		seen               netip.Addr
+		seen, gateway      netip.Addr
 		lookedUp           string
 		wantCode, wantFrom string
 	}{
-		{own, seen, "FR", "US", "interface"},
-		{private, seen, "FR", "NL", "pool"},
-		{private, netip.Addr{}, "FR", "FR", "lookup"},
-		{private, netip.MustParseAddr("100.64.0.9"), "", "", ""},
+		{own, seen, gateway, "FR", "US", "interface"},
+		{private, seen, gateway, "FR", "NL", "pool"},
+		{private, none, gateway, "FR", "US", "gateway"},
+		{private, none, netip.MustParseAddr("100.64.0.1"), "FR", "FR", "lookup"},
+		{private, none, none, "FR", "FR", "lookup"},
+		{private, netip.MustParseAddr("100.64.0.9"), none, "", "", ""},
 	} {
-		if code, from := countryFrom(tt.own, tt.seen, tt.lookedUp); code != tt.wantCode || from != tt.wantFrom {
-			t.Errorf("countryFrom(%v, %v, %q) = %q, %q; want %q, %q", tt.own, tt.seen, tt.lookedUp, code, from, tt.wantCode, tt.wantFrom)
+		if code, from := countryFrom(tt.own, tt.seen, tt.gateway, tt.lookedUp); code != tt.wantCode || from != tt.wantFrom {
+			t.Errorf("countryFrom(%v, %v, %v, %q) = %q, %q; want %q, %q", tt.own, tt.seen, tt.gateway, tt.lookedUp, code, from, tt.wantCode, tt.wantFrom)
 		}
 	}
+}
+
+// The gateway is asked only for its external address, and a gateway that
+// is not there, or does not answer, places the node nowhere.
+func TestTheGatewayIsAskedWhereTheNodeShowsTheInternet(t *testing.T) {
+	oldFind, oldAsk := findGateway, askGateway
+	defer func() { findGateway, askGateway = oldFind, oldAsk }()
+	router := netip.MustParseAddr("192.168.1.1")
+	findGateway = func() (netip.Addr, error) { return router, nil }
+	askGateway = func(_ context.Context, gw netip.Addr) (netip.Addr, error) {
+		if gw != router {
+			t.Errorf("asked %v, not the gateway", gw)
+		}
+		return netip.MustParseAddr("193.0.6.139"), nil
+	}
+	if got := gatewaysAddress(context.Background(), quiet); got != netip.MustParseAddr("193.0.6.139") {
+		t.Errorf("the gateway's address: %v", got)
+	}
+	askGateway = func(context.Context, netip.Addr) (netip.Addr, error) { return netip.Addr{}, errors.New("no answer") }
+	if got := gatewaysAddress(context.Background(), quiet); got.IsValid() {
+		t.Errorf("a gateway that does not answer gave %v", got)
+	}
+	findGateway = func() (netip.Addr, error) { return netip.Addr{}, errors.New("no default route") }
+	if got := gatewaysAddress(context.Background(), quiet); got.IsValid() {
+		t.Errorf("no gateway gave %v", got)
+	}
+
+	// Told to, a node asks its gateway, and says that is how it knows.
+	findGateway = func() (netip.Addr, error) { return router, nil }
+	askGateway = func(context.Context, netip.Addr) (netip.Addr, error) { return netip.MustParseAddr("193.0.6.139"), nil }
+	apiAddr := freeAddr(t)
+	startDaemon(t, "--listen", freeAddr(t), "--api-listen", apiAddr, "--locate-gateway")
+	client := desktop(t, apiAddr)
+	waitFor(t, func() bool {
+		info, err := client.GetNodeInfo(context.Background(), &nodepb.GetNodeInfoRequest{})
+		return err == nil && info.GetCountryCode() == "NL" && info.GetCountrySource() == "gateway"
+	})
 }
 
 func TestCountryLookupsThatGiveNothing(t *testing.T) {
