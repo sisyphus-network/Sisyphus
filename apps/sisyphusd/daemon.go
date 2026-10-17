@@ -108,7 +108,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	bootstrap := fs.String("bootstrap", "", "addresses of nodes to connect to at startup, besides those in the address book: comma-separated, each ending in /p2p/<node ID>")
 	stunServer := fs.String("stun-server", "", "if the node cannot tell which country it is in from its own addresses, its pool's view of it or its gateway, ask this STUN server, host or host:port (port 3478 if none is given), which address its traffic comes from. The server learns that address, so none is asked unless named here. Only a Binding request is sent; no port is opened. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
 	byGateway := fs.Bool("locate-gateway", false, "if the node cannot tell which country it is in from its own addresses or its pool's view of it, ask its default gateway for its external address by NAT-PMP. Only that read-only request is sent, and only to the gateway; no port is opened. The system's default route is used on Linux, macOS, the BSDs and Windows. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
-	locate := fs.Bool("locate-country", false, "if the node cannot tell which country it is in from its own addresses, its pool's view of it, its gateway or a STUN server, ask ipapi.co, which thereby learns its address and, from the request, that it is a Sisyphus node and which version; it is asked only when the node is asked where it is and nothing else has placed it, and only once, so a refused or failed answer leaves the country unknown until the node restarts. Without this nothing is asked of anyone. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
+	locate := fs.Bool("locate-country", false, "if the node cannot tell which country it is in from its own addresses, its pool's view of it, its gateway or a STUN server, ask ipapi.co, which thereby learns its address and, from the request, that it is a Sisyphus node and which version; it is asked only when the node is asked where it is and nothing else has placed it. A country, or any refusal but a timeout or a rate limit, is kept until the node restarts; a timeout, a rate limit, a fault on its side or no answer lets it be asked again, the next time the node is asked where it is, once a wait has passed that starts at a minute and doubles with each failure in a row up to an hour, or is as long as the service's Retry-After says if that is longer, up to the same hour. Without this nothing is asked of anyone. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
 	keepJobs := fs.Duration("keep-jobs", 30*24*time.Hour, "coordinator role: how long a finished job can still be asked after; 0 keeps them for good. A client's job is kept at least as long as --retain, since its record says whose its data is")
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
@@ -927,50 +927,21 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	// The node places itself by the addresses it is reached at, from a
 	// table it carries. Only if told to does it ask anyone.
-	var asked, gateway, stunned atomic.Value
-	var gatewayAnswered, stunAnswered atomic.Bool
-	gatewayAnswered.Store(!locationDiscoveryRunning.LocateGateway)
+	where := &whereabouts{
+		own: host.Addrs, seen: func() netip.Addr { return seenAs() },
+		stunServer: locationDiscoveryRunning.StunServer, lookUp: locationDiscoveryRunning.LocateCountry,
+		ctx: looking, start: searches.start, notify: local.NodeInfoChanges.Notify, log: log,
+	}
+	where.gatewayAnswered.Store(!locationDiscoveryRunning.LocateGateway)
 	if locationDiscoveryRunning.LocateGateway {
 		searches.start(func() {
-			gateway.Store(gatewaysAddress(looking, log))
-			gatewayAnswered.Store(true)
+			where.gateway.Store(gatewaysAddress(looking, log))
+			where.gatewayAnswered.Store(true)
 			local.NodeInfoChanges.Notify()
 		})
 	}
-	stunAnswered.Store(locationDiscoveryRunning.StunServer == "")
-	// A STUN server, and the lookup service after it, learn the node's
-	// address, so each is asked only once the node is asked where it is
-	// and nothing nearer has placed it: not its own addresses, nor its
-	// pool, nor its gateway once that has answered or given up, nor, for
-	// the lookup, the STUN server once that has. Each is asked once.
-	var askingSTUN, lookingUp sync.Once
-	local.Country = func() (string, string) {
-		code, _ := asked.Load().(string)
-		external, _ := gateway.Load().(netip.Addr)
-		reflexive, _ := stunned.Load().(netip.Addr)
-		country, source := countryFrom(host.Addrs(), seenAs(), external, reflexive, code)
-		if source != "" || !gatewayAnswered.Load() {
-			return country, source
-		}
-		if locationDiscoveryRunning.StunServer != "" {
-			askingSTUN.Do(func() {
-				searches.start(func() {
-					stunned.Store(stunnedAddress(looking, locationDiscoveryRunning.StunServer, log))
-					stunAnswered.Store(true)
-					local.NodeInfoChanges.Notify()
-				})
-			})
-		}
-		if locationDiscoveryRunning.LocateCountry && stunAnswered.Load() {
-			lookingUp.Do(func() {
-				searches.start(func() {
-					asked.Store(lookUpCountry(looking))
-					local.NodeInfoChanges.Notify()
-				})
-			})
-		}
-		return country, source
-	}
+	where.stunAnswered.Store(locationDiscoveryRunning.StunServer == "")
+	local.Country = where.country
 
 	if *inferenceListen != "" {
 		lis, err := net.Listen("tcp", *inferenceListen)
@@ -1414,6 +1385,127 @@ func (b *background) stop() {
 	b.running.Wait()
 }
 
+// whereabouts is how a node works out where it is when it is asked.
+type whereabouts struct {
+	// own gives the node's own addresses, and seen its address as its
+	// pool sees it.
+	own  func() []string
+	seen func() netip.Addr
+	// stunServer is the STUN server to ask, if any, and lookUp whether
+	// the lookup service may be asked.
+	stunServer string
+	lookUp     bool
+	// ctx bounds what is asked, start runs a search beside everything
+	// else, and notify tells those watching the node that it may have
+	// been placed.
+	ctx    context.Context
+	start  func(func())
+	notify func()
+	log    *slog.Logger
+
+	// gateway and stunned hold the addresses the gateway and the STUN
+	// server gave, once they have answered.
+	gateway, stunned              atomic.Value
+	gatewayAnswered, stunAnswered atomic.Bool
+	askingSTUN                    sync.Once
+	lookups                       countryLookups
+}
+
+// country says where the node is and how that was found. A STUN server,
+// and the lookup service after it, learn the node's address, so each is
+// asked only once the node is asked where it is and nothing nearer has
+// placed it: not its own addresses, nor its pool, nor its gateway once
+// that has answered or given up, nor, for the lookup, the STUN server once
+// that has. The STUN server is asked once; the lookup service again, after
+// a while, only if it could not answer (see countryLookups). Neither is
+// waited for: what they say is used the next time the node is asked.
+func (w *whereabouts) country() (string, string) {
+	external, _ := w.gateway.Load().(netip.Addr)
+	reflexive, _ := w.stunned.Load().(netip.Addr)
+	country, source := countryFrom(w.own(), w.seen(), external, reflexive, w.lookups.found())
+	if source != "" || !w.gatewayAnswered.Load() {
+		return country, source
+	}
+	if w.stunServer != "" {
+		w.askingSTUN.Do(func() {
+			w.start(func() {
+				w.stunned.Store(stunnedAddress(w.ctx, w.stunServer, w.log))
+				w.stunAnswered.Store(true)
+				w.notify()
+			})
+		})
+	}
+	if w.lookUp && w.stunAnswered.Load() && w.lookups.begin(time.Now()) {
+		w.start(func() {
+			w.lookups.end(time.Now(), lookUpCountry(w.ctx))
+			w.notify()
+		})
+	}
+	return country, source
+}
+
+// countryRetryFirst is how long the lookup service is left after it first
+// fails to answer, and countryRetryMost the longest it is ever left; the
+// wait doubles from one to the other with each failure in a row. Tests
+// shorten them.
+var (
+	countryRetryFirst = time.Minute
+	countryRetryMost  = time.Hour
+)
+
+// countryLookups keeps track of the lookup service's answers. A definitive
+// one, a country or a refusal, is kept for good and the service never
+// asked again. One it could not give, a rate limit, a fault on its side or
+// no answer at all, lets it be asked again once a wait has passed: the
+// service's Retry-After if it gave one, but never less than the backoff
+// nor more than countryRetryMost. Only one lookup is ever in flight.
+type countryLookups struct {
+	mu      sync.Mutex
+	code    string
+	settled bool
+	busy    bool
+	// after is when the service may next be asked, and wait the backoff
+	// after the next failure, zero before the first.
+	after time.Time
+	wait  time.Duration
+}
+
+// found gives the country the service said, if it has said one.
+func (l *countryLookups) found() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.code
+}
+
+// begin says whether the service is to be asked now, and if so counts the
+// lookup as in flight until end is called.
+func (l *countryLookups) begin(now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.settled || l.busy || now.Before(l.after) {
+		return false
+	}
+	l.busy = true
+	return true
+}
+
+// end records what the lookup begun last came to.
+func (l *countryLookups) end(now time.Time, answer countryAnswer) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.busy = false
+	if !answer.transient {
+		l.code, l.settled = answer.code, true
+		return
+	}
+	if l.wait == 0 {
+		l.wait = countryRetryFirst
+	}
+	l.wait = min(l.wait, countryRetryMost)
+	l.after = now.Add(min(max(answer.retryAfter, l.wait), countryRetryMost))
+	l.wait = min(2*l.wait, countryRetryMost)
+}
+
 // countryFrom says which country a node is in, and how that was found: by
 // the first of its own addresses that has a place in the world; failing
 // that, behind a NAT, by its address as the pool sees it (see
@@ -1492,30 +1584,56 @@ var countryURL = "https://ipapi.co/json/"
 
 var countryCode = regexp.MustCompile(`^[A-Za-z]{2}$`)
 
+// countryAnswer is what came of asking the lookup service: the country it
+// said, if any, or, if transient, that it could not answer now, and when
+// it said to ask again, if it did.
+type countryAnswer struct {
+	code       string
+	transient  bool
+	retryAfter time.Duration
+}
+
 // lookUpCountry asks an outside service which country the address this node
-// reaches it from is in, and returns its two-letter code, or nothing if the
-// service does not give one. The service learns the address by being asked.
-func lookUpCountry(ctx context.Context) string {
+// reaches it from is in. A 200 OK gives its two-letter code, or nothing if
+// the service does not give one, and any other refusal nothing; both are
+// definitive. A rate limit, a fault on the service's side or no answer in
+// time is transient. The service learns the address by being asked.
+func lookUpCountry(ctx context.Context) countryAnswer {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, countryURL, nil) // the address is ours and well formed
 	req.Header.Set("User-Agent", "Sisyphus/"+version)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return ""
+		return countryAnswer{transient: true}
 	}
 	defer res.Body.Close()
+	if res.StatusCode == http.StatusRequestTimeout || res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= 500 {
+		return countryAnswer{transient: true, retryAfter: retryAfter(res.Header.Get("Retry-After"), time.Now())}
+	}
 	if res.StatusCode != http.StatusOK {
-		return ""
+		return countryAnswer{}
 	}
 	var answer struct {
 		CountryCode string `json:"country_code"`
 	}
 	json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&answer)
 	if !countryCode.MatchString(answer.CountryCode) {
-		return ""
+		return countryAnswer{}
 	}
-	return strings.ToUpper(answer.CountryCode)
+	return countryAnswer{code: strings.ToUpper(answer.CountryCode)}
+}
+
+// retryAfter reads a Retry-After header, in seconds or as an HTTP date, as
+// how long from now to wait, or zero if it says nothing usable.
+func retryAfter(header string, now time.Time) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(header)); err == nil {
+		return time.Duration(min(max(seconds, 0), 1<<30)) * time.Second
+	}
+	if when, err := http.ParseTime(header); err == nil {
+		return max(when.Sub(now), 0)
+	}
+	return 0
 }
 
 // blobProtocol names the streams on which one worker's libp2p host asks
