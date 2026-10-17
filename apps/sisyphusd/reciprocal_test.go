@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -342,6 +344,214 @@ func TestTrustStreamReconnectsFromFreshSnapshot(t *testing.T) {
 		t.Fatal("reciprocity did not stop after cancellation")
 	}
 	waitFor(t, func() bool { return len(stopped) == 2 })
+}
+
+func TestFollowTrustRejectsInvalidState(t *testing.T) {
+	client, server := net.Pipe()
+	r := newReciprocity(&reciprocity{addresses: func(string) []string { return nil }, log: slog.New(slog.DiscardHandler)})
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := server.Write([]byte{2})
+		writeDone <- err
+	}()
+	_, err := r.followTrust(context.Background(), "peer", client)
+	if err == nil || err.Error() != "invalid reciprocal trust state" {
+		t.Fatalf("invalid trust state error = %v", err)
+	}
+	client.Close()
+	server.Close()
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write invalid state: %v", err)
+	}
+}
+
+func TestSendTrustUpdateStopsWhenReaderIsDone(t *testing.T) {
+	stop := make(chan struct{})
+	updates := make(chan trustUpdate, 1)
+	updates <- trustUpdate{trusted: true}
+	close(stop)
+	if sendTrustUpdate(stop, updates, trustUpdate{trusted: false}) {
+		t.Fatal("sent an update after the reader stopped")
+	}
+}
+
+func TestFollowTrustRetriesWorkWithoutReopeningTrustStream(t *testing.T) {
+	client, server := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		serveTrustState(ctx, server, "peer", new(notices), func(string) bool { return true })
+	}()
+	started := make(chan struct{}, 2)
+	r := newReciprocity(&reciprocity{
+		addresses: func(string) []string { return []string{"right:1"} },
+		work: func(ctx context.Context, _, _ string) error {
+			started <- struct{}{}
+			if len(started) == 1 {
+				return errors.New("temporarily unavailable")
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		log: slog.New(slog.DiscardHandler),
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.followTrust(ctx, "peer", client)
+		done <- err
+	}()
+	waitFor(t, func() bool { return len(started) == 2 })
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("followTrust error = %v, want cancellation", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("followTrust did not stop")
+	}
+	client.Close()
+	server.Close()
+	select {
+	case <-serverDone:
+	case <-time.After(time.Second):
+		t.Fatal("trust stream server did not stop")
+	}
+}
+
+type failNthTrustWrite struct {
+	net.Conn
+	failAt int
+	writes int
+}
+
+func (c *failNthTrustWrite) Write(p []byte) (int, error) {
+	c.writes++
+	if c.writes == c.failAt {
+		return 0, errors.New("injected trust write failure")
+	}
+	return c.Conn.Write(p)
+}
+
+func TestTrustStreamStopsWhenItsInitialOrUpdatedStateCannotBeWritten(t *testing.T) {
+	for _, failAt := range []int{1, 2} {
+		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
+			client, server := net.Pipe()
+			if failAt == 1 {
+				client.Close()
+			}
+			wrapped := &failNthTrustWrite{Conn: server, failAt: failAt}
+			changes := new(notices)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				serveTrustState(ctx, wrapped, "peer", changes, func(string) bool { return true })
+			}()
+			if failAt == 1 {
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("server did not stop after its initial write failed")
+				}
+			} else {
+				var initial [1]byte
+				if _, err := io.ReadFull(client, initial[:]); err != nil || initial[0] != 1 {
+					t.Fatalf("initial trust state = %d, %v", initial[0], err)
+				}
+				changes.tell("peer")
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("server did not stop after its update write failed")
+				}
+			}
+			cancel()
+			client.Close()
+			server.Close()
+		})
+	}
+}
+
+func TestDialTrustWithCoversFailureCancellationAndOpenStream(t *testing.T) {
+	ctx := context.Background()
+	if conn, err := dialTrustWith(ctx, func(context.Context) (net.Conn, error) {
+		return nil, errors.New("dial failed")
+	}); err == nil || conn != nil {
+		t.Fatalf("failed dial = (%v, %v), want an error and no connection", conn, err)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	left, right := net.Pipe()
+	conn, err := dialTrustWith(canceled, func(context.Context) (net.Conn, error) {
+		cancel()
+		return left, nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || conn != nil {
+		t.Fatalf("canceled dial = (%v, %v), want deadline exceeded and no connection", conn, err)
+	}
+	right.Close()
+
+	left, right = net.Pipe()
+	conn, err = dialTrustWith(ctx, func(context.Context) (net.Conn, error) { return left, nil })
+	if err != nil {
+		t.Fatalf("open trust stream: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close trust stream: %v", err)
+	}
+	conn.Close()
+	right.Close()
+}
+
+func TestCancelTrustDialUnlessOpened(t *testing.T) {
+	var opened atomic.Bool
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelTrustDialUnlessOpened(&opened, cancel)
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatal("a not-yet-opened stream was not canceled")
+	}
+	opened.Store(true)
+	ctx, cancel = context.WithCancel(context.Background())
+	cancelTrustDialUnlessOpened(&opened, cancel)
+	if ctx.Err() != nil {
+		t.Fatal("an opened stream was canceled by its dial timeout")
+	}
+	cancel()
+}
+
+func TestWorkAtAddressesStopsForCancellationAndReturnsLastFailure(t *testing.T) {
+	calls := 0
+	r := &reciprocity{work: func(context.Context, string, string) error {
+		calls++
+		return errors.New("unreachable")
+	}}
+	if err := r.workAtAddresses(context.Background(), "peer", nil); err != nil {
+		t.Fatalf("empty address list: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := r.workAtAddresses(ctx, "peer", []string{"right:1"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled work: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("worked at %d addresses after cancellation", calls)
+	}
+	want := errors.New("unreachable")
+	r.work = func(context.Context, string, string) error { return want }
+	if err := r.workAtAddresses(context.Background(), "peer", []string{"right:1"}); !errors.Is(err, want) {
+		t.Fatalf("last address error = %v, want %v", err, want)
+	}
+	workCtx, stop := context.WithCancel(context.Background())
+	r.work = func(context.Context, string, string) error {
+		stop()
+		return want
+	}
+	if err := r.workAtAddresses(workCtx, "peer", []string{"right:1"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("work canceled during address attempt: %v", err)
+	}
 }
 
 func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {

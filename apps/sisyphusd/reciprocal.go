@@ -196,6 +196,15 @@ type trustUpdate struct {
 	err     error
 }
 
+func sendTrustUpdate(stop <-chan struct{}, updates chan<- trustUpdate, update trustUpdate) bool {
+	select {
+	case updates <- update:
+		return true
+	case <-stop:
+		return false
+	}
+}
+
 // followTrust consumes the initial trust state and its live changes. Losing
 // the stream stops guest work; reconnecting starts with a fresh state snapshot.
 func (r *reciprocity) followTrust(ctx context.Context, id string, conn net.Conn) (received bool, err error) {
@@ -203,25 +212,17 @@ func (r *reciprocity) followTrust(ctx context.Context, id string, conn net.Conn)
 	stopReading := make(chan struct{})
 	defer close(stopReading)
 	go func() {
-		send := func(update trustUpdate) bool {
-			select {
-			case updates <- update:
-				return true
-			case <-stopReading:
-				return false
-			}
-		}
 		for {
 			var state [1]byte
 			if _, err := io.ReadFull(conn, state[:]); err != nil {
-				send(trustUpdate{err: err})
+				sendTrustUpdate(stopReading, updates, trustUpdate{err: err})
 				return
 			}
 			if state[0] > 1 {
-				send(trustUpdate{err: errors.New("invalid reciprocal trust state")})
+				sendTrustUpdate(stopReading, updates, trustUpdate{err: errors.New("invalid reciprocal trust state")})
 				return
 			}
-			if !send(trustUpdate{trusted: state[0] == 1}) {
+			if !sendTrustUpdate(stopReading, updates, trustUpdate{trusted: state[0] == 1}) {
 				return
 			}
 		}
@@ -354,14 +355,22 @@ func (c *cancelConn) Close() error {
 // dialTrust opens a persistent stream. The deadline only bounds stream
 // establishment; after it opens, the stream lives until its peer or ctx ends.
 func dialTrust(ctx context.Context, host *p2p.Host, id string) (net.Conn, error) {
+	return dialTrustWith(ctx, func(ctx context.Context) (net.Conn, error) {
+		return host.Dial(ctx, id, trustProtocol)
+	})
+}
+
+func cancelTrustDialUnlessOpened(opened *atomic.Bool, cancel context.CancelFunc) {
+	if !opened.Load() {
+		cancel()
+	}
+}
+
+func dialTrustWith(ctx context.Context, dial func(context.Context) (net.Conn, error)) (net.Conn, error) {
 	dialCtx, cancel := context.WithCancel(ctx)
 	var opened atomic.Bool
-	timer := time.AfterFunc(15*time.Second, func() {
-		if !opened.Load() {
-			cancel()
-		}
-	})
-	conn, err := host.Dial(dialCtx, id, trustProtocol)
+	timer := time.AfterFunc(15*time.Second, func() { cancelTrustDialUnlessOpened(&opened, cancel) })
+	conn, err := dial(dialCtx)
 	opened.Store(true)
 	timer.Stop()
 	if err != nil {
