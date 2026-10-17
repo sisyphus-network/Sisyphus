@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -457,20 +460,49 @@ func TestCountryLookupsThatGiveNothing(t *testing.T) {
 		"a code with a digit in it":    `{"country_code":"N1"}`,
 	} {
 		answering(t, body)
-		if got := lookUpCountry(ctx); got != "" {
-			t.Errorf("%s: %q", name, got)
+		if got := lookUpCountry(ctx); got != (countryAnswer{}) {
+			t.Errorf("%s: %+v, want a definitive nothing", name, got)
 		}
 	}
-	// Nobody there to ask.
+	// Nobody there to ask: that may change, so it is not definitive.
 	old := countryURL
 	countryURL = "http://" + freeAddr(t)
 	defer func() { countryURL = old }()
-	if got := lookUpCountry(ctx); got != "" {
-		t.Errorf("with the service unreachable: %q", got)
+	if got := lookUpCountry(ctx); got != (countryAnswer{transient: true}) {
+		t.Errorf("with the service unreachable: %+v", got)
 	}
 }
 
-func TestCountryLookupIdentifiesTheDaemonAndRejectsRateLimits(t *testing.T) {
+// replying stands in for the lookup service, giving each reply in turn
+// with its status and Retry-After, and the last one from then on. It
+// counts the lookups it is sent.
+func replying(t *testing.T, replies ...lookupReply) *atomic.Int32 {
+	t.Helper()
+	var asked atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reply := replies[min(int(asked.Add(1)), len(replies))-1]
+		if reply.retryAfter != "" {
+			w.Header().Set("Retry-After", reply.retryAfter)
+		}
+		w.WriteHeader(reply.status)
+		w.Write([]byte(reply.body))
+	}))
+	old := countryURL
+	countryURL = server.URL
+	t.Cleanup(func() {
+		countryURL = old
+		server.Close()
+	})
+	return &asked
+}
+
+type lookupReply struct {
+	status     int
+	retryAfter string
+	body       string
+}
+
+func TestCountryLookupIdentifiesTheDaemonAndTellsTransientFromDefinitive(t *testing.T) {
 	t.Run("identifies the daemon", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if got, want := r.UserAgent(), "Sisyphus/"+version; got != want {
@@ -482,24 +514,338 @@ func TestCountryLookupIdentifiesTheDaemonAndRejectsRateLimits(t *testing.T) {
 		old := countryURL
 		countryURL = server.URL
 		defer func() { countryURL = old }()
-		if got := lookUpCountry(context.Background()); got != "IL" {
-			t.Errorf("country = %q, want IL", got)
+		if got := lookUpCountry(context.Background()); got != (countryAnswer{code: "IL"}) {
+			t.Errorf("answer = %+v, want IL", got)
 		}
 	})
 
-	t.Run("rejects a rate-limited reply", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusTooManyRequests)
-			w.Write([]byte(`{"country_code":"il"}`))
-		}))
-		defer server.Close()
-		old := countryURL
-		countryURL = server.URL
-		defer func() { countryURL = old }()
-		if got := lookUpCountry(context.Background()); got != "" {
-			t.Errorf("country from a rate-limited reply = %q, want empty", got)
+	for name, c := range map[string]struct {
+		reply lookupReply
+		want  countryAnswer
+	}{
+		"a rate limit is transient, and says when to ask again": {lookupReply{http.StatusTooManyRequests, "120", `{"country_code":"il"}`}, countryAnswer{transient: true, retryAfter: 2 * time.Minute}},
+		"a fault on the service's side is transient":            {lookupReply{http.StatusServiceUnavailable, "", `{"country_code":"il"}`}, countryAnswer{transient: true}},
+		"a 404 is definitive":                                   {lookupReply{http.StatusNotFound, "120", `{"country_code":"il"}`}, countryAnswer{}},
+		"a 403 is definitive":                                   {lookupReply{http.StatusForbidden, "", ""}, countryAnswer{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			replying(t, c.reply)
+			if got := lookUpCountry(context.Background()); got != c.want {
+				t.Errorf("answer = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestRetryAfterIsReadInSecondsOrAsADate(t *testing.T) {
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	for header, want := range map[string]time.Duration{
+		"":                              0,
+		"90":                            90 * time.Second,
+		" 5 ":                           5 * time.Second,
+		"-3":                            0,
+		"99999999999":                   (1 << 30) * time.Second,
+		"Sat, 17 Oct 2026 12:10:00 GMT": 10 * time.Minute,
+		"Sat, 17 Oct 2026 11:00:00 GMT": 0,
+		"soon":                          0,
+	} {
+		if got := retryAfter(header, now); got != want {
+			t.Errorf("Retry-After %q: %v, want %v", header, got, want)
 		}
+	}
+}
+
+// After each failure in a row the lookup service is left longer, from the
+// first wait doubling to the most, or as long as it says, within those.
+// A definitive answer is kept for good.
+func TestCountryLookupsBackOff(t *testing.T) {
+	oldFirst, oldMost := countryRetryFirst, countryRetryMost
+	defer func() { countryRetryFirst, countryRetryMost = oldFirst, oldMost }()
+	countryRetryFirst, countryRetryMost = time.Minute, time.Hour
+
+	var l countryLookups
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	fail := func(retryAfter time.Duration, want time.Duration) {
+		t.Helper()
+		if !l.begin(now) {
+			t.Fatalf("at %v the lookup was not begun", now)
+		}
+		if l.begin(now) {
+			t.Fatal("a second lookup was begun with one in flight")
+		}
+		l.end(now, countryAnswer{transient: true, retryAfter: retryAfter})
+		if l.begin(now.Add(want - time.Nanosecond)) {
+			t.Fatalf("a lookup was begun before %v had passed", want)
+		}
+		now = now.Add(want)
+	}
+	fail(0, time.Minute)
+	fail(0, 2*time.Minute)
+	fail(time.Second, 4*time.Minute)     // never sooner than the backoff
+	fail(30*time.Minute, 30*time.Minute) // as long as the service says
+	fail(0, 16*time.Minute)
+	fail(0, 32*time.Minute)
+	fail(0, time.Hour)
+	fail(0, time.Hour)
+	fail(5*time.Hour, time.Hour) // never longer than the most
+	if !l.begin(now) {
+		t.Fatal("the lookup was not begun once the wait had passed")
+	}
+	l.end(now, countryAnswer{code: "DE"})
+	if l.found() != "DE" || l.begin(now.Add(24*time.Hour)) {
+		t.Errorf("after a country was found: %q, and asked again", l.found())
+	}
+
+	// A first wait longer than the most is held to the most.
+	countryRetryFirst = 2 * time.Hour
+	var long countryLookups
+	long.begin(now)
+	long.end(now, countryAnswer{transient: true})
+	if long.begin(now.Add(time.Hour-time.Nanosecond)) || !long.begin(now.Add(time.Hour)) {
+		t.Error("the first wait was not held to the most")
+	}
+}
+
+// shortRetries makes the waits between lookups short for the rest of the
+// test.
+func shortRetries(t *testing.T, first, most time.Duration) {
+	oldFirst, oldMost := countryRetryFirst, countryRetryMost
+	countryRetryFirst, countryRetryMost = first, most
+	t.Cleanup(func() { countryRetryFirst, countryRetryMost = oldFirst, oldMost })
+}
+
+// A lookup the service could not answer is tried again, once the wait has
+// passed, the next time the node is asked where it is, and a country it
+// then gives is shown to those watching.
+func TestTheCountryIsLookedUpAgainAfterATransientFailure(t *testing.T) {
+	shortRetries(t, 20*time.Millisecond, 100*time.Millisecond)
+	asked := replying(t,
+		lookupReply{status: http.StatusServiceUnavailable},
+		lookupReply{status: http.StatusTooManyRequests},
+		lookupReply{status: http.StatusOK, body: `{"country_code":"de"}`})
+	apiAddr := freeAddr(t)
+	startDaemon(t, "--listen", freeAddr(t), "--api-listen", apiAddr, "--locate-country")
+	client := desktop(t, apiAddr)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	stream, err := client.WatchNodeState(ctx, &nodepb.GetNodeInfoRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The watch asks once; asking again now and then lets the retries due
+	// be made, and the watch is told of the country they find.
+	go func() {
+		for ctx.Err() == nil {
+			client.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	for {
+		state, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("waiting for the country found on retrying: %v", err)
+		}
+		if state.GetInfo().GetCountryCode() == "DE" && state.GetInfo().GetCountrySource() == "lookup" {
+			break
+		}
+	}
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+	if n := asked.Load(); n != 3 {
+		t.Errorf("the lookup service was asked %d times, want 3", n)
+	}
+}
+
+// placing gives what places a node with nothing nearer than the lookup
+// service to place it by, and the searches it runs.
+func placing(t *testing.T) (*whereabouts, *background) {
+	t.Helper()
+	searches := new(background)
+	t.Cleanup(searches.stop)
+	w := &whereabouts{
+		own:    func() []string { return nil },
+		seen:   func() netip.Addr { return netip.Addr{} },
+		lookUp: true, ctx: context.Background(), start: searches.start, notify: func() {},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	w.gatewayAnswered.Store(true)
+	w.stunAnswered.Store(true)
+	return w, searches
+}
+
+func TestCountryLookupsAreRetriedOnlyWhenTransient(t *testing.T) {
+	shortRetries(t, time.Millisecond, 5*time.Millisecond)
+	for name, c := range map[string]struct {
+		replies []lookupReply
+		want    int32
+	}{
+		"a 404":                       {[]lookupReply{{status: http.StatusNotFound}, {status: http.StatusOK, body: `{"country_code":"de"}`}}, 1},
+		"a 200 with no country":       {[]lookupReply{{status: http.StatusOK, body: `{}`}, {status: http.StatusOK, body: `{"country_code":"de"}`}}, 1},
+		"a 500 and then a country":    {[]lookupReply{{status: http.StatusInternalServerError}, {status: http.StatusOK, body: `{"country_code":"de"}`}}, 2},
+		"a 429 twice and then a 404":  {[]lookupReply{{status: http.StatusTooManyRequests}, {status: http.StatusTooManyRequests}, {status: http.StatusNotFound}}, 3},
+		"a 502, then a 200 with none": {[]lookupReply{{status: http.StatusBadGateway}, {status: http.StatusOK, body: `{"country_code":"N1"}`}}, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			asked := replying(t, c.replies...)
+			w, searches := placing(t)
+			deadline := time.Now().Add(300 * time.Millisecond)
+			for time.Now().Before(deadline) {
+				w.country()
+				time.Sleep(time.Millisecond)
+			}
+			searches.stop()
+			if n := asked.Load(); n != c.want {
+				t.Errorf("the lookup service was asked %d times, want %d", n, c.want)
+			}
+		})
+	}
+}
+
+// A rate limit's Retry-After is waited out, though the backoff is shorter.
+func TestARateLimitsRetryAfterIsWaitedOut(t *testing.T) {
+	shortRetries(t, time.Millisecond, 5*time.Second)
+	var times []time.Time
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		times = append(times, time.Now())
+		first := len(times) == 1
+		mu.Unlock()
+		if first {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Write([]byte(`{"country_code":"se"}`))
+	}))
+	defer server.Close()
+	old := countryURL
+	countryURL = server.URL
+	defer func() { countryURL = old }()
+	w, searches := placing(t)
+	waitFor(t, func() bool {
+		code, _ := w.country()
+		time.Sleep(time.Millisecond)
+		return code == "SE"
 	})
+	searches.stop()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(times) != 2 || times[1].Sub(times[0]) < time.Second {
+		t.Errorf("asked at %v, want twice, a second apart", times)
+	}
+}
+
+// With nobody there to ask, the service is tried again after the wait.
+func TestACountryLookupWithNoAnswerIsRetried(t *testing.T) {
+	shortRetries(t, 10*time.Millisecond, 10*time.Millisecond)
+	old := countryURL
+	countryURL = "http://" + freeAddr(t)
+	defer func() { countryURL = old }()
+	w, searches := placing(t)
+	if _, source := w.country(); source != "" {
+		t.Fatalf("placed by %q", source)
+	}
+	waitFor(t, func() bool {
+		w.lookups.mu.Lock()
+		defer w.lookups.mu.Unlock()
+		return w.lookups.wait > 0 && !w.lookups.busy
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(`{"country_code":"jp"}`)) }))
+	defer server.Close()
+	countryURL = server.URL
+	waitFor(t, func() bool {
+		code, source := w.country()
+		return code == "JP" && source == "lookup"
+	})
+	searches.stop()
+}
+
+// Once something nearer places the node, the lookup service is not asked
+// again, however long it is left.
+func TestNoCountryLookupOnceTheNodeIsPlacedNearer(t *testing.T) {
+	shortRetries(t, time.Millisecond, time.Millisecond)
+	asked := replying(t, lookupReply{status: http.StatusServiceUnavailable})
+	w, searches := placing(t)
+	waitFor(t, func() bool {
+		w.country()
+		return asked.Load() >= 2
+	})
+	// Its own address now has a place in the world.
+	w.own = func() []string { return []string{"/ip4/193.0.6.139/tcp/4001"} }
+	searches.stop()
+	before := asked.Load()
+	searches = new(background)
+	w.start = searches.start
+	for range 50 {
+		if _, source := w.country(); source != "interface" {
+			t.Fatalf("placed by %q", source)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	searches.stop()
+	if n := asked.Load(); n != before {
+		t.Errorf("with the node placed by its own address, the service was asked %d more times", n-before)
+	}
+}
+
+// However many ask at once where the node is, one lookup is in flight.
+func TestOneCountryLookupIsInFlightAtATime(t *testing.T) {
+	shortRetries(t, time.Nanosecond, time.Nanosecond)
+	var inFlight, most, asked atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked.Add(1)
+		n := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for {
+			m := most.Load()
+			if n <= m || most.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		<-release
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	old := countryURL
+	countryURL = server.URL
+	defer func() { countryURL = old }()
+	w, searches := placing(t)
+
+	var askers sync.WaitGroup
+	for range 32 {
+		askers.Add(1)
+		go func() {
+			defer askers.Done()
+			for range 20 {
+				w.country()
+			}
+		}()
+	}
+	askers.Wait()
+	waitFor(t, func() bool { return asked.Load() == 1 })
+	close(release)
+	// Released, each retry still waits for the one before.
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		var again sync.WaitGroup
+		for range 8 {
+			again.Add(1)
+			go func() {
+				defer again.Done()
+				w.country()
+			}()
+		}
+		again.Wait()
+	}
+	searches.stop()
+	if m := most.Load(); m != 1 {
+		t.Errorf("%d lookups were in flight at once", m)
+	}
+	if asked.Load() < 2 {
+		t.Errorf("the lookup service was asked %d times, want it retried", asked.Load())
+	}
 }
 
 func TestWhereANodeStartsFrom(t *testing.T) {
