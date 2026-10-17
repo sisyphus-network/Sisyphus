@@ -1,7 +1,10 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
@@ -73,4 +76,26 @@ func TestStartupLocationDiscovery(t *testing.T) {
 			t.Fatalf("error = %v, want %v", err, wantErr)
 		}
 	})
+}
+
+// A node whose saved discovery settings cannot be read does not start with
+// settings its owner did not choose.
+func TestADaemonWhoseDiscoverySettingsCannotBeReadDoesNotStart(t *testing.T) {
+	damaged := t.TempDir()
+	db, err := nodedb.Open(filepath.Join(damaged, "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	raw, err := sql.Open("sqlite", "file:"+filepath.Join(damaged, "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`DROP TABLE location_discovery`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	if _, err := cli(t, "run", "--discovery", "off", "--data-dir", damaged, "--listen", freeAddr(t)); err == nil || !strings.Contains(err.Error(), "load location discovery settings") {
+		t.Errorf("starting with discovery settings that cannot be read: %v", err)
+	}
 }
