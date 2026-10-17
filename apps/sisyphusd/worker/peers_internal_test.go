@@ -202,3 +202,22 @@ func TestNewMembersAsksOverTheGivenConnection(t *testing.T) {
 func workerOnlyCreds() credentials.TransportCredentials {
 	return insecure.NewCredentials()
 }
+
+// Relay lists that change while the consumer is busy wake it once, and it
+// then reads the latest.
+func TestRelayChangesWhileTheConsumerIsBusyComeToOne(t *testing.T) {
+	stream := &relayUpdates{updates: make(chan *pb.RelaysResponse, 2)}
+	members := &Members{pool: &roster{relays: stream}, relayChanges: make(chan struct{}, 1)}
+	stream.updates <- &pb.RelaysResponse{Addresses: []string{"first"}}
+	stream.updates <- &pb.RelaysResponse{Addresses: []string{"second"}}
+	close(stream.updates)
+	if err := members.WatchRelays(context.Background()); err == nil {
+		t.Fatal("the watch outlived its stream")
+	}
+	if len(members.RelayChanges()) != 1 {
+		t.Errorf("%d wakings waiting, want one", len(members.RelayChanges()))
+	}
+	if got := members.Relays(context.Background()); !slices.Equal(got, []string{"second"}) {
+		t.Errorf("Relays() = %v, want the latest", got)
+	}
+}

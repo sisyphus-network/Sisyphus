@@ -1116,3 +1116,36 @@ func TestAClosingHostTakesUpNoNodeAnnouncedOnItsNetwork(t *testing.T) {
 		t.Error("a closed host connected to a node announced to it")
 	}
 }
+
+// A relay no longer named loses its renewal and retry deadlines, so the
+// host neither renews nor retries a place it has been told to let go.
+func TestARelayNoLongerNamedHasNoDeadlines(t *testing.T) {
+	soon := time.Now().Add(time.Minute)
+	h := &Host{
+		renew: map[peer.ID]time.Time{"renewed": soon},
+		retry: map[peer.ID]time.Time{"renewed": soon, "retried": soon},
+	}
+	h.refreshRelays(nil)
+	if len(h.renew) != 0 || len(h.retry) != 0 {
+		t.Errorf("renew %v and retry %v, want both empty", h.renew, h.retry)
+	}
+	if wait := h.untilNextPlace(); wait != -1 {
+		t.Errorf("untilNextPlace = %v, want -1 with no deadlines", wait)
+	}
+}
+
+// The host waits for the nearest renewal or retry, and not at all for one
+// already due.
+func TestTheNextPlaceIsTheNearestDeadline(t *testing.T) {
+	h := &Host{
+		renew: map[peer.ID]time.Time{"later": time.Now().Add(time.Hour)},
+		retry: map[peer.ID]time.Time{"sooner": time.Now().Add(time.Minute)},
+	}
+	if wait := h.untilNextPlace(); wait <= 0 || wait > time.Minute {
+		t.Errorf("untilNextPlace = %v, want up to a minute", wait)
+	}
+	h.renew["due"] = time.Now().Add(-time.Second)
+	if wait := h.untilNextPlace(); wait != 0 {
+		t.Errorf("untilNextPlace with one due = %v, want 0", wait)
+	}
+}

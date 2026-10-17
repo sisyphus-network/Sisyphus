@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -71,5 +72,40 @@ func TestWatchRelaysSendsInitialListAndMembershipChanges(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("watcher did not stop after cancellation")
+	}
+}
+
+// A relay watcher ends with the error of the first list it cannot send,
+// the first or a later one. A change that comes while another is still
+// unheard is told to it once.
+func TestWatchRelaysStopsAtAListItCannotSend(t *testing.T) {
+	c := New(Config{ID: "coordinator"})
+	defer c.Close()
+	gone := errors.New("watcher went away")
+	if err := c.WatchRelays(context.Background(), func([]string) error { return gone }); !errors.Is(err, gone) {
+		t.Errorf("first list: %v, want %v", err, gone)
+	}
+
+	// The watcher is held in its first send while two changes come, so the
+	// second finds the first still unheard.
+	sending, release := make(chan struct{}), make(chan struct{})
+	lists := 0
+	done := make(chan error, 1)
+	go func() {
+		done <- c.WatchRelays(context.Background(), func([]string) error {
+			if lists++; lists > 1 {
+				return gone
+			}
+			close(sending)
+			<-release
+			return nil
+		})
+	}()
+	<-sending
+	c.notifyRelaysChanged()
+	c.notifyRelaysChanged()
+	close(release)
+	if err := <-done; !errors.Is(err, gone) || lists != 2 {
+		t.Errorf("later list: %v after %d lists, want %v after two", err, lists, gone)
 	}
 }

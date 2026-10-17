@@ -136,10 +136,7 @@ func (m *Members) runRelayWatch(ctx context.Context, log *slog.Logger, initialDe
 			return
 		}
 		if !receivedSnapshot {
-			delay *= 2
-			if delay > maxDelay {
-				delay = maxDelay
-			}
+			delay = min(delay*2, maxDelay)
 		}
 	}
 }

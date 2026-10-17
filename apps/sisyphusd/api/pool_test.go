@@ -231,3 +231,16 @@ func TestRekeyOnRequest(t *testing.T) {
 		t.Errorf("a key that cannot be changed: %v, want Internal", err)
 	}
 }
+
+// The relay list is also given whole for a client that does not watch it,
+// and a node that coordinates no pool has none to watch.
+func TestRelaysAskedOnceAndWithoutAPool(t *testing.T) {
+	service := &poolService{coordinator: newCoordinator(t)}
+	if listed, err := service.Relays(context.Background(), &pb.RelaysRequest{}); err != nil || len(listed.GetAddresses()) != 0 {
+		t.Errorf("Relays = %v, %v; want an empty list", listed, err)
+	}
+	stream := &relaySnapshotStream{ctx: context.Background(), updates: make(chan *pb.RelaysResponse, 1)}
+	if err := (&poolService{}).WatchRelays(&pb.RelaysRequest{}, stream); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("WatchRelays without a pool: %v, want failed precondition", err)
+	}
+}

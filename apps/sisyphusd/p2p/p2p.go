@@ -72,6 +72,7 @@ type Config struct {
 	MoreRelays func(ctx context.Context) []string
 	// MoreRelaysChanged signals that MoreRelays may now return a new list.
 	// Notifications may be coalesced; the latest list is always authoritative.
+	// It is never closed.
 	MoreRelaysChanged <-chan struct{}
 	// Allow says whether the node with the given ID is one of this node's
 	// own: a member of its pool. Only those are relayed for. Unless Discover
@@ -440,10 +441,7 @@ func (h *Host) keepPlaces(more func(ctx context.Context) []string, changed <-cha
 			deadline = time.After(wait)
 		}
 		select {
-		case _, ok := <-changed:
-			if !ok {
-				changed = nil
-			}
+		case <-changed:
 			refresh = true
 		case <-h.placeChanged:
 			refresh = false
@@ -513,18 +511,14 @@ func (h *Host) untilNextPlace() time.Duration {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var next time.Time
-	for id, renewAt := range h.renew {
-		if !h.namedRelayLocked(id) {
-			continue
-		}
+	// Only relays now named have entries: refreshRelays drops the others,
+	// and runs in the same goroutine as this.
+	for _, renewAt := range h.renew {
 		if next.IsZero() || renewAt.Before(next) {
 			next = renewAt
 		}
 	}
-	for id, retryAt := range h.retry {
-		if !h.namedRelayLocked(id) {
-			continue
-		}
+	for _, retryAt := range h.retry {
 		if next.IsZero() || retryAt.Before(next) {
 			next = retryAt
 		}
@@ -532,19 +526,7 @@ func (h *Host) untilNextPlace() time.Duration {
 	if next.IsZero() {
 		return -1
 	}
-	if wait := time.Until(next); wait > 0 {
-		return wait
-	}
-	return 0
-}
-
-func (h *Host) namedRelayLocked(id peer.ID) bool {
-	for _, r := range h.relays {
-		if r.ID == id {
-			return true
-		}
-	}
-	return false
+	return max(time.Until(next), 0)
 }
 
 func (h *Host) nudgePlaces() {
