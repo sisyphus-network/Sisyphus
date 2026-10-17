@@ -969,7 +969,7 @@ Work flows from one node to another when the first gives and the second takes. N
 **What holds whichever way it was set up**
 
 - **Either side ends it.** A node that stops giving cuts the other's worker off; a node that stops taking stops working. Both are at once.
-- **It takes effect at once.** When a node's giving changes, it sends word to the node concerned over libp2p, which looks again on hearing. Should word not arrive, each asks again once a minute anyway.
+- **It takes effect at once.** A trusted peer opens an authenticated libp2p trust stream. It starts with the current admission state, then carries changes as they happen. If the stream breaks, the worker stops guest work, reconnects with bounded backoff, and receives a fresh state before resuming; there is no periodic trust check while connected. This stream requires trust protocol v2, so older coordinators do not offer reciprocal guest work until upgraded.
 - **A node's slots are shared, fairly.** However many nodes it works for, it runs no more tasks at once than `--slots`. A coordinator may hand it more than that, and those wait their turn. When a slot comes free it goes to the pool with the fewest of its tasks running on this node, so one pool's long queue does not hold up another's single task.
 - **Each pool's data is kept apart.** What a node fetches while working for another is kept under `guest/<that node's ID>` in its data directory, away from its own pool's store and from every other node's.
 - **With `--kubo`, it joins the other pool's private IPFS network too.** A private network has a key of its own, so the node runs one more Kubo daemon for each pool it works for, on a repository under that same directory, and follows that pool's key when it changes. Each costs about as much memory as the node's own. If the other node runs no such network, the work is done without one.
@@ -977,8 +977,6 @@ Work flows from one node to another when the first gives and the second takes. N
 - **`--work-for-trusted=false`** has a node take nobody's work but that of the coordinator it was started for, whatever its list says.
 
 What this does not do yet:
-
-- **Word of a change can be sent by any node that can connect.** All it does is make this node ask sooner, so the worst a stranger can do with it is cause some needless asking.
 - **Nothing limits what a node gives.** A node that gives another work gives it any task; there is no "only these workloads" or "only this much".
 - A node works for at most sixteen others at once.
 

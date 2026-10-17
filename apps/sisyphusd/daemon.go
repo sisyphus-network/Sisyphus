@@ -489,6 +489,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	local.Lending, local.Lent, local.LentByFlags = db, lent, *modelsFrom != ""
 	// host is the node's libp2p host, started below according to its role.
 	var host *p2p.Host
+	var mutual atomic.Pointer[reciprocity]
 	// trustChanged hears of each node the coordinator admits or removes, and
 	// worksFor says whether this node is working for another.
 	trustChanged := new(notices)
@@ -621,6 +622,20 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		defer host.Close()
+		trustListener := host.Listen(trustProtocol)
+		trustCtx, stopTrust := context.WithCancel(ctx)
+		trustDone := make(chan struct{})
+		go func() {
+			defer close(trustDone)
+			serveTrustChanges(trustCtx, trustListener, trustChanged, func(id string) bool {
+				role, admitted := admitted.Role(id)
+				return admitted && role == access.Worker
+			})
+		}()
+		defer func() {
+			stopTrust()
+			<-trustDone
+		}()
 		lis, _ := host.TLSListener() // fails only if asked for twice
 		// A coordinator answers for its own name and for those of the nodes
 		// it has admitted. With Kubo, what it is handed goes on to the
@@ -768,7 +783,12 @@ func runDaemon(ctx context.Context, args []string) error {
 		// do. Only the coordinator and the pool's members are let in.
 		// One that has a port open for the purpose relays as the coordinator
 		// does, and every worker keeps a place on each member that relays.
-		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, Discover: *discovery == "on", Log: log, PeerChanged: local.NodeInfoChanges.Notify, Allow: func(id string) bool {
+		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, Discover: *discovery == "on", Log: log, PeerChanged: func() {
+			local.NodeInfoChanges.Notify()
+			if watcher := mutual.Load(); watcher != nil {
+				watcher.nudge()
+			}
+		}, Allow: func(id string) bool {
 			if id == coordinatorID || slices.Contains(takes.List(), id) {
 				return true
 			}
@@ -811,46 +831,34 @@ func runDaemon(ctx context.Context, args []string) error {
 			local.WorkFor = takes
 			w.Limit, w.Pool = worker.NewSlots(*slots), coordinatorID
 			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, kubo: *useKubo, kuboSecret: kuboSecret, syncCache: *syncCache, maxCache: *maxCache}
-			mutual := newReciprocity(&reciprocity{
+			watcher := newReciprocity(&reciprocity{
 				// The node it already works for, being its coordinator, is
 				// not one to work for a second time.
 				trusted: func() []string {
 					return slices.DeleteFunc(takes.List(), func(id string) bool { return id == coordinatorID })
 				},
 				addresses: func(id string) []string { return whereToAsk(host.Peers(), id) },
-				ask:       func(ctx context.Context, id, addr string) bool { return trustsThisNode(ctx, ident, id, addr) },
+				watch:     func(ctx context.Context, id string) (net.Conn, error) { return dialTrust(ctx, host, id) },
 				work:      guests.work,
-				every:     reciprocityCheck, most: maxWorkedFor, log: log,
+				changed:   local.NodeInfoChanges.Notify,
+				most:      maxWorkedFor, log: log,
 			})
-			worksFor = mutual.workingFor
-			local.Join = joinFromDesktop(*dataDir, ident, host.Connect, db, takes, mutual.nudge)
-			// A change of trust at either end is acted on at once: this node
-			// looks again when its own changes, and tells the node concerned,
-			// which looks again when it hears.
-			var words sync.WaitGroup
-			takes.onChange(mutual.nudge)
-			trustChanged.listen(func(id string) {
-				mutual.nudge()
-				words.Add(1)
-				go func() {
-					defer words.Done()
-					sendWord(ctx, host, id)
-				}()
-			})
-			hearing := host.Listen(trustProtocol)
-			go hearWord(hearing, mutual.nudge)
+			mutual.Store(watcher)
+			worksFor = watcher.workingFor
+			local.Join = joinFromDesktop(*dataDir, ident, host.Connect, db, takes, watcher.nudge)
+			// Changes to local trust and to known peer connections immediately
+			// reconcile the watcher set; remote trust changes arrive on streams.
+			takes.onChange(watcher.nudge)
 			working := make(chan struct{})
 			defer func() {
 				cancel()
-				hearing.Close()
 				takes.onChange(nil)
-				trustChanged.listen(nil)
-				words.Wait()
 				<-working
+				mutual.Store(nil)
 			}()
 			go func() {
 				defer close(working)
-				mutual.run(ctx)
+				watcher.run(ctx)
 			}()
 		}
 		if *relayAt != "" {
@@ -1220,12 +1228,7 @@ func waitForDaemonStop(ctx context.Context, local *api.LocalConfig, webAccess *w
 // leaves it to the worker. Tests put a shorter time in its place.
 var workerHeartbeat time.Duration
 
-// reciprocityCheck is how often a node looks over the nodes it trusts and
-// asks those it does not yet work for whether they trust it, in case word
-// of a change did not reach it, and
-// maxWorkedFor how many it will work for at once.
-var reciprocityCheck = time.Minute
-
+// maxWorkedFor is how many trusted nodes this worker can work for at once.
 const maxWorkedFor = 16
 
 // routeTo says how this node's libp2p host is connected to another: directly,
