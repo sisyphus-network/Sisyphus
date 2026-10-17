@@ -470,6 +470,38 @@ func TestCountryLookupsThatGiveNothing(t *testing.T) {
 	}
 }
 
+func TestCountryLookupIdentifiesTheDaemonAndRejectsRateLimits(t *testing.T) {
+	t.Run("identifies the daemon", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got, want := r.UserAgent(), "Sisyphus/"+version; got != want {
+				t.Errorf("User-Agent = %q, want %q", got, want)
+			}
+			w.Write([]byte(`{"country_code":"il"}`))
+		}))
+		defer server.Close()
+		old := countryURL
+		countryURL = server.URL
+		defer func() { countryURL = old }()
+		if got := lookUpCountry(context.Background()); got != "IL" {
+			t.Errorf("country = %q, want IL", got)
+		}
+	})
+
+	t.Run("rejects a rate-limited reply", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"country_code":"il"}`))
+		}))
+		defer server.Close()
+		old := countryURL
+		countryURL = server.URL
+		defer func() { countryURL = old }()
+		if got := lookUpCountry(context.Background()); got != "" {
+			t.Errorf("country from a rate-limited reply = %q, want empty", got)
+		}
+	})
+}
+
 func TestWhereANodeStartsFrom(t *testing.T) {
 	book := []nodedb.BootstrapPeer{{PeerID: "a", Address: "/ip4/10.0.0.1/tcp/7700/p2p/a"}}
 	got := startingPoints(book, " /ip4/10.0.0.2/tcp/7700/p2p/b ,, /dns/rig.example.net/tcp/7700/p2p/c")

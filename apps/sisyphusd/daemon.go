@@ -1493,11 +1493,15 @@ func lookUpCountry(ctx context.Context) string {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, countryURL, nil) // the address is ours and well formed
+	req.Header.Set("User-Agent", "Sisyphus/"+version)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return ""
 	}
 	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return ""
+	}
 	var answer struct {
 		CountryCode string `json:"country_code"`
 	}
