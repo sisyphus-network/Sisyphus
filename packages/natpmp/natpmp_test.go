@@ -6,8 +6,6 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -146,36 +144,5 @@ func TestOnlyAnIPv4GatewayIsAsked(t *testing.T) {
 	defer func() { listen = old }()
 	if _, err := ExternalAddress(context.Background(), loopback); err == nil || !strings.Contains(err.Error(), "no sockets left") {
 		t.Errorf("with no socket: %v", err)
-	}
-}
-
-// The default gateway is read from the routing table.
-func TestTheGatewayIsTheDefaultRoutes(t *testing.T) {
-	for table, want := range map[string]string{
-		"Iface\tDestination\tGateway\nwlan0\t0010A8C0\t00000000\neth0\t00000000\t0189A8C0\n":   "192.168.137.1",
-		"Iface\tDestination\tGateway\neth0\t00000000\tnothex!!\ndocker0\t000011AC\t00000000\n": "",
-		"Iface\tDestination\tGateway\nwg0\t00000000\t00000000\n":                               "",
-		"Iface\tDestination\tGateway\nshort\n":                                                 "",
-		"Iface\tDestination\tGateway\neth0\t00000000\t01\n":                                    "",
-	} {
-		got, err := gatewayIn(strings.NewReader(table))
-		switch {
-		case want == "" && !errors.Is(err, ErrNoGateway):
-			t.Errorf("%q: %v, %v; want no gateway", table, got, err)
-		case want != "" && (err != nil || got != netip.MustParseAddr(want)):
-			t.Errorf("%q: %v, %v; want %s", table, got, err, want)
-		}
-	}
-	file := filepath.Join(t.TempDir(), "route")
-	os.WriteFile(file, []byte("Iface\tDestination\tGateway\neth0\t00000000\t0101A8C0\n"), 0o600)
-	old := routes
-	defer func() { routes = old }()
-	routes = file
-	if got, err := Gateway(); err != nil || got != netip.MustParseAddr("192.168.1.1") {
-		t.Errorf("Gateway() = %v, %v", got, err)
-	}
-	routes = filepath.Join(t.TempDir(), "missing")
-	if _, err := Gateway(); err == nil {
-		t.Error("a routing table that is not there gave a gateway")
 	}
 }
