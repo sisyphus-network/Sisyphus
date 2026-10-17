@@ -1724,6 +1724,9 @@ func uploads(a assignment) string {
 type attemptUploads struct {
 	used   uint64
 	client string
+	// copies is how many copies of the attempt's task are run to be
+	// verified, each of which counts towards the client's share, or zero.
+	copies int
 }
 
 // ChargeUpload counts n more bytes uploaded for the attempt Uploading named
@@ -1754,7 +1757,11 @@ func (c *Coordinator) ChargeUpload(owner string, n uint64) error {
 	if up.client != "" {
 		kept, flying := c.store.GroupUsage(up.client, time.Now()), c.inFlight[up.client]
 		if kept+flying+n > c.storePerClient {
-			return status.Errorf(codes.ResourceExhausted, "the client this job is for keeps %d bytes here and has %d more on their way, and may keep %d", kept, flying, c.storePerClient)
+			why := fmt.Sprintf("the client this job is for keeps %d bytes here and has %d more on their way, and may keep %d", kept, flying, c.storePerClient)
+			if up.copies >= 2 {
+				why += fmt.Sprintf("; each of this task's %d verified copies counts towards it", up.copies)
+			}
+			return status.Error(codes.ResourceExhausted, why)
 		}
 		c.inFlight[up.client] = flying + n
 	}
@@ -1916,7 +1923,7 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 	c.uploadMu.Lock()
 	up := attemptUploads{}
 	if c.shareOf(a.job) > 0 {
-		up.client = a.job.Submitter
+		up.client, up.copies = a.job.Submitter, a.task.Verify
 	}
 	c.uploaded[uploads(a)] = up
 	c.uploadMu.Unlock()
