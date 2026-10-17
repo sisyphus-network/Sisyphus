@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WindowStreams } from './window-streams'
 import { createIpcLogEntry } from './ipc-logger'
 import { DesktopDaemon } from './daemon-process'
-import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, saveLocationDiscoverySettings, supportsGatewayDiscovery } from './location-discovery-settings'
+import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, normalizeLocationDiscoverySettings, supportsGatewayDiscovery } from './location-discovery-settings'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
 import { firstUploadMessage } from './file-upload'
@@ -22,9 +22,6 @@ const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
 const autoStartManagedDaemon = process.env.SISYPHUS_AUTO_START_DAEMON !== '0' && !process.env.SISYPHUS_API_ADDRESS && !process.env.SISYPHUS_API_TOKEN_FILE
 const locationDiscoveryPath = join(app.getPath('userData'), 'location-discovery.json')
 const initialLocationDiscoverySettings = loadLocationDiscoverySettings(locationDiscoveryPath)
-const gatewayDiscoverySupported = supportsGatewayDiscovery(process.platform)
-const runningLocationDiscoverySettings = effectiveLocationDiscoverySettings(initialLocationDiscoverySettings, gatewayDiscoverySupported)
-let savedLocationDiscoverySettings = initialLocationDiscoverySettings
 // The daemon lets anything on this machine read from its local API, but only
 // a holder of its token change it. The token is in the daemon's data
 // directory, readable by the user who runs the daemon.
@@ -38,7 +35,7 @@ const desktopDaemon = new DesktopDaemon({
   dataDir: daemonDataDir(),
   // A custom endpoint/token belongs to its operator, not this desktop process.
   enabled: autoStartManagedDaemon,
-  locationDiscovery: runningLocationDiscoverySettings,
+  locationDiscovery: effectiveLocationDiscoverySettings(initialLocationDiscoverySettings, supportsGatewayDiscovery(process.platform)),
   onError: (message) => { daemonStartupError = message },
 })
 
@@ -75,6 +72,29 @@ function authorization(): grpc.Metadata {
     // No token: the daemon will refuse the call and say why.
   }
   return metadata
+}
+
+function validateLocationDiscoverySettings(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid location discovery settings.')
+  const candidate = value as Record<string, unknown>
+  if (typeof candidate.locateGateway !== 'boolean' || typeof candidate.locateCountry !== 'boolean' || typeof candidate.stunServer !== 'string') {
+    throw new Error('Invalid location discovery settings.')
+  }
+  return normalizeLocationDiscoverySettings(candidate)
+}
+
+function locationDiscoveryState(value: Record<string, unknown>) {
+  const saved = normalizeLocationDiscoverySettings(value.saved)
+  const running = normalizeLocationDiscoverySettings(value.running)
+  return {
+    managed: desktopDaemon.managesDaemon,
+    configurable: true,
+    configured: value.configured === true,
+    restartNeeded: value.restartNeeded === true,
+    gatewaySupported: value.gatewaySupported === true,
+    saved,
+    running,
+  }
 }
 
 type BrowserPairingInvitation = { code: string; expiresAt: string; pairUrl: string }
@@ -198,7 +218,7 @@ function handleNode(channel: string, handler: (event: IpcMainInvokeEvent, ...arg
 }
 const unaryRpcMethods = new Set([
   'getNodeInfo', 'listPeers', 'getBootstrapPeers', 'setBootstrapPeers', 'listWorkers', 'submitJob', 'getJob', 'listJobs', 'cancelJob',
-  'getModelConfig', 'setModelConfig', 'listModelProfiles', 'saveModelProfile', 'deleteModelProfile', 'listProviders', 'listModels', 'removeModel', 'getWebAccessConfig', 'setWebAccessConfig', 'listNetworkInterfaces', 'getModelLending', 'setModelLending', 'inspectOllama', 'listChats', 'getChat', 'deleteChat',
+  'getModelConfig', 'setModelConfig', 'listModelProfiles', 'saveModelProfile', 'deleteModelProfile', 'listProviders', 'listModels', 'removeModel', 'getWebAccessConfig', 'setWebAccessConfig', 'listNetworkInterfaces', 'getModelLending', 'setModelLending', 'inspectOllama', 'getLocationDiscoverySettings', 'setLocationDiscoverySettings', 'listChats', 'getChat', 'deleteChat',
   'listFiles', 'removeFile', 'createInvitation', 'listMembers', 'removeMember', 'joinPool',
 ])
 const streamingRpcMethods = new Set(['watchJobs', 'watchJobEvents', 'ask', 'pullModel'])
@@ -363,21 +383,22 @@ app.whenReady().then(() => {
     window?.focus()
   })
   handleNode('node:get-snapshot', () => snapshot)
-  handleNode('node:get-location-discovery-settings', () => ({
-    managed: desktopDaemon.managesDaemon,
-    gatewaySupported: gatewayDiscoverySupported,
-    saved: savedLocationDiscoverySettings,
-    running: runningLocationDiscoverySettings,
-  }))
-  handleNode('node:save-location-discovery-settings', (_event, value: unknown) => {
-    if (!desktopDaemon.managesDaemon) throw new Error('Location discovery settings are controlled by the daemon operator.')
-    savedLocationDiscoverySettings = saveLocationDiscoverySettings(locationDiscoveryPath, value)
-    return {
-      managed: desktopDaemon.managesDaemon,
-      gatewaySupported: gatewayDiscoverySupported,
-      saved: savedLocationDiscoverySettings,
-      running: runningLocationDiscoverySettings,
+  handleNode('node:get-location-discovery-settings', async () => {
+    try {
+      const result = await callUnary('getLocationDiscoverySettings', {}) as Record<string, unknown>
+      return locationDiscoveryState(result)
+    } catch (error) {
+      if (error instanceof Error && /does not implement getLocationDiscoverySettings|UNIMPLEMENTED/.test(error.message)) {
+        return { managed: desktopDaemon.managesDaemon, configurable: false, configured: false, restartNeeded: false, gatewaySupported: null,
+          saved: initialLocationDiscoverySettings, running: effectiveLocationDiscoverySettings(initialLocationDiscoverySettings, supportsGatewayDiscovery(process.platform)) }
+      }
+      throw error
     }
+  })
+  handleNode('node:save-location-discovery-settings', async (_event, value: unknown) => {
+    const settings = validateLocationDiscoverySettings(value)
+    const result = await callUnary('setLocationDiscoverySettings', { settings }) as Record<string, unknown>
+    return locationDiscoveryState(result)
   })
   handleNode('node:reconnect', () => {
     if (retryTimer) clearTimeout(retryTimer)

@@ -19,48 +19,50 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	NodeService_GetNodeInfo_FullMethodName               = "/sisyphus.node.v1.NodeService/GetNodeInfo"
-	NodeService_GetWebAccessConfig_FullMethodName        = "/sisyphus.node.v1.NodeService/GetWebAccessConfig"
-	NodeService_SetWebAccessConfig_FullMethodName        = "/sisyphus.node.v1.NodeService/SetWebAccessConfig"
-	NodeService_ListNetworkInterfaces_FullMethodName     = "/sisyphus.node.v1.NodeService/ListNetworkInterfaces"
-	NodeService_ListPeers_FullMethodName                 = "/sisyphus.node.v1.NodeService/ListPeers"
-	NodeService_WatchPeers_FullMethodName                = "/sisyphus.node.v1.NodeService/WatchPeers"
-	NodeService_GetBootstrapPeers_FullMethodName         = "/sisyphus.node.v1.NodeService/GetBootstrapPeers"
-	NodeService_SetBootstrapPeers_FullMethodName         = "/sisyphus.node.v1.NodeService/SetBootstrapPeers"
-	NodeService_ConnectPeer_FullMethodName               = "/sisyphus.node.v1.NodeService/ConnectPeer"
-	NodeService_SetPeerComputeTrust_FullMethodName       = "/sisyphus.node.v1.NodeService/SetPeerComputeTrust"
-	NodeService_SetPeerComputePermissions_FullMethodName = "/sisyphus.node.v1.NodeService/SetPeerComputePermissions"
-	NodeService_ListWorkers_FullMethodName               = "/sisyphus.node.v1.NodeService/ListWorkers"
-	NodeService_SubmitJob_FullMethodName                 = "/sisyphus.node.v1.NodeService/SubmitJob"
-	NodeService_GetJob_FullMethodName                    = "/sisyphus.node.v1.NodeService/GetJob"
-	NodeService_ListJobs_FullMethodName                  = "/sisyphus.node.v1.NodeService/ListJobs"
-	NodeService_WatchJobs_FullMethodName                 = "/sisyphus.node.v1.NodeService/WatchJobs"
-	NodeService_CancelJob_FullMethodName                 = "/sisyphus.node.v1.NodeService/CancelJob"
-	NodeService_WatchJobEvents_FullMethodName            = "/sisyphus.node.v1.NodeService/WatchJobEvents"
-	NodeService_GetModelConfig_FullMethodName            = "/sisyphus.node.v1.NodeService/GetModelConfig"
-	NodeService_SetModelConfig_FullMethodName            = "/sisyphus.node.v1.NodeService/SetModelConfig"
-	NodeService_ListModelProfiles_FullMethodName         = "/sisyphus.node.v1.NodeService/ListModelProfiles"
-	NodeService_SaveModelProfile_FullMethodName          = "/sisyphus.node.v1.NodeService/SaveModelProfile"
-	NodeService_DeleteModelProfile_FullMethodName        = "/sisyphus.node.v1.NodeService/DeleteModelProfile"
-	NodeService_GetModelLending_FullMethodName           = "/sisyphus.node.v1.NodeService/GetModelLending"
-	NodeService_SetModelLending_FullMethodName           = "/sisyphus.node.v1.NodeService/SetModelLending"
-	NodeService_InspectOllama_FullMethodName             = "/sisyphus.node.v1.NodeService/InspectOllama"
-	NodeService_ListProviders_FullMethodName             = "/sisyphus.node.v1.NodeService/ListProviders"
-	NodeService_ListModels_FullMethodName                = "/sisyphus.node.v1.NodeService/ListModels"
-	NodeService_PullModel_FullMethodName                 = "/sisyphus.node.v1.NodeService/PullModel"
-	NodeService_RemoveModel_FullMethodName               = "/sisyphus.node.v1.NodeService/RemoveModel"
-	NodeService_Ask_FullMethodName                       = "/sisyphus.node.v1.NodeService/Ask"
-	NodeService_ListChats_FullMethodName                 = "/sisyphus.node.v1.NodeService/ListChats"
-	NodeService_GetChat_FullMethodName                   = "/sisyphus.node.v1.NodeService/GetChat"
-	NodeService_DeleteChat_FullMethodName                = "/sisyphus.node.v1.NodeService/DeleteChat"
-	NodeService_StoreFile_FullMethodName                 = "/sisyphus.node.v1.NodeService/StoreFile"
-	NodeService_FetchFile_FullMethodName                 = "/sisyphus.node.v1.NodeService/FetchFile"
-	NodeService_ListFiles_FullMethodName                 = "/sisyphus.node.v1.NodeService/ListFiles"
-	NodeService_RemoveFile_FullMethodName                = "/sisyphus.node.v1.NodeService/RemoveFile"
-	NodeService_CreateInvitation_FullMethodName          = "/sisyphus.node.v1.NodeService/CreateInvitation"
-	NodeService_ListMembers_FullMethodName               = "/sisyphus.node.v1.NodeService/ListMembers"
-	NodeService_RemoveMember_FullMethodName              = "/sisyphus.node.v1.NodeService/RemoveMember"
-	NodeService_JoinPool_FullMethodName                  = "/sisyphus.node.v1.NodeService/JoinPool"
+	NodeService_GetNodeInfo_FullMethodName                  = "/sisyphus.node.v1.NodeService/GetNodeInfo"
+	NodeService_GetLocationDiscoverySettings_FullMethodName = "/sisyphus.node.v1.NodeService/GetLocationDiscoverySettings"
+	NodeService_SetLocationDiscoverySettings_FullMethodName = "/sisyphus.node.v1.NodeService/SetLocationDiscoverySettings"
+	NodeService_GetWebAccessConfig_FullMethodName           = "/sisyphus.node.v1.NodeService/GetWebAccessConfig"
+	NodeService_SetWebAccessConfig_FullMethodName           = "/sisyphus.node.v1.NodeService/SetWebAccessConfig"
+	NodeService_ListNetworkInterfaces_FullMethodName        = "/sisyphus.node.v1.NodeService/ListNetworkInterfaces"
+	NodeService_ListPeers_FullMethodName                    = "/sisyphus.node.v1.NodeService/ListPeers"
+	NodeService_WatchPeers_FullMethodName                   = "/sisyphus.node.v1.NodeService/WatchPeers"
+	NodeService_GetBootstrapPeers_FullMethodName            = "/sisyphus.node.v1.NodeService/GetBootstrapPeers"
+	NodeService_SetBootstrapPeers_FullMethodName            = "/sisyphus.node.v1.NodeService/SetBootstrapPeers"
+	NodeService_ConnectPeer_FullMethodName                  = "/sisyphus.node.v1.NodeService/ConnectPeer"
+	NodeService_SetPeerComputeTrust_FullMethodName          = "/sisyphus.node.v1.NodeService/SetPeerComputeTrust"
+	NodeService_SetPeerComputePermissions_FullMethodName    = "/sisyphus.node.v1.NodeService/SetPeerComputePermissions"
+	NodeService_ListWorkers_FullMethodName                  = "/sisyphus.node.v1.NodeService/ListWorkers"
+	NodeService_SubmitJob_FullMethodName                    = "/sisyphus.node.v1.NodeService/SubmitJob"
+	NodeService_GetJob_FullMethodName                       = "/sisyphus.node.v1.NodeService/GetJob"
+	NodeService_ListJobs_FullMethodName                     = "/sisyphus.node.v1.NodeService/ListJobs"
+	NodeService_WatchJobs_FullMethodName                    = "/sisyphus.node.v1.NodeService/WatchJobs"
+	NodeService_CancelJob_FullMethodName                    = "/sisyphus.node.v1.NodeService/CancelJob"
+	NodeService_WatchJobEvents_FullMethodName               = "/sisyphus.node.v1.NodeService/WatchJobEvents"
+	NodeService_GetModelConfig_FullMethodName               = "/sisyphus.node.v1.NodeService/GetModelConfig"
+	NodeService_SetModelConfig_FullMethodName               = "/sisyphus.node.v1.NodeService/SetModelConfig"
+	NodeService_ListModelProfiles_FullMethodName            = "/sisyphus.node.v1.NodeService/ListModelProfiles"
+	NodeService_SaveModelProfile_FullMethodName             = "/sisyphus.node.v1.NodeService/SaveModelProfile"
+	NodeService_DeleteModelProfile_FullMethodName           = "/sisyphus.node.v1.NodeService/DeleteModelProfile"
+	NodeService_GetModelLending_FullMethodName              = "/sisyphus.node.v1.NodeService/GetModelLending"
+	NodeService_SetModelLending_FullMethodName              = "/sisyphus.node.v1.NodeService/SetModelLending"
+	NodeService_InspectOllama_FullMethodName                = "/sisyphus.node.v1.NodeService/InspectOllama"
+	NodeService_ListProviders_FullMethodName                = "/sisyphus.node.v1.NodeService/ListProviders"
+	NodeService_ListModels_FullMethodName                   = "/sisyphus.node.v1.NodeService/ListModels"
+	NodeService_PullModel_FullMethodName                    = "/sisyphus.node.v1.NodeService/PullModel"
+	NodeService_RemoveModel_FullMethodName                  = "/sisyphus.node.v1.NodeService/RemoveModel"
+	NodeService_Ask_FullMethodName                          = "/sisyphus.node.v1.NodeService/Ask"
+	NodeService_ListChats_FullMethodName                    = "/sisyphus.node.v1.NodeService/ListChats"
+	NodeService_GetChat_FullMethodName                      = "/sisyphus.node.v1.NodeService/GetChat"
+	NodeService_DeleteChat_FullMethodName                   = "/sisyphus.node.v1.NodeService/DeleteChat"
+	NodeService_StoreFile_FullMethodName                    = "/sisyphus.node.v1.NodeService/StoreFile"
+	NodeService_FetchFile_FullMethodName                    = "/sisyphus.node.v1.NodeService/FetchFile"
+	NodeService_ListFiles_FullMethodName                    = "/sisyphus.node.v1.NodeService/ListFiles"
+	NodeService_RemoveFile_FullMethodName                   = "/sisyphus.node.v1.NodeService/RemoveFile"
+	NodeService_CreateInvitation_FullMethodName             = "/sisyphus.node.v1.NodeService/CreateInvitation"
+	NodeService_ListMembers_FullMethodName                  = "/sisyphus.node.v1.NodeService/ListMembers"
+	NodeService_RemoveMember_FullMethodName                 = "/sisyphus.node.v1.NodeService/RemoveMember"
+	NodeService_JoinPool_FullMethodName                     = "/sisyphus.node.v1.NodeService/JoinPool"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -68,6 +70,10 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeServiceClient interface {
 	GetNodeInfo(ctx context.Context, in *GetNodeInfoRequest, opts ...grpc.CallOption) (*GetNodeInfoResponse, error)
+	// Location discovery is opt-in. Changes are saved by the node and take
+	// effect after it restarts, whether the desktop starts it or not.
+	GetLocationDiscoverySettings(ctx context.Context, in *GetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error)
+	SetLocationDiscoverySettings(ctx context.Context, in *SetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error)
 	// Browser access is disabled until explicitly enabled by the node owner.
 	GetWebAccessConfig(ctx context.Context, in *GetWebAccessConfigRequest, opts ...grpc.CallOption) (*WebAccessConfig, error)
 	SetWebAccessConfig(ctx context.Context, in *SetWebAccessConfigRequest, opts ...grpc.CallOption) (*WebAccessConfig, error)
@@ -175,6 +181,26 @@ func (c *nodeServiceClient) GetNodeInfo(ctx context.Context, in *GetNodeInfoRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetNodeInfoResponse)
 	err := c.cc.Invoke(ctx, NodeService_GetNodeInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetLocationDiscoverySettings(ctx context.Context, in *GetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LocationDiscoverySettingsState)
+	err := c.cc.Invoke(ctx, NodeService_GetLocationDiscoverySettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) SetLocationDiscoverySettings(ctx context.Context, in *SetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LocationDiscoverySettingsState)
+	err := c.cc.Invoke(ctx, NodeService_SetLocationDiscoverySettings_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -653,6 +679,10 @@ func (c *nodeServiceClient) JoinPool(ctx context.Context, in *JoinPoolRequest, o
 // for forward compatibility.
 type NodeServiceServer interface {
 	GetNodeInfo(context.Context, *GetNodeInfoRequest) (*GetNodeInfoResponse, error)
+	// Location discovery is opt-in. Changes are saved by the node and take
+	// effect after it restarts, whether the desktop starts it or not.
+	GetLocationDiscoverySettings(context.Context, *GetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error)
+	SetLocationDiscoverySettings(context.Context, *SetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error)
 	// Browser access is disabled until explicitly enabled by the node owner.
 	GetWebAccessConfig(context.Context, *GetWebAccessConfigRequest) (*WebAccessConfig, error)
 	SetWebAccessConfig(context.Context, *SetWebAccessConfigRequest) (*WebAccessConfig, error)
@@ -758,6 +788,12 @@ type UnimplementedNodeServiceServer struct{}
 
 func (UnimplementedNodeServiceServer) GetNodeInfo(context.Context, *GetNodeInfoRequest) (*GetNodeInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNodeInfo not implemented")
+}
+func (UnimplementedNodeServiceServer) GetLocationDiscoverySettings(context.Context, *GetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetLocationDiscoverySettings not implemented")
+}
+func (UnimplementedNodeServiceServer) SetLocationDiscoverySettings(context.Context, *SetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetLocationDiscoverySettings not implemented")
 }
 func (UnimplementedNodeServiceServer) GetWebAccessConfig(context.Context, *GetWebAccessConfigRequest) (*WebAccessConfig, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetWebAccessConfig not implemented")
@@ -917,6 +953,42 @@ func _NodeService_GetNodeInfo_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeServiceServer).GetNodeInfo(ctx, req.(*GetNodeInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetLocationDiscoverySettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetLocationDiscoverySettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetLocationDiscoverySettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetLocationDiscoverySettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetLocationDiscoverySettings(ctx, req.(*GetLocationDiscoverySettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_SetLocationDiscoverySettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetLocationDiscoverySettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).SetLocationDiscoverySettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_SetLocationDiscoverySettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).SetLocationDiscoverySettings(ctx, req.(*SetLocationDiscoverySettingsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1616,6 +1688,14 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetNodeInfo",
 			Handler:    _NodeService_GetNodeInfo_Handler,
+		},
+		{
+			MethodName: "GetLocationDiscoverySettings",
+			Handler:    _NodeService_GetLocationDiscoverySettings_Handler,
+		},
+		{
+			MethodName: "SetLocationDiscoverySettings",
+			Handler:    _NodeService_SetLocationDiscoverySettings_Handler,
 		},
 		{
 			MethodName: "GetWebAccessConfig",

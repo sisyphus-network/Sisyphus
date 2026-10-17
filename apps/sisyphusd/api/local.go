@@ -96,6 +96,12 @@ type LocalConfig struct {
 	BrowserAccess BrowserAccessStore
 	// WebAccess controls the separate, opt-in HTTPS listener for browser clients.
 	WebAccess WebAccessController
+	// LocationDiscovery stores optional location sources. The saved settings
+	// take effect when the daemon restarts; running values are the settings it
+	// started with.
+	LocationDiscovery         LocationDiscoveryStore
+	LocationDiscoveryRunning  nodedb.LocationDiscovery
+	GatewayDiscoverySupported bool
 	// AllowLAN accepts requests addressed to one of this host's private IPs.
 	// The listener must separately be enabled on a private interface.
 	AllowLAN bool

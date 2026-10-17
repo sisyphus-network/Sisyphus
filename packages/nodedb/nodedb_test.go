@@ -320,6 +320,7 @@ func TestMigrationHistoryFollowsNamesWhenNumbersHaveShifted(t *testing.T) {
 		"0023_model_lending.sql",
 		"0024_web_access.sql",
 		"0025_web_access_interfaces.sql",
+		"0028_location_discovery.sql",
 	}
 	if err := (&DB{sql: handle}).alignMigrationHistory(names); err != nil {
 		t.Fatal(err)
@@ -655,6 +656,7 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 		`DROP TABLE browser_pairings`,
 		`DROP TABLE browser_devices`,
 		`DROP TABLE web_access_config`,
+		`DROP TABLE location_discovery`,
 		`ALTER TABLE tasks DROP COLUMN verify`,
 		`ALTER TABLE jobs DROP COLUMN verify_share`,
 		`DROP TABLE file_references`,

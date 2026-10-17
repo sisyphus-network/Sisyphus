@@ -64,20 +64,30 @@ test('the window shows the node it is connected to', async () => {
   }
 })
 
-test('location discovery controls stay read-only for an independently managed daemon', async () => {
+test('location discovery controls configure an independently managed daemon and persist across restart', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
     await openSettingsCategory(page, 'This node')
     await page.getByRole('heading', { name: 'Location discovery' }).waitFor()
-    await page.getByText(/This node is connected to a daemon managed outside this app\./).waitFor()
-    for (const label of ['Ask my gateway', 'Use ipapi.co as a last resort']) {
-      const toggle = page.getByRole('switch', { name: label })
-      await toggle.waitFor()
-      assert.equal(await toggle.isDisabled(), true, `${label} must not change an independently managed daemon`)
-    }
-    assert.equal(await page.getByRole('textbox', { name: 'Ask a STUN server' }).isDisabled(), true)
-    assert.equal(await page.getByRole('button', { name: 'Save discovery settings' }).count(), 0)
+    const gateway = page.getByRole('switch', { name: 'Ask my gateway' })
+    const country = page.getByRole('switch', { name: 'Use ipapi.co as a last resort' })
+    await gateway.waitFor()
+    assert.equal(await gateway.isDisabled(), false)
+    assert.equal(await country.isDisabled(), false)
+    const stun = page.getByRole('textbox', { name: 'Ask a STUN server' })
+    assert.equal(await stun.isDisabled(), false)
+    await country.click()
+    await stun.fill('stun.example.org:3478')
+    const save = page.getByRole('button', { name: 'Save discovery settings' })
+    assert.equal(await save.isEnabled(), true)
+    await save.click()
+    await page.getByText('Discovery settings saved', { exact: true }).waitFor()
+    await page.getByText('Saved. Restart the daemon to apply these changes.', { exact: true }).waitFor()
+    await node.stop()
+    await node.start()
+    await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Use ipapi.co as a last resort"]')?.getAttribute('aria-checked') === 'true')
+    assert.equal(await stun.inputValue(), 'stun.example.org:3478')
   } finally {
     await app.close()
     profile.remove()

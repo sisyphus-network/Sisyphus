@@ -21,6 +21,29 @@ function normalizeProtocolValue(value: unknown): unknown {
   return value
 }
 
+function locationDiscoveryState(value: {
+  configured: boolean
+  gatewaySupported: boolean
+  restartNeeded: boolean
+  saved?: LocationDiscoverySettings
+  running?: LocationDiscoverySettings
+}): LocationDiscoveryState {
+  const disabled: LocationDiscoverySettings = { locateGateway: false, locateCountry: false, stunServer: '' }
+  return {
+    managed: false,
+    configurable: true,
+    configured: value.configured,
+    restartNeeded: value.restartNeeded,
+    gatewaySupported: value.gatewaySupported,
+    saved: value.saved ?? disabled,
+    running: value.running ?? disabled,
+  }
+}
+
+function supportsLocationDiscoverySettings(error: unknown): boolean {
+  return !(error instanceof Error && /UNIMPLEMENTED|does not implement/i.test(error.message))
+}
+
 function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge {
   const devPreview = import.meta.env.DEV
   let devSessionVerified = false
@@ -61,8 +84,17 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
 
   return {
     getSnapshot,
-    getLocationDiscoverySettings: async (): Promise<LocationDiscoveryState> => ({ managed: false, gatewaySupported: null, saved: { locateGateway: false, locateCountry: false, stunServer: '' }, running: { locateGateway: false, locateCountry: false, stunServer: '' } }),
-    saveLocationDiscoverySettings: async (_settings: LocationDiscoverySettings): Promise<LocationDiscoveryState> => { throw new Error('Location discovery settings are available in the desktop app only.') },
+    getLocationDiscoverySettings: async (): Promise<LocationDiscoveryState> => {
+      try {
+        return locationDiscoveryState(await node.getLocationDiscoverySettings({}))
+      } catch (error) {
+        if (supportsLocationDiscoverySettings(error)) throw error
+        const disabled: LocationDiscoverySettings = { locateGateway: false, locateCountry: false, stunServer: '' }
+        return { managed: false, configurable: false, configured: false, restartNeeded: false, gatewaySupported: null, saved: disabled, running: disabled }
+      }
+    },
+    saveLocationDiscoverySettings: async (settings: LocationDiscoverySettings): Promise<LocationDiscoveryState> =>
+      locationDiscoveryState(await node.setLocationDiscoverySettings({ settings })),
     reconnect: getSnapshot,
     connectPeer: async (address) => (await node.connectPeer({ address })).peerId,
     setPeerComputeTrust: async (peerId, trusted) => { await node.setPeerComputeTrust({ peerId, trusted }) },

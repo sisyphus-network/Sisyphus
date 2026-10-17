@@ -105,9 +105,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	relayAt := fs.String("relay", "", "worker-only node: listen on this address, as host:port, for the other members' libp2p hosts and relay between them; the port must be open to them. A coordinator relays already")
 	discovery := fs.String("discovery", "on", "whether to look for other nodes, on this network and through the nodes already known, and let them find this one: on or off")
 	bootstrap := fs.String("bootstrap", "", "addresses of nodes to connect to at startup, besides those in the address book: comma-separated, each ending in /p2p/<node ID>")
-	stunServer := fs.String("stun-server", "", "if the node cannot tell which country it is in from its own addresses, its pool's view of it or its gateway, ask this STUN server, host or host:port (port 3478 if none is given), which address its traffic comes from. The server learns that address, so none is asked unless named here. Only a Binding request is sent; no port is opened")
-	byGateway := fs.Bool("locate-gateway", false, "if the node cannot tell which country it is in from its own addresses or its pool's view of it, ask its default gateway for its external address by NAT-PMP. Only that read-only request is sent, and only to the gateway; no port is opened. The system's default route is used on Linux, macOS, the BSDs and Windows")
-	locate := fs.Bool("locate-country", false, "if the node cannot tell which country it is in from its own addresses, its pool's view of it, its gateway or a STUN server, ask ipapi.co, which thereby learns its address; it is asked only when the node is asked where it is and nothing else has placed it, and only once. Without this nothing is asked of anyone")
+	stunServer := fs.String("stun-server", "", "if the node cannot tell which country it is in from its own addresses, its pool's view of it or its gateway, ask this STUN server, host or host:port (port 3478 if none is given), which address its traffic comes from. The server learns that address, so none is asked unless named here. Only a Binding request is sent; no port is opened. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
+	byGateway := fs.Bool("locate-gateway", false, "if the node cannot tell which country it is in from its own addresses or its pool's view of it, ask its default gateway for its external address by NAT-PMP. Only that read-only request is sent, and only to the gateway; no port is opened. The system's default route is used on Linux, macOS, the BSDs and Windows. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
+	locate := fs.Bool("locate-country", false, "if the node cannot tell which country it is in from its own addresses, its pool's view of it, its gateway or a STUN server, ask ipapi.co, which thereby learns its address; it is asked only when the node is asked where it is and nothing else has placed it, and only once. Without this nothing is asked of anyone. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
 	keepJobs := fs.Duration("keep-jobs", 30*24*time.Hour, "coordinator role: how long a finished job can still be asked after; 0 keeps them for good. A client's job is kept at least as long as --retain, since its record says whose its data is")
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
@@ -134,6 +134,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
+	locationDiscoveryOverrides := locationDiscoveryFlagOverridesFrom(fs, byGateway, locate, stunServer)
 
 	var isCoordinator, isWorker bool
 	for _, role := range strings.Split(*roles, ",") {
@@ -426,6 +427,18 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 	defer db.Close()
+	gatewayDiscoverySupported := supportsGatewayDiscovery(goruntime.GOOS)
+	locationDiscoveryRunning, err := startupLocationDiscovery(db, nodedb.LocationDiscovery{
+		LocateGateway: *byGateway,
+		LocateCountry: *locate,
+		StunServer:    *stunServer,
+	}, gatewayDiscoverySupported, locationDiscoveryOverrides)
+	if err != nil {
+		return err
+	}
+	local.LocationDiscovery = db
+	local.LocationDiscoveryRunning = locationDiscoveryRunning
+	local.GatewayDiscoverySupported = gatewayDiscoverySupported
 	local.BrowserAccess = db
 	var allowedWebOrigins []string
 	for _, origin := range strings.Split(*webOrigins, ",") {
@@ -894,14 +907,14 @@ func runDaemon(ctx context.Context, args []string) error {
 	// table it carries. Only if told to does it ask anyone.
 	var asked, gateway, stunned atomic.Value
 	var gatewayAnswered, stunAnswered atomic.Bool
-	gatewayAnswered.Store(!*byGateway)
-	if *byGateway {
+	gatewayAnswered.Store(!locationDiscoveryRunning.LocateGateway)
+	if locationDiscoveryRunning.LocateGateway {
 		searches.start(func() {
 			gateway.Store(gatewaysAddress(looking, log))
 			gatewayAnswered.Store(true)
 		})
 	}
-	stunAnswered.Store(*stunServer == "")
+	stunAnswered.Store(locationDiscoveryRunning.StunServer == "")
 	// A STUN server, and the lookup service after it, learn the node's
 	// address, so each is asked only once the node is asked where it is
 	// and nothing nearer has placed it: not its own addresses, nor its
@@ -916,15 +929,15 @@ func runDaemon(ctx context.Context, args []string) error {
 		if source != "" || !gatewayAnswered.Load() {
 			return country, source
 		}
-		if *stunServer != "" {
+		if locationDiscoveryRunning.StunServer != "" {
 			askingSTUN.Do(func() {
 				searches.start(func() {
-					stunned.Store(stunnedAddress(looking, *stunServer, log))
+					stunned.Store(stunnedAddress(looking, locationDiscoveryRunning.StunServer, log))
 					stunAnswered.Store(true)
 				})
 			})
 		}
-		if *locate && stunAnswered.Load() {
+		if locationDiscoveryRunning.LocateCountry && stunAnswered.Load() {
 			lookingUp.Do(func() {
 				searches.start(func() { asked.Store(lookUpCountry(looking)) })
 			})
@@ -1029,6 +1042,64 @@ func runDaemon(ctx context.Context, args []string) error {
 		go pages.Serve(lis)
 	}
 	return waitForDaemonStop(ctx, &local, webAccess, stopped, log)
+}
+
+type locationDiscoverySettingsStore interface {
+	LocationDiscovery() (nodedb.LocationDiscovery, bool, error)
+}
+
+type locationDiscoveryFlagOverrides struct {
+	LocateGateway *bool
+	LocateCountry *bool
+	StunServer    *string
+}
+
+func locationDiscoveryFlagOverridesFrom(fs *flag.FlagSet, locateGateway, locateCountry *bool, stunServer *string) locationDiscoveryFlagOverrides {
+	var overrides locationDiscoveryFlagOverrides
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "locate-gateway":
+			overrides.LocateGateway = locateGateway
+		case "locate-country":
+			overrides.LocateCountry = locateCountry
+		case "stun-server":
+			overrides.StunServer = stunServer
+		}
+	})
+	return overrides
+}
+
+func startupLocationDiscovery(store locationDiscoverySettingsStore, defaults nodedb.LocationDiscovery, gatewayDiscoverySupported bool, overrides locationDiscoveryFlagOverrides) (nodedb.LocationDiscovery, error) {
+	running := defaults
+	saved, configured, err := store.LocationDiscovery()
+	if err != nil {
+		return nodedb.LocationDiscovery{}, err
+	}
+	if configured {
+		running = saved
+	}
+	if overrides.LocateGateway != nil {
+		running.LocateGateway = *overrides.LocateGateway
+	}
+	if overrides.LocateCountry != nil {
+		running.LocateCountry = *overrides.LocateCountry
+	}
+	if overrides.StunServer != nil {
+		running.StunServer = *overrides.StunServer
+	}
+	if !gatewayDiscoverySupported {
+		running.LocateGateway = false
+	}
+	return running, nil
+}
+
+func supportsGatewayDiscovery(goos string) bool {
+	switch goos {
+	case "linux", "darwin", "windows", "freebsd", "openbsd", "netbsd", "dragonfly":
+		return true
+	default:
+		return false
+	}
 }
 
 func startSavedWebAccess(local *api.LocalConfig, webAccess *webAccessRuntime) error {
