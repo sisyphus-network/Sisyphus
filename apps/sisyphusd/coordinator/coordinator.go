@@ -1203,8 +1203,11 @@ func (c *Coordinator) disconnect(w *worker) {
 		} else {
 			c.recordLocked(a.job, eventTaskLost, a.task.Index, w.name, "its worker disconnected")
 			c.failLocked(a, "worker "+w.id+" disconnected", now)
-			c.releaseLocked(a)
 		}
+		// Either way the attempt is over, and what it uploaded with it:
+		// a stopping coordinator takes in no more results, so nothing it
+		// uploaded can be named by one.
+		c.releaseLocked(a)
 		c.settleLocked(a.job)
 		c.notifyLocked(a.job)
 	}

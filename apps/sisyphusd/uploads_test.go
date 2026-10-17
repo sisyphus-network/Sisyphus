@@ -121,3 +121,24 @@ func TestWhatAnAttemptUploadedIsLetGoOfWhenItFails(t *testing.T) {
 	w.returns(again, `{"count":5}`)
 	p.wait(id)
 }
+
+// What an attempt uploaded is let go of when the coordinator stops too: the
+// attempt goes back to be handed out again, and no result of it is taken in.
+func TestWhatAnAttemptUploadedIsLetGoOfWhenTheCoordinatorStops(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	w := p.connectRaw(hello("rig", 1, "primes"))
+	w.welcome()
+	id := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER, 0)).GetJobId()
+	a := w.assignment()
+	uploaded, err := p.uploadAs(w, "left half done", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held := p.heldFor(uploaded); !slices.Contains(held, "job:"+id+"#0@1.") {
+		t.Fatalf("held for %v before the stop", held)
+	}
+	p.stopAndForget()
+	if held := p.heldFor(uploaded); slices.Contains(held, "job:"+id+"#0@1.") {
+		t.Errorf("still held for the attempt after the coordinator stopped: %v", held)
+	}
+}
