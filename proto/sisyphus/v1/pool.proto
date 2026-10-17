@@ -28,6 +28,11 @@ service PoolService {
   // through any of them.
   rpc Relays(RelaysRequest) returns (RelaysResponse);
 
+  // WatchRelays sends the current relay members, then a new list whenever
+  // one joins or leaves. Workers use it to keep relay reservations current
+  // without repeatedly asking for the same list.
+  rpc WatchRelays(RelaysRequest) returns (stream RelaysResponse);
+
   // The rest may be called only by the node's owner: its own command line.
 
   // Invite issues a token for one node to join with.

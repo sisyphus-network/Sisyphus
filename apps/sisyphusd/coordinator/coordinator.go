@@ -241,6 +241,8 @@ type Coordinator struct {
 	log            *slog.Logger
 	workersChanged func()
 	jobsChanged    func()
+	relayMu        sync.Mutex
+	relaySubs      map[chan struct{}]struct{}
 
 	// ctx bounds the aggregations still running when the coordinator closes.
 	ctx         context.Context
@@ -407,6 +409,7 @@ func New(cfg Config) *Coordinator {
 		log:            cfg.Log,
 		workersChanged: cfg.WorkersChanged,
 		jobsChanged:    cfg.JobsChanged,
+		relaySubs:      make(map[chan struct{}]struct{}),
 		ctx:            ctx,
 		cancel:         cancel,
 		jobs:           make(map[string]*jobmodel.Job),
@@ -1176,6 +1179,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	if c.workersChanged != nil {
 		c.workersChanged()
 	}
+	c.notifyRelaysChanged()
 	c.log.Info("worker connected", "node", w.id, "name", w.name, "slots", capabilities.GetTaskSlots())
 
 	// One goroutine writes to the stream and one reads from it, so that this
@@ -1322,6 +1326,7 @@ func (c *Coordinator) disconnect(w *worker) {
 	if c.workersChanged != nil {
 		c.workersChanged()
 	}
+	c.notifyRelaysChanged()
 }
 
 func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {

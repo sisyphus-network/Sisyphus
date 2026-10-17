@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -558,19 +559,33 @@ func TestANodeKeepsAPlaceOnTheRelaysItIsToldOf(t *testing.T) {
 
 	var mu sync.Mutex
 	var told []string
+	var reads atomic.Int64
+	changes := []chan struct{}{make(chan struct{}, 1), make(chan struct{}, 1)}
 	more := func(context.Context) []string {
+		reads.Add(1)
 		mu.Lock()
 		defer mu.Unlock()
 		return told
 	}
 	tell := func(addresses ...string) {
 		mu.Lock()
-		defer mu.Unlock()
 		told = addresses
+		mu.Unlock()
+		for _, changed := range changes {
+			select {
+			case changed <- struct{}{}:
+			default:
+			}
+		}
 	}
-	a := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more})
-	b := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more})
+	a := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more, MoreRelaysChanged: changes[0]})
+	b := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more, MoreRelaysChanged: changes[1]})
 	waitFor(t, func() bool { return a.Relayed() && b.Relayed() })
+	readsWhileIdle := reads.Load()
+	time.Sleep(3 * PlaceCheck)
+	if reads.Load() != readsWhileIdle {
+		t.Fatalf("MoreRelays was read again without a membership event: %d -> %d", readsWhileIdle, reads.Load())
+	}
 	echo(t, b)
 	placedOn := func(h, relay *Host) bool {
 		return h.placed(relay.host.ID(), time.Now())
@@ -657,9 +672,10 @@ func TestFullNodeRelayIsPreferredToCoordinatorAndCoordinatorIsFallback(t *testin
 		}
 		return addresses
 	}
+	changes := []chan struct{}{make(chan struct{}, 1), make(chan struct{}, 1)}
 	noDirectAddresses := func([]ma.Multiaddr) []ma.Multiaddr { return nil }
-	a := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more, AddrsFactory: noDirectAddresses})
-	b := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more, AddrsFactory: noDirectAddresses})
+	a := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more, MoreRelaysChanged: changes[0], AddrsFactory: noDirectAddresses})
+	b := p.start(Config{Via: coordinator.Addrs(), MoreRelays: more, MoreRelaysChanged: changes[1], AddrsFactory: noDirectAddresses})
 	waitFor(t, func() bool {
 		for _, fullNode := range fullNodes {
 			if !a.placed(fullNode.host.ID(), time.Now()) || !b.placed(fullNode.host.ID(), time.Now()) {
@@ -770,11 +786,18 @@ func TestANodeTakesItsPlaceOnTheRelayAgainAfterLosingIt(t *testing.T) {
 	echo(t, b)
 
 	// The relay drops b, as a restart or a break in the network would.
+	b.mu.Lock()
+	oldRenewal := b.renew[relay.host.ID()]
+	b.mu.Unlock()
 	if err := relay.host.Network().ClosePeer(b.host.ID()); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return !b.Relayed() })
-	waitFor(t, b.Relayed)
+	waitFor(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		renewal, ok := b.renew[relay.host.ID()]
+		return ok && renewal.After(oldRenewal)
+	})
 	conn, err := a.Dial(context.Background(), b.ID(), echoProtocol)
 	if err != nil {
 		t.Fatal(err)
@@ -1091,5 +1114,38 @@ func TestAClosingHostTakesUpNoNodeAnnouncedOnItsNetwork(t *testing.T) {
 	told.HandlePeerFound(*info)
 	if a.host.Network().Connectedness(info.ID) == network.Connected {
 		t.Error("a closed host connected to a node announced to it")
+	}
+}
+
+// A relay no longer named loses its renewal and retry deadlines, so the
+// host neither renews nor retries a place it has been told to let go.
+func TestARelayNoLongerNamedHasNoDeadlines(t *testing.T) {
+	soon := time.Now().Add(time.Minute)
+	h := &Host{
+		renew: map[peer.ID]time.Time{"renewed": soon},
+		retry: map[peer.ID]time.Time{"renewed": soon, "retried": soon},
+	}
+	h.refreshRelays(nil)
+	if len(h.renew) != 0 || len(h.retry) != 0 {
+		t.Errorf("renew %v and retry %v, want both empty", h.renew, h.retry)
+	}
+	if wait := h.untilNextPlace(); wait != -1 {
+		t.Errorf("untilNextPlace = %v, want -1 with no deadlines", wait)
+	}
+}
+
+// The host waits for the nearest renewal or retry, and not at all for one
+// already due.
+func TestTheNextPlaceIsTheNearestDeadline(t *testing.T) {
+	h := &Host{
+		renew: map[peer.ID]time.Time{"later": time.Now().Add(time.Hour)},
+		retry: map[peer.ID]time.Time{"sooner": time.Now().Add(time.Minute)},
+	}
+	if wait := h.untilNextPlace(); wait <= 0 || wait > time.Minute {
+		t.Errorf("untilNextPlace = %v, want up to a minute", wait)
+	}
+	h.renew["due"] = time.Now().Add(-time.Second)
+	if wait := h.untilNextPlace(); wait != 0 {
+		t.Errorf("untilNextPlace with one due = %v, want 0", wait)
 	}
 }

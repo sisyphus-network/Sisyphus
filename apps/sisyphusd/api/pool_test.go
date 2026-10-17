@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -143,6 +144,45 @@ func newCoordinator(t *testing.T) *coordinator.Coordinator {
 	return c
 }
 
+type relaySnapshotStream struct {
+	grpc.ServerStream
+	ctx     context.Context
+	updates chan *pb.RelaysResponse
+}
+
+func (s *relaySnapshotStream) Context() context.Context { return s.ctx }
+func (s *relaySnapshotStream) Send(update *pb.RelaysResponse) error {
+	s.updates <- update
+	return nil
+}
+
+func TestWatchRelaysSendsInitialSnapshotAndStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	stream := &relaySnapshotStream{ctx: ctx, updates: make(chan *pb.RelaysResponse, 1)}
+	service := &poolService{coordinator: newCoordinator(t)}
+	done := make(chan error, 1)
+	go func() {
+		done <- service.WatchRelays(&pb.RelaysRequest{}, stream)
+	}()
+	select {
+	case update := <-stream.updates:
+		if len(update.GetAddresses()) != 0 {
+			t.Fatalf("initial relay list = %v, want empty", update.GetAddresses())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WatchRelays did not send its initial snapshot")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WatchRelays: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WatchRelays did not stop after cancellation")
+	}
+}
+
 func TestRemovingAMemberChangesTheSwarmKey(t *testing.T) {
 	ctx := context.Background()
 	list := newList(t)
@@ -189,5 +229,18 @@ func TestRekeyOnRequest(t *testing.T) {
 	stuck := &poolService{coordinator: newCoordinator(t), swarm: network{rekeyed: &changes, rekeyErr: errors.New("kubo would not restart")}}
 	if _, err := stuck.Rekey(ctx, &pb.RekeyRequest{}); status.Code(err) != codes.Internal {
 		t.Errorf("a key that cannot be changed: %v, want Internal", err)
+	}
+}
+
+// The relay list is also given whole for a client that does not watch it,
+// and a node that coordinates no pool has none to watch.
+func TestRelaysAskedOnceAndWithoutAPool(t *testing.T) {
+	service := &poolService{coordinator: newCoordinator(t)}
+	if listed, err := service.Relays(context.Background(), &pb.RelaysRequest{}); err != nil || len(listed.GetAddresses()) != 0 {
+		t.Errorf("Relays = %v, %v; want an empty list", listed, err)
+	}
+	stream := &relaySnapshotStream{ctx: context.Background(), updates: make(chan *pb.RelaysResponse, 1)}
+	if err := (&poolService{}).WatchRelays(&pb.RelaysRequest{}, stream); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("WatchRelays without a pool: %v, want failed precondition", err)
 	}
 }

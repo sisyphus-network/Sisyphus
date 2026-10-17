@@ -281,14 +281,21 @@ func TestTheCoordinatorKnowsWhichWorkersRelayAndWhatTheyHaveCarried(t *testing.T
 	}
 	defer conn.Close()
 	members := worker.NewMembers(conn)
-	if got := members.Relays(p.ctx); !slices.Equal(got, []string{at}) {
-		t.Errorf("relays as a worker is told: %v", got)
+	watchCtx, stopWatching := context.WithCancel(p.ctx)
+	watchDone := make(chan error, 1)
+	go func() { watchDone <- members.WatchRelays(watchCtx) }()
+	waitFor(t, func() bool { return slices.Equal(members.Relays(p.ctx), []string{at}) })
+	stopWatching()
+	select {
+	case <-watchDone:
+	case <-time.After(time.Second):
+		t.Fatal("relay watcher did not stop after cancellation")
 	}
-	// With the coordinator out of reach there is nothing to add.
+	// The latest snapshot remains available locally after the stream closes.
 	gone, cancel := context.WithCancel(p.ctx)
 	cancel()
-	if got := members.Relays(gone); len(got) != 0 {
-		t.Errorf("relays with nobody to ask: %v", got)
+	if got := members.Relays(gone); !slices.Equal(got, []string{at}) {
+		t.Errorf("cached relays after stream closure: %v", got)
 	}
 }
 
