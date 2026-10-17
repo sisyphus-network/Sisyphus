@@ -29,6 +29,8 @@ type brokenStore struct {
 	*storage.Store
 	failPut, failOpen, failRead bool
 	failPin, failGC, failSize   bool
+	// failUnpin fails only taking pins back.
+	failUnpin bool
 	// used, if set, is what the store claims to occupy on disk.
 	used uint64
 }
@@ -41,7 +43,7 @@ func (b brokenStore) Pin(ctx context.Context, owner string, expires time.Time, c
 }
 
 func (b brokenStore) Unpin(owner string, cids ...cid.Cid) error {
-	if b.failPin {
+	if b.failPin || b.failUnpin {
 		return errDisk
 	}
 	return b.Store.Unpin(owner, cids...)
@@ -343,5 +345,27 @@ func TestAnUploadThatCannotBeCountedFails(t *testing.T) {
 	asClient(t, service, "alice")
 	if err := service.Put(&upload{chunks: [][]byte{[]byte("hi")}}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "count the upload towards its client") {
 		t.Errorf("an upload that could not be counted: %v", err)
+	}
+}
+
+// A pin over a client's share that cannot be taken back is still in
+// place, so the client is told the node failed, not that it was refused.
+func TestAPinThatCannotBeTakenBackIsSaidSo(t *testing.T) {
+	store, held := storeWithBlob(t)
+	over := func(context.Context) (map[string]uint64, error) { return map[string]uint64{"alice": 101}, nil }
+	service := &blobService{store: brokenStore{Store: store, failUnpin: true}, owner: "node", perClient: 100, stored: over}
+	asClient(t, service, "alice")
+
+	if _, err := service.Pin(context.Background(), &pb.PinBlobRequest{Cid: held}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "would have this client keep 101 bytes here, and it may keep 100, and its pin could not be taken back") {
+		t.Errorf("a pin: %v", err)
+	}
+	// An upload is let in with room to spare, and found over once stored.
+	measured := 0
+	service.stored = func(context.Context) (map[string]uint64, error) {
+		measured++
+		return map[string]uint64{"alice": uint64(measured) * 60}, nil
+	}
+	if err := service.Put(&upload{chunks: [][]byte{[]byte("hi")}}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "uploading") || !strings.Contains(err.Error(), "its pin could not be taken back") {
+		t.Errorf("an upload: %v", err)
 	}
 }

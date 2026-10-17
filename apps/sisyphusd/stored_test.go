@@ -159,3 +159,23 @@ func TestAClientKeepsNoMoreThanItsShare(t *testing.T) {
 		t.Errorf("the node's own upload: %v", err)
 	}
 }
+
+// The store keeps a little more than was sent, for the links between the
+// pieces of a large file, and a client's share is held to what the store
+// keeps: an upload that fits its share as sent but not as stored is
+// refused, and leaves nothing counted against the client.
+func TestAClientsShareCountsWhatIsStored(t *testing.T) {
+	const size = 300 << 10 // more than one 256 KiB piece
+	clientShare = size
+	defer func() { clientShare = 0 }()
+	p := startPool(t, runtime.Builtin())
+	alice := p.newClient()
+
+	_, err := blobclient.Upload(p.ctx, alice.blobs, strings.NewReader(strings.Repeat("a", size)))
+	if status.Code(err) != codes.ResourceExhausted || !strings.Contains(err.Error(), "uploading") || !strings.Contains(err.Error(), "may keep 307200") {
+		t.Fatalf("an upload that fits as sent but not as stored: %v", err)
+	}
+	if got := p.storedBy()[alice.id]; got != 0 {
+		t.Errorf("a refused upload has alice keep %d bytes", got)
+	}
+}

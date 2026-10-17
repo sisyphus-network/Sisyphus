@@ -143,6 +143,11 @@ func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, p
 		if err := s.store.Pin(ctx, uploadOwner+client, time.Now().Add(storage.GracePeriod), c); err != nil {
 			return status.Errorf(codes.Internal, "count the upload towards its client: %v", err)
 		}
+		// What is stored takes a little more than what was sent, so
+		// the share is checked again as the store counts it.
+		if err := s.within(ctx, uploadOwner+client, client, c, "uploading"); err != nil {
+			return err
+		}
 	}
 	return stream.SendAndClose(&pb.PutBlobResponse{Cid: c.String(), Size: size})
 }
@@ -306,18 +311,35 @@ func (s *blobService) Pin(ctx context.Context, req *pb.PinBlobRequest) (*pb.PinB
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "pin blob: %v", err)
 	}
-	if isClient && !held && s.perClient > 0 {
-		stored, err := s.stored(ctx)
-		if err == nil && stored[client] <= s.perClient {
-			return &pb.PinBlobResponse{}, nil
+	if isClient && !held {
+		if err := s.within(ctx, owner, client, c, "pinning"); err != nil {
+			return nil, err
 		}
-		s.store.Unpin(owner, c)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "measure what this client keeps: %v", err)
-		}
-		return nil, status.Errorf(codes.ResourceExhausted, "pinning %s would have this client keep %d bytes here, and it may keep %d", c, stored[client], s.perClient)
 	}
 	return &pb.PinBlobResponse{}, nil
+}
+
+// within checks that a client keeps no more than its share now that owner
+// holds a pin on c for it, and takes the pin back if it does, or if what
+// it keeps cannot be measured. A pin that cannot be taken back is said so,
+// since it is then still in place.
+func (s *blobService) within(ctx context.Context, owner, client string, c cid.Cid, doing string) error {
+	if s.perClient == 0 {
+		return nil
+	}
+	stored, err := s.stored(ctx)
+	if err == nil && stored[client] <= s.perClient {
+		return nil
+	}
+	if err != nil {
+		err = status.Errorf(codes.Internal, "measure what this client keeps: %v", err)
+	} else {
+		err = status.Errorf(codes.ResourceExhausted, "%s %s would have this client keep %d bytes here, and it may keep %d", doing, c, stored[client], s.perClient)
+	}
+	if unpinErr := s.store.Unpin(owner, c); unpinErr != nil {
+		return status.Errorf(codes.Internal, "%v, and its pin could not be taken back: %v", status.Convert(err).Message(), unpinErr)
+	}
+	return err
 }
 
 func (s *blobService) Unpin(ctx context.Context, req *pb.UnpinBlobRequest) (*pb.UnpinBlobResponse, error) {
