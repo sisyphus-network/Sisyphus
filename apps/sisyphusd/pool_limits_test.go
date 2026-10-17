@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"flag"
+	"math"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +86,41 @@ func TestStartupPoolLimits(t *testing.T) {
 			t.Fatalf("limits = %#v, want %#v", got, want)
 		}
 	})
+
+	t.Run("limits the API cannot carry exactly are refused", func(t *testing.T) {
+		if strconv.IntSize < 64 {
+			t.Skip("an int cannot hold a count past 2^31-1 here")
+		}
+		var past int64 = math.MaxInt32 + 1
+		over, half := int(past), 1500*time.Millisecond
+		for name, c := range map[string]struct {
+			store     fakePoolLimitsStore
+			overrides poolLimitsFlagOverrides
+			want      string
+		}{
+			"jobs by flag":     {overrides: poolLimitsFlagOverrides{MaxJobsPerClient: &over}, want: "--max-jobs-per-client may be at most 2147483647"},
+			"tasks by flag":    {overrides: poolLimitsFlagOverrides{MaxTasksPerClient: &over}, want: "--max-tasks-per-client may be at most 2147483647"},
+			"saved jobs":       {store: fakePoolLimitsStore{limits: nodedb.PoolLimits{MaxJobsPerClient: over}, configured: true}, want: "--max-jobs-per-client may be at most"},
+			"part of a second": {overrides: poolLimitsFlagOverrides{MaxTaskTimeout: &half}, want: "--max-task-timeout must be a whole number of seconds, not 1.5s"},
+		} {
+			if _, err := startupPoolLimits(c.store, defaults, c.overrides); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s: %v, want %q", name, err, c.want)
+			}
+		}
+	})
+}
+
+// A node refuses to start with a count past what the API carries, rather
+// than report a different limit from the one it enforces.
+func TestAnOversizedClientCountLimitStopsTheNodeStarting(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("such a count does not parse here")
+	}
+	for _, name := range []string{"--max-jobs-per-client", "--max-tasks-per-client"} {
+		if _, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), name, "4294967296"); err == nil || !strings.Contains(err.Error(), name+" may be at most 2147483647") {
+			t.Errorf("%s 4294967296: %v", name, err)
+		}
+	}
 }
 
 func TestPoolLimitsFlagOverridesTrackOnlyExplicitFlags(t *testing.T) {

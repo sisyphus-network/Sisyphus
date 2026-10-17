@@ -12,6 +12,7 @@ import (
 	"io"
 	iofs "io/fs"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -1169,6 +1170,17 @@ func startupPoolLimits(store poolLimitsStore, defaults nodedb.PoolLimits, overri
 	}
 	if overrides.MaxUploadBytesPerAttempt != nil {
 		running.MaxUploadBytesPerAttempt = *overrides.MaxUploadBytesPerAttempt
+	}
+	// The limits the node runs with are reported through the API as it
+	// carries them, so one it cannot carry exactly is refused rather than
+	// reported as something other than what is enforced.
+	switch {
+	case running.MaxJobsPerClient > math.MaxInt32:
+		return nodedb.PoolLimits{}, fmt.Errorf("--max-jobs-per-client may be at most %d", math.MaxInt32)
+	case running.MaxTasksPerClient > math.MaxInt32:
+		return nodedb.PoolLimits{}, fmt.Errorf("--max-tasks-per-client may be at most %d", math.MaxInt32)
+	case running.MaxTaskTimeout%time.Second != 0:
+		return nodedb.PoolLimits{}, fmt.Errorf("--max-task-timeout must be a whole number of seconds, not %s", running.MaxTaskTimeout)
 	}
 	return running, nil
 }
