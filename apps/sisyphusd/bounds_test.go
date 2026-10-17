@@ -219,3 +219,34 @@ func slicesRepeat(s string, n int) []string {
 	}
 	return out
 }
+
+// stuck is a store that can neither pin nor unpin.
+type stuck struct{ pinFails }
+
+func (stuck) Unpin(string, ...cid.Cid) error {
+	return errors.New("pin file is read-only")
+}
+
+func (stuck) UnpinPrefix(string) error {
+	return errors.New("pin file is read-only")
+}
+
+// Nor is a store that cannot keep what a verified task was settled with,
+// or let go of what its copies staged.
+func TestAVerifiedJobSucceedsEvenIfTheStoreCannotPinOrUnpin(t *testing.T) {
+	p := startPoolOver(t, runtime.Builtin(), func(store *storage.Store) coordinator.Store { return stuck{pinFails{store}} })
+	crew := p.crew("alpha", "beta")
+	stored := p.upload("what the task stored")
+	id := p.submit(verifiedPrimes(1, 2)).GetJobId()
+	first, second := crew[0].assignment(), crew[1].assignment()
+	crew[0].returns(first, `{"count":7}`, stored)
+	crew[1].returns(second, `{"count":7}`, stored)
+	if done := p.wait(id); done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("the job: %v %s", done.GetState(), done.GetError())
+	}
+	for _, said := range []string{"could not pin a job's blobs", "could not release what a task's results staged", "could not release what a job's results staged"} {
+		if !strings.Contains(p.logs.String(), said) {
+			t.Errorf("the log does not say %q:\n%s", said, p.logs.String())
+		}
+	}
+}

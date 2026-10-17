@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ipfs/boxo/ipld/merkledag"
@@ -170,6 +171,24 @@ func (s *Store) Unpin(owner string, cids ...cid.Cid) error {
 		delete(s.pins, pinKey{c, owner})
 		if s.index != nil {
 			s.index.unchargeLocked(pinKey{c, owner})
+		}
+	}
+	s.tellPinsChangedLocked()
+	return s.savePinsLocked()
+}
+
+// UnpinPrefix releases every pin whose owner's name begins with prefix,
+// whatever blobs they are on: for owners whose pins are not all known by
+// name, such as some left by a process that stopped before noting them.
+func (s *Store) UnpinPrefix(prefix string) error {
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	for key := range s.pins {
+		if strings.HasPrefix(key.owner, prefix) {
+			delete(s.pins, key)
+			if s.index != nil {
+				s.index.unchargeLocked(key)
+			}
 		}
 	}
 	s.tellPinsChangedLocked()

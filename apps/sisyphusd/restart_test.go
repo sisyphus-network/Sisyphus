@@ -258,9 +258,12 @@ func TestOnlyUnfinishedJobsHoldPinsOpen(t *testing.T) {
 	for owner, want := range map[string]bool{
 		"job:" + running.GetJobId():  true,
 		"job:" + finished.GetJobId(): false,
-		"job:never-heard-of-it":      false,
-		running.GetJobId():           false, // a job's ID is not the name its pins are under
-		"user":                       false,
+		// What its tasks' results staged is held as long as the job is.
+		"job:" + running.GetJobId() + "#0":  true,
+		"job:" + finished.GetJobId() + "#0": false,
+		"job:never-heard-of-it":             false,
+		running.GetJobId():                  false, // a job's ID is not the name its pins are under
+		"user":                              false,
 	} {
 		if got := p.coord.Holds(owner); got != want {
 			t.Errorf("Holds(%q) = %v, want %v", owner, got, want)
@@ -575,4 +578,55 @@ func TestJobsAreListedNewestFirst(t *testing.T) {
 	if strings.Join(order, " ") != "latest twin-a twin-b oldest" {
 		t.Errorf("jobs listed as %v", order)
 	}
+}
+
+// What an audited result staged is released when its job ends, even if the
+// coordinator stopped while it was auditing it, before the result was noted
+// anywhere that outlasts it.
+func TestWhatAnAuditStagedBeforeACrashIsReleasedWhenItsJobEnds(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "node.db")
+	shared := storage.NewMemory()
+	onShared := func(*storage.Store) coordinator.Store { return shared }
+	stuckAudit := gated{started: make(chan struct{}, 4), release: make(chan struct{})}
+	defer close(stuckAudit.release)
+	before := startPoolWith(t, runtime.NewRegistry(stuckAudit), onShared, journalIn(t, file))
+	w := before.connectRaw(hello("first", 1, "gated"))
+	w.welcome()
+	stored, err := shared.Put(before.ctx, strings.NewReader("what the task stored"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := before.submit(&pb.JobSpec{Workload: "gated", MaxTasks: 1, AuditShare: 1}).GetJobId()
+	w.returns(w.assignment(), "ok", stored.String())
+	<-stuckAudit.started
+	if staged := before.stagedIn(shared, id); len(staged) != 1 {
+		t.Fatalf("staged while audited: %v", staged)
+	}
+
+	// A crash saves nothing on the way out: the audit never settles, and
+	// the result it was checking is noted nowhere.
+	audit := gated{started: make(chan struct{}, 4), release: make(chan struct{})}
+	after := startPoolWith(t, runtime.NewRegistry(audit), onShared, journalIn(t, file))
+	again := after.connectRaw(hello("second", 1, "gated"))
+	again.welcome()
+	again.returns(again.assignment(), "ok")
+	<-audit.started
+	close(audit.release)
+	if done := after.wait(id); done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("the job after the restart: %v %s", done.GetState(), done.GetError())
+	}
+	if staged := after.stagedIn(shared, id); len(staged) != 0 {
+		t.Errorf("still staged after the job ended: %v", staged)
+	}
+}
+
+// stagedIn lists what store has staged for a job's tasks.
+func (p *pool) stagedIn(store *storage.Store, jobID string) []string {
+	var staged []string
+	for _, pin := range store.Pins() {
+		if strings.HasPrefix(pin.Owner, "job:"+jobID+"#") {
+			staged = append(staged, pin.Owner+" "+pin.CID.String())
+		}
+	}
+	return staged
 }

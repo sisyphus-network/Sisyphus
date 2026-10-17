@@ -231,3 +231,84 @@ func TestAClientsJobStoresNoMoreThanItsShare(t *testing.T) {
 		t.Errorf("the task failed %d times", failed)
 	}
 }
+
+// staged lists what is staged for a job's tasks: what their results stored,
+// kept until each task is settled.
+func (p *pool) staged(jobID string) []string {
+	return p.stagedIn(p.store, jobID)
+}
+
+// What the copies of a verified task store counts towards its client's
+// share only once the task is settled, and then only what the copies it was
+// settled by stored: a copy that is outvoted costs the client nothing. What
+// they stored is held to the share as a task's on one worker's word is.
+func TestAVerifiedTaskIsHeldToItsClientsShareOnceSettled(t *testing.T) {
+	clientShare = 1000
+	defer func() { clientShare = 0 }()
+	p := startPool(t, runtime.Builtin())
+	crew := p.crew("alpha", "beta", "gamma")
+	alice := p.newClient()
+	small, large := p.upload(strings.Repeat("s", 600)), p.upload(strings.Repeat("l", 1500))
+	submit := func() string {
+		t.Helper()
+		submitted, err := alice.jobs.SubmitJob(p.ctx, &pb.SubmitJobRequest{Spec: verifiedPrimes(1, 2)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return submitted.GetJob().GetJobId()
+	}
+
+	id := submit()
+	first, second := crew[0].assignment(), crew[1].assignment()
+	crew[0].returns(first, `{"count":7}`, large)
+	crew[1].returns(second, `{"count":7}`, small)
+	crew[2].returns(crew[2].assignment(), `{"count":7}`, small)
+	if job := p.wait(id); job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("a job settled on what fits alice's share, outvoting more: %v %s", job.GetState(), job.GetError())
+	}
+	if staged := p.staged(id); len(staged) != 0 {
+		t.Errorf("still staged: %v", staged)
+	}
+
+	id = submit()
+	first, second = crew[0].assignment(), crew[1].assignment()
+	crew[0].returns(first, `{"count":7}`, large)
+	crew[1].returns(second, `{"count":7}`, large)
+	job := p.wait(id)
+	if job.GetState() != pb.JobState_JOB_STATE_FAILED || job.GetError() != "task 0 failed: its outputs would have this client keep 1500 bytes here, and it may keep 1000; free some and submit the job again" {
+		t.Fatalf("a job settled on more than alice's share: %v %s", job.GetState(), job.GetError())
+	}
+	if staged, pins := p.staged(id), p.jobPins(id); len(staged) != 0 || len(pins) != 0 {
+		t.Errorf("still staged: %v; the job's pins: %v", staged, pins)
+	}
+	if got := p.storedBy()[alice.id]; got != 0 {
+		t.Errorf("alice keeps %d bytes", got)
+	}
+}
+
+// What a worker's task stored while it is audited is staged too, and
+// released when the audit settles the task: here with the coordinator's
+// own result, which stored nothing.
+func TestAnAuditedTaskStagesWhatItsWorkerStored(t *testing.T) {
+	clientShare = 1000
+	defer func() { clientShare = 0 }()
+	p := startPool(t, runtime.Builtin())
+	w := p.connectRaw(hello("only", 1, "primes"))
+	w.welcome()
+	alice := p.newClient()
+	submitted, err := alice.jobs.SubmitJob(p.ctx, &pb.SubmitJobRequest{Spec: &pb.JobSpec{Workload: "primes", Params: []byte(hundred), MaxTasks: 1, AuditShare: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := submitted.GetJob().GetJobId()
+	w.returns(w.assignment(), primesBelow100, p.upload(strings.Repeat("l", 1500)))
+	if job := p.wait(id); job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || string(job.GetResult()) != primesBelow100 {
+		t.Fatalf("the job: %v %s", job.GetState(), job.GetError())
+	}
+	if staged := p.staged(id); len(staged) != 0 {
+		t.Errorf("still staged: %v", staged)
+	}
+	if got := p.storedBy()[alice.id]; got != 0 {
+		t.Errorf("alice keeps %d bytes", got)
+	}
+}

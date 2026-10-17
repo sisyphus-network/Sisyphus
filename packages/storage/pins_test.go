@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -608,5 +609,45 @@ func TestPinningOrUnpinningNothingDoesNothing(t *testing.T) {
 	// Neither touched the disk.
 	if _, err := os.Stat(filepath.Join(dir, "pins.json")); !os.IsNotExist(err) {
 		t.Errorf("an empty pin request wrote the pin file (stat error: %v)", err)
+	}
+}
+
+// UnpinPrefix releases every pin of every owner whose name begins with a
+// prefix, whichever blobs they are on, and no other: they count for their
+// group no more.
+func TestUnpinPrefixReleasesEveryPinOfThoseOwners(t *testing.T) {
+	s := NewMemory()
+	if err := s.GroupPins(ctx, func(owner string) string {
+		if strings.HasPrefix(owner, "job:") {
+			return "alice"
+		}
+		return ""
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staged, other := put(t, s, []byte("staged for a task")), put(t, s, []byte("kept for the job"))
+	for owner, c := range map[string]cid.Cid{"job:a#0": staged, "job:a#1": other, "job:a": other, "job:ab#0": staged} {
+		if err := s.Pin(ctx, owner, time.Time{}, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.UnpinPrefix("job:a#"); err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, pin := range s.Pins() {
+		if strings.HasPrefix(pin.Owner, "job:") {
+			left = append(left, pin.Owner)
+		}
+	}
+	slices.Sort(left)
+	if !slices.Equal(left, []string{"job:a", "job:ab#0"}) {
+		t.Errorf("left pinned for %v", left)
+	}
+	if err := s.Unpin("job:ab#0", staged); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Usage(time.Now())["alice"]; got != uint64(len("kept for the job")) {
+		t.Errorf("alice keeps %d bytes", got)
 	}
 }
