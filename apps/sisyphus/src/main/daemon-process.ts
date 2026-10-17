@@ -32,7 +32,7 @@ type Options = {
   endpoint: string
   dataDir: string
   enabled: boolean
-  locationDiscovery?: { locateGateway: boolean; locateCountry: boolean }
+  locationDiscovery?: { locateGateway: boolean; locateCountry: boolean; stunServer: string }
   unused?: (endpoint: string) => Promise<boolean>
   launch?: (executable: string, args: string[]) => ChildProcess
   onError: (message: string) => void
@@ -44,6 +44,7 @@ export const daemonShutdownGraceMs = 30000
 /** Own only the process we launched. Never kill an existing independently-run node. */
 export class DesktopDaemon {
   private child: ChildProcess | null = null
+  private launched = false
   private attempted = false
   private stopping = false
   private pending: Promise<void> | null = null
@@ -52,6 +53,8 @@ export class DesktopDaemon {
 
   get ownsProcess(): boolean { return this.child !== null }
   get isStarting(): boolean { return this.pending !== null }
+  /** Settings remain app-managed if our child exits unexpectedly. */
+  get managesDaemon(): boolean { return this.launched || this.ownsProcess || this.isStarting }
 
   ensureStarted(): Promise<void> {
     if (this.pending) return this.pending
@@ -72,7 +75,9 @@ export class DesktopDaemon {
         '--listen', listen, '--discovery', 'off']
       if (this.options.locationDiscovery?.locateGateway) args.push('--locate-gateway')
       if (this.options.locationDiscovery?.locateCountry) args.push('--locate-country')
+      if (this.options.locationDiscovery?.stunServer) args.push('--stun-server', this.options.locationDiscovery.stunServer)
       const child = (this.options.launch ?? ((executable, arguments_) => spawn(executable, arguments_, { stdio: 'ignore', windowsHide: true, shell: false })))(this.options.executable, args)
+      this.launched = true
       this.child = child
       child.once('error', (error) => {
         if (!this.stopping) this.options.onError(`Could not start the local daemon: ${error.message}`)

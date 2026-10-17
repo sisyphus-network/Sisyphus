@@ -76,6 +76,7 @@ test('location discovery controls stay read-only for an independently managed da
       await toggle.waitFor()
       assert.equal(await toggle.isDisabled(), true, `${label} must not change an independently managed daemon`)
     }
+    assert.equal(await page.getByRole('textbox', { name: 'Ask a STUN server' }).isDisabled(), true)
     assert.equal(await page.getByRole('button', { name: 'Save discovery settings' }).count(), 0)
   } finally {
     await app.close()

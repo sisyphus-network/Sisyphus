@@ -1,12 +1,18 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
+import { normalizeStunServer } from '../shared/stun-server.ts'
 
-export type LocationDiscoverySettings = { locateGateway: boolean; locateCountry: boolean }
+export type LocationDiscoverySettings = { locateGateway: boolean; locateCountry: boolean; stunServer: string }
 
 export const defaultLocationDiscoverySettings: LocationDiscoverySettings = {
   locateGateway: false,
   locateCountry: false,
+  stunServer: '',
+}
+
+function safeStunServer(value: unknown): string {
+  try { return normalizeStunServer(value) } catch { return '' }
 }
 
 export function normalizeLocationDiscoverySettings(value: unknown): LocationDiscoverySettings {
@@ -15,11 +21,12 @@ export function normalizeLocationDiscoverySettings(value: unknown): LocationDisc
   return {
     locateGateway: settings.locateGateway === true,
     locateCountry: settings.locateCountry === true,
+    stunServer: safeStunServer(settings.stunServer),
   }
 }
 
 export function effectiveLocationDiscoverySettings(settings: LocationDiscoverySettings, gatewaySupported: boolean): LocationDiscoverySettings {
-  return { locateGateway: settings.locateGateway && gatewaySupported, locateCountry: settings.locateCountry }
+  return { locateGateway: settings.locateGateway && gatewaySupported, locateCountry: settings.locateCountry, stunServer: settings.stunServer }
 }
 
 export function loadLocationDiscoverySettings(path: string): LocationDiscoverySettings {
@@ -33,10 +40,10 @@ export function loadLocationDiscoverySettings(path: string): LocationDiscoverySe
 export function saveLocationDiscoverySettings(path: string, value: unknown): LocationDiscoverySettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid location discovery settings.')
   const candidate = value as Record<string, unknown>
-  if (typeof candidate.locateGateway !== 'boolean' || typeof candidate.locateCountry !== 'boolean') {
+  if (typeof candidate.locateGateway !== 'boolean' || typeof candidate.locateCountry !== 'boolean' || typeof candidate.stunServer !== 'string') {
     throw new Error('Invalid location discovery settings.')
   }
-  const settings = normalizeLocationDiscoverySettings(candidate)
+  const settings = normalizeLocationDiscoverySettings({ ...candidate, stunServer: normalizeStunServer(candidate.stunServer) })
   const temporaryPath = `${path}.${randomUUID()}.tmp`
   try {
     mkdirSync(dirname(path), { recursive: true })

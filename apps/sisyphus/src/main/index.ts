@@ -364,16 +364,16 @@ app.whenReady().then(() => {
   })
   handleNode('node:get-snapshot', () => snapshot)
   handleNode('node:get-location-discovery-settings', () => ({
-    managed: desktopDaemon.ownsProcess || desktopDaemon.isStarting,
+    managed: desktopDaemon.managesDaemon,
     gatewaySupported: gatewayDiscoverySupported,
     saved: savedLocationDiscoverySettings,
     running: runningLocationDiscoverySettings,
   }))
   handleNode('node:save-location-discovery-settings', (_event, value: unknown) => {
-    if (!desktopDaemon.ownsProcess && !desktopDaemon.isStarting) throw new Error('Location discovery settings are controlled by the daemon operator.')
+    if (!desktopDaemon.managesDaemon) throw new Error('Location discovery settings are controlled by the daemon operator.')
     savedLocationDiscoverySettings = saveLocationDiscoverySettings(locationDiscoveryPath, value)
     return {
-      managed: desktopDaemon.ownsProcess || desktopDaemon.isStarting,
+      managed: desktopDaemon.managesDaemon,
       gatewaySupported: gatewayDiscoverySupported,
       saved: savedLocationDiscoverySettings,
       running: runningLocationDiscoverySettings,
