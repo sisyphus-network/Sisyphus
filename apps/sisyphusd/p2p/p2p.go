@@ -429,12 +429,6 @@ var PlaceCheck = 10 * time.Second
 func (h *Host) keepPlaces(more func(ctx context.Context) []string, changed <-chan struct{}) {
 	defer h.kept.Done()
 	refresh := true
-	var timer *time.Timer
-	defer func() {
-		if timer != nil {
-			timer.Stop()
-		}
-	}()
 	for {
 		if refresh {
 			h.refreshRelays(more)
@@ -443,26 +437,7 @@ func (h *Host) keepPlaces(more func(ctx context.Context) []string, changed <-cha
 		wait := h.untilNextPlace()
 		var deadline <-chan time.Time
 		if wait >= 0 {
-			if timer == nil {
-				timer = time.NewTimer(wait)
-			} else {
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(wait)
-			}
-			deadline = timer.C
-		} else if timer != nil {
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			timer = nil
+			deadline = time.After(wait)
 		}
 		select {
 		case _, ok := <-changed:

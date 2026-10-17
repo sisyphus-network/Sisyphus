@@ -80,15 +80,21 @@ func (m *Members) RelayChanges() <-chan struct{} { return m.relayChanges }
 // WatchRelays consumes one coordinator stream until it ends. The server sends
 // an initial snapshot, followed only by snapshots after membership changes.
 func (m *Members) WatchRelays(ctx context.Context) error {
+	_, err := m.watchRelays(ctx)
+	return err
+}
+
+func (m *Members) watchRelays(ctx context.Context) (receivedSnapshot bool, err error) {
 	stream, err := m.pool.WatchRelays(ctx, &pb.RelaysRequest{})
 	if err != nil {
-		return err
+		return false, err
 	}
 	for {
 		listed, err := stream.Recv()
 		if err != nil {
-			return err
+			return receivedSnapshot, err
 		}
+		receivedSnapshot = true
 		next := listed.GetAddresses()
 		m.mu.Lock()
 		changed := !slices.Equal(m.relays, next)
@@ -108,30 +114,32 @@ func (m *Members) WatchRelays(ctx context.Context) error {
 // RunRelayWatch reconnects after a broken coordinator stream with bounded
 // backoff. The last usable list remains active until a new snapshot arrives.
 func (m *Members) RunRelayWatch(ctx context.Context, log *slog.Logger) {
-	delay := time.Second
+	m.runRelayWatch(ctx, log, time.Second, 15*time.Second)
+}
+
+func (m *Members) runRelayWatch(ctx context.Context, log *slog.Logger, initialDelay, maxDelay time.Duration) {
+	delay := initialDelay
 	for {
-		err := m.WatchRelays(ctx)
+		receivedSnapshot, err := m.watchRelays(ctx)
 		if ctx.Err() != nil {
 			return
+		}
+		if receivedSnapshot {
+			delay = initialDelay
 		}
 		if log != nil {
 			log.Warn("relay update stream ended; reconnecting", "error", err, "retry_in", delay)
 		}
-		timer := time.NewTimer(delay)
 		select {
-		case <-timer.C:
+		case <-time.After(delay):
 		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
 			return
 		}
-		delay *= 2
-		if delay > 15*time.Second {
-			delay = 15 * time.Second
+		if !receivedSnapshot {
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
 		}
 	}
 }

@@ -42,6 +42,17 @@ type relayUpdates struct {
 	updates chan *pb.RelaysResponse
 }
 
+type relayWatchPool struct {
+	pb.PoolServiceClient
+	streams chan grpc.ServerStreamingClient[pb.RelaysResponse]
+	calls   chan struct{}
+}
+
+func (p *relayWatchPool) WatchRelays(context.Context, *pb.RelaysRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.RelaysResponse], error) {
+	p.calls <- struct{}{}
+	return <-p.streams, nil
+}
+
 func (s *relayUpdates) Recv() (*pb.RelaysResponse, error) {
 	update, ok := <-s.updates
 	if !ok {
@@ -91,6 +102,42 @@ func TestMembersPublishesChangedRelaySnapshotsOnly(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("relay watcher did not stop")
+	}
+}
+
+func TestRunRelayWatchResetsBackoffAfterReceivingSnapshot(t *testing.T) {
+	stream := func(snapshot bool) *relayUpdates {
+		updates := make(chan *pb.RelaysResponse, 1)
+		if snapshot {
+			updates <- &pb.RelaysResponse{Addresses: []string{"relay"}}
+		}
+		close(updates)
+		return &relayUpdates{updates: updates}
+	}
+	lastStream := &relayUpdates{updates: make(chan *pb.RelaysResponse)}
+	pool := &relayWatchPool{
+		streams: make(chan grpc.ServerStreamingClient[pb.RelaysResponse], 3),
+		calls:   make(chan struct{}, 3),
+	}
+	pool.streams <- stream(true)
+	pool.streams <- stream(false)
+	pool.streams <- lastStream
+	members := &Members{pool: pool, relayChanges: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := time.Now()
+	go members.runRelayWatch(ctx, nil, 150*time.Millisecond, 600*time.Millisecond)
+	for range 3 {
+		select {
+		case <-pool.calls:
+		case <-time.After(400 * time.Millisecond):
+			t.Fatal("relay stream did not reconnect after a healthy snapshot reset the backoff")
+		}
+	}
+	close(lastStream.updates)
+	if elapsed := time.Since(started); elapsed >= 400*time.Millisecond {
+		t.Fatalf("third stream started after %v; expected reset backoff", elapsed)
 	}
 }
 
