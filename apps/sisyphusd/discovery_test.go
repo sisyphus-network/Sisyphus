@@ -525,6 +525,7 @@ func TestCountryLookupIdentifiesTheDaemonAndTellsTransientFromDefinitive(t *test
 	}{
 		"a rate limit is transient, and says when to ask again": {lookupReply{http.StatusTooManyRequests, "120", `{"country_code":"il"}`}, countryAnswer{transient: true, retryAfter: 2 * time.Minute}},
 		"a fault on the service's side is transient":            {lookupReply{http.StatusServiceUnavailable, "", `{"country_code":"il"}`}, countryAnswer{transient: true}},
+		"a request timeout is transient":                        {lookupReply{http.StatusRequestTimeout, "", ""}, countryAnswer{transient: true}},
 		"a 404 is definitive":                                   {lookupReply{http.StatusNotFound, "120", `{"country_code":"il"}`}, countryAnswer{}},
 		"a 403 is definitive":                                   {lookupReply{http.StatusForbidden, "", ""}, countryAnswer{}},
 	} {
@@ -682,6 +683,7 @@ func TestCountryLookupsAreRetriedOnlyWhenTransient(t *testing.T) {
 		"a 404":                       {[]lookupReply{{status: http.StatusNotFound}, {status: http.StatusOK, body: `{"country_code":"de"}`}}, 1},
 		"a 200 with no country":       {[]lookupReply{{status: http.StatusOK, body: `{}`}, {status: http.StatusOK, body: `{"country_code":"de"}`}}, 1},
 		"a 500 and then a country":    {[]lookupReply{{status: http.StatusInternalServerError}, {status: http.StatusOK, body: `{"country_code":"de"}`}}, 2},
+		"a 408 and then a country":    {[]lookupReply{{status: http.StatusRequestTimeout}, {status: http.StatusOK, body: `{"country_code":"de"}`}}, 2},
 		"a 429 twice and then a 404":  {[]lookupReply{{status: http.StatusTooManyRequests}, {status: http.StatusTooManyRequests}, {status: http.StatusNotFound}}, 3},
 		"a 502, then a 200 with none": {[]lookupReply{{status: http.StatusBadGateway}, {status: http.StatusOK, body: `{"country_code":"N1"}`}}, 2},
 	} {
