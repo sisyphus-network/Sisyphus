@@ -61,7 +61,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
 
   return {
     getSnapshot,
-    getLocationDiscoverySettings: async (): Promise<LocationDiscoveryState> => ({ managed: false, gatewaySupported: null, saved: { locateGateway: false, locateCountry: false, stunServer: '' }, running: { locateGateway: false, locateCountry: false, stunServer: '' } }),
+    getLocationDiscoverySettings: async (): Promise<LocationDiscoveryState> => ({ managed: false, configurable: false, configured: false, restartNeeded: false, gatewaySupported: null, saved: { locateGateway: false, locateCountry: false, stunServer: '' }, running: { locateGateway: false, locateCountry: false, stunServer: '' } }),
     saveLocationDiscoverySettings: async (_settings: LocationDiscoverySettings): Promise<LocationDiscoveryState> => { throw new Error('Location discovery settings are available in the desktop app only.') },
     reconnect: getSnapshot,
     connectPeer: async (address) => (await node.connectPeer({ address })).peerId,

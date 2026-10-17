@@ -56,7 +56,7 @@ export type NodeSnapshot = {
 export type BrowserPairingInvitation = { code: string; expiresAt: string; pairUrl: string }
 export type PairedBrowser = { id: string; name: string; createdAt: string }
 export type LocationDiscoverySettings = { locateGateway: boolean; locateCountry: boolean; stunServer: string }
-export type LocationDiscoveryState = { managed: boolean; gatewaySupported: boolean | null; saved: LocationDiscoverySettings; running: LocationDiscoverySettings }
+export type LocationDiscoveryState = { managed: boolean; configurable: boolean; configured: boolean; restartNeeded: boolean; gatewaySupported: boolean | null; saved: LocationDiscoverySettings; running: LocationDiscoverySettings }
 
 export type NodeRpcMethod =
   | 'getBootstrapPeers' | 'setBootstrapPeers' | 'listWorkers' | 'listPeers' | 'getNodeInfo'

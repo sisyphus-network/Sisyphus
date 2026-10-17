@@ -426,6 +426,21 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 	defer db.Close()
+	locationDiscoveryRunning := nodedb.LocationDiscovery{LocateGateway: *byGateway, LocateCountry: *locate, StunServer: *stunServer}
+	locationDiscoverySaved, configured, err := db.LocationDiscovery()
+	if err != nil {
+		return err
+	}
+	if configured {
+		locationDiscoveryRunning = locationDiscoverySaved
+	}
+	gatewayDiscoverySupported := supportsGatewayDiscovery(goruntime.GOOS)
+	if !gatewayDiscoverySupported {
+		locationDiscoveryRunning.LocateGateway = false
+	}
+	local.LocationDiscovery = db
+	local.LocationDiscoveryRunning = locationDiscoveryRunning
+	local.GatewayDiscoverySupported = gatewayDiscoverySupported
 	local.BrowserAccess = db
 	var allowedWebOrigins []string
 	for _, origin := range strings.Split(*webOrigins, ",") {
@@ -894,14 +909,14 @@ func runDaemon(ctx context.Context, args []string) error {
 	// table it carries. Only if told to does it ask anyone.
 	var asked, gateway, stunned atomic.Value
 	var gatewayAnswered, stunAnswered atomic.Bool
-	gatewayAnswered.Store(!*byGateway)
-	if *byGateway {
+	gatewayAnswered.Store(!locationDiscoveryRunning.LocateGateway)
+	if locationDiscoveryRunning.LocateGateway {
 		searches.start(func() {
 			gateway.Store(gatewaysAddress(looking, log))
 			gatewayAnswered.Store(true)
 		})
 	}
-	stunAnswered.Store(*stunServer == "")
+	stunAnswered.Store(locationDiscoveryRunning.StunServer == "")
 	// A STUN server, and the lookup service after it, learn the node's
 	// address, so each is asked only once the node is asked where it is
 	// and nothing nearer has placed it: not its own addresses, nor its
@@ -916,15 +931,15 @@ func runDaemon(ctx context.Context, args []string) error {
 		if source != "" || !gatewayAnswered.Load() {
 			return country, source
 		}
-		if *stunServer != "" {
+		if locationDiscoveryRunning.StunServer != "" {
 			askingSTUN.Do(func() {
 				searches.start(func() {
-					stunned.Store(stunnedAddress(looking, *stunServer, log))
+					stunned.Store(stunnedAddress(looking, locationDiscoveryRunning.StunServer, log))
 					stunAnswered.Store(true)
 				})
 			})
 		}
-		if *locate && stunAnswered.Load() {
+		if locationDiscoveryRunning.LocateCountry && stunAnswered.Load() {
 			lookingUp.Do(func() {
 				searches.start(func() { asked.Store(lookUpCountry(looking)) })
 			})
@@ -1029,6 +1044,15 @@ func runDaemon(ctx context.Context, args []string) error {
 		go pages.Serve(lis)
 	}
 	return waitForDaemonStop(ctx, &local, webAccess, stopped, log)
+}
+
+func supportsGatewayDiscovery(goos string) bool {
+	switch goos {
+	case "linux", "darwin", "windows", "freebsd", "openbsd", "netbsd", "dragonfly":
+		return true
+	default:
+		return false
+	}
 }
 
 func startSavedWebAccess(local *api.LocalConfig, webAccess *webAccessRuntime) error {

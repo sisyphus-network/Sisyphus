@@ -6,6 +6,10 @@ option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisy
 
 service NodeService {
   rpc GetNodeInfo(GetNodeInfoRequest) returns (GetNodeInfoResponse);
+  // Location discovery is opt-in. Changes are saved by the node and take
+  // effect after it restarts, whether the desktop starts it or not.
+  rpc GetLocationDiscoverySettings(GetLocationDiscoverySettingsRequest) returns (LocationDiscoverySettingsState);
+  rpc SetLocationDiscoverySettings(SetLocationDiscoverySettingsRequest) returns (LocationDiscoverySettingsState);
   // Browser access is disabled until explicitly enabled by the node owner.
   rpc GetWebAccessConfig(GetWebAccessConfigRequest) returns (WebAccessConfig);
   rpc SetWebAccessConfig(SetWebAccessConfigRequest) returns (WebAccessConfig);
@@ -773,3 +777,20 @@ message JoinPoolResponse {
   string peer_id = 1;
   PoolRole role = 2;
 }
+
+message LocationDiscoverySettings {
+  bool locate_gateway = 1;
+  bool locate_country = 2;
+  string stun_server = 3;
+}
+
+message LocationDiscoverySettingsState {
+  LocationDiscoverySettings saved = 1;
+  LocationDiscoverySettings running = 2;
+  bool gateway_supported = 3;
+  bool restart_needed = 4;
+  bool configured = 5;
+}
+
+message GetLocationDiscoverySettingsRequest {}
+message SetLocationDiscoverySettingsRequest { LocationDiscoverySettings settings = 1; }
