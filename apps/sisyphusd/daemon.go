@@ -426,17 +426,14 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 	defer db.Close()
-	locationDiscoveryRunning := nodedb.LocationDiscovery{LocateGateway: *byGateway, LocateCountry: *locate, StunServer: *stunServer}
-	locationDiscoverySaved, configured, err := db.LocationDiscovery()
+	gatewayDiscoverySupported := supportsGatewayDiscovery(goruntime.GOOS)
+	locationDiscoveryRunning, err := startupLocationDiscovery(db, nodedb.LocationDiscovery{
+		LocateGateway: *byGateway,
+		LocateCountry: *locate,
+		StunServer:    *stunServer,
+	}, gatewayDiscoverySupported)
 	if err != nil {
 		return err
-	}
-	if configured {
-		locationDiscoveryRunning = locationDiscoverySaved
-	}
-	gatewayDiscoverySupported := supportsGatewayDiscovery(goruntime.GOOS)
-	if !gatewayDiscoverySupported {
-		locationDiscoveryRunning.LocateGateway = false
 	}
 	local.LocationDiscovery = db
 	local.LocationDiscoveryRunning = locationDiscoveryRunning
@@ -1044,6 +1041,25 @@ func runDaemon(ctx context.Context, args []string) error {
 		go pages.Serve(lis)
 	}
 	return waitForDaemonStop(ctx, &local, webAccess, stopped, log)
+}
+
+type locationDiscoverySettingsStore interface {
+	LocationDiscovery() (nodedb.LocationDiscovery, bool, error)
+}
+
+func startupLocationDiscovery(store locationDiscoverySettingsStore, defaults nodedb.LocationDiscovery, gatewayDiscoverySupported bool) (nodedb.LocationDiscovery, error) {
+	running := defaults
+	saved, configured, err := store.LocationDiscovery()
+	if err != nil {
+		return nodedb.LocationDiscovery{}, err
+	}
+	if configured {
+		running = saved
+	}
+	if !gatewayDiscoverySupported {
+		running.LocateGateway = false
+	}
+	return running, nil
 }
 
 func supportsGatewayDiscovery(goos string) bool {
