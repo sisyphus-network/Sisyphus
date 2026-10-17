@@ -546,10 +546,8 @@ func (c *Coordinator) Expire(now time.Time) {
 // Assignment changes interrupt the wait so an earlier deadline is not missed.
 func (c *Coordinator) watchAttemptExpirations() {
 	timer := time.NewTimer(time.Hour)
+	timer.Stop()
 	defer timer.Stop()
-	if !timer.Stop() {
-		<-timer.C
-	}
 	for {
 		deadline, found := c.nextAttemptExpiry()
 		if !found {
@@ -560,21 +558,14 @@ func (c *Coordinator) watchAttemptExpirations() {
 				return
 			}
 		}
-		wait := time.Until(deadline)
-		if wait < 0 {
-			wait = 0
-		}
-		timer.Reset(wait)
+		// A deadline already past makes the timer fire at once.
+		timer.Reset(time.Until(deadline))
 		select {
 		case <-timer.C:
 			c.Expire(time.Now())
 		case <-c.expiryChanged:
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+			// Since Go 1.23, the Reset above drops any tick the timer made
+			// for an earlier deadline, so nothing needs draining here.
 		case <-c.ctx.Done():
 			return
 		}
