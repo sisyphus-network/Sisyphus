@@ -25,7 +25,8 @@ func TestPrivateChatAttachmentRunsEncryptedWorkAcrossTurns(t *testing.T) {
 	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--slots", "2", "--api-listen", apiAddr)
 	client := desktop(t, apiAddr)
 	poolAsSeenBy(t, client)
-	ctx, cancel := context.WithTimeout(tokenOf(t, dataDir), 20*time.Second)
+	// Two jobs run in turn, each given what one job gets elsewhere.
+	ctx, cancel := context.WithTimeout(tokenOf(t, dataDir), 60*time.Second)
 	defer cancel()
 	info, err := client.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
 	if err != nil {
