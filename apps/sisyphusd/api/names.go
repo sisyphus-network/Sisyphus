@@ -37,6 +37,8 @@ type Names struct {
 	answers func(id string) bool
 	// carry, if set, is given every record that is taken in.
 	carry func(*names.Record)
+	// changed, if set, is told which name was published.
+	changed func(id string)
 	// mu makes comparing with the record held and replacing it one step.
 	mu sync.Mutex
 }
@@ -54,12 +56,21 @@ func (n *Names) OnPublish(carry func(*names.Record)) {
 	n.carry = carry
 }
 
+// OnChange has fn called with each name published from now on, after it has
+// been accepted. It is set before the names are in use.
+func (n *Names) OnChange(fn func(id string)) {
+	n.changed = fn
+}
+
 // Publish keeps a record, which has been checked, as the latest for its
 // name. One that would not replace the record held is refused with
 // ErrOlderRecord, unless it is that very record, handed over again.
 func (n *Names) Publish(record *names.Record, now time.Time) error {
 	if err := n.replace(record, now); err != nil {
 		return err
+	}
+	if n.changed != nil {
+		n.changed(record.Name)
 	}
 	// Passing it on can take a while, and the next record need not wait.
 	if n.carry != nil {

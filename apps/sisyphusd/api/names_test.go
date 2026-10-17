@@ -58,6 +58,8 @@ func TestTheLatestRecordOfANameIsTheOneHeld(t *testing.T) {
 	held := NewNames(kept, everyone)
 	var carried []uint64
 	held.OnPublish(func(r *names.Record) { carried = append(carried, r.Sequence) })
+	var changed []string
+	held.OnChange(func(id string) { changed = append(changed, id) })
 
 	if _, err := held.Held(node.ID()); !errors.Is(err, ErrNoRecord) {
 		t.Fatalf("before anything is published: %v", err)
@@ -86,6 +88,9 @@ func TestTheLatestRecordOfANameIsTheOneHeld(t *testing.T) {
 	// Each record taken in was passed on, and none that was refused.
 	if len(carried) != 4 {
 		t.Errorf("records passed on: %v", carried)
+	}
+	if len(changed) != 4 || changed[0] != node.ID() {
+		t.Errorf("accepted name changes: %v", changed)
 	}
 
 	// A record of a node not answered for is not given out, though held.
