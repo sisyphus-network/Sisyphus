@@ -59,6 +59,7 @@ What has no automated test: the desktop app has no coverage measure, and nothing
 | `packages/s3` | A bucket in an S3-style object store, for a store that keeps its blocks there. Its tests run against a real one, SeaweedFS in a container. |
 | `packages/sealed` | Encrypting a private job's blobs: the format, sealing and seekable unsealing. |
 | `packages/storage` | The blob store: IPFS-compatible import, pins, garbage collection, verification. Also holds nodes of linked data (DAG-CBOR), which a pin keeps without keeping the blobs they link. |
+| `packages/stun` | Asks a STUN server the user names, by a single Binding request, which address the machine's traffic reaches it from. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. `verify.go` has the rules of verification by replication and of spot checks. |
 | `apps/sisyphusd/worker` | Connecting to a coordinator, running tasks, the blob cache. |
 | `apps/sisyphusd/api` | The gRPC server and the client-facing services. |

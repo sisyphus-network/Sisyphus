@@ -56,6 +56,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/s3"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
+	"github.com/sisyphus-network/Sisyphus/packages/stun"
 )
 
 func runDaemon(ctx context.Context, args []string) error {
@@ -104,6 +105,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	relayAt := fs.String("relay", "", "worker-only node: listen on this address, as host:port, for the other members' libp2p hosts and relay between them; the port must be open to them. A coordinator relays already")
 	discovery := fs.String("discovery", "on", "whether to look for other nodes, on this network and through the nodes already known, and let them find this one: on or off")
 	bootstrap := fs.String("bootstrap", "", "addresses of nodes to connect to at startup, besides those in the address book: comma-separated, each ending in /p2p/<node ID>")
+	stunServer := fs.String("stun-server", "", "if the node cannot tell which country it is in from its own addresses, its pool's view of it or its gateway, ask this STUN server, host or host:port (port 3478 if none is given), which address its traffic comes from. The server learns that address, so none is asked unless named here. Only a Binding request is sent; no port is opened")
 	byGateway := fs.Bool("locate-gateway", false, "if the node cannot tell which country it is in from its own addresses or its pool's view of it, ask its default gateway for its external address by NAT-PMP. Only that read-only request is sent, and only to the gateway; no port is opened. Linux only, so far")
 	locate := fs.Bool("locate-country", false, "if the node cannot tell which country it is in from its own addresses, ask ipapi.co, which thereby learns its address. Without this nothing is asked of anyone")
 	keepJobs := fs.Duration("keep-jobs", 30*24*time.Hour, "coordinator role: how long a finished job can still be asked after; 0 keeps them for good. A client's job is kept at least as long as --retain, since its record says whose its data is")
@@ -868,10 +870,10 @@ func runDaemon(ctx context.Context, args []string) error {
 		return err
 	}
 	looking, stopLooking := context.WithCancel(ctx)
-	var searches sync.WaitGroup
+	var searches background
 	defer func() {
 		stopLooking()
-		searches.Wait()
+		searches.stop()
 	}()
 	local.Connect, local.Listen, local.Book = host.Connect, host.Addrs, db
 	local.Bootstrap = func(ctx context.Context, addresses []string) {
@@ -879,11 +881,9 @@ func runDaemon(ctx context.Context, args []string) error {
 			log.Info("connected to the nodes this one starts from", "answered", answered, "of", len(addresses))
 		}
 	}
-	searches.Add(1)
-	go func() {
-		defer searches.Done()
+	searches.start(func() {
 		local.Bootstrap(looking, startingPoints(book, *bootstrap))
-	}()
+	})
 	// The desktop client is shown the node's pool and, beside it, the nodes
 	// its host has found.
 	pool := local.Peers
@@ -892,25 +892,36 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	// The node places itself by the addresses it is reached at, from a
 	// table it carries. Only if told to does it ask anyone.
-	var asked, gateway atomic.Value
+	var asked, gateway, stunned atomic.Value
 	if *locate {
-		searches.Add(1)
-		go func() {
-			defer searches.Done()
+		searches.start(func() {
 			asked.Store(lookUpCountry(looking))
-		}()
+		})
 	}
+	var gatewayAnswered atomic.Bool
+	gatewayAnswered.Store(!*byGateway)
 	if *byGateway {
-		searches.Add(1)
-		go func() {
-			defer searches.Done()
+		searches.start(func() {
 			gateway.Store(gatewaysAddress(looking, log))
-		}()
+			gatewayAnswered.Store(true)
+		})
 	}
+	// The STUN server learns the node's address, so it is asked only once
+	// the node is asked where it is and nothing nearer has placed it: not
+	// its own addresses, nor its pool, nor its gateway once that has
+	// answered or given up. It is asked once.
+	var askingSTUN sync.Once
 	local.Country = func() (string, string) {
 		code, _ := asked.Load().(string)
 		external, _ := gateway.Load().(netip.Addr)
-		return countryFrom(host.Addrs(), seenAs(), external, code)
+		reflexive, _ := stunned.Load().(netip.Addr)
+		country, source := countryFrom(host.Addrs(), seenAs(), external, reflexive, code)
+		if *stunServer != "" && (source == "" || source == "lookup") && gatewayAnswered.Load() {
+			askingSTUN.Do(func() {
+				searches.start(func() { stunned.Store(stunnedAddress(looking, *stunServer, log)) })
+			})
+		}
+		return country, source
 	}
 
 	if *inferenceListen != "" {
@@ -1192,13 +1203,43 @@ func placed(multiaddrs []string) string {
 	return ""
 }
 
+// background runs a node's searches, and waits for them when it stops. A
+// search started once it is stopping is not run, since nothing would wait
+// for it.
+type background struct {
+	mu      sync.Mutex
+	over    bool
+	running sync.WaitGroup
+}
+
+func (b *background) start(f func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.over {
+		return
+	}
+	b.running.Add(1)
+	go func() {
+		defer b.running.Done()
+		f()
+	}()
+}
+
+func (b *background) stop() {
+	b.mu.Lock()
+	b.over = true
+	b.mu.Unlock()
+	b.running.Wait()
+}
+
 // countryFrom says which country a node is in, and how that was found: by
 // the first of its own addresses that has a place in the world; failing
 // that, behind a NAT, by its address as the pool sees it (see
 // coordinator/observed.go); failing that, by the address its gateway says
-// it shows the internet, if it was asked; and failing that, by what an
-// outside service said, if it was asked.
-func countryFrom(own []string, seen, gateway netip.Addr, lookedUp string) (code, source string) {
+// it shows the internet, if it was asked; failing that, by the address a
+// STUN server the user named saw it come from; and failing that, by what
+// an outside service said, if it was asked.
+func countryFrom(own []string, seen, gateway, stunned netip.Addr, lookedUp string) (code, source string) {
 	if code := placed(own); code != "" {
 		return code, "interface"
 	}
@@ -1207,6 +1248,9 @@ func countryFrom(own []string, seen, gateway netip.Addr, lookedUp string) (code,
 	}
 	if code := countryOf(gateway); code != "" {
 		return code, "gateway"
+	}
+	if code := countryOf(stunned); code != "" {
+		return code, "stun"
 	}
 	if lookedUp != "" {
 		return lookedUp, "lookup"
@@ -1240,6 +1284,25 @@ func gatewaysAddress(ctx context.Context, log *slog.Logger) netip.Addr {
 		return netip.Addr{}
 	}
 	return external
+}
+
+// askSTUN asks a STUN server where the node's traffic comes from; tests
+// put another here.
+var askSTUN = stun.ReflexiveAddress
+
+// stunnedAddress asks the STUN server the user named which address the
+// node's traffic reaches it from, and returns it, or the zero address if
+// the server does not answer within a few seconds. Like the gateway's
+// answer, it is used only to place the node.
+func stunnedAddress(ctx context.Context, server string, log *slog.Logger) netip.Addr {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	reflexive, err := askSTUN(ctx, server)
+	if err != nil {
+		log.Info("the STUN server did not say the node's address", "server", server, "error", err)
+		return netip.Addr{}
+	}
+	return reflexive
 }
 
 // countryURL is the service asked which country this node's address is in.
