@@ -248,3 +248,13 @@ func TestAnAttemptKeepsWhatItsWorkerSaysItRanWith(t *testing.T) {
 		t.Errorf("an attempt the job has no record of changed it: %+v", task.History)
 	}
 }
+
+// A task refused fails, and its job with it, at once, however many
+// attempts it had left.
+func TestARefusedTaskFailsItsJobAtOnce(t *testing.T) {
+	j := newJob(2)
+	j.Refuse(j.Tasks[1], "too big", now)
+	if j.State != Failed || j.Err != "task 1 failed: too big" || j.Tasks[1].State != Failed || j.Tasks[1].Err != "too big" || j.Tasks[0].State != Cancelled {
+		t.Errorf("job %v %q; tasks %v %v %q", j.State, j.Err, j.Tasks[0].State, j.Tasks[1].State, j.Tasks[1].Err)
+	}
+}

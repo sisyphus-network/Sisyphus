@@ -14,12 +14,27 @@ import (
 // store keeps count from the first time it is asked, so it is not walked
 // again.
 func (c *Coordinator) Stored() map[string]uint64 {
+	c.count()
+	return c.store.Usage(time.Now())
+}
+
+// count has the store start counting what each client keeps, if it has not
+// already.
+func (c *Coordinator) count() {
 	c.grouping.Do(func() {
 		if err := c.store.GroupPins(c.ctx, c.groupOf); err != nil {
 			c.log.Warn("some pins cannot be counted towards what their clients keep", "error", err)
 		}
 	})
-	return c.store.Usage(time.Now())
+}
+
+// shareOf is the most a job's client may keep in the store, or 0 for no
+// limit: for the node's own jobs, or a coordinator that sets none.
+func (c *Coordinator) shareOf(job *jobmodel.Job) uint64 {
+	if job.Submitter == "" {
+		return 0
+	}
+	return c.storePerClient
 }
 
 // groupOf names the client a pin owner holds pins for: a client job's

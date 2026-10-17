@@ -262,6 +262,14 @@ func (j *Job) Fail(t *Task, reason string, maxAttempts int, now time.Time) {
 	j.Finish(nil, fmt.Errorf("task %d failed after %d attempts: %s", t.Index, t.Failures, reason), now)
 }
 
+// Refuse fails a task, and the job with it, at once, for a reason no other
+// attempt would change.
+func (j *Job) Refuse(t *Task, reason string, now time.Time) {
+	t.State, t.Err = Failed, reason
+	j.touch(t)
+	j.Finish(nil, fmt.Errorf("task %d failed: %s", t.Index, reason), now)
+}
+
 // Requeue puts a running task back to pending without counting the attempt
 // against it, for when the attempt was lost through no fault of the task or
 // its worker.
