@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WindowStreams } from './window-streams'
 import { createIpcLogEntry } from './ipc-logger'
 import { DesktopDaemon } from './daemon-process'
-import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, saveLocationDiscoverySettings } from './location-discovery-settings'
+import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, saveLocationDiscoverySettings, supportsGatewayDiscovery } from './location-discovery-settings'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
 import { firstUploadMessage } from './file-upload'
@@ -22,7 +22,7 @@ const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
 const autoStartManagedDaemon = process.env.SISYPHUS_AUTO_START_DAEMON !== '0' && !process.env.SISYPHUS_API_ADDRESS && !process.env.SISYPHUS_API_TOKEN_FILE
 const locationDiscoveryPath = join(app.getPath('userData'), 'location-discovery.json')
 const initialLocationDiscoverySettings = loadLocationDiscoverySettings(locationDiscoveryPath)
-const gatewayDiscoverySupported = process.platform === 'linux'
+const gatewayDiscoverySupported = supportsGatewayDiscovery(process.platform)
 const runningLocationDiscoverySettings = effectiveLocationDiscoverySettings(initialLocationDiscoverySettings, gatewayDiscoverySupported)
 let savedLocationDiscoverySettings = initialLocationDiscoverySettings
 // The daemon lets anything on this machine read from its local API, but only

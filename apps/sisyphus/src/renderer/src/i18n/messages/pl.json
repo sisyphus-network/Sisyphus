@@ -232,7 +232,7 @@
     "description": "Opcjonalne źródła mogą pomóc oszacować położenie węzła w sieci, gdy jego publiczne adresy są nieznane.",
     "gatewayTitle": "Zapytaj moją bramę",
     "gatewayDescription": "Zezwól na żądanie NAT-PMP tylko do odczytu do domyślnej bramy tego komputera, aby poznać zewnętrzny adres IPv4. Nie powstaje mapowanie portu; żądanie otrzymuje tylko brama.",
-    "gatewayUnavailable": "Ustalanie przez bramę jest obecnie obsługiwane tylko w systemie Linux.",
+    "gatewayUnavailable": "Wyszukiwanie bramy nie jest dostępne w tym systemie operacyjnym.",
     "lookupTitle": "Użyj ipapi.co w ostateczności",
     "lookupDescription": "Jeśli adresy lokalne, pula, brama i skonfigurowane serwery STUN nie pomogą, publiczny adres IP zostanie wysłany do ipapi.co. ipapi.co podaje wtedy, w jakim kraju jest ten adres.",
     "stunTitle": "Zapytaj serwer STUN",
