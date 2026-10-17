@@ -119,7 +119,7 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
         {snapshot.info ? <CardContent className="grid grid-cols-2 gap-x-8 max-[600px]:grid-cols-1">
           <Detail label={messages.peerId} value={snapshot.info.peerId} code wide />
           <Detail label={messages.daemonVersion} value={snapshot.info.daemonVersion} />
-          <Detail label={messages.geoCountry} value={snapshot.info.countryCode || messages.geoUnavailable} />
+          <Detail label={snapshot.info.countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry} value={snapshot.info.countryCode || messages.geoUnavailable} />
           <Detail label={messages.listenAddresses} wide>{snapshot.info.listenAddresses.length ? <div className="flex flex-col gap-1.5">{snapshot.info.listenAddresses.slice(0, 3).map((address) => <code key={address} dir="ltr" className="break-all text-xs">{address}</code>)}{snapshot.info.listenAddresses.length > 3 && <span className="text-xs text-muted-foreground">{formatMessage(messages.moreAddresses, { count: snapshot.info.listenAddresses.length - 3 })}</span>}</div> : <EmptyState icon={Signal} title={messages.noAddresses} />}</Detail>
         </CardContent> : <EmptyState icon={HardDrive} title={labels.noNodeDetails} description={labels.nodeDetailsPending} />}
       </NodeSection>

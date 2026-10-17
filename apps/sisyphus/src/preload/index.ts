@@ -44,6 +44,7 @@ export type NodeSnapshot = {
     daemonVersion: string
     listenAddresses: string[]
     countryCode: string
+    countrySource: string
   } | null
   peers: Peer[]
   revision: string

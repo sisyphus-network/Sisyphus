@@ -119,6 +119,7 @@ type NodeInfo = {
   daemonVersion: string
   listenAddresses: string[]
   countryCode: string
+  countrySource: string
 }
 
 type NodeSnapshot = {

@@ -49,7 +49,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
     const [info, peerList] = await Promise.all([node.getNodeInfo({}), node.listPeers({})])
     return {
       status: 'connected', endpoint: baseUrl,
-      info: { peerId: info.peerId, daemonVersion: info.daemonVersion, listenAddresses: info.listenAddresses, countryCode: info.countryCode },
+      info: { peerId: info.peerId, daemonVersion: info.daemonVersion, listenAddresses: info.listenAddresses, countryCode: info.countryCode, countrySource: info.countrySource },
       peers: peerList.peers.map((peer) => ({
         peerId: peer.peerId, connectionState: peer.connectionState, knownAddresses: peer.knownAddresses,
         trustedForCompute: peer.trustedForCompute, worksForThisNode: peer.worksForThisNode,
@@ -117,7 +117,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
                 if (controller.signal.aborted) break
                 callback({
                   status: 'connected', endpoint: baseUrl,
-                  info: { peerId: info.peerId, daemonVersion: info.daemonVersion, listenAddresses: info.listenAddresses, countryCode: info.countryCode },
+                  info: { peerId: info.peerId, daemonVersion: info.daemonVersion, listenAddresses: info.listenAddresses, countryCode: info.countryCode, countrySource: info.countrySource },
                   peers: update.peers.map((peer) => ({
                     peerId: peer.peerId, connectionState: peer.connectionState, knownAddresses: peer.knownAddresses,
                     trustedForCompute: peer.trustedForCompute, worksForThisNode: peer.worksForThisNode,
