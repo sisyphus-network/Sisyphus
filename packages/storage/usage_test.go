@@ -267,3 +267,40 @@ func TestABlobKeepsARepeatedChunkOnce(t *testing.T) {
 		t.Errorf("alice keeps %d, want %d", got, want)
 	}
 }
+
+// Pins placed and released while the groups are being named are counted
+// as they stand once it is done, none of them lost.
+func TestPinsPlacedWhileGroupingAreCounted(t *testing.T) {
+	s := NewMemory()
+	var blobs []cid.Cid
+	for i := range 8 {
+		blobs = append(blobs, put(t, s, append(pattern(2*chunkSize), byte(i))))
+	}
+	for _, c := range blobs[:4] {
+		pinFor(t, s, "user:alice", time.Time{}, c)
+	}
+	start := make(chan struct{})
+	done := make(chan error, 3)
+	go func() { <-start; done <- s.GroupPins(ctx, clientOf) }()
+	go func() {
+		<-start
+		for _, c := range blobs[4:] {
+			if err := s.Pin(ctx, "user:bob", time.Time{}, c); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	go func() { <-start; done <- s.Unpin("user:alice", blobs[0]) }()
+	close(start)
+	for range 3 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	if got, want := s.Usage(now), walked(t, s, now, clientOf); !maps.Equal(got, want) {
+		t.Errorf("index %v, walk %v", got, want)
+	}
+}

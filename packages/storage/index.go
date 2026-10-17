@@ -211,29 +211,34 @@ func (s *Store) GroupPins(ctx context.Context, group func(owner string) string) 
 	s.gcMu.Lock()
 	defer s.gcMu.Unlock()
 	ix := newUsageIndex(group)
-	s.pinMu.Lock()
-	var held []pinKey
-	for key := range s.pins {
-		if group(key.owner) != "" {
-			held = append(held, key)
-		}
-	}
-	s.pinMu.Unlock()
-
+	// The pins are walked with them unlocked, and then looked at again
+	// with them locked, until none is left that has not been walked, so
+	// that the index is published counting every pin there is then, even
+	// one that came while the walk went on.
 	reached := make(map[cid.Cid]*reach)
+	walked := make(map[cid.Cid]bool)
 	var failed []error
-	for _, key := range held {
-		if _, found := reached[key.cid]; found {
-			continue
+	for {
+		s.pinMu.Lock()
+		var unwalked []pinKey
+		for key := range s.pins {
+			if !walked[key.cid] && group(key.owner) != "" {
+				walked[key.cid] = true
+				unwalked = append(unwalked, key)
+			}
 		}
-		r, err := s.reachOf(ctx, key.cid)
-		if err != nil {
-			failed = append(failed, fmt.Errorf("pin of %s: %w", key.owner, err))
+		if len(unwalked) == 0 {
+			break // with the pins locked
 		}
-		reached[key.cid] = r
+		s.pinMu.Unlock()
+		for _, key := range unwalked {
+			r, err := s.reachOf(ctx, key.cid)
+			if err != nil {
+				failed = append(failed, fmt.Errorf("pin of %s: %w", key.owner, err))
+			}
+			reached[key.cid] = r
+		}
 	}
-
-	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
 	// Pins released while the walk went on are not there to count.
 	for key, expires := range s.pins {
