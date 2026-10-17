@@ -265,6 +265,8 @@ type Coordinator struct {
 	// keys is what the workers of each private job are given, once it has
 	// been worked out.
 	keys map[string]*pb.TaskAssignment
+	// expiryChanged wakes the deadline watcher when running attempts change.
+	expiryChanged chan struct{}
 }
 
 // maxEvents is how many of a job's events are kept to hand.
@@ -407,6 +409,7 @@ func New(cfg Config) *Coordinator {
 		seqs:           make(map[string]uint64),
 		logged:         make(map[string]int),
 		keys:           make(map[string]*pb.TaskAssignment),
+		expiryChanged:  make(chan struct{}, 1),
 	}
 	if c.addressOf == nil {
 		c.addressOf = callersAddress
@@ -414,20 +417,12 @@ func New(cfg Config) *Coordinator {
 	if c.sourceOf == nil {
 		c.sourceOf = callersSource
 	}
-	// Attempts that have run past their time are looked for once a second.
+	// Attempts are expired at their nearest deadline, not found by scanning
+	// all running work once a second.
 	c.aggregating.Add(1)
 	go func() {
 		defer c.aggregating.Done()
-		tick := time.NewTicker(time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case now := <-tick.C:
-				c.Expire(now)
-			case <-c.ctx.Done():
-				return
-			}
-		}
+		c.watchAttemptExpirations()
 	}()
 	return c
 }
@@ -524,12 +519,14 @@ func (c *Coordinator) Cancel(jobID string) (*pb.Job, error) {
 func (c *Coordinator) Expire(now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	changed := false
 	for _, w := range c.workers {
 		for id, a := range w.running {
-			if a.job.TaskTimeout <= 0 || now.Sub(a.started) <= a.job.TaskTimeout {
+			if a.job.TaskTimeout <= 0 || now.Before(a.started.Add(a.job.TaskTimeout)) {
 				continue
 			}
 			delete(w.running, id)
+			changed = true
 			c.releaseLocked(a)
 			w.send.add(cancelOf(a))
 			reason := "timed out after " + a.job.TaskTimeout.String()
@@ -539,7 +536,76 @@ func (c *Coordinator) Expire(now time.Time) {
 			c.notifyLocked(a.job)
 		}
 	}
+	if changed {
+		c.notifyExpiryChangedLocked()
+	}
 	c.scheduleLocked()
+}
+
+// watchAttemptExpirations waits for the nearest running-attempt deadline.
+// Assignment changes interrupt the wait so an earlier deadline is not missed.
+func (c *Coordinator) watchAttemptExpirations() {
+	timer := time.NewTimer(time.Hour)
+	defer timer.Stop()
+	if !timer.Stop() {
+		<-timer.C
+	}
+	for {
+		deadline, found := c.nextAttemptExpiry()
+		if !found {
+			select {
+			case <-c.expiryChanged:
+				continue
+			case <-c.ctx.Done():
+				return
+			}
+		}
+		wait := time.Until(deadline)
+		if wait < 0 {
+			wait = 0
+		}
+		timer.Reset(wait)
+		select {
+		case <-timer.C:
+			c.Expire(time.Now())
+		case <-c.expiryChanged:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-c.ctx.Done():
+			return
+		}
+	}
+}
+
+func (c *Coordinator) nextAttemptExpiry() (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var earliest time.Time
+	for _, w := range c.workers {
+		for _, a := range w.running {
+			if a.job.TaskTimeout <= 0 {
+				continue
+			}
+			deadline := a.started.Add(a.job.TaskTimeout)
+			if earliest.IsZero() || deadline.Before(earliest) {
+				earliest = deadline
+			}
+		}
+	}
+	return earliest, !earliest.IsZero()
+}
+
+// notifyExpiryChangedLocked asks the deadline watcher to re-evaluate the
+// running attempts. Changes coalesce; the current state is always re-read.
+func (c *Coordinator) notifyExpiryChangedLocked() {
+	select {
+	case c.expiryChanged <- struct{}{}:
+	default:
+	}
 }
 
 // cancelOf is the message that tells a worker to stop a task it was given.
@@ -551,14 +617,19 @@ func cancelOf(a assignment) *pb.CoordinatorMessage {
 // stop it, and takes the task off the worker's hands, so that its slot is
 // free at once and whatever it still reports is ignored.
 func (c *Coordinator) stopTasksLocked(job *jobmodel.Job) {
+	changed := false
 	for _, w := range c.workers {
 		for id, a := range w.running {
 			if a.job == job {
 				delete(w.running, id)
+				changed = true
 				c.releaseLocked(a)
 				w.send.add(cancelOf(a))
 			}
 		}
+	}
+	if changed {
+		c.notifyExpiryChangedLocked()
 	}
 }
 
@@ -1237,6 +1308,7 @@ func (c *Coordinator) disconnect(w *worker) {
 	// With nothing recorded as running, it is dropped like any other result
 	// for a task the worker does not hold.
 	w.running = make(map[string]assignment)
+	c.notifyExpiryChangedLocked()
 	c.scheduleLocked()
 }
 
@@ -1257,6 +1329,7 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 		return
 	}
 	delete(w.running, a.task.ID)
+	c.notifyExpiryChangedLocked()
 	defer c.scheduleLocked()
 	// What the attempt uploaded is kept further only if its result names
 	// it, which keep does below.
@@ -1920,6 +1993,7 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 	c.recordLocked(a.job, eventTaskStarted, a.task.Index, w.name, fmt.Sprintf("attempt %d", a.attempt))
 	c.log.Info("task given", "task", a.task.ID, "worker", w.name, "attempt", a.attempt)
 	w.running[a.task.ID] = a
+	c.notifyExpiryChangedLocked()
 	c.uploadMu.Lock()
 	up := attemptUploads{}
 	if c.shareOf(a.job) > 0 {
