@@ -234,7 +234,7 @@
     "gatewayDescription": "Allow a read-only NAT-PMP request to this computer’s default gateway for its external IPv4 address. No port mapping is created; only your gateway receives the request.",
     "gatewayUnavailable": "This gateway lookup is currently supported on Linux only.",
     "lookupTitle": "Use ipapi.co as a last resort",
-    "lookupDescription": "If local, pool, and gateway sources cannot place this node, send its public IP address to ipapi.co. The daemon still derives the country locally.",
+    "lookupDescription": "If local, pool, and gateway sources cannot place this node, send its public IP address to ipapi.co. ipapi.co then says which country that address is in.",
     "operatorManaged": "This node is connected to a daemon managed outside this app. Change these options where that daemon is configured.",
     "restartRequired": "Saved. Quit and reopen Sisyphus to apply these changes.",
     "restartHint": "Changes take effect the next time you open Sisyphus.",

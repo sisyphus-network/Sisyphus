@@ -234,7 +234,7 @@
     "gatewayDescription": "Permitir una solicitud NAT-PMP de solo lectura a la puerta de enlace predeterminada de este equipo para conocer su IPv4 externa. No se crea ninguna asignación de puertos; solo la puerta de enlace recibe la solicitud.",
     "gatewayUnavailable": "La consulta de la puerta de enlace solo está disponible actualmente en Linux.",
     "lookupTitle": "Usar ipapi.co como último recurso",
-    "lookupDescription": "Si las direcciones locales, el pool y la puerta de enlace no bastan, se envía la IP pública a ipapi.co. El demonio sigue calculando el país localmente.",
+    "lookupDescription": "Si las direcciones locales, el pool y la puerta de enlace no bastan, se envía la IP pública a ipapi.co. ipapi.co indica entonces en qué país está esa dirección.",
     "operatorManaged": "Este nodo está conectado a un demonio administrado fuera de la aplicación. Cambia estas opciones donde esté configurado ese demonio.",
     "restartRequired": "Guardado. Cierra y vuelve a abrir Sisyphus para aplicar los cambios.",
     "restartHint": "Los cambios se aplican la próxima vez que abras Sisyphus.",

@@ -234,7 +234,7 @@
     "gatewayDescription": "Autoriser une requête NAT-PMP en lecture seule vers la passerelle par défaut de cet ordinateur pour obtenir son IPv4 externe. Aucun mappage de port n’est créé ; seule votre passerelle reçoit la requête.",
     "gatewayUnavailable": "La recherche via la passerelle est actuellement prise en charge uniquement sous Linux.",
     "lookupTitle": "Utiliser ipapi.co en dernier recours",
-    "lookupDescription": "Si les adresses locales, le pool et la passerelle ne suffisent pas, l’adresse IP publique est envoyée à ipapi.co. Le démon continue de déterminer le pays localement.",
+    "lookupDescription": "Si les adresses locales, le pool et la passerelle ne suffisent pas, l’adresse IP publique est envoyée à ipapi.co. ipapi.co indique alors dans quel pays se trouve cette adresse.",
     "operatorManaged": "Ce nœud est connecté à un démon géré en dehors de l’application. Modifiez ces options dans la configuration de ce démon.",
     "restartRequired": "Enregistré. Fermez puis rouvrez Sisyphus pour appliquer les changements.",
     "restartHint": "Les changements prendront effet au prochain démarrage de Sisyphus.",
