@@ -14,7 +14,7 @@ test('unrelated peer snapshot changes keep the globe marker key stable', () => {
   ], centroids)
   const next = locatePeers([
     { peerId: 'peer-a', countryCode: 'IL', connectionState: 0, knownAddresses: [] },
-    { peerId: 'peer-b', countryCode: 'us', connectionState: 2, knownAddresses: ['/ip4/198.51.100.1'] },
+    { peerId: 'peer-b', countryCode: 'US', connectionState: 2, knownAddresses: ['/ip4/198.51.100.1'] },
   ], centroids)
 
   assert.deepEqual(next, first)

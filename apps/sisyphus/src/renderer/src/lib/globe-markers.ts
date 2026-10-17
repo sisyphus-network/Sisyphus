@@ -5,7 +5,7 @@ export function locatePeers(peers: PeerCountry[], centroids: ReadonlyMap<string,
   return peers.flatMap((peer) => {
     const countryCode = peer.countryCode?.toUpperCase()
     const centroid = countryCode ? centroids.get(countryCode) : undefined
-    return centroid ? [{ peerId: peer.peerId, countryCode: peer.countryCode, ...centroid }] : []
+    return centroid ? [{ peerId: peer.peerId, countryCode, ...centroid }] : []
   }).sort((a, b) => a.peerId.localeCompare(b.peerId))
 }
 
