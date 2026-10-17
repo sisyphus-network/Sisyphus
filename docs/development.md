@@ -51,7 +51,7 @@ What has no automated test: the desktop app has no coverage measure, and nothing
 | `packages/ipfscluster` | Starting and stopping an IPFS Cluster peer beside the node's Kubo, and calling its REST API. |
 | `packages/kubo` | Starting and stopping a Kubo daemon beside the node, and calling its API. |
 | `packages/names` | The signed records behind names, which are IPNS records: making one with a node's key, checking one against the name, and telling which of two is newer. No network. |
-| `packages/natpmp` | Asks the machine's default gateway, by NAT-PMP's one read-only request, which address it shows the internet. |
+| `packages/natpmp` | Asks the machine's default gateway, found in its routing table on Linux, macOS, the BSDs and Windows, by NAT-PMP's one read-only request, which address it shows the internet. |
 | `packages/job-model` | Job and task state machines, which blobs a job consumed and produced, and for a job that is verified, the results its workers returned and whether enough of them agree. No I/O, no locks. |
 | `packages/jobrecord` | A finished job as linked data: the record's layout, building it from a job, reading it back. No I/O in the building, so the same job always gives the same CID. |
 | `packages/nodedb` | The node's SQLite database, where a coordinator keeps its jobs, its members, the invitations it has issued, the requests made of it as a pinning service and the records of the names it answers for. Schema changes are new numbered files in `migrations/`, never edits to old ones. |

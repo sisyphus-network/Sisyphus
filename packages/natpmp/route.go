@@ -62,3 +62,37 @@ func gatewayIn(table io.Reader) (netip.Addr, error) {
 	}
 	return best, nil
 }
+
+// gatewayInRouteGet reads the IPv4 gateway from what `route -n get
+// default` prints on macOS and the BSDs: the route the kernel itself
+// chooses for traffic with no more particular route, one field a line,
+// among them "gateway: 192.168.1.1". A default through an interface rather
+// than an address, as a VPN's may be, has no gateway to ask.
+func gatewayInRouteGet(answer io.Reader) (netip.Addr, error) {
+	lines := bufio.NewScanner(answer)
+	for lines.Scan() {
+		name, value, found := strings.Cut(strings.TrimSpace(lines.Text()), ":")
+		if !found || name != "gateway" {
+			continue
+		}
+		if gateway, err := netip.ParseAddr(strings.TrimSpace(value)); err == nil && gateway.Is4() && !gateway.IsUnspecified() {
+			return gateway, nil
+		}
+	}
+	return netip.Addr{}, ErrNoGateway
+}
+
+// gatewayInNextHop reads the IPv4 gateway from the next hop Windows says
+// it would send by, one address alone on a line, as PowerShell prints the
+// NextHop of the route Find-NetRoute chooses. A next hop of 0.0.0.0 is a
+// route on the link itself, with no gateway.
+func gatewayInNextHop(answer io.Reader) (netip.Addr, error) {
+	lines := bufio.NewScanner(answer)
+	for lines.Scan() {
+		gateway, err := netip.ParseAddr(strings.TrimSpace(lines.Text()))
+		if err == nil && gateway.Is4() && !gateway.IsUnspecified() {
+			return gateway, nil
+		}
+	}
+	return netip.Addr{}, ErrNoGateway
+}
