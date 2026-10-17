@@ -51,14 +51,15 @@ func TestAWorkerUploadsOnlyForAnAttemptItHolds(t *testing.T) {
 	p := startPool(t, runtime.Builtin())
 	w := p.connectRaw(hello("rig", 1, "primes"))
 	w.welcome()
-	other := p.connectRaw(hello("other", 1, "primes"))
-	other.welcome()
 
 	if _, err := p.uploadAs(w, "for no task", nil); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "names none") {
 		t.Fatalf("an upload naming no attempt: %v", err)
 	}
 	id := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_FULL_WORKER, 0)).GetJobId()
 	a := w.assignment()
+	// Another worker, connected only once the task is rig's.
+	other := p.connectRaw(hello("other", 1, "primes"))
+	other.welcome()
 	if _, err := p.uploadAs(other, "for another's task", a); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "holds no attempt 1") {
 		t.Fatalf("an upload for another worker's attempt: %v", err)
 	}
