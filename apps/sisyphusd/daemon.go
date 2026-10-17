@@ -1498,7 +1498,8 @@ func (w *whereabouts) country() (string, string) {
 	}
 	if w.lookUp && w.stunAnswered.Load() && w.lookups.begin(time.Now()) {
 		w.start(func() {
-			w.lookups.end(time.Now(), lookUpCountry(w.ctx))
+			answer := lookUpCountry(w.ctx)
+			w.lookups.end(time.Now(), answer)
 			w.notify()
 		})
 	}
@@ -2245,9 +2246,6 @@ const (
 // only when a queue mutation occurs. Failures use bounded exponential retry,
 // since the external pinning service has no change notification of its own.
 func replayFilePinsOnChanges(ctx context.Context, planning *assistant, retryInterval time.Duration, log *slog.Logger) {
-	if retryInterval <= 0 {
-		retryInterval = filePinRetryInterval
-	}
 	failing := false
 	backoff := retryInterval
 	for {
@@ -2266,15 +2264,13 @@ func replayFilePinsOnChanges(ctx context.Context, planning *assistant, retryInte
 			log.Info("attachment pins applied")
 		}
 		failing = err != nil
-		var timer *time.Timer
+		// Since Go 1.23 a timer nothing refers to any longer is collected
+		// whether or not it fired, so one left behind by a change or by ctx
+		// ending costs nothing.
 		var retry <-chan time.Time
 		if err != nil {
-			timer = time.NewTimer(backoff)
-			retry = timer.C
-			backoff *= 2
-			if backoff > filePinMaxRetry {
-				backoff = filePinMaxRetry
-			}
+			retry = time.After(backoff)
+			backoff = min(backoff*2, filePinMaxRetry)
 		} else {
 			backoff = retryInterval
 		}
@@ -2285,13 +2281,7 @@ func replayFilePinsOnChanges(ctx context.Context, planning *assistant, retryInte
 			}
 		case <-retry:
 		case <-ctx.Done():
-			if timer != nil {
-				timer.Stop()
-			}
 			return
-		}
-		if timer != nil {
-			timer.Stop()
 		}
 	}
 }
