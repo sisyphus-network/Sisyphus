@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { createRpcStream } from './rpc-stream'
+import type { PoolLimits } from '../shared/pool-limits.ts'
 
 type IpcLogEntry = {
   phase: 'request' | 'response' | 'error' | 'event'
@@ -57,6 +58,8 @@ export type BrowserPairingInvitation = { code: string; expiresAt: string; pairUr
 export type PairedBrowser = { id: string; name: string; createdAt: string }
 export type LocationDiscoverySettings = { locateGateway: boolean; locateCountry: boolean; stunServer: string }
 export type LocationDiscoveryState = { managed: boolean; configurable: boolean; configured: boolean; restartNeeded: boolean; gatewaySupported: boolean | null; saved: LocationDiscoverySettings; running: LocationDiscoverySettings }
+export type { PoolLimits }
+export type PoolLimitsState = { managed: boolean; configurable: boolean; configured: boolean; restartNeeded: boolean; coordinator: boolean; saved: PoolLimits; running: PoolLimits }
 
 export type NodeRpcMethod =
   | 'getBootstrapPeers' | 'setBootstrapPeers' | 'listWorkers' | 'listPeers' | 'getNodeInfo'
@@ -74,6 +77,8 @@ const api = {
   getSnapshot: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:get-snapshot'),
   getLocationDiscoverySettings: (): Promise<LocationDiscoveryState> => ipcRenderer.invoke('node:get-location-discovery-settings'),
   saveLocationDiscoverySettings: (settings: LocationDiscoverySettings): Promise<LocationDiscoveryState> => ipcRenderer.invoke('node:save-location-discovery-settings', settings),
+  getPoolLimits: (): Promise<PoolLimitsState> => ipcRenderer.invoke('node:get-pool-limits'),
+  savePoolLimits: (limits: PoolLimits): Promise<PoolLimitsState> => ipcRenderer.invoke('node:save-pool-limits', limits),
   reconnect: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:reconnect'),
   connectPeer: (address: string): Promise<string> => ipcRenderer.invoke('node:connect-peer', address),
   setPeerComputeTrust: (peerId: string, trusted: boolean): Promise<void> => ipcRenderer.invoke('node:set-peer-compute-trust', { peerId, trusted }),

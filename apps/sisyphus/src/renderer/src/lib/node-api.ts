@@ -1,4 +1,5 @@
-import type { LocationDiscoverySettings, LocationDiscoveryState, NodeSnapshot, SisyphusBridge } from '../../../preload'
+import type { LocationDiscoverySettings, LocationDiscoveryState, NodeSnapshot, PoolLimits, PoolLimitsState, SisyphusBridge } from '../../../preload'
+import { normalizePoolLimits } from '../../../shared/pool-limits.ts'
 import { createBrowserPairing, createSisyphusClient, isAuthenticationError, listPairedBrowsers, revokePairedBrowser, type NodeServiceClient, type SisyphusClient } from '@sisyphus/client'
 
 let runtimeClient: SisyphusClient | undefined
@@ -40,8 +41,23 @@ function locationDiscoveryState(value: {
   }
 }
 
-function supportsLocationDiscoverySettings(error: unknown): boolean {
+function daemonImplementsCall(error: unknown): boolean {
   return !(error instanceof Error && /UNIMPLEMENTED|does not implement/i.test(error.message))
+}
+
+// A paired browser reaches the daemon through its same-origin session, so it
+// manages the node's pool limits the same way Electron does. Uint64 fields
+// arrive as bigint and are carried as decimal strings.
+function poolLimitsState(value: { configured: boolean; restartNeeded: boolean; coordinator: boolean; saved?: unknown; running?: unknown }): PoolLimitsState {
+  return {
+    managed: false,
+    configurable: true,
+    configured: value.configured,
+    restartNeeded: value.restartNeeded,
+    coordinator: value.coordinator,
+    saved: normalizePoolLimits(normalizeProtocolValue(value.saved)),
+    running: normalizePoolLimits(normalizeProtocolValue(value.running)),
+  }
 }
 
 function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge {
@@ -88,13 +104,29 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
       try {
         return locationDiscoveryState(await node.getLocationDiscoverySettings({}))
       } catch (error) {
-        if (supportsLocationDiscoverySettings(error)) throw error
+        if (daemonImplementsCall(error)) throw error
         const disabled: LocationDiscoverySettings = { locateGateway: false, locateCountry: false, stunServer: '' }
         return { managed: false, configurable: false, configured: false, restartNeeded: false, gatewaySupported: null, saved: disabled, running: disabled }
       }
     },
     saveLocationDiscoverySettings: async (settings: LocationDiscoverySettings): Promise<LocationDiscoveryState> =>
       locationDiscoveryState(await node.setLocationDiscoverySettings({ settings })),
+    getPoolLimits: async (): Promise<PoolLimitsState> => {
+      try {
+        return poolLimitsState(await node.getPoolLimits({}))
+      } catch (error) {
+        if (daemonImplementsCall(error)) throw error
+        return { managed: false, configurable: false, configured: false, restartNeeded: false, coordinator: false, saved: normalizePoolLimits({}), running: normalizePoolLimits({}) }
+      }
+    },
+    savePoolLimits: async (limits: PoolLimits): Promise<PoolLimitsState> =>
+      poolLimitsState(await node.setPoolLimits({ limits: {
+        maxJobsPerClient: limits.maxJobsPerClient,
+        maxTasksPerClient: limits.maxTasksPerClient,
+        maxTaskTimeoutSeconds: BigInt(limits.maxTaskTimeoutSeconds),
+        maxStoreBytesPerClient: BigInt(limits.maxStoreBytesPerClient),
+        maxUploadBytesPerAttempt: BigInt(limits.maxUploadBytesPerAttempt),
+      } })),
     reconnect: getSnapshot,
     connectPeer: async (address) => (await node.connectPeer({ address })).peerId,
     setPeerComputeTrust: async (peerId, trusted) => { await node.setPeerComputeTrust({ peerId, trusted }) },
