@@ -13,7 +13,13 @@ test:
 	go test -race ./...
 
 # Fails unless the tests execute every statement of hand-written code.
-# Generated protocol code is not counted.
+# Generated protocol code is not counted. The tests that need Kubo, IPFS
+# Cluster or Docker are required, as in CI, so that one missing program
+# fails with its name rather than as a list of blocks no test ran. Set any
+# of these to nothing to skip those tests, knowing coverage will then fail.
+cover: export SISYPHUS_REQUIRE_KUBO ?= 1
+cover: export SISYPHUS_REQUIRE_CLUSTER ?= 1
+cover: export SISYPHUS_REQUIRE_DOCKER ?= 1
 cover:
 	go test -count=1 -coverpkg=$(COVERED) -coverprofile=coverage.out ./...
 	./scripts/check-coverage.sh coverage.out
