@@ -358,7 +358,10 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	cfg := LocalConfig{NodeID: "12D3KooWnode", Token: "owner-token", Listen: func() []string { return nil }, BrowserAccess: db}
+	cfg := LocalConfig{
+		NodeID: "12D3KooWnode", Token: "owner-token", Listen: func() []string { return nil },
+		BrowserAccess: db, LocationDiscovery: db, GatewayDiscoverySupported: true,
+	}
 	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}
 	server := httptest.NewServer(NewWebAppHandler(cfg, nil, ui))
 	t.Cleanup(func() { server.Close() })
@@ -428,6 +431,22 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("paired browser API call: %d %s", res.StatusCode, body)
+	}
+	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/GetLocationDiscoverySettings", `{}`, cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"configured":false`) {
+		t.Fatalf("paired browser could not read discovery settings: %d %s", res.StatusCode, body)
+	}
+	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/SetLocationDiscoverySettings", `{"settings":{"locateCountry":true,"stunServer":"stun.example.org:3478"}}`, cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"locateCountry":true`) {
+		t.Fatalf("paired browser could not save discovery settings: %d %s", res.StatusCode, body)
+	}
+	settings, configured, err := db.LocationDiscovery()
+	if err != nil || !configured || settings != (nodedb.LocationDiscovery{LocateCountry: true, StunServer: "stun.example.org:3478"}) {
+		t.Fatalf("paired browser discovery settings = %#v, configured %v, error %v", settings, configured, err)
 	}
 	res = request(http.MethodGet, "/devices", "", cookie, false)
 	body, _ = io.ReadAll(res.Body)

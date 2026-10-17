@@ -128,9 +128,7 @@ func validDiscoveryHostname(host string) bool {
 	if len(host) == 0 || len(host) > 253 {
 		return false
 	}
-	if strings.HasSuffix(host, ".") {
-		host = strings.TrimSuffix(host, ".")
-	}
+	host = strings.TrimSuffix(host, ".")
 	for _, label := range strings.Split(host, ".") {
 		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return false
