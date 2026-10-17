@@ -22,6 +22,8 @@ const (
 	NodeService_GetNodeInfo_FullMethodName                  = "/sisyphus.node.v1.NodeService/GetNodeInfo"
 	NodeService_GetLocationDiscoverySettings_FullMethodName = "/sisyphus.node.v1.NodeService/GetLocationDiscoverySettings"
 	NodeService_SetLocationDiscoverySettings_FullMethodName = "/sisyphus.node.v1.NodeService/SetLocationDiscoverySettings"
+	NodeService_GetPoolLimits_FullMethodName                = "/sisyphus.node.v1.NodeService/GetPoolLimits"
+	NodeService_SetPoolLimits_FullMethodName                = "/sisyphus.node.v1.NodeService/SetPoolLimits"
 	NodeService_GetWebAccessConfig_FullMethodName           = "/sisyphus.node.v1.NodeService/GetWebAccessConfig"
 	NodeService_SetWebAccessConfig_FullMethodName           = "/sisyphus.node.v1.NodeService/SetWebAccessConfig"
 	NodeService_ListNetworkInterfaces_FullMethodName        = "/sisyphus.node.v1.NodeService/ListNetworkInterfaces"
@@ -74,6 +76,12 @@ type NodeServiceClient interface {
 	// effect after it restarts, whether the desktop starts it or not.
 	GetLocationDiscoverySettings(ctx context.Context, in *GetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error)
 	SetLocationDiscoverySettings(ctx context.Context, in *SetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error)
+	// The limits a coordinator holds each member to. Changes are saved by the
+	// node and take effect after it restarts, whether the desktop starts it
+	// or not; a node that does not run the coordinator role holds no one to
+	// them.
+	GetPoolLimits(ctx context.Context, in *GetPoolLimitsRequest, opts ...grpc.CallOption) (*PoolLimitsState, error)
+	SetPoolLimits(ctx context.Context, in *SetPoolLimitsRequest, opts ...grpc.CallOption) (*PoolLimitsState, error)
 	// Browser access is disabled until explicitly enabled by the node owner.
 	GetWebAccessConfig(ctx context.Context, in *GetWebAccessConfigRequest, opts ...grpc.CallOption) (*WebAccessConfig, error)
 	SetWebAccessConfig(ctx context.Context, in *SetWebAccessConfigRequest, opts ...grpc.CallOption) (*WebAccessConfig, error)
@@ -201,6 +209,26 @@ func (c *nodeServiceClient) SetLocationDiscoverySettings(ctx context.Context, in
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LocationDiscoverySettingsState)
 	err := c.cc.Invoke(ctx, NodeService_SetLocationDiscoverySettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetPoolLimits(ctx context.Context, in *GetPoolLimitsRequest, opts ...grpc.CallOption) (*PoolLimitsState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PoolLimitsState)
+	err := c.cc.Invoke(ctx, NodeService_GetPoolLimits_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) SetPoolLimits(ctx context.Context, in *SetPoolLimitsRequest, opts ...grpc.CallOption) (*PoolLimitsState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PoolLimitsState)
+	err := c.cc.Invoke(ctx, NodeService_SetPoolLimits_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -683,6 +711,12 @@ type NodeServiceServer interface {
 	// effect after it restarts, whether the desktop starts it or not.
 	GetLocationDiscoverySettings(context.Context, *GetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error)
 	SetLocationDiscoverySettings(context.Context, *SetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error)
+	// The limits a coordinator holds each member to. Changes are saved by the
+	// node and take effect after it restarts, whether the desktop starts it
+	// or not; a node that does not run the coordinator role holds no one to
+	// them.
+	GetPoolLimits(context.Context, *GetPoolLimitsRequest) (*PoolLimitsState, error)
+	SetPoolLimits(context.Context, *SetPoolLimitsRequest) (*PoolLimitsState, error)
 	// Browser access is disabled until explicitly enabled by the node owner.
 	GetWebAccessConfig(context.Context, *GetWebAccessConfigRequest) (*WebAccessConfig, error)
 	SetWebAccessConfig(context.Context, *SetWebAccessConfigRequest) (*WebAccessConfig, error)
@@ -794,6 +828,12 @@ func (UnimplementedNodeServiceServer) GetLocationDiscoverySettings(context.Conte
 }
 func (UnimplementedNodeServiceServer) SetLocationDiscoverySettings(context.Context, *SetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetLocationDiscoverySettings not implemented")
+}
+func (UnimplementedNodeServiceServer) GetPoolLimits(context.Context, *GetPoolLimitsRequest) (*PoolLimitsState, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPoolLimits not implemented")
+}
+func (UnimplementedNodeServiceServer) SetPoolLimits(context.Context, *SetPoolLimitsRequest) (*PoolLimitsState, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetPoolLimits not implemented")
 }
 func (UnimplementedNodeServiceServer) GetWebAccessConfig(context.Context, *GetWebAccessConfigRequest) (*WebAccessConfig, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetWebAccessConfig not implemented")
@@ -989,6 +1029,42 @@ func _NodeService_SetLocationDiscoverySettings_Handler(srv interface{}, ctx cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeServiceServer).SetLocationDiscoverySettings(ctx, req.(*SetLocationDiscoverySettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetPoolLimits_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPoolLimitsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetPoolLimits(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetPoolLimits_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetPoolLimits(ctx, req.(*GetPoolLimitsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_SetPoolLimits_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetPoolLimitsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).SetPoolLimits(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_SetPoolLimits_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).SetPoolLimits(ctx, req.(*SetPoolLimitsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1696,6 +1772,14 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetLocationDiscoverySettings",
 			Handler:    _NodeService_SetLocationDiscoverySettings_Handler,
+		},
+		{
+			MethodName: "GetPoolLimits",
+			Handler:    _NodeService_GetPoolLimits_Handler,
+		},
+		{
+			MethodName: "SetPoolLimits",
+			Handler:    _NodeService_SetPoolLimits_Handler,
 		},
 		{
 			MethodName: "GetWebAccessConfig",

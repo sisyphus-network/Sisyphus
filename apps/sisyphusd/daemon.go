@@ -92,9 +92,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	containersCPUs := fs.Float64("containers-cpus", 0, "with --containers: the most processors a task may use, whatever its job asks; 0 leaves it to the job")
 	containersTimeout := fs.Duration("containers-timeout", 0, "with --containers: the longest a task may run before this worker stops it, whatever its job allows; 0 leaves it to the job's --timeout")
 	containersNetwork := fs.Bool("containers-network", false, "with --containers: let a task reach the network when its job asks to. Without it no task can, and a job that asks for the network is given to workers that allow it, or waits")
-	maxJobsPerClient := fs.Int("max-jobs-per-client", 0, "coordinator: how many unfinished jobs one client may have at once; more are refused until one is over. 0 means no limit. The node's own jobs are not counted")
-	maxTaskTimeout := fs.Duration("max-task-timeout", 0, "coordinator: the longest one attempt at a task of a client's job may run before it is stopped and tried again; a job may ask for less, and one that names no timeout gets this. 0 means no limit. The node's own jobs are not held to it")
-	maxTasksPerClient := fs.Int("max-tasks-per-client", 0, "coordinator: how many unfinished tasks, waiting or running, one client may have across its jobs; a job that would take it past that is refused. 0 means no limit. The node's own jobs are not counted")
+	maxJobsPerClient := fs.Int("max-jobs-per-client", 0, "coordinator: how many unfinished jobs one client may have at once; more are refused until one is over. 0 means no limit. The node's own jobs are not counted. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
+	maxTaskTimeout := fs.Duration("max-task-timeout", 0, "coordinator: the longest one attempt at a task of a client's job may run before it is stopped and tried again; a job may ask for less, and one that names no timeout gets this. 0 means no limit. The node's own jobs are not held to it. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
+	maxTasksPerClient := fs.Int("max-tasks-per-client", 0, "coordinator: how many unfinished tasks, waiting or running, one client may have across its jobs; a job that would take it past that is refused. 0 means no limit. The node's own jobs are not counted. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
 	hardenedContainers := fs.Bool("containers-hardened", false, "coordinator: give container jobs only to workers that run them hardened, with a sandboxing --container-runtime and --containers-read-only with a --containers-tmp-mb; such a job waits while none is connected. For a pool that takes container work from strangers")
 	distinctAddresses := fs.Bool("verify-distinct-addresses", false, "coordinator: for jobs submitted with --verify, hand each task's copies only to workers at different network addresses, so that two workers on one machine or behind one router cannot vouch for each other. For a pool with strangers in it: in a pool whose workers share an address it leaves too few to verify with")
 	maxConnections := fs.Int("max-connections", 0, "how many connections to take at once from other nodes and their command lines, on --listen; 0 takes as many as half the files the system lets this program have open, which on most machines is far more than a pool needs. An eighth of them, and at least 256, may come from one address")
@@ -112,8 +112,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
 	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
-	maxUploadPerAttempt := fs.Uint64("max-upload-bytes-per-attempt", 0, "coordinator role: the most a worker may upload here for one attempt at a task, across all the attempt's uploads; an upload that would take it past is refused. 0 means no limit")
-	maxStorePerClient := fs.Uint64("max-store-bytes-per-client", 0, "coordinator role: the most one client may keep here, its uploads, pins and jobs' data counted as pool members shows; uploads and pins past it are refused, and so is a task of its job whose outputs would take it past, which fails the job. 0 means no limit. The node's own are not counted")
+	maxUploadPerAttempt := fs.Uint64("max-upload-bytes-per-attempt", 0, "coordinator role: the most a worker may upload here for one attempt at a task, across all the attempt's uploads; an upload that would take it past is refused. 0 means no limit. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
+	maxStorePerClient := fs.Uint64("max-store-bytes-per-client", 0, "coordinator role: the most one client may keep here, its uploads, pins and jobs' data counted as pool members shows; uploads and pins past it are refused, and so is a task of its job whose outputs would take it past, which fails the job. 0 means no limit. The node's own are not counted. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
 	maxCache := fs.Uint64("max-cache-bytes", 0, "worker-only node: evict the least recently used cached blobs once the cache uses this much disk; 0 means no limit")
 	s3Endpoint := fs.String("s3-endpoint", "", "coordinator: keep stored data in a bucket of the S3-style object store at this address, such as https://s3.wasabisys.com or http://127.0.0.1:9000, instead of on this machine's disk")
 	s3Bucket := fs.String("s3-bucket", "", "the bucket, which must exist")
@@ -136,6 +136,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 	locationDiscoveryOverrides := locationDiscoveryFlagOverridesFrom(fs, byGateway, locate, stunServer)
+	poolLimitsOverrides := poolLimitsFlagOverridesFrom(fs, maxJobsPerClient, maxTasksPerClient, maxTaskTimeout, maxStorePerClient, maxUploadPerAttempt)
 
 	var isCoordinator, isWorker bool
 	for _, role := range strings.Split(*roles, ",") {
@@ -257,8 +258,13 @@ func runDaemon(ctx context.Context, args []string) error {
 	if confined.MemoryMB < 0 || confined.CPUs < 0 || confined.Timeout < 0 || confined.TmpMB < 0 {
 		return errors.New("--containers-memory-mb, --containers-cpus, --containers-timeout and --containers-tmp-mb are the most a task may use, and cannot be less than nothing")
 	}
+	// The saved pool limits are never negative, so checking the flags
+	// checks the limits the node runs with.
 	if *maxTaskTimeout < 0 {
 		return errors.New("--max-task-timeout cannot be negative")
+	}
+	if *maxJobsPerClient < 0 || *maxTasksPerClient < 0 {
+		return errors.New("--max-jobs-per-client and --max-tasks-per-client cannot be negative")
 	}
 	if confined.TmpMB > 0 && !confined.ReadOnly {
 		return errors.New("--containers-tmp-mb sizes the /tmp that --containers-read-only gives a task, and needs it: without it a task can write anywhere in its image")
@@ -440,6 +446,19 @@ func runDaemon(ctx context.Context, args []string) error {
 	local.LocationDiscovery = db
 	local.LocationDiscoveryRunning = locationDiscoveryRunning
 	local.GatewayDiscoverySupported = gatewayDiscoverySupported
+	poolLimits, err := startupPoolLimits(db, nodedb.PoolLimits{
+		MaxJobsPerClient:         *maxJobsPerClient,
+		MaxTasksPerClient:        *maxTasksPerClient,
+		MaxTaskTimeout:           *maxTaskTimeout,
+		MaxStoreBytesPerClient:   *maxStorePerClient,
+		MaxUploadBytesPerAttempt: *maxUploadPerAttempt,
+	}, poolLimitsOverrides)
+	if err != nil {
+		return err
+	}
+	local.PoolLimits = db
+	local.PoolLimitsRunning = poolLimits
+	local.RunsCoordinator = isCoordinator
 	local.BrowserAccess = db
 	var allowedWebOrigins []string
 	for _, origin := range strings.Split(*webOrigins, ",") {
@@ -556,7 +575,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			audits = runs
 		}
 		coord = coordinator.New(coordinator.Config{
-			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: *maxJobsPerClient, MaxTasksPerClient: *maxTasksPerClient, MaxStoreBytesPerClient: *maxStorePerClient, MaxUploadBytesPerAttempt: *maxUploadPerAttempt, MaxTaskTimeout: *maxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: poolLimits.MaxJobsPerClient, MaxTasksPerClient: poolLimits.MaxTasksPerClient, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, MaxUploadBytesPerAttempt: poolLimits.MaxUploadBytesPerAttempt, MaxTaskTimeout: poolLimits.MaxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 		})
 		defer coord.Close()
 		seenAs = coord.Observed
@@ -602,7 +621,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		if sidecar != nil {
 			held.OnPublish(func(record *names.Record) { carryName(ctx, sidecar, record, log) })
 		}
-		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore, MaxStoreBytesPerClient: *maxStorePerClient, WorkFor: takes, Names: held, Replication: replicated}
+		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, WorkFor: takes, Names: held, Replication: replicated}
 		if swarm != nil {
 			config.Swarm = swarm
 			coord.AnnounceSwarm(swarm.Fingerprint())
@@ -1090,6 +1109,66 @@ func startupLocationDiscovery(store locationDiscoverySettingsStore, defaults nod
 	}
 	if !gatewayDiscoverySupported {
 		running.LocateGateway = false
+	}
+	return running, nil
+}
+
+type poolLimitsStore interface {
+	PoolLimits() (nodedb.PoolLimits, bool, error)
+}
+
+type poolLimitsFlagOverrides struct {
+	MaxJobsPerClient         *int
+	MaxTasksPerClient        *int
+	MaxTaskTimeout           *time.Duration
+	MaxStoreBytesPerClient   *uint64
+	MaxUploadBytesPerAttempt *uint64
+}
+
+func poolLimitsFlagOverridesFrom(fs *flag.FlagSet, maxJobsPerClient, maxTasksPerClient *int, maxTaskTimeout *time.Duration, maxStoreBytesPerClient, maxUploadBytesPerAttempt *uint64) poolLimitsFlagOverrides {
+	var overrides poolLimitsFlagOverrides
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "max-jobs-per-client":
+			overrides.MaxJobsPerClient = maxJobsPerClient
+		case "max-tasks-per-client":
+			overrides.MaxTasksPerClient = maxTasksPerClient
+		case "max-task-timeout":
+			overrides.MaxTaskTimeout = maxTaskTimeout
+		case "max-store-bytes-per-client":
+			overrides.MaxStoreBytesPerClient = maxStoreBytesPerClient
+		case "max-upload-bytes-per-attempt":
+			overrides.MaxUploadBytesPerAttempt = maxUploadBytesPerAttempt
+		}
+	})
+	return overrides
+}
+
+// startupPoolLimits works out the limits the node runs with: each one given
+// on the command line, else the saved one, else the flag's default.
+func startupPoolLimits(store poolLimitsStore, defaults nodedb.PoolLimits, overrides poolLimitsFlagOverrides) (nodedb.PoolLimits, error) {
+	running := defaults
+	saved, configured, err := store.PoolLimits()
+	if err != nil {
+		return nodedb.PoolLimits{}, err
+	}
+	if configured {
+		running = saved
+	}
+	if overrides.MaxJobsPerClient != nil {
+		running.MaxJobsPerClient = *overrides.MaxJobsPerClient
+	}
+	if overrides.MaxTasksPerClient != nil {
+		running.MaxTasksPerClient = *overrides.MaxTasksPerClient
+	}
+	if overrides.MaxTaskTimeout != nil {
+		running.MaxTaskTimeout = *overrides.MaxTaskTimeout
+	}
+	if overrides.MaxStoreBytesPerClient != nil {
+		running.MaxStoreBytesPerClient = *overrides.MaxStoreBytesPerClient
+	}
+	if overrides.MaxUploadBytesPerAttempt != nil {
+		running.MaxUploadBytesPerAttempt = *overrides.MaxUploadBytesPerAttempt
 	}
 	return running, nil
 }

@@ -102,6 +102,14 @@ type LocalConfig struct {
 	LocationDiscovery         LocationDiscoveryStore
 	LocationDiscoveryRunning  nodedb.LocationDiscovery
 	GatewayDiscoverySupported bool
+	// PoolLimits stores the limits the node, as a coordinator, holds each
+	// member to. The saved limits take effect when the daemon restarts;
+	// running values are the limits it started with. RunsCoordinator says
+	// whether the node has the coordinator role, without which the limits
+	// hold no one to anything.
+	PoolLimits        PoolLimitsStore
+	PoolLimitsRunning nodedb.PoolLimits
+	RunsCoordinator   bool
 	// AllowLAN accepts requests addressed to one of this host's private IPs.
 	// The listener must separately be enabled on a private interface.
 	AllowLAN bool

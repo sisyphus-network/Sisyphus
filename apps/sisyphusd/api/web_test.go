@@ -361,6 +361,7 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	cfg := LocalConfig{
 		NodeID: "12D3KooWnode", Token: "owner-token", Listen: func() []string { return nil },
 		BrowserAccess: db, LocationDiscovery: db, GatewayDiscoverySupported: true,
+		PoolLimits: db, RunsCoordinator: true,
 	}
 	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}
 	server := httptest.NewServer(NewWebAppHandler(cfg, nil, ui))
@@ -447,6 +448,48 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	settings, configured, err := db.LocationDiscovery()
 	if err != nil || !configured || settings != (nodedb.LocationDiscovery{LocateCountry: true, StunServer: "stun.example.org:3478"}) {
 		t.Fatalf("paired browser discovery settings = %#v, configured %v, error %v", settings, configured, err)
+	}
+	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/GetPoolLimits", `{}`, cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"coordinator":true`) || strings.Contains(string(body), `"configured":true`) {
+		t.Fatalf("paired browser could not read pool limits: %d %s", res.StatusCode, body)
+	}
+	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/SetPoolLimits", `{"limits":{"maxJobsPerClient":3,"maxTaskTimeoutSeconds":"600","maxStoreBytesPerClient":"1048576"}}`, cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"maxJobsPerClient":3`) || !strings.Contains(string(body), `"restartNeeded":true`) {
+		t.Fatalf("paired browser could not save pool limits: %d %s", res.StatusCode, body)
+	}
+	limits, configured, err := db.PoolLimits()
+	if err != nil || !configured || limits != (nodedb.PoolLimits{MaxJobsPerClient: 3, MaxTaskTimeout: 10 * time.Minute, MaxStoreBytesPerClient: 1 << 20}) {
+		t.Fatalf("paired browser pool limits = %#v, configured %v, error %v", limits, configured, err)
+	}
+	// A client of a separately managed node, such as Electron given the
+	// node's endpoint and API token, reads and saves them with the token;
+	// without a session or the token it may do neither.
+	for _, route := range []string{"GetPoolLimits", "SetPoolLimits"} {
+		res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/"+route, `{"limits":{"maxJobsPerClient":2}}`, nil, false)
+		body, _ = io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode == http.StatusOK {
+			t.Fatalf("%s without a session or token: %d %s", route, res.StatusCode, body)
+		}
+	}
+	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/SetPoolLimits", `{"limits":{"maxTasksPerClient":8,"maxUploadBytesPerAttempt":"4096"}}`, nil, true)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"maxTasksPerClient":8`) {
+		t.Fatalf("token-authorized client could not save pool limits: %d %s", res.StatusCode, body)
+	}
+	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/GetPoolLimits", `{}`, nil, true)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"maxUploadBytesPerAttempt":"4096"`) || !strings.Contains(string(body), `"configured":true`) {
+		t.Fatalf("token-authorized client could not read pool limits: %d %s", res.StatusCode, body)
+	}
+	if limits, _, err := db.PoolLimits(); err != nil || limits != (nodedb.PoolLimits{MaxTasksPerClient: 8, MaxUploadBytesPerAttempt: 4096}) {
+		t.Fatalf("token-authorized pool limits = %#v, error %v", limits, err)
 	}
 	res = request(http.MethodGet, "/devices", "", cookie, false)
 	body, _ = io.ReadAll(res.Body)
