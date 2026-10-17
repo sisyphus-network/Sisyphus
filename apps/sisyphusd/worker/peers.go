@@ -2,7 +2,9 @@ package worker
 
 import (
 	"context"
+	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -29,14 +31,16 @@ type Members struct {
 	// one. It is also how long a node just removed can go on fetching.
 	remember time.Duration
 
-	mu    sync.Mutex
-	known map[string]time.Time // when each known member was last confirmed
+	mu           sync.Mutex
+	known        map[string]time.Time // when each known member was last confirmed
+	relays       []string
+	relayChanges chan struct{}
 }
 
 // NewMembers returns a membership check that asks the pool's coordinator
 // through conn.
 func NewMembers(conn grpc.ClientConnInterface) *Members {
-	return &Members{pool: pb.NewPoolServiceClient(conn), remember: time.Minute, known: make(map[string]time.Time)}
+	return &Members{pool: pb.NewPoolServiceClient(conn), remember: time.Minute, known: make(map[string]time.Time), relayChanges: make(chan struct{}, 1)}
 }
 
 // IsMember reports whether the node with the given ID belongs to the pool.
@@ -61,13 +65,75 @@ func (m *Members) IsMember(ctx context.Context, nodeID string) (bool, error) {
 	return answer.GetMember(), nil
 }
 
-// Relays asks the coordinator which members of the pool relay between the
-// others. It returns nothing if the coordinator cannot be asked.
-func (m *Members) Relays(ctx context.Context) []string {
-	ctx, cancel := context.WithTimeout(ctx, peerProbe)
-	defer cancel()
-	listed, _ := m.pool.Relays(ctx, &pb.RelaysRequest{})
-	return listed.GetAddresses()
+// Relays returns the latest relay list received from the coordinator's
+// event stream. The worker keeps its explicitly configured relay separately.
+func (m *Members) Relays(context.Context) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.relays...)
+}
+
+// RelayChanges is signalled when the stream publishes a different list.
+// Notifications coalesce while a consumer is busy.
+func (m *Members) RelayChanges() <-chan struct{} { return m.relayChanges }
+
+// WatchRelays consumes one coordinator stream until it ends. The server sends
+// an initial snapshot, followed only by snapshots after membership changes.
+func (m *Members) WatchRelays(ctx context.Context) error {
+	stream, err := m.pool.WatchRelays(ctx, &pb.RelaysRequest{})
+	if err != nil {
+		return err
+	}
+	for {
+		listed, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		next := listed.GetAddresses()
+		m.mu.Lock()
+		changed := !slices.Equal(m.relays, next)
+		if changed {
+			m.relays = append(m.relays[:0], next...)
+		}
+		m.mu.Unlock()
+		if changed {
+			select {
+			case m.relayChanges <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+// RunRelayWatch reconnects after a broken coordinator stream with bounded
+// backoff. The last usable list remains active until a new snapshot arrives.
+func (m *Members) RunRelayWatch(ctx context.Context, log *slog.Logger) {
+	delay := time.Second
+	for {
+		err := m.WatchRelays(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if log != nil {
+			log.Warn("relay update stream ended; reconnecting", "error", err, "retry_in", delay)
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return
+		}
+		delay *= 2
+		if delay > 15*time.Second {
+			delay = 15 * time.Second
+		}
+	}
 }
 
 // peerProbe is how long a worker waits for another to answer at all before

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -141,6 +142,45 @@ func newCoordinator(t *testing.T) *coordinator.Coordinator {
 	})
 	t.Cleanup(c.Close)
 	return c
+}
+
+type relaySnapshotStream struct {
+	grpc.ServerStream
+	ctx     context.Context
+	updates chan *pb.RelaysResponse
+}
+
+func (s *relaySnapshotStream) Context() context.Context { return s.ctx }
+func (s *relaySnapshotStream) Send(update *pb.RelaysResponse) error {
+	s.updates <- update
+	return nil
+}
+
+func TestWatchRelaysSendsInitialSnapshotAndStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	stream := &relaySnapshotStream{ctx: ctx, updates: make(chan *pb.RelaysResponse, 1)}
+	service := &poolService{coordinator: newCoordinator(t)}
+	done := make(chan error, 1)
+	go func() {
+		done <- service.WatchRelays(&pb.RelaysRequest{}, stream)
+	}()
+	select {
+	case update := <-stream.updates:
+		if len(update.GetAddresses()) != 0 {
+			t.Fatalf("initial relay list = %v, want empty", update.GetAddresses())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WatchRelays did not send its initial snapshot")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WatchRelays: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WatchRelays did not stop after cancellation")
+	}
 }
 
 func TestRemovingAMemberChangesTheSwarmKey(t *testing.T) {

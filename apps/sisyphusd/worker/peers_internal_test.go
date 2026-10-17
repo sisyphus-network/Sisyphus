@@ -3,6 +3,8 @@ package worker
 import (
 	"context"
 	"errors"
+	"io"
+	"slices"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ type roster struct {
 	members map[string]bool
 	err     error
 	asked   int
+	relays  grpc.ServerStreamingClient[pb.RelaysResponse]
 }
 
 func (r *roster) IsMember(_ context.Context, req *pb.IsMemberRequest, _ ...grpc.CallOption) (*pb.IsMemberResponse, error) {
@@ -28,6 +31,67 @@ func (r *roster) IsMember(_ context.Context, req *pb.IsMemberRequest, _ ...grpc.
 		return nil, r.err
 	}
 	return &pb.IsMemberResponse{Member: r.members[req.GetNodeId()]}, nil
+}
+
+func (r *roster) WatchRelays(context.Context, *pb.RelaysRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.RelaysResponse], error) {
+	return r.relays, nil
+}
+
+type relayUpdates struct {
+	grpc.ServerStreamingClient[pb.RelaysResponse]
+	updates chan *pb.RelaysResponse
+}
+
+func (s *relayUpdates) Recv() (*pb.RelaysResponse, error) {
+	update, ok := <-s.updates
+	if !ok {
+		return nil, io.EOF
+	}
+	return update, nil
+}
+
+func TestMembersPublishesChangedRelaySnapshotsOnly(t *testing.T) {
+	stream := &relayUpdates{updates: make(chan *pb.RelaysResponse, 3)}
+	members := &Members{pool: &roster{relays: stream}, relayChanges: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- members.WatchRelays(ctx) }()
+
+	addresses := []string{"/ip4/192.0.2.1/tcp/7700/p2p/relay"}
+	stream.updates <- &pb.RelaysResponse{Addresses: addresses}
+	select {
+	case <-members.RelayChanges():
+	case <-time.After(time.Second):
+		t.Fatal("relay snapshot did not notify the consumer")
+	}
+	if got := members.Relays(ctx); !slices.Equal(got, addresses) {
+		t.Fatalf("Relays() = %v, want %v", got, addresses)
+	}
+
+	stream.updates <- &pb.RelaysResponse{Addresses: addresses}
+	select {
+	case <-members.RelayChanges():
+		t.Fatal("an unchanged relay snapshot notified the consumer")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	stream.updates <- &pb.RelaysResponse{}
+	select {
+	case <-members.RelayChanges():
+	case <-time.After(time.Second):
+		t.Fatal("relay removal did not notify the consumer")
+	}
+	if got := members.Relays(ctx); len(got) != 0 {
+		t.Fatalf("Relays() after removal = %v, want none", got)
+	}
+
+	cancel()
+	close(stream.updates)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("relay watcher did not stop")
+	}
 }
 
 func TestMembersRemembersAYesForAWhileAndNeverANo(t *testing.T) {

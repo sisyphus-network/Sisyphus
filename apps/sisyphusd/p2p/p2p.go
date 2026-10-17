@@ -67,9 +67,12 @@ type Config struct {
 	// multiaddress ending in /p2p/ and the relay's ID. A host with any
 	// takes itself to be unreachable otherwise.
 	Via []string
-	// MoreRelays, if set, is asked from time to time for further relays to
-	// keep a place on, in the same form. Those it stops naming are let go.
+	// MoreRelays returns the latest additional relays to keep a place on, in
+	// the same form. Those it stops naming are let go.
 	MoreRelays func(ctx context.Context) []string
+	// MoreRelaysChanged signals that MoreRelays may now return a new list.
+	// Notifications may be coalesced; the latest list is always authoritative.
+	MoreRelaysChanged <-chan struct{}
 	// Allow says whether the node with the given ID is one of this node's
 	// own: a member of its pool. Only those are relayed for. Unless Discover
 	// is set, only those may connect at all, and everyone else is turned
@@ -121,7 +124,9 @@ type Host struct {
 	closed bool
 	// renew is when the host's place on each relay is next due for
 	// renewal. A relay it has no place on is absent.
-	renew map[peer.ID]time.Time
+	renew        map[peer.ID]time.Time
+	retry        map[peer.ID]time.Time
+	placeChanged chan struct{}
 	// lan is the host's announcing of itself on its own network.
 	lan io.Closer
 	// carried counts what the host has relayed for others.
@@ -239,7 +244,7 @@ func New(cfg Config) (*Host, error) {
 			return nil, err
 		}
 	}
-	h := &Host{renew: make(map[peer.ID]time.Time), relayStart: rand.Uint64(), placeCheck: PlaceCheck, preferredRelayWait: 2 * time.Second, directDial: directDial}
+	h := &Host{renew: make(map[peer.ID]time.Time), retry: make(map[peer.ID]time.Time), placeChanged: make(chan struct{}, 1), relayStart: rand.Uint64(), placeCheck: PlaceCheck, preferredRelayWait: 2 * time.Second, directDial: directDial}
 	for _, address := range cfg.Via {
 		info, err := peer.AddrInfoFromString(address)
 		if err != nil {
@@ -331,6 +336,7 @@ func New(cfg Config) (*Host, error) {
 	// time had left to run.
 	started.Network().Notify(&network.NotifyBundle{
 		ConnectedF: func(network.Network, network.Conn) {
+			h.nudgePlaces()
 			if cfg.PeerChanged != nil {
 				cfg.PeerChanged()
 			}
@@ -338,15 +344,17 @@ func New(cfg Config) (*Host, error) {
 		DisconnectedF: func(_ network.Network, conn network.Conn) {
 			h.mu.Lock()
 			delete(h.renew, conn.RemotePeer())
+			delete(h.retry, conn.RemotePeer())
 			h.mu.Unlock()
+			h.nudgePlaces()
 			if cfg.PeerChanged != nil {
 				cfg.PeerChanged()
 			}
 		},
 	})
-	if len(h.relays) > 0 {
+	if len(h.relays) > 0 || cfg.MoreRelays != nil {
 		h.kept.Add(1)
-		go h.keepPlaces(cfg.MoreRelays)
+		go h.keepPlaces(cfg.MoreRelays, cfg.MoreRelaysChanged)
 	}
 	return h, nil
 }
@@ -407,51 +415,167 @@ func (h *Host) Bootstrap(ctx context.Context, addresses []string) (answered int)
 	return answered
 }
 
-// PlaceCheck is how often a host looks to see that it still has its place
-// on a relay, and so how soon after losing it, as when the relay restarts,
-// it has it again. Tests put a shorter time in its place.
+// PlaceCheck is the delay before retrying a failed reservation attempt.
+// Healthy reservations are renewed at their own expiration deadline.
 var PlaceCheck = 10 * time.Second
 
 // keepPlaces keeps the host connected to its relays and holding a place on
 // each, which is what lets a relay bring other nodes to this one, until the
-// host closes. A place lasts as long as the connection it was asked for
-// on, and then only for a time, so it is asked for again when either runs
-// out. The relays are those the host was started with and whatever more
-// names besides, asked each time round.
+// host closes. Membership events update the relay list; one-shot deadlines
+// renew reservations and retry failed attempts. There is no idle rescan.
 //
 // libp2p has a client that does this, but it will only take a place on a
 // relay with a public address, and a pool on one private network has none.
-func (h *Host) keepPlaces(more func(ctx context.Context) []string) {
+func (h *Host) keepPlaces(more func(ctx context.Context) []string, changed <-chan struct{}) {
 	defer h.kept.Done()
-	fixed := h.fixedRelays
+	refresh := true
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	for {
-		var preferred []peer.AddrInfo
-		if more != nil {
-			for _, address := range more(h.ctx) {
-				// An invalid address, this host, or a relay already named as
-				// fixed is passed over.
-				if info, err := peer.AddrInfoFromString(address); err == nil && info.ID != h.host.ID() && !containsRelay(fixed, info.ID) && !containsRelay(preferred, info.ID) {
-					preferred = append(preferred, *info)
+		if refresh {
+			h.refreshRelays(more)
+		}
+		h.processPlaces()
+		wait := h.untilNextPlace()
+		var deadline <-chan time.Time
+		if wait >= 0 {
+			if timer == nil {
+				timer = time.NewTimer(wait)
+			} else {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(wait)
+			}
+			deadline = timer.C
+		} else if timer != nil {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
 				}
 			}
-		}
-		relays := make([]peer.AddrInfo, 0, len(preferred)+len(fixed))
-		relays = append(relays, preferred...)
-		relays = append(relays, fixed...)
-		h.mu.Lock()
-		h.preferredRelays = preferred
-		h.relays = relays
-		h.mu.Unlock()
-		for _, r := range relays {
-			if !h.placed(r.ID, time.Now()) {
-				h.takePlace(r)
-			}
+			timer = nil
 		}
 		select {
-		case <-time.After(h.placeCheck):
+		case _, ok := <-changed:
+			if !ok {
+				changed = nil
+			}
+			refresh = true
+		case <-h.placeChanged:
+			refresh = false
+		case <-deadline:
+			refresh = false
 		case <-h.ctx.Done():
 			return
 		}
+	}
+}
+
+func (h *Host) refreshRelays(more func(context.Context) []string) {
+	var preferred []peer.AddrInfo
+	if more != nil {
+		for _, address := range more(h.ctx) {
+			// An invalid address, this host, or a relay already named as
+			// fixed is passed over.
+			if info, err := peer.AddrInfoFromString(address); err == nil && info.ID != h.host.ID() && !containsRelay(h.fixedRelays, info.ID) && !containsRelay(preferred, info.ID) {
+				preferred = append(preferred, *info)
+			}
+		}
+	}
+	relays := make([]peer.AddrInfo, 0, len(preferred)+len(h.fixedRelays))
+	relays = append(relays, preferred...)
+	relays = append(relays, h.fixedRelays...)
+	h.mu.Lock()
+	h.preferredRelays = preferred
+	h.relays = relays
+	keep := make(map[peer.ID]struct{}, len(relays))
+	for _, r := range relays {
+		keep[r.ID] = struct{}{}
+	}
+	for id := range h.renew {
+		if _, named := keep[id]; !named {
+			delete(h.renew, id)
+			delete(h.retry, id)
+		}
+	}
+	for id := range h.retry {
+		if _, named := keep[id]; !named {
+			delete(h.retry, id)
+		}
+	}
+	h.mu.Unlock()
+}
+
+func (h *Host) processPlaces() {
+	h.mu.Lock()
+	relays := append([]peer.AddrInfo(nil), h.relays...)
+	h.mu.Unlock()
+	now := time.Now()
+	for _, r := range relays {
+		h.mu.Lock()
+		renewAt, hasRenewal := h.renew[r.ID]
+		retryAt, hasRetry := h.retry[r.ID]
+		h.mu.Unlock()
+		if hasRenewal && now.Before(renewAt) || hasRetry && now.Before(retryAt) {
+			continue
+		}
+		h.takePlace(r)
+	}
+}
+
+// untilNextPlace returns the next reservation or failed-attempt deadline, or
+// -1 when the watcher can sleep until a membership event or connection change.
+func (h *Host) untilNextPlace() time.Duration {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var next time.Time
+	for id, renewAt := range h.renew {
+		if !h.namedRelayLocked(id) {
+			continue
+		}
+		if next.IsZero() || renewAt.Before(next) {
+			next = renewAt
+		}
+	}
+	for id, retryAt := range h.retry {
+		if !h.namedRelayLocked(id) {
+			continue
+		}
+		if next.IsZero() || retryAt.Before(next) {
+			next = retryAt
+		}
+	}
+	if next.IsZero() {
+		return -1
+	}
+	if wait := time.Until(next); wait > 0 {
+		return wait
+	}
+	return 0
+}
+
+func (h *Host) namedRelayLocked(id peer.ID) bool {
+	for _, r := range h.relays {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Host) nudgePlaces() {
+	select {
+	case h.placeChanged <- struct{}{}:
+	default:
 	}
 }
 
@@ -468,8 +592,8 @@ func (h *Host) takePlace(r peer.AddrInfo) {
 	// A relay that did not answer is otherwise not called again for five
 	// seconds, and longer each time after, up to five minutes: a relay
 	// that was down for a while, as a coordinator being restarted is, would
-	// be back long before it was called again. This is called no more often
-	// than once per PlaceCheck interval, which is wait enough between calls.
+	// be back long before it was called again. A failed attempt is retried
+	// only after its one-shot retry deadline.
 	h.host.Network().(*swarm.Swarm).Backoff().Clear(r.ID)
 	err := h.host.Connect(h.ctx, r)
 	var place *client.Reservation
@@ -480,8 +604,11 @@ func (h *Host) takePlace(r peer.AddrInfo) {
 	defer h.mu.Unlock()
 	delete(h.renew, r.ID)
 	if err == nil {
+		delete(h.retry, r.ID)
 		// Renew with half its time still to run.
 		h.renew[r.ID] = time.Now().Add(time.Until(place.Expiration) / 2)
+	} else if h.ctx.Err() == nil {
+		h.retry[r.ID] = time.Now().Add(h.placeCheck)
 	}
 }
 
