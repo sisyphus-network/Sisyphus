@@ -784,9 +784,9 @@ func TestANodeTakesItsPlaceOnTheRelayAgainAfterLosingIt(t *testing.T) {
 }
 
 func TestANodeTakesItsPlaceOnARelayThatIsBackWithoutWaitingOutTheBackoff(t *testing.T) {
-	old := placeCheck
-	placeCheck = 20 * time.Millisecond
-	defer func() { placeCheck = old }()
+	old := PlaceCheck
+	PlaceCheck = 20 * time.Millisecond
+	defer func() { PlaceCheck = old }()
 
 	p := newPool(t)
 	port, ident := freePort(t), newIdentity(t)
