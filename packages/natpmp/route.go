@@ -63,54 +63,36 @@ func gatewayIn(table io.Reader) (netip.Addr, error) {
 	return best, nil
 }
 
-// gatewayInNetstat reads the IPv4 default gateway from what
-// `netstat -rn -f inet` prints on macOS and the BSDs: a row a route, the
-// destination, gateway and flags first. It is the gateway of the first
-// default route that is up (U) and goes through a gateway (G), which is
-// the one the system prefers; a route through an interface rather than an
-// address, such as a VPN's "link#12", has no gateway to ask.
-func gatewayInNetstat(table io.Reader) (netip.Addr, error) {
-	lines := bufio.NewScanner(table)
+// gatewayInRouteGet reads the IPv4 gateway from what `route -n get
+// default` prints on macOS and the BSDs: the route the kernel itself
+// chooses for traffic with no more particular route, one field a line,
+// among them "gateway: 192.168.1.1". A default through an interface rather
+// than an address, as a VPN's may be, has no gateway to ask.
+func gatewayInRouteGet(answer io.Reader) (netip.Addr, error) {
+	lines := bufio.NewScanner(answer)
 	for lines.Scan() {
-		fields := strings.Fields(lines.Text())
-		if len(fields) < 3 || fields[0] != "default" || !strings.Contains(fields[2], "U") || !strings.Contains(fields[2], "G") {
+		name, value, found := strings.Cut(strings.TrimSpace(lines.Text()), ":")
+		if !found || name != "gateway" {
 			continue
 		}
-		if gateway, err := netip.ParseAddr(fields[1]); err == nil && gateway.Is4() && !gateway.IsUnspecified() {
+		if gateway, err := netip.ParseAddr(strings.TrimSpace(value)); err == nil && gateway.Is4() && !gateway.IsUnspecified() {
 			return gateway, nil
 		}
 	}
 	return netip.Addr{}, ErrNoGateway
 }
 
-// gatewayInRoutePrint reads the IPv4 default gateway from what Windows
-// prints for `route print -4 0.0.0.0`. Its headers are in the system's
-// language, so only the rows of active routes are read, five columns
-// each: destination, mask, gateway, interface and metric. Persistent
-// routes have four and are passed over, as is a route "On-link", which has
-// no gateway. It is the gateway of the default route of lowest metric, the
-// first if they tie.
-func gatewayInRoutePrint(table io.Reader) (netip.Addr, error) {
-	lines := bufio.NewScanner(table)
-	var best netip.Addr
-	var bestMetric uint64
+// gatewayInNextHop reads the IPv4 gateway from the next hop Windows says
+// it would send by, one address alone on a line, as PowerShell prints the
+// NextHop of the route Find-NetRoute chooses. A next hop of 0.0.0.0 is a
+// route on the link itself, with no gateway.
+func gatewayInNextHop(answer io.Reader) (netip.Addr, error) {
+	lines := bufio.NewScanner(answer)
 	for lines.Scan() {
-		fields := strings.Fields(lines.Text())
-		if len(fields) != 5 || fields[0] != "0.0.0.0" || fields[1] != "0.0.0.0" {
-			continue
+		gateway, err := netip.ParseAddr(strings.TrimSpace(lines.Text()))
+		if err == nil && gateway.Is4() && !gateway.IsUnspecified() {
+			return gateway, nil
 		}
-		gateway, err := netip.ParseAddr(fields[2])
-		if err != nil || !gateway.Is4() || gateway.IsUnspecified() {
-			continue
-		}
-		metric, err := strconv.ParseUint(fields[4], 10, 32)
-		if err != nil || (best.IsValid() && metric >= bestMetric) {
-			continue
-		}
-		best, bestMetric = gateway, metric
 	}
-	if !best.IsValid() {
-		return netip.Addr{}, ErrNoGateway
-	}
-	return best, nil
+	return netip.Addr{}, ErrNoGateway
 }
