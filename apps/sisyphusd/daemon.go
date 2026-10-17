@@ -1498,7 +1498,8 @@ func (w *whereabouts) country() (string, string) {
 	}
 	if w.lookUp && w.stunAnswered.Load() && w.lookups.begin(time.Now()) {
 		w.start(func() {
-			w.lookups.end(time.Now(), lookUpCountry(w.ctx))
+			answer := lookUpCountry(w.ctx)
+			w.lookups.end(time.Now(), answer)
 			w.notify()
 		})
 	}
