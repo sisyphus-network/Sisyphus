@@ -110,6 +110,11 @@ func TestANodeToldToRunContainersChecksThatItCan(t *testing.T) {
 			t.Errorf("%v: %v", flags, err)
 		}
 	}
+	for _, timeout := range []string{"-1s", "-1m"} {
+		if _, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--max-task-timeout", timeout); err == nil || !strings.Contains(err.Error(), "--max-task-timeout cannot be negative") {
+			t.Errorf("--max-task-timeout %s: %v", timeout, err)
+		}
+	}
 	// A sized /tmp means something only where the root cannot be written.
 	if _, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--containers-tmp-mb", "64"); err == nil || !strings.Contains(err.Error(), "needs it") {
 		t.Errorf("--containers-tmp-mb without --containers-read-only: %v", err)
