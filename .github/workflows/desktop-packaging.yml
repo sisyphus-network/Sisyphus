@@ -75,6 +75,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - name: Package
+        env:
+          # A transient proxy failure should fall back to the module's source repository.
+          GOPROXY: 'https://proxy.golang.org|direct'
         shell: bash
         # macOS's hdiutil sometimes cannot detach the disk image it just
         # built ("Resource busy"), which fails the build after everything
