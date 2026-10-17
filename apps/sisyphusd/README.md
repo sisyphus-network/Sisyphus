@@ -886,7 +886,7 @@ A job's arrival and its finish are written through to the disk before anyone is 
 
 The database holds the rest of what a coordinator must not forget as well: which nodes have been admitted, and the invitations issued and not yet used, so an invitation is still good after a restart. Invitations are recorded by a hash of their token, so reading the database admits nobody. A coordinator from before this was so finds its old `access.json`, takes its members in, and sets the file aside as `access.json.imported`.
 
-A finished job can be asked after for 30 days, or whatever `--keep-jobs` says; `--keep-jobs 0` keeps them for good. That is about the record of the job. How long its data is kept is `--retain`, described under [How long data is kept](#how-long-data-is-kept).
+A finished job can be asked after for 30 days, or whatever `--keep-jobs` says; `--keep-jobs 0` keeps them for good. A client's job is kept at least as long as `--retain` too: its record is what says whose its data is, so that data counts towards the client in `pool members` until it lapses, across restarts. That is about the record of the job. How long its data is kept is `--retain`, described under [How long data is kept](#how-long-data-is-kept).
 
 A node's own record of the coordinators it has joined, `known.json`, stays a file. Every command reads it, on machines that run no coordinator and have no database, and it is small enough to mend by hand when a coordinator's address changes.
 
