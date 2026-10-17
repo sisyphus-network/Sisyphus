@@ -423,3 +423,28 @@ func TestAGroupPastItsLimitMayPinAgainWhatItKeeps(t *testing.T) {
 		t.Errorf("pinning more with alice past her limit: %v", err)
 	}
 }
+
+// What one group keeps can be asked on its own, and agrees with what Usage
+// says of it: nothing before the groups are named, nothing for a group that
+// keeps nothing, and nothing more for a pin once it has lapsed.
+func TestGroupUsageSaysWhatOneGroupKeeps(t *testing.T) {
+	s := NewMemory()
+	blob := put(t, s, pattern(chunkSize+10))
+	now := time.Now()
+	pinFor(t, s, "user:alice", now.Add(time.Hour), blob)
+	if got := s.GroupUsage("alice", now); got != 0 {
+		t.Errorf("with no groups named, alice keeps %d", got)
+	}
+	if err := s.GroupPins(ctx, clientOf); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := s.GroupUsage("alice", now), s.Usage(now)["alice"]; got == 0 || got != want {
+		t.Errorf("alice keeps %d, and Usage says %d", got, want)
+	}
+	if got := s.GroupUsage("bob", now); got != 0 {
+		t.Errorf("bob, who pins nothing, keeps %d", got)
+	}
+	if got := s.GroupUsage("alice", now.Add(2*time.Hour)); got != 0 {
+		t.Errorf("alice keeps %d once her pin has lapsed", got)
+	}
+}

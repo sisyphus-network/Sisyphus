@@ -286,3 +286,17 @@ func (s *Store) Usage(now time.Time) map[string]uint64 {
 	}
 	return used
 }
+
+// GroupUsage says how many bytes the pins of one group of owners keep, as
+// of now, as Usage does for every group, without listing the others. A
+// group the store does not know of keeps nothing; so does every group until
+// GroupPins has named them.
+func (s *Store) GroupUsage(group string, now time.Time) uint64 {
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	if s.index == nil {
+		return 0
+	}
+	s.index.lapseLocked(now)
+	return s.index.kept(group)
+}
