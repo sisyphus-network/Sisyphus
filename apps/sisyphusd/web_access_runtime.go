@@ -45,6 +45,7 @@ type webAccessRuntime struct {
 	server      *http.Server
 	addr        string
 	listeners   []net.Listener
+	listen      func(network, address string) (net.Listener, error)
 	fingerprint func(string) (string, error)
 }
 
@@ -210,6 +211,10 @@ func (w *webAccessRuntime) start(config nodedb.WebAccessConfig) error {
 	if _, err := loadWebAccessKeyPair(certFile, keyFile); err != nil {
 		return fmt.Errorf("load browser-access TLS certificate: %w", err)
 	}
+	listen := w.listen
+	if listen == nil {
+		listen = net.Listen
+	}
 	listeners := make([]net.Listener, 0, len(addresses))
 	for _, address := range addresses {
 		if err := validateWebListenTLS(address, true, true); err != nil {
@@ -218,7 +223,7 @@ func (w *webAccessRuntime) start(config nodedb.WebAccessConfig) error {
 			}
 			return err
 		}
-		listener, err := net.Listen("tcp", address)
+		listener, err := listen("tcp", address)
 		if err != nil {
 			for _, opened := range listeners {
 				_ = opened.Close()
