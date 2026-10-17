@@ -302,9 +302,16 @@ func TestPublicAddressOnOwnInterfaceIsUsedWithoutNATEvidence(t *testing.T) {
 	}
 	defer func() { countryOf, interfacePrefixes = oldCountry, oldLocal }()
 
-	own := []string{"/ip4/203.0.113.7/tcp/7700"}
+	own := []string{
+		"/dns4/node.example/tcp/7700",
+		"/ip4/not-an-address/tcp/7700",
+		"/ip4/203.0.113.7/tcp/7700",
+	}
 	if code, source := countryFrom(own, netip.Addr{}, netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
 		t.Errorf("countryFrom without NAT evidence = %q from %q; want US from interface", code, source)
+	}
+	if code, source := countryFrom(own, netip.MustParseAddr("203.0.113.7"), netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
+		t.Errorf("countryFrom when the pool sees this same public address = %q from %q; want US from interface", code, source)
 	}
 	if code, source := countryFrom(own, netip.MustParseAddr("198.51.100.8"), netip.Addr{}, netip.Addr{}, "CA"); code != "US" || source != "pool" {
 		t.Errorf("countryFrom with a distinct observed address = %q from %q; want US from pool", code, source)
