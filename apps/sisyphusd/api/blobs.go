@@ -125,6 +125,19 @@ type blobStore interface {
 	Pins() []storage.Pin
 	GC(ctx context.Context, now time.Time) (storage.Collected, error)
 	PinWithin(ctx context.Context, owner string, expires time.Time, limit uint64, cids ...cid.Cid) error
+	PutFor(ctx context.Context, owner string, r io.Reader) (cid.Cid, error)
+}
+
+// storingFor is a store whose Put stores what it is given pinned for owner
+// alone: what a worker uploads for an attempt, which is to go when the
+// attempt does rather than be kept for a grace period.
+type storingFor struct {
+	blobStore
+	owner string
+}
+
+func (s storingFor) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
+	return s.PutFor(ctx, s.owner, r)
 }
 
 func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, pb.PutBlobResponse]) error {
@@ -149,8 +162,12 @@ func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, p
 			return err
 		}
 	}
+	var target FileStore = s.store
+	if attemptOwner != "" {
+		target = storingFor{s.store, attemptOwner}
+	}
 	pending := first
-	c, size, err := storeUpload(ctx, s.store, s.quota, left, plain, func() ([]byte, error) {
+	c, size, err := storeUpload(ctx, target, s.quota, left, plain, func() ([]byte, error) {
 		if pending != nil {
 			data := pending.GetData()
 			pending = nil
@@ -164,7 +181,7 @@ func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, p
 	}
 	switch {
 	case attemptOwner != "":
-		if err := s.keepForAttempt(ctx, attemptOwner, c, first); err != nil {
+		if err := s.stillHeld(ctx, attemptOwner, c, first); err != nil {
 			return err
 		}
 	case isClient:
@@ -202,13 +219,10 @@ func (s *blobService) attemptOf(ctx context.Context, first *pb.PutBlobRequest) (
 	return owner, nil
 }
 
-// keepForAttempt pins what a worker uploaded for an attempt. If the attempt
-// ended while the upload was on its way, the pin is let go of again, since
-// nothing else will.
-func (s *blobService) keepForAttempt(ctx context.Context, owner string, c cid.Cid, first *pb.PutBlobRequest) error {
-	if err := s.store.Pin(ctx, owner, time.Time{}, c); err != nil {
-		return status.Errorf(codes.Internal, "keep %s for its attempt: %v", c, err)
-	}
+// stillHeld checks that the attempt a worker's upload was stored for is
+// still the worker's. If it ended while the upload was on its way, the pin
+// the upload was stored with is let go of, since nothing else will.
+func (s *blobService) stillHeld(ctx context.Context, owner string, c cid.Cid, first *pb.PutBlobRequest) error {
 	caller, _ := guest(ctx, s.owner)
 	if _, holds := s.uploading(caller, first.GetTaskId(), first.GetAttempt()); !holds {
 		s.store.Unpin(owner, c)

@@ -167,6 +167,51 @@ func (s *Store) Close() error {
 func (s *Store) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	s.gcMu.RLock()
 	defer s.gcMu.RUnlock()
+	root, err := s.layout(ctx, r)
+	if err != nil {
+		return cid.Undef, err
+	}
+	s.pinMu.Lock()
+	s.pins[pinKey{root, GraceOwner}] = time.Now().Add(GracePeriod)
+	s.pinMu.Unlock()
+	return root, nil
+}
+
+// PutFor stores everything read from r as Put does, but pinned for owner
+// until owner lets go of it, and not kept for GracePeriod: once owner's pin
+// is gone, so is the blob, unless something else holds it. Storing and
+// pinning are one step, so the blob cannot be collected between them.
+func (s *Store) PutFor(ctx context.Context, owner string, r io.Reader) (cid.Cid, error) {
+	s.gcMu.RLock()
+	defer s.gcMu.RUnlock()
+	root, err := s.layout(ctx, r)
+	if err != nil {
+		return cid.Undef, err
+	}
+	// What the pin keeps is found before the pins are locked, as Pin does,
+	// if the owner's pins are counted at all.
+	s.pinMu.Lock()
+	counted := s.index != nil && !s.index.knowsLocked(owner, root)
+	s.pinMu.Unlock()
+	var reached *reach
+	if counted {
+		if reached, err = s.reachOf(ctx, root); err != nil {
+			return cid.Undef, err
+		}
+	}
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	key := pinKey{root, owner}
+	s.pins[key] = time.Time{}
+	if s.index != nil {
+		s.index.chargeLocked(key, time.Time{}, reached)
+	}
+	s.tellPinsChangedLocked()
+	return root, s.savePinsLocked()
+}
+
+// layout stores everything read from r as a blob and returns its CID.
+func (s *Store) layout(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	params := helpers.DagBuilderParams{
 		Maxlinks:   linksPerNode,
 		RawLeaves:  true,
@@ -180,9 +225,6 @@ func (s *Store) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	if err != nil {
 		return cid.Undef, err
 	}
-	s.pinMu.Lock()
-	s.pins[pinKey{root.Cid(), GraceOwner}] = time.Now().Add(GracePeriod)
-	s.pinMu.Unlock()
 	return root.Cid(), nil
 }
 
