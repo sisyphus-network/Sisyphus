@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { hasWebgl, launch, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, wide } from './harness.mjs'
+import { hasWebgl, launch, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide } from './harness.mjs'
 
 let node
 before(async () => { node = await testNode() })
@@ -851,6 +851,41 @@ test('model settings load and save a local provider used by the planner', async 
     assert.ok(model.authorizations.includes(`Bearer ${apiKey}`), 'the optional Ollama API key was not sent to the service')
     assert.equal(model.asked.length, 1)
     assert.match(JSON.stringify(model.asked[0].messages), /Does the saved local model answer\?/)
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
+test('model provider setup retries a failed model-list request', async () => {
+  const model = await standInModel()
+  model.failTags = true
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'Model provider')
+    await page.getByRole('button', { name: 'Add provider' }).first().click()
+    await selectProvider(page, 'Ollama')
+    await page.getByRole('textbox', { name: 'Profile name' }).fill('Retry test provider')
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
+
+    const connection = page.getByRole('region', { name: 'Connection' })
+    await connection.getByText('Could not list models', { exact: true }).waitFor()
+    const retry = connection.getByRole('button', { name: 'Load models', exact: true })
+    await until('the initial model-list request', () => model.tagRequests === 1)
+    assert.equal(model.tagRequests, 1)
+
+    model.failTags = false
+    await retry.click()
+    await connection.getByText('models available', { exact: true }).waitFor()
+    await until('the retried model-list request', () => model.tagRequests === 2)
+    assert.equal(model.tagRequests, 2, 'the explicit retry should make exactly one new request')
+
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
+    await page.getByRole('button', { name: 'Model', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Model' }).getByRole('button', { name: 'test-model', exact: true }).waitFor()
   } finally {
     await app.close()
     profile.remove()
