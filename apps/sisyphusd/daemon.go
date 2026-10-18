@@ -588,9 +588,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		coord = coordinator.New(coordinator.Config{
 			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: poolLimits.MaxJobsPerClient, MaxTasksPerClient: poolLimits.MaxTasksPerClient, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, MaxUploadBytesPerAttempt: poolLimits.MaxUploadBytesPerAttempt, MaxTaskTimeout: poolLimits.MaxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 			WorkersChanged: local.NodeInfoChanges.Notify,
-			JobsChanged: func() {
-				local.NodeInfoChanges.Notify()
-			},
+			JobsChanged:    local.NodeInfoChanges.Notify,
 			PruneChanged: func() {
 				notifyPrune(pruneChanges)
 			},
@@ -2369,11 +2367,15 @@ func runJobPruner(ctx context.Context, nextDeadline func() time.Time, prune func
 			timer.Stop()
 			return
 		case <-timer.C:
-			if _, err := prune(time.Now()); err != nil {
+			forgotten, err := prune(time.Now())
+			if err != nil {
 				log.Warn("could not clear out old jobs", "error", err)
 				retryAt = time.Now().Add(retry)
 				retry = min(retry*2, maxRetry)
 			} else {
+				if forgotten > 0 {
+					log.Info("forgot jobs that finished long ago", "jobs", forgotten)
+				}
 				retryAt = time.Time{}
 				retry = time.Second
 			}

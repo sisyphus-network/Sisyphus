@@ -256,6 +256,7 @@ func TestJobPrunerWaitsForChangeAndDeadline(t *testing.T) {
 	checked := make(chan struct{}, 4)
 	changed := make(chan struct{}, 1)
 	prunedOnce := make(chan struct{}, 1)
+	logs := new(syncBuffer)
 	next := func() time.Time {
 		if armed.Load() && !pruned.Load() {
 			at := due
@@ -276,7 +277,7 @@ func TestJobPrunerWaitsForChangeAndDeadline(t *testing.T) {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		runJobPruner(ctx, next, prune, changed, slog.New(slog.DiscardHandler))
+		runJobPruner(ctx, next, prune, changed, slog.New(slog.NewTextHandler(logs, nil)))
 	}()
 	<-checked
 	due = time.Now().Add(time.Hour)
@@ -292,6 +293,9 @@ func TestJobPrunerWaitsForChangeAndDeadline(t *testing.T) {
 	}
 	cancel()
 	<-stopped
+	if !strings.Contains(logs.String(), `msg="forgot jobs that finished long ago" jobs=1`) {
+		t.Fatalf("successful pruning did not log the number of forgotten jobs: %s", logs.String())
+	}
 }
 
 func TestJobPrunerStopsWaitingOnCancellation(t *testing.T) {
@@ -321,6 +325,7 @@ func TestJobPrunerHandlesAnAlreadyDueDeadline(t *testing.T) {
 	due := time.Now().Add(-time.Second)
 	pruned := make(chan struct{}, 1)
 	prunedDone := atomic.Bool{}
+	logs := new(syncBuffer)
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
@@ -332,8 +337,8 @@ func TestJobPrunerHandlesAnAlreadyDueDeadline(t *testing.T) {
 		}, func(time.Time) (int, error) {
 			prunedDone.Store(true)
 			pruned <- struct{}{}
-			return 1, nil
-		}, make(chan struct{}), slog.New(slog.DiscardHandler))
+			return 0, nil
+		}, make(chan struct{}), slog.New(slog.NewTextHandler(logs, nil)))
 	}()
 	select {
 	case <-pruned:
@@ -342,6 +347,9 @@ func TestJobPrunerHandlesAnAlreadyDueDeadline(t *testing.T) {
 	}
 	cancel()
 	<-stopped
+	if strings.Contains(logs.String(), "forgot jobs that finished long ago") {
+		t.Errorf("pruning no jobs produced a misleading log: %s", logs.String())
+	}
 }
 
 func TestNotifyPruneCoalescesChanges(t *testing.T) {
