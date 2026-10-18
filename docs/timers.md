@@ -11,7 +11,7 @@ Each loop is put in one of six kinds:
 - **Maintenance**: clears out, now and then, what has outlived its keeping.
 - **Anti-entropy**: compares this node's view with another's on a timer, to catch a change that no event reported. It is a backstop beside the events, not a replacement for them.
 
-A wait that bounds a single call (a request's timeout, a listening window, a grace period before a kill) is not a loop and is listed separately at the end. Paths are relative to `apps/sisyphusd` unless they start with `packages/`. Tests shorten the intervals, as [`development.md`](development.md#tests) describes. This page covers the daemon. The desktop app's timers (stream reconnects, the pairing countdown, debounce) are covered in #393.
+A wait that bounds a single call (a request's timeout, a listening window, a grace period before a kill) is not a loop and is listed separately at the end. Paths are relative to `apps/sisyphusd` unless they start with `packages/`. Tests shorten the intervals, as [`development.md`](development.md#tests) describes. The daemon loops are below; desktop/browser timers are inventoried at the end.
 
 ## Loops
 
@@ -49,3 +49,24 @@ One remaining anti-entropy loop has an event that could take over its normal cas
 - **Follower lists.** A coordinator already holds a stream to each worker. Sending a "your list changed" notice on it would let a follower ask straight away instead of within the minute. That needs a stream contract first, one that keeps what the minute gives today: signed-list recovery, blob challenges, convergence after a reconnect, and follower liveness. It is a design question for after V0 ([#413](https://github.com/sisyphus-network/Sisyphus/issues/413)), and the minute stays until it is settled.
 
 Relay places were moved to events and deadlines in [#410](https://github.com/sisyphus-network/Sisyphus/pull/410); reciprocity was moved to the trust stream in [#414](https://github.com/sisyphus-network/Sisyphus/pull/414).
+
+## Desktop and browser client timers
+
+These are UI lifecycle, retry, or feedback waits; none is a steady-state node snapshot poll. Node/peer state uses an initial fetch followed by the shared stream. A retry fetches a new baseline only after the stream fails or ends.
+
+| Where | What it waits for | Kind | Interval | Why it is a timer |
+| --- | --- | --- | --- | --- |
+| `apps/sisyphus/src/main/index.ts`, `scheduleReconnect` | A failed daemon connection or state stream | Retry | Exponential, 1 s to 15 s; reset after `getNodeInfo` succeeds | Restarts the Electron connection and obtains a fresh node baseline. |
+| `apps/sisyphus/src/renderer/src/lib/node-api.ts`, browser state session | A failed/ended daemon stream | Retry | 1.5 s | Re-fetches the browser snapshot before reopening the stream; no snapshot calls while the stream is healthy. |
+| `apps/sisyphus/src/renderer/src/pages/AccessPage.tsx`, paired-device stream | A failed/ended `WatchPairedBrowsers` stream | Retry | Exponential, 500 ms to 30 s; reset on update | Reopens the change stream after failure. |
+| `apps/sisyphus/src/renderer/src/pages/NodeDetailsPage.tsx`, worker stream | A failed/ended `WatchWorkers` stream | Retry | Exponential, 500 ms to 30 s; reset on update | Reopens the worker change stream after failure. |
+| `apps/sisyphus/src/renderer/src/pages/AccessPage.tsx`, invitation countdown | Invitation time remaining | User-facing countdown | 1 s while an invitation is open; otherwise 60 s | Refreshes displayed expiry time, not daemon state. |
+| `apps/sisyphus/src/renderer/src/pages/AccessPage.tsx` and `NodeDetailsPage.tsx` | Temporary copied-code/identity confirmation | User feedback | 1.6 s | Clears transient confirmation UI. |
+| `apps/sisyphus/src/renderer/src/App.tsx` | Persisting scroll position after a scroll | Debounce | 120 ms | Coalesces frequent user scroll events before a local-storage write. |
+| `apps/sisyphus/src/renderer/src/pages/SettingsPage.tsx` | Loading models after connection inputs change | Debounce | 650 ms | Avoids issuing a model-list request for every keystroke. |
+| `apps/sisyphus/src/renderer/src/pages/WorkspacePage.tsx` | Waiting before globe initialization | UI transition | 240 ms (0 with reduced motion) | Lets the view settle before initializing the visual. |
+| `apps/sisyphus/src/renderer/src/components/navigation/advanced-sidebar.tsx` | Sidebar transition completion fallback | UI transition | 210 ms | Advances the sidebar's visual phase. |
+| `apps/sisyphus/src/renderer/src/pages/OperationsPage.tsx` | Releasing a generated download URL | Resource cleanup | 1 s | Revokes a temporary browser object URL after download starts. |
+| `apps/sisyphus/src/main/daemon-process.ts` | Local API readiness and graceful daemon shutdown | Readiness / deadline | 750 ms socket probe; bounded shutdown timeout | These bound process lifecycle calls; they do not refresh application state. |
+
+Stream reconnection and stale-generation behavior are covered by `apps/sisyphus/dev/node-state-session.test.mjs` and `apps/sisyphus/dev/browser-node-state-session.test.mjs`; retry bounds are covered by `apps/sisyphus/dev/reconnect-backoff.test.mjs`.

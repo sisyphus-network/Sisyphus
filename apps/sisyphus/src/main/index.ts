@@ -12,6 +12,8 @@ import { normalizePoolLimits, validatePoolLimits } from '../shared/pool-limits.t
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
 import { firstUploadMessage } from './file-upload'
+import { startNodeStateSession } from './node-state-session'
+import { createReconnectBackoff } from './reconnect-backoff'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
@@ -202,6 +204,8 @@ type GrpcNodeService = {
   listFiles(request: object, metadata: grpc.Metadata, callback: (error: grpc.ServiceError | null, response?: { files?: { cid?: string; name?: string }[] }) => void): void
   close(): void
 }
+type NodeStateUpdate = { info: NodeInfo; peers: Peer[]; revision: string | number | { toString(): string } }
+type PeerUpdate = { peers: Peer[]; revision: string | number | { toString(): string } }
 
 const initialSnapshot = (): NodeSnapshot => ({
   status: 'connecting',
@@ -216,10 +220,9 @@ const initialSnapshot = (): NodeSnapshot => ({
 
 let snapshot = initialSnapshot()
 let client: GrpcNodeService | null = null
-let nodeStateStream: grpc.ClientReadableStream<unknown> | null = null
-let legacyPeerStream: grpc.ClientReadableStream<unknown> | null = null
+let nodeStateSession: (() => void) | null = null
 let retryTimer: NodeJS.Timeout | null = null
-let retryDelayMs = 1_000
+const reconnectBackoff = createReconnectBackoff(1_000, 15_000)
 let reconnecting = false
 let isQuitting = false
 let connectionGeneration = 0
@@ -279,15 +282,12 @@ function publish(next: Partial<NodeSnapshot>) {
 
 function clearConnection() {
   connectionGeneration += 1
-  const previousStream = nodeStateStream
-  const previousLegacyPeerStream = legacyPeerStream
+  const previousSession = nodeStateSession
   const previousClient = client
-  nodeStateStream = null
-  legacyPeerStream = null
+  nodeStateSession = null
   client = null
   activeStreams.clearAll()
-  previousStream?.cancel()
-  previousLegacyPeerStream?.cancel()
+  previousSession?.()
   previousClient?.close()
 }
 
@@ -298,8 +298,7 @@ function scheduleReconnect(error: string, generation: number) {
   retryTimer = setTimeout(() => {
     retryTimer = null
     connectToNode()
-  }, retryDelayMs)
-  retryDelayMs = Math.min(retryDelayMs * 2, 15_000)
+  }, reconnectBackoff.next())
 }
 
 function connectToNode() {
@@ -322,46 +321,33 @@ function connectToNode() {
     const nextClient = new loaded.sisyphus.node.v1.NodeService(endpoint, grpc.credentials.createInsecure())
     client = nextClient
 
-    nextClient.getNodeInfo({}, { deadline: Date.now() + 5000 }, (error, info) => {
-      if (generation !== connectionGeneration) return
-      reconnecting = false
-      if (error || !info) {
-        if (error?.code === grpc.status.UNAVAILABLE) void desktopDaemon.ensureStarted()
-        scheduleReconnect(error?.message ?? 'The daemon returned no node information.', generation)
-        return
-      }
-
-      retryDelayMs = 1_000
-      daemonStartupError = null
-      publish({ status: 'connected', info, stateTransport: 'initial-daemon-fetch', error: null })
-      const stateStream = nextClient.watchNodeState({})
-      nodeStateStream = stateStream
-      stateStream.on('data', (update) => {
-        if (generation !== connectionGeneration) return
-        publish({
-          status: 'connected', info: update.info, peers: update.peers ?? [],
-          revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), stateTransport: 'realtime', error: null,
-        })
-      })
-      stateStream.on('error', (streamError: grpc.ServiceError) => {
-        if (generation === connectionGeneration && streamError.code === grpc.status.UNIMPLEMENTED) {
-          stateStream.cancel()
-          nodeStateStream = null
-          const stream = nextClient.watchPeers({})
-          legacyPeerStream = stream
-          stream.on('data', (update: { peers?: Peer[]; revision?: string | number | { toString(): string } }) => {
-            if (generation !== connectionGeneration) return
-            publish({ status: 'connected', peers: update.peers ?? [], revision: update.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), error: null })
-          })
-          stream.on('error', (legacyError: Error) => scheduleReconnect(legacyError.message, generation))
-          stream.on('end', () => scheduleReconnect('The peer stream ended.', generation))
+    nodeStateSession = startNodeStateSession<NodeInfo, NodeStateUpdate, PeerUpdate>({
+      client: nextClient,
+      isCurrent: () => generation === connectionGeneration,
+      unimplementedCode: grpc.status.UNIMPLEMENTED,
+      onReady: (info) => {
+        reconnecting = false
+        reconnectBackoff.reset()
+        daemonStartupError = null
+        publish({ status: 'connected', info, stateTransport: 'initial-daemon-fetch', error: null })
+      },
+      onUpdate: (update, legacy) => {
+        if (legacy) {
+          const peers = update as { peers?: Peer[]; revision?: string | number | { toString(): string } }
+          publish({ status: 'connected', peers: peers.peers ?? [], revision: peers.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), error: null })
           return
         }
+        const state = update as { info?: NodeInfo; peers?: Peer[]; revision?: string | number | { toString(): string } }
+        publish({
+          status: 'connected', info: state.info, peers: state.peers ?? [],
+          revision: state.revision?.toString() ?? '0', lastUpdated: new Date().toISOString(), stateTransport: 'realtime', error: null,
+        })
+      },
+      onError: (streamError) => {
+        reconnecting = false
+        if (streamError.code === grpc.status.UNAVAILABLE) void desktopDaemon.ensureStarted()
         scheduleReconnect(streamError.message, generation)
-      })
-      stateStream.on('end', () => {
-        if (nodeStateStream === stateStream) scheduleReconnect('The node state stream ended.', generation)
-      })
+      },
     })
   } catch (error) {
     reconnecting = false
@@ -468,7 +454,7 @@ app.whenReady().then(() => {
     if (retryTimer) clearTimeout(retryTimer)
     retryTimer = null
     reconnecting = false
-    retryDelayMs = 1_000
+    reconnectBackoff.reset()
     clearConnection()
     connectToNode()
     return snapshot
