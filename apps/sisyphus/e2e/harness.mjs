@@ -34,7 +34,7 @@ function listening(port) {
   })
 }
 
-async function until(what, met, seconds = 30) {
+export async function until(what, met, seconds = 30) {
   for (let left = seconds * 10; left > 0; left--) {
     if (await met()) return
     await new Promise((wake) => setTimeout(wake, 100))

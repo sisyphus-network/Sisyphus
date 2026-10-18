@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { hasWebgl, launch, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, wide } from './harness.mjs'
+import { hasWebgl, launch, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide } from './harness.mjs'
 
 let node
 before(async () => { node = await testNode() })
@@ -874,11 +874,13 @@ test('model provider setup retries a failed model-list request', async () => {
     const connection = page.getByRole('region', { name: 'Connection' })
     await connection.getByText('Could not list models', { exact: true }).waitFor()
     const retry = connection.getByRole('button', { name: 'Load models', exact: true })
+    await until('the initial model-list request', () => model.tagRequests === 1)
     assert.equal(model.tagRequests, 1)
 
     model.failTags = false
     await retry.click()
     await connection.getByText('models available', { exact: true }).waitFor()
+    await until('the retried model-list request', () => model.tagRequests === 2)
     assert.equal(model.tagRequests, 2, 'the explicit retry should make exactly one new request')
 
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
