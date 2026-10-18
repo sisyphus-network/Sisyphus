@@ -162,6 +162,149 @@ func TestAQuestionIsAnsweredInItsTimeOrNotAtAll(t *testing.T) {
 	}
 }
 
+func TestManagerExpiresAChallengeWithoutAnotherFollowerRequest(t *testing.T) {
+	r := newRig(t, 1, "one blob")
+	one := put(t, r.store, "one blob")
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		r.Run(runCtx)
+		close(done)
+	}()
+
+	asked := r.Replicate(ctx, "follower", &pb.ReplicateRequest{
+		Holding: []string{one}, AnswersChallenges: true,
+	})
+	if len(asked.GetChallenges()) != 1 {
+		t.Fatalf("issued %d challenges, want one", len(asked.GetChallenges()))
+	}
+	second := r.Replicate(ctx, "follower-2", &pb.ReplicateRequest{
+		Holding: []string{one}, AnswersChallenges: true,
+	})
+	if len(second.GetChallenges()) != 1 {
+		t.Fatalf("issued %d challenges to the second follower, want one", len(second.GetChallenges()))
+	}
+	r.mu.Lock()
+	r.Manager.followers["follower"].pending[0].issued = time.Now().Add(-challengeWindow - time.Second)
+	r.Manager.followers["follower-2"].pending[0].issued = time.Now().Add(-challengeWindow - 2*time.Second)
+	r.notifyChangedLocked()
+	r.mu.Unlock()
+
+	eventually(t, "unanswered challenges to expire without another follower request", func() bool {
+		return r.Status("").GetChallengesFailed() == 2
+	})
+	r.mu.Lock()
+	follower := r.Manager.followers["follower"]
+	secondFollower := r.Manager.followers["follower-2"]
+	pending, held := len(follower.pending)+len(secondFollower.pending), len(follower.held)+len(secondFollower.held)
+	r.mu.Unlock()
+	if pending != 0 || held != 0 {
+		t.Errorf("after challenge deadline pending=%d held=%d, want both zero", pending, held)
+	}
+	if got := r.logs.count("did not show that it holds a blob it says it holds"); got != 2 {
+		t.Errorf("challenge failure logged %d times, want twice", got)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("replication deadline loop did not stop after cancellation")
+	}
+}
+
+func TestWaitForChallengeWakesForChangeDeadlineOrCancellation(t *testing.T) {
+	changed := make(chan struct{})
+	close(changed)
+	if due, stopped := waitForChallenge(context.Background(), changed, time.Now().Add(time.Hour)); due || stopped {
+		t.Fatalf("change wake returned due=%v stopped=%v, want both false", due, stopped)
+	}
+	if due, stopped := waitForChallenge(context.Background(), make(chan struct{}), time.Now().Add(-time.Second)); !due || stopped {
+		t.Fatalf("deadline wake returned due=%v stopped=%v, want due", due, stopped)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if due, stopped := waitForChallenge(canceled, make(chan struct{}), time.Now().Add(time.Hour)); due || !stopped {
+		t.Fatalf("canceled wait returned due=%v stopped=%v, want stopped", due, stopped)
+	}
+}
+
+func TestExpireSkipsAChallengeChangedWhileWaitingForItsLock(t *testing.T) {
+	r := newRig(t, 1, "one blob")
+	one := put(t, r.store, "one blob")
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{Holding: []string{one}, AnswersChallenges: true})
+	r.mu.Lock()
+	r.Manager.followers["follower"].pending[0].issued = time.Now().Add(-challengeWindow - time.Second)
+	r.mu.Unlock()
+	unlock := r.Manager.lockChallenges("follower")
+	done := make(chan struct{})
+	go func() {
+		r.Manager.expireChallenges(ctx, time.Now())
+		close(done)
+	}()
+	eventually(t, "deadline handler to wait for an in-flight challenge response", func() bool {
+		r.Manager.challengeLocksMu.Lock()
+		defer r.Manager.challengeLocksMu.Unlock()
+		lock := r.Manager.challengeLocks["follower"]
+		return lock != nil && lock.refs == 2
+	})
+	r.mu.Lock()
+	r.Manager.followers["follower"].pending[0].issued = time.Now()
+	r.mu.Unlock()
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("deadline handler did not finish after the challenge response settled")
+	}
+	if got := r.Status("").GetChallengesFailed(); got != 0 {
+		t.Errorf("a superseded deadline counted %d challenge failures, want zero", got)
+	}
+}
+
+type removeFollowerOnOpen struct {
+	*storage.Store
+	onOpen func()
+}
+
+func (s removeFollowerOnOpen) Open(ctx context.Context, c cid.Cid) (storage.Blob, error) {
+	s.onOpen()
+	return s.Store.Open(ctx, c)
+}
+
+func TestExpireIgnoresAFollowerRemovedWhileReadingChallengeBytes(t *testing.T) {
+	r := newRig(t, 1, "one blob")
+	one := put(t, r.store, "one blob")
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{Holding: []string{one}, AnswersChallenges: true})
+	r.mu.Lock()
+	r.Manager.followers["follower"].pending[0].issued = time.Now().Add(-challengeWindow - time.Second)
+	r.Manager.store = removeFollowerOnOpen{Store: r.store, onOpen: func() {
+		r.mu.Lock()
+		delete(r.Manager.followers, "follower")
+		r.mu.Unlock()
+	}}
+	r.mu.Unlock()
+	r.Manager.expireChallenges(ctx, time.Now())
+	if got := r.Status("").GetChallengesFailed(); got != 0 {
+		t.Errorf("removed follower accumulated %d challenge failures, want zero", got)
+	}
+}
+
+func TestExpireLeavesAChallengeAloneAfterItsContextIsCanceled(t *testing.T) {
+	r := newRig(t, 1, "one blob")
+	one := put(t, r.store, "one blob")
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{Holding: []string{one}, AnswersChallenges: true})
+	r.mu.Lock()
+	r.Manager.followers["follower"].pending[0].issued = time.Now().Add(-challengeWindow - time.Second)
+	r.mu.Unlock()
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.Manager.expireChallenges(canceled, time.Now())
+	if got := r.Status("").GetChallengesFailed(); got != 0 {
+		t.Errorf("canceled deadline handler counted %d challenge failures, want zero", got)
+	}
+}
+
 // unreadable is a store some of whose blobs cannot be opened.
 type unreadable struct {
 	*storage.Store

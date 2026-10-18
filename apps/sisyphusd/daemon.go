@@ -575,6 +575,16 @@ func runDaemon(ctx context.Context, args []string) error {
 					})
 			},
 		})
+		replicationCtx, stopReplication := context.WithCancel(ctx)
+		replicationDone := make(chan struct{})
+		go func() {
+			defer close(replicationDone)
+			replicated.Run(replicationCtx)
+		}()
+		defer func() {
+			stopReplication()
+			<-replicationDone
+		}()
 		store.OnPinChange(replicated.PinsChanged)
 		if followerCopies > 0 {
 			log.Info("storage followers are to hold copies of what this node has pinned", "copies", followerCopies)
