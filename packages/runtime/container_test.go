@@ -50,6 +50,29 @@ func (p *pretend) engine(ctx context.Context, args []string, stdout, stderr io.W
 	return p.do(args, stdout, stderr)
 }
 
+func TestAContainerJobsInputIsReadWhenItIsSplit(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	input, err := store.Put(ctx, strings.NewReader("what the tasks are given"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only tasks read the input after this, so splitting is where the
+	// coordinator learns of it and keeps it for as long as the job runs.
+	touched := Record(store)
+	if _, err := (Container{}).Split(ctx, touched, []byte(`{"image":"alpine:3.20","input":"`+input.String()+`"}`), 2); err != nil {
+		t.Fatal(err)
+	}
+	if read := touched.Read(); !slices.Equal(read, []string{input.String()}) {
+		t.Errorf("splitting read %v, want the input %s", read, input)
+	}
+	// An input that is not here is refused before any task is given out.
+	absent, _ := storage.NewMemory().Put(ctx, strings.NewReader("held elsewhere"))
+	if _, err := (Container{}).Split(ctx, store, []byte(`{"image":"alpine:3.20","input":"`+absent.String()+`"}`), 1); err == nil || !strings.Contains(err.Error(), "container input "+absent.String()) {
+		t.Errorf("an input that is not held: %v", err)
+	}
+}
+
 func TestAContainerJobIsSplitIntoCopiesThatKnowWhichTheyAre(t *testing.T) {
 	c := Container{}
 	params := `{"image":"alpine:3.20","command":["echo","hi"],"env":{"B":"2","A":"1"},"memory_mb":256,"cpus":1.5}`
@@ -272,8 +295,10 @@ func TestContainerTasksThatFail(t *testing.T) {
 		do      func([]string, io.Writer, io.Writer) (int, error)
 		want    string
 	}{
-		"a payload that is not one":    {[]byte("not json"), store, quiet, "container payload"},
-		"an input that is not stored":  {payload(`{"image":"alpine:3.20","input":"` + missing + `"}`), store, quiet, "container input " + missing},
+		"a payload that is not one": {[]byte("not json"), store, quiet, "container payload"},
+		// Split refuses an input it cannot find, so this is one that went
+		// after the job was split.
+		"an input that is not stored":  {mustJSON(containerTask{ContainerParams: ContainerParams{Image: "alpine:3.20", Input: missing}, Count: 1}), store, quiet, "container input " + missing},
 		"an input that cannot be read": {payload(`{"image":"alpine:3.20","input":"` + input.String() + `"}`), &awkward{Blobs: store, badReads: true}, quiet, "the store is full"},
 		"an engine that cannot be run": {plain, store, func([]string, io.Writer, io.Writer) (int, error) { return 0, errors.New("docker: not found") }, "run the container: docker: not found"},
 		"a command that fails": {plain, store, func(_ []string, _, stderr io.Writer) (int, error) {
@@ -563,7 +588,7 @@ func TestTasksOfAJobOnOneMachineShareOneCopyOfItsInput(t *testing.T) {
 	c := Container{Engine: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 		return engine.do(args, stdout, stderr)
 	}}
-	payloads, _ := c.Split(ctx, store, params, 2)
+	payloads, _ := c.Split(ctx, store.Blobs, params, 2) // on the coordinator, which is not counted
 	var tasks sync.WaitGroup
 	for _, payload := range payloads {
 		tasks.Add(1)
@@ -587,8 +612,8 @@ func TestTasksOfAJobOnOneMachineShareOneCopyOfItsInput(t *testing.T) {
 	// same input: it fetches its own.
 	seen, both = nil, make(chan struct{})
 	close(both)
-	first, _ := c.Split(ctx, store, params, 1)
-	second, _ := c.Split(ctx, store, params, 1)
+	first, _ := c.Split(ctx, store.Blobs, params, 1)
+	second, _ := c.Split(ctx, store.Blobs, params, 1)
 	engine.do = func(args []string, _, _ io.Writer) (int, error) {
 		seen = append(seen, volume(args, "/input"))
 		if len(seen) == 1 {
