@@ -190,6 +190,8 @@ type Config struct {
 	WorkersChanged func()
 	// JobsChanged is called whenever a job's published snapshot changes.
 	JobsChanged func()
+	// PruneChanged is called when a job becomes terminal and may gain a retention deadline.
+	PruneChanged func()
 }
 
 type Coordinator struct {
@@ -241,6 +243,7 @@ type Coordinator struct {
 	log            *slog.Logger
 	workersChanged func()
 	jobsChanged    func()
+	pruneChanged   func()
 	relayMu        sync.Mutex
 	relaySubs      map[chan struct{}]struct{}
 
@@ -409,6 +412,7 @@ func New(cfg Config) *Coordinator {
 		log:            cfg.Log,
 		workersChanged: cfg.WorkersChanged,
 		jobsChanged:    cfg.JobsChanged,
+		pruneChanged:   cfg.PruneChanged,
 		relaySubs:      make(map[chan struct{}]struct{}),
 		ctx:            ctx,
 		cancel:         cancel,
@@ -802,6 +806,52 @@ func (c *Coordinator) Prune(now time.Time) (int, error) {
 		delete(c.keys, id)
 	}
 	return len(old), nil
+}
+
+// NextPruneAt returns the earliest time a finished job can be pruned, or
+// zero when no finished job has a retention deadline. A child job's record
+// remains while its parent record links it, so both deadlines must have
+// passed before the child is eligible.
+func (c *Coordinator) NextPruneAt() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.keepJobs <= 0 {
+		return time.Time{}
+	}
+	due := func(job *jobmodel.Job) time.Time {
+		if job == nil || !job.Terminal() {
+			return time.Time{}
+		}
+		kept := c.keepJobs
+		if job.Submitter != "" {
+			kept = max(kept, c.retain)
+		}
+		if job.FinishedAt.IsZero() {
+			return time.Now()
+		}
+		// Prune uses a strict greater-than age comparison.
+		return job.FinishedAt.Add(kept).Add(time.Nanosecond)
+	}
+	var next time.Time
+	for _, job := range c.jobs {
+		at := due(job)
+		if at.IsZero() {
+			continue
+		}
+		if parent, step := c.jobs[job.Parent]; step {
+			parentAt := due(parent)
+			if parentAt.IsZero() {
+				continue
+			}
+			if parentAt.After(at) {
+				at = parentAt
+			}
+		}
+		if next.IsZero() || at.Before(next) {
+			next = at
+		}
+	}
+	return next
 }
 
 // Holds reports whether owner is the name an unfinished job holds its pins
@@ -2173,6 +2223,9 @@ func suits(has *pb.NodeCapabilities, workload string, minMemory uint64, minGPUs 
 // and wakes whoever is watching the job.
 func (c *Coordinator) notifyLocked(job *jobmodel.Job) {
 	c.saveLocked(job)
+	if job.Terminal() && c.pruneChanged != nil {
+		c.pruneChanged()
+	}
 	c.wakeLocked(job)
 }
 
