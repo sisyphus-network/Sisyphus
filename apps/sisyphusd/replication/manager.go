@@ -461,13 +461,16 @@ func (m *Manager) issueChallenges(ctx context.Context, now time.Time) {
 			continue
 		}
 		f.challengeAt = time.Time{} // reserve this firing while challenge bytes are read
-		holding := make([]string, 0, len(f.held))
+		// What it failed to show is still what it says it holds, and is
+		// what most needs asking about again: held leaves it out.
+		holding := make([]string, 0, len(f.held)+len(f.failed))
 		for id := range f.held {
 			holding = append(holding, id)
 		}
 		failed := make(map[string]struct{}, len(f.failed))
 		for id := range f.failed {
 			failed[id] = struct{}{}
+			holding = append(holding, id)
 		}
 		shown := make(map[string]time.Time, len(f.shown))
 		for id, at := range f.shown {

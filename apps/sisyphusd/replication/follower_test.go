@@ -529,6 +529,29 @@ func TestFollowerLeaseSenderRejectsAnUnframeableStateReport(t *testing.T) {
 	}
 }
 
+// failReportFrames takes lease frames but fails to send a state report.
+type failReportFrames struct {
+	*replicationFrames
+	err error
+}
+
+func (s *failReportFrames) Send(frame *pb.ReplicationHello) error {
+	if frame.GetLease() {
+		return nil
+	}
+	return s.err
+}
+
+func TestFollowerLeaseSenderReturnsAStateReportSendError(t *testing.T) {
+	want := errors.New("report send failed")
+	requests := make(chan *pb.ReplicateRequest, 1)
+	requests <- &pb.ReplicateRequest{KeepsLists: true, AnswersChallenges: true}
+	stream := &failReportFrames{replicationFrames: &replicationFrames{}, err: want}
+	if err := (&Follower{}).sendLeases(context.Background(), stream, requests); !errors.Is(err, want) {
+		t.Errorf("lease sender returned %v after a state report failed to send, want %v", err, want)
+	}
+}
+
 type blockingReplicationFrames struct {
 	*replicationFrames
 	ctx context.Context

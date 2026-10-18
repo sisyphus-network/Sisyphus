@@ -207,6 +207,18 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 	}
 	replicated := replication.New(copies)
 	store.OnPinChange(replicated.PinsChanged)
+	// The daemon runs the manager's deadline loop; so must the pool, or
+	// connected followers' challenges are never issued nor expired.
+	replicationCtx, stopReplication := context.WithCancel(context.Background())
+	replicationDone := make(chan struct{})
+	go func() {
+		defer close(replicationDone)
+		replicated.Run(replicationCtx)
+	}()
+	t.Cleanup(func() {
+		stopReplication()
+		<-replicationDone
+	})
 	srv := api.NewServer(
 		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Replication: replicated, MaxStoreBytesPerClient: clientShare, Names: api.NewNames(kept, func(id string) bool {
 			_, admitted := admitted.Role(id)

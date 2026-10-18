@@ -289,6 +289,41 @@ func TestManagerPushesScheduledChallengesOverTheAssignmentStream(t *testing.T) {
 	}
 }
 
+// A connected follower that once failed to show it holds a blob is asked
+// about it again at the next proof deadline. It still says it holds the
+// blob, and asking is the only way for it to be counted as holding it again:
+// a connected follower makes no unary exchange that would ask instead.
+func TestAFailedBlobIsChallengedAgainOnAStream(t *testing.T) {
+	r := newRig(t, 1, "one blob")
+	one := put(t, r.store, "one blob")
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{Holding: []string{one}, AnswersChallenges: true})
+	leaseID := r.BeginLease("follower")
+	r.RenewLease("follower", leaseID)
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{
+		Holding: []string{one}, AnswersChallenges: true, Answers: []*pb.ChallengeAnswer{{Cid: one}},
+	})
+	r.mu.Lock()
+	f := r.Manager.followers["follower"]
+	_, failed := f.failed[one]
+	_, held := f.held[one]
+	f.challengeAt = time.Now().Add(-time.Second)
+	r.mu.Unlock()
+	if !failed || held {
+		t.Fatalf("after a wrong answer failed=%v held=%v, want it failed and not held", failed, held)
+	}
+
+	r.Manager.issueChallenges(ctx, time.Now())
+	r.mu.Lock()
+	var asked []string
+	for _, c := range r.Manager.followers["follower"].pending {
+		asked = append(asked, c.cid)
+	}
+	r.mu.Unlock()
+	if !slices.Equal(asked, []string{one}) {
+		t.Errorf("at the next proof deadline the follower was asked about %v, want the blob it failed to show", asked)
+	}
+}
+
 func TestExpireSkipsAChallengeChangedWhileWaitingForItsLock(t *testing.T) {
 	r := newRig(t, 1, "one blob")
 	one := put(t, r.store, "one blob")
