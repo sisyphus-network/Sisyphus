@@ -584,10 +584,14 @@ func runDaemon(ctx context.Context, args []string) error {
 		if isWorker {
 			audits = runs
 		}
+		pruneChanges := make(chan struct{}, 1)
 		coord = coordinator.New(coordinator.Config{
 			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: poolLimits.MaxJobsPerClient, MaxTasksPerClient: poolLimits.MaxTasksPerClient, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, MaxUploadBytesPerAttempt: poolLimits.MaxUploadBytesPerAttempt, MaxTaskTimeout: poolLimits.MaxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 			WorkersChanged: local.NodeInfoChanges.Notify,
 			JobsChanged:    local.NodeInfoChanges.Notify,
+			PruneChanged: func() {
+				notifyPrune(pruneChanges)
+			},
 		})
 		defer coord.Close()
 		seenAs = coord.Observed
@@ -609,6 +613,15 @@ func runDaemon(ctx context.Context, args []string) error {
 		if unfinished > 0 {
 			log.Info("took up the jobs left unfinished", "jobs", unfinished)
 		}
+		prunerStopped := make(chan struct{})
+		defer func() {
+			cancel()
+			<-prunerStopped
+		}()
+		go func() {
+			defer close(prunerStopped)
+			runJobPruner(ctx, coord.NextPruneAt, coord.Prune, pruneChanges, log)
+		}()
 		// The node listens on one port for two kinds of caller: its gRPC
 		// clients and workers, and the libp2p hosts of its pool's members,
 		// for which it relays so that two of them with no port open can
@@ -722,7 +735,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			}()
 			go func() {
 				defer close(collected)
-				collectPeriodically(ctx, store, coord.Prune, *gcInterval, log)
+				collectPeriodically(ctx, store, *gcInterval, log)
 			}()
 		}
 	} else {
@@ -2301,10 +2314,9 @@ func replayFilePinsOnChanges(ctx context.Context, planning *assistant, retryInte
 	}
 }
 
-// collectPeriodically clears out, every interval until ctx ends, what has
-// outlived its keeping: stored data nothing pins any longer, and the record
-// of jobs that finished long ago.
-func collectPeriodically(ctx context.Context, store *storage.Store, prune func(time.Time) (int, error), interval time.Duration, log *slog.Logger) {
+// collectPeriodically clears out, every interval until ctx ends, stored data
+// that nothing pins any longer.
+func collectPeriodically(ctx context.Context, store *storage.Store, interval time.Duration, log *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2316,15 +2328,65 @@ func collectPeriodically(ctx context.Context, store *storage.Store, prune func(t
 			} else if done != (storage.Collected{}) {
 				log.Info("collected garbage", "expired_pins", done.ExpiredPins, "blocks", done.Blocks, "bytes", done.Bytes)
 			}
-			forgotten, err := prune(time.Now())
-			if err != nil {
-				log.Warn("could not clear out old jobs", "error", err)
-			} else if forgotten > 0 {
-				log.Info("forgot jobs that finished long ago", "jobs", forgotten)
-			}
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// runJobPruner waits for a job's retention deadline or a job change that
+// might add an earlier one. Database failures use bounded backoff instead of
+// returning to the hourly garbage-collection interval.
+func runJobPruner(ctx context.Context, nextDeadline func() time.Time, prune func(time.Time) (int, error), changed <-chan struct{}, log *slog.Logger) {
+	const maxRetry = time.Minute
+	retry := time.Second
+	var retryAt time.Time
+	for {
+		due := nextDeadline()
+		if due.IsZero() {
+			select {
+			case <-changed:
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
+		if !retryAt.IsZero() && due.Before(retryAt) {
+			due = retryAt
+		}
+		wait := time.Until(due)
+		if wait < 0 {
+			wait = 0
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-changed:
+			timer.Stop()
+			continue
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			forgotten, err := prune(time.Now())
+			if err != nil {
+				log.Warn("could not clear out old jobs", "error", err)
+				retryAt = time.Now().Add(retry)
+				retry = min(retry*2, maxRetry)
+			} else {
+				if forgotten > 0 {
+					log.Info("forgot jobs that finished long ago", "jobs", forgotten)
+				}
+				retryAt = time.Time{}
+				retry = time.Second
+			}
+		}
+	}
+}
+
+func notifyPrune(ch chan<- struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
 	}
 }
 

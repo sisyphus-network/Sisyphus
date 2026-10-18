@@ -218,29 +218,13 @@ func TestPeriodicCollection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The record of old jobs is cleared out on the same round: here, three
-	// jobs the first time, a failure the second, and nothing after that.
-	var rounds atomic.Int32
-	prune := func(time.Time) (int, error) {
-		switch rounds.Add(1) {
-		case 1:
-			return 3, nil
-		case 2:
-			return 0, errors.New("the database is locked")
-		}
-		return 0, nil
-	}
 	logs := new(syncBuffer)
 	collecting, stop := context.WithCancel(ctx)
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		collectPeriodically(collecting, store, prune, 5*time.Millisecond, slog.New(slog.NewTextHandler(logs, nil)))
+		collectPeriodically(collecting, store, 5*time.Millisecond, slog.New(slog.NewTextHandler(logs, nil)))
 	}()
-	waitFor(t, func() bool {
-		return strings.Contains(logs.String(), `msg="forgot jobs that finished long ago" jobs=3`) &&
-			strings.Contains(logs.String(), `msg="could not clear out old jobs" error="the database is locked"`)
-	})
 	waitFor(t, func() bool { return strings.Contains(logs.String(), `msg="collected garbage" expired_pins=1 blocks=1`) })
 	if held, _ := store.Has(ctx, lapsed); held {
 		t.Error("the collector logged a collection but the blob is still there")
@@ -262,8 +246,161 @@ func TestPeriodicCollection(t *testing.T) {
 	if n := strings.Count(logs.String(), "collected garbage"); n != 1 {
 		t.Errorf("logged %d collections, want only the one that removed something", n)
 	}
-	if n := strings.Count(logs.String(), "forgot jobs"); n != 1 {
-		t.Errorf("logged %d rounds of forgetting jobs, want only the one that forgot some", n)
+}
+
+func TestJobPrunerWaitsForChangeAndDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var due time.Time
+	armed, pruned := atomic.Bool{}, atomic.Bool{}
+	checked := make(chan struct{}, 4)
+	changed := make(chan struct{}, 1)
+	prunedOnce := make(chan struct{}, 1)
+	logs := new(syncBuffer)
+	next := func() time.Time {
+		if armed.Load() && !pruned.Load() {
+			at := due
+			checked <- struct{}{}
+			return at
+		}
+		checked <- struct{}{}
+		return time.Time{}
+	}
+	prune := func(now time.Time) (int, error) {
+		if now.Before(due) {
+			t.Errorf("pruned before deadline: %v < %v", now, due)
+		}
+		pruned.Store(true)
+		prunedOnce <- struct{}{}
+		return 1, nil
+	}
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		runJobPruner(ctx, next, prune, changed, slog.New(slog.NewTextHandler(logs, nil)))
+	}()
+	<-checked
+	due = time.Now().Add(time.Hour)
+	armed.Store(true)
+	changed <- struct{}{}
+	<-checked
+	due = time.Now().Add(30 * time.Millisecond)
+	changed <- struct{}{}
+	select {
+	case <-prunedOnce:
+	case <-time.After(time.Second):
+		t.Fatal("the job was not pruned at its retention deadline")
+	}
+	cancel()
+	<-stopped
+	if !strings.Contains(logs.String(), `msg="forgot jobs that finished long ago" jobs=1`) {
+		t.Fatalf("successful pruning did not log the number of forgotten jobs: %s", logs.String())
+	}
+}
+
+func TestJobPrunerStopsWaitingOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	due := time.Now().Add(time.Hour)
+	checked := make(chan struct{}, 1)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		runJobPruner(ctx, func() time.Time {
+			checked <- struct{}{}
+			return due
+		}, func(time.Time) (int, error) { return 0, nil }, make(chan struct{}), slog.New(slog.DiscardHandler))
+	}()
+	<-checked
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("the pruner did not stop when its context was cancelled")
+	}
+}
+
+func TestJobPrunerHandlesAnAlreadyDueDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	due := time.Now().Add(-time.Second)
+	pruned := make(chan struct{}, 1)
+	prunedDone := atomic.Bool{}
+	logs := new(syncBuffer)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		runJobPruner(ctx, func() time.Time {
+			if prunedDone.Load() {
+				return time.Time{}
+			}
+			return due
+		}, func(time.Time) (int, error) {
+			prunedDone.Store(true)
+			pruned <- struct{}{}
+			return 0, nil
+		}, make(chan struct{}), slog.New(slog.NewTextHandler(logs, nil)))
+	}()
+	select {
+	case <-pruned:
+	case <-time.After(time.Second):
+		t.Fatal("an overdue record was not pruned")
+	}
+	cancel()
+	<-stopped
+	if strings.Contains(logs.String(), "forgot jobs that finished long ago") {
+		t.Errorf("pruning no jobs produced a misleading log: %s", logs.String())
+	}
+}
+
+func TestNotifyPruneCoalescesChanges(t *testing.T) {
+	changes := make(chan struct{}, 1)
+	notifyPrune(changes)
+	notifyPrune(changes)
+	select {
+	case <-changes:
+	default:
+		t.Fatal("the change notification was lost")
+	}
+	select {
+	case <-changes:
+		t.Fatal("duplicate notifications were not coalesced")
+	default:
+	}
+}
+
+func TestJobPrunerRetriesJournalFailureWithBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	due := time.Now().Add(10 * time.Millisecond)
+	var attempts atomic.Int32
+	finished := make(chan struct{}, 1)
+	prune := func(time.Time) (int, error) {
+		if attempts.Add(1) == 1 {
+			return 0, errors.New("the database is locked")
+		}
+		finished <- struct{}{}
+		return 1, nil
+	}
+	next := func() time.Time {
+		if attempts.Load() >= 2 {
+			return time.Time{}
+		}
+		return due
+	}
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		runJobPruner(ctx, next, prune, make(chan struct{}), slog.New(slog.DiscardHandler))
+	}()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the failed prune was not retried")
+	}
+	cancel()
+	<-stopped
+	if got := attempts.Load(); got != 2 {
+		t.Errorf("prune attempts = %d, want one failure and one retry", got)
 	}
 }
 

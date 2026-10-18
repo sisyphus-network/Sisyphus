@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	jobmodel "github.com/sisyphus-network/Sisyphus/packages/job-model"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
@@ -17,6 +18,100 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestNextPruneAtFollowsRetentionAndParentRecords(t *testing.T) {
+	const keep = time.Hour
+	base := time.Now()
+	c := New(Config{Workloads: runtime.Builtin(), Store: storage.NewMemory(), KeepJobs: keep, Retain: 24 * time.Hour, Log: slog.New(slog.DiscardHandler)})
+	defer c.Close()
+
+	if got := c.NextPruneAt(); !got.IsZero() {
+		t.Fatalf("no jobs have a prune deadline, got %v", got)
+	}
+
+	parent := jobmodel.New("parent", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, base)
+	parent.Finish(nil, nil, base.Add(2*time.Hour))
+	child := jobmodel.New("child", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, base)
+	child.Parent = parent.ID
+	child.Finish(nil, nil, base)
+	client := jobmodel.New("client", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, base)
+	client.Submitter = "alice"
+	client.Finish(nil, nil, base)
+	c.jobs[parent.ID], c.jobs[child.ID], c.jobs[client.ID] = parent, child, client
+
+	want := base.Add(3 * time.Hour).Add(time.Nanosecond)
+	if got := c.NextPruneAt(); !got.Equal(want) {
+		t.Fatalf("earliest eligible deadline = %v, want %v", got, want)
+	}
+
+	delete(c.jobs, "client")
+	if got, want := c.NextPruneAt(), base.Add(3*time.Hour).Add(time.Nanosecond); !got.Equal(want) {
+		t.Fatalf("child deadline must wait for its parent: got %v, want %v", got, want)
+	}
+
+	parent.State = jobmodel.Pending
+	if got := c.NextPruneAt(); !got.IsZero() {
+		t.Fatalf("child with unfinished parent has no deadline, got %v", got)
+	}
+}
+
+func TestNextPruneAtUsesClientRetentionAndDisablesWhenKeepingForever(t *testing.T) {
+	base := time.Now()
+	c := New(Config{Workloads: runtime.Builtin(), Store: storage.NewMemory(), KeepJobs: time.Hour, Retain: 24 * time.Hour, Log: slog.New(slog.DiscardHandler)})
+	defer c.Close()
+	client := jobmodel.New("client", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, base)
+	client.Submitter = "alice"
+	client.Finish(nil, nil, base)
+	c.jobs[client.ID] = client
+	if got, want := c.NextPruneAt(), base.Add(24*time.Hour).Add(time.Nanosecond); !got.Equal(want) {
+		t.Fatalf("client job deadline = %v, want %v", got, want)
+	}
+	c.keepJobs = 0
+	if got := c.NextPruneAt(); !got.IsZero() {
+		t.Fatalf("keeping jobs forever should have no deadline, got %v", got)
+	}
+}
+
+func TestNextPruneAtHandlesMissingFinishTime(t *testing.T) {
+	c := New(Config{Workloads: runtime.Builtin(), Store: storage.NewMemory(), KeepJobs: time.Hour, Log: slog.New(slog.DiscardHandler)})
+	defer c.Close()
+	job := jobmodel.New("missing-finish", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, time.Time{})
+	job.Finish(nil, nil, time.Time{})
+	c.jobs[job.ID] = job
+	now := time.Now()
+	if got := c.NextPruneAt(); got.IsZero() || got.Before(now) || got.After(now.Add(time.Second)) {
+		t.Fatalf("missing finish time should be due immediately, got %v", got)
+	}
+}
+
+func TestPruneChangedFiresWhenAJobBecomesTerminal(t *testing.T) {
+	changed := make(chan struct{}, 1)
+	c := New(Config{
+		Workloads:    runtime.Builtin(),
+		Store:        storage.NewMemory(),
+		KeepJobs:     time.Hour,
+		PruneChanged: func() { changed <- struct{}{} },
+		Log:          slog.New(slog.DiscardHandler),
+	})
+	defer c.Close()
+	job, err := c.Submit(context.Background(), &pb.JobSpec{Workload: "primes", Params: []byte(`{"from":1,"to":10}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-changed:
+		t.Fatal("a pending job woke the retention scheduler")
+	default:
+	}
+	if _, err := c.Cancel(job.GetJobId()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-changed:
+	default:
+		t.Fatal("a terminal job did not wake the retention scheduler")
+	}
+}
 
 // One client may have only so many jobs unfinished at once, so that it
 // cannot fill the coordinator for everyone else. Others are not held to
