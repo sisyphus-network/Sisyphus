@@ -507,8 +507,14 @@ func (s *blobService) Replication(stream grpc.BidiStreamingServer[pb.Replication
 		}
 		return status.Errorf(codes.InvalidArgument, "invalid replication hello: %v", err)
 	}
-	response := s.replication.Replicate(stream.Context(), access.Caller(stream.Context()), request)
-	return sendReplicationFrames(response, stream.Send)
+	caller := access.Caller(stream.Context())
+	response := s.replication.Replicate(stream.Context(), caller, request)
+	if err := sendReplicationFrames(response, stream.Send); err != nil {
+		return err
+	}
+	return s.replication.WatchAssignments(stream.Context(), caller, response.GetList(), func(list *pb.KeepList) error {
+		return sendReplicationFrames(&pb.ReplicateResponse{Store: list.GetStore(), List: list}, stream.Send)
+	})
 }
 
 func sendReplicationFrames(response *pb.ReplicateResponse, send func(*pb.ReplicationFrame) error) error {

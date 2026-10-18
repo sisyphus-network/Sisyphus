@@ -575,6 +575,7 @@ func runDaemon(ctx context.Context, args []string) error {
 					})
 			},
 		})
+		store.OnPinChange(replicated.PinsChanged)
 		if followerCopies > 0 {
 			log.Info("storage followers are to hold copies of what this node has pinned", "copies", followerCopies)
 		}
@@ -674,7 +675,10 @@ func runDaemon(ctx context.Context, args []string) error {
 			// What the store pins, the cluster is told to pin, for as long
 			// as the node runs. The store must outlive the telling.
 			mirror := newClusterPins(store.Kept, cluster.peer, ident.ID(), clusterHolders(*replicas), log)
-			store.OnPinChange(mirror.nudge)
+			store.OnPinChange(func() {
+				mirror.nudge()
+				replicated.PinsChanged()
+			})
 			mirrored := make(chan struct{})
 			defer func() {
 				cancel()

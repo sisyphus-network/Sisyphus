@@ -247,6 +247,370 @@ func TestFollowerRejectsAnInvalidReplicationSignature(t *testing.T) {
 	}
 }
 
+func TestFollowerIgnoresAnAlreadyAppliedPushedAssignment(t *testing.T) {
+	coordinator, follower, copies, _ := following(t)
+	blob := put(t, coordinator.store, "a stale assignment must not change the follower")
+	list := &pb.KeepList{Store: "node/first", Sequence: 7, Blobs: []*pb.KeptBlob{{Cid: blob}}}
+	list.Signature = coordinator.ident.Sign(signedBytes(list))
+	follower.lastSequence = list.GetSequence()
+
+	changed, err := follower.applyPush(ctx, &pb.ReplicateResponse{Store: "node/first", List: list})
+	if err != nil || changed {
+		t.Fatalf("applying a stale assignment: changed %v, error %v; want no change", changed, err)
+	}
+	if holds(t, copies, blob) {
+		t.Error("the follower acted on an assignment it had already applied")
+	}
+}
+
+func TestFollowerRejectsMalformedPushedAssignments(t *testing.T) {
+	_, follower, _, _ := following(t)
+	if _, err := follower.applyPush(ctx, &pb.ReplicateResponse{}); err == nil {
+		t.Fatal("pushed assignment without a signed list was accepted")
+	}
+
+	list := &pb.KeepList{Store: "node/first", Sequence: 1}
+	list.Signature = newIdentity(t).Sign(signedBytes(list))
+	if _, err := follower.applyPush(ctx, &pb.ReplicateResponse{Store: "node/first", List: list}); err == nil {
+		t.Fatal("pushed assignment signed by another identity was accepted")
+	}
+}
+
+type replicationFrames struct {
+	grpc.ClientStream
+	frames []*pb.ReplicationFrame
+	index  int
+}
+
+func (s *replicationFrames) Recv() (*pb.ReplicationFrame, error) {
+	if s.index == len(s.frames) {
+		return nil, io.EOF
+	}
+	frame := s.frames[s.index]
+	s.index++
+	return frame, nil
+}
+
+func (*replicationFrames) Send(*pb.ReplicationHello) error { return nil }
+
+func (*replicationFrames) CloseSend() error { return nil }
+
+type blockingReplicationFrames struct {
+	*replicationFrames
+	ctx context.Context
+}
+
+func (s *blockingReplicationFrames) Recv() (*pb.ReplicationFrame, error) {
+	frame, err := s.replicationFrames.Recv()
+	if !errors.Is(err, io.EOF) {
+		return frame, err
+	}
+	<-s.ctx.Done()
+	return nil, s.ctx.Err()
+}
+
+type replicationClientStub struct {
+	pb.BlobServiceClient
+	replicate func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error)
+	stream    func(context.Context) (pb.BlobService_ReplicationClient, error)
+	calls     chan struct{}
+	opened    chan struct{}
+}
+
+func (s *replicationClientStub) Replication(ctx context.Context, _ ...grpc.CallOption) (pb.BlobService_ReplicationClient, error) {
+	if s.stream != nil {
+		if s.opened != nil {
+			select {
+			case s.opened <- struct{}{}:
+			default:
+			}
+		}
+		return s.stream(ctx)
+	}
+	return nil, status.Error(codes.Unimplemented, "replication stream is not supported")
+}
+
+func (s *replicationClientStub) Replicate(ctx context.Context, request *pb.ReplicateRequest, _ ...grpc.CallOption) (*pb.ReplicateResponse, error) {
+	select {
+	case s.calls <- struct{}{}:
+	default:
+	}
+	return s.replicate(ctx, request)
+}
+
+func frameResponse(t *testing.T, response *pb.ReplicateResponse) *pb.ReplicationFrame {
+	t.Helper()
+	frames, err := ReplicationFrames(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frames[0]
+}
+
+func TestReceiveAssignmentsRejectsMissingListsAndCoalescesSnapshots(t *testing.T) {
+	ctx := context.Background()
+	updates := make(chan *pb.ReplicateResponse, 1)
+	ended := make(chan error, 1)
+	missing := &replicationFrames{frames: []*pb.ReplicationFrame{frameResponse(t, &pb.ReplicateResponse{})}}
+	(&Follower{}).receiveAssignments(ctx, missing, updates, ended)
+	if err := <-ended; err == nil || !strings.Contains(err.Error(), "without a signed list") {
+		t.Fatalf("stream without a signed list ended with %v", err)
+	}
+
+	first := frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 1}})
+	latest := frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 2}})
+	ended = make(chan error, 1)
+	(&Follower{}).receiveAssignments(ctx, &replicationFrames{frames: []*pb.ReplicationFrame{first, latest}}, updates, ended)
+	if got := (<-updates).GetList().GetSequence(); got != 2 {
+		t.Errorf("coalesced assignment sequence = %d, want latest sequence 2", got)
+	}
+	if err := <-ended; !errors.Is(err, io.EOF) {
+		t.Errorf("completed stream ended with %v, want EOF", err)
+	}
+}
+
+func TestReceiveAssignmentsStopsWhenCanceledWhileWaitingToQueue(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	updates := make(chan *pb.ReplicateResponse)
+	ended := make(chan error, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 1}}),
+	}}
+	(&Follower{}).receiveAssignments(ctx, stream, updates, ended)
+	if stream.index != 1 {
+		t.Errorf("received %d frames after cancellation, want one", stream.index)
+	}
+}
+
+func TestReceiveAssignmentsPrefersCancellationWithoutAnErrorReceiver(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{frameResponse(t, &pb.ReplicateResponse{})}}
+	(&Follower{}).receiveAssignments(ctx, stream, make(chan *pb.ReplicateResponse), make(chan error))
+}
+
+func TestResetTimerStopsOrDrainsBeforeResetting(t *testing.T) {
+	active := time.NewTimer(time.Hour)
+	resetTimer(active, time.Hour)
+	active.Stop()
+
+	expired := time.NewTimer(time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
+	resetTimer(expired, time.Hour)
+	expired.Stop()
+
+	consumed := time.NewTimer(time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
+	<-consumed.C
+	resetTimer(consumed, time.Hour)
+	consumed.Stop()
+}
+
+func TestRunImmediatelyReportsChangedLegacyBaseline(t *testing.T) {
+	ident := newIdentity(t)
+	copies := storage.NewMemory()
+	c, err := copies.Put(ctx, strings.NewReader("a previously held follower copy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := copies.Pin(ctx, ownerPrefix+"node/old", time.Time{}, c); err != nil {
+		t.Fatal(err)
+	}
+	list := &pb.KeepList{Store: "node/first", Sequence: 1}
+	list.Signature = ident.Sign(signedBytes(list))
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 4),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return &pb.ReplicateResponse{Store: list.GetStore(), List: list}, nil
+		},
+	}
+	follower := &Follower{
+		Store: copies, ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: new(logged).logger(),
+	}
+	stop := run(t, follower, time.Hour)
+	select {
+	case <-client.calls:
+	case <-time.After(time.Second):
+		t.Fatal("legacy baseline did not make its initial unary request")
+	}
+	select {
+	case <-client.calls:
+	case <-time.After(time.Second):
+		t.Fatal("changed legacy baseline was not reported immediately")
+	}
+	stop()
+	if holds(t, copies, c.String()) {
+		t.Error("the follower kept a blob absent from its new signed assignment")
+	}
+}
+
+func TestRunKeepsUnaryReconciliationWhenCoordinatorClosesStreamCleanly(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	logs := new(logged)
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 64), opened: make(chan struct{}, 64),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(context.Context) (pb.BlobService_ReplicationClient, error) {
+			return &replicationFrames{frames: []*pb.ReplicationFrame{
+				frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+			}}, nil
+		},
+	}
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: logs.logger(),
+	}
+	stop := run(t, follower, 5*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	stop()
+
+	if got := len(client.opened); got != 1 {
+		t.Errorf("opened assignment stream %d times, want one", got)
+	}
+	if got := len(client.calls); got < 2 {
+		t.Errorf("made %d unary anti-entropy calls, want at least two after the stream ended", got)
+	}
+	if got := logs.count("the coordinator does not push storage assignments"); got != 1 {
+		t.Errorf("logged unsupported-stream info %d times, want one", got)
+	}
+	if got := logs.count("the storage assignment stream ended; reconnecting"); got != 0 {
+		t.Errorf("logged %d stream reconnect warnings for a clean EOF, want none", got)
+	}
+}
+
+func TestRunReconnectsAfterRejectingAnInvalidPushedAssignment(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	foreign := &pb.KeepList{Store: "node/first", Sequence: 2}
+	foreign.Signature = newIdentity(t).Sign(signedBytes(foreign))
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 4), opened: make(chan struct{}, 4),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
+			return &blockingReplicationFrames{
+				replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+					frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+					frameResponse(t, &pb.ReplicateResponse{Store: foreign.GetStore(), List: foreign}),
+				}},
+				ctx: ctx,
+			}, nil
+		},
+	}
+	follower := &Follower{Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"), Coordinator: client, CoordinatorID: ident.ID(), Log: new(logged).logger()}
+	stop := run(t, follower, 5*time.Millisecond)
+	for range 2 {
+		select {
+		case <-client.opened:
+		case <-time.After(time.Second):
+			stop()
+			t.Fatal("the follower did not reconnect after rejecting the foreign assignment")
+		}
+	}
+	stop()
+}
+
+func TestRunReportsReconciliationErrorsWithoutDroppingItsStream(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	var calls int
+	var mu sync.Mutex
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 4), opened: make(chan struct{}, 2),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			mu.Lock()
+			calls++
+			current := calls
+			mu.Unlock()
+			if current == 1 {
+				return nil, status.Error(codes.Unavailable, "temporary reconciliation failure")
+			}
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
+			return &blockingReplicationFrames{
+				replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+					frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+				}},
+				ctx: ctx,
+			}, nil
+		},
+	}
+	logs := new(logged)
+	follower := &Follower{Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"), Coordinator: client, CoordinatorID: ident.ID(), Log: logs.logger()}
+	stop := run(t, follower, 5*time.Millisecond)
+	deadline := time.Now().Add(time.Second)
+	for logs.count("could not reconcile this node's copies") == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	stop()
+	if logs.count("could not reconcile this node's copies") == 0 {
+		t.Fatal("the connected follower did not report a failed anti-entropy request")
+	}
+}
+
+func TestRunStopsItsStreamWhenCanceledBeforeTheInitialExchange(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 1),
+		replicate: func(ctx context.Context, _ *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return nil, ctx.Err()
+		},
+	}
+	follower := &Follower{Store: storage.NewMemory(), Coordinator: client, Log: new(logged).logger(), streamCancel: streamCancel}
+	follower.Run(ctx)
+	if streamCtx.Err() == nil {
+		t.Error("the follower left its stream context running after cancellation")
+	}
+}
+
+func TestInitialSyncCancelsItsStreamWhenSignedListRecoveryFails(t *testing.T) {
+	ident := newIdentity(t)
+	list := &pb.KeepList{Store: "node/first", Sequence: 1}
+	list.Signature = ident.Sign(signedBytes(list))
+	listFile := filepath.Join(t.TempDir(), "kept.list")
+	if err := saveList(listFile, list); err != nil {
+		t.Fatal(err)
+	}
+	var streamCtx context.Context
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 1),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return nil, status.Error(codes.Unavailable, "recovery request failed")
+		},
+		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
+			streamCtx = ctx
+			return &blockingReplicationFrames{
+				replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+					frameResponse(t, &pb.ReplicateResponse{Store: list.GetStore(), List: list, ShowList: true}),
+				}},
+				ctx: ctx,
+			}, nil
+		},
+	}
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: listFile, Coordinator: client,
+		CoordinatorID: ident.ID(), Log: new(logged).logger(),
+	}
+	if _, err := follower.syncWith(ctx, true); status.Code(err) != codes.Unavailable {
+		t.Fatalf("initial signed-list recovery error = %v, want Unavailable", err)
+	}
+	if streamCtx == nil || streamCtx.Err() == nil {
+		t.Error("the follower left its stream open after signed-list recovery failed")
+	}
+}
+
 // run runs a follower, asking every interval, until the test ends or the
 // returned function is called.
 func run(t *testing.T, f *Follower, interval time.Duration) (stop func()) {

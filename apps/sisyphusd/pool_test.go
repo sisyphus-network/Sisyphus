@@ -206,6 +206,7 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 		}, nil)
 	}
 	replicated := replication.New(copies)
+	store.OnPinChange(replicated.PinsChanged)
 	srv := api.NewServer(
 		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Replication: replicated, MaxStoreBytesPerClient: clientShare, Names: api.NewNames(kept, func(id string) bool {
 			_, admitted := admitted.Role(id)

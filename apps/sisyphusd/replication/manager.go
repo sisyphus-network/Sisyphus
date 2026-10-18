@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
@@ -110,6 +111,10 @@ type Manager struct {
 
 	mu        sync.Mutex
 	followers map[string]*follower
+	// changed is closed and replaced whenever a follower or the store may
+	// have changed an assignment. Watchers take the channel before checking
+	// the assignment so a change cannot be lost between the check and wait.
+	changed chan struct{}
 	// sequence is the sequence of the last list signed.
 	sequence uint64
 	// restored holds what has been taken back from a list, and the expiry
@@ -157,6 +162,7 @@ func New(cfg Config) *Manager {
 		log:       cfg.Log,
 		grace:     Grace,
 		followers: make(map[string]*follower),
+		changed:   make(chan struct{}),
 		restored:  make(map[string]time.Time),
 	}
 	if cfg.Identity != nil {
@@ -220,18 +226,101 @@ func later(a, b time.Time) bool {
 
 // liveLocked returns the followers heard from within the grace period, in
 // order of ID, and forgets the rest.
-func (m *Manager) liveLocked(now time.Time) []string {
+func (m *Manager) liveLocked(now time.Time) ([]string, bool) {
 	var live []string
+	changed := false
 	for id, f := range m.followers {
 		if now.Sub(f.asked) > m.grace {
 			delete(m.followers, id)
+			changed = true
 			m.log.Warn("a storage follower has not been heard from; others are to hold its share", "node", id, "for", m.grace.String())
 			continue
 		}
 		live = append(live, id)
 	}
 	sort.Strings(live)
-	return live
+	return live, changed
+}
+
+// PinsChanged wakes assignment streams after the store's pin roots or
+// expiries change. It is safe to call while the store holds its pin lock.
+func (m *Manager) PinsChanged() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifyChangedLocked()
+}
+
+func (m *Manager) notifyChangedLocked() {
+	close(m.changed)
+	m.changed = make(chan struct{})
+}
+
+// WatchAssignments sends a complete, newly signed list only when this
+// follower's assignment changes. Bursts coalesce because the watcher
+// recomputes from current state after each wake instead of queuing snapshots.
+func (m *Manager) WatchAssignments(ctx context.Context, caller string, last *pb.KeepList, send func(*pb.KeepList) error) error {
+	if m.identity == nil {
+		return nil
+	}
+	for {
+		m.mu.Lock()
+		changed := m.changed
+		m.mu.Unlock()
+
+		list := m.changedAssignment(caller, last)
+		if list != nil {
+			if err := send(list); err != nil {
+				return err
+			}
+			last = list
+			continue
+		}
+
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// changedAssignment returns a newly signed list if the follower's current
+// assignment differs from last. It does not refresh the follower's liveness;
+// only a Replicate request does that until stream leases are added.
+func (m *Manager) changedAssignment(caller string, last *pb.KeepList) *pb.KeepList {
+	now := time.Now()
+	pinned, order := m.pinned(now)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.identity == nil {
+		return nil
+	}
+	live, expired := m.liveLocked(now)
+	if expired {
+		m.notifyChangedLocked()
+	}
+	f := m.followers[caller]
+	if f == nil || len(f.stranded) > 0 {
+		return nil
+	}
+	hold := m.assignmentLocked(now, caller, f, pinned, order, live)
+	if sameKeepList(last, makeKeepList(m.storeID, hold, pinned)) {
+		return nil
+	}
+	return m.signLocked(now, hold, pinned)
+}
+
+func sameKeepList(a, b *pb.KeepList) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	x, y := proto.Clone(a).(*pb.KeepList), proto.Clone(b).(*pb.KeepList)
+	x.Sequence, y.Sequence = 0, 0
+	x.Signature, y.Signature = nil, nil
+	sort.Slice(x.Blobs, func(i, j int) bool { return x.Blobs[i].GetCid() < x.Blobs[j].GetCid() })
+	sort.Slice(y.Blobs, func(i, j int) bool { return y.Blobs[i].GetCid() < y.Blobs[j].GetCid() })
+	return proto.Equal(x, y)
 }
 
 // chosen picks which of the followers are to hold a blob: those that score
@@ -252,6 +341,28 @@ func (m *Manager) chosen(blob string, followers []string) []string {
 		return string(x[:]) > string(y[:])
 	})
 	return ranked[:m.replicas]
+}
+
+// assignmentLocked computes the complete list this follower should hold.
+// The manager lock protects follower holdings, startup grace and placement.
+func (m *Manager) assignmentLocked(now time.Time, caller string, f *follower, pinned map[string]time.Time, order, live []string) []string {
+	var hold []string
+	for _, blob := range order {
+		chosen := m.chosen(blob, live)
+		mine := slices.Contains(chosen, caller)
+		_, has := f.held[blob]
+		// A blob this node had when it started may be on followers it has
+		// yet to hear from. A node that wants no copies waits for nobody.
+		_, old := m.atStart[blob]
+		waiting := old && m.replicas > 0 && now.Before(m.settled)
+		// A follower keeps a copy that is to move elsewhere until those
+		// that are to hold it say they do, so a placement change does not
+		// leave fewer copies than there were.
+		if (mine && !waiting) || (has && (mine || waiting || !m.allHoldLocked(chosen, blob))) {
+			hold = append(hold, blob)
+		}
+	}
+	return hold
 }
 
 // Replicate takes a follower's word for what it holds, and for which store,
@@ -348,7 +459,8 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 		}
 	}
 	m.followers[caller] = f
-	live := m.liveLocked(now)
+	live, _ := m.liveLocked(now)
+	m.notifyChangedLocked()
 
 	// A list that is not this node's is as good as none. A follower that
 	// shows none this time is asked for it again, and is not logged twice.
@@ -357,22 +469,7 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 		m.log.Warn("a storage follower showed a list of what to hold that this node did not sign; it is ignored, and nothing is taken back on the strength of it", "node", caller, "store", shown.GetStore())
 	}
 
-	var hold []string
-	for _, blob := range order {
-		chosen := m.chosen(blob, live)
-		mine := slices.Contains(chosen, caller)
-		_, has := f.held[blob]
-		// A blob this node had when it started may be on followers it has
-		// yet to hear from. A node that wants no copies waits for nobody.
-		_, old := m.atStart[blob]
-		waiting := old && m.replicas > 0 && now.Before(m.settled)
-		// A follower keeps a copy that is to move elsewhere until those
-		// that are to hold it say they do, so that a change of followers
-		// never leaves fewer copies than there were.
-		if (mine && !waiting) || (has && (mine || waiting || !m.allHoldLocked(chosen, blob))) {
-			hold = append(hold, blob)
-		}
-	}
+	hold := m.assignmentLocked(now, caller, f, pinned, order, live)
 
 	// What a follower holds that is not pinned has been released, and it
 	// drops it, unless it holds it for a store this node had before: then
@@ -434,7 +531,14 @@ func questions(asked []challenge) []*pb.Challenge {
 // the store has it pinned until.
 func (m *Manager) signLocked(now time.Time, hold []string, until map[string]time.Time) *pb.KeepList {
 	m.sequence = max(uint64(now.UnixNano()), m.sequence+1)
-	list := &pb.KeepList{Store: m.storeID, Sequence: m.sequence}
+	list := makeKeepList(m.storeID, hold, until)
+	list.Sequence = m.sequence
+	list.Signature = m.identity.Sign(signedBytes(list))
+	return list
+}
+
+func makeKeepList(store string, hold []string, until map[string]time.Time) *pb.KeepList {
+	list := &pb.KeepList{Store: store}
 	for _, id := range hold {
 		blob := &pb.KeptBlob{Cid: id}
 		if expires := until[id]; !expires.IsZero() {
@@ -442,7 +546,6 @@ func (m *Manager) signLocked(now time.Time, hold []string, until map[string]time
 		}
 		list.Blobs = append(list.Blobs, blob)
 	}
-	list.Signature = m.identity.Sign(signedBytes(list))
 	return list
 }
 
@@ -561,10 +664,14 @@ func (m *Manager) allHoldLocked(followers []string, blob string) bool {
 func (m *Manager) Status(only string) *pb.ReplicasResponse {
 	now := time.Now()
 	_, order := m.pinned(now)
+	pins := m.store.Pins()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	live := m.liveLocked(now)
+	live, expired := m.liveLocked(now)
+	if expired {
+		m.notifyChangedLocked()
+	}
 	res := &pb.ReplicasResponse{
 		Wanted: uint32(m.replicas), Followers: live,
 		Settling: len(m.atStart) > 0 && now.Before(m.settled), ChallengesFailed: m.unshown,
@@ -572,7 +679,7 @@ func (m *Manager) Status(only string) *pb.ReplicasResponse {
 	res.FromEarlierStore = uint32(len(m.strandedLocked(live, false)))
 	res.UnsignedFromEarlierStore = uint32(len(m.strandedLocked(live, true)))
 	res.Restoring = m.restoring > 0
-	for _, pin := range m.store.Pins() {
+	for _, pin := range pins {
 		if pin.Owner == RestoredOwner && (pin.Expires.IsZero() || pin.Expires.After(now)) {
 			res.Restored++
 		}
@@ -616,7 +723,11 @@ func (m *Manager) Holders(blob, asker string) []*pb.BlobHolder {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var holders []*pb.BlobHolder
-	for _, id := range m.liveLocked(time.Now()) {
+	live, expired := m.liveLocked(time.Now())
+	if expired {
+		m.notifyChangedLocked()
+	}
+	for _, id := range live {
 		if _, has := m.followers[id].held[blob]; !has || id == asker {
 			continue
 		}
@@ -648,7 +759,11 @@ func (m *Manager) Recover(ctx context.Context, c cid.Cid) bool {
 // signed by this node names is taken back without it.
 func (m *Manager) Restore(ctx context.Context, owner string) (restored int, failed []string) {
 	m.mu.Lock()
-	stranded := m.strandedLocked(m.liveLocked(time.Now()), false)
+	live, expired := m.liveLocked(time.Now())
+	if expired {
+		m.notifyChangedLocked()
+	}
+	stranded := m.strandedLocked(live, false)
 	m.mu.Unlock()
 
 	done := make(map[string]struct{})

@@ -192,6 +192,10 @@ func TestReplicationStreamFramesTheResponseAndReportsSendFailure(t *testing.T) {
 	}
 
 	gone := status.Error(codes.Unavailable, "follower disconnected")
+	stream = &replicationExchange{hello: hellos[0], sendErr: gone}
+	if err := service.Replication(stream); !errors.Is(err, gone) {
+		t.Errorf("initial replication response send error = %v, want original error", err)
+	}
 	if err := sendReplicationFrames(&pb.ReplicateResponse{}, func(*pb.ReplicationFrame) error { return gone }); !errors.Is(err, gone) {
 		t.Errorf("replication send error = %v, want original error", err)
 	}
