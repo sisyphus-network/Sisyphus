@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -57,7 +58,8 @@ func TestModelLendingSetByFlagsNeedsNoRestart(t *testing.T) {
 func TestModelLendingPolicyAppliesLiveAtTheRunningAddress(t *testing.T) {
 	running := nodedb.ModelLending{Enabled: true, URL: "http://127.0.0.1:11434", Only: []string{"first"}, GPULayers: -1}
 	live := runtime.NewModelServer(running.URL, runtime.OwnerFromSettings(running.Only, running.GPULayers, running.Threads, running.Context, running.KeepAlive))
-	client := serveLocal(t, LocalConfig{Lending: newFileList(t), Lent: running, LiveLending: live})
+	var told atomic.Int32
+	client := serveLocal(t, LocalConfig{Lending: newFileList(t), Lent: running, LiveLending: live, OffersChanged: func() { told.Add(1) }})
 
 	asked := &nodepb.ModelLending{Enabled: true, OllamaUrl: running.URL, Only: []string{"second"}, GpuLayers: 0, Threads: 6, Context: 4096, KeepAlive: "10m"}
 	state, err := client.SetModelLending(withToken("the-token"), &nodepb.SetModelLendingRequest{Lending: asked})
@@ -70,6 +72,10 @@ func TestModelLendingPolicyAppliesLiveAtTheRunningAddress(t *testing.T) {
 	url, owner := live.Settings()
 	if url != running.URL || strings.Join(owner.Only, ",") != "second" || owner.Options["num_gpu"] != 0 || owner.Options["num_thread"] != 6 || owner.Options["num_ctx"] != 4096 || owner.KeepAlive != "10m" {
 		t.Fatalf("live model server = %q, %+v", url, owner)
+	}
+	// Which models are lent has changed, and the worker is told.
+	if told.Load() != 1 {
+		t.Errorf("the worker was told %d times, want once", told.Load())
 	}
 }
 
@@ -171,7 +177,8 @@ func TestInspectOllamaSaysWhatWouldBeLentOrWhyNothingCould(t *testing.T) {
 		}
 		return runtime.Server{Version: "0.21.0", Models: []string{"llama3.1:8b"}, Loaded: []runtime.Loaded{{Model: "llama3.1:8b", OnCard: 75}}}, nil
 	}
-	client := serveLocal(t, LocalConfig{})
+	var told atomic.Int32
+	client := serveLocal(t, LocalConfig{OffersChanged: func() { told.Add(1) }})
 	ctx := withToken("the-token")
 	got, err := client.InspectOllama(ctx, &nodepb.InspectOllamaRequest{Url: "http://127.0.0.1:11434", Only: []string{" llama3.1 ", ""}})
 	if err != nil || got.GetVersion() != "0.21.0" || strings.Join(got.GetModels(), ",") != "llama3.1:8b" || got.GetLoaded()[0].GetOnCardPercent() != 75 || strings.Join(offered, ",") != "llama3.1" {
@@ -182,5 +189,9 @@ func TestInspectOllamaSaysWhatWouldBeLentOrWhyNothingCould(t *testing.T) {
 	}
 	if _, err := client.InspectOllama(ctx, &nodepb.InspectOllamaRequest{Url: "127.0.0.1:11434"}); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("an address with no scheme: %v", err)
+	}
+	// Looking at an Ollama that answered is when the worker looks again too.
+	if told.Load() != 1 {
+		t.Errorf("the worker was told %d times, want once", told.Load())
 	}
 }

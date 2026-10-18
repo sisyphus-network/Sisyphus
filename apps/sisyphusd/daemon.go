@@ -825,6 +825,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			Hardware:          hardware.Detect(ctx).Offer(*maxMemory<<20, *maxGPUs),
 			HeartbeatInterval: workerHeartbeat,
 		}
+		local.OffersChanged = w.OffersChanged
 		if *reciprocate {
 			// The node works for each node it has said it will take tasks
 			// from, whenever that node will have it. All of that shares the
@@ -832,6 +833,10 @@ func runDaemon(ctx context.Context, args []string) error {
 			local.WorkFor = takes
 			w.Limit, w.Pool = worker.NewSlots(*slots), coordinatorID
 			guests := &guestWork{ident: ident, dataDir: *dataDir, template: w, kubo: *useKubo, kuboSecret: kuboSecret, syncCache: *syncCache, maxCache: *maxCache}
+			local.OffersChanged = func() {
+				w.OffersChanged()
+				guests.offersChanged()
+			}
 			watcher := newReciprocity(&reciprocity{
 				// The node it already works for, being its coordinator, is
 				// not one to work for a second time.

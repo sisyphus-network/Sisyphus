@@ -58,3 +58,14 @@ func TestAWorkerPublishesAnIndependentSnapshotOfItsLabels(t *testing.T) {
 	}
 	writers.Wait()
 }
+
+// Word that what a worker serves changed never waits: given twice before
+// the worker has acted on it, it is acted on once.
+func TestWordOfChangedOffersNeverWaits(t *testing.T) {
+	w := &Worker{}
+	w.OffersChanged()
+	w.OffersChanged()
+	if pending := len(w.changes()); pending != 1 {
+		t.Errorf("%d changes waiting, want the two as one", pending)
+	}
+}

@@ -75,6 +75,7 @@ func (s *localService) SetModelLending(ctx context.Context, req *nodepb.SetModel
 		}
 	}
 	s.lendingMu.Unlock()
+	s.offersChanged()
 	return s.lendingState(l), nil
 }
 
@@ -91,6 +92,10 @@ func (s *localService) InspectOllama(ctx context.Context, req *nodepb.InspectOll
 	if err != nil {
 		return &nodepb.InspectOllamaResponse{Error: err.Error()}, nil
 	}
+	// The owner looking at what an Ollama has is the time to make sure the
+	// pool sees the same: models fetched or removed there directly are not
+	// otherwise noticed.
+	s.offersChanged()
 	response := &nodepb.InspectOllamaResponse{Version: server.Version, Models: server.Models}
 	for _, m := range server.Loaded {
 		response.Loaded = append(response.Loaded, &nodepb.LoadedModel{Name: m.Model, OnCardPercent: uint32(m.OnCard)})

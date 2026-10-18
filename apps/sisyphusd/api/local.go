@@ -127,6 +127,11 @@ type LocalConfig struct {
 	// LiveLending replaces model allowlists and request limits while an
 	// already-enabled Ollama at the same address keeps serving the worker.
 	LiveLending *runtime.ModelServer
+	// OffersChanged, if set, is told when a call may have changed which
+	// models this node's worker serves: a model fetched or removed, lending
+	// changed, or the owner looking at what is lent. The worker then asks
+	// its model server again, which it does not do on a timer.
+	OffersChanged func()
 	// PairingOrigin is the LAN URL peers should open, without a trailing slash.
 	PairingOrigin string
 }

@@ -87,8 +87,13 @@ type Worker struct {
 	observed atomic.Pointer[netip.Addr]
 	// offered is what the worker last told its coordinator it has.
 	offered atomic.Pointer[[]string]
+	// changed carries word that what the worker offers may have changed;
+	// see OffersChanged.
+	changedOnce sync.Once
+	changed     chan struct{}
 	// HeartbeatInterval is how often the coordinator hears from this node
-	// while it is idle. Zero means five seconds.
+	// while it is idle, which is how it tells a quiet worker from a lost
+	// one. Zero means five seconds.
 	HeartbeatInterval time.Duration
 	Log               *slog.Logger
 }
@@ -177,6 +182,52 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	var running atomic.Int32
 	// stops holds, by task ID, how to stop each task now running.
 	var stops sync.Map
+	// refresh asks the workloads again what the worker offers and, if that
+	// has changed, tells the coordinator. It is not done on a timer: it is
+	// done on word that something the worker serves changed (see
+	// OffersChanged) and after every task that used a model, before that
+	// task's result is sent. So the coordinator, when it hears that a
+	// model was not there, already knows not to give the task back.
+	//
+	// The asking is bounded by offersWait and by the session, so a slow or
+	// absent model server delays a task's result by no more than that. One
+	// that has not answered in time changes nothing, and refresh says so.
+	// After a task, it is then asked once more in the background, but only
+	// once the task's result has been sent, so the result always goes
+	// first and a late answer still corrects what the coordinator was told.
+	// Until then a model found missing may be asked for here again. An
+	// asking in the background that times out asks no more, so a server
+	// that never answers is not asked on a timer. Answers are asked for outside the lock, so tasks that end
+	// together do not wait in turn, and one asked for earlier never replaces
+	// one asked for later.
+	var offeredMu sync.Mutex
+	var asked, applied uint64
+	refresh := func() (late bool) {
+		offeredMu.Lock()
+		asked++
+		mine := asked
+		offeredMu.Unlock()
+		within, done := context.WithTimeout(ctx, offersWait)
+		defer done()
+		now := w.labelsWithin(within)
+		if within.Err() != nil {
+			return true
+		}
+		offeredMu.Lock()
+		defer offeredMu.Unlock()
+		if mine < applied {
+			return false
+		}
+		applied = mine
+		if !slices.Equal(now, offered) {
+			offered = now
+			w.storeOffered(now)
+			send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: &pb.Heartbeat{
+				RunningTasks: uint32(running.Load()), Labels: &pb.Labels{Labels: now},
+			}}})
+		}
+		return false
+	}
 	tasks.Add(1)
 	go func() {
 		defer tasks.Done()
@@ -190,17 +241,12 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 			select {
 			case <-ticker.C:
 				heartbeat := &pb.Heartbeat{RunningTasks: uint32(running.Load())}
-				// What the worker offers can change while it runs: its
-				// owner fetches a model, or removes one.
-				if now := w.labels(); !slices.Equal(now, offered) {
-					offered = now
-					w.storeOffered(now)
-					heartbeat.Labels = &pb.Labels{Labels: now}
-				}
 				if w.Relayed != nil {
 					heartbeat.RelayedConnections, heartbeat.RelayedBytes = w.Relayed()
 				}
 				send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: heartbeat}})
+			case <-w.changes():
+				refresh()
 			case <-ctx.Done():
 				return
 			}
@@ -263,7 +309,13 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				// coordinator has already given the task to someone else.
 				if ctx.Err() == nil {
 					pass()
+					// Running a model loads it, and failing to may mean it
+					// is gone: what the worker offers is told first.
+					late := runtime.ModelNeeded(assigned.GetNeeds()) != "" && refresh()
 					send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskResult{TaskResult: result}})
+					if late {
+						w.OffersChanged()
+					}
 				}
 			}()
 		}
@@ -474,6 +526,23 @@ func (w *Worker) lacking(needs []string) string {
 	return ""
 }
 
+// OffersChanged tells the worker that what it serves may have changed, as
+// when its owner fetches or removes a model, or changes which are lent. It
+// asks its workloads again and tells its coordinator if anything differs.
+// It never waits, and word that comes while the worker is still acting on
+// earlier word is acted on once.
+func (w *Worker) OffersChanged() {
+	select {
+	case w.changes() <- struct{}{}:
+	default:
+	}
+}
+
+func (w *Worker) changes() chan struct{} {
+	w.changedOnce.Do(func() { w.changed = make(chan struct{}, 1) })
+	return w.changed
+}
+
 // storeOffered keeps a private snapshot. The session replaces its offered
 // slice as labels change, while task execution may read it concurrently.
 func (w *Worker) storeOffered(labels []string) {
@@ -485,9 +554,16 @@ func (w *Worker) storeOffered(labels []string) {
 // and whatever its workloads offer. Who it is the coordinator decides for
 // itself, from the key the worker connected with; the name is sent for a
 // coordinator from before it did.
-func (w *Worker) labels() []string {
-	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.Workloads.Offers(context.Background())...)
+func (w *Worker) labels() []string { return w.labelsWithin(context.Background()) }
+
+func (w *Worker) labelsWithin(ctx context.Context) []string {
+	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.Workloads.Offers(ctx)...)
 }
+
+// offersWait is the longest the worker waits for its workloads to say what
+// they offer, when asked on an event, before it gives up until the next.
+// A local model server answers in milliseconds. Tests shorten it.
+var offersWait = time.Second
 
 // updateGap is the least time between two updates a worker sends of how a
 // running task is getting on, so that a task that logs in a tight loop
