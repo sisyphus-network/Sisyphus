@@ -188,11 +188,33 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	// OffersChanged) and after every task that used a model, before that
 	// task's result is sent. So the coordinator, when it hears that a
 	// model was not there, already knows not to give the task back.
+	//
+	// The asking is bounded by offersWait and by the session, so a slow or
+	// absent model server delays a task's result by no more than that. One
+	// that has not answered in time changes nothing, and the next event
+	// asks again. Answers are asked for outside the lock, so tasks that end
+	// together do not wait in turn, and one asked for earlier never replaces
+	// one asked for later.
 	var offeredMu sync.Mutex
+	var asked, applied uint64
 	refresh := func() {
 		offeredMu.Lock()
+		asked++
+		mine := asked
+		offeredMu.Unlock()
+		within, done := context.WithTimeout(ctx, offersWait)
+		defer done()
+		now := w.labelsWithin(within)
+		if within.Err() != nil {
+			return
+		}
+		offeredMu.Lock()
 		defer offeredMu.Unlock()
-		if now := w.labels(); !slices.Equal(now, offered) {
+		if mine < applied {
+			return
+		}
+		applied = mine
+		if !slices.Equal(now, offered) {
 			offered = now
 			w.storeOffered(now)
 			send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: &pb.Heartbeat{
@@ -525,9 +547,16 @@ func (w *Worker) storeOffered(labels []string) {
 // and whatever its workloads offer. Who it is the coordinator decides for
 // itself, from the key the worker connected with; the name is sent for a
 // coordinator from before it did.
-func (w *Worker) labels() []string {
-	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.Workloads.Offers(context.Background())...)
+func (w *Worker) labels() []string { return w.labelsWithin(context.Background()) }
+
+func (w *Worker) labelsWithin(ctx context.Context) []string {
+	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.Workloads.Offers(ctx)...)
 }
+
+// offersWait is the longest the worker waits for its workloads to say what
+// they offer, when asked on an event, before it gives up until the next.
+// A local model server answers in milliseconds. Tests shorten it.
+var offersWait = time.Second
 
 // updateGap is the least time between two updates a worker sends of how a
 // running task is getting on, so that a task that logs in a tight loop

@@ -170,3 +170,121 @@ func TestAWorkerSaysAModelIsGoneBeforeReportingTheTaskThatFoundItGone(t *testing
 		t.Errorf("the coordinator heard %v, want the labels before the result", order)
 	}
 }
+
+// A model server too slow to say what it has delays a task's result by no
+// more than the worker's wait, and changes nothing the worker said.
+func TestASlowModelServerDoesNotHoldUpATasksResult(t *testing.T) {
+	worker.ShortenOffersWait(t, 100*time.Millisecond)
+	hung := make(chan struct{})
+	t.Cleanup(func() { close(hung) })
+	var slow sync.Once
+	ollama := &ollamaWith{models: []string{"llama3.1:8b"}}
+	listed := ollama.serve(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The loaded models are asked for only when the worker says what it
+		// offers: the first time, for the hello, they are given, and every
+		// later time the asking hangs until the asker gives up.
+		answered := false
+		if r.URL.Path == "/api/ps" {
+			slow.Do(func() { answered = true })
+		}
+		if r.URL.Path == "/api/ps" && !answered {
+			select {
+			case <-r.Context().Done():
+			case <-hung:
+			}
+			return
+		}
+		proxied, err := http.Get(listed + r.URL.Path)
+		if err != nil {
+			return
+		}
+		defer proxied.Body.Close()
+		w.WriteHeader(proxied.StatusCode)
+		io.Copy(w, proxied.Body)
+	}))
+	t.Cleanup(server.Close)
+	coordinator, _, _ := startListened(t, server.URL)
+
+	began := time.Now()
+	coordinator.assign <- &pb.TaskAssignment{
+		TaskId: "job/0", JobId: "job", Attempt: 1, Workload: "chat", Needs: []string{"model:llama3.1:8b"},
+		Payload: []byte(`{"model":"llama3.1:8b","messages":[{"role":"user","content":"Hi"}]}`),
+	}
+	msg := <-coordinator.heard
+	if msg.GetTaskResult() == nil {
+		t.Fatalf("the worker sent %v before the task's result", msg)
+	}
+	if took := time.Since(began); took > 2*time.Second {
+		t.Errorf("the result took %v behind a model server that did not answer", took)
+	}
+}
+
+// What a model server said when asked earlier never replaces what it said
+// when asked later, whichever answer arrives first.
+func TestAnEarlierAskingNeverReplacesALaterOne(t *testing.T) {
+	ollama := &ollamaWith{models: []string{"llama3.1:8b", "qwen3:8b"}}
+	listed := ollama.serve(t)
+	firstAsked, release := make(chan struct{}), make(chan struct{})
+	var tags sync.Mutex // guards asked
+	asked := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only saying what the worker offers asks for the loaded models.
+		// The hello's asking is the first; the first task's, by then past
+		// reading the model list, is held until the second task's has been
+		// answered and acted on.
+		if r.URL.Path == "/api/ps" {
+			tags.Lock()
+			asked++
+			n := asked
+			tags.Unlock()
+			if n == 2 {
+				close(firstAsked)
+				<-release
+			}
+		}
+		proxied, err := http.Get(listed + r.URL.Path)
+		if err != nil {
+			return
+		}
+		defer proxied.Body.Close()
+		w.WriteHeader(proxied.StatusCode)
+		io.Copy(w, proxied.Body)
+	}))
+	t.Cleanup(server.Close)
+	coordinator := &listeningCoordinator{assign: make(chan *pb.TaskAssignment, 2), heard: make(chan *pb.WorkerMessage, 16)}
+	t.Cleanup(func() { close(coordinator.assign) })
+	srv := newServer()
+	pb.RegisterCoordinatorServiceServer(srv, coordinator)
+	addr, _ := serve(t, srv)
+	runWorker(t, &worker.Worker{
+		Name: "w", Coordinator: addr, Credentials: workerCreds, Slots: 2,
+		Workloads: runtime.Builtin().With(runtime.Chat{URL: server.URL}),
+		Blobs:     storage.NewMemory(), Log: quiet(), HeartbeatInterval: time.Hour,
+	})
+	<-coordinator.heard
+	task := func(id string) *pb.TaskAssignment {
+		return &pb.TaskAssignment{
+			TaskId: id, JobId: "job", Attempt: 1, Workload: "chat", Needs: []string{"model:llama3.1:8b"},
+			Payload: []byte(`{"model":"llama3.1:8b","messages":[{"role":"user","content":"Hi"}]}`),
+		}
+	}
+	coordinator.assign <- task("job/0")
+	<-firstAsked
+	// The second task's asking, later, finds qwen3:8b gone and says so.
+	ollama.set("llama3.1:8b")
+	coordinator.assign <- task("job/1")
+	labels := (<-coordinator.heard).GetHeartbeat().GetLabels().GetLabels()
+	if slices.Contains(labels, "model:qwen3:8b") {
+		t.Fatalf("the later asking's labels = %v", labels)
+	}
+	if result := (<-coordinator.heard).GetTaskResult(); result.GetTaskId() != "job/1" {
+		t.Fatalf("heard %v, want the second task's result", result)
+	}
+	// The first asking's answer, older, arrives last and is not sent.
+	close(release)
+	msg := <-coordinator.heard
+	if msg.GetTaskResult().GetTaskId() != "job/0" {
+		t.Errorf("heard %v before the first task's result, want nothing more", msg)
+	}
+}
