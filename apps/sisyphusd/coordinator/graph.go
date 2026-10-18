@@ -111,6 +111,10 @@ func (c *Coordinator) runStep(job *jobmodel.Job, task *jobmodel.Task, composite 
 		job.Fail(task, failed, 1, time.Now())
 	} else {
 		c.recordLocked(job, eventTaskSucceeded, task.Index, stepRunner, fmt.Sprintf("step %s", child.Name))
+		// The graph's result names what its steps stored, so those are its
+		// results too, kept for as long as it is: a step that ended early
+		// would otherwise let them go while the graph still names them.
+		job.NoteResult(ended.GetOutputBlobs()...)
 		if job.Succeed(task, composite.Output(task.Payload, id, ended.GetResult(), ended.GetOutputBlobs())) {
 			c.aggregating.Add(1)
 			go c.aggregate(job)
