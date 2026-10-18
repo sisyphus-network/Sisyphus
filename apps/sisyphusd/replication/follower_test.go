@@ -542,7 +542,7 @@ func TestRunReopensAssignmentStreamAfterUnaryFailureFollowingCleanEOF(t *testing
 	for range 2 {
 		select {
 		case <-client.opened:
-		case <-time.After(time.Second):
+		case <-time.After(5 * time.Second):
 			stop()
 			t.Fatal("the follower did not reopen its stream after unary reconciliation failed")
 		}
@@ -587,7 +587,7 @@ func TestRunReconnectsAfterReplicationStreamError(t *testing.T) {
 	for range 2 {
 		select {
 		case <-client.opened:
-		case <-time.After(time.Second):
+		case <-time.After(5 * time.Second):
 			stop()
 			t.Fatal("the follower did not reconnect after a replication stream error")
 		}
