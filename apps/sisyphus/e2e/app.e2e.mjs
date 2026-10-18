@@ -856,6 +856,70 @@ test('a language chosen with the keyboard turns the window round, and is still c
   }
 })
 
+test('Settings pickers open in full view, above every card and inside the window, tall or as short as it goes', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    // Opens a picker and checks its choices can all be seen and reached:
+    // inside the window, clear of its own trigger, and not under a card.
+    const opensInView = async (category, name, height, within) => {
+      await openSettingsCategory(page, category)
+      if (within) await page.getByRole('button', { name: within }).first().click()
+      const trigger = page.getByRole('button', { name, exact: true })
+      await trigger.waitFor({ timeout: 30000 })
+      await trigger.scrollIntoViewIfNeeded()
+      await trigger.click()
+      const menu = page.getByRole('dialog', { name, exact: true })
+      await menu.waitFor()
+      await page.waitForTimeout(400) // its 220 ms entrance
+      const anchor = await trigger.boundingBox()
+      const seen = await menu.evaluate((menu, { name, anchor }) => {
+        const box = menu.getBoundingClientRect()
+        const covered = [...menu.querySelectorAll('button')].filter((choice) => {
+          const at = choice.getBoundingClientRect()
+          if (at.bottom <= box.top || at.top >= box.bottom) return false // scrolled out of the menu's own view
+          const x = at.left + at.width / 2
+          const y = Math.max(at.top, box.top) + Math.min(at.height, box.bottom - at.top) / 2
+          return document.elementFromPoint(x, y)?.closest('[role="dialog"]')?.getAttribute('aria-label') !== name
+        }).map((choice) => choice.textContent?.trim())
+        return {
+          box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom },
+          window: { width: window.innerWidth, height: window.innerHeight },
+          // The trigger stays in sight to show what is chosen: the menu may
+          // meet its edge, but is not over its middle.
+          overlapsTrigger: Boolean(anchor && menu.contains(document.elementFromPoint(anchor.x + anchor.width / 2, anchor.y + anchor.height / 2))),
+          covered,
+        }
+      }, { name, anchor })
+      const where = `${name} in ${category}, ${height}px high: ${JSON.stringify(seen)}`
+      assert.ok(seen.box.top >= 0 && seen.box.left >= 0 && seen.box.bottom <= seen.window.height && seen.box.right <= seen.window.width, `the picker goes past the window: ${where}`)
+      assert.ok(!seen.overlapsTrigger, `the picker is over the middle of its own trigger: ${where}`)
+      assert.deepEqual(seen.covered, [], `choices are under something else: ${where}`)
+      // Its trigger closes it as it opened it.
+      await trigger.click()
+      await menu.waitFor({ state: 'detached' })
+      if (within) {
+        const holder = page.getByRole('dialog', { name: within, exact: true })
+        await holder.getByRole('button', { name: 'Cancel', exact: true }).click()
+        await holder.waitFor({ state: 'detached' })
+      }
+    }
+
+    // As tall as the tests' window, and as short as the app allows (650).
+    for (const height of [800, 650]) {
+      await app.evaluate(({ BrowserWindow }, height) => BrowserWindow.getAllWindows()[0].setSize(1180, height), height)
+      await page.waitForFunction((height) => Math.abs(window.outerHeight - height) < 60, height)
+      await opensInView('General', 'Language', height)
+      await opensInView('General', 'Accent', height)
+      // This one opens over the wizard's own dialog, not only over a card.
+      await opensInView('Model provider', 'Provider', height, 'Add provider')
+    }
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('theme mode and accent survive settings/workspace navigation and renderer reload', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
