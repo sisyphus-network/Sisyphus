@@ -239,6 +239,26 @@ func TestGarbageCollectionOptions(t *testing.T) {
 	}
 }
 
+func TestRunRejectsNegativeGarbageCollectionInterval(t *testing.T) {
+	_, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--gc-interval=-1s")
+	if err == nil || !strings.Contains(err.Error(), "--gc-interval must be zero or positive") {
+		t.Fatalf("run with a negative gc interval: %v", err)
+	}
+}
+
+func TestResetTimerAtClampsPastDeadline(t *testing.T) {
+	timer := time.NewTimer(time.Hour)
+	defer timer.Stop()
+	if ch := resetTimerAt(timer, time.Now().Add(-time.Second)); ch != timer.C {
+		t.Fatal("resetTimerAt did not return the timer channel")
+	}
+	select {
+	case <-timer.C:
+	case <-time.After(time.Second):
+		t.Fatal("a past deadline did not fire immediately")
+	}
+}
+
 func TestEventDrivenCollectionSweepsAtStartupAndAfterUnpin(t *testing.T) {
 	dir := t.TempDir()
 	store, err := storage.OpenLocal(dir)
@@ -357,6 +377,52 @@ func TestEventDrivenCollectionWaitsForPinExpiry(t *testing.T) {
 	if held, _ := store.Has(context.Background(), cid); held {
 		t.Error("the expired pin's blob survived its deadline collection")
 	}
+	cancel()
+	<-stopped
+}
+
+func TestEventDrivenCollectionKeepsOptionalPeriodicSweep(t *testing.T) {
+	priorDebounce := gcChangeDebounce
+	gcChangeDebounce = time.Second
+	t.Cleanup(func() { gcChangeDebounce = priorDebounce })
+
+	store, err := storage.OpenLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	orphan, err := store.Put(context.Background(), strings.NewReader("startup collection"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Unpin(storage.GraceOwner, orphan); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := store.PutFor(context.Background(), "temporary", strings.NewReader("periodic cleanup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := new(syncBuffer)
+	cancel, stopped := startEventCollector(t, store, 25*time.Millisecond, logs)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), `blocks=1`) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), `blocks=1`) {
+		cancel()
+		<-stopped
+		t.Fatalf("collector did not finish its startup sweep: %s", logs.String())
+	}
+	if err := store.Unpin("temporary", blob); err != nil {
+		cancel()
+		<-stopped
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		held, _ := store.Has(context.Background(), blob)
+		return !held
+	})
 	cancel()
 	<-stopped
 }
