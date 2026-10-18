@@ -501,9 +501,50 @@ func TestUnaryAntiEntropyTakesOverAfterTheLeaseStreamEnds(t *testing.T) {
 	if status := r.Status(""); len(status.GetFollowers()) != 0 {
 		t.Fatalf("ended stream still reports the follower present: %v", status.GetFollowers())
 	}
+	// The first exchange after the stream ended may have been in flight as
+	// the follower stopped. It is a follower that keeps syncing that has
+	// fallen back.
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	if status := r.Status(""); len(status.GetFollowers()) != 0 {
+		t.Fatalf("one unary exchange after the stream ended made the follower present: %v", status.GetFollowers())
+	}
 	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
 	if status := r.Status(""); !slices.Equal(status.GetFollowers(), []string{"follower"}) {
 		t.Fatalf("successful unary fallback did not restore legacy liveness: %v", status.GetFollowers())
+	}
+}
+
+func TestAUnaryExchangeAnIntervalAfterTheLeaseWasLostIsAFallback(t *testing.T) {
+	r := newRig(t, 1)
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	leaseID := r.BeginLease("follower")
+	r.RenewLease("follower", leaseID)
+	r.EndLease("follower", leaseID)
+	r.mu.Lock()
+	r.Manager.followers["follower"].leaseLost = time.Now().Add(-Interval)
+	r.mu.Unlock()
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	if status := r.Status(""); !slices.Equal(status.GetFollowers(), []string{"follower"}) {
+		t.Fatalf("a unary exchange an Interval after the lease was lost did not restore legacy liveness: %v", status.GetFollowers())
+	}
+}
+
+func TestALateUnaryExchangeDoesNotCountAgainstALaterStream(t *testing.T) {
+	r := newRig(t, 1)
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	first := r.BeginLease("follower")
+	r.RenewLease("follower", first)
+	r.EndLease("follower", first)
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+
+	// The follower streams again, and that stream ends too. The exchange
+	// that came after the first stream is no part of a fallback from this one.
+	second := r.BeginLease("follower")
+	r.RenewLease("follower", second)
+	r.EndLease("follower", second)
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	if status := r.Status(""); len(status.GetFollowers()) != 0 {
+		t.Fatalf("one unary exchange after the second stream ended made the follower present: %v", status.GetFollowers())
 	}
 }
 

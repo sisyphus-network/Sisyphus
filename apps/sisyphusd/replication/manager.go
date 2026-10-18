@@ -103,6 +103,9 @@ type Manager struct {
 	fetch    func(ctx context.Context, from *pb.BlobHolder, c cid.Cid, into blobclient.Putter) error
 	log      *slog.Logger
 	grace    time.Duration
+	// interval is how often a follower that has fallen back to unary
+	// exchanges syncs: Interval, as it was when the manager started.
+	interval time.Duration
 
 	// atStart holds the blobs that were pinned when the manager started,
 	// and settled is when it stops waiting for followers that may already
@@ -153,6 +156,10 @@ type follower struct {
 	streamOpen   bool
 	leaseAt      time.Time
 	leaseLost    time.Time
+	// fallbackAt is when a unary exchange first came after the stream
+	// ended. One may have been in flight as the follower stopped, so it is
+	// not taken on its own as the follower having fallen back to unary.
+	fallbackAt time.Time
 	// held is what it then said it holds, less what it was asked to show
 	// it holds and did not.
 	held map[string]struct{}
@@ -182,6 +189,7 @@ func New(cfg Config) *Manager {
 		fetch:          cfg.Fetch,
 		log:            cfg.Log,
 		grace:          Grace,
+		interval:       Interval,
 		followers:      make(map[string]*follower),
 		leaseIDs:       make(map[string]uint64),
 		challengeLocks: make(map[string]*challengeLock),
@@ -324,7 +332,7 @@ func (m *Manager) RenewLease(caller string, leaseID uint64) {
 	}
 	now := time.Now()
 	wasPresent := f.leaseEnabled && f.leaseLost.IsZero() && now.Sub(f.leaseAt) <= LeaseTimeout
-	f.leaseEnabled, f.streamOpen, f.leaseAt, f.leaseLost = true, true, now, time.Time{}
+	f.leaseEnabled, f.streamOpen, f.leaseAt, f.leaseLost, f.fallbackAt = true, true, now, time.Time{}, time.Time{}
 	if !wasPresent {
 		m.notifyChangedLocked()
 	}
@@ -340,7 +348,7 @@ func (m *Manager) BeginLease(caller string) uint64 {
 	leaseID := m.nextLease
 	m.leaseIDs[caller] = leaseID
 	if f := m.followers[caller]; f != nil {
-		f.leaseEnabled, f.streamOpen, f.leaseAt, f.leaseLost = false, true, time.Time{}, time.Time{}
+		f.leaseEnabled, f.streamOpen, f.leaseAt, f.leaseLost, f.fallbackAt = false, true, time.Time{}, time.Time{}, time.Time{}
 		m.notifyChangedLocked()
 	}
 	return leaseID
@@ -679,9 +687,17 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	if prior := m.followers[caller]; prior != nil {
 		// A cleanly ended stream may belong to an older coordinator that
 		// ignores lease frames. Successful unary anti-entropy then remains its
-		// compatibility liveness signal until a stream is opened again.
+		// compatibility liveness signal until a stream is opened again. But a
+		// unary exchange sent just before a follower stopped can land after
+		// its stream ended, so the follower is taken to have fallen back only
+		// once it syncs again, or syncs at least an Interval after its lease
+		// was lost. Until then it stays absent, as its lease left it.
 		if prior.leaseEnabled && !prior.streamOpen {
-			prior.leaseEnabled, prior.leaseAt, prior.leaseLost = false, time.Time{}, time.Time{}
+			if prior.fallbackAt.IsZero() && now.Sub(prior.leaseLost) < m.interval {
+				prior.fallbackAt = now
+			} else {
+				prior.leaseEnabled, prior.leaseAt, prior.leaseLost, prior.fallbackAt = false, time.Time{}, time.Time{}, time.Time{}
+			}
 		}
 		pending = prior.pending
 		for _, id := range holding {
@@ -734,7 +750,7 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	}
 	f := &follower{
 		asked: now, leaseEnabled: before.leaseEnabled, streamOpen: before.streamOpen,
-		leaseAt: before.leaseAt, leaseLost: before.leaseLost,
+		leaseAt: before.leaseAt, leaseLost: before.leaseLost, fallbackAt: before.fallbackAt,
 		held: make(map[string]struct{}, len(holding)), pending: ask, shown: proven, failed: failed,
 	}
 	for _, id := range holding {
