@@ -314,6 +314,14 @@ func TestEventDrivenCollectionSweepsAtStartupAndAfterUnpin(t *testing.T) {
 }
 
 func TestEventDrivenCollectionCoalescesPinReleases(t *testing.T) {
+	// The three releases below are three Unpin calls, each writing the pin
+	// file, and the sweep comes a debounce after the first of them. On a
+	// busy runner they took longer than the 100 ms the daemon waits, and two
+	// sweeps of 2 and 1 blocks were seen. A window they cannot outlast keeps
+	// the test about coalescing, not about how fast a disk is.
+	priorDebounce := gcChangeDebounce
+	gcChangeDebounce = 2 * time.Second
+	t.Cleanup(func() { gcChangeDebounce = priorDebounce })
 	dir := t.TempDir()
 	store, err := storage.OpenLocal(dir)
 	if err != nil {
