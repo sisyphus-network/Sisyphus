@@ -438,7 +438,7 @@ func TestAssignmentWatchUsesLeaseAndGraceDeadlines(t *testing.T) {
 	defer cancel()
 	ended := make(chan error, 1)
 	go func() {
-		ended <- r.WatchAssignments(watchCtx, "follower", baseline, func(*pb.KeepList) error { return nil })
+		ended <- r.WatchAssignments(watchCtx, "follower", baseline, func(*pb.ReplicateResponse) error { return nil })
 	}()
 
 	eventually(t, "lease expiry recorded by the assignment deadline", func() bool {
@@ -698,7 +698,7 @@ func TestANodeThatAsksNothingOfFollowersGivesThemNothingToHold(t *testing.T) {
 	store := storage.NewMemory()
 	pinned := keep(t, store, "pinned on a node that keeps no copies")
 	off := Off(store)
-	if err := off.WatchAssignments(ctx, "a", nil, func(*pb.KeepList) error {
+	if err := off.WatchAssignments(ctx, "a", nil, func(*pb.ReplicateResponse) error {
 		t.Error("an unsigned manager sent a streamed assignment")
 		return nil
 	}); err != nil {
@@ -730,11 +730,11 @@ func TestWatchAssignmentsPushesChangedSignedSnapshots(t *testing.T) {
 
 	watchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	updates := make(chan *pb.KeepList, 1)
+	updates := make(chan *pb.ReplicateResponse, 1)
 	ended := make(chan error, 1)
 	go func() {
-		ended <- r.WatchAssignments(watchCtx, "follower", baseline, func(list *pb.KeepList) error {
-			updates <- list
+		ended <- r.WatchAssignments(watchCtx, "follower", baseline, func(response *pb.ReplicateResponse) error {
+			updates <- response
 			return nil
 		})
 	}()
@@ -742,7 +742,8 @@ func TestWatchAssignmentsPushesChangedSignedSnapshots(t *testing.T) {
 	blob := keep(t, r.store, "a pin change is pushed to the follower")
 	r.PinsChanged()
 	select {
-	case list := <-updates:
+	case update := <-updates:
+		list := update.GetList()
 		if list.GetSequence() <= baseline.GetSequence() {
 			t.Errorf("pushed sequence %d did not advance past %d", list.GetSequence(), baseline.GetSequence())
 		}
@@ -767,8 +768,45 @@ func TestWatchAssignmentsPushesChangedSignedSnapshots(t *testing.T) {
 	}
 
 	want := errors.New("follower disconnected")
-	if err := r.WatchAssignments(ctx, "follower", nil, func(*pb.KeepList) error { return want }); !errors.Is(err, want) {
+	if err := r.WatchAssignments(ctx, "follower", nil, func(*pb.ReplicateResponse) error { return want }); !errors.Is(err, want) {
 		t.Errorf("assignment send error = %v, want original error", err)
+	}
+}
+
+func TestWatchAssignmentsPushesWhenAPinExpires(t *testing.T) {
+	r := newRig(t, 1)
+	id := put(t, r.store, "a pin expiry changes the signed assignment")
+	expires := time.Now().Add(100 * time.Millisecond)
+	if err := r.store.Pin(ctx, "user", expires, cid.MustParse(id)); err != nil {
+		t.Fatal(err)
+	}
+	r.PinsChanged()
+	baseline := r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true}).GetList()
+	if baseline == nil || len(baseline.GetBlobs()) != 1 {
+		t.Fatalf("baseline assignment = %v, want the expiring pin", baseline)
+	}
+
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	updates := make(chan *pb.ReplicateResponse, 1)
+	ended := make(chan error, 1)
+	go func() {
+		ended <- r.WatchAssignments(watchCtx, "follower", baseline, func(response *pb.ReplicateResponse) error {
+			updates <- response
+			return nil
+		})
+	}()
+	select {
+	case update := <-updates:
+		if len(update.GetList().GetBlobs()) != 0 {
+			t.Errorf("assignment after expiry still has blobs: %v", update.GetList().GetBlobs())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pin expiry did not wake the assignment stream")
+	}
+	cancel()
+	if err := <-ended; !errors.Is(err, context.Canceled) {
+		t.Errorf("assignment watcher ended with %v, want context canceled", err)
 	}
 }
 

@@ -36,6 +36,10 @@ type FollowerStore interface {
 	blobclient.Putter
 }
 
+type pinChangeSource interface {
+	OnPinChange(func())
+}
+
 // Follower is a storage follower's side of replication: it holds, in a
 // store set aside for the purpose, the blobs its coordinator tells it to.
 type Follower struct {
@@ -64,6 +68,15 @@ type Follower struct {
 // Run keeps the store as the coordinator would have it until ctx ends.
 func (f *Follower) Run(ctx context.Context) {
 	interval := Interval
+	pinChanges := make(chan struct{}, 1)
+	if source, ok := f.Store.(pinChangeSource); ok {
+		source.OnPinChange(func() {
+			select {
+			case pinChanges <- struct{}{}:
+			default:
+			}
+		})
+	}
 	initial := true
 	// failing is whether the last attempt failed. Only the first failure of
 	// a run of them is worth a warning: a coordinator that is away stays
@@ -84,43 +97,42 @@ func (f *Follower) Run(ctx context.Context) {
 		stream, cancel := f.takeStream()
 		if err == nil && stream != nil {
 			updates := make(chan *pb.ReplicateResponse, 1)
+			requests := make(chan *pb.ReplicateRequest, 8)
 			streamEnded := make(chan error, 1)
 			leaseEnded := make(chan error, 1)
+			streamReadyEvents := make(chan struct{}, 1)
 			leaseCtx, stopLeases := context.WithCancel(ctx)
 			leaseResult := leaseEnded
-			go f.receiveAssignments(ctx, stream, updates, streamEnded)
-			go func() { leaseResult <- f.sendLeases(leaseCtx, stream) }()
-
-			wait := interval
-			if changed {
-				// Tell the coordinator at once what the baseline now holds.
-				wait = 0
-			}
-			timer := time.NewTimer(wait)
+			go f.receiveAssignments(ctx, stream, updates, streamReadyEvents, streamEnded)
+			go func() { leaseResult <- f.sendLeases(leaseCtx, stream, requests) }()
+			timer := time.NewTimer(time.Hour)
+			timer.Stop()
+			timerC := (<-chan time.Time)(nil)
+			streamReady := false
+			needsReport := changed
+			var pendingAnswers []*pb.ChallengeAnswer
 			connected := true
 			for connected {
 				select {
-				case response := <-updates:
-					changed, err = f.applyPush(ctx, response)
-					if err != nil {
-						if !failing {
-							f.Log.Warn("could not apply a pushed storage assignment; it keeps what it has and reconnects", "error", err)
+				case <-streamReadyEvents:
+					streamReady = true
+					if needsReport {
+						select {
+						case requests <- f.reportRequest(pendingAnswers):
+							needsReport = false
+							pendingAnswers = nil
+							drainPinChanges(pinChanges)
+						case <-ctx.Done():
+							connected = false
 						}
-						failing = true
-						connected = false
-						initial = true
-						break
 					}
-					failing = false
-					if changed {
-						// Report newly held copies promptly. A second request, if
-						// needed, reports the result after this response is applied.
-						for changed && err == nil {
-							changed, err = f.sync(ctx)
-						}
+				case response := <-updates:
+					changed = false
+					if response.GetList() != nil {
+						changed, err = f.applyPush(ctx, response)
 						if err != nil {
 							if !failing {
-								f.Log.Warn("could not report the storage assignment just applied; it keeps what it has and reconnects", "error", err)
+								f.Log.Warn("could not apply a pushed storage assignment; it keeps what it has and reconnects", "error", err)
 							}
 							failing = true
 							connected = false
@@ -128,7 +140,22 @@ func (f *Follower) Run(ctx context.Context) {
 							break
 						}
 					}
-					resetTimer(timer, interval)
+					failing = false
+					answers, forgot := f.answerChallenges(ctx, response.GetChallenges(), f.heldCopies())
+					if changed || forgot || len(response.GetChallenges()) > 0 {
+						needsReport = true
+						pendingAnswers = append(pendingAnswers, answers...)
+						if streamReady {
+							select {
+							case requests <- f.reportRequest(pendingAnswers):
+								needsReport = false
+								pendingAnswers = nil
+								drainPinChanges(pinChanges)
+							case <-ctx.Done():
+								connected = false
+							}
+						}
+					}
 				case err := <-streamEnded:
 					if errors.Is(err, io.EOF) {
 						// Older coordinators answer the initial baseline and then
@@ -138,6 +165,12 @@ func (f *Follower) Run(ctx context.Context) {
 						cancel()
 						stopLeases()
 						updates, streamEnded, leaseEnded = nil, nil, nil
+						wait := interval
+						if needsReport {
+							wait = 0
+						}
+						resetTimer(timer, wait)
+						timerC = timer.C
 						continue
 					}
 					if ctx.Err() == nil && !failing {
@@ -152,6 +185,12 @@ func (f *Follower) Run(ctx context.Context) {
 						// baseline. Let Recv decide whether it supports pushes or
 						// whether the stream really failed.
 						leaseEnded = nil
+						wait := interval
+						if needsReport {
+							wait = 0
+						}
+						resetTimer(timer, wait)
+						timerC = timer.C
 						continue
 					}
 					if ctx.Err() == nil {
@@ -162,7 +201,23 @@ func (f *Follower) Run(ctx context.Context) {
 						connected = false
 						initial = true
 					}
-				case <-timer.C:
+				case <-pinChanges:
+					needsReport = true
+					if streamReady {
+						select {
+						case requests <- f.reportRequest(pendingAnswers):
+							needsReport = false
+							pendingAnswers = nil
+							drainPinChanges(pinChanges)
+						case <-ctx.Done():
+							connected = false
+						}
+					} else if timerC != nil {
+						resetTimer(timer, 0)
+						timerC = timer.C
+					}
+				case <-timerC:
+					needsReport = false
 					changed, err = f.sync(ctx)
 					if err != nil && !failing && ctx.Err() == nil {
 						f.Log.Warn("could not reconcile this node's copies with its pool; it keeps what it has and tries again", "every", interval.String(), "error", err)
@@ -201,20 +256,32 @@ func (f *Follower) Run(ctx context.Context) {
 			// The coordinator is told at once what is now held.
 			wait = 0
 		}
-		if !sleepContext(ctx, wait) {
+		if !sleepForPinChange(ctx, pinChanges, wait) {
 			return
 		}
 	}
 }
 
-func sleepContext(ctx context.Context, wait time.Duration) bool {
+func sleepForPinChange(ctx context.Context, changed <-chan struct{}, wait time.Duration) bool {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
 		return true
+	case <-changed:
+		return true
 	case <-ctx.Done():
 		return false
+	}
+}
+
+func drainPinChanges(changed <-chan struct{}) {
+	for {
+		select {
+		case <-changed:
+		default:
+			return
+		}
 	}
 }
 
@@ -238,7 +305,7 @@ func (f *Follower) stopStream() {
 	}
 }
 
-func (f *Follower) receiveAssignments(ctx context.Context, stream pb.BlobService_ReplicationClient, updates chan *pb.ReplicateResponse, ended chan<- error) {
+func (f *Follower) receiveAssignments(ctx context.Context, stream pb.BlobService_ReplicationClient, updates chan *pb.ReplicateResponse, ready chan<- struct{}, ended chan<- error) {
 	for {
 		response, err := ReadReplicationResponse(stream.Recv)
 		if err != nil {
@@ -249,11 +316,30 @@ func (f *Follower) receiveAssignments(ctx context.Context, stream pb.BlobService
 			return
 		}
 		if response.GetList() == nil {
+			if response.GetStore() == "" && len(response.GetHold()) == 0 && !response.GetShowList() {
+				// Capability acknowledgement is separate from snapshots: a slow
+				// snapshot application must not leave the stream in discovery mode.
+				select {
+				case ready <- struct{}{}:
+				default:
+				}
+				continue
+			}
 			select {
 			case ended <- fmt.Errorf("replication stream sent a response without a signed list"):
 			case <-ctx.Done():
 			}
 			return
+		}
+		if len(response.GetChallenges()) > 0 {
+			// Challenge replies are correlated with this exact nonce and must not
+			// be coalesced away with a newer assignment snapshot.
+			select {
+			case updates <- response:
+			case <-ctx.Done():
+				return
+			}
+			continue
 		}
 		select {
 		case updates <- response:
@@ -292,12 +378,24 @@ func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
 	return f.syncWith(ctx, false)
 }
 
-func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, err error) {
-	if initial {
-		f.stopStream()
+func (f *Follower) heldCopies() map[cid.Cid][]string {
+	held := make(map[cid.Cid][]string)
+	for _, pin := range f.Store.Pins() {
+		if _, ours := strings.CutPrefix(pin.Owner, ownerPrefix); ours {
+			held[pin.CID] = append(held[pin.CID], pin.Owner)
+		}
 	}
-	// held maps each blob held to the names it is pinned under: one, unless
-	// an earlier change of name was cut short.
+	return held
+}
+
+func (f *Follower) reportRequest(answers []*pb.ChallengeAnswer) *pb.ReplicateRequest {
+	_, holding, store := f.currentHoldings()
+	return &pb.ReplicateRequest{
+		Holding: holding, Store: store, KeepsLists: true, AnswersChallenges: true, Answers: answers,
+	}
+}
+
+func (f *Follower) currentHoldings() (map[cid.Cid][]string, []string, string) {
 	held := make(map[cid.Cid][]string)
 	var holding []string
 	var store string
@@ -312,6 +410,32 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 		held[pin.CID] = append(held[pin.CID], pin.Owner)
 		store = name
 	}
+	return held, holding, store
+}
+
+func (f *Follower) answerChallenges(ctx context.Context, questions []*pb.Challenge, held map[cid.Cid][]string) (answers []*pb.ChallengeAnswer, changed bool) {
+	for _, c := range questions {
+		answer := &pb.ChallengeAnswer{Cid: c.GetCid(), Nonce: c.GetNonce()}
+		named, unread := read(ctx, f.Store, c.GetCid(), c.GetOffset(), c.GetLength())
+		if unread != nil {
+			f.Log.Warn("this node cannot read a blob it holds for its pool, and lets go of it to fetch it again", "cid", c.GetCid(), "error", unread)
+			f.forget(held, c.GetCid())
+			changed = true
+		} else {
+			answer.Digest = Answer(c.GetNonce(), named)
+		}
+		answers = append(answers, answer)
+	}
+	return answers, changed
+}
+
+func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, err error) {
+	if initial {
+		f.stopStream()
+	}
+	// held maps each blob held to the names it is pinned under: one, unless
+	// an earlier change of name was cut short.
+	held, holding, store := f.currentHoldings()
 	asked := &pb.ReplicateRequest{Holding: holding, Store: store, KeepsLists: true, AnswersChallenges: true}
 	var told *pb.ReplicateResponse
 	var activeStream pb.BlobService_ReplicationClient
@@ -386,21 +510,11 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 		}
 	}
 	if err == nil && len(told.GetChallenges()) > 0 {
-		// Asked to show that it holds what it says it holds, it answers at
-		// once. A blob it turns out not to be able to read is let go of, so
-		// that it is fetched again below and not claimed in the meantime.
-		for _, c := range told.GetChallenges() {
-			answer := &pb.ChallengeAnswer{Cid: c.GetCid(), Nonce: c.GetNonce()}
-			named, unread := read(ctx, f.Store, c.GetCid(), c.GetOffset(), c.GetLength())
-			if unread != nil {
-				f.Log.Warn("this node cannot read a blob it holds for its pool, and lets go of it to fetch it again", "cid", c.GetCid(), "error", unread)
-				f.forget(held, c.GetCid())
-				changed = true
-			} else {
-				answer.Digest = Answer(c.GetNonce(), named)
-			}
-			asked.Answers = append(asked.Answers, answer)
-		}
+		// Asked to show what it holds, answer at once. Unreadable copies are
+		// released before the resulting state report is sent.
+		answers, forgot := f.answerChallenges(ctx, told.GetChallenges(), held)
+		asked.Answers = answers
+		changed = changed || forgot
 		told, err = f.Coordinator.Replicate(ctx, asked)
 		if err == nil {
 			err = f.verifyList(told.GetList())
@@ -420,7 +534,7 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 	return changed, nil
 }
 
-func (f *Follower) sendLeases(ctx context.Context, stream pb.BlobService_ReplicationClient) error {
+func (f *Follower) sendLeases(ctx context.Context, stream pb.BlobService_ReplicationClient, requests <-chan *pb.ReplicateRequest) error {
 	if err := stream.Send(&pb.ReplicationHello{Lease: true}); err != nil {
 		return err
 	}
@@ -428,6 +542,14 @@ func (f *Follower) sendLeases(ctx context.Context, stream pb.BlobService_Replica
 	defer ticker.Stop()
 	for {
 		select {
+		case request := <-requests:
+			frames, err := ReplicationHellos(request)
+			if err != nil {
+				return err
+			}
+			if err := sendReplicationHellos(stream.Send, frames); err != nil {
+				return err
+			}
 		case <-ticker.C:
 			if err := stream.Send(&pb.ReplicationHello{Lease: true}); err != nil {
 				return err
@@ -460,6 +582,7 @@ func (f *Follower) applyPush(ctx context.Context, response *pb.ReplicateResponse
 
 func (f *Follower) applyResponse(ctx context.Context, told *pb.ReplicateResponse, held map[cid.Cid][]string) (changed bool, err error) {
 	hold := told.GetHold()
+	expiresByCID := make(map[string]time.Time)
 	if list := told.GetList(); list != nil {
 		// Persist the signed list before acting on it, so the file never
 		// names less than what the follower is expected to keep.
@@ -469,11 +592,20 @@ func (f *Follower) applyResponse(ctx context.Context, told *pb.ReplicateResponse
 		f.lastSequence = max(f.lastSequence, list.GetSequence())
 		for _, blob := range list.GetBlobs() {
 			hold = append(hold, blob.GetCid())
+			if blob.GetKeepUntil() != nil {
+				expiresByCID[blob.GetCid()] = blob.GetKeepUntil().AsTime()
+			}
 		}
 	}
 	owner := ownerPrefix + told.GetStore()
 	wanted := make(map[cid.Cid]bool)
-	var pin []cid.Cid
+	pin := make(map[time.Time][]cid.Cid)
+	currentExpiry := make(map[cid.Cid]time.Time)
+	for _, existing := range f.Store.Pins() {
+		if existing.Owner == owner {
+			currentExpiry[existing.CID] = existing.Expires
+		}
+	}
 	failed := false
 	for _, id := range hold {
 		c, err := cid.Decode(id)
@@ -489,11 +621,16 @@ func (f *Follower) applyResponse(ctx context.Context, told *pb.ReplicateResponse
 			continue
 		}
 		wanted[c] = true
-		if !slices.Contains(held[c], owner) {
-			pin = append(pin, c)
+		expires := expiresByCID[id]
+		if !slices.Contains(held[c], owner) || !currentExpiry[c].Equal(expires) {
+			pin[expires] = append(pin[expires], c)
 		}
 	}
-	err = f.Store.Pin(ctx, owner, time.Time{}, pin...)
+	for expires, cids := range pin {
+		if err = f.Store.Pin(ctx, owner, expires, cids...); err != nil {
+			break
+		}
+	}
 
 	// Everything else goes, as does any pin under a name no longer used.
 	drop := make(map[string][]cid.Cid)
@@ -505,6 +642,7 @@ func (f *Follower) applyResponse(ctx context.Context, told *pb.ReplicateResponse
 		}
 		changed = changed || !wanted[c]
 	}
+	changed = changed || len(pin) > 0 || len(drop) > 0
 	for name, cids := range drop {
 		if err == nil {
 			err = f.Store.Unpin(name, cids...)

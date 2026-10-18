@@ -69,8 +69,18 @@ func ReadReplicationHello(recv func() (*pb.ReplicationHello, error)) (*pb.Replic
 	if err != nil {
 		return nil, err
 	}
+	return ReadReplicationRequestAfter(first, recv)
+}
+
+// ReadReplicationRequestAfter assembles one bounded request beginning with an
+// already-read frame. It is used both for the initial hello and for live state
+// reports sent later on the bidirectional replication stream.
+func ReadReplicationRequestAfter(first *pb.ReplicationHello, recv func() (*pb.ReplicationHello, error)) (*pb.ReplicateRequest, error) {
+	if first == nil {
+		return nil, fmt.Errorf("replication request frame is nil")
+	}
 	if first.GetLease() || first.GetIndex() != 0 || first.GetCount() == 0 || first.GetCount() > maxReplicationFrames {
-		return nil, fmt.Errorf("invalid first replication hello: index %d, count %d", first.GetIndex(), first.GetCount())
+		return nil, fmt.Errorf("invalid first replication request frame: index %d, count %d", first.GetIndex(), first.GetCount())
 	}
 	count, sequence := first.GetCount(), first.GetSequence()
 	if len(first.GetPayload()) > ReplicationFrameSize {

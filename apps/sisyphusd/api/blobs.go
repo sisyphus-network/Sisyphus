@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -523,16 +524,22 @@ func (s *blobService) Replication(stream grpc.BidiStreamingServer[pb.Replication
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 	leaseEnded := make(chan error, 1)
+	var sendMu sync.Mutex
+	send := func(response *pb.ReplicateResponse) error {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		return sendReplicationFrames(response, stream.Send)
+	}
 	go func() {
-		err := watchReplicationLeases(ctx, stream.Recv, caller, leaseID, s.replication)
+		err := watchReplicationMessages(ctx, stream.Recv, caller, leaseID, s.replication, send)
 		s.replication.EndLease(caller, leaseID)
 		leaseEnded <- err
 		if !errors.Is(err, io.EOF) {
 			cancel()
 		}
 	}()
-	watchErr := s.replication.WatchAssignments(ctx, caller, response.GetList(), func(list *pb.KeepList) error {
-		return sendReplicationFrames(&pb.ReplicateResponse{Store: list.GetStore(), List: list}, stream.Send)
+	watchErr := s.replication.WatchAssignments(ctx, caller, response.GetList(), func(response *pb.ReplicateResponse) error {
+		return send(response)
 	})
 	cancel()
 	if watchErr != nil && !errors.Is(watchErr, context.Canceled) {
@@ -550,20 +557,38 @@ func (s *blobService) Replication(stream grpc.BidiStreamingServer[pb.Replication
 	return leaseErr
 }
 
-func watchReplicationLeases(ctx context.Context, recv func() (*pb.ReplicationHello, error), caller string, leaseID uint64, manager *replication.Manager) error {
+func watchReplicationMessages(ctx context.Context, recv func() (*pb.ReplicationHello, error), caller string, leaseID uint64, manager *replication.Manager, send func(*pb.ReplicateResponse) error) error {
+	acknowledged := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		frame, err := recv()
 		if err != nil {
 			return err
 		}
-		if !frame.GetLease() || frame.GetSequence() != 0 || frame.GetIndex() != 0 || frame.GetCount() != 0 || len(frame.GetPayload()) != 0 {
-			return status.Error(codes.InvalidArgument, "replication stream expected a lease frame")
+		if frame.GetLease() {
+			if frame.GetSequence() != 0 || frame.GetIndex() != 0 || frame.GetCount() != 0 || len(frame.GetPayload()) != 0 {
+				return status.Error(codes.InvalidArgument, "invalid replication lease frame")
+			}
+			manager.RenewLease(caller, leaseID)
+			if !acknowledged {
+				// An empty response marks a stream-capable coordinator. Older
+				// coordinators close cleanly after the initial baseline instead.
+				if err := send(&pb.ReplicateResponse{}); err != nil {
+					return err
+				}
+				acknowledged = true
+			}
+			continue
 		}
-		manager.RenewLease(caller, leaseID)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		request, err := replication.ReadReplicationRequestAfter(frame, recv)
+		if err != nil {
+			return status.Errorf(codes.InvalidArgument, "invalid replication state report: %v", err)
+		}
+		response := manager.Replicate(ctx, caller, request)
+		if err := send(response); err != nil {
+			return err
 		}
 	}
 }

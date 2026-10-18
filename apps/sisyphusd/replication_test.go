@@ -36,9 +36,11 @@ import (
 // test goes on to start.
 func replicateQuickly(t *testing.T, grace time.Duration) {
 	t.Helper()
-	interval, usual := replication.Interval, replication.Grace
-	replication.Interval, replication.Grace = 20*time.Millisecond, grace
-	t.Cleanup(func() { replication.Interval, replication.Grace = interval, usual })
+	interval, challenge, usual := replication.Interval, replication.ChallengeInterval, replication.Grace
+	replication.Interval, replication.ChallengeInterval, replication.Grace = 20*time.Millisecond, 20*time.Millisecond, grace
+	t.Cleanup(func() {
+		replication.Interval, replication.ChallengeInterval, replication.Grace = interval, challenge, usual
+	})
 }
 
 // relayQuickly has the nodes a test starts look to their place on a relay
@@ -296,6 +298,10 @@ func TestTooFewFollowersIsReported(t *testing.T) {
 	p := startReplicatedPool(t, 3, "only")
 	id := p.keep("wanted in three places")
 	p.waitForCopies(1)
+	waitFor(t, func() bool {
+		listed := p.replicas()
+		return len(listed.GetBlobs()) == 1 && len(listed.GetBlobs()[0].GetShown()) == 1
+	})
 	client := p.clientOf()
 
 	out := mustCLI(t, "blob", "replicas", "--addr", p.addr, "--data-dir", client)
