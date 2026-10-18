@@ -59,13 +59,13 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 | `mcpserver/extras.go`, `follow` | The caller-supplied wait stops following a job's live events at the requested duration, then returns its current state; the job itself continues. |
 | `packages/kubo/daemon.go` and `packages/ipfscluster/daemon.go`, `stopGrace` (10 s) | How long a subprocess has to exit after an interrupt before it is killed. |
 
-## Candidates
+## Remaining event-source limitation
 
-One anti-entropy loop has an event that could take over its normal case, keeping its timer as a backstop:
+- **IPFS Cluster pin and peer changes.** Sisyphus receives local store-change events, but IPFS Cluster exposes finite REST snapshots rather than a durable change feed with replay. The periodic `clusterSync` is therefore still needed to recover remote pin/peer drift and restarts. Keep it until an authoritative watch/replay contract exists and gap recovery is tested; this is tracked in [#456](https://github.com/sisyphus-network/Sisyphus/issues/456).
 
-- **Follower lists.** The initial hello/list exchange, pushed assignments, follower state reports, and proof challenges use a dedicated bidirectional blob-connection stream (#413, slices 1–5). Connected peers do not send periodic unary state polls; the coordinator uses a deadline to issue integrity challenges. A coordinator that closes the stream cleanly after the baseline uses the unary compatibility cadence, which retries the stream after a failed reconciliation. Every reconnect sends a full baseline and the last signed list; end-to-end tests cover an assignment missed while disconnected. Coordinator data-loss recovery remains grounded in the signed-list restore tests.
+Storage followers now exchange assignments, state reports, and proof challenges on the dedicated bidirectional blob-connection stream (#413, slices 1–5; completed in [#453](https://github.com/sisyphus-network/Sisyphus/pull/453)). Connected modern peers do not send periodic unary state polls. A coordinator that closes the stream cleanly after the baseline uses the documented unary compatibility cadence; reconnects exchange a full baseline, and coordinator data-loss recovery remains grounded in signed-list restore tests.
 
-Relay places were moved to events and deadlines in [#410](https://github.com/sisyphus-network/Sisyphus/pull/410); reciprocity was moved to the trust stream in [#414](https://github.com/sisyphus-network/Sisyphus/pull/414); worker offers were taken off the heartbeat and onto events in #393's last step.
+Other completed migrations include relay placement via events and deadlines ([#410](https://github.com/sisyphus-network/Sisyphus/pull/410)), reciprocal trust via its live stream ([#414](https://github.com/sisyphus-network/Sisyphus/pull/414)), and worker offers via change events rather than the heartbeat (#393's final slice).
 
 ## Desktop and browser client timers
 
