@@ -106,7 +106,7 @@ export async function open(page, name) {
  * say, or { tool, arguments } to call one of the planner's tools.
  */
 export async function standInModel(...replies) {
-  const model = { asked: [], pulled: [], removed: [], authorizations: [], tagRequests: 0, tagResponses: 0, tagDelayMs: 0, failTags: false, url: '', aborted: 0, pending: [] }
+  const model = { asked: [], pulled: [], removed: [], authorizations: [], tagRequests: 0, tagResponses: 0, tagSettled: 0, tagDelayMs: 0, failTags: false, url: '', aborted: 0, pending: [] }
   model.tags = [
     { name: 'test-model', size: 4900000000 },
     { name: 'second-model', size: 1200000000 },
@@ -133,6 +133,14 @@ export async function standInModel(...replies) {
       if (request.url === '/api/version') return response.end('{"version":"test"}')
       if (request.url === '/api/tags') {
         model.tagRequests++
+        let settled = false
+        const settle = () => {
+          if (settled) return
+          settled = true
+          model.tagSettled++
+        }
+        response.once('finish', settle)
+        response.once('close', settle)
         void (async () => {
           if (model.tagDelayMs) await new Promise((done) => setTimeout(done, model.tagDelayMs))
           if (response.destroyed) return

@@ -916,7 +916,7 @@ test('model provider setup ignores a stale model-list response after changing se
     const connection = page.getByRole('region', { name: 'Connection' })
     await connection.getByText('models available', { exact: true }).waitFor()
     await until('the current service model-list response', () => current.tagResponses === 1)
-    await until('the delayed stale service response', () => stale.tagResponses === 1)
+    await until('the stale service request to settle', () => stale.tagSettled === 1)
 
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await page.getByRole('button', { name: 'Model', exact: true }).click()
