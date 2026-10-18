@@ -143,6 +143,7 @@ type halfClosedReplicationExchange struct {
 	grpc.ServerStream
 	ctx      context.Context
 	hello    *pb.ReplicationHello
+	second   *pb.ReplicationHello
 	received bool
 	sent     chan *pb.ReplicationFrame
 }
@@ -153,6 +154,11 @@ func (s *halfClosedReplicationExchange) Recv() (*pb.ReplicationHello, error) {
 	if !s.received {
 		s.received = true
 		return s.hello, nil
+	}
+	if s.second != nil {
+		frame := s.second
+		s.second = nil
+		return frame, nil
 	}
 	return nil, io.EOF
 }
@@ -293,6 +299,27 @@ func TestReplicationPushStaysOpenAfterClientHalfClosesSendSide(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("replication handler did not stop after the client canceled")
+	}
+}
+
+func TestReplicationStreamRejectsUnexpectedClientFrameAfterHello(t *testing.T) {
+	store := storage.NewMemory()
+	manager := replication.New(replication.Config{
+		Identity: newIdentity(t), Store: store, StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7700" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	hellos, err := replication.ReplicationHellos(&pb.ReplicateRequest{KeepsLists: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &halfClosedReplicationExchange{
+		ctx: context.Background(), hello: hellos[0], second: &pb.ReplicationHello{},
+		sent: make(chan *pb.ReplicationFrame, 4),
+	}
+	err = (&blobService{store: store, replication: manager}).Replication(stream)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("replication stream with a non-lease frame after hello: %v, want InvalidArgument", err)
 	}
 }
 
