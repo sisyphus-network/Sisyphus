@@ -46,7 +46,7 @@ func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 	// A worker whose owner allows it takes the job, and holds its tasks in
 	// as its owner asked: by the runtime named, with a root they cannot
 	// write to.
-	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "docker-host", "--slots", "3", "--containers", "--container-runtime", "runc", "--containers-read-only", "--containers-tmp-mb", "64")
+	stopWorker := startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "docker-host", "--slots", "3", "--containers", "--container-runtime", "runc", "--containers-read-only", "--containers-tmp-mb", "64")
 	// And the pool is told how it holds them in.
 	waitForOutput(t, "docker-host runs containers with a read-only root and a sized /tmp", "nodes", "--addr", addr)
 	// Three containers started at once are slow to start on a machine busy
@@ -60,7 +60,9 @@ func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 	if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n{")+1:]), &result); err != nil || len(result.Tasks) != 3 {
 		t.Fatalf("the job's result, in:\n%s\n%v", out, err)
 	}
-	// Each task's output is stored like any other data.
+	// The task artifacts remain available from the coordinator, not just from
+	// the workers whose local stores first held them.
+	stopWorker()
 	dir := t.TempDir()
 	for i, task := range result.Tasks {
 		printed, index := filepath.Join(dir, "printed"), filepath.Join(dir, "index")

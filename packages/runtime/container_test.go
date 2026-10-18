@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -162,6 +163,23 @@ func TestTheResultOfAContainerJobIsItsTasksOutputsInOrder(t *testing.T) {
 	}
 	if _, err := c.Aggregate(context.Background(), nil, [][]byte{[]byte("not json")}); err == nil || !strings.Contains(err.Error(), "task 0 output") {
 		t.Errorf("an output that is not JSON: %v", err)
+	}
+}
+
+func TestAContainerResultKeepsTheBlobsItReferences(t *testing.T) {
+	workload := Container{}
+	result := mustJSON(ContainerResult{Tasks: []ContainerOutput{
+		{Stdout: "stdout-0", Files: map[string]string{"index": "index-0"}},
+		{Stdout: "stdout-1"},
+	}})
+	got := workload.ResultBlobs(result)
+	sort.Strings(got)
+	want := []string{"index-0", "stdout-0", "stdout-1"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ResultBlobs() = %v, want %v", got, want)
+	}
+	if got := workload.ResultBlobs([]byte("not JSON")); len(got) != 0 {
+		t.Errorf("ResultBlobs(invalid JSON) = %v, want none", got)
 	}
 }
 

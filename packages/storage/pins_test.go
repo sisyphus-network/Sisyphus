@@ -598,6 +598,43 @@ func TestAChangeOfPinsIsToldToWhoeverAskedToHear(t *testing.T) {
 	}
 }
 
+func TestGarbageCollectionListenerGetsRootChangesAndCanStopListening(t *testing.T) {
+	s := NewMemory()
+	var changes []bool
+	s.OnGCChange(func(mayCollect bool) { changes = append(changes, mayCollect) })
+	c := put(t, s, []byte("grace-pinned"))
+	if err := s.Pin(ctx, "alice", time.Now().Add(time.Hour), c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Unpin("alice", c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Pin(ctx, "orphan", time.Time{}, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ExpireOpenPins(func(owner string) bool { return owner == "orphan" }, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []bool{false, false, true, false, false}
+	if !slices.Equal(changes, want) {
+		t.Fatalf("GC change hints = %v, want %v", changes, want)
+	}
+	if err := s.Unpin("nobody", c); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(changes, want) {
+		t.Errorf("a no-op unpin requested collection: %v", changes)
+	}
+	s.OnGCChange(nil)
+	if err := s.Unpin("alice", c); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(changes, want) {
+		t.Errorf("GC change hints after listener was removed = %v, want %v", changes, want)
+	}
+}
+
 func TestPinningOrUnpinningNothingDoesNothing(t *testing.T) {
 	dir := t.TempDir()
 	s := openLocal(t, dir)

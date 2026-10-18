@@ -322,7 +322,7 @@ A node keeps a blob for as long as something pins it, and deletes what nothing p
 
 Blobs that only pass between a job's tasks are released as soon as the job ends. Several pins can hold one blob; it goes when the last has lapsed.
 
-New chat attachments do not receive the permanent `user` pin used by ordinary file uploads. Deleting a conversation releases only that conversation's ownership; another conversation, a job or an explicit user pin can still keep the same content. Abandoned uploads, including completed uploads from a partially failed send, become eligible for collection after the 24-hour draft grace period. Deletion is not immediate: collection must run and every other pin must have expired or been released. Disabling automatic collection with `--gc-interval 0` requires manual `blob gc`.
+New chat attachments do not receive the permanent `user` pin used by ordinary file uploads. Deleting a conversation releases only that conversation's ownership; another conversation, a job or an explicit user pin can still keep the same content. Abandoned uploads, including completed uploads from a partially failed send, become eligible for collection after the 24-hour draft grace period. Deletion is not immediate: the event-driven collector sweeps after a pin is released or expires, and every other pin must have expired or been released. Explicitly setting `--gc-interval 0` disables automatic collection and requires manual `blob gc`.
 
 The desktop checks both `chat-file-references-v1` and `chat-attachment-retention-v1` before uploading chat attachments. Older daemons cannot safely ignore the new upload flag. Existing permanently pinned uploads are not retroactively unpinned. The file list hides content that the store no longer holds, and reports storage failures rather than treating them as absence. Listing does not delete catalogue metadata or ownership: a concurrent upload or a later restore can make the content available again. Metadata compaction and paginated listing remain separate follow-ups.
 
@@ -333,7 +333,7 @@ bin/sisyphusd blob unpin <cid>
 bin/sisyphusd blob gc               # delete what nothing is keeping, now
 ```
 
-A coordinator also collects every `--gc-interval` (default one hour), and with `--max-store-bytes` refuses uploads once its store reaches that size.
+A coordinator collects once at startup, after pin releases, and when the next pin expires. By default it does not run a periodic full-store scan; a positive `--gc-interval` adds an optional safety sweep, while explicitly setting it to `0` disables automatic collection. With `--max-store-bytes`, it refuses uploads once its store reaches that size.
 
 A job's result must be stored by the workload's aggregation step to be kept; a blob a task stored is treated as intermediate unless the aggregation stores it again.
 

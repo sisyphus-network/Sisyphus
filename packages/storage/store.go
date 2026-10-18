@@ -71,6 +71,9 @@ type Store struct {
 	// pinsChanged, if set, is told whenever the blobs that pins keep may
 	// have changed.
 	pinsChanged func()
+	// gcChanged, if set, is told whether a pin change may have made blocks
+	// collectible. It is only a hint; the listener must re-read pins.
+	gcChanged func(mayCollect bool)
 	// index counts what each group of owners keeps, once GroupPins has
 	// named the groups. It is set with both gcMu and pinMu held, so either
 	// is enough to read it.
@@ -173,6 +176,7 @@ func (s *Store) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
 	}
 	s.pinMu.Lock()
 	s.pins[pinKey{root, GraceOwner}] = time.Now().Add(GracePeriod)
+	s.tellGCChangedLocked(false)
 	s.pinMu.Unlock()
 	return root, nil
 }

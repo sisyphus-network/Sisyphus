@@ -1512,6 +1512,23 @@ func (c *Coordinator) aggregate(job *jobmodel.Job) {
 	now := time.Now()
 	job.NoteRead(touched.Read()...)
 	job.NoteResult(touched.Written()...)
+	if err == nil {
+		if references, ok := workload.(runtime.ResultBlobs); ok {
+			// A workload can only retain task blobs the coordinator accepted
+			// and pinned; a worker's aggregate JSON is not proof a CID exists.
+			written := make(map[string]struct{})
+			for _, c := range job.IntermediateBlobs() {
+				written[c] = struct{}{}
+			}
+			var retained []string
+			for _, c := range references.ResultBlobs(result) {
+				if _, exists := written[c]; exists {
+					retained = append(retained, c)
+				}
+			}
+			job.NoteResult(retained...)
+		}
+	}
 	job.Finish(result, err, now)
 	c.settleLocked(job)
 	c.log.Info("job finished", "job", job.ID, "state", job.State.String(), "took", now.Sub(job.CreatedAt).String(), "by", workedBy(job))

@@ -111,7 +111,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	locate := fs.Bool("locate-country", false, "if the node cannot tell which country it is in from its own addresses, its pool's view of it, its gateway or a STUN server, ask ipapi.co, which thereby learns its address and, from the request, that it is a Sisyphus node and which version; it is asked only when the node is asked where it is and nothing else has placed it. A country, or any refusal but a timeout or a rate limit, is kept until the node restarts; a timeout, a rate limit, a fault on its side or no answer lets it be asked again, the next time the node is asked where it is, once a wait has passed that starts at a minute and doubles with each failure in a row up to an hour, or is as long as the service's Retry-After says if that is longer, up to the same hour. Without this nothing is asked of anyone. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
 	keepJobs := fs.Duration("keep-jobs", 30*24*time.Hour, "coordinator role: how long a finished job can still be asked after; 0 keeps them for good. A client's job is kept at least as long as --retain, since its record says whose its data is")
 	retain := fs.Duration("retain", 7*24*time.Hour, "coordinator role: how long a job's inputs and results are kept after it finishes")
-	gcInterval := fs.Duration("gc-interval", time.Hour, "coordinator role: how often to delete stored data nothing is keeping; 0 never does")
+	gcInterval := fs.Duration("gc-interval", 0, "coordinator role: optional full-store safety sweep interval; by default collection follows pin changes and expiry deadlines, while explicitly supplying 0 disables automatic collection")
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
 	maxUploadPerAttempt := fs.Uint64("max-upload-bytes-per-attempt", 0, "coordinator role: the most a worker may upload here for one attempt at a task, across all the attempt's uploads; an upload that would take it past is refused. 0 means no limit. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
 	maxStorePerClient := fs.Uint64("max-store-bytes-per-client", 0, "coordinator role: the most one client may keep here, its uploads, pins and jobs' data counted as pool members shows; uploads and pins past it are refused, and so is a task of its job whose outputs would take it past, which fails the job. 0 means no limit. What workers upload for its jobs' attempts while they run counts towards it too, shared between them. The node's own are not counted. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
@@ -135,6 +135,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	gcOptions := garbageCollectionOptionsFrom(fs, *gcInterval)
+	if gcOptions.interval < 0 {
+		return errors.New("--gc-interval must be zero or positive")
 	}
 	locationDiscoveryOverrides := locationDiscoveryFlagOverridesFrom(fs, byGateway, locate, stunServer)
 	poolLimitsOverrides := poolLimitsFlagOverridesFrom(fs, maxJobsPerClient, maxTasksPerClient, maxTaskTimeout, maxStorePerClient, maxUploadPerAttempt)
@@ -681,6 +685,11 @@ func runDaemon(ctx context.Context, args []string) error {
 				mirror.run(ctx)
 			}()
 		}
+		var gcChanges *gcChangeSignals
+		if gcOptions.enabled {
+			gcChanges = newGCChangeSignals()
+			store.OnGCChange(gcChanges.notify)
+		}
 		srv := api.NewServer(config)
 		local.Pool = api.NewPoolAdmin(config)
 		local.Jobs = coord
@@ -726,7 +735,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// expects to find the node itself at the other end.
 		*join = loopback(lis.Addr())
 
-		if *gcInterval > 0 {
+		if gcChanges != nil {
 			collected := make(chan struct{})
 			// The store must outlive the collector.
 			defer func() {
@@ -735,7 +744,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			}()
 			go func() {
 				defer close(collected)
-				collectPeriodically(ctx, store, *gcInterval, log)
+				collectOnChanges(ctx, store, gcOptions.interval, gcChanges, log)
 			}()
 		}
 	} else {
@@ -2314,24 +2323,131 @@ func replayFilePinsOnChanges(ctx context.Context, planning *assistant, retryInte
 	}
 }
 
-// collectPeriodically clears out, every interval until ctx ends, stored data
-// that nothing pins any longer.
-func collectPeriodically(ctx context.Context, store *storage.Store, interval time.Duration, log *slog.Logger) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+type garbageCollectionOptions struct {
+	enabled  bool
+	interval time.Duration
+}
+
+func garbageCollectionOptionsFrom(fs *flag.FlagSet, interval time.Duration) garbageCollectionOptions {
+	options := garbageCollectionOptions{enabled: true, interval: interval}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "gc-interval" && interval == 0 {
+			options.enabled = false
+		}
+	})
+	return options
+}
+
+type gcChangeSignals struct {
+	changed    chan struct{}
+	mayCollect atomic.Bool
+}
+
+func newGCChangeSignals() *gcChangeSignals {
+	return &gcChangeSignals{changed: make(chan struct{}, 1)}
+}
+
+func (s *gcChangeSignals) notify(mayCollect bool) {
+	if mayCollect {
+		s.mayCollect.Store(true)
+	}
+	select {
+	case s.changed <- struct{}{}:
+	default:
+	}
+}
+
+var (
+	gcChangeDebounce = 100 * time.Millisecond
+	gcRetryInitial   = time.Second
+	gcRetryMaximum   = time.Minute
+)
+
+// collectOnChanges sweeps once at startup, after changes that can release
+// blocks, and when the next pin expires. A positive interval is an optional
+// anti-entropy sweep; the default is event/deadline driven.
+func collectOnChanges(ctx context.Context, store *storage.Store, interval time.Duration, changes *gcChangeSignals, log *slog.Logger) {
+	var periodic *time.Ticker
+	var periodicC <-chan time.Time
+	if interval > 0 {
+		periodic = time.NewTicker(interval)
+		periodicC = periodic.C
+		defer periodic.Stop()
+	}
+	deadline := time.NewTimer(time.Hour)
+	debounce := time.NewTimer(time.Hour)
+	deadline.Stop()
+	debounce.Stop()
+	defer deadline.Stop()
+	defer debounce.Stop()
+
+	nextRetry := time.Time{}
+	retryDelay := gcRetryInitial
+	debounceArmed := false
+	collect := func() {
+		done, err := store.GC(ctx, time.Now())
+		if err != nil {
+			log.Warn("garbage collection failed", "error", err, "retry_in", retryDelay.String())
+			nextRetry = time.Now().Add(retryDelay)
+			retryDelay = min(retryDelay*2, gcRetryMaximum)
+			return
+		}
+		nextRetry = time.Time{}
+		retryDelay = gcRetryInitial
+		if done != (storage.Collected{}) {
+			log.Info("collected garbage", "expired_pins", done.ExpiredPins, "blocks", done.Blocks, "bytes", done.Bytes)
+		}
+	}
+	collect()
+
 	for {
-		select {
-		case <-ticker.C:
-			done, err := store.GC(ctx, time.Now())
-			if err != nil {
-				log.Warn("garbage collection failed", "error", err)
-			} else if done != (storage.Collected{}) {
-				log.Info("collected garbage", "expired_pins", done.ExpiredPins, "blocks", done.Blocks, "bytes", done.Bytes)
+		var expires time.Time
+		for _, pin := range store.Pins() {
+			if !pin.Expires.IsZero() && (expires.IsZero() || pin.Expires.Before(expires)) {
+				expires = pin.Expires
 			}
+		}
+		if !nextRetry.IsZero() {
+			// Retry a failed sweep before waiting on any pin expiry. In
+			// particular, a new upload's grace pin must not defer retrying
+			// cleanup of already released data for up to an hour.
+			expires = nextRetry
+		}
+		deadlineC := resetTimerAt(deadline, expires)
+		select {
+		case <-changes.changed:
+			if changes.mayCollect.Swap(false) && !debounceArmed {
+				resetTimerFor(debounce, gcChangeDebounce)
+				debounceArmed = true
+			}
+		case <-debounce.C:
+			debounceArmed = false
+			collect()
+		case <-deadlineC:
+			collect()
+		case <-periodicC:
+			collect()
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func resetTimerAt(timer *time.Timer, at time.Time) <-chan time.Time {
+	if at.IsZero() {
+		timer.Stop()
+		return nil
+	}
+	delay := time.Until(at)
+	if delay < 0 {
+		delay = 0
+	}
+	timer.Reset(delay)
+	return timer.C
+}
+
+func resetTimerFor(timer *time.Timer, delay time.Duration) {
+	timer.Reset(delay)
 }
 
 // runJobPruner waits for a job's retention deadline or a job change that
