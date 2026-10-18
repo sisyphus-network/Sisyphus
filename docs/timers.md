@@ -30,7 +30,7 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 | `p2p/p2p.go`, `Host.keepPlaces` | A change to the pool's relays, a connection made or lost, or the nearest renewal or retry | Event and deadline, with retry | Renewal at half a reservation's life; a failed attempt again after `PlaceCheck`, 10 s | A reservation expires whether or not anything changed, and a relay that did not answer gives no notice when it is back. Nothing is rescanned while all is well (#410). |
 | `worker/peers.go`, `Members.RunRelayWatch` | The coordinator's relay stream ending | Retry | Backoff from 1 s to 15 s, back to 1 s after a stream that delivered a list | The stream itself carries every change to the relays (#410). The timer only reconnects it. |
 | `replication/follower.go`, `Follower.Run` | The interval, or at once after a change it made | Anti-entropy | `replication.Interval`, 1 min | A storage follower asks its coordinator which blobs to hold. The coordinator has no stream to push that list on. See the candidates below. |
-| `reciprocal.go`, `reciprocity.pause` | A change to this node's trust, word from another node that its trust changed, or the interval | Event and anti-entropy | `reciprocityCheck`, 1 min | Whether another node trusts this one back is that node's state, so it is asked. Word of a change from either side wakes it at once, and the minute catches word that was lost. |
+| `reciprocal.go`, `reciprocity.workFor` and `followTrust` | A local trust or peer-address change; the authenticated peer's initial trust snapshot and live changes; a reconnect or work retry becoming due | Event, with retry | No periodic trust check; reconnect and work retry back off from 1 s to 1 min | The protocol-v2 trust stream reports the current admission state first, then every change. If it ends, guest work stops and reconnect gets a fresh snapshot; address and connection changes wake reconciliation. Older coordinators do not provide reciprocal guest work until upgraded (#414). |
 | `pinning/client.go`, waiting for a remote pin | The interval, while a remote pinning service is still pinning | Retry (status poll) | The caller's `every` | The IPFS Pinning Service API has no notification, so status is the only way to learn a pin is done. It stops once the pin is pinned or failed. |
 | `packages/kubo/daemon.go` and `packages/ipfscluster/daemon.go`, start | The subprocess answering its API, or its ready timeout | Readiness | Every 20 ms (Kubo) and 50 ms (Cluster) | Neither program says when it is ready, so its API is tried until it answers. Bounded by `ReadyTimeout`. |
 
@@ -44,8 +44,8 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 
 ## Candidates
 
-One anti-entropy loop has an event that could take over its normal case, keeping its timer as a backstop:
+One remaining anti-entropy loop has an event that could take over its normal case, keeping its timer as a backstop:
 
 - **Follower lists.** A coordinator already holds a stream to each worker. Sending a "your list changed" notice on it would let a follower ask straight away instead of within the minute. That needs a stream contract first, one that keeps what the minute gives today: signed-list recovery, blob challenges, convergence after a reconnect, and follower liveness. It is a design question for after V0 ([#413](https://github.com/sisyphus-network/Sisyphus/issues/413)), and the minute stays until it is settled.
 
-Relay places, the other candidate, were moved to events and deadlines in [#410](https://github.com/sisyphus-network/Sisyphus/pull/410).
+Relay places were moved to events and deadlines in [#410](https://github.com/sisyphus-network/Sisyphus/pull/410); reciprocity was moved to the trust stream in [#414](https://github.com/sisyphus-network/Sisyphus/pull/414).
