@@ -287,6 +287,34 @@ type recordedLeaseFrames struct {
 	sent chan *pb.ReplicationHello
 }
 
+type duplexReplicationFrames struct {
+	*replicationFrames
+	ctx      context.Context
+	incoming chan *pb.ReplicationFrame
+	sent     chan *pb.ReplicationHello
+}
+
+func (s *duplexReplicationFrames) Recv() (*pb.ReplicationFrame, error) {
+	if s.index < len(s.frames) {
+		return s.replicationFrames.Recv()
+	}
+	select {
+	case frame := <-s.incoming:
+		return frame, nil
+	case <-s.ctx.Done():
+		return nil, s.ctx.Err()
+	}
+}
+
+func (s *duplexReplicationFrames) Send(frame *pb.ReplicationHello) error {
+	select {
+	case s.sent <- frame:
+		return nil
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	}
+}
+
 type failLeaseReplicationFrames struct {
 	*blockingReplicationFrames
 	err        error
@@ -329,7 +357,7 @@ func TestFollowerRenewsItsReplicationLeaseOnTheOpenStream(t *testing.T) {
 	stream := &recordedLeaseFrames{replicationFrames: &replicationFrames{}, sent: make(chan *pb.ReplicationHello, 2)}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- (&Follower{}).sendLeases(ctx, stream) }()
+	go func() { done <- (&Follower{}).sendLeases(ctx, stream, nil) }()
 	for range 2 {
 		select {
 		case frame := <-stream.sent:
@@ -346,6 +374,135 @@ func TestFollowerRenewsItsReplicationLeaseOnTheOpenStream(t *testing.T) {
 	}
 }
 
+func TestRunReportsAppliedPushOnTheOpenStream(t *testing.T) {
+	ident := newIdentity(t)
+	copies := storage.NewMemory()
+	c, err := copies.Put(ctx, strings.NewReader("a follower copy to release"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := copies.Pin(ctx, ownerPrefix+"node/first", time.Time{}, c); err != nil {
+		t.Fatal(err)
+	}
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1, Blobs: []*pb.KeptBlob{{Cid: c.String()}}}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	assigned := &pb.KeepList{Store: "node/first", Sequence: 2}
+	assigned.Signature = ident.Sign(signedBytes(assigned))
+	initialFrames, err := ReplicationFrames(&pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushFrames, err := ReplicationFrames(&pb.ReplicateResponse{Store: assigned.GetStore(), List: assigned})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream *duplexReplicationFrames
+	created := make(chan struct{})
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 1),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return nil, errors.New("healthy stream must report follower state without unary Replicate")
+		},
+		stream: func(streamCtx context.Context) (pb.BlobService_ReplicationClient, error) {
+			stream = &duplexReplicationFrames{
+				replicationFrames: &replicationFrames{frames: initialFrames}, ctx: streamCtx,
+				incoming: make(chan *pb.ReplicationFrame, 4), sent: make(chan *pb.ReplicationHello, 16),
+			}
+			close(created)
+			return stream, nil
+		},
+	}
+	follower := &Follower{
+		Store: copies, ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: new(logged).logger(),
+	}
+	stop := run(t, follower, time.Hour)
+	defer stop()
+	select {
+	case <-created:
+	case <-time.After(time.Second):
+		t.Fatal("follower did not open its replication stream")
+	}
+	// The initial bounded hello and the first lease are the only outbound
+	// messages until the coordinator pushes a new signed assignment.
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case frame := <-stream.sent:
+			if frame.GetLease() {
+				goto leased
+			}
+		case <-deadline:
+			t.Fatal("follower did not establish its stream lease")
+		}
+	}
+
+leased:
+	ack, err := ReplicationFrames(&pb.ReplicateResponse{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, frame := range ack {
+		stream.incoming <- frame
+	}
+	for _, frame := range pushFrames {
+		stream.incoming <- frame
+	}
+	var first *pb.ReplicationHello
+	for first == nil {
+		select {
+		case frame := <-stream.sent:
+			if !frame.GetLease() {
+				first = frame
+			}
+		case <-time.After(time.Second):
+			t.Fatal("follower did not report the applied push on its open stream")
+		}
+	}
+	request, err := ReadReplicationRequestAfter(first, func() (*pb.ReplicationHello, error) {
+		return <-stream.sent, nil
+	})
+	if err != nil {
+		t.Fatalf("read live follower state report: %v", err)
+	}
+	if len(request.GetHolding()) != 0 || !request.GetAnswersChallenges() {
+		t.Errorf("live report has holding=%v answersChallenges=%v, want no copies and challenge support", request.GetHolding(), request.GetAnswersChallenges())
+	}
+	if holds(t, copies, c.String()) {
+		t.Error("follower kept a copy removed by the pushed assignment")
+	}
+
+	// A local pin change is reported on the same stream without waiting for
+	// another coordinator assignment or the reconciliation interval.
+	local, err := copies.Put(ctx, strings.NewReader("a local, non-pool pin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := copies.Pin(ctx, "local", time.Time{}, local); err != nil {
+		t.Fatal(err)
+	}
+	var changedFirst *pb.ReplicationHello
+	for changedFirst == nil {
+		select {
+		case frame := <-stream.sent:
+			if !frame.GetLease() {
+				changedFirst = frame
+			}
+		case <-time.After(time.Second):
+			t.Fatal("follower did not report a local pin change on its open stream")
+		}
+	}
+	changedRequest, err := ReadReplicationRequestAfter(changedFirst, func() (*pb.ReplicationHello, error) {
+		return <-stream.sent, nil
+	})
+	if err != nil {
+		t.Fatalf("read local pin-change report: %v", err)
+	}
+	if len(changedRequest.GetHolding()) != 0 || !changedRequest.GetKeepsLists() {
+		t.Errorf("local pin-change report has holding=%v keepsLists=%v, want no pool copies and signed-list support", changedRequest.GetHolding(), changedRequest.GetKeepsLists())
+	}
+}
+
 func TestFollowerLeaseSenderReturnsRenewalError(t *testing.T) {
 	usual := LeaseInterval
 	LeaseInterval = time.Millisecond
@@ -357,9 +514,41 @@ func TestFollowerLeaseSenderReturnsRenewalError(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	err := (&Follower{}).sendLeases(ctx, stream)
+	err := (&Follower{}).sendLeases(ctx, stream, nil)
 	if !errors.Is(err, want) {
 		t.Errorf("lease sender returned %v, want %v", err, want)
+	}
+}
+
+func TestFollowerLeaseSenderRejectsAnUnframeableStateReport(t *testing.T) {
+	requests := make(chan *pb.ReplicateRequest, 1)
+	requests <- nil
+	stream := &recordedLeaseFrames{replicationFrames: &replicationFrames{}, sent: make(chan *pb.ReplicationHello, 1)}
+	if err := (&Follower{}).sendLeases(context.Background(), stream, requests); err == nil {
+		t.Fatal("lease sender accepted an unframeable nil state report")
+	}
+}
+
+// failReportFrames takes lease frames but fails to send a state report.
+type failReportFrames struct {
+	*replicationFrames
+	err error
+}
+
+func (s *failReportFrames) Send(frame *pb.ReplicationHello) error {
+	if frame.GetLease() {
+		return nil
+	}
+	return s.err
+}
+
+func TestFollowerLeaseSenderReturnsAStateReportSendError(t *testing.T) {
+	want := errors.New("report send failed")
+	requests := make(chan *pb.ReplicateRequest, 1)
+	requests <- &pb.ReplicateRequest{KeepsLists: true, AnswersChallenges: true}
+	stream := &failReportFrames{replicationFrames: &replicationFrames{}, err: want}
+	if err := (&Follower{}).sendLeases(context.Background(), stream, requests); !errors.Is(err, want) {
+		t.Errorf("lease sender returned %v after a state report failed to send, want %v", err, want)
 	}
 }
 
@@ -440,9 +629,10 @@ func frameResponse(t *testing.T, response *pb.ReplicateResponse) *pb.Replication
 func TestReceiveAssignmentsRejectsMissingListsAndCoalescesSnapshots(t *testing.T) {
 	ctx := context.Background()
 	updates := make(chan *pb.ReplicateResponse, 1)
+	ready := make(chan struct{}, 1)
 	ended := make(chan error, 1)
-	missing := &replicationFrames{frames: []*pb.ReplicationFrame{frameResponse(t, &pb.ReplicateResponse{})}}
-	(&Follower{}).receiveAssignments(ctx, missing, updates, ended)
+	missing := &replicationFrames{frames: []*pb.ReplicationFrame{frameResponse(t, &pb.ReplicateResponse{Store: "missing"})}}
+	(&Follower{}).receiveAssignments(ctx, missing, updates, ready, ended)
 	if err := <-ended; err == nil || !strings.Contains(err.Error(), "without a signed list") {
 		t.Fatalf("stream without a signed list ended with %v", err)
 	}
@@ -450,12 +640,80 @@ func TestReceiveAssignmentsRejectsMissingListsAndCoalescesSnapshots(t *testing.T
 	first := frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 1}})
 	latest := frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 2}})
 	ended = make(chan error, 1)
-	(&Follower{}).receiveAssignments(ctx, &replicationFrames{frames: []*pb.ReplicationFrame{first, latest}}, updates, ended)
+	(&Follower{}).receiveAssignments(ctx, &replicationFrames{frames: []*pb.ReplicationFrame{first, latest}}, updates, ready, ended)
 	if got := (<-updates).GetList().GetSequence(); got != 2 {
 		t.Errorf("coalesced assignment sequence = %d, want latest sequence 2", got)
 	}
 	if err := <-ended; !errors.Is(err, io.EOF) {
 		t.Errorf("completed stream ended with %v, want EOF", err)
+	}
+}
+
+func TestReceiveAssignmentsKeepsHighestSequenceWhenResponsesArriveOutOfOrder(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	updates := make(chan *pb.ReplicateResponse, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 9}}),
+		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 8}}),
+	}}
+	(&Follower{}).receiveAssignments(ctx, stream, updates, make(chan struct{}, 1), make(chan error, 1))
+	if got := (<-updates).GetList().GetSequence(); got != 9 {
+		t.Fatalf("coalesced assignment sequence = %d, want highest sequence 9", got)
+	}
+}
+
+func TestReceiveAssignmentsKeepsChallengesWhenCoalescingSnapshots(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	updates := make(chan *pb.ReplicateResponse, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 1}, Challenges: []*pb.Challenge{{Cid: "blob-cid", Nonce: []byte("nonce")}}}),
+		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 2}}),
+	}}
+	(&Follower{}).receiveAssignments(ctx, stream, updates, make(chan struct{}, 1), make(chan error, 1))
+	response := <-updates
+	if got := response.GetList().GetSequence(); got != 2 {
+		t.Fatalf("coalesced assignment sequence = %d, want latest sequence 2", got)
+	}
+	if len(response.GetChallenges()) != 1 || string(response.GetChallenges()[0].GetNonce()) != "nonce" {
+		t.Fatalf("challenge was not preserved while coalescing: %v", response)
+	}
+}
+
+func TestReceiveAssignmentsDeliversChallengeOnlyPushAfterCapabilityAck(t *testing.T) {
+	ctx := context.Background()
+	ready := make(chan struct{}, 2)
+	updates := make(chan *pb.ReplicateResponse, 1)
+	ended := make(chan error, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{}),
+		frameResponse(t, &pb.ReplicateResponse{Challenges: []*pb.Challenge{{Cid: "blob-cid", Nonce: []byte("challenge-nonce")}}}),
+	}}
+
+	(&Follower{}).receiveAssignments(ctx, stream, updates, ready, ended)
+	if len(ready) != 1 {
+		t.Fatalf("capability acknowledgements = %d, want 1", len(ready))
+	}
+	response := <-updates
+	if len(response.GetChallenges()) != 1 || string(response.GetChallenges()[0].GetNonce()) != "challenge-nonce" {
+		t.Fatalf("challenge-only push was not delivered intact: %v", response)
+	}
+	if err := <-ended; !errors.Is(err, io.EOF) {
+		t.Errorf("completed stream ended with %v, want EOF", err)
+	}
+}
+
+func TestReceiveAssignmentsDropsAdditionalCapabilityAcksWhenReadyBufferIsFull(t *testing.T) {
+	updates := make(chan *pb.ReplicateResponse, 1)
+	ready := make(chan struct{}, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{}),
+		frameResponse(t, &pb.ReplicateResponse{}),
+	}}
+	(&Follower{}).receiveAssignments(context.Background(), stream, updates, ready, make(chan error, 1))
+	if len(ready) != 1 {
+		t.Errorf("buffered capability acknowledgements = %d, want one coalesced acknowledgement", len(ready))
 	}
 }
 
@@ -467,9 +725,80 @@ func TestReceiveAssignmentsStopsWhenCanceledWhileWaitingToQueue(t *testing.T) {
 	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
 		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 1}}),
 	}}
-	(&Follower{}).receiveAssignments(ctx, stream, updates, ended)
+	(&Follower{}).receiveAssignments(ctx, stream, updates, make(chan struct{}, 1), ended)
 	if stream.index != 1 {
 		t.Errorf("received %d frames after cancellation, want one", stream.index)
+	}
+}
+
+func TestReceiveAssignmentsStopsWhenCanceledWhileDeliveringChallenge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	updates := make(chan *pb.ReplicateResponse)
+	ended := make(chan error, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{Challenges: []*pb.Challenge{{Cid: "blob-cid", Nonce: []byte("nonce")}}}),
+	}}
+	(&Follower{}).receiveAssignments(ctx, stream, updates, make(chan struct{}, 1), ended)
+	if stream.index != 1 {
+		t.Errorf("received %d frames after cancellation, want one", stream.index)
+	}
+}
+
+func TestReceiveAssignmentsCanReportMalformedFrameAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{Store: "missing"}),
+	}}
+	(&Follower{}).receiveAssignments(ctx, stream, make(chan *pb.ReplicateResponse), make(chan struct{}), make(chan error))
+}
+
+func TestEnqueueReportChoosesBetweenSendingAndCancellation(t *testing.T) {
+	request := &pb.ReplicateRequest{KeepsLists: true}
+	requests := make(chan *pb.ReplicateRequest, 1)
+	queued := false
+	if !enqueueReport(context.Background(), requests, request, func() { queued = true }) {
+		t.Fatal("report was not queued on an open context")
+	}
+	if !queued {
+		t.Fatal("successful report enqueue did not run its callback")
+	}
+	if got := <-requests; got != request {
+		t.Fatalf("queued report = %p, want %p", got, request)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if enqueueReport(ctx, make(chan *pb.ReplicateRequest), request, func() {
+		t.Error("canceled report enqueue ran its callback")
+	}) {
+		t.Fatal("report was queued after its context was canceled")
+	}
+}
+
+func TestLegacySyncWaitAndPinChangeTimer(t *testing.T) {
+	interval := 5 * time.Second
+	if got := legacySyncWait(interval, false); got != interval {
+		t.Errorf("legacy wait without a pending report = %s, want %s", got, interval)
+	}
+	if got := legacySyncWait(interval, true); got != 0 {
+		t.Errorf("legacy wait with a pending report = %s, want immediate", got)
+	}
+
+	if got := expediteLegacySync(time.NewTimer(time.Hour), nil); got != nil {
+		t.Errorf("pin change without an active legacy timer returned %v, want nil", got)
+	}
+	timer := time.NewTimer(time.Hour)
+	timerC := timer.C
+	got := expediteLegacySync(timer, timerC)
+	if got != timer.C {
+		t.Fatal("pin change did not return the expedited timer channel")
+	}
+	select {
+	case <-got:
+	case <-time.After(time.Second):
+		t.Fatal("pin change did not expedite legacy reconciliation")
 	}
 }
 
@@ -477,7 +806,7 @@ func TestReceiveAssignmentsPrefersCancellationWithoutAnErrorReceiver(t *testing.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	stream := &replicationFrames{frames: []*pb.ReplicationFrame{frameResponse(t, &pb.ReplicateResponse{})}}
-	(&Follower{}).receiveAssignments(ctx, stream, make(chan *pb.ReplicateResponse), make(chan error))
+	(&Follower{}).receiveAssignments(ctx, stream, make(chan *pb.ReplicateResponse), make(chan struct{}, 1), make(chan error))
 }
 
 func TestResetTimerStopsOrDrainsBeforeResetting(t *testing.T) {
@@ -786,43 +1115,31 @@ func TestRunReconnectsAfterRejectingAnInvalidPushedAssignment(t *testing.T) {
 	stop()
 }
 
-func TestRunReportsReconciliationErrorsWithoutDroppingItsStream(t *testing.T) {
+func TestRunDoesNotPollWhileAssignmentStreamIsHealthy(t *testing.T) {
 	ident := newIdentity(t)
 	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
 	baseline.Signature = ident.Sign(signedBytes(baseline))
-	var calls int
-	var mu sync.Mutex
 	client := &replicationClientStub{
 		calls: make(chan struct{}, 4), opened: make(chan struct{}, 2),
 		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
-			mu.Lock()
-			calls++
-			current := calls
-			mu.Unlock()
-			if current == 1 {
-				return nil, status.Error(codes.Unavailable, "temporary reconciliation failure")
-			}
-			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+			return nil, errors.New("healthy assignment stream must not use unary anti-entropy")
 		},
 		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
 			return &blockingReplicationFrames{
 				replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
 					frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+					frameResponse(t, &pb.ReplicateResponse{}),
 				}},
 				ctx: ctx,
 			}, nil
 		},
 	}
-	logs := new(logged)
-	follower := &Follower{Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"), Coordinator: client, CoordinatorID: ident.ID(), Log: logs.logger()}
+	follower := &Follower{Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"), Coordinator: client, CoordinatorID: ident.ID(), Log: new(logged).logger()}
 	stop := run(t, follower, 5*time.Millisecond)
-	deadline := time.Now().Add(time.Second)
-	for logs.count("could not reconcile this node's copies") == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
+	time.Sleep(30 * time.Millisecond)
 	stop()
-	if logs.count("could not reconcile this node's copies") == 0 {
-		t.Fatal("the connected follower did not report a failed anti-entropy request")
+	if got := len(client.calls); got != 0 {
+		t.Fatalf("healthy assignment stream made %d unary requests, want none", got)
 	}
 }
 
@@ -1053,7 +1370,7 @@ func TestAFollowerHoldsItsCopiesForTheStoreItsCoordinatorNames(t *testing.T) {
 
 	coordinator.say("node/second", nil, blob, other)
 	changed, err := follower.sync(ctx)
-	if err != nil || changed {
+	if err != nil || !changed {
 		t.Fatalf("taking up a new name for the store: changed %v, error %v", changed, err)
 	}
 	want := []string{"pool:node/second " + blob, "pool:node/second " + other}
@@ -1202,5 +1519,23 @@ func TestAFollowerThatCannotKeepAListDoesNotActOnIt(t *testing.T) {
 	}
 	if !holds(t, copies, held) || holds(t, copies, fresh) {
 		t.Error("the follower acted on a list it could not keep")
+	}
+}
+
+// Between attempts a follower sleeps until the wait is over or its pins
+// change, and stops sleeping, saying so, when it is told to stop.
+func TestAFollowerSleepsUntilItsWaitIsOverItsPinsChangeOrItStops(t *testing.T) {
+	if !sleepForPinChange(context.Background(), make(chan struct{}), 0) {
+		t.Error("a wait that is over did not end the sleep to try again")
+	}
+	changed := make(chan struct{}, 1)
+	changed <- struct{}{}
+	if !sleepForPinChange(context.Background(), changed, time.Hour) {
+		t.Error("a pin change did not end the sleep to try again")
+	}
+	stopped, stop := context.WithCancel(context.Background())
+	stop()
+	if sleepForPinChange(stopped, make(chan struct{}), time.Hour) {
+		t.Error("a follower told to stop went on to try again")
 	}
 }

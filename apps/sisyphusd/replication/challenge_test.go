@@ -229,6 +229,101 @@ func TestWaitForChallengeWakesForChangeDeadlineOrCancellation(t *testing.T) {
 	}
 }
 
+func TestManagerPushesScheduledChallengesOverTheAssignmentStream(t *testing.T) {
+	r := newRig(t, 1, "one blob")
+	one := put(t, r.store, "one blob")
+	first := r.Replicate(ctx, "follower", &pb.ReplicateRequest{
+		Holding: []string{one}, KeepsLists: true, AnswersChallenges: true,
+	})
+	if len(first.GetChallenges()) != 1 {
+		t.Fatalf("initial challenge count = %d, want one", len(first.GetChallenges()))
+	}
+	baseline := r.Replicate(ctx, "follower", &pb.ReplicateRequest{
+		Holding: []string{one}, KeepsLists: true, AnswersChallenges: true,
+		Answers: answers(t, r.store, first.GetChallenges()),
+	})
+	leaseID := r.BeginLease("follower")
+	r.RenewLease("follower", leaseID)
+	r.mu.Lock()
+	r.Manager.followers["follower"].challengeAt = time.Now().Add(-time.Second)
+	r.notifyChangedLocked()
+	r.mu.Unlock()
+
+	runCtx, stopRun := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() {
+		r.Run(runCtx)
+		close(runDone)
+	}()
+	watchCtx, stopWatch := context.WithCancel(context.Background())
+	updates := make(chan *pb.ReplicateResponse, 1)
+	watchDone := make(chan error, 1)
+	go func() {
+		watchDone <- r.WatchAssignments(watchCtx, "follower", baseline.GetList(), func(response *pb.ReplicateResponse) error {
+			updates <- response
+			return nil
+		})
+	}()
+	select {
+	case response := <-updates:
+		if len(response.GetChallenges()) != 1 || response.GetList() != nil {
+			t.Fatalf("scheduled stream response = %v, want challenge-only response", response)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("coordinator did not push a scheduled challenge to the connected follower")
+	}
+	stopRun()
+	select {
+	case <-runDone:
+	case <-time.After(time.Second):
+		t.Fatal("challenge scheduler did not stop after cancellation")
+	}
+	stopWatch()
+	select {
+	case err := <-watchDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("assignment watcher ended with %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("assignment watcher did not stop after cancellation")
+	}
+}
+
+// A connected follower that once failed to show it holds a blob is asked
+// about it again at the next proof deadline. It still says it holds the
+// blob, and asking is the only way for it to be counted as holding it again:
+// a connected follower makes no unary exchange that would ask instead.
+func TestAFailedBlobIsChallengedAgainOnAStream(t *testing.T) {
+	r := newRig(t, 1, "one blob")
+	one := put(t, r.store, "one blob")
+	asked := r.Replicate(ctx, "follower", &pb.ReplicateRequest{Holding: []string{one}, AnswersChallenges: true}).GetChallenges()
+	leaseID := r.BeginLease("follower")
+	r.RenewLease("follower", leaseID)
+	wrong := answers(t, r.store, asked)
+	wrong[0].Digest = []byte("not the digest")
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{Holding: []string{one}, AnswersChallenges: true, Answers: wrong})
+	r.mu.Lock()
+	f := r.Manager.followers["follower"]
+	_, failed := f.failed[one]
+	_, held := f.held[one]
+	f.challengeAt = time.Now().Add(-time.Second)
+	r.mu.Unlock()
+	if !failed || held {
+		t.Fatalf("after a wrong answer failed=%v held=%v, want it failed and not held", failed, held)
+	}
+
+	r.Manager.issueChallenges(ctx, time.Now())
+	r.mu.Lock()
+	var again []string
+	for _, c := range r.Manager.followers["follower"].pending {
+		again = append(again, c.cid)
+	}
+	r.mu.Unlock()
+	if !slices.Equal(again, []string{one}) {
+		t.Errorf("at the next proof deadline the follower was asked about %v, want the blob it failed to show", again)
+	}
+}
+
 func TestExpireSkipsAChallengeChangedWhileWaitingForItsLock(t *testing.T) {
 	r := newRig(t, 1, "one blob")
 	one := put(t, r.store, "one blob")

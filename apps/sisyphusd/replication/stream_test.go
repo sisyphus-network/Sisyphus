@@ -93,6 +93,9 @@ func TestSendReplicationHellosStopsOnSendError(t *testing.T) {
 }
 
 func TestReadReplicationHelloRejectsIncompleteAndMalformedFrames(t *testing.T) {
+	if _, err := ReadReplicationRequestAfter(nil, nil); err == nil {
+		t.Fatal("a nil first replication frame was accepted")
+	}
 	sequenceMismatch := &pb.ReplicationHello{Sequence: 7, Index: 0, Count: 1, Payload: mustMarshal(t, &pb.ReplicateRequest{List: &pb.KeepList{Sequence: 8}})}
 	missingList := &pb.ReplicationHello{Sequence: 7, Index: 0, Count: 1, Payload: mustMarshal(t, &pb.ReplicateRequest{})}
 	tooMany := &pb.ReplicationHello{Index: 0, Count: maxReplicationFrames + 1}

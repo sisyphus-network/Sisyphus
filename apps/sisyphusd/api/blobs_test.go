@@ -5,14 +5,20 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/replication"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -475,7 +481,7 @@ func TestReplicationStreamRejectsUnexpectedClientFrameAfterHello(t *testing.T) {
 	}
 }
 
-func TestWatchReplicationLeasesStopsAfterCancellation(t *testing.T) {
+func TestWatchReplicationMessagesStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	manager := replication.New(replication.Config{
@@ -483,11 +489,218 @@ func TestWatchReplicationLeasesStopsAfterCancellation(t *testing.T) {
 		Address: func(string) string { return "127.0.0.1:7700" },
 		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
-	err := watchReplicationLeases(ctx, func() (*pb.ReplicationHello, error) {
+	err := watchReplicationMessages(ctx, func() (*pb.ReplicationHello, error) {
 		return &pb.ReplicationHello{Lease: true}, nil
-	}, "follower", 1, manager)
+	}, "follower", 1, manager, func(*pb.ReplicateResponse) error { return nil })
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("watchReplicationLeases returned %v, want context canceled", err)
+		t.Fatalf("watchReplicationMessages returned %v, want context canceled", err)
+	}
+}
+
+func TestWatchReplicationMessagesRejectsMalformedLeaseAndPassesOnSendErrors(t *testing.T) {
+	manager := replication.New(replication.Config{
+		Identity: newIdentity(t), Store: storage.NewMemory(), StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7700" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	malformed := watchReplicationMessages(context.Background(), func() (*pb.ReplicationHello, error) {
+		return &pb.ReplicationHello{Lease: true, Index: 1}, nil
+	}, "follower", 1, manager, func(*pb.ReplicateResponse) error { return nil })
+	if status.Code(malformed) != codes.InvalidArgument {
+		t.Errorf("malformed lease error = %v, want InvalidArgument", malformed)
+	}
+
+	want := status.Error(codes.Unavailable, "follower disconnected")
+	ackFailure := watchReplicationMessages(context.Background(), func() (*pb.ReplicationHello, error) {
+		return &pb.ReplicationHello{Lease: true}, nil
+	}, "follower", 1, manager, func(*pb.ReplicateResponse) error { return want })
+	if !errors.Is(ackFailure, want) {
+		t.Errorf("capability-ack send error = %v, want original error", ackFailure)
+	}
+
+	frames, err := replication.ReplicationHellos(&pb.ReplicateRequest{KeepsLists: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received int
+	reportFailure := watchReplicationMessages(context.Background(), func() (*pb.ReplicationHello, error) {
+		if received < len(frames) {
+			frame := frames[received]
+			received++
+			return frame, nil
+		}
+		return nil, io.EOF
+	}, "follower", 1, manager, func(*pb.ReplicateResponse) error { return want })
+	if !errors.Is(reportFailure, want) {
+		t.Errorf("state-report response send error = %v, want original error", reportFailure)
+	}
+}
+
+func TestWatchReplicationMessagesAnswersLiveStateReports(t *testing.T) {
+	manager := replication.New(replication.Config{
+		Identity: newIdentity(t), Store: storage.NewMemory(), StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7700" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	frames, err := replication.ReplicationHellos(&pb.ReplicateRequest{KeepsLists: true, AnswersChallenges: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received int
+	var sent []*pb.ReplicateResponse
+	err = watchReplicationMessages(context.Background(), func() (*pb.ReplicationHello, error) {
+		if received < len(frames) {
+			frame := frames[received]
+			received++
+			return frame, nil
+		}
+		return nil, context.Canceled
+	}, "follower", 1, manager, func(response *pb.ReplicateResponse) error {
+		sent = append(sent, response)
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("watchReplicationMessages returned %v, want context canceled", err)
+	}
+	if len(sent) != 1 || sent[0].GetList() == nil {
+		t.Fatalf("live state report got responses %v, want one signed assignment", sent)
+	}
+}
+
+func TestFollowerRecoversEventGapOverReplicationStreamWithoutUnaryPolling(t *testing.T) {
+	previousInterval := replication.Interval
+	replication.Interval = 20 * time.Millisecond
+	t.Cleanup(func() { replication.Interval = previousInterval })
+	ident := newIdentity(t)
+	coordinatorStore := storage.NewMemory()
+	first, err := coordinatorStore.Put(context.Background(), strings.NewReader("first assignment"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := coordinatorStore.Put(context.Background(), strings.NewReader("assignment changed while follower was away"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := replication.New(replication.Config{
+		Identity: ident, Store: coordinatorStore, StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7701" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	var unaryReplicates atomic.Int64
+	server := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if info.FullMethod == "/sisyphus.v1.BlobService/Replicate" {
+			unaryReplicates.Add(1)
+		}
+		return handler(ctx, req)
+	}))
+	pb.RegisterBlobServiceServer(server, &blobService{store: coordinatorStore, replication: manager})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+	})
+	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	followerStore := storage.NewMemory()
+	follower := &replication.Follower{
+		Store: followerStore, ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: pb.NewBlobServiceClient(conn), CoordinatorID: ident.ID(),
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	ctx, cancelManager := context.WithCancel(context.Background())
+	managerDone := make(chan struct{})
+	go func() { manager.Run(ctx); close(managerDone) }()
+	startFollower := func() (context.CancelFunc, <-chan struct{}) {
+		followerCtx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { follower.Run(followerCtx); close(done) }()
+		return cancel, done
+	}
+	waitFor := func(description string, condition func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for !condition() && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !condition() {
+			t.Fatalf("timed out waiting for %s", description)
+		}
+	}
+	stopFollower, followerDone := startFollower()
+	if err := coordinatorStore.Pin(context.Background(), "user", time.Time{}, first); err != nil {
+		t.Fatal(err)
+	}
+	manager.PinsChanged()
+	waitFor("the first pushed assignment to be fetched", func() bool {
+		has, err := followerStore.Has(context.Background(), first)
+		return err == nil && has
+	})
+	waitFor("the stream challenge to be answered", func() bool {
+		status := manager.Status(first.String())
+		return len(status.GetBlobs()) == 1 && len(status.GetBlobs()[0].GetShown()) > 0
+	})
+	stopFollower()
+	select {
+	case <-followerDone:
+	case <-time.After(time.Second):
+		t.Fatal("follower did not stop its first stream")
+	}
+	waitFor("the coordinator to observe the disconnected follower", func() bool {
+		return len(manager.Status("").GetFollowers()) == 0
+	})
+	oldListBytes, err := os.ReadFile(follower.ListFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldList pb.KeepList
+	if err := proto.Unmarshal(oldListBytes, &oldList); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinatorStore.Unpin("user", first); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinatorStore.Pin(context.Background(), "user", time.Time{}, second); err != nil {
+		t.Fatal(err)
+	}
+	manager.PinsChanged()
+	stopFollower, followerDone = startFollower()
+	waitFor("the reconnect baseline to recover the missed assignment", func() bool {
+		hasSecond, secondErr := followerStore.Has(context.Background(), second)
+		hasFirst, firstErr := followerStore.Has(context.Background(), first)
+		return secondErr == nil && firstErr == nil && hasSecond && !hasFirst
+	})
+	newListBytes, err := os.ReadFile(follower.ListFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newList pb.KeepList
+	if err := proto.Unmarshal(newListBytes, &newList); err != nil {
+		t.Fatal(err)
+	}
+	if newList.GetSequence() <= oldList.GetSequence() || len(newList.GetBlobs()) != 1 || newList.GetBlobs()[0].GetCid() != second.String() {
+		t.Errorf("recovered signed list = %v, want a newer list containing only %s", &newList, second)
+	}
+	if got := unaryReplicates.Load(); got != 0 {
+		t.Errorf("stream-capable coordinator used unary Replicate %d times, want none", got)
+	}
+	stopFollower()
+	select {
+	case <-followerDone:
+	case <-time.After(time.Second):
+		t.Fatal("follower did not stop its restarted stream")
+	}
+	cancelManager()
+	select {
+	case <-managerDone:
+	case <-time.After(time.Second):
+		t.Fatal("manager challenge scheduler did not stop")
 	}
 }
 

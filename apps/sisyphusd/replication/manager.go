@@ -4,9 +4,10 @@
 // What is kept is decided where it always was: by the pins of the node that
 // coordinates the pool. Other members, its storage followers, each keep a
 // durable store of their own and hold in it the blobs the coordinator tells
-// them to. A follower asks for its list every so often, fetches what it
-// lacks, drops what is no longer listed, and says what it holds. It decides
-// nothing.
+// them to. A follower receives complete signed assignments on a shared
+// stream, fetches what it lacks, drops what is no longer listed, and reports
+// what it holds. Older coordinators use the unary compatibility exchange.
+// The follower decides nothing.
 //
 // The coordinator signs each list, and the follower keeps the last one. A
 // coordinator that comes back with its key and without its store is shown
@@ -39,8 +40,10 @@ import (
 )
 
 var (
-	// Interval is how often a follower asks its coordinator what to hold.
+	// Interval is how often a legacy follower asks what to hold.
 	Interval = time.Minute
+	// ChallengeInterval is how often connected followers prove what they hold.
+	ChallengeInterval = time.Minute
 	// LeaseInterval is how often a connected follower renews its stream lease.
 	LeaseInterval = 10 * time.Second
 	// LeaseTimeout is how long a coordinator waits without a stream lease
@@ -107,6 +110,10 @@ type Manager struct {
 	// exchanges syncs: Interval, as it was when the manager started.
 	interval time.Duration
 
+	// challengeInterval is captured at construction so changing the package
+	// default in tests cannot race with a running manager.
+	challengeInterval time.Duration
+
 	// atStart holds the blobs that were pinned when the manager started,
 	// and settled is when it stops waiting for followers that may already
 	// hold them.
@@ -165,9 +172,11 @@ type follower struct {
 	held map[string]struct{}
 	// pending is what it was last asked to show it holds, shown what it
 	// has shown and when, and failed what it has failed to show since.
-	pending []challenge
-	shown   map[string]time.Time
-	failed  map[string]struct{}
+	pending       []challenge
+	challengeAt   time.Time
+	challengeSent bool
+	shown         map[string]time.Time
+	failed        map[string]struct{}
 	// stranded lists what it holds from an earlier store of this node that
 	// the present store has not pinned, and unsigned those of them that no
 	// list it showed, signed by this node, names.
@@ -182,19 +191,20 @@ type follower struct {
 // New returns a manager for a coordinator that has just started.
 func New(cfg Config) *Manager {
 	m := &Manager{
-		identity:       cfg.Identity,
-		store:          cfg.Store,
-		replicas:       cfg.Replicas,
-		address:        cfg.Address,
-		fetch:          cfg.Fetch,
-		log:            cfg.Log,
-		grace:          Grace,
-		interval:       Interval,
-		followers:      make(map[string]*follower),
-		leaseIDs:       make(map[string]uint64),
-		challengeLocks: make(map[string]*challengeLock),
-		changed:        make(chan struct{}),
-		restored:       make(map[string]time.Time),
+		identity:          cfg.Identity,
+		store:             cfg.Store,
+		replicas:          cfg.Replicas,
+		address:           cfg.Address,
+		fetch:             cfg.Fetch,
+		log:               cfg.Log,
+		grace:             Grace,
+		interval:          Interval,
+		challengeInterval: ChallengeInterval,
+		followers:         make(map[string]*follower),
+		leaseIDs:          make(map[string]uint64),
+		challengeLocks:    make(map[string]*challengeLock),
+		changed:           make(chan struct{}),
+		restored:          make(map[string]time.Time),
 	}
 	if cfg.Identity != nil {
 		m.id = cfg.Identity.ID()
@@ -394,13 +404,15 @@ func (m *Manager) nextFollowerDeadlineLocked() time.Time {
 func (m *Manager) nextChallengeDeadlineLocked() time.Time {
 	var next time.Time
 	for _, f := range m.followers {
-		if len(f.pending) == 0 {
-			continue
+		var deadline time.Time
+		if len(f.pending) > 0 {
+			// Answers are valid through challengeWindow; wake just after that
+			// inclusive boundary so an answer at the deadline is not rejected.
+			deadline = f.pending[0].issued.Add(challengeWindow + time.Nanosecond)
+		} else if f.leaseEnabled && f.streamOpen {
+			deadline = f.challengeAt
 		}
-		// Answers are valid through challengeWindow; wake just after that
-		// inclusive boundary so an answer at the deadline is not rejected.
-		deadline := f.pending[0].issued.Add(challengeWindow + time.Nanosecond)
-		if next.IsZero() || deadline.Before(next) {
+		if !deadline.IsZero() && (next.IsZero() || deadline.Before(next)) {
 			next = deadline
 		}
 	}
@@ -421,8 +433,67 @@ func (m *Manager) Run(ctx context.Context) {
 			return
 		}
 		if due {
-			m.expireChallenges(ctx, time.Now())
+			now := time.Now()
+			m.expireChallenges(ctx, now)
+			m.issueChallenges(ctx, now)
 		}
+	}
+}
+
+func (m *Manager) issueChallenges(ctx context.Context, now time.Time) {
+	var due []string
+	m.mu.Lock()
+	for caller, f := range m.followers {
+		if f.leaseEnabled && f.streamOpen && len(f.pending) == 0 && !f.challengeAt.IsZero() && !now.Before(f.challengeAt) {
+			due = append(due, caller)
+		}
+	}
+	m.mu.Unlock()
+	slices.Sort(due)
+
+	for _, caller := range due {
+		unlockChallenges := m.lockChallenges(caller)
+		m.mu.Lock()
+		f := m.followers[caller]
+		if f == nil || !f.leaseEnabled || !f.streamOpen || len(f.pending) > 0 || f.challengeAt.IsZero() || now.Before(f.challengeAt) {
+			m.mu.Unlock()
+			unlockChallenges()
+			continue
+		}
+		f.challengeAt = time.Time{} // reserve this firing while challenge bytes are read
+		// What it failed to show is still what it says it holds, and is
+		// what most needs asking about again: held leaves it out.
+		holding := make([]string, 0, len(f.held)+len(f.failed))
+		for id := range f.held {
+			holding = append(holding, id)
+		}
+		failed := make(map[string]struct{}, len(f.failed))
+		for id := range f.failed {
+			failed[id] = struct{}{}
+			holding = append(holding, id)
+		}
+		shown := make(map[string]time.Time, len(f.shown))
+		for id, at := range f.shown {
+			shown[id] = at
+		}
+		m.mu.Unlock()
+
+		pinned, _ := m.pinned(now)
+		asked := m.challenges(ctx, now, holding, pinned, failed, shown)
+		m.mu.Lock()
+		f = m.followers[caller]
+		if f != nil && f.leaseEnabled && f.streamOpen && len(f.pending) == 0 {
+			f.pending = asked
+			f.challengeSent = false
+			if len(asked) == 0 {
+				// There is nothing to prove yet. Try again at the next proof
+				// deadline; pin or follower changes wake this loop sooner.
+				f.challengeAt = now.Add(m.challengeInterval)
+			}
+			m.notifyChangedLocked()
+		}
+		m.mu.Unlock()
+		unlockChallenges()
 	}
 }
 
@@ -494,6 +565,8 @@ func (m *Manager) expireChallenges(ctx context.Context, now time.Time) {
 			m.log.Warn("a storage follower did not show that it holds a blob it says it holds; it is not counted as holding it until it does", "node", item.caller, "cid", id)
 		}
 		f.pending = nil
+		f.challengeAt = item.pending[0].issued.Add(m.challengeInterval)
+		f.challengeSent = false
 		m.notifyChangedLocked()
 		m.mu.Unlock()
 		unlockChallenges()
@@ -516,7 +589,7 @@ func (m *Manager) notifyChangedLocked() {
 // WatchAssignments sends a complete, newly signed list only when this
 // follower's assignment changes. Bursts coalesce because the watcher
 // recomputes from current state after each wake instead of queuing snapshots.
-func (m *Manager) WatchAssignments(ctx context.Context, caller string, last *pb.KeepList, send func(*pb.KeepList) error) error {
+func (m *Manager) WatchAssignments(ctx context.Context, caller string, last *pb.KeepList, send func(*pb.ReplicateResponse) error) error {
 	if m.identity == nil {
 		return nil
 	}
@@ -525,13 +598,29 @@ func (m *Manager) WatchAssignments(ctx context.Context, caller string, last *pb.
 		changed := m.changed
 		deadline := m.nextFollowerDeadlineLocked()
 		m.mu.Unlock()
+		if expires := m.nextPinDeadline(); !expires.IsZero() && (deadline.IsZero() || expires.Before(deadline)) {
+			deadline = expires
+		}
 
 		list := m.changedAssignment(caller, last)
-		if list != nil {
-			if err := send(list); err != nil {
+		m.mu.Lock()
+		var challenged []*pb.Challenge
+		if f := m.followers[caller]; f != nil && f.leaseEnabled && f.streamOpen && !f.challengeSent && len(f.pending) > 0 {
+			challenged = questions(f.pending)
+			f.challengeSent = true
+		}
+		m.mu.Unlock()
+		if list != nil || len(challenged) > 0 {
+			response := &pb.ReplicateResponse{Challenges: challenged}
+			if list != nil {
+				response.Store, response.List = list.GetStore(), list
+			}
+			if err := send(response); err != nil {
 				return err
 			}
-			last = list
+			if list != nil {
+				last = list
+			}
 			continue
 		}
 
@@ -560,6 +649,23 @@ func (m *Manager) WatchAssignments(ctx context.Context, caller string, last *pb.
 			timer.Stop()
 		}
 	}
+}
+
+// nextPinDeadline is the next moment a signed assignment may lose a blob,
+// even if the store's garbage collector has not run yet. Reading the store
+// happens outside m.mu because pin callbacks acquire that lock.
+func (m *Manager) nextPinDeadline() time.Time {
+	now := time.Now()
+	var next time.Time
+	for _, pin := range m.store.Pins() {
+		if pin.Expires.IsZero() || !pin.Expires.After(now) {
+			continue
+		}
+		if next.IsZero() || pin.Expires.Before(next) {
+			next = pin.Expires
+		}
+	}
+	return next
 }
 
 // changedAssignment returns a newly signed list if the follower's current
@@ -713,10 +819,15 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	// Questions still within their time and not yet answered are put
 	// again as they were: a follower may ask more than once before it
 	// answers, to show a list for one. Past their time they have failed.
-	waiting := len(req.GetAnswers()) == 0 && len(pending) > 0 && now.Sub(pending[0].issued) <= challengeWindow
+	// An answer that answers none of the questions now put is a repeat of
+	// one already judged: a follower can be sent the same questions twice,
+	// pushed on its stream and again in the reply to a report it sent
+	// meanwhile, and it answers both. It says nothing of questions put since.
+	answered := currentAnswers(pending, req.GetAnswers())
+	waiting := len(answered) == 0 && len(pending) > 0 && now.Sub(pending[0].issued) <= challengeWindow
 	var verdicts map[string]bool
 	if !waiting {
-		verdicts = m.judge(ctx, now, pending, req.GetAnswers())
+		verdicts = m.judge(ctx, now, pending, answered)
 	}
 	for id, held := range verdicts {
 		delete(proven, id)
@@ -733,6 +844,10 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 		ask = pending
 	case req.GetAnswersChallenges() && len(req.GetAnswers()) == 0:
 		ask = m.challenges(ctx, now, holding, pinned, failed, proven)
+	}
+	challengeAt := time.Time{}
+	if len(ask) == 0 && req.GetAnswersChallenges() {
+		challengeAt = now.Add(m.challengeInterval)
 	}
 
 	m.mu.Lock()
@@ -751,7 +866,8 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	f := &follower{
 		asked: now, leaseEnabled: before.leaseEnabled, streamOpen: before.streamOpen,
 		leaseAt: before.leaseAt, leaseLost: before.leaseLost, fallbackAt: before.fallbackAt,
-		held: make(map[string]struct{}, len(holding)), pending: ask, shown: proven, failed: failed,
+		held: make(map[string]struct{}, len(holding)), pending: ask, challengeAt: challengeAt,
+		challengeSent: len(ask) > 0, shown: proven, failed: failed,
 	}
 	for _, id := range holding {
 		if _, lacks := failed[id]; !lacks {
