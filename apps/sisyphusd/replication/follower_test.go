@@ -282,6 +282,16 @@ type replicationFrames struct {
 	index  int
 }
 
+type recordedLeaseFrames struct {
+	*replicationFrames
+	sent chan *pb.ReplicationHello
+}
+
+func (s *recordedLeaseFrames) Send(frame *pb.ReplicationHello) error {
+	s.sent <- frame
+	return nil
+}
+
 func (s *replicationFrames) Recv() (*pb.ReplicationFrame, error) {
 	if s.index == len(s.frames) {
 		return nil, io.EOF
@@ -294,6 +304,30 @@ func (s *replicationFrames) Recv() (*pb.ReplicationFrame, error) {
 func (*replicationFrames) Send(*pb.ReplicationHello) error { return nil }
 
 func (*replicationFrames) CloseSend() error { return nil }
+
+func TestFollowerRenewsItsReplicationLeaseOnTheOpenStream(t *testing.T) {
+	usual := LeaseInterval
+	LeaseInterval = 5 * time.Millisecond
+	t.Cleanup(func() { LeaseInterval = usual })
+	stream := &recordedLeaseFrames{replicationFrames: &replicationFrames{}, sent: make(chan *pb.ReplicationHello, 2)}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- (&Follower{}).sendLeases(ctx, stream) }()
+	for range 2 {
+		select {
+		case frame := <-stream.sent:
+			if !frame.GetLease() || frame.GetSequence() != 0 || frame.GetIndex() != 0 || frame.GetCount() != 0 || len(frame.GetPayload()) != 0 {
+				t.Fatalf("follower sent malformed lease frame: %v", frame)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("follower did not renew its stream lease")
+		}
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Errorf("lease sender returned %v, want context canceled", err)
+	}
+}
 
 type blockingReplicationFrames struct {
 	*replicationFrames

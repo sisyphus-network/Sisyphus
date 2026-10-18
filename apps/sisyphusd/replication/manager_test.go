@@ -51,6 +51,13 @@ func graceOf(t *testing.T, grace time.Duration) {
 	t.Cleanup(func() { Grace = usual })
 }
 
+func leaseTimeoutOf(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	usual := LeaseTimeout
+	LeaseTimeout = timeout
+	t.Cleanup(func() { LeaseTimeout = usual })
+}
+
 // put stores text and returns its CID, as a string.
 func put(t *testing.T, store *storage.Store, text string) string {
 	t.Helper()
@@ -389,6 +396,113 @@ func TestAFollowerNotHeardFromIsGivenUpOn(t *testing.T) {
 	}
 }
 
+func TestAStreamLeaseMarksAFollowerAbsentBeforeItsShareMoves(t *testing.T) {
+	graceOf(t, 100*time.Millisecond)
+	leaseTimeoutOf(t, 10*time.Millisecond)
+	r := newRig(t, 1)
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	leaseID := r.BeginLease("follower")
+	r.RenewLease("follower", leaseID)
+	if status := r.Status(""); !slices.Equal(status.GetFollowers(), []string{"follower"}) {
+		t.Fatalf("fresh lease reports %v", status.GetFollowers())
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	if status := r.Status(""); len(status.GetFollowers()) != 0 {
+		t.Fatalf("expired stream lease still reports the follower present: %v", status.GetFollowers())
+	}
+	r.mu.Lock()
+	present, retained, _ := r.followersLocked(time.Now())
+	r.mu.Unlock()
+	if len(present) != 0 || !slices.Equal(retained, []string{"follower"}) {
+		t.Fatalf("during Grace present=%v retained=%v, want absent but still retained", present, retained)
+	}
+
+	time.Sleep(110 * time.Millisecond)
+	r.mu.Lock()
+	_, retained, _ = r.followersLocked(time.Now())
+	r.mu.Unlock()
+	if len(retained) != 0 {
+		t.Fatalf("follower remains in placement after Grace: %v", retained)
+	}
+}
+
+func TestAssignmentWatchUsesLeaseAndGraceDeadlines(t *testing.T) {
+	graceOf(t, 35*time.Millisecond)
+	leaseTimeoutOf(t, 10*time.Millisecond)
+	r := newRig(t, 1)
+	baseline := r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true}).GetList()
+	leaseID := r.BeginLease("follower")
+	r.RenewLease("follower", leaseID)
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ended := make(chan error, 1)
+	go func() {
+		ended <- r.WatchAssignments(watchCtx, "follower", baseline, func(*pb.KeepList) error { return nil })
+	}()
+
+	eventually(t, "lease expiry recorded by the assignment deadline", func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		follower := r.Manager.followers["follower"]
+		return follower != nil && !follower.leaseLost.IsZero()
+	})
+	eventually(t, "follower removed after the Grace deadline", func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.Manager.followers["follower"] == nil
+	})
+
+	cancel()
+	select {
+	case err := <-ended:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("assignment watcher ended with %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("assignment watcher did not stop after cancellation")
+	}
+}
+
+func TestLegacyUnaryFollowerRemainsPresentWithoutLeaseFrames(t *testing.T) {
+	graceOf(t, time.Minute)
+	r := newRig(t, 1)
+	r.Replicate(ctx, "legacy", &pb.ReplicateRequest{KeepsLists: true})
+	leaseID := r.BeginLease("legacy")
+	r.EndLease("legacy", leaseID)
+	if status := r.Status(""); !slices.Equal(status.GetFollowers(), []string{"legacy"}) {
+		t.Fatalf("legacy follower without lease frames is not retained as present: %v", status.GetFollowers())
+	}
+}
+
+func TestUnaryAntiEntropyTakesOverAfterTheLeaseStreamEnds(t *testing.T) {
+	r := newRig(t, 1)
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	leaseID := r.BeginLease("follower")
+	r.RenewLease("follower", leaseID)
+	r.EndLease("follower", leaseID)
+	if status := r.Status(""); len(status.GetFollowers()) != 0 {
+		t.Fatalf("ended stream still reports the follower present: %v", status.GetFollowers())
+	}
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	if status := r.Status(""); !slices.Equal(status.GetFollowers(), []string{"follower"}) {
+		t.Fatalf("successful unary fallback did not restore legacy liveness: %v", status.GetFollowers())
+	}
+}
+
+func TestAnOldStreamCannotEndItsReplacementLease(t *testing.T) {
+	r := newRig(t, 1)
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	oldLease := r.BeginLease("follower")
+	r.RenewLease("follower", oldLease)
+	newLease := r.BeginLease("follower")
+	r.RenewLease("follower", newLease)
+	r.EndLease("follower", oldLease)
+	if status := r.Status(""); !slices.Equal(status.GetFollowers(), []string{"follower"}) {
+		t.Fatalf("ending the stale stream expired the replacement lease: %v", status.GetFollowers())
+	}
+}
+
 func TestCopiesOfAStoreThatWasLostAreKeptUntilRestored(t *testing.T) {
 	graceOf(t, time.Minute)
 	r := newRig(t, 1)
@@ -487,6 +601,12 @@ func TestALostBlobIsFetchedBackFromAFollowerThatCanSupplyIt(t *testing.T) {
 	r.followers["b"], r.followers["c"] = storage.NewMemory(), storage.NewMemory()
 	for _, id := range []string{"a", "b", "c"} {
 		r.ask(id, r.now, []string{lost})
+	}
+	leaseID := r.BeginLease("c")
+	r.RenewLease("c", leaseID)
+	r.EndLease("c", leaseID)
+	if holders := r.Holders(lost, ""); slices.ContainsFunc(holders, func(holder *pb.BlobHolder) bool { return holder.GetNodeId() == "c" }) {
+		t.Errorf("an absent follower was exposed for ordinary fetches: %v", holders)
 	}
 	if _, err := kept.Open(ctx, c); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("opening a blob no follower can supply: %v", err)

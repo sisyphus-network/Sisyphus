@@ -214,6 +214,9 @@ message ReplicationHello {
   uint32 index = 2;
   uint32 count = 3;
   bytes payload = 4;
+  // A lease renews the follower's presence without repeating its full state.
+  // Lease messages have no sequence, frame count, index or payload.
+  bool lease = 5;
 }
 
 // ReplicationFrame is one bounded part of a serialized ReplicateResponse.

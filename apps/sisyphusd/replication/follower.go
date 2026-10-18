@@ -85,7 +85,11 @@ func (f *Follower) Run(ctx context.Context) {
 		if err == nil && stream != nil {
 			updates := make(chan *pb.ReplicateResponse, 1)
 			streamEnded := make(chan error, 1)
+			leaseEnded := make(chan error, 1)
+			leaseCtx, stopLeases := context.WithCancel(ctx)
+			leaseResult := leaseEnded
 			go f.receiveAssignments(ctx, stream, updates, streamEnded)
+			go func() { leaseResult <- f.sendLeases(leaseCtx, stream) }()
 
 			wait := interval
 			if changed {
@@ -132,7 +136,8 @@ func (f *Follower) Run(ctx context.Context) {
 						// RPC rather than reopening that unsupported stream each tick.
 						f.Log.Info("the coordinator does not push storage assignments; continuing periodic reconciliation")
 						cancel()
-						updates, streamEnded = nil, nil
+						stopLeases()
+						updates, streamEnded, leaseEnded = nil, nil, nil
 						continue
 					}
 					if ctx.Err() == nil && !failing {
@@ -141,6 +146,15 @@ func (f *Follower) Run(ctx context.Context) {
 					failing = ctx.Err() == nil
 					connected = false
 					initial = true
+				case err := <-leaseEnded:
+					if ctx.Err() == nil {
+						if !failing {
+							f.Log.Warn("the storage assignment lease could not be renewed; reconnecting", "error", err)
+						}
+						failing = true
+						connected = false
+						initial = true
+					}
 				case <-timer.C:
 					changed, err = f.sync(ctx)
 					if err != nil && !failing && ctx.Err() == nil {
@@ -166,6 +180,7 @@ func (f *Follower) Run(ctx context.Context) {
 			}
 			timer.Stop()
 			cancel()
+			stopLeases()
 			if ctx.Err() != nil {
 				return
 			}
@@ -321,9 +336,6 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 				streamErr = sendReplicationHellos(stream.Send, frames)
 			}
 			if streamErr == nil {
-				streamErr = stream.CloseSend()
-			}
-			if streamErr == nil {
 				told, streamErr = ReadReplicationResponse(stream.Recv)
 			}
 			if streamErr == nil {
@@ -399,6 +411,24 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 		activeCancel = nil
 	}
 	return changed, nil
+}
+
+func (f *Follower) sendLeases(ctx context.Context, stream pb.BlobService_ReplicationClient) error {
+	if err := stream.Send(&pb.ReplicationHello{Lease: true}); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(LeaseInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if err := stream.Send(&pb.ReplicationHello{Lease: true}); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func (f *Follower) applyPush(ctx context.Context, response *pb.ReplicateResponse) (bool, error) {

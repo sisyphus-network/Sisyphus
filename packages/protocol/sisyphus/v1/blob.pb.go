@@ -1187,11 +1187,14 @@ func (x *ReplicateResponse) GetChallenges() []*Challenge {
 // sequence zero. The coordinator assembles the complete request before
 // verifying or acting on the list.
 type ReplicationHello struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Sequence      uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
-	Index         uint32                 `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`
-	Count         uint32                 `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
-	Payload       []byte                 `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Sequence uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Index    uint32                 `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`
+	Count    uint32                 `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
+	Payload  []byte                 `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	// A lease renews the follower's presence without repeating its full state.
+	// Lease messages have no sequence, frame count, index or payload.
+	Lease         bool `protobuf:"varint,5,opt,name=lease,proto3" json:"lease,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1252,6 +1255,13 @@ func (x *ReplicationHello) GetPayload() []byte {
 		return x.Payload
 	}
 	return nil
+}
+
+func (x *ReplicationHello) GetLease() bool {
+	if x != nil {
+		return x.Lease
+	}
+	return false
 }
 
 // ReplicationFrame is one bounded part of a serialized ReplicateResponse.
@@ -1853,12 +1863,13 @@ const file_sisyphus_v1_blob_proto_rawDesc = "" +
 	"\tshow_list\x18\x04 \x01(\bR\bshowList\x126\n" +
 	"\n" +
 	"challenges\x18\x05 \x03(\v2\x16.sisyphus.v1.ChallengeR\n" +
-	"challenges\"t\n" +
+	"challenges\"\x8a\x01\n" +
 	"\x10ReplicationHello\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\rR\x05index\x12\x14\n" +
 	"\x05count\x18\x03 \x01(\rR\x05count\x12\x18\n" +
-	"\apayload\x18\x04 \x01(\fR\apayload\"t\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\x12\x14\n" +
+	"\x05lease\x18\x05 \x01(\bR\x05lease\"t\n" +
 	"\x10ReplicationFrame\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\rR\x05index\x12\x14\n" +
