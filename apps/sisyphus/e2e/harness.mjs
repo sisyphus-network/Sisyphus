@@ -106,7 +106,7 @@ export async function open(page, name) {
  * say, or { tool, arguments } to call one of the planner's tools.
  */
 export async function standInModel(...replies) {
-  const model = { asked: [], pulled: [], removed: [], authorizations: [], url: '', aborted: 0, pending: [] }
+  const model = { asked: [], pulled: [], removed: [], authorizations: [], tagRequests: 0, failTags: false, url: '', aborted: 0, pending: [] }
   const tags = [
     { name: 'test-model', size: 4900000000 },
     { name: 'second-model', size: 1200000000 },
@@ -131,7 +131,14 @@ export async function standInModel(...replies) {
     request.on('end', () => {
       model.authorizations.push(request.headers.authorization ?? '')
       if (request.url === '/api/version') return response.end('{"version":"test"}')
-      if (request.url === '/api/tags') return response.end(JSON.stringify({ models: tags }))
+      if (request.url === '/api/tags') {
+        model.tagRequests++
+        if (model.failTags) {
+          response.statusCode = 503
+          return response.end('temporarily unavailable')
+        }
+        return response.end(JSON.stringify({ models: tags }))
+      }
       if (request.url === '/api/show') return response.end('{"capabilities":["completion","tools"]}')
       const requestBody = JSON.parse(body || '{}')
       if (request.url === '/api/delete' && request.method === 'DELETE') {

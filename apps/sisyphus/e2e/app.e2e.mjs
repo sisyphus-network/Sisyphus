@@ -858,6 +858,39 @@ test('model settings load and save a local provider used by the planner', async 
   }
 })
 
+test('model provider setup retries a failed model-list request', async () => {
+  const model = await standInModel()
+  model.failTags = true
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'Model provider')
+    await page.getByRole('button', { name: 'Add provider' }).first().click()
+    await selectProvider(page, 'Ollama')
+    await page.getByRole('textbox', { name: 'Profile name' }).fill('Retry test provider')
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Service URL' }).fill(model.url)
+
+    const connection = page.getByRole('region', { name: 'Connection' })
+    await connection.getByText('Could not list models', { exact: true }).waitFor()
+    const retry = connection.getByRole('button', { name: 'Load models', exact: true })
+    assert.equal(model.tagRequests, 1)
+
+    model.failTags = false
+    await retry.click()
+    await connection.getByText('models available', { exact: true }).waitFor()
+    assert.equal(model.tagRequests, 2, 'the explicit retry should make exactly one new request')
+
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
+    await page.getByRole('button', { name: 'Model', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Model' }).getByRole('button', { name: 'test-model', exact: true }).waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
 test('model lending inspects Ollama, saves selected models and shows restart state', async () => {
   const ollama = await standInModel()
   const profile = testProfile()
