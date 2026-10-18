@@ -43,3 +43,16 @@ func TestWhereACallerIs(t *testing.T) {
 		t.Errorf("a call from nowhere is at %q", got)
 	}
 }
+
+// A worker's serving address is known only while it is connected. The
+// answer for one that is not, used when a follower that has gone is looked
+// up, must not depend on a daemon test happening to ask at the right time.
+func TestTheServeAddressOfAWorkerThatIsNotConnectedIsEmpty(t *testing.T) {
+	c := &Coordinator{workers: map[string]*worker{"here": {serveAddress: "127.0.0.1:4001"}}}
+	if got := c.ServeAddress("here"); got != "127.0.0.1:4001" {
+		t.Errorf("a connected worker serves at %q, want 127.0.0.1:4001", got)
+	}
+	if got := c.ServeAddress("gone"); got != "" {
+		t.Errorf("a worker that is not connected serves at %q, want nothing", got)
+	}
+}
