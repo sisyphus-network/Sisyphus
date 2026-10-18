@@ -191,17 +191,18 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	//
 	// The asking is bounded by offersWait and by the session, so a slow or
 	// absent model server delays a task's result by no more than that. One
-	// that has not answered in time changes nothing. After a task, it is
-	// asked once more in the background (again), so a late answer still
-	// corrects what the coordinator was told; but the result has gone first,
-	// and until then a model found missing may be asked for here again. A
-	// background asking that times out asks no more, so a server that
-	// never answers is not asked on a timer. Answers are asked for outside the lock, so tasks that end
+	// that has not answered in time changes nothing, and refresh says so.
+	// After a task, it is then asked once more in the background, but only
+	// once the task's result has been sent, so the result always goes
+	// first and a late answer still corrects what the coordinator was told.
+	// Until then a model found missing may be asked for here again. An
+	// asking in the background that times out asks no more, so a server
+	// that never answers is not asked on a timer. Answers are asked for outside the lock, so tasks that end
 	// together do not wait in turn, and one asked for earlier never replaces
 	// one asked for later.
 	var offeredMu sync.Mutex
 	var asked, applied uint64
-	refresh := func(again bool) {
+	refresh := func() (late bool) {
 		offeredMu.Lock()
 		asked++
 		mine := asked
@@ -210,15 +211,12 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 		defer done()
 		now := w.labelsWithin(within)
 		if within.Err() != nil {
-			if again {
-				w.OffersChanged()
-			}
-			return
+			return true
 		}
 		offeredMu.Lock()
 		defer offeredMu.Unlock()
 		if mine < applied {
-			return
+			return false
 		}
 		applied = mine
 		if !slices.Equal(now, offered) {
@@ -228,6 +226,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				RunningTasks: uint32(running.Load()), Labels: &pb.Labels{Labels: now},
 			}}})
 		}
+		return false
 	}
 	tasks.Add(1)
 	go func() {
@@ -247,7 +246,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				}
 				send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: heartbeat}})
 			case <-w.changes():
-				refresh(false)
+				refresh()
 			case <-ctx.Done():
 				return
 			}
@@ -312,10 +311,11 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 					pass()
 					// Running a model loads it, and failing to may mean it
 					// is gone: what the worker offers is told first.
-					if runtime.ModelNeeded(assigned.GetNeeds()) != "" {
-						refresh(true)
-					}
+					late := runtime.ModelNeeded(assigned.GetNeeds()) != "" && refresh()
 					send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskResult{TaskResult: result}})
+					if late {
+						w.OffersChanged()
+					}
 				}
 			}()
 		}
