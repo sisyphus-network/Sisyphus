@@ -3,9 +3,10 @@ package api
 import (
 	"context"
 	"errors"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -103,6 +104,15 @@ func (s *poolService) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRe
 
 func (s *poolService) Relays(context.Context, *pb.RelaysRequest) (*pb.RelaysResponse, error) {
 	return &pb.RelaysResponse{Addresses: s.coordinator.Relays()}, nil
+}
+
+func (s *poolService) WatchRelays(_ *pb.RelaysRequest, stream grpc.ServerStreamingServer[pb.RelaysResponse]) error {
+	if s.coordinator == nil {
+		return status.Error(codes.FailedPrecondition, "this node does not coordinate a pool")
+	}
+	return s.coordinator.WatchRelays(stream.Context(), func(addresses []string) error {
+		return stream.Send(&pb.RelaysResponse{Addresses: addresses})
+	})
 }
 
 func (s *poolService) IsMember(_ context.Context, req *pb.IsMemberRequest) (*pb.IsMemberResponse, error) {

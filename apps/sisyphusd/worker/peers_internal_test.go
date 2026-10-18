@@ -3,6 +3,8 @@ package worker
 import (
 	"context"
 	"errors"
+	"io"
+	"slices"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ type roster struct {
 	members map[string]bool
 	err     error
 	asked   int
+	relays  grpc.ServerStreamingClient[pb.RelaysResponse]
 }
 
 func (r *roster) IsMember(_ context.Context, req *pb.IsMemberRequest, _ ...grpc.CallOption) (*pb.IsMemberResponse, error) {
@@ -28,6 +31,114 @@ func (r *roster) IsMember(_ context.Context, req *pb.IsMemberRequest, _ ...grpc.
 		return nil, r.err
 	}
 	return &pb.IsMemberResponse{Member: r.members[req.GetNodeId()]}, nil
+}
+
+func (r *roster) WatchRelays(context.Context, *pb.RelaysRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.RelaysResponse], error) {
+	return r.relays, nil
+}
+
+type relayUpdates struct {
+	grpc.ServerStreamingClient[pb.RelaysResponse]
+	updates chan *pb.RelaysResponse
+}
+
+type relayWatchPool struct {
+	pb.PoolServiceClient
+	streams chan grpc.ServerStreamingClient[pb.RelaysResponse]
+	calls   chan struct{}
+}
+
+func (p *relayWatchPool) WatchRelays(context.Context, *pb.RelaysRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.RelaysResponse], error) {
+	p.calls <- struct{}{}
+	return <-p.streams, nil
+}
+
+func (s *relayUpdates) Recv() (*pb.RelaysResponse, error) {
+	update, ok := <-s.updates
+	if !ok {
+		return nil, io.EOF
+	}
+	return update, nil
+}
+
+func TestMembersPublishesChangedRelaySnapshotsOnly(t *testing.T) {
+	stream := &relayUpdates{updates: make(chan *pb.RelaysResponse, 3)}
+	members := &Members{pool: &roster{relays: stream}, relayChanges: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- members.WatchRelays(ctx) }()
+
+	addresses := []string{"/ip4/192.0.2.1/tcp/7700/p2p/relay"}
+	stream.updates <- &pb.RelaysResponse{Addresses: addresses}
+	select {
+	case <-members.RelayChanges():
+	case <-time.After(time.Second):
+		t.Fatal("relay snapshot did not notify the consumer")
+	}
+	if got := members.Relays(ctx); !slices.Equal(got, addresses) {
+		t.Fatalf("Relays() = %v, want %v", got, addresses)
+	}
+
+	stream.updates <- &pb.RelaysResponse{Addresses: addresses}
+	select {
+	case <-members.RelayChanges():
+		t.Fatal("an unchanged relay snapshot notified the consumer")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	stream.updates <- &pb.RelaysResponse{}
+	select {
+	case <-members.RelayChanges():
+	case <-time.After(time.Second):
+		t.Fatal("relay removal did not notify the consumer")
+	}
+	if got := members.Relays(ctx); len(got) != 0 {
+		t.Fatalf("Relays() after removal = %v, want none", got)
+	}
+
+	cancel()
+	close(stream.updates)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("relay watcher did not stop")
+	}
+}
+
+func TestRunRelayWatchResetsBackoffAfterReceivingSnapshot(t *testing.T) {
+	stream := func(snapshot bool) *relayUpdates {
+		updates := make(chan *pb.RelaysResponse, 1)
+		if snapshot {
+			updates <- &pb.RelaysResponse{Addresses: []string{"relay"}}
+		}
+		close(updates)
+		return &relayUpdates{updates: updates}
+	}
+	lastStream := &relayUpdates{updates: make(chan *pb.RelaysResponse)}
+	pool := &relayWatchPool{
+		streams: make(chan grpc.ServerStreamingClient[pb.RelaysResponse], 3),
+		calls:   make(chan struct{}, 3),
+	}
+	pool.streams <- stream(true)
+	pool.streams <- stream(false)
+	pool.streams <- lastStream
+	members := &Members{pool: pool, relayChanges: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := time.Now()
+	go members.runRelayWatch(ctx, nil, 150*time.Millisecond, 600*time.Millisecond)
+	for range 3 {
+		select {
+		case <-pool.calls:
+		case <-time.After(400 * time.Millisecond):
+			t.Fatal("relay stream did not reconnect after a healthy snapshot reset the backoff")
+		}
+	}
+	close(lastStream.updates)
+	if elapsed := time.Since(started); elapsed >= 400*time.Millisecond {
+		t.Fatalf("third stream started after %v; expected reset backoff", elapsed)
+	}
 }
 
 func TestMembersRemembersAYesForAWhileAndNeverANo(t *testing.T) {
@@ -90,4 +201,23 @@ func TestNewMembersAsksOverTheGivenConnection(t *testing.T) {
 
 func workerOnlyCreds() credentials.TransportCredentials {
 	return insecure.NewCredentials()
+}
+
+// Relay lists that change while the consumer is busy wake it once, and it
+// then reads the latest.
+func TestRelayChangesWhileTheConsumerIsBusyComeToOne(t *testing.T) {
+	stream := &relayUpdates{updates: make(chan *pb.RelaysResponse, 2)}
+	members := &Members{pool: &roster{relays: stream}, relayChanges: make(chan struct{}, 1)}
+	stream.updates <- &pb.RelaysResponse{Addresses: []string{"first"}}
+	stream.updates <- &pb.RelaysResponse{Addresses: []string{"second"}}
+	close(stream.updates)
+	if err := members.WatchRelays(context.Background()); err == nil {
+		t.Fatal("the watch outlived its stream")
+	}
+	if len(members.RelayChanges()) != 1 {
+		t.Errorf("%d wakings waiting, want one", len(members.RelayChanges()))
+	}
+	if got := members.Relays(context.Background()); !slices.Equal(got, []string{"second"}) {
+		t.Errorf("Relays() = %v, want the latest", got)
+	}
 }

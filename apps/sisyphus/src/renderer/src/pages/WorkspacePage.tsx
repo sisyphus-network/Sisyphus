@@ -13,6 +13,7 @@ import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/li
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { AgentChat } from '@/components/assistant/agent-chat'
 import { visiblePanelWidth, stepPanelWidth } from '@/lib/panel-width'
+import { locatePeers, peerLocationsKey } from '@/lib/globe-markers'
 import { webglAvailable } from '@/lib/webgl'
 import { useWebgl } from '@/hooks/use-webgl'
 
@@ -172,12 +173,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, peers, nodeLabel,
   }, [active, applyHologramStyle, fitCameraToViewport])
 
   const location = countryCode ? countryCentroids.get(countryCode.toUpperCase()) : undefined
-  const peerLocations = peers.flatMap((peer) => {
-    const peerLocation = peer.countryCode ? countryCentroids.get(peer.countryCode.toUpperCase()) : undefined
-    return peerLocation ? [{ peerId: peer.peerId, ...peerLocation, countryCode: peer.countryCode }] : []
-  }).sort((a, b) => a.peerId.localeCompare(b.peerId))
-  const peerLocationsKey = JSON.stringify(peerLocations.map(({ peerId, countryCode }) => [peerId, countryCode]))
-  const stablePeerLocations = useMemo(() => peerLocations, [peerLocationsKey])
+  const peerLocations = locatePeers(peers, countryCentroids)
+  const locationsKey = peerLocationsKey(peerLocations)
+  const stablePeerLocations = useMemo(() => peerLocations, [locationsKey])
   const points = useMemo(() => {
     const own = location ? [{ ...location, label: nodeLabel, color: theme.accent }] : []
     const known = stablePeerLocations.map((peer) => ({ ...peer, label: `${peer.peerId.slice(0, 12)} · ${peer.countryCode}`, color: theme.accent }))

@@ -741,6 +741,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		blobs = remote
 		members := worker.NewMembers(remote.Conn())
+		go members.RunRelayWatch(ctx, log)
 		// A storage follower keeps a second store, a durable one, for the
 		// copies its coordinator has it hold, and serves what is in either.
 		var served api.Opener = store
@@ -783,7 +784,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// do. Only the coordinator and the pool's members are let in.
 		// One that has a port open for the purpose relays as the coordinator
 		// does, and every worker keeps a place on each member that relays.
-		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, Discover: *discovery == "on", Log: log, PeerChanged: func() {
+		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, MoreRelaysChanged: members.RelayChanges(), Discover: *discovery == "on", Log: log, PeerChanged: func() {
 			local.NodeInfoChanges.Notify()
 			if watcher := mutual.Load(); watcher != nil {
 				watcher.nudge()
@@ -1057,7 +1058,10 @@ func runDaemon(ctx context.Context, args []string) error {
 			lis.Close()
 			return err
 		}
-		pages := &http.Server{Handler: api.NewWebAppHandler(local, allowedWebOrigins, webUI)}
+		if webAccess.browserAccess == nil {
+			webAccess.browserAccess = api.NewBrowserAccessManager(local)
+		}
+		pages := &http.Server{Handler: api.NewWebAppHandlerWithBrowserAccess(local, allowedWebOrigins, webUI, webAccess.browserAccess)}
 		defer pages.Close()
 		log.Info("local API listening for development web pages", "addr", lis.Addr().String(), "origins", allowedWebOrigins, "ui", *webUIDir != "")
 		go pages.Serve(lis)

@@ -35,18 +35,19 @@ import (
 // webAccessRuntime owns the optional, HTTPS-only browser listener. The local
 // Electron API and the node-to-node P2P listener are deliberately independent.
 type webAccessRuntime struct {
-	mu          sync.Mutex
-	db          webAccessStore
-	dataDir     string
-	local       *api.LocalConfig
-	origins     []string
-	ui          fs.FS
-	log         *slog.Logger
-	server      *http.Server
-	addr        string
-	listeners   []net.Listener
-	listen      func(network, address string) (net.Listener, error)
-	fingerprint func(string) (string, error)
+	mu            sync.Mutex
+	db            webAccessStore
+	dataDir       string
+	local         *api.LocalConfig
+	origins       []string
+	ui            fs.FS
+	log           *slog.Logger
+	server        *http.Server
+	addr          string
+	listeners     []net.Listener
+	listen        func(network, address string) (net.Listener, error)
+	fingerprint   func(string) (string, error)
+	browserAccess *api.BrowserAccessManager
 }
 
 type webAccessStore interface {
@@ -235,8 +236,11 @@ func (w *webAccessRuntime) start(config nodedb.WebAccessConfig) error {
 	local := *w.local
 	local.AllowLAN = true
 	local.PairingOrigin = strings.TrimRight(public.String(), "/")
+	if w.browserAccess == nil {
+		w.browserAccess = api.NewBrowserAccessManager(local)
+	}
 	server := &http.Server{
-		Handler:           api.NewWebAppHandler(local, w.origins, w.ui),
+		Handler:           api.NewWebAppHandlerWithBrowserAccess(local, w.origins, w.ui, w.browserAccess),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}

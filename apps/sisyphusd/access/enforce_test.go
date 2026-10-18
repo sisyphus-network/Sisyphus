@@ -106,6 +106,11 @@ func try(conn *grpc.ClientConn) map[string]codes.Code {
 	result["swarm key"] = status.Code(err)
 	_, err = pb.NewPoolServiceClient(conn).RemoveMember(ctx, &pb.RemoveMemberRequest{})
 	result["remove member"] = status.Code(err)
+	relays, err := pb.NewPoolServiceClient(conn).WatchRelays(ctx, &pb.RelaysRequest{})
+	if err == nil {
+		_, err = relays.Recv()
+	}
+	result["watch relays"] = status.Code(err)
 
 	_, err = pb.NewBlobServiceClient(conn).Replicate(ctx, &pb.ReplicateRequest{})
 	result["ask what to hold"] = status.Code(err)
@@ -146,22 +151,22 @@ func TestEachRoleMayMakeOnlyItsOwnCalls(t *testing.T) {
 		{"the owner", g.server, map[string]codes.Code{
 			"list nodes": yes, "submit job": stub, "stat blob": stub, "get blob": yes, "collect garbage": stub,
 			"take tasks": stub, "join": stub, "invite": stub, "remove member": stub, "swarm key": stub,
-			"ask what to hold": stub, "list copies": stub, "restore": stub,
+			"watch relays": stub, "ask what to hold": stub, "list copies": stub, "restore": stub,
 		}},
 		{"a worker", worker, map[string]codes.Code{
 			"list nodes": no, "submit job": no, "stat blob": stub, "get blob": yes, "collect garbage": no,
 			"take tasks": stub, "join": stub, "invite": no, "remove member": no, "swarm key": stub,
-			"ask what to hold": stub, "list copies": no, "restore": no,
+			"watch relays": stub, "ask what to hold": stub, "list copies": no, "restore": no,
 		}},
 		{"a client", client, map[string]codes.Code{
 			"list nodes": yes, "submit job": stub, "stat blob": stub, "get blob": yes, "collect garbage": stub,
 			"take tasks": no, "join": stub, "invite": no, "remove member": no, "swarm key": stub,
-			"ask what to hold": no, "list copies": stub, "restore": stub,
+			"watch relays": no, "ask what to hold": no, "list copies": stub, "restore": stub,
 		}},
 		{"a node never admitted", stranger, map[string]codes.Code{
 			"list nodes": no, "submit job": no, "stat blob": no, "get blob": no, "collect garbage": no,
 			"take tasks": no, "join": stub, "invite": no, "remove member": no, "swarm key": no,
-			"ask what to hold": no, "list copies": no, "restore": no,
+			"watch relays": no, "ask what to hold": no, "list copies": no, "restore": no,
 		}},
 	}
 	for _, tt := range tests {
