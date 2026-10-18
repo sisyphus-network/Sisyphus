@@ -309,6 +309,19 @@ func (s *blockingReplicationFrames) Recv() (*pb.ReplicationFrame, error) {
 	return nil, s.ctx.Err()
 }
 
+type failingReplicationFrames struct {
+	*replicationFrames
+	err error
+}
+
+func (s *failingReplicationFrames) Recv() (*pb.ReplicationFrame, error) {
+	frame, err := s.replicationFrames.Recv()
+	if !errors.Is(err, io.EOF) {
+		return frame, err
+	}
+	return nil, s.err
+}
+
 type replicationClientStub struct {
 	pb.BlobServiceClient
 	replicate func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error)
@@ -467,20 +480,121 @@ func TestRunKeepsUnaryReconciliationWhenCoordinatorClosesStreamCleanly(t *testin
 		Coordinator: client, CoordinatorID: ident.ID(), Log: logs.logger(),
 	}
 	stop := run(t, follower, 5*time.Millisecond)
-	time.Sleep(100 * time.Millisecond)
+	for range 2 {
+		select {
+		case <-client.calls:
+		case <-time.After(5 * time.Second):
+			stop()
+			t.Fatal("the follower stopped reconciling after the stream ended")
+		}
+	}
 	stop()
 
 	if got := len(client.opened); got != 1 {
 		t.Errorf("opened assignment stream %d times, want one", got)
-	}
-	if got := len(client.calls); got < 2 {
-		t.Errorf("made %d unary anti-entropy calls, want at least two after the stream ended", got)
 	}
 	if got := logs.count("the coordinator does not push storage assignments"); got != 1 {
 		t.Errorf("logged unsupported-stream info %d times, want one", got)
 	}
 	if got := logs.count("the storage assignment stream ended; reconnecting"); got != 0 {
 		t.Errorf("logged %d stream reconnect warnings for a clean EOF, want none", got)
+	}
+}
+
+func TestRunReopensAssignmentStreamAfterUnaryFailureFollowingCleanEOF(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	var calls int
+	var mu sync.Mutex
+	var streams int
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 8), opened: make(chan struct{}, 4),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls++
+			if calls == 1 {
+				return nil, status.Error(codes.Unavailable, "coordinator restarted")
+			}
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
+			streams++
+			if streams == 2 {
+				return &blockingReplicationFrames{
+					replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+						frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+					}},
+					ctx: ctx,
+				}, nil
+			}
+			return &replicationFrames{frames: []*pb.ReplicationFrame{
+				frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+			}}, nil
+		},
+	}
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: new(logged).logger(),
+	}
+	stop := run(t, follower, 5*time.Millisecond)
+	for range 2 {
+		select {
+		case <-client.opened:
+		case <-time.After(time.Second):
+			stop()
+			t.Fatal("the follower did not reopen its stream after unary reconciliation failed")
+		}
+	}
+	stop()
+}
+
+func TestRunReconnectsAfterReplicationStreamError(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	logs := new(logged)
+	var streams int
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 8), opened: make(chan struct{}, 4),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
+			streams++
+			if streams == 1 {
+				return &failingReplicationFrames{
+					replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+						frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+					}},
+					err: status.Error(codes.Unavailable, "stream interrupted"),
+				}, nil
+			}
+			return &blockingReplicationFrames{
+				replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+					frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+				}},
+				ctx: ctx,
+			}, nil
+		},
+	}
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: logs.logger(),
+	}
+	stop := run(t, follower, 5*time.Millisecond)
+	for range 2 {
+		select {
+		case <-client.opened:
+		case <-time.After(time.Second):
+			stop()
+			t.Fatal("the follower did not reconnect after a replication stream error")
+		}
+	}
+	stop()
+	if got := logs.count("the storage assignment stream ended; reconnecting"); got != 1 {
+		t.Errorf("logged stream reconnect warning %d times, want one", got)
 	}
 }
 
