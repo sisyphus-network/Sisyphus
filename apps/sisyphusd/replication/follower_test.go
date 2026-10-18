@@ -446,6 +446,44 @@ func TestRunImmediatelyReportsChangedLegacyBaseline(t *testing.T) {
 	}
 }
 
+func TestRunKeepsUnaryReconciliationWhenCoordinatorClosesStreamCleanly(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	logs := new(logged)
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 64), opened: make(chan struct{}, 64),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(context.Context) (pb.BlobService_ReplicationClient, error) {
+			return &replicationFrames{frames: []*pb.ReplicationFrame{
+				frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+			}}, nil
+		},
+	}
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: logs.logger(),
+	}
+	stop := run(t, follower, 5*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	stop()
+
+	if got := len(client.opened); got != 1 {
+		t.Errorf("opened assignment stream %d times, want one", got)
+	}
+	if got := len(client.calls); got < 2 {
+		t.Errorf("made %d unary anti-entropy calls, want at least two after the stream ended", got)
+	}
+	if got := logs.count("the coordinator does not push storage assignments"); got != 1 {
+		t.Errorf("logged unsupported-stream info %d times, want one", got)
+	}
+	if got := logs.count("the storage assignment stream ended; reconnecting"); got != 0 {
+		t.Errorf("logged %d stream reconnect warnings for a clean EOF, want none", got)
+	}
+}
+
 func TestRunReconnectsAfterRejectingAnInvalidPushedAssignment(t *testing.T) {
 	ident := newIdentity(t)
 	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}

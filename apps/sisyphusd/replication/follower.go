@@ -126,6 +126,19 @@ func (f *Follower) Run(ctx context.Context) {
 					}
 					resetTimer(timer, interval)
 				case err := <-streamEnded:
+					if ctx.Err() != nil {
+						connected = false
+						break
+					}
+					if errors.Is(err, io.EOF) {
+						// Older coordinators answer the initial baseline and then
+						// close the stream cleanly. Keep anti-entropy on the unary
+						// RPC rather than reopening that unsupported stream each tick.
+						f.Log.Info("the coordinator does not push storage assignments; continuing periodic reconciliation")
+						cancel()
+						updates, streamEnded = nil, nil
+						continue
+					}
 					if ctx.Err() == nil && !failing {
 						f.Log.Warn("the storage assignment stream ended; reconnecting", "error", err)
 					}
