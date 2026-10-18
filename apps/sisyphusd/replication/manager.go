@@ -263,6 +263,14 @@ func (m *Manager) chosen(blob string, followers []string) []string {
 func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.ReplicateRequest) *pb.ReplicateResponse {
 	store, holding, shown := req.GetStore(), req.GetHolding(), req.GetList()
 	vouched := shown != nil && m.signedHere(shown)
+	// A follower can reconnect with a list from before this manager's in-memory
+	// sequence was restored. Trust only a list signed by this identity, and
+	// adopt its higher revision before this exchange can sign a replacement.
+	if vouched {
+		m.mu.Lock()
+		m.sequence = max(m.sequence, shown.GetSequence())
+		m.mu.Unlock()
+	}
 	// named is what a list of an earlier store names, and owed what of that
 	// could not be taken back this time.
 	var named, owed map[string]struct{}

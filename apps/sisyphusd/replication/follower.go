@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
@@ -44,18 +47,23 @@ type Follower struct {
 	ListFile string
 	// Coordinator is the blob service of the node followed.
 	Coordinator pb.BlobServiceClient
-	Log         *slog.Logger
+	// CoordinatorID is the identity whose signature the follower expects on
+	// replication lists.
+	CoordinatorID string
+	Log           *slog.Logger
 }
 
 // Run keeps the store as the coordinator would have it until ctx ends.
 func (f *Follower) Run(ctx context.Context) {
 	interval := Interval
+	initial := true
 	// failing is whether the last attempt failed. Only the first failure of
 	// a run of them is worth a warning: a coordinator that is away stays
 	// away for a while.
 	failing := false
 	for {
-		changed, err := f.sync(ctx)
+		changed, err := f.syncWith(ctx, initial)
+		initial = false
 		if err != nil && !failing && ctx.Err() == nil {
 			f.Log.Warn("could not bring this node's copies of its pool's data up to date; it keeps what it has and tries again", "every", interval.String(), "error", err)
 		}
@@ -89,6 +97,10 @@ func (f *Follower) forget(held map[cid.Cid][]string, id string) {
 // sync asks the coordinator what to hold, fetches what is missing and drops
 // the rest. It reports whether what the store holds changed.
 func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
+	return f.syncWith(ctx, false)
+}
+
+func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, err error) {
 	// held maps each blob held to the names it is pinned under: one, unless
 	// an earlier change of name was cut short.
 	held := make(map[cid.Cid][]string)
@@ -106,7 +118,44 @@ func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
 		store = name
 	}
 	asked := &pb.ReplicateRequest{Holding: holding, Store: store, KeepsLists: true, AnswersChallenges: true}
-	told, err := f.Coordinator.Replicate(ctx, asked)
+	var told *pb.ReplicateResponse
+	if initial {
+		var list *pb.KeepList
+		if f.ListFile != "" {
+			var unread error
+			list, unread = loadList(f.ListFile)
+			if unread != nil {
+				f.Log.Warn("could not read the list this node's coordinator signed of what to hold; without it the coordinator takes nothing back by itself", "error", unread)
+			}
+		}
+		stream, streamErr := f.Coordinator.Replication(ctx)
+		if streamErr == nil {
+			asked.List = list
+			var frames []*pb.ReplicationHello
+			frames, streamErr = ReplicationHellos(asked)
+			if streamErr == nil {
+				streamErr = sendReplicationHellos(stream.Send, frames)
+			}
+			if streamErr == nil {
+				streamErr = stream.CloseSend()
+			}
+			if streamErr == nil {
+				told, streamErr = ReadReplicationResponse(stream.Recv)
+			}
+		}
+		if status.Code(streamErr) == codes.Unimplemented {
+			// Older coordinators keep the unary recovery path. The signed list
+			// will be offered only if that coordinator asks for it.
+			told, err = f.Coordinator.Replicate(ctx, asked)
+		} else {
+			err = streamErr
+		}
+	} else {
+		told, err = f.Coordinator.Replicate(ctx, asked)
+	}
+	if err == nil {
+		err = f.verifyList(told.GetList())
+	}
 	if err == nil && told.GetShowList() {
 		// The coordinator has another store than the one these copies are
 		// of. Shown the list it signed for that one, it can take them back.
@@ -117,6 +166,9 @@ func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
 		if list != nil {
 			asked.List = list
 			told, err = f.Coordinator.Replicate(ctx, asked)
+			if err == nil {
+				err = f.verifyList(told.GetList())
+			}
 		}
 	}
 	if err == nil && len(told.GetChallenges()) > 0 {
@@ -136,11 +188,13 @@ func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
 			asked.Answers = append(asked.Answers, answer)
 		}
 		told, err = f.Coordinator.Replicate(ctx, asked)
+		if err == nil {
+			err = f.verifyList(told.GetList())
+		}
 	}
 	if err != nil {
 		return false, err
 	}
-
 	hold := told.GetHold()
 	if list := told.GetList(); list != nil {
 		// The list is kept before it is acted on, so that the one on disk
@@ -198,4 +252,15 @@ func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
 		_, err = f.Store.GC(ctx, time.Now().AddDate(100, 0, 0))
 	}
 	return changed, err
+}
+
+func (f *Follower) verifyList(list *pb.KeepList) error {
+	if list == nil {
+		return nil
+	}
+	valid, err := identity.Verify(f.CoordinatorID, signedBytes(list), list.GetSignature())
+	if err != nil || !valid {
+		return fmt.Errorf("the replication list is not signed by coordinator %s", f.CoordinatorID)
+	}
+	return nil
 }

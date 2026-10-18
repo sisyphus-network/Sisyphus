@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
@@ -28,6 +29,7 @@ import (
 type scripted struct {
 	pb.UnimplementedBlobServiceServer
 	store *storage.Store
+	ident *identity.Identity
 
 	mu sync.Mutex
 	// hold and name are what it answers with, and err, if set, what it
@@ -57,6 +59,27 @@ func (s *scripted) Replicate(_ context.Context, req *pb.ReplicateRequest) (*pb.R
 		questions = s.questions
 	}
 	return &pb.ReplicateResponse{Hold: s.hold, Store: s.name, List: s.list, ShowList: s.asks && req.GetList() == nil, Challenges: questions}, nil
+}
+
+func (s *scripted) Replication(stream grpc.BidiStreamingServer[pb.ReplicationHello, pb.ReplicationFrame]) error {
+	request, err := ReadReplicationHello(stream.Recv)
+	if err != nil {
+		return err
+	}
+	response, err := s.Replicate(stream.Context(), request)
+	if err != nil {
+		return err
+	}
+	frames, err := ReplicationFrames(response)
+	if err != nil {
+		return err
+	}
+	for _, frame := range frames {
+		if err := stream.Send(frame); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ask has the coordinator put these questions from now on.
@@ -91,10 +114,11 @@ func (s *scripted) say(name string, err error, hold ...string) {
 func (s *scripted) sign(name string, hold ...string) *pb.KeepList {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.name, s.err, s.hold, s.list = name, nil, nil, &pb.KeepList{Store: name, Sequence: uint64(len(s.asked)) + 1, Signature: []byte("signed")}
+	s.name, s.err, s.hold, s.list = name, nil, nil, &pb.KeepList{Store: name, Sequence: uint64(len(s.asked)) + 1}
 	for _, id := range hold {
 		s.list.Blobs = append(s.list.Blobs, &pb.KeptBlob{Cid: id})
 	}
+	s.list.Signature = s.ident.Sign(signedBytes(s.list))
 	return s.list
 }
 
@@ -113,7 +137,8 @@ func (s *scripted) requests() (int, *pb.ReplicateRequest) {
 // empty store.
 func following(t *testing.T) (*scripted, *Follower, *storage.Store, *logged) {
 	t.Helper()
-	coordinator := &scripted{store: storage.NewMemory(), name: "node/first"}
+	ident := newIdentity(t)
+	coordinator := &scripted{store: storage.NewMemory(), name: "node/first", ident: ident}
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +153,65 @@ func following(t *testing.T) (*scripted, *Follower, *storage.Store, *logged) {
 	}
 	t.Cleanup(func() { conn.Close() })
 	copies, logs := storage.NewMemory(), new(logged)
-	return coordinator, &Follower{Store: copies, ListFile: filepath.Join(t.TempDir(), "kept.list"), Coordinator: pb.NewBlobServiceClient(conn), Log: logs.logger()}, copies, logs
+	return coordinator, &Follower{Store: copies, ListFile: filepath.Join(t.TempDir(), "kept.list"), Coordinator: pb.NewBlobServiceClient(conn), CoordinatorID: ident.ID(), Log: logs.logger()}, copies, logs
+}
+
+type legacyCoordinator struct {
+	pb.UnimplementedBlobServiceServer
+	response *pb.ReplicateResponse
+}
+
+func (s legacyCoordinator) Replicate(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+	return s.response, nil
+}
+
+func TestInitialReplicationFallsBackToAnOlderCoordinator(t *testing.T) {
+	ident := newIdentity(t)
+	list := &pb.KeepList{Store: ident.ID() + "/store", Sequence: 1}
+	list.Signature = ident.Sign(signedBytes(list))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	pb.RegisterBlobServiceServer(server, legacyCoordinator{response: &pb.ReplicateResponse{Store: list.GetStore(), List: list}})
+	go server.Serve(listener)
+	t.Cleanup(server.Stop)
+	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: pb.NewBlobServiceClient(conn), CoordinatorID: ident.ID(), Log: new(logged).logger(),
+	}
+	if _, err := follower.syncWith(context.Background(), true); err != nil {
+		t.Fatalf("initial sync with legacy coordinator: %v", err)
+	}
+}
+
+func TestInitialReplicationWarnsAndContinuesWithoutUnreadableLastList(t *testing.T) {
+	_, follower, _, logs := following(t)
+	if err := os.WriteFile(follower.ListFile, []byte("not a signed list"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := follower.syncWith(context.Background(), true); err != nil {
+		t.Fatalf("initial sync without a readable previous list: %v", err)
+	}
+	if got := logs.count("could not read the list this node's coordinator signed"); got != 1 {
+		t.Errorf("unreadable last-list warnings = %d, want 1", got)
+	}
+}
+
+func TestFollowerRejectsAnInvalidReplicationSignature(t *testing.T) {
+	_, follower, _, _ := following(t)
+	foreign := newIdentity(t)
+	list := &pb.KeepList{Store: "foreign/store", Sequence: 1}
+	list.Signature = foreign.Sign(signedBytes(list))
+	if err := follower.verifyList(list); err == nil {
+		t.Fatal("accepted a replication list signed by another identity")
+	}
 }
 
 // run runs a follower, asking every interval, until the test ends or the

@@ -28,6 +28,7 @@ const (
 	BlobService_ListPins_FullMethodName       = "/sisyphus.v1.BlobService/ListPins"
 	BlobService_CollectGarbage_FullMethodName = "/sisyphus.v1.BlobService/CollectGarbage"
 	BlobService_Replicate_FullMethodName      = "/sisyphus.v1.BlobService/Replicate"
+	BlobService_Replication_FullMethodName    = "/sisyphus.v1.BlobService/Replication"
 	BlobService_Replicas_FullMethodName       = "/sisyphus.v1.BlobService/Replicas"
 	BlobService_Restore_FullMethodName        = "/sisyphus.v1.BlobService/Restore"
 )
@@ -69,6 +70,13 @@ type BlobServiceClient interface {
 	// list, checks that the signature is its own, and takes back what the
 	// list names. A follower's word alone brings nothing back.
 	Replicate(ctx context.Context, in *ReplicateRequest, opts ...grpc.CallOption) (*ReplicateResponse, error)
+	// Replication is the follower's initial exchange on its existing blob
+	// connection. It sends its complete previous signed list (if any) and
+	// receives the coordinator's complete replacement in bounded frames. Both
+	// sides assemble before verifying or applying a list. Later protocol steps
+	// keep this stream open for pushed changes; unary Replicate remains the
+	// recovery path until those steps are complete.
+	Replication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ReplicationHello, ReplicationFrame], error)
 	// Replicas reports which followers hold each blob the node has pinned,
 	// against how many should.
 	Replicas(ctx context.Context, in *ReplicasRequest, opts ...grpc.CallOption) (*ReplicasResponse, error)
@@ -190,6 +198,19 @@ func (c *blobServiceClient) Replicate(ctx context.Context, in *ReplicateRequest,
 	return out, nil
 }
 
+func (c *blobServiceClient) Replication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ReplicationHello, ReplicationFrame], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &BlobService_ServiceDesc.Streams[2], BlobService_Replication_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReplicationHello, ReplicationFrame]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BlobService_ReplicationClient = grpc.BidiStreamingClient[ReplicationHello, ReplicationFrame]
+
 func (c *blobServiceClient) Replicas(ctx context.Context, in *ReplicasRequest, opts ...grpc.CallOption) (*ReplicasResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReplicasResponse)
@@ -247,6 +268,13 @@ type BlobServiceServer interface {
 	// list, checks that the signature is its own, and takes back what the
 	// list names. A follower's word alone brings nothing back.
 	Replicate(context.Context, *ReplicateRequest) (*ReplicateResponse, error)
+	// Replication is the follower's initial exchange on its existing blob
+	// connection. It sends its complete previous signed list (if any) and
+	// receives the coordinator's complete replacement in bounded frames. Both
+	// sides assemble before verifying or applying a list. Later protocol steps
+	// keep this stream open for pushed changes; unary Replicate remains the
+	// recovery path until those steps are complete.
+	Replication(grpc.BidiStreamingServer[ReplicationHello, ReplicationFrame]) error
 	// Replicas reports which followers hold each blob the node has pinned,
 	// against how many should.
 	Replicas(context.Context, *ReplicasRequest) (*ReplicasResponse, error)
@@ -292,6 +320,9 @@ func (UnimplementedBlobServiceServer) CollectGarbage(context.Context, *CollectGa
 }
 func (UnimplementedBlobServiceServer) Replicate(context.Context, *ReplicateRequest) (*ReplicateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Replicate not implemented")
+}
+func (UnimplementedBlobServiceServer) Replication(grpc.BidiStreamingServer[ReplicationHello, ReplicationFrame]) error {
+	return status.Error(codes.Unimplemented, "method Replication not implemented")
 }
 func (UnimplementedBlobServiceServer) Replicas(context.Context, *ReplicasRequest) (*ReplicasResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Replicas not implemented")
@@ -464,6 +495,13 @@ func _BlobService_Replicate_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BlobService_Replication_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(BlobServiceServer).Replication(&grpc.GenericServerStream[ReplicationHello, ReplicationFrame]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BlobService_ReplicationServer = grpc.BidiStreamingServer[ReplicationHello, ReplicationFrame]
+
 func _BlobService_Replicas_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReplicasRequest)
 	if err := dec(in); err != nil {
@@ -554,6 +592,12 @@ var BlobService_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "Get",
 			Handler:       _BlobService_Get_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "Replication",
+			Handler:       _BlobService_Replication_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "sisyphus/v1/blob.proto",

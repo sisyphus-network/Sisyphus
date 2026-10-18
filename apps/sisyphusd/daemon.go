@@ -777,7 +777,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			// The list the coordinator signed of what to hold is kept with
 			// the copies: it is of no use without them, nor they without it
 			// to a coordinator that has lost its store.
-			follower := &replication.Follower{Store: copies, ListFile: filepath.Join(*replicaDir, "kept.list"), Coordinator: pb.NewBlobServiceClient(remote.Conn()), Log: log}
+			follower := &replication.Follower{Store: copies, ListFile: filepath.Join(*replicaDir, "kept.list"), Coordinator: pb.NewBlobServiceClient(remote.Conn()), CoordinatorID: coordinatorID, Log: log}
 			following := make(chan struct{})
 			// The store of copies must outlive whatever fills it.
 			defer func() {

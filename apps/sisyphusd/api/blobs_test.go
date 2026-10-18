@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/replication"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
@@ -128,6 +130,75 @@ type download struct {
 func (d *download) Context() context.Context { return context.Background() }
 
 func (d *download) Send(*pb.GetBlobResponse) error { return d.sendErr }
+
+type replicationExchange struct {
+	grpc.ServerStream
+	hello   *pb.ReplicationHello
+	recvErr error
+	sendErr error
+	sent    []*pb.ReplicationFrame
+}
+
+func (s *replicationExchange) Context() context.Context { return context.Background() }
+
+func (s *replicationExchange) Recv() (*pb.ReplicationHello, error) {
+	if s.recvErr != nil {
+		return nil, s.recvErr
+	}
+	return s.hello, nil
+}
+
+func (s *replicationExchange) Send(frame *pb.ReplicationFrame) error {
+	if s.sendErr != nil {
+		return s.sendErr
+	}
+	s.sent = append(s.sent, frame)
+	return nil
+}
+
+func TestReplicationStreamRequiresAHelloAndPassesReceiveErrors(t *testing.T) {
+	service := &blobService{}
+	if err := service.Replication(&replicationExchange{recvErr: io.EOF}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("empty replication stream error = %v, want InvalidArgument", err)
+	}
+	gone := status.Error(codes.Unavailable, "connection lost")
+	if err := service.Replication(&replicationExchange{recvErr: gone}); !errors.Is(err, gone) {
+		t.Errorf("replication receive error = %v, want original error", err)
+	}
+	if err := service.Replication(&replicationExchange{hello: &pb.ReplicationHello{}}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("malformed replication hello error = %v, want InvalidArgument", err)
+	}
+}
+
+func TestReplicationStreamFramesTheResponseAndReportsSendFailure(t *testing.T) {
+	service := &blobService{replication: replication.New(replication.Config{
+		Store: storage.NewMemory(), StoreID: "test", Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})}
+	hellos, err := replication.ReplicationHellos(&pb.ReplicateRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &replicationExchange{hello: hellos[0]}
+	if err := service.Replication(stream); err != nil {
+		t.Fatalf("replication stream: %v", err)
+	}
+	if len(stream.sent) != 1 {
+		t.Fatalf("sent %d frames, want one", len(stream.sent))
+	}
+	if _, err := replication.ReadReplicationResponse(func() (*pb.ReplicationFrame, error) {
+		return stream.sent[0], nil
+	}); err != nil {
+		t.Fatalf("read framed response: %v", err)
+	}
+
+	gone := status.Error(codes.Unavailable, "follower disconnected")
+	if err := sendReplicationFrames(&pb.ReplicateResponse{}, func(*pb.ReplicationFrame) error { return gone }); !errors.Is(err, gone) {
+		t.Errorf("replication send error = %v, want original error", err)
+	}
+	if err := sendReplicationFrames(nil, func(*pb.ReplicationFrame) error { return nil }); status.Code(err) != codes.ResourceExhausted {
+		t.Errorf("unframeable replication response error = %v, want ResourceExhausted", err)
+	}
+}
 
 func storeWithBlob(t *testing.T) (*storage.Store, string) {
 	t.Helper()

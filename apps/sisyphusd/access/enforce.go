@@ -43,7 +43,8 @@ var allowed = map[string][]Role{
 	pb.PoolService_WatchRelays_FullMethodName: {Worker},
 	// A storage follower asks what to hold. Asking changes nothing that
 	// this node keeps.
-	pb.BlobService_Replicate_FullMethodName: {Worker},
+	pb.BlobService_Replicate_FullMethodName:   {Worker},
+	pb.BlobService_Replication_FullMethodName: {Worker},
 
 	pb.BlobService_Pin_FullMethodName:            {Client},
 	pb.BlobService_Unpin_FullMethodName:          {Client},

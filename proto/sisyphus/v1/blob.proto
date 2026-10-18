@@ -44,6 +44,13 @@ service BlobService {
   // list, checks that the signature is its own, and takes back what the
   // list names. A follower's word alone brings nothing back.
   rpc Replicate(ReplicateRequest) returns (ReplicateResponse);
+  // Replication is the follower's initial exchange on its existing blob
+  // connection. It sends its complete previous signed list (if any) and
+  // receives the coordinator's complete replacement in bounded frames. Both
+  // sides assemble before verifying or applying a list. Later protocol steps
+  // keep this stream open for pushed changes; unary Replicate remains the
+  // recovery path until those steps are complete.
+  rpc Replication(stream ReplicationHello) returns (stream ReplicationFrame);
   // Replicas reports which followers hold each blob the node has pinned,
   // against how many should.
   rpc Replicas(ReplicasRequest) returns (ReplicasResponse);
@@ -195,6 +202,29 @@ message ReplicateResponse {
   // Blobs the follower says it holds and is asked to show that it does. It
   // should ask again at once, with its answers.
   repeated Challenge challenges = 5;
+}
+
+// ReplicationHello is one bounded part of the follower's serialized
+// ReplicateRequest, including its holdings, store and last signed list. Every
+// part names the list sequence, index and total; a request without a list has
+// sequence zero. The coordinator assembles the complete request before
+// verifying or acting on the list.
+message ReplicationHello {
+  uint64 sequence = 1;
+  uint32 index = 2;
+  uint32 count = 3;
+  bytes payload = 4;
+}
+
+// ReplicationFrame is one bounded part of a serialized ReplicateResponse.
+// Every frame in a response has the same sequence and count, and indices run
+// from zero to count-1. sequence is the signed list's sequence, or zero when
+// the response has no signed list. Incomplete responses must be discarded.
+message ReplicationFrame {
+  uint64 sequence = 1;
+  uint32 index = 2;
+  uint32 count = 3;
+  bytes payload = 4;
 }
 
 // KeepList is a node's statement of what one follower is to hold, signed so
