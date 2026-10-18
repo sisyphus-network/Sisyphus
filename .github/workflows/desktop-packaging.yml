@@ -2,36 +2,48 @@ name: Desktop packaging
 
 on:
   pull_request:
-    # labeled is heard only so that adding all-platforms packages all six.
-    types: [opened, synchronize, reopened, labeled]
+    # Not labeled (#446): adding all-platforms re-runs this, and then it
+    # packages all six (.github/workflows/all-platforms.yml).
+    types: [opened, synchronize, reopened]
   push:
     branches: [dev]
 
 permissions:
   contents: read
+  pull-requests: read
 
 # A pull request's newer push replaces its older run, which frees the
 # runners for others. Pushes to dev are never cancelled: each commit there
 # keeps its own complete run.
 concurrency:
-  group: ${{ github.workflow }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'all-platforms') && github.run_id || github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scope:
-    if: github.event.action != 'labeled' || github.event.label.name == 'all-platforms'
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       changed: ${{ steps.scope.outputs.changed }}
+      all: ${{ github.event_name == 'push' || steps.labels.outputs.all == 'true' }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - id: labels
+        # Read from the pull request as it is now, not from the event: a
+        # re-run keeps its first event, and all-platforms is added later and
+        # re-runs this (.github/workflows/all-platforms.yml).
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: echo "all=$(gh api "repos/$REPO/issues/$NUMBER/labels" --jq 'any(.[]; .name == "all-platforms")')" >> "$GITHUB_OUTPUT"
       - id: scope
         env:
           EVENT: ${{ github.event_name }}
-          ALL: ${{ contains(github.event.pull_request.labels.*.name, 'all-platforms') }}
+          ALL: ${{ steps.labels.outputs.all }}
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$EVENT" != pull_request ] || [ "$ALL" = true ] ||
@@ -52,7 +64,7 @@ jobs:
         # to dev and for a pull request labelled all-platforms. Other pull
         # requests build the three most people run, since the account has
         # twenty runners at a time to share between every pull request.
-        os: ${{ fromJSON((github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'all-platforms')) && '["ubuntu-26.04","ubuntu-26.04-arm","windows-2025","windows-11-arm","macos-26","macos-26-intel"]' || '["ubuntu-26.04","windows-2025","macos-26"]') }}
+        os: ${{ fromJSON(needs.scope.outputs.all == 'true' && '["ubuntu-26.04","ubuntu-26.04-arm","windows-2025","windows-11-arm","macos-26","macos-26-intel"]' || '["ubuntu-26.04","windows-2025","macos-26"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
