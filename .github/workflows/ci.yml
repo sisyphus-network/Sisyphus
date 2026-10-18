@@ -147,7 +147,7 @@ jobs:
       - name: Check the workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Check for mistakes vet does not look for
-        run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
       - name: Test against real local services
         # Each Go package test process has its own test-only port allocator.
         # Keep packages sequential as well as keeping this step exclusive with
