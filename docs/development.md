@@ -24,6 +24,8 @@ To check dependencies for known vulnerabilities, run `go run golang.org/x/vuln/c
 
 CI runs formatting, `go vet`, staticcheck, the tests under the race detector, `make cover`, a build and the container rehearsal on every pull request, and for the desktop app its typecheck, unit tests, build and end-to-end tests.
 
+A pull request that changes only documentation skips the tests. One that touches neither the packages, the daemon, `go.mod` nor the workflows skips building the workloads on other systems (`workload-architecture`, `workload-elsewhere`), and desktop packaging builds on three of its six systems for every pull request. Adding the `all-platforms` label runs everything, everywhere: `.github/workflows/all-platforms.yml` re-runs the pull request's CI and desktop packaging, which read the label from the pull request. The two workflows do not start on labels themselves, because a label's run would list its skipped jobs under the same names as the real run's and hide a failure. For a pull request from a fork, add the label and re-run its CI by hand.
+
 ### What is tested how
 
 | Layer | What it is here | Run with |

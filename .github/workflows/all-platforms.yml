@@ -1,0 +1,46 @@
+name: All platforms
+
+# Adding the all-platforms label to a pull request re-runs its CI and its
+# desktop packaging, which then build for every system they support. Those
+# workflows do not listen for labels themselves: each label would start a
+# run whose skipped jobs show under the same names as the real ones, in
+# place of their results (#446). Any other label starts nothing but the
+# skipped job below, whose name is its own.
+#
+# A pull request from a fork gets a token that cannot re-run anything; a
+# maintainer re-runs its CI by hand after adding the label.
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun:
+    if: github.event.label.name == 'all-platforms'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - name: Re-run CI and desktop packaging
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          for workflow in ci.yml desktop-packaging.yml; do
+            run=$(gh api "repos/$REPO/actions/workflows/$workflow/runs?head_sha=$SHA&event=pull_request&per_page=1" --jq '.workflow_runs[0].id // empty')
+            if [ -z "$run" ]; then
+              echo "::error::$workflow has no run for $SHA to re-run"
+              exit 1
+            fi
+            # Only a finished run can be re-run, so one still going is
+            # stopped first: it was building for fewer systems.
+            if [ "$(gh api "repos/$REPO/actions/runs/$run" --jq .status)" != completed ]; then
+              gh api -X POST "repos/$REPO/actions/runs/$run/cancel" --silent || true
+              until [ "$(gh api "repos/$REPO/actions/runs/$run" --jq .status)" = completed ]; do sleep 5; done
+            fi
+            gh api -X POST "repos/$REPO/actions/runs/$run/rerun" --silent
+            echo "re-ran $workflow: https://github.com/$REPO/actions/runs/$run"
+          done
