@@ -55,8 +55,15 @@ func (c *Client) Address() string {
 // must close. Kubo reports failures as a JSON object with an HTTP error
 // status; those come back as errors.
 func (c *Client) call(ctx context.Context, command string, args url.Values, body io.Reader, contentType string) (io.ReadCloser, error) {
+	return c.callWithArgs(ctx, command, func() url.Values { return args }, body, contentType)
+}
+
+// callWithArgs builds arguments while holding the same read lock that guards
+// the daemon address, so values that change during rekey stay in one snapshot.
+func (c *Client) callWithArgs(ctx context.Context, command string, args func() url.Values, body io.Reader, contentType string) (io.ReadCloser, error) {
 	c.mu.RLock()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+command+"?"+args.Encode(), body)
+	query := args()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+command+"?"+query.Encode(), body)
 	if err != nil {
 		c.mu.RUnlock()
 		return nil, err
@@ -232,11 +239,13 @@ func (c *Client) BlockPut(ctx context.Context, codec string, data []byte) (strin
 // offline, a block it does not hold is looked for among its peers first,
 // for PeerTimeout or as long as ctx allows.
 func (c *Client) BlockGet(ctx context.Context, id string) ([]byte, error) {
-	args := url.Values{"arg": {id}}
-	if c.PeerTimeout > 0 {
-		args.Set("timeout", c.PeerTimeout.String())
-	}
-	body, err := c.call(ctx, "block/get", args, nil, "")
+	body, err := c.callWithArgs(ctx, "block/get", func() url.Values {
+		args := url.Values{"arg": {id}}
+		if c.PeerTimeout > 0 {
+			args.Set("timeout", c.PeerTimeout.String())
+		}
+		return args
+	}, nil, "")
 	if err != nil {
 		return nil, err
 	}
