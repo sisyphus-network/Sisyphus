@@ -642,7 +642,6 @@ func (m *Manager) assignmentLocked(now time.Time, caller string, f *follower, pi
 // what the list names taken back first, so that the answer is to hold it for
 // the store the node has now.
 func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.ReplicateRequest) *pb.ReplicateResponse {
-	now := time.Now()
 	store, holding, shown := req.GetStore(), req.GetHolding(), req.GetList()
 	vouched := shown != nil && m.signedHere(shown)
 	// A follower can reconnect with a list from before this manager's in-memory
@@ -667,6 +666,7 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	// slow restore hold up challenge deadlines for this or another follower.
 	unlockChallenges := m.lockChallenges(caller)
 	defer unlockChallenges()
+	now := time.Now()
 	pinned, order := m.pinned(now)
 
 	// What the follower was last asked to show it holds is checked, and
