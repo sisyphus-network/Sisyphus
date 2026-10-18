@@ -191,13 +191,17 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	//
 	// The asking is bounded by offersWait and by the session, so a slow or
 	// absent model server delays a task's result by no more than that. One
-	// that has not answered in time changes nothing, and the next event
-	// asks again. Answers are asked for outside the lock, so tasks that end
+	// that has not answered in time changes nothing. After a task, it is
+	// asked once more in the background (again), so a late answer still
+	// corrects what the coordinator was told; but the result has gone first,
+	// and until then a model found missing may be asked for here again. A
+	// background asking that times out asks no more, so a server that
+	// never answers is not asked on a timer. Answers are asked for outside the lock, so tasks that end
 	// together do not wait in turn, and one asked for earlier never replaces
 	// one asked for later.
 	var offeredMu sync.Mutex
 	var asked, applied uint64
-	refresh := func() {
+	refresh := func(again bool) {
 		offeredMu.Lock()
 		asked++
 		mine := asked
@@ -206,6 +210,9 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 		defer done()
 		now := w.labelsWithin(within)
 		if within.Err() != nil {
+			if again {
+				w.OffersChanged()
+			}
 			return
 		}
 		offeredMu.Lock()
@@ -240,7 +247,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				}
 				send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: heartbeat}})
 			case <-w.changes():
-				refresh()
+				refresh(false)
 			case <-ctx.Done():
 				return
 			}
@@ -306,7 +313,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 					// Running a model loads it, and failing to may mean it
 					// is gone: what the worker offers is told first.
 					if runtime.ModelNeeded(assigned.GetNeeds()) != "" {
-						refresh()
+						refresh(true)
 					}
 					send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_TaskResult{TaskResult: result}})
 				}

@@ -171,29 +171,25 @@ func TestAWorkerSaysAModelIsGoneBeforeReportingTheTaskThatFoundItGone(t *testing
 	}
 }
 
-// A model server too slow to say what it has delays a task's result by no
-// more than the worker's wait, and changes nothing the worker said.
-func TestASlowModelServerDoesNotHoldUpATasksResult(t *testing.T) {
-	worker.ShortenOffersWait(t, 100*time.Millisecond)
-	hung := make(chan struct{})
-	t.Cleanup(func() { close(hung) })
-	var slow sync.Once
-	ollama := &ollamaWith{models: []string{"llama3.1:8b"}}
+// psServer is an Ollama, as ollamaWith serves it, whose loaded models are
+// asked for only when the worker says what it offers, with a hang chosen
+// for each such asking after the hello's: hang says, for the nth (counting
+// the hello's as the first), whether it waits until the asker gives up.
+func psServer(t *testing.T, ollama *ollamaWith, hang func(n int) bool) (url string, asked func() int) {
+	t.Helper()
 	listed := ollama.serve(t)
+	var mu sync.Mutex
+	count := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The loaded models are asked for only when the worker says what it
-		// offers: the first time, for the hello, they are given, and every
-		// later time the asking hangs until the asker gives up.
-		answered := false
 		if r.URL.Path == "/api/ps" {
-			slow.Do(func() { answered = true })
-		}
-		if r.URL.Path == "/api/ps" && !answered {
-			select {
-			case <-r.Context().Done():
-			case <-hung:
+			mu.Lock()
+			count++
+			n := count
+			mu.Unlock()
+			if hang(n) {
+				<-r.Context().Done()
+				return
 			}
-			return
 		}
 		proxied, err := http.Get(listed + r.URL.Path)
 		if err != nil {
@@ -204,19 +200,62 @@ func TestASlowModelServerDoesNotHoldUpATasksResult(t *testing.T) {
 		io.Copy(w, proxied.Body)
 	}))
 	t.Cleanup(server.Close)
-	coordinator, _, _ := startListened(t, server.URL)
+	return server.URL, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return count
+	}
+}
 
-	began := time.Now()
-	coordinator.assign <- &pb.TaskAssignment{
-		TaskId: "job/0", JobId: "job", Attempt: 1, Workload: "chat", Needs: []string{"model:llama3.1:8b"},
+func chatTask(id string) *pb.TaskAssignment {
+	return &pb.TaskAssignment{
+		TaskId: id, JobId: "job", Attempt: 1, Workload: "chat", Needs: []string{"model:llama3.1:8b"},
 		Payload: []byte(`{"model":"llama3.1:8b","messages":[{"role":"user","content":"Hi"}]}`),
 	}
-	msg := <-coordinator.heard
-	if msg.GetTaskResult() == nil {
-		t.Fatalf("the worker sent %v before the task's result", msg)
+}
+
+// A model server too slow to say what it has delays a task's result by no
+// more than the worker's wait. The result then goes first, and the worker
+// asks once more after it, so a model the task found missing is still
+// taken off what the coordinator was told.
+func TestASlowModelServerDoesNotHoldUpATasksResult(t *testing.T) {
+	worker.ShortenOffersWait(t, 100*time.Millisecond)
+	ollama := &ollamaWith{models: []string{"llama3.1:8b"}}
+	url, _ := psServer(t, ollama, func(n int) bool { return n == 2 })
+	coordinator, _, _ := startListened(t, url)
+
+	ollama.set()
+	began := time.Now()
+	coordinator.assign <- chatTask("job/0")
+	if result := (<-coordinator.heard).GetTaskResult(); result.GetError() == "" {
+		t.Fatalf("heard %v first, want the task's failure", result)
 	}
 	if took := time.Since(began); took > 2*time.Second {
 		t.Errorf("the result took %v behind a model server that did not answer", took)
+	}
+	labels := (<-coordinator.heard).GetHeartbeat().GetLabels()
+	if labels == nil || slices.Contains(labels.GetLabels(), "model:llama3.1:8b") {
+		t.Errorf("labels after the second asking = %v, want them without the missing model", labels)
+	}
+}
+
+// A model server that never answers is asked once more after a task, and
+// then no more: the worker does not fall back to asking on a timer.
+func TestAModelServerThatNeverAnswersIsNotAskedOnATimer(t *testing.T) {
+	worker.ShortenOffersWait(t, 50*time.Millisecond)
+	ollama := &ollamaWith{models: []string{"llama3.1:8b"}}
+	url, asked := psServer(t, ollama, func(n int) bool { return n > 1 })
+	coordinator, _, _ := startListened(t, url)
+
+	coordinator.assign <- chatTask("job/0")
+	<-coordinator.heard
+	deadline := time.Now().Add(5 * time.Second)
+	for asked() < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n := asked(); n != 3 {
+		t.Errorf("the model server was asked %d times, want the hello's, the task's and one more", n)
 	}
 }
 
