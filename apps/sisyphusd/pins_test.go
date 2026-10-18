@@ -239,6 +239,22 @@ func TestGarbageCollectionOptions(t *testing.T) {
 	}
 }
 
+func TestGCChangeSignalsCoalesceAndRememberReleases(t *testing.T) {
+	signals := newGCChangeSignals()
+	signals.notify(false)
+	signals.notify(true)
+
+	if !signals.mayCollect.Load() {
+		t.Fatal("a coalesced release notification was lost")
+	}
+	<-signals.changed
+	select {
+	case <-signals.changed:
+		t.Fatal("notifications were not coalesced")
+	default:
+	}
+}
+
 func TestRunRejectsNegativeGarbageCollectionInterval(t *testing.T) {
 	_, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--gc-interval=-1s")
 	if err == nil || !strings.Contains(err.Error(), "--gc-interval must be zero or positive") {
