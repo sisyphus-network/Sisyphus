@@ -150,6 +150,21 @@ func (m *Manager) challenges(ctx context.Context, now time.Time, holding []strin
 	return asked
 }
 
+// currentAnswers keeps the answers that answer a question now put, as told
+// by its nonce.
+func currentAnswers(pending []challenge, answers []*pb.ChallengeAnswer) []*pb.ChallengeAnswer {
+	var current []*pb.ChallengeAnswer
+	for _, given := range answers {
+		for _, asked := range pending {
+			if bytes.Equal(asked.nonce, given.GetNonce()) {
+				current = append(current, given)
+				break
+			}
+		}
+	}
+	return current
+}
+
 // judge checks a follower's answers against the questions it was last put,
 // and returns, for each blob asked about, whether it showed it holds it. A
 // question with no answer, a wrong answer, or one that came too late, is

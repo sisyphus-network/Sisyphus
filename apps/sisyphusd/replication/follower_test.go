@@ -1521,3 +1521,21 @@ func TestAFollowerThatCannotKeepAListDoesNotActOnIt(t *testing.T) {
 		t.Error("the follower acted on a list it could not keep")
 	}
 }
+
+// Between attempts a follower sleeps until the wait is over or its pins
+// change, and stops sleeping, saying so, when it is told to stop.
+func TestAFollowerSleepsUntilItsWaitIsOverItsPinsChangeOrItStops(t *testing.T) {
+	if !sleepForPinChange(context.Background(), make(chan struct{}), 0) {
+		t.Error("a wait that is over did not end the sleep to try again")
+	}
+	changed := make(chan struct{}, 1)
+	changed <- struct{}{}
+	if !sleepForPinChange(context.Background(), changed, time.Hour) {
+		t.Error("a pin change did not end the sleep to try again")
+	}
+	stopped, stop := context.WithCancel(context.Background())
+	stop()
+	if sleepForPinChange(stopped, make(chan struct{}), time.Hour) {
+		t.Error("a follower told to stop went on to try again")
+	}
+}

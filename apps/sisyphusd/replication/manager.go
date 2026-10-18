@@ -819,10 +819,15 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	// Questions still within their time and not yet answered are put
 	// again as they were: a follower may ask more than once before it
 	// answers, to show a list for one. Past their time they have failed.
-	waiting := len(req.GetAnswers()) == 0 && len(pending) > 0 && now.Sub(pending[0].issued) <= challengeWindow
+	// An answer that answers none of the questions now put is a repeat of
+	// one already judged: a follower can be sent the same questions twice,
+	// pushed on its stream and again in the reply to a report it sent
+	// meanwhile, and it answers both. It says nothing of questions put since.
+	answered := currentAnswers(pending, req.GetAnswers())
+	waiting := len(answered) == 0 && len(pending) > 0 && now.Sub(pending[0].issued) <= challengeWindow
 	var verdicts map[string]bool
 	if !waiting {
-		verdicts = m.judge(ctx, now, pending, req.GetAnswers())
+		verdicts = m.judge(ctx, now, pending, answered)
 	}
 	for id, held := range verdicts {
 		delete(proven, id)

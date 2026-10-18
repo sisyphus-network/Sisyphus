@@ -296,12 +296,12 @@ func TestManagerPushesScheduledChallengesOverTheAssignmentStream(t *testing.T) {
 func TestAFailedBlobIsChallengedAgainOnAStream(t *testing.T) {
 	r := newRig(t, 1, "one blob")
 	one := put(t, r.store, "one blob")
-	r.Replicate(ctx, "follower", &pb.ReplicateRequest{Holding: []string{one}, AnswersChallenges: true})
+	asked := r.Replicate(ctx, "follower", &pb.ReplicateRequest{Holding: []string{one}, AnswersChallenges: true}).GetChallenges()
 	leaseID := r.BeginLease("follower")
 	r.RenewLease("follower", leaseID)
-	r.Replicate(ctx, "follower", &pb.ReplicateRequest{
-		Holding: []string{one}, AnswersChallenges: true, Answers: []*pb.ChallengeAnswer{{Cid: one}},
-	})
+	wrong := answers(t, r.store, asked)
+	wrong[0].Digest = []byte("not the digest")
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{Holding: []string{one}, AnswersChallenges: true, Answers: wrong})
 	r.mu.Lock()
 	f := r.Manager.followers["follower"]
 	_, failed := f.failed[one]
@@ -314,13 +314,13 @@ func TestAFailedBlobIsChallengedAgainOnAStream(t *testing.T) {
 
 	r.Manager.issueChallenges(ctx, time.Now())
 	r.mu.Lock()
-	var asked []string
+	var again []string
 	for _, c := range r.Manager.followers["follower"].pending {
-		asked = append(asked, c.cid)
+		again = append(again, c.cid)
 	}
 	r.mu.Unlock()
-	if !slices.Equal(asked, []string{one}) {
-		t.Errorf("at the next proof deadline the follower was asked about %v, want the blob it failed to show", asked)
+	if !slices.Equal(again, []string{one}) {
+		t.Errorf("at the next proof deadline the follower was asked about %v, want the blob it failed to show", again)
 	}
 }
 
