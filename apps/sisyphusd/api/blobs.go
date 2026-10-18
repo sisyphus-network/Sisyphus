@@ -496,6 +496,34 @@ func (s *blobService) Replicate(ctx context.Context, req *pb.ReplicateRequest) (
 	return s.replication.Replicate(ctx, access.Caller(ctx), req), nil
 }
 
+func (s *blobService) Replication(stream grpc.BidiStreamingServer[pb.ReplicationHello, pb.ReplicationFrame]) error {
+	request, err := replication.ReadReplicationHello(stream.Recv)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return status.Error(codes.InvalidArgument, "replication stream requires a follower hello")
+		}
+		if _, ok := status.FromError(err); ok {
+			return err
+		}
+		return status.Errorf(codes.InvalidArgument, "invalid replication hello: %v", err)
+	}
+	response := s.replication.Replicate(stream.Context(), access.Caller(stream.Context()), request)
+	return sendReplicationFrames(response, stream.Send)
+}
+
+func sendReplicationFrames(response *pb.ReplicateResponse, send func(*pb.ReplicationFrame) error) error {
+	frames, err := replication.ReplicationFrames(response)
+	if err != nil {
+		return status.Errorf(codes.ResourceExhausted, "frame replication response: %v", err)
+	}
+	for _, frame := range frames {
+		if err := send(frame); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *blobService) Replicas(_ context.Context, req *pb.ReplicasRequest) (*pb.ReplicasResponse, error) {
 	var only string
 	if req.GetCid() != "" {

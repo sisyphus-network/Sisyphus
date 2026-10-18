@@ -1181,6 +1181,151 @@ func (x *ReplicateResponse) GetChallenges() []*Challenge {
 	return nil
 }
 
+// ReplicationHello is one bounded part of the follower's serialized
+// ReplicateRequest, including its holdings, store and last signed list. Every
+// part names the list sequence, index and total; a request without a list has
+// sequence zero. The coordinator assembles the complete request before
+// verifying or acting on the list.
+type ReplicationHello struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sequence      uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Index         uint32                 `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`
+	Count         uint32                 `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
+	Payload       []byte                 `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplicationHello) Reset() {
+	*x = ReplicationHello{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicationHello) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicationHello) ProtoMessage() {}
+
+func (x *ReplicationHello) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicationHello.ProtoReflect.Descriptor instead.
+func (*ReplicationHello) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *ReplicationHello) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *ReplicationHello) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *ReplicationHello) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *ReplicationHello) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+// ReplicationFrame is one bounded part of a serialized ReplicateResponse.
+// Every frame in a response has the same sequence and count, and indices run
+// from zero to count-1. sequence is the signed list's sequence, or zero when
+// the response has no signed list. Incomplete responses must be discarded.
+type ReplicationFrame struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sequence      uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Index         uint32                 `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`
+	Count         uint32                 `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
+	Payload       []byte                 `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplicationFrame) Reset() {
+	*x = ReplicationFrame{}
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicationFrame) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicationFrame) ProtoMessage() {}
+
+func (x *ReplicationFrame) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicationFrame.ProtoReflect.Descriptor instead.
+func (*ReplicationFrame) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ReplicationFrame) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *ReplicationFrame) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *ReplicationFrame) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *ReplicationFrame) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
 // KeepList is a node's statement of what one follower is to hold, signed so
 // that the node can later tell it for its own.
 type KeepList struct {
@@ -1204,7 +1349,7 @@ type KeepList struct {
 
 func (x *KeepList) Reset() {
 	*x = KeepList{}
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[22]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1216,7 +1361,7 @@ func (x *KeepList) String() string {
 func (*KeepList) ProtoMessage() {}
 
 func (x *KeepList) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[22]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1229,7 +1374,7 @@ func (x *KeepList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeepList.ProtoReflect.Descriptor instead.
 func (*KeepList) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{22}
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *KeepList) GetStore() string {
@@ -1272,7 +1417,7 @@ type KeptBlob struct {
 
 func (x *KeptBlob) Reset() {
 	*x = KeptBlob{}
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[23]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1284,7 +1429,7 @@ func (x *KeptBlob) String() string {
 func (*KeptBlob) ProtoMessage() {}
 
 func (x *KeptBlob) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[23]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1297,7 +1442,7 @@ func (x *KeptBlob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeptBlob.ProtoReflect.Descriptor instead.
 func (*KeptBlob) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{23}
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *KeptBlob) GetCid() string {
@@ -1324,7 +1469,7 @@ type ReplicasRequest struct {
 
 func (x *ReplicasRequest) Reset() {
 	*x = ReplicasRequest{}
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[24]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1336,7 +1481,7 @@ func (x *ReplicasRequest) String() string {
 func (*ReplicasRequest) ProtoMessage() {}
 
 func (x *ReplicasRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[24]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1349,7 +1494,7 @@ func (x *ReplicasRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicasRequest.ProtoReflect.Descriptor instead.
 func (*ReplicasRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{24}
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ReplicasRequest) GetCid() string {
@@ -1390,7 +1535,7 @@ type ReplicasResponse struct {
 
 func (x *ReplicasResponse) Reset() {
 	*x = ReplicasResponse{}
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[25]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1402,7 +1547,7 @@ func (x *ReplicasResponse) String() string {
 func (*ReplicasResponse) ProtoMessage() {}
 
 func (x *ReplicasResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[25]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1415,7 +1560,7 @@ func (x *ReplicasResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicasResponse.ProtoReflect.Descriptor instead.
 func (*ReplicasResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{25}
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ReplicasResponse) GetWanted() uint32 {
@@ -1495,7 +1640,7 @@ type ReplicatedBlob struct {
 
 func (x *ReplicatedBlob) Reset() {
 	*x = ReplicatedBlob{}
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[26]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1507,7 +1652,7 @@ func (x *ReplicatedBlob) String() string {
 func (*ReplicatedBlob) ProtoMessage() {}
 
 func (x *ReplicatedBlob) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[26]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1520,7 +1665,7 @@ func (x *ReplicatedBlob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicatedBlob.ProtoReflect.Descriptor instead.
 func (*ReplicatedBlob) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{26}
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ReplicatedBlob) GetCid() string {
@@ -1552,7 +1697,7 @@ type RestoreRequest struct {
 
 func (x *RestoreRequest) Reset() {
 	*x = RestoreRequest{}
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[27]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1564,7 +1709,7 @@ func (x *RestoreRequest) String() string {
 func (*RestoreRequest) ProtoMessage() {}
 
 func (x *RestoreRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[27]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1577,7 +1722,7 @@ func (x *RestoreRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreRequest.ProtoReflect.Descriptor instead.
 func (*RestoreRequest) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{27}
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{29}
 }
 
 type RestoreResponse struct {
@@ -1592,7 +1737,7 @@ type RestoreResponse struct {
 
 func (x *RestoreResponse) Reset() {
 	*x = RestoreResponse{}
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[28]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1604,7 +1749,7 @@ func (x *RestoreResponse) String() string {
 func (*RestoreResponse) ProtoMessage() {}
 
 func (x *RestoreResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_blob_proto_msgTypes[28]
+	mi := &file_sisyphus_v1_blob_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1617,7 +1762,7 @@ func (x *RestoreResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreResponse.ProtoReflect.Descriptor instead.
 func (*RestoreResponse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{28}
+	return file_sisyphus_v1_blob_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *RestoreResponse) GetRestored() uint32 {
@@ -1708,7 +1853,17 @@ const file_sisyphus_v1_blob_proto_rawDesc = "" +
 	"\tshow_list\x18\x04 \x01(\bR\bshowList\x126\n" +
 	"\n" +
 	"challenges\x18\x05 \x03(\v2\x16.sisyphus.v1.ChallengeR\n" +
-	"challenges\"\x87\x01\n" +
+	"challenges\"t\n" +
+	"\x10ReplicationHello\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12\x14\n" +
+	"\x05index\x18\x02 \x01(\rR\x05index\x12\x14\n" +
+	"\x05count\x18\x03 \x01(\rR\x05count\x12\x18\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\"t\n" +
+	"\x10ReplicationFrame\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12\x14\n" +
+	"\x05index\x18\x02 \x01(\rR\x05index\x12\x14\n" +
+	"\x05count\x18\x03 \x01(\rR\x05count\x12\x18\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\"\x87\x01\n" +
 	"\bKeepList\x12\x14\n" +
 	"\x05store\x18\x01 \x01(\tR\x05store\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x04R\bsequence\x12+\n" +
@@ -1737,7 +1892,7 @@ const file_sisyphus_v1_blob_proto_rawDesc = "" +
 	"\x0eRestoreRequest\"E\n" +
 	"\x0fRestoreResponse\x12\x1a\n" +
 	"\brestored\x18\x01 \x01(\rR\brestored\x12\x16\n" +
-	"\x06failed\x18\x02 \x03(\tR\x06failed2\xae\x06\n" +
+	"\x06failed\x18\x02 \x03(\tR\x06failed2\xff\x06\n" +
 	"\vBlobService\x12B\n" +
 	"\x03Put\x12\x1b.sisyphus.v1.PutBlobRequest\x1a\x1c.sisyphus.v1.PutBlobResponse(\x01\x12B\n" +
 	"\x03Get\x12\x1b.sisyphus.v1.GetBlobRequest\x1a\x1c.sisyphus.v1.GetBlobResponse0\x01\x12C\n" +
@@ -1747,7 +1902,8 @@ const file_sisyphus_v1_blob_proto_rawDesc = "" +
 	"\x05Unpin\x12\x1d.sisyphus.v1.UnpinBlobRequest\x1a\x1e.sisyphus.v1.UnpinBlobResponse\x12G\n" +
 	"\bListPins\x12\x1c.sisyphus.v1.ListPinsRequest\x1a\x1d.sisyphus.v1.ListPinsResponse\x12Y\n" +
 	"\x0eCollectGarbage\x12\".sisyphus.v1.CollectGarbageRequest\x1a#.sisyphus.v1.CollectGarbageResponse\x12J\n" +
-	"\tReplicate\x12\x1d.sisyphus.v1.ReplicateRequest\x1a\x1e.sisyphus.v1.ReplicateResponse\x12G\n" +
+	"\tReplicate\x12\x1d.sisyphus.v1.ReplicateRequest\x1a\x1e.sisyphus.v1.ReplicateResponse\x12O\n" +
+	"\vReplication\x12\x1d.sisyphus.v1.ReplicationHello\x1a\x1d.sisyphus.v1.ReplicationFrame(\x010\x01\x12G\n" +
 	"\bReplicas\x12\x1c.sisyphus.v1.ReplicasRequest\x1a\x1d.sisyphus.v1.ReplicasResponse\x12D\n" +
 	"\aRestore\x12\x1b.sisyphus.v1.RestoreRequest\x1a\x1c.sisyphus.v1.RestoreResponseBOZMgithub.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1b\x06proto3"
 
@@ -1763,7 +1919,7 @@ func file_sisyphus_v1_blob_proto_rawDescGZIP() []byte {
 	return file_sisyphus_v1_blob_proto_rawDescData
 }
 
-var file_sisyphus_v1_blob_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_sisyphus_v1_blob_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_sisyphus_v1_blob_proto_goTypes = []any{
 	(*PutBlobRequest)(nil),         // 0: sisyphus.v1.PutBlobRequest
 	(*PutBlobResponse)(nil),        // 1: sisyphus.v1.PutBlobResponse
@@ -1787,26 +1943,28 @@ var file_sisyphus_v1_blob_proto_goTypes = []any{
 	(*Challenge)(nil),              // 19: sisyphus.v1.Challenge
 	(*ChallengeAnswer)(nil),        // 20: sisyphus.v1.ChallengeAnswer
 	(*ReplicateResponse)(nil),      // 21: sisyphus.v1.ReplicateResponse
-	(*KeepList)(nil),               // 22: sisyphus.v1.KeepList
-	(*KeptBlob)(nil),               // 23: sisyphus.v1.KeptBlob
-	(*ReplicasRequest)(nil),        // 24: sisyphus.v1.ReplicasRequest
-	(*ReplicasResponse)(nil),       // 25: sisyphus.v1.ReplicasResponse
-	(*ReplicatedBlob)(nil),         // 26: sisyphus.v1.ReplicatedBlob
-	(*RestoreRequest)(nil),         // 27: sisyphus.v1.RestoreRequest
-	(*RestoreResponse)(nil),        // 28: sisyphus.v1.RestoreResponse
-	(*timestamppb.Timestamp)(nil),  // 29: google.protobuf.Timestamp
+	(*ReplicationHello)(nil),       // 22: sisyphus.v1.ReplicationHello
+	(*ReplicationFrame)(nil),       // 23: sisyphus.v1.ReplicationFrame
+	(*KeepList)(nil),               // 24: sisyphus.v1.KeepList
+	(*KeptBlob)(nil),               // 25: sisyphus.v1.KeptBlob
+	(*ReplicasRequest)(nil),        // 26: sisyphus.v1.ReplicasRequest
+	(*ReplicasResponse)(nil),       // 27: sisyphus.v1.ReplicasResponse
+	(*ReplicatedBlob)(nil),         // 28: sisyphus.v1.ReplicatedBlob
+	(*RestoreRequest)(nil),         // 29: sisyphus.v1.RestoreRequest
+	(*RestoreResponse)(nil),        // 30: sisyphus.v1.RestoreResponse
+	(*timestamppb.Timestamp)(nil),  // 31: google.protobuf.Timestamp
 }
 var file_sisyphus_v1_blob_proto_depIdxs = []int32{
 	8,  // 0: sisyphus.v1.LocateBlobResponse.holders:type_name -> sisyphus.v1.BlobHolder
 	15, // 1: sisyphus.v1.ListPinsResponse.pins:type_name -> sisyphus.v1.Pin
-	29, // 2: sisyphus.v1.Pin.expires_at:type_name -> google.protobuf.Timestamp
-	22, // 3: sisyphus.v1.ReplicateRequest.list:type_name -> sisyphus.v1.KeepList
+	31, // 2: sisyphus.v1.Pin.expires_at:type_name -> google.protobuf.Timestamp
+	24, // 3: sisyphus.v1.ReplicateRequest.list:type_name -> sisyphus.v1.KeepList
 	20, // 4: sisyphus.v1.ReplicateRequest.answers:type_name -> sisyphus.v1.ChallengeAnswer
-	22, // 5: sisyphus.v1.ReplicateResponse.list:type_name -> sisyphus.v1.KeepList
+	24, // 5: sisyphus.v1.ReplicateResponse.list:type_name -> sisyphus.v1.KeepList
 	19, // 6: sisyphus.v1.ReplicateResponse.challenges:type_name -> sisyphus.v1.Challenge
-	23, // 7: sisyphus.v1.KeepList.blobs:type_name -> sisyphus.v1.KeptBlob
-	29, // 8: sisyphus.v1.KeptBlob.keep_until:type_name -> google.protobuf.Timestamp
-	26, // 9: sisyphus.v1.ReplicasResponse.blobs:type_name -> sisyphus.v1.ReplicatedBlob
+	25, // 7: sisyphus.v1.KeepList.blobs:type_name -> sisyphus.v1.KeptBlob
+	31, // 8: sisyphus.v1.KeptBlob.keep_until:type_name -> google.protobuf.Timestamp
+	28, // 9: sisyphus.v1.ReplicasResponse.blobs:type_name -> sisyphus.v1.ReplicatedBlob
 	0,  // 10: sisyphus.v1.BlobService.Put:input_type -> sisyphus.v1.PutBlobRequest
 	2,  // 11: sisyphus.v1.BlobService.Get:input_type -> sisyphus.v1.GetBlobRequest
 	4,  // 12: sisyphus.v1.BlobService.Stat:input_type -> sisyphus.v1.StatBlobRequest
@@ -1816,21 +1974,23 @@ var file_sisyphus_v1_blob_proto_depIdxs = []int32{
 	13, // 16: sisyphus.v1.BlobService.ListPins:input_type -> sisyphus.v1.ListPinsRequest
 	16, // 17: sisyphus.v1.BlobService.CollectGarbage:input_type -> sisyphus.v1.CollectGarbageRequest
 	18, // 18: sisyphus.v1.BlobService.Replicate:input_type -> sisyphus.v1.ReplicateRequest
-	24, // 19: sisyphus.v1.BlobService.Replicas:input_type -> sisyphus.v1.ReplicasRequest
-	27, // 20: sisyphus.v1.BlobService.Restore:input_type -> sisyphus.v1.RestoreRequest
-	1,  // 21: sisyphus.v1.BlobService.Put:output_type -> sisyphus.v1.PutBlobResponse
-	3,  // 22: sisyphus.v1.BlobService.Get:output_type -> sisyphus.v1.GetBlobResponse
-	5,  // 23: sisyphus.v1.BlobService.Stat:output_type -> sisyphus.v1.StatBlobResponse
-	7,  // 24: sisyphus.v1.BlobService.Locate:output_type -> sisyphus.v1.LocateBlobResponse
-	10, // 25: sisyphus.v1.BlobService.Pin:output_type -> sisyphus.v1.PinBlobResponse
-	12, // 26: sisyphus.v1.BlobService.Unpin:output_type -> sisyphus.v1.UnpinBlobResponse
-	14, // 27: sisyphus.v1.BlobService.ListPins:output_type -> sisyphus.v1.ListPinsResponse
-	17, // 28: sisyphus.v1.BlobService.CollectGarbage:output_type -> sisyphus.v1.CollectGarbageResponse
-	21, // 29: sisyphus.v1.BlobService.Replicate:output_type -> sisyphus.v1.ReplicateResponse
-	25, // 30: sisyphus.v1.BlobService.Replicas:output_type -> sisyphus.v1.ReplicasResponse
-	28, // 31: sisyphus.v1.BlobService.Restore:output_type -> sisyphus.v1.RestoreResponse
-	21, // [21:32] is the sub-list for method output_type
-	10, // [10:21] is the sub-list for method input_type
+	22, // 19: sisyphus.v1.BlobService.Replication:input_type -> sisyphus.v1.ReplicationHello
+	26, // 20: sisyphus.v1.BlobService.Replicas:input_type -> sisyphus.v1.ReplicasRequest
+	29, // 21: sisyphus.v1.BlobService.Restore:input_type -> sisyphus.v1.RestoreRequest
+	1,  // 22: sisyphus.v1.BlobService.Put:output_type -> sisyphus.v1.PutBlobResponse
+	3,  // 23: sisyphus.v1.BlobService.Get:output_type -> sisyphus.v1.GetBlobResponse
+	5,  // 24: sisyphus.v1.BlobService.Stat:output_type -> sisyphus.v1.StatBlobResponse
+	7,  // 25: sisyphus.v1.BlobService.Locate:output_type -> sisyphus.v1.LocateBlobResponse
+	10, // 26: sisyphus.v1.BlobService.Pin:output_type -> sisyphus.v1.PinBlobResponse
+	12, // 27: sisyphus.v1.BlobService.Unpin:output_type -> sisyphus.v1.UnpinBlobResponse
+	14, // 28: sisyphus.v1.BlobService.ListPins:output_type -> sisyphus.v1.ListPinsResponse
+	17, // 29: sisyphus.v1.BlobService.CollectGarbage:output_type -> sisyphus.v1.CollectGarbageResponse
+	21, // 30: sisyphus.v1.BlobService.Replicate:output_type -> sisyphus.v1.ReplicateResponse
+	23, // 31: sisyphus.v1.BlobService.Replication:output_type -> sisyphus.v1.ReplicationFrame
+	27, // 32: sisyphus.v1.BlobService.Replicas:output_type -> sisyphus.v1.ReplicasResponse
+	30, // 33: sisyphus.v1.BlobService.Restore:output_type -> sisyphus.v1.RestoreResponse
+	22, // [22:34] is the sub-list for method output_type
+	10, // [10:22] is the sub-list for method input_type
 	10, // [10:10] is the sub-list for extension type_name
 	10, // [10:10] is the sub-list for extension extendee
 	0,  // [0:10] is the sub-list for field type_name
@@ -1847,7 +2007,7 @@ func file_sisyphus_v1_blob_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_blob_proto_rawDesc), len(file_sisyphus_v1_blob_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

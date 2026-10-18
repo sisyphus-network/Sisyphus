@@ -114,6 +114,13 @@ func try(conn *grpc.ClientConn) map[string]codes.Code {
 
 	_, err = pb.NewBlobServiceClient(conn).Replicate(ctx, &pb.ReplicateRequest{})
 	result["ask what to hold"] = status.Code(err)
+	replication, err := pb.NewBlobServiceClient(conn).Replication(ctx)
+	if err == nil {
+		if err = replication.Send(&pb.ReplicationHello{Count: 1}); err == nil {
+			_, err = replication.Recv()
+		}
+	}
+	result["replication hello"] = status.Code(err)
 	_, err = pb.NewBlobServiceClient(conn).Replicas(ctx, &pb.ReplicasRequest{})
 	result["list copies"] = status.Code(err)
 	_, err = pb.NewBlobServiceClient(conn).Restore(ctx, &pb.RestoreRequest{})
@@ -151,22 +158,22 @@ func TestEachRoleMayMakeOnlyItsOwnCalls(t *testing.T) {
 		{"the owner", g.server, map[string]codes.Code{
 			"list nodes": yes, "submit job": stub, "stat blob": stub, "get blob": yes, "collect garbage": stub,
 			"take tasks": stub, "join": stub, "invite": stub, "remove member": stub, "swarm key": stub,
-			"watch relays": stub, "ask what to hold": stub, "list copies": stub, "restore": stub,
+			"watch relays": stub, "ask what to hold": stub, "replication hello": stub, "list copies": stub, "restore": stub,
 		}},
 		{"a worker", worker, map[string]codes.Code{
 			"list nodes": no, "submit job": no, "stat blob": stub, "get blob": yes, "collect garbage": no,
 			"take tasks": stub, "join": stub, "invite": no, "remove member": no, "swarm key": stub,
-			"watch relays": stub, "ask what to hold": stub, "list copies": no, "restore": no,
+			"watch relays": stub, "ask what to hold": stub, "replication hello": stub, "list copies": no, "restore": no,
 		}},
 		{"a client", client, map[string]codes.Code{
 			"list nodes": yes, "submit job": stub, "stat blob": stub, "get blob": yes, "collect garbage": stub,
 			"take tasks": no, "join": stub, "invite": no, "remove member": no, "swarm key": stub,
-			"watch relays": no, "ask what to hold": no, "list copies": stub, "restore": stub,
+			"watch relays": no, "ask what to hold": no, "replication hello": no, "list copies": stub, "restore": stub,
 		}},
 		{"a node never admitted", stranger, map[string]codes.Code{
 			"list nodes": no, "submit job": no, "stat blob": no, "get blob": no, "collect garbage": no,
 			"take tasks": no, "join": stub, "invite": no, "remove member": no, "swarm key": no,
-			"watch relays": no, "ask what to hold": no, "list copies": no, "restore": no,
+			"watch relays": no, "ask what to hold": no, "replication hello": no, "list copies": no, "restore": no,
 		}},
 	}
 	for _, tt := range tests {

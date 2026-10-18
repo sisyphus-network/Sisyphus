@@ -302,7 +302,7 @@ func (p *pool) startMember(id string, slots int, copies *storage.Store, list str
 		close(following)
 	} else {
 		p.copies[id], p.lists[id], served = copies, list, api.Stores(copies, local)
-		follower := &replication.Follower{Store: copies, ListFile: list, Coordinator: pb.NewBlobServiceClient(blobs.Conn()), Log: quiet}
+		follower := &replication.Follower{Store: copies, ListFile: list, Coordinator: pb.NewBlobServiceClient(blobs.Conn()), CoordinatorID: p.ident.ID(), Log: quiet}
 		asking, unfollow := context.WithCancel(ctx)
 		go func() {
 			defer close(following)

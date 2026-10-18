@@ -223,6 +223,24 @@ func TestAListSignedWithAnotherKeyIsIgnored(t *testing.T) {
 	}
 }
 
+func TestCoordinatorAdvancesItsSequenceFromAVerifiedFollowerList(t *testing.T) {
+	r := newRig(t, 0)
+	higher := uint64(time.Now().Add(time.Hour).UnixNano())
+	shown := &pb.KeepList{Store: r.Manager.storeID, Sequence: higher}
+	shown.Signature = r.ident.Sign(signedBytes(shown))
+
+	told := r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true, List: shown})
+	if got := told.GetList().GetSequence(); got <= higher {
+		t.Fatalf("replacement list sequence = %d, want greater than verified follower sequence %d", got, higher)
+	}
+
+	forged := &pb.KeepList{Store: r.Manager.storeID, Sequence: ^uint64(0), Signature: []byte("not signed by this coordinator")}
+	told = r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true, List: forged})
+	if got := told.GetList().GetSequence(); got >= forged.GetSequence() {
+		t.Fatalf("replacement list sequence = %d, advanced from an unverified sequence", got)
+	}
+}
+
 func TestACoordinatorTakesBackWhatAListItSignedNames(t *testing.T) {
 	graceOf(t, time.Minute)
 	r := newRig(t, 1)
