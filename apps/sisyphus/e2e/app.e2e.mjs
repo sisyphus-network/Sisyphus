@@ -893,6 +893,44 @@ test('model provider setup retries a failed model-list request', async () => {
   }
 })
 
+test('model provider setup ignores a stale model-list response after changing services', async () => {
+  const stale = await standInModel()
+  stale.tags = [{ name: 'stale-model', size: 1000 }]
+  stale.tagDelayMs = 1800
+  const current = await standInModel()
+  current.tags = [{ name: 'current-model', size: 2000 }]
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'Model provider')
+    await page.getByRole('button', { name: 'Add provider' }).first().click()
+    await selectProvider(page, 'Ollama')
+    await page.getByRole('textbox', { name: 'Profile name' }).fill('Stale response test')
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
+
+    const serviceUrl = page.getByRole('textbox', { name: 'Service URL' })
+    await serviceUrl.fill(stale.url)
+    await until('the first service model-list request', () => stale.tagRequests === 1)
+    await serviceUrl.fill(current.url)
+
+    const connection = page.getByRole('region', { name: 'Connection' })
+    await connection.getByText('models available', { exact: true }).waitFor()
+    await until('the current service model-list response', () => current.tagResponses === 1)
+    await until('the delayed stale service response', () => stale.tagResponses === 1)
+
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
+    await page.getByRole('button', { name: 'Model', exact: true }).click()
+    const modelPicker = page.getByRole('dialog', { name: 'Model' })
+    await modelPicker.getByRole('button', { name: 'current-model', exact: true }).waitFor()
+    assert.equal(await modelPicker.getByRole('button', { name: 'stale-model', exact: true }).count(), 0)
+  } finally {
+    await app.close()
+    profile.remove()
+    await stale.close()
+    await current.close()
+  }
+})
+
 test('model lending inspects Ollama, saves selected models and shows restart state', async () => {
   const ollama = await standInModel()
   const profile = testProfile()
