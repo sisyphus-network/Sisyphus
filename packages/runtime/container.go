@@ -422,14 +422,47 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	return mustJSON(out), nil
 }
 
-func (Container) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, error) {
+// Aggregate gathers the tasks' outputs in order. What a task stored is
+// only kept past the job if the job's result stores it too, so each blob a
+// task left is stored again here and the result names it as stored.
+func (Container) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error) {
 	result := ContainerResult{Tasks: make([]ContainerOutput, len(outputs))}
 	for i, output := range outputs {
-		if err := json.Unmarshal(output, &result.Tasks[i]); err != nil {
+		task := &result.Tasks[i]
+		if err := json.Unmarshal(output, task); err != nil {
 			return nil, fmt.Errorf("task %d output: %w", i, err)
+		}
+		stdout, err := keep(ctx, blobs, task.Stdout)
+		if err != nil {
+			return nil, fmt.Errorf("keep what task %d printed: %w", i, err)
+		}
+		task.Stdout = stdout
+		for name, c := range task.Files {
+			if task.Files[name], err = keep(ctx, blobs, c); err != nil {
+				return nil, fmt.Errorf("keep task %d's output %s: %w", i, name, err)
+			}
 		}
 	}
 	return mustJSON(result), nil
+}
+
+// keep stores the blob c again and returns what it is now stored as: the
+// same CID, unless the job's data is sealed and so stored afresh.
+func keep(ctx context.Context, blobs Blobs, c string) (string, error) {
+	id, err := cid.Decode(c)
+	if err != nil {
+		return "", err
+	}
+	blob, err := blobs.Open(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	defer blob.Close()
+	stored, err := blobs.Put(ctx, blob)
+	if err != nil {
+		return "", err
+	}
+	return stored.String(), nil
 }
 
 // CheckContainers reports, as an error, a machine on which container tasks

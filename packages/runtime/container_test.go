@@ -149,20 +149,58 @@ func TestAContainerTaskRunsWithItsInputAndItsOutputIsKept(t *testing.T) {
 }
 
 func TestTheResultOfAContainerJobIsItsTasksOutputsInOrder(t *testing.T) {
+	ctx := context.Background()
 	c := Container{}
-	outputs := [][]byte{mustJSON(ContainerOutput{Index: 0, Stdout: "bafy-a"}), mustJSON(ContainerOutput{Index: 1, Stdout: "bafy-b", Files: map[string]string{"f": "bafy-f"}})}
-	raw, err := c.Aggregate(context.Background(), nil, outputs)
+	store := storage.NewMemory()
+	put := func(text string) string {
+		stored, err := store.Put(ctx, strings.NewReader(text))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored.String()
+	}
+	a, b, f := put("printed by 0"), put("printed by 1"), put("a file")
+	outputs := [][]byte{mustJSON(ContainerOutput{Index: 0, Stdout: a}), mustJSON(ContainerOutput{Index: 1, Stdout: b, Files: map[string]string{"f": f}})}
+	touched := Record(store)
+	raw, err := c.Aggregate(ctx, touched, outputs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var result ContainerResult
 	json.Unmarshal(raw, &result)
-	if len(result.Tasks) != 2 || result.Tasks[1].Stdout != "bafy-b" || result.Tasks[1].Files["f"] != "bafy-f" {
+	if len(result.Tasks) != 2 || result.Tasks[0].Stdout != a || result.Tasks[1].Stdout != b || result.Tasks[1].Files["f"] != f {
 		t.Errorf("result %+v", result)
 	}
-	if _, err := c.Aggregate(context.Background(), nil, [][]byte{[]byte("not json")}); err == nil || !strings.Contains(err.Error(), "task 0 output") {
+	// What the tasks stored is stored again by the result, so that it is
+	// kept with the job's result and not released as only intermediate.
+	if written, want := touched.Written(), []string{a, b, f}; !sameSet(written, want) {
+		t.Errorf("the result stored %v, want %v", written, want)
+	}
+
+	if _, err := c.Aggregate(ctx, store, [][]byte{[]byte("not json")}); err == nil || !strings.Contains(err.Error(), "task 0 output") {
 		t.Errorf("an output that is not JSON: %v", err)
 	}
+	if _, err := c.Aggregate(ctx, store, [][]byte{mustJSON(ContainerOutput{Stdout: "not a cid"})}); err == nil || !strings.Contains(err.Error(), "keep what task 0 printed") {
+		t.Errorf("an output naming no blob: %v", err)
+	}
+	absent, _ := storage.NewMemory().Put(ctx, strings.NewReader("held elsewhere"))
+	if _, err := c.Aggregate(ctx, store, [][]byte{mustJSON(ContainerOutput{Stdout: absent.String()})}); err == nil || !strings.Contains(err.Error(), "keep what task 0 printed") {
+		t.Errorf("an output that is not here: %v", err)
+	}
+	if _, err := c.Aggregate(ctx, store, [][]byte{mustJSON(ContainerOutput{Stdout: a, Files: map[string]string{"g": absent.String()}})}); err == nil || !strings.Contains(err.Error(), "keep task 0's output g") {
+		t.Errorf("a file that is not here: %v", err)
+	}
+	if _, err := c.Aggregate(ctx, failingBlobs{Store: store, failPut: true}, [][]byte{mustJSON(ContainerOutput{Stdout: a})}); !errors.Is(err, errBlobs) {
+		t.Errorf("an output that cannot be stored again: %v", err)
+	}
+}
+
+// sameSet says whether a and b hold the same strings, in any order.
+func sameSet(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
 }
 
 // awkward is a blob store that fails in the ways a test asks.
