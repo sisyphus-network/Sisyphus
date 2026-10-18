@@ -391,11 +391,7 @@ func (m *Manager) WatchAssignments(ctx context.Context, caller string, last *pb.
 		var timer *time.Timer
 		var deadlineC <-chan time.Time
 		if !deadline.IsZero() {
-			wait := time.Until(deadline)
-			if wait < 0 {
-				wait = 0
-			}
-			timer = time.NewTimer(wait)
+			timer = time.NewTimer(time.Until(deadline))
 			deadlineC = timer.C
 		}
 		select {

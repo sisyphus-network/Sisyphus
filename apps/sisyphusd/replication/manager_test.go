@@ -475,6 +475,23 @@ func TestLegacyUnaryFollowerRemainsPresentWithoutLeaseFrames(t *testing.T) {
 	}
 }
 
+func TestRenewLeaseIgnoresUnknownAndStaleStreams(t *testing.T) {
+	r := newRig(t, 1)
+	unknownID := r.BeginLease("unknown")
+	r.RenewLease("unknown", unknownID)
+
+	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+	leaseID := r.BeginLease("follower")
+	r.RenewLease("follower", leaseID+1)
+	r.mu.Lock()
+	follower := r.Manager.followers["follower"]
+	gotEnabled := follower.leaseEnabled
+	r.mu.Unlock()
+	if gotEnabled {
+		t.Fatal("stale stream renewed the follower's current lease")
+	}
+}
+
 func TestUnaryAntiEntropyTakesOverAfterTheLeaseStreamEnds(t *testing.T) {
 	r := newRig(t, 1)
 	r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})

@@ -148,6 +148,44 @@ type halfClosedReplicationExchange struct {
 	sent     chan *pb.ReplicationFrame
 }
 
+type failingPushReplicationExchange struct {
+	*halfClosedReplicationExchange
+	sends int
+	err   error
+}
+
+type blockedLeaseRecvExchange struct {
+	*halfClosedReplicationExchange
+	release <-chan struct{}
+}
+
+type canceledLeaseRecvExchange struct{ *halfClosedReplicationExchange }
+
+func (s *canceledLeaseRecvExchange) Recv() (*pb.ReplicationHello, error) {
+	if !s.received {
+		s.received = true
+		return s.hello, nil
+	}
+	return nil, context.Canceled
+}
+
+func (s *blockedLeaseRecvExchange) Recv() (*pb.ReplicationHello, error) {
+	if !s.received {
+		s.received = true
+		return s.hello, nil
+	}
+	<-s.release
+	return nil, io.EOF
+}
+
+func (s *failingPushReplicationExchange) Send(frame *pb.ReplicationFrame) error {
+	s.sends++
+	if s.sends > 1 {
+		return s.err
+	}
+	return s.halfClosedReplicationExchange.Send(frame)
+}
+
 func (s *halfClosedReplicationExchange) Context() context.Context { return s.ctx }
 
 func (s *halfClosedReplicationExchange) Recv() (*pb.ReplicationHello, error) {
@@ -302,6 +340,120 @@ func TestReplicationPushStaysOpenAfterClientHalfClosesSendSide(t *testing.T) {
 	}
 }
 
+func TestReplicationReturnsAssignmentPushSendError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := storage.NewMemory()
+	manager := replication.New(replication.Config{
+		Identity: newIdentity(t), Store: store, StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7700" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	hellos, err := replication.ReplicationHellos(&pb.ReplicateRequest{KeepsLists: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := status.Error(codes.Unavailable, "follower disconnected during push")
+	stream := &failingPushReplicationExchange{
+		halfClosedReplicationExchange: &halfClosedReplicationExchange{
+			ctx: ctx, hello: hellos[0], sent: make(chan *pb.ReplicationFrame, 4),
+		},
+		err: want,
+	}
+	service := &blobService{store: store, replication: manager}
+	done := make(chan error, 1)
+	go func() { done <- service.Replication(stream) }()
+	if _, err := replication.ReadReplicationResponse(func() (*pb.ReplicationFrame, error) {
+		select {
+		case frame := <-stream.sent:
+			return frame, nil
+		case <-time.After(time.Second):
+			return nil, errors.New("timed out waiting for baseline assignment")
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := store.Put(ctx, strings.NewReader("assignment that triggers a push"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Pin(ctx, "test", time.Time{}, blob); err != nil {
+		t.Fatal(err)
+	}
+	manager.PinsChanged()
+	select {
+	case err := <-done:
+		if !errors.Is(err, want) {
+			t.Errorf("replication handler returned %v, want %v", err, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replication handler did not return after assignment push failed")
+	}
+}
+
+func TestReplicationReturnsWhenStreamContextEndsBeforeLeaseRecv(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := storage.NewMemory()
+	manager := replication.New(replication.Config{
+		Identity: newIdentity(t), Store: store, StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7700" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	hellos, err := replication.ReplicationHellos(&pb.ReplicateRequest{KeepsLists: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	stream := &blockedLeaseRecvExchange{
+		halfClosedReplicationExchange: &halfClosedReplicationExchange{
+			ctx: ctx, hello: hellos[0], sent: make(chan *pb.ReplicationFrame, 2),
+		},
+		release: release,
+	}
+	done := make(chan error, 1)
+	go func() { done <- (&blobService{store: store, replication: manager}).Replication(stream) }()
+	if _, err := replication.ReadReplicationResponse(func() (*pb.ReplicationFrame, error) {
+		select {
+		case frame := <-stream.sent:
+			return frame, nil
+		case <-time.After(time.Second):
+			return nil, errors.New("timed out waiting for baseline assignment")
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("replication handler after stream cancellation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replication handler waited for a blocked lease receive after cancellation")
+	}
+	close(release)
+}
+
+func TestReplicationTreatsCanceledLeaseWatcherAsCleanEnd(t *testing.T) {
+	store := storage.NewMemory()
+	manager := replication.New(replication.Config{
+		Identity: newIdentity(t), Store: store, StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7700" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	hellos, err := replication.ReplicationHellos(&pb.ReplicateRequest{KeepsLists: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &canceledLeaseRecvExchange{&halfClosedReplicationExchange{
+		ctx: context.Background(), hello: hellos[0], sent: make(chan *pb.ReplicationFrame, 2),
+	}}
+	if err := (&blobService{store: store, replication: manager}).Replication(stream); err != nil {
+		t.Errorf("replication handler after canceled lease watcher: %v", err)
+	}
+}
+
 func TestReplicationStreamRejectsUnexpectedClientFrameAfterHello(t *testing.T) {
 	store := storage.NewMemory()
 	manager := replication.New(replication.Config{
@@ -320,6 +472,22 @@ func TestReplicationStreamRejectsUnexpectedClientFrameAfterHello(t *testing.T) {
 	err = (&blobService{store: store, replication: manager}).Replication(stream)
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("replication stream with a non-lease frame after hello: %v, want InvalidArgument", err)
+	}
+}
+
+func TestWatchReplicationLeasesStopsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	manager := replication.New(replication.Config{
+		Identity: newIdentity(t), Store: storage.NewMemory(), StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7700" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	err := watchReplicationLeases(ctx, func() (*pb.ReplicationHello, error) {
+		return &pb.ReplicationHello{Lease: true}, nil
+	}, "follower", 1, manager)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("watchReplicationLeases returned %v, want context canceled", err)
 	}
 }
 

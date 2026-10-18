@@ -287,6 +287,23 @@ type recordedLeaseFrames struct {
 	sent chan *pb.ReplicationHello
 }
 
+type failLeaseReplicationFrames struct {
+	*blockingReplicationFrames
+	err        error
+	failAfter  int
+	leaseSends int
+}
+
+func (s *failLeaseReplicationFrames) Send(frame *pb.ReplicationHello) error {
+	if frame.GetLease() {
+		s.leaseSends++
+		if s.leaseSends > s.failAfter {
+			return s.err
+		}
+	}
+	return nil
+}
+
 func (s *recordedLeaseFrames) Send(frame *pb.ReplicationHello) error {
 	s.sent <- frame
 	return nil
@@ -326,6 +343,23 @@ func TestFollowerRenewsItsReplicationLeaseOnTheOpenStream(t *testing.T) {
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Errorf("lease sender returned %v, want context canceled", err)
+	}
+}
+
+func TestFollowerLeaseSenderReturnsRenewalError(t *testing.T) {
+	usual := LeaseInterval
+	LeaseInterval = time.Millisecond
+	t.Cleanup(func() { LeaseInterval = usual })
+	want := errors.New("lease send failed")
+	stream := &failLeaseReplicationFrames{
+		blockingReplicationFrames: &blockingReplicationFrames{replicationFrames: &replicationFrames{}},
+		err:                       want, failAfter: 1,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := (&Follower{}).sendLeases(ctx, stream)
+	if !errors.Is(err, want) {
+		t.Errorf("lease sender returned %v, want %v", err, want)
 	}
 }
 
@@ -576,6 +610,48 @@ func TestRunWaitsForRecvAfterLeaseSendReturnsEOF(t *testing.T) {
 	stop()
 	if got := len(client.opened); got != 1 {
 		t.Errorf("opened assignment stream %d times, want one when Recv is still open", got)
+	}
+}
+
+func TestRunReconnectsWhenLeaseRenewalFails(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	want := errors.New("lease renewal failed")
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 4), opened: make(chan struct{}, 4),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
+			return &failLeaseReplicationFrames{
+				blockingReplicationFrames: &blockingReplicationFrames{
+					replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+						frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+					}},
+					ctx: ctx,
+				},
+				err: want,
+			}, nil
+		},
+	}
+	logs := new(logged)
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: logs.logger(),
+	}
+	stop := run(t, follower, time.Second)
+	defer stop()
+	deadline := time.After(time.Second)
+	for logs.count("the storage assignment lease could not be renewed; reconnecting") == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("failed lease renewal was not logged")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if got := len(client.opened); got < 1 {
+		t.Fatal("follower did not open its assignment stream")
 	}
 }
 
