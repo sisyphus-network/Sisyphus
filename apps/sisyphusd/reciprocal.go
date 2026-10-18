@@ -205,28 +205,30 @@ func sendTrustUpdate(stop <-chan struct{}, updates chan<- trustUpdate, update tr
 	}
 }
 
+func readTrustUpdates(conn net.Conn, stop <-chan struct{}, updates chan<- trustUpdate) {
+	for {
+		var state [1]byte
+		if _, err := io.ReadFull(conn, state[:]); err != nil {
+			sendTrustUpdate(stop, updates, trustUpdate{err: err})
+			return
+		}
+		if state[0] > 1 {
+			sendTrustUpdate(stop, updates, trustUpdate{err: errors.New("invalid reciprocal trust state")})
+			return
+		}
+		if !sendTrustUpdate(stop, updates, trustUpdate{trusted: state[0] == 1}) {
+			return
+		}
+	}
+}
+
 // followTrust consumes the initial trust state and its live changes. Losing
 // the stream stops guest work; reconnecting starts with a fresh state snapshot.
 func (r *reciprocity) followTrust(ctx context.Context, id string, conn net.Conn) (received bool, err error) {
 	updates := make(chan trustUpdate, 1)
 	stopReading := make(chan struct{})
 	defer close(stopReading)
-	go func() {
-		for {
-			var state [1]byte
-			if _, err := io.ReadFull(conn, state[:]); err != nil {
-				sendTrustUpdate(stopReading, updates, trustUpdate{err: err})
-				return
-			}
-			if state[0] > 1 {
-				sendTrustUpdate(stopReading, updates, trustUpdate{err: errors.New("invalid reciprocal trust state")})
-				return
-			}
-			if !sendTrustUpdate(stopReading, updates, trustUpdate{trusted: state[0] == 1}) {
-				return
-			}
-		}
-	}()
+	go readTrustUpdates(conn, stopReading, updates)
 
 	const minWorkRetry = time.Second
 	const maxWorkRetry = time.Minute
@@ -367,9 +369,13 @@ func cancelTrustDialUnlessOpened(opened *atomic.Bool, cancel context.CancelFunc)
 }
 
 func dialTrustWith(ctx context.Context, dial func(context.Context) (net.Conn, error)) (net.Conn, error) {
+	return dialTrustWithTimeout(ctx, 15*time.Second, dial)
+}
+
+func dialTrustWithTimeout(ctx context.Context, timeout time.Duration, dial func(context.Context) (net.Conn, error)) (net.Conn, error) {
 	dialCtx, cancel := context.WithCancel(ctx)
 	var opened atomic.Bool
-	timer := time.AfterFunc(15*time.Second, func() { cancelTrustDialUnlessOpened(&opened, cancel) })
+	timer := time.AfterFunc(timeout, func() { cancelTrustDialUnlessOpened(&opened, cancel) })
 	conn, err := dial(dialCtx)
 	opened.Store(true)
 	timer.Stop()

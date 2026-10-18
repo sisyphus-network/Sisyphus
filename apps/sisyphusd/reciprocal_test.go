@@ -375,6 +375,50 @@ func TestSendTrustUpdateStopsWhenReaderIsDone(t *testing.T) {
 	}
 }
 
+func TestTrustReaderStopsWhenItsUpdatesAreNoLongerNeeded(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	stop := make(chan struct{})
+	close(stop)
+	updates := make(chan trustUpdate, 1)
+	updates <- trustUpdate{trusted: true}
+
+	written := make(chan error, 1)
+	go func() {
+		_, err := server.Write([]byte{1})
+		written <- err
+	}()
+	readTrustUpdates(client, stop, updates)
+	if err := <-written; err != nil {
+		t.Fatalf("write trust state: %v", err)
+	}
+}
+
+func TestNoticesCoalescePendingWakeups(t *testing.T) {
+	changes := new(notices)
+	wake, forget := changes.watch("peer")
+	defer forget()
+	changes.tell("peer")
+	changes.tell("peer")
+	select {
+	case <-wake:
+	default:
+		t.Fatal("missing trust-change notification")
+	}
+	select {
+	case <-wake:
+		t.Fatal("duplicate notification was not coalesced")
+	default:
+	}
+	changes.tell("peer")
+	select {
+	case <-wake:
+	case <-time.After(time.Second):
+		t.Fatal("notification was lost after the previous one was consumed")
+	}
+}
+
 func TestFollowTrustRetriesWorkWithoutReopeningTrustStream(t *testing.T) {
 	client, server := net.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -504,6 +548,16 @@ func TestDialTrustWithCoversFailureCancellationAndOpenStream(t *testing.T) {
 	}
 	conn.Close()
 	right.Close()
+}
+
+func TestDialTrustTimeoutCancelsPendingDial(t *testing.T) {
+	conn, err := dialTrustWithTimeout(context.Background(), time.Millisecond, func(ctx context.Context) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	if conn != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("timed-out dial = (%v, %v), want no connection and cancellation", conn, err)
+	}
 }
 
 func TestCancelTrustDialUnlessOpened(t *testing.T) {
