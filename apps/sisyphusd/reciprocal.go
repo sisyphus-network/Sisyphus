@@ -589,6 +589,21 @@ type guestWork struct {
 	kuboSecret string
 	syncCache  bool
 	maxCache   uint64
+
+	mu sync.Mutex
+	// working is the workers now running for other nodes, so that word of
+	// a change in what this node serves reaches each of them.
+	working map[*worker.Worker]struct{}
+}
+
+// offersChanged passes word that what this node serves may have changed
+// to each worker it runs for another node.
+func (g *guestWork) offersChanged() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for w := range g.working {
+		w.OffersChanged()
+	}
 }
 
 // work runs as a worker of the node with the given ID, at addr, until ctx
@@ -605,6 +620,17 @@ func (g *guestWork) work(ctx context.Context, id, addr string) error {
 		Name: g.template.Name, Slots: g.template.Slots, Workloads: g.template.Workloads, Limit: g.template.Limit, Pool: id, Log: log, Hardware: g.template.Hardware,
 		Coordinator: addr, Credentials: creds,
 	}
+	g.mu.Lock()
+	if g.working == nil {
+		g.working = make(map[*worker.Worker]struct{})
+	}
+	g.working[w] = struct{}{}
+	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		delete(g.working, w)
+		g.mu.Unlock()
+	}()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

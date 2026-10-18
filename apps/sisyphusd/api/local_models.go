@@ -91,11 +91,15 @@ func (s *localService) PullModel(req *nodepb.PullModelRequest, stream nodepb.Nod
 	if err != nil {
 		return err
 	}
-	return asError(s.cfg.Assistant.PullModel(ctx, at, req.GetModel(), func(p ai.Progress) {
+	if err := s.cfg.Assistant.PullModel(ctx, at, req.GetModel(), func(p ai.Progress) {
 		// A send that fails means whoever asked has gone, which ends ctx
 		// and with it the fetching.
 		stream.Send(&nodepb.PullModelProgress{Status: p.Status, CompletedBytes: uint64(p.Done), TotalBytes: uint64(p.Total)})
-	}))
+	}); err != nil {
+		return asError(err)
+	}
+	s.offersChanged()
+	return nil
 }
 
 // RemoveModel deletes a fetched model.
@@ -110,7 +114,16 @@ func (s *localService) RemoveModel(ctx context.Context, req *nodepb.RemoveModelR
 	if err := s.cfg.Assistant.RemoveModel(ctx, at, req.GetModel()); err != nil {
 		return nil, asError(err)
 	}
+	s.offersChanged()
 	return &nodepb.RemoveModelResponse{}, nil
+}
+
+// offersChanged tells the node's worker, if it has one, that what it
+// serves may have changed.
+func (s *localService) offersChanged() {
+	if s.cfg.OffersChanged != nil {
+		s.cfg.OffersChanged()
+	}
 }
 
 // sameService reports whether two configurations are of one model service,

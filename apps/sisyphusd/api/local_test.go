@@ -1377,6 +1377,37 @@ func (settable) ModelConfig() (nodedb.ModelConfig, bool, error) {
 	return nodedb.ModelConfig{Provider: "ollama", Model: "m", APIKey: "k"}, true, nil
 }
 
+// fetching is a planner that fetches and removes models without fail.
+type fetching struct{ settable }
+
+func (fetching) PullModel(context.Context, *nodedb.ModelConfig, string, func(ai.Progress)) error {
+	return nil
+}
+func (fetching) RemoveModel(context.Context, *nodedb.ModelConfig, string) error { return nil }
+
+// Fetching or removing a model tells the node's worker that what it serves
+// may have changed, and a call that fails does not.
+func TestFetchingOrRemovingAModelTellsTheWorker(t *testing.T) {
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	told := 0
+	s := &localService{cfg: LocalConfig{Token: "the-token", Assistant: fetching{}, OffersChanged: func() { told++ }}}
+	if err := s.PullModel(&nodepb.PullModelRequest{Model: "m"}, &pullStream{ctx: ctx}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RemoveModel(ctx, &nodepb.RemoveModelRequest{Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if told != 2 {
+		t.Errorf("the worker was told %d times, want twice", told)
+	}
+	failing := &localService{cfg: LocalConfig{Token: "the-token", Assistant: absent{}, OffersChanged: func() { told++ }}}
+	failing.PullModel(&nodepb.PullModelRequest{Model: "m"}, &pullStream{ctx: ctx})
+	failing.RemoveModel(ctx, &nodepb.RemoveModelRequest{Model: "m"})
+	if told != 2 {
+		t.Errorf("failed calls told the worker: %d", told)
+	}
+}
+
 func TestThePlannersCallsOnANodeWithoutOneAndOnOneThatFails(t *testing.T) {
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
 	calls := func(s *localService) map[string]error {

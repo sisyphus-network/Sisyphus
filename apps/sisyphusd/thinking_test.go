@@ -113,11 +113,29 @@ func TestThePoolThinksOnAWorkersModelAndThePlannerPlansWithIt(t *testing.T) {
 	if !strings.Contains(held, strings.ToLower(strings.TrimPrefix(pb.JobState_JOB_STATE_PENDING.String(), "JOB_STATE_"))) {
 		t.Errorf("a conversation with a model nobody serves:\n%s", held)
 	}
-	// The worker's owner fetches the model. The worker says so the next
-	// time it reports in, and the conversation that was waiting is had.
+	// A model that turns up in the model server by itself, as one fetched
+	// there by hand would, is not noticed: nothing is asked on a timer.
 	served.mu.Lock()
 	served.fetched = "unserved-model"
 	served.mu.Unlock()
+	time.Sleep(300 * time.Millisecond)
+	if job, err := client.GetJob(tokenOf(t, dataDir), &nodepb.GetJobRequest{JobId: strings.TrimSpace(waiting)}); err != nil || job.GetJob().GetState() != nodepb.JobState_JOB_STATE_PENDING {
+		t.Fatalf("a model nobody told the worker of was used: %v, %v", job, err)
+	}
+	// The worker's owner fetches it through the node. The worker says so
+	// at once, and the conversation that was waiting is had.
+	pulling, err := client.PullModel(tokenOf(t, dataDir), &nodepb.PullModelRequest{Service: &nodepb.ModelService{Provider: "ollama", BaseUrl: served.URL}, Model: "unserved-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := pulling.Recv(); err != nil {
+			if err != io.EOF {
+				t.Fatalf("fetching the model: %v", err)
+			}
+			break
+		}
+	}
 	waitFor(t, func() bool {
 		job, err := client.GetJob(tokenOf(t, dataDir), &nodepb.GetJobRequest{JobId: strings.TrimSpace(waiting)})
 		return err == nil && job.GetJob().GetState() == nodepb.JobState_JOB_STATE_SUCCEEDED && strings.Contains(string(job.GetJob().GetResult()), "Fetched and ready.")

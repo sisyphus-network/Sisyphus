@@ -618,6 +618,15 @@ func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- guests.work(ctx, p.ident.ID(), p.addr) }()
 	p.waitForWorkers(1)
+	// Word that what this node serves changed reaches the worker it runs
+	// for the other node.
+	guests.mu.Lock()
+	working := len(guests.working)
+	guests.mu.Unlock()
+	if working != 1 {
+		t.Errorf("%d workers known to be working for others, want one", working)
+	}
+	guests.offersChanged()
 	// What its tasks fetch is kept apart, under the other node's name.
 	input := p.upload(sampleText())
 	p.wordcountOn(input, 2)
@@ -627,6 +636,9 @@ func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {
 	stop()
 	if err := <-done; err != nil {
 		t.Errorf("stopping work for another node: %v", err)
+	}
+	if len(guests.working) != 0 {
+		t.Errorf("a worker that stopped is still known to be working: %d", len(guests.working))
 	}
 
 	// Turned away, it says why.
