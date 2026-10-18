@@ -2,7 +2,7 @@
 
 ## Setup
 
-You need Go 1.27 or newer. To change the protocol you also need `protoc` (the generated code was last made with 36.2; get it from the protobuf releases on GitHub, since distributions carry old ones) and the plugins that `make tools` installs.
+You need Go 1.27 or newer. `go.mod` names `toolchain go1.27.2`, the first 1.27 release with the fixes for this module's reachable standard-library advisories. The Go command fetches it on its own unless `GOTOOLCHAIN=local` is set, as the Nix shell sets it, and `setup-go` installs it in CI and for releases. To change the protocol you also need `protoc` (the generated code was last made with 36.2; get it from the protobuf releases on GitHub, since distributions carry old ones) and the plugins that `make tools` installs.
 
 Some tests run a real IPFS daemon and need the `ipfs` program ([Kubo](https://github.com/ipfs/kubo/releases)) on the PATH; CI uses the version pinned in `.github/workflows/ci.yml`. Without it `make test` skips those tests, and `make cover` fails each of them, naming the program, since the code they exercise would go unrun. Each test daemon gets a repository of its own in a temporary directory and never touches `~/.ipfs` or a daemon already running on the machine.
 
@@ -19,6 +19,8 @@ make demo    # a three-node pool and a few jobs on this machine, in one terminal
 make proto   # regenerate packages/protocol after editing proto/
 make fmt
 ```
+
+To check dependencies for known vulnerabilities, run `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...` (older releases, 1.1.4 for one, crash on Go 1.27's syntax). It reports one advisory that has no fix: [GO-2024-3218](https://pkg.go.dev/vuln/GO-2024-3218), censorship of content by peers that abuse a Kademlia DHT, in `go-libp2p-kad-dht`. A node builds a DHT only with `--discover`, and it is Sisyphus's own table, under its own protocol prefix (`apps/sisyphusd/p2p`, `tablePrefix`), not the IPFS one. Its peers are the nodes that discover each other there.
 
 CI runs formatting, `go vet`, staticcheck, the tests under the race detector, `make cover`, a build and the container rehearsal on every pull request, and for the desktop app its typecheck, unit tests, build and end-to-end tests.
 
