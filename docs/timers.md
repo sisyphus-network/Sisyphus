@@ -28,7 +28,7 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 | `daemon.go`, `poolSwarm.adopt` | A failed move to the pool's new private-network key | Retry | `adoptRetry`, 5 s | Tried again until it succeeds or the node stops. |
 | `p2p/p2p.go`, `Host.call` | A failed dial to a node that has just been found | Retry | Random, 150 to 300 ms, three tries | Two nodes that dial each other at the same instant both fail. Waiting a different time each lets one get through. |
 | `daemon.go`, `collectPeriodically` | The interval | Maintenance | `--gc-interval`, 1 h; 0 turns it off | Walks pinned DAGs and sweeps unreferenced blocks. Store pin changes do not make this full-store walk cheap; job-record pruning has its own event/deadline scheduler. |
-| `cluster.go`, `clusterPins.run` | A change to the store's pins, or the interval | Event and anti-entropy | `clusterSync`, 1 min | IPFS Cluster can change without the store hearing of it, as when a peer restarts. The minute catches that. |
+| `cluster.go`, `clusterPins.run` | A change to the store's pins, or the interval | Event and anti-entropy | `clusterSync`, 1 min | IPFS Cluster can change without the store hearing of it, as when a peer restarts. The minute catches that. Its [`/allocations` and `/pins` endpoints](https://ipfscluster.io/documentation/reference/api/) stream finite results for each request; the [handlers](https://github.com/ipfs-cluster/ipfs-cluster/blob/master/api/rest/restapi.go) are not subscriptions to later changes. |
 | `p2p/p2p.go`, `Host.keepPlaces` | A change to the pool's relays, a connection made or lost, or the nearest renewal or retry | Event and deadline, with retry | Renewal at half a reservation's life; a failed attempt again after `PlaceCheck`, 10 s | A reservation expires whether or not anything changed, and a relay that did not answer gives no notice when it is back. Nothing is rescanned while all is well (#410). |
 | `worker/peers.go`, `Members.RunRelayWatch` | The coordinator's relay stream ending | Retry | Backoff from 1 s to 15 s, back to 1 s after a stream that delivered a list | The stream itself carries every change to the relays (#410). The timer only reconnects it. |
 | `replication/follower.go`, `Follower.Run` | The interval, or at once after a change it made | Anti-entropy | `replication.Interval`, 1 min | A storage follower asks its coordinator which blobs to hold. The coordinator has no stream to push that list on. See the candidates below. |
@@ -36,12 +36,25 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 | `pinning/client.go`, waiting for a remote pin | The interval, while a remote pinning service is still pinning | Retry (status poll) | The caller's `every` | The IPFS Pinning Service API has no notification, so status is the only way to learn a pin is done. It stops once the pin is pinned or failed. |
 | `packages/kubo/daemon.go` and `packages/ipfscluster/daemon.go`, start | The subprocess answering its API, or its ready timeout | Readiness | Every 20 ms (Kubo) and 50 ms (Cluster) | Neither program says when it is ready, so its API is tried until it answers. Bounded by `ReadyTimeout`. |
 
-## Waits bounded to one call
+## One-shot waits and bounded calls
 
 | Where | What it bounds |
 | --- | --- |
 | `pinning/service.go`, `promptness` (5 s) | How long a pin request waits to answer `pinned` at once, before it answers `queued`. |
 | `mcpserver/mcpserver.go`, `listenFor` (2 s) | How long a running job's events are listened to before an agent is given what came. |
+| `worker/peers.go`, `peerProbe` (5 s) | How long a peer's `Stat` call may take before the worker gives up on that holder, rather than letting an unavailable peer consume the longer blob-fetch budget. |
+| `reciprocal.go`, `dialTrustWithTimeout` (15 s) | How long a trust stream may take to open. The timeout is stopped once the persistent stream is established. |
+| `reciprocal.go`, `wordTimeout` (5 s) | How long a trust-state write may block when the other peer has stopped reading. |
+| `web_access_runtime.go`, remote-access disable (750 ms) | Lets the current API request return before its own HTTPS listener is closed asynchronously. |
+| `p2p/p2p.go`, peer discovery and dialing | `meet` (10 s) for a newly discovered peer; 2 s each for the preferred relay and direct-dial attempt | Bounds one attempt in each connection stage; failure falls through to the next route or normal retry behavior. |
+| `daemon.go`, `gatewaysAddress`, `stunnedAddress`, and `lookUpCountry` | 10 s for NAT-PMP/STUN; 5 s for the country lookup | Bounds each external discovery request. A transient country lookup failure uses `Retry-After` with exponential backoff as a gate on the next location query. |
+| `daemon.go`, pool-member check and `carryName` | `memberCheck` (5 s); `kuboHandover` (30 s) | Bounds one coordinator admission check or one attempt to pass a name record to Kubo. |
+| `daemon.go` / `assistant.go`, attachment-pin replay and flush | `filePinTimeout` (10 s) | Bounds one attempt to replay queued pin work, including the flush after a chat is deleted; failures are retried by the event/retry loop above. |
+| `pinning/service.go`, `connectTimeout` (10 s) | Bounds Kubo's connection to each origin of a pin request; one unavailable origin does not consume the full fetch. |
+| `packages/hardware/hardware.go`, `Detect` (5 s) | Bounds the platform command used to read hardware details; unanswered probes leave those details unknown. |
+| `packages/runtime/chat.go` and `used.go`, `tagsWait` (3 s) | Bounds the Ollama version/model metadata lookups; failure leaves optional model-use metadata empty. |
+| `packages/runtime/container.go`, `Confined.Timeout` | Owner-configured maximum runtime for one workload; the coordinator's attempt deadline provides the corresponding assignment lifecycle bound. |
+| `mcpserver/extras.go`, `follow` | The caller-supplied wait | Stops waiting for a job's live events at the requested duration, then returns its current state; the job itself continues. |
 | `packages/kubo/daemon.go` and `packages/ipfscluster/daemon.go`, `stopGrace` (10 s) | How long a subprocess has to exit after an interrupt before it is killed. |
 
 ## Candidates
