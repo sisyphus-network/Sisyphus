@@ -361,9 +361,81 @@ func TestEventDrivenCollectionWaitsForPinExpiry(t *testing.T) {
 	<-stopped
 }
 
+func TestEventDrivenCollectionDebounceIsBoundedFromFirstRelease(t *testing.T) {
+	priorDebounce := gcChangeDebounce
+	gcChangeDebounce = 300 * time.Millisecond
+	t.Cleanup(func() { gcChangeDebounce = priorDebounce })
+
+	dir := t.TempDir()
+	store, err := storage.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	orphan, err := store.Put(ctx, strings.NewReader("startup sweep"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Unpin(storage.GraceOwner, orphan); err != nil {
+		t.Fatal(err)
+	}
+	var cids []cid.Cid
+	for _, content := range []string{"first sustained release", "second sustained release", "third sustained release"} {
+		cid, err := store.PutFor(ctx, "user", strings.NewReader(content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cids = append(cids, cid)
+	}
+
+	logs := new(syncBuffer)
+	cancel, stopped := startEventCollector(t, store, 0, logs)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), `blocks=1`) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), `blocks=1`) {
+		cancel()
+		<-stopped
+		t.Fatalf("collector did not finish its startup sweep: %s", logs.String())
+	}
+	if err := store.Unpin("user", cids[0]); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := store.Unpin("user", cids[1]); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := store.Unpin("user", cids[2]); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(250 * time.Millisecond)
+	for {
+		held, err := store.Has(ctx, cids[0])
+		if err != nil {
+			cancel()
+			<-stopped
+			t.Fatal(err)
+		}
+		if !held {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-stopped
+			t.Fatalf("first released blob remained past the first-release debounce window: %s", logs.String())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-stopped
+}
+
 func TestEventDrivenCollectionRetriesFailureWithBackoff(t *testing.T) {
 	priorRetry, priorMaximum := gcRetryInitial, gcRetryMaximum
-	gcRetryInitial, gcRetryMaximum = 5*time.Millisecond, 10*time.Millisecond
+	gcRetryInitial, gcRetryMaximum = 100*time.Millisecond, 100*time.Millisecond
 	t.Cleanup(func() { gcRetryInitial, gcRetryMaximum = priorRetry, priorMaximum })
 
 	dir := t.TempDir()
@@ -372,11 +444,16 @@ func TestEventDrivenCollectionRetriesFailureWithBackoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	cid, err := store.Put(context.Background(), strings.NewReader("retry after pin journal failure"))
+	ctx := context.Background()
+	cid, err := store.PutFor(ctx, "released", strings.NewReader("retry after pin journal failure"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Unpin(storage.GraceOwner, cid); err != nil {
+	if err := store.Unpin("released", cid); err != nil {
+		t.Fatal(err)
+	}
+	grace, err := store.Put(ctx, strings.NewReader("grace pin must not delay retries"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	blocker := filepath.Join(dir, "pins.json.tmp")
@@ -390,10 +467,23 @@ func TestEventDrivenCollectionRetriesFailureWithBackoff(t *testing.T) {
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		held, _ := store.Has(context.Background(), cid)
-		return !held
-	})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		held, err := store.Has(ctx, cid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !held {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if held, err := store.Has(ctx, cid); err != nil || held {
+		t.Fatalf("failed collection did not retry before an unrelated grace pin expires: held=%t err=%v logs=%s", held, err, logs.String())
+	}
+	if held, err := store.Has(ctx, grace); err != nil || !held {
+		t.Fatalf("retry deleted the blob kept by its grace pin: held=%t err=%v", held, err)
+	}
 	cancel()
 	<-stopped
 	if n := strings.Count(logs.String(), "garbage collection failed"); n != 1 {

@@ -2376,13 +2376,14 @@ func collectOnChanges(ctx context.Context, store *storage.Store, interval time.D
 	}
 	deadline := time.NewTimer(time.Hour)
 	debounce := time.NewTimer(time.Hour)
-	stopAndDrain(deadline)
-	stopAndDrain(debounce)
+	deadline.Stop()
+	debounce.Stop()
 	defer deadline.Stop()
 	defer debounce.Stop()
 
 	nextRetry := time.Time{}
 	retryDelay := gcRetryInitial
+	debounceArmed := false
 	collect := func() {
 		done, err := store.GC(ctx, time.Now())
 		if err != nil {
@@ -2406,16 +2407,21 @@ func collectOnChanges(ctx context.Context, store *storage.Store, interval time.D
 				expires = pin.Expires
 			}
 		}
-		if !nextRetry.IsZero() && (expires.IsZero() || nextRetry.After(expires)) {
+		if !nextRetry.IsZero() {
+			// Retry a failed sweep before waiting on any pin expiry. In
+			// particular, a new upload's grace pin must not defer retrying
+			// cleanup of already released data for up to an hour.
 			expires = nextRetry
 		}
 		deadlineC := resetTimerAt(deadline, expires)
 		select {
 		case <-changes.changed:
-			if changes.mayCollect.Swap(false) {
+			if changes.mayCollect.Swap(false) && !debounceArmed {
 				resetTimerFor(debounce, gcChangeDebounce)
+				debounceArmed = true
 			}
 		case <-debounce.C:
+			debounceArmed = false
 			collect()
 		case <-deadlineC:
 			collect()
@@ -2428,13 +2434,8 @@ func collectOnChanges(ctx context.Context, store *storage.Store, interval time.D
 }
 
 func resetTimerAt(timer *time.Timer, at time.Time) <-chan time.Time {
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
 	if at.IsZero() {
+		timer.Stop()
 		return nil
 	}
 	delay := time.Until(at)
@@ -2446,22 +2447,7 @@ func resetTimerAt(timer *time.Timer, at time.Time) <-chan time.Time {
 }
 
 func resetTimerFor(timer *time.Timer, delay time.Duration) {
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
 	timer.Reset(delay)
-}
-
-func stopAndDrain(timer *time.Timer) {
-	if !timer.Stop() {
-		select {
-		case <-timer.C:
-		default:
-		}
-	}
 }
 
 // runJobPruner waits for a job's retention deadline or a job change that
