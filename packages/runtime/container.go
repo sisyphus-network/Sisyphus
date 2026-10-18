@@ -219,7 +219,7 @@ func (Container) Describe() string {
 	return `Runs a container image, once for each task, with no network unless asked. Parameters: {"image": "<image>", "command": ["<program>", "<argument>", ...], "tasks": <how many copies>, "input": "<optional CID of a stored file, given to each task at /input/data>", "network": <true to allow network access, which only workers whose owner allows it give>, "gpus": <how many graphics cards each task needs, if any>}. Each task has SISYPHUS_TASK_INDEX (from 0) and SISYPHUS_TASK_COUNT in its environment. Result: {"tasks": [{"index": <n>, "stdout": "<CID of what it printed>", "files": {"<name>": "<CID of a file it wrote to /output>"}}]}.`
 }
 
-func (Container) Split(_ context.Context, _ Blobs, params []byte, parts int) ([][]byte, error) {
+func (Container) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
 	var p ContainerParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("container parameters: %w", err)
@@ -228,9 +228,17 @@ func (Container) Split(_ context.Context, _ Blobs, params []byte, parts int) ([]
 		return nil, fmt.Errorf("container parameters: %w", err)
 	}
 	if p.Input != "" {
-		if _, err := cid.Decode(p.Input); err != nil {
+		input, err := cid.Decode(p.Input)
+		if err != nil {
 			return nil, fmt.Errorf("container parameters: input is not a CID: %w", err)
 		}
+		// Opening it is what tells the coordinator the job reads it, and so
+		// keeps it while the job runs: only tasks read it after this.
+		blob, err := blobs.Open(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("container input %s: %w", input, err)
+		}
+		blob.Close()
 	}
 	count := parts
 	if p.Tasks > 0 {
