@@ -193,7 +193,7 @@ bin/sisyphusd run --kubo --cluster --role worker --coordinator <addr> --join <in
 bin/sisyphusd pool cluster                                  # which nodes hold what
 ```
 
-- **The node's pins are the cluster's pins.** Everything in `blob pins`, apart from the hour's grace every upload gets and the records of jobs, which are not files, is pinned on the cluster, and unpinned from it when the last pin on the node goes: unpinned by hand, or lapsed and collected. Retention is still managed in the one place, with `blob pin`, `blob unpin`, `--retain` and `--ttl`. The coordinator compares the two lists when it starts and every minute after, and puts right whatever differs.
+- **The node's pins are the cluster's pins.** Everything in `blob pins`, apart from the hour's grace every upload gets and the records of jobs, which are not files, is pinned on the cluster, and unpinned from it when the last pin on the node goes: unpinned by hand, or lapsed and collected. Retention is still managed in the one place, with `blob pin`, `blob unpin`, `--retain` and `--ttl`. The coordinator syncs a change as soon as the node's pins change, and compares the lists again every minute to catch changes made outside the node.
 - **`--replicas N` is how many nodes hold each pin besides the coordinator**, one unless told otherwise; `pool cluster` counts the coordinator too, so it shows N + 1. The coordinator always holds everything: its Kubo is where the node stores it in any case. The others are chosen by the cluster, by free space, and fetch the data over the pool's private network.
 - **With fewer nodes than that, a pin is held by as many as there are**, and gains holders within about a minute of more joining.
 - **When a holder goes, another takes its place.** A node not heard from for thirty seconds is taken to be gone, and the coordinator's peer has another node fetch what it held, if there is one that does not hold it already. If the node comes back, the pin stays where it was moved to.
@@ -391,8 +391,8 @@ Started with `--publish-record`, a coordinator keeps a small JSON document about
 
 - **What it reveals** is exactly that: the node's ID, the version of `sisyphusd` it runs, the names of the workloads it takes jobs for, and the ID and role of every node admitted to its pool. It does not hold addresses, the labels given with `--name`, hardware, which members are connected, or anything about jobs.
 - **Who can read it** is whoever can resolve the name and fetch the file: every member of the pool; anyone with the node's API token, through its gateway; anyone at all who can reach the gateway, if it was started with `--gateway-open`; and, with `--kubo`, every member's Kubo. A list of members is its owner's to give out, which is why this is off unless asked for.
-- The node looks every 30 seconds for a change, and publishes a new record when the document differs. Each record is good for 48 hours and is replaced after 24. The document is pinned for as long as a record points at it.
-- It uses the node's one name. Anything else published under that name is replaced by the description within 30 seconds.
+- At startup, and whenever the pool's membership or the record held under the node's name changes, the coordinator promptly publishes its current description. A failed publication is retried after 30 seconds; an unchanged record is renewed after 24 hours, halfway through its 48-hour lifetime. The document is pinned for as long as a record points at it.
+- It uses the node's one name. If the record held under that name changes, the coordinator promptly republishes its description, replacing the other record. If publication fails, the retry takes place after 30 seconds.
 - Only a coordinator has it. A worker-only node publishes no description of itself.
 
 ### In a bucket
