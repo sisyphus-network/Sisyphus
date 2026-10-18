@@ -626,6 +626,38 @@ func TestReceiveAssignmentsRejectsMissingListsAndCoalescesSnapshots(t *testing.T
 	}
 }
 
+func TestReceiveAssignmentsKeepsHighestSequenceWhenResponsesArriveOutOfOrder(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	updates := make(chan *pb.ReplicateResponse, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 9}}),
+		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 8}}),
+	}}
+	(&Follower{}).receiveAssignments(ctx, stream, updates, make(chan struct{}, 1), make(chan error, 1))
+	if got := (<-updates).GetList().GetSequence(); got != 9 {
+		t.Fatalf("coalesced assignment sequence = %d, want highest sequence 9", got)
+	}
+}
+
+func TestReceiveAssignmentsKeepsChallengesWhenCoalescingSnapshots(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	updates := make(chan *pb.ReplicateResponse, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 1}, Challenges: []*pb.Challenge{{Cid: "blob-cid", Nonce: []byte("nonce")}}}),
+		frameResponse(t, &pb.ReplicateResponse{List: &pb.KeepList{Sequence: 2}}),
+	}}
+	(&Follower{}).receiveAssignments(ctx, stream, updates, make(chan struct{}, 1), make(chan error, 1))
+	response := <-updates
+	if got := response.GetList().GetSequence(); got != 2 {
+		t.Fatalf("coalesced assignment sequence = %d, want latest sequence 2", got)
+	}
+	if len(response.GetChallenges()) != 1 || string(response.GetChallenges()[0].GetNonce()) != "nonce" {
+		t.Fatalf("challenge was not preserved while coalescing: %v", response)
+	}
+}
+
 func TestReceiveAssignmentsDeliversChallengeOnlyPushAfterCapabilityAck(t *testing.T) {
 	ctx := context.Background()
 	ready := make(chan struct{}, 2)

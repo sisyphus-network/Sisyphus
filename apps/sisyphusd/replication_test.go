@@ -43,6 +43,13 @@ func replicateQuickly(t *testing.T, grace time.Duration) {
 	})
 }
 
+func giveReplicationTestRoom(t *testing.T, p *pool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	t.Cleanup(cancel)
+	p.ctx = ctx
+}
+
 // relayQuickly has the nodes a test starts look to their place on a relay
 // as often as a test needs, not as a real pool does, so that a worker is
 // back on its coordinator's relay soon after the coordinator restarts.
@@ -97,7 +104,7 @@ func (p *pool) replicas() *pb.ReplicasResponse {
 	p.t.Helper()
 	listed, err := p.blobs.Replicas(p.ctx, &pb.ReplicasRequest{})
 	if err != nil {
-		p.t.Fatal(err)
+		p.t.Fatalf("listing replication state: %v (gRPC connection state: %s)", err, p.conn.GetState())
 	}
 	return listed
 }
@@ -106,20 +113,36 @@ func (p *pool) replicas() *pb.ReplicasResponse {
 // has pinned is held by so many followers.
 func (p *pool) waitForCopies(n int) {
 	p.t.Helper()
-	waitFor(p.t, func() bool {
+	deadline := time.Now().Add(60 * time.Second)
+	for {
 		listed := p.replicas()
+		complete := len(listed.GetBlobs()) > 0
 		for _, blob := range listed.GetBlobs() {
 			if len(blob.GetHolders()) != n {
-				return false
+				complete = false
+				break
 			}
 		}
-		return len(listed.GetBlobs()) > 0
-	})
+		if complete {
+			return
+		}
+		if time.Now().After(deadline) {
+			var unmet []string
+			for _, blob := range listed.GetBlobs() {
+				if len(blob.GetHolders()) != n {
+					unmet = append(unmet, fmt.Sprintf("%s=%v", blob.GetCid(), blob.GetHolders()))
+				}
+			}
+			p.t.Fatalf("timed out waiting for %d copies; followers=%v unmet=%v coordinator logs:\n%s", n, listed.GetFollowers(), unmet, p.logs.String())
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 func TestPinnedDataEndsUpOnAsManyFollowersAsAsked(t *testing.T) {
 	replicateQuickly(t, time.Minute)
 	p := startReplicatedPool(t, 2, "a", "b", "c")
+	giveReplicationTestRoom(t, p)
 	// Which two of the three hold a blob follows from its CID and their IDs,
 	// which are new each run. Six blobs all missed one follower about once
 	// in two hundred and fifty runs; thirty-two do not.
@@ -203,6 +226,7 @@ func TestALostFollowerIsReplacedAfterTheGracePeriod(t *testing.T) {
 	const grace = 5 * time.Second
 	replicateQuickly(t, grace)
 	p := startPoolKeeping(t, runtime.Builtin(), func(store *storage.Store) coordinator.Store { return store }, nil, 2)
+	giveReplicationTestRoom(t, p)
 	stops := make(map[string]func())
 	for _, name := range []string{"a", "b", "c"} {
 		stops[name] = p.startFollower(name)

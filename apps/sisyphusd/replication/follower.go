@@ -13,6 +13,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
@@ -313,23 +314,16 @@ func (f *Follower) receiveAssignments(ctx context.Context, stream pb.BlobService
 			}
 			return
 		}
-		if len(response.GetChallenges()) > 0 {
-			// Challenge replies are correlated with this exact nonce and must not
-			// be coalesced away with a newer assignment snapshot.
-			select {
-			case updates <- response:
-			case <-ctx.Done():
-				return
-			}
-			continue
-		}
 		select {
 		case updates <- response:
 		default:
-			// Lists are complete snapshots. If application falls behind, keep
-			// only the newest one rather than queueing every intermediate state.
+			// Coalesce complete lists by highest sequence, while retaining every
+			// challenge in stream order. Keeping them in one event also means a
+			// challenge accompanying a list is answered only after that list is
+			// applied.
 			select {
-			case <-updates:
+			case queued := <-updates:
+				response = coalesceReplicationResponses(queued, response)
 			default:
 			}
 			select {
@@ -339,6 +333,16 @@ func (f *Follower) receiveAssignments(ctx context.Context, stream pb.BlobService
 			}
 		}
 	}
+}
+
+func coalesceReplicationResponses(queued, incoming *pb.ReplicateResponse) *pb.ReplicateResponse {
+	latest := incoming
+	if queued.GetList().GetSequence() > incoming.GetList().GetSequence() {
+		latest = queued
+	}
+	merged := proto.Clone(latest).(*pb.ReplicateResponse)
+	merged.Challenges = append(slices.Clone(queued.GetChallenges()), incoming.GetChallenges()...)
+	return merged
 }
 
 // forget lets go of a blob the store turned out not to have, as held is
