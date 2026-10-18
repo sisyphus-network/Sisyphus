@@ -497,6 +497,45 @@ func TestWatchReplicationMessagesStopsAfterCancellation(t *testing.T) {
 	}
 }
 
+func TestWatchReplicationMessagesRejectsMalformedLeaseAndPassesOnSendErrors(t *testing.T) {
+	manager := replication.New(replication.Config{
+		Identity: newIdentity(t), Store: storage.NewMemory(), StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7700" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	malformed := watchReplicationMessages(context.Background(), func() (*pb.ReplicationHello, error) {
+		return &pb.ReplicationHello{Lease: true, Index: 1}, nil
+	}, "follower", 1, manager, func(*pb.ReplicateResponse) error { return nil })
+	if status.Code(malformed) != codes.InvalidArgument {
+		t.Errorf("malformed lease error = %v, want InvalidArgument", malformed)
+	}
+
+	want := status.Error(codes.Unavailable, "follower disconnected")
+	ackFailure := watchReplicationMessages(context.Background(), func() (*pb.ReplicationHello, error) {
+		return &pb.ReplicationHello{Lease: true}, nil
+	}, "follower", 1, manager, func(*pb.ReplicateResponse) error { return want })
+	if !errors.Is(ackFailure, want) {
+		t.Errorf("capability-ack send error = %v, want original error", ackFailure)
+	}
+
+	frames, err := replication.ReplicationHellos(&pb.ReplicateRequest{KeepsLists: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received int
+	reportFailure := watchReplicationMessages(context.Background(), func() (*pb.ReplicationHello, error) {
+		if received < len(frames) {
+			frame := frames[received]
+			received++
+			return frame, nil
+		}
+		return nil, io.EOF
+	}, "follower", 1, manager, func(*pb.ReplicateResponse) error { return want })
+	if !errors.Is(reportFailure, want) {
+		t.Errorf("state-report response send error = %v, want original error", reportFailure)
+	}
+}
+
 func TestWatchReplicationMessagesAnswersLiveStateReports(t *testing.T) {
 	manager := replication.New(replication.Config{
 		Identity: newIdentity(t), Store: storage.NewMemory(), StoreID: "test", Replicas: 1,

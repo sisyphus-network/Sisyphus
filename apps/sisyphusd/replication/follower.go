@@ -117,14 +117,11 @@ func (f *Follower) Run(ctx context.Context) {
 				case <-streamReadyEvents:
 					streamReady = true
 					if needsReport {
-						select {
-						case requests <- f.reportRequest(pendingAnswers):
+						connected = enqueueReport(ctx, requests, f.reportRequest(pendingAnswers), func() {
 							needsReport = false
 							pendingAnswers = nil
 							drainPinChanges(pinChanges)
-						case <-ctx.Done():
-							connected = false
-						}
+						})
 					}
 				case response := <-updates:
 					changed = false
@@ -146,14 +143,11 @@ func (f *Follower) Run(ctx context.Context) {
 						needsReport = true
 						pendingAnswers = append(pendingAnswers, answers...)
 						if streamReady {
-							select {
-							case requests <- f.reportRequest(pendingAnswers):
+							connected = enqueueReport(ctx, requests, f.reportRequest(pendingAnswers), func() {
 								needsReport = false
 								pendingAnswers = nil
 								drainPinChanges(pinChanges)
-							case <-ctx.Done():
-								connected = false
-							}
+							})
 						}
 					}
 				case err := <-streamEnded:
@@ -165,11 +159,7 @@ func (f *Follower) Run(ctx context.Context) {
 						cancel()
 						stopLeases()
 						updates, streamEnded, leaseEnded = nil, nil, nil
-						wait := interval
-						if needsReport {
-							wait = 0
-						}
-						resetTimer(timer, wait)
+						resetTimer(timer, legacySyncWait(interval, needsReport))
 						timerC = timer.C
 						continue
 					}
@@ -185,11 +175,7 @@ func (f *Follower) Run(ctx context.Context) {
 						// baseline. Let Recv decide whether it supports pushes or
 						// whether the stream really failed.
 						leaseEnded = nil
-						wait := interval
-						if needsReport {
-							wait = 0
-						}
-						resetTimer(timer, wait)
+						resetTimer(timer, legacySyncWait(interval, needsReport))
 						timerC = timer.C
 						continue
 					}
@@ -204,17 +190,13 @@ func (f *Follower) Run(ctx context.Context) {
 				case <-pinChanges:
 					needsReport = true
 					if streamReady {
-						select {
-						case requests <- f.reportRequest(pendingAnswers):
+						connected = enqueueReport(ctx, requests, f.reportRequest(pendingAnswers), func() {
 							needsReport = false
 							pendingAnswers = nil
 							drainPinChanges(pinChanges)
-						case <-ctx.Done():
-							connected = false
-						}
-					} else if timerC != nil {
-						resetTimer(timer, 0)
-						timerC = timer.C
+						})
+					} else {
+						timerC = expediteLegacySync(timer, timerC)
 					}
 				case <-timerC:
 					needsReport = false
@@ -393,6 +375,31 @@ func (f *Follower) reportRequest(answers []*pb.ChallengeAnswer) *pb.ReplicateReq
 	return &pb.ReplicateRequest{
 		Holding: holding, Store: store, KeepsLists: true, AnswersChallenges: true, Answers: answers,
 	}
+}
+
+func enqueueReport(ctx context.Context, requests chan<- *pb.ReplicateRequest, request *pb.ReplicateRequest, queued func()) bool {
+	select {
+	case requests <- request:
+		queued()
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func legacySyncWait(interval time.Duration, needsReport bool) time.Duration {
+	if needsReport {
+		return 0
+	}
+	return interval
+}
+
+func expediteLegacySync(timer *time.Timer, timerC <-chan time.Time) <-chan time.Time {
+	if timerC == nil {
+		return nil
+	}
+	resetTimer(timer, 0)
+	return timer.C
 }
 
 func (f *Follower) currentHoldings() (map[cid.Cid][]string, []string, string) {

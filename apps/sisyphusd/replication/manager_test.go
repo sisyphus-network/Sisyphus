@@ -834,3 +834,48 @@ func TestExpiredFollowerPruningWakesAssignmentsAcrossManagerReads(t *testing.T) 
 		t.Errorf("restoring with no stranded blobs returned %d, %v", count, failed)
 	}
 }
+
+func TestIssueChallengesSkipsFollowerWhoseStreamClosedWhileWaitingForItsLock(t *testing.T) {
+	m := New(Config{Store: storage.NewMemory(), StoreID: "test", Log: slog.New(slog.DiscardHandler)})
+	m.followers["follower"] = &follower{
+		leaseEnabled: true,
+		streamOpen:   true,
+		challengeAt:  time.Now().Add(-time.Second),
+		held:         make(map[string]struct{}),
+	}
+
+	unlock := m.lockChallenges("follower")
+	done := make(chan struct{})
+	go func() {
+		m.issueChallenges(context.Background(), time.Now())
+		close(done)
+	}()
+
+	deadline := time.After(time.Second)
+	for {
+		m.challengeLocksMu.Lock()
+		lock := m.challengeLocks["follower"]
+		waiting := lock != nil && lock.refs == 2
+		m.challengeLocksMu.Unlock()
+		if waiting {
+			break
+		}
+		select {
+		case <-deadline:
+			unlock()
+			t.Fatal("challenge scheduler did not wait for the follower lock")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	m.mu.Lock()
+	m.followers["follower"].streamOpen = false
+	m.mu.Unlock()
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("challenge scheduler did not skip the now-closed follower stream")
+	}
+}

@@ -471,6 +471,36 @@ leased:
 	if holds(t, copies, c.String()) {
 		t.Error("follower kept a copy removed by the pushed assignment")
 	}
+
+	// A local pin change is reported on the same stream without waiting for
+	// another coordinator assignment or the reconciliation interval.
+	local, err := copies.Put(ctx, strings.NewReader("a local, non-pool pin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := copies.Pin(ctx, "local", time.Time{}, local); err != nil {
+		t.Fatal(err)
+	}
+	var changedFirst *pb.ReplicationHello
+	for changedFirst == nil {
+		select {
+		case frame := <-stream.sent:
+			if !frame.GetLease() {
+				changedFirst = frame
+			}
+		case <-time.After(time.Second):
+			t.Fatal("follower did not report a local pin change on its open stream")
+		}
+	}
+	changedRequest, err := ReadReplicationRequestAfter(changedFirst, func() (*pb.ReplicationHello, error) {
+		return <-stream.sent, nil
+	})
+	if err != nil {
+		t.Fatalf("read local pin-change report: %v", err)
+	}
+	if len(changedRequest.GetHolding()) != 0 || !changedRequest.GetKeepsLists() {
+		t.Errorf("local pin-change report has holding=%v keepsLists=%v, want no pool copies and signed-list support", changedRequest.GetHolding(), changedRequest.GetKeepsLists())
+	}
 }
 
 func TestFollowerLeaseSenderReturnsRenewalError(t *testing.T) {
@@ -487,6 +517,15 @@ func TestFollowerLeaseSenderReturnsRenewalError(t *testing.T) {
 	err := (&Follower{}).sendLeases(ctx, stream, nil)
 	if !errors.Is(err, want) {
 		t.Errorf("lease sender returned %v, want %v", err, want)
+	}
+}
+
+func TestFollowerLeaseSenderRejectsAnUnframeableStateReport(t *testing.T) {
+	requests := make(chan *pb.ReplicateRequest, 1)
+	requests <- nil
+	stream := &recordedLeaseFrames{replicationFrames: &replicationFrames{}, sent: make(chan *pb.ReplicationHello, 1)}
+	if err := (&Follower{}).sendLeases(context.Background(), stream, requests); err == nil {
+		t.Fatal("lease sender accepted an unframeable nil state report")
 	}
 }
 
@@ -610,6 +649,19 @@ func TestReceiveAssignmentsDeliversChallengeOnlyPushAfterCapabilityAck(t *testin
 	}
 }
 
+func TestReceiveAssignmentsDropsAdditionalCapabilityAcksWhenReadyBufferIsFull(t *testing.T) {
+	updates := make(chan *pb.ReplicateResponse, 1)
+	ready := make(chan struct{}, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{}),
+		frameResponse(t, &pb.ReplicateResponse{}),
+	}}
+	(&Follower{}).receiveAssignments(context.Background(), stream, updates, ready, make(chan error, 1))
+	if len(ready) != 1 {
+		t.Errorf("buffered capability acknowledgements = %d, want one coalesced acknowledgement", len(ready))
+	}
+}
+
 func TestReceiveAssignmentsStopsWhenCanceledWhileWaitingToQueue(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -621,6 +673,77 @@ func TestReceiveAssignmentsStopsWhenCanceledWhileWaitingToQueue(t *testing.T) {
 	(&Follower{}).receiveAssignments(ctx, stream, updates, make(chan struct{}, 1), ended)
 	if stream.index != 1 {
 		t.Errorf("received %d frames after cancellation, want one", stream.index)
+	}
+}
+
+func TestReceiveAssignmentsStopsWhenCanceledWhileDeliveringChallenge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	updates := make(chan *pb.ReplicateResponse)
+	ended := make(chan error, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{Challenges: []*pb.Challenge{{Cid: "blob-cid", Nonce: []byte("nonce")}}}),
+	}}
+	(&Follower{}).receiveAssignments(ctx, stream, updates, make(chan struct{}, 1), ended)
+	if stream.index != 1 {
+		t.Errorf("received %d frames after cancellation, want one", stream.index)
+	}
+}
+
+func TestReceiveAssignmentsCanReportMalformedFrameAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{Store: "missing"}),
+	}}
+	(&Follower{}).receiveAssignments(ctx, stream, make(chan *pb.ReplicateResponse), make(chan struct{}), make(chan error))
+}
+
+func TestEnqueueReportChoosesBetweenSendingAndCancellation(t *testing.T) {
+	request := &pb.ReplicateRequest{KeepsLists: true}
+	requests := make(chan *pb.ReplicateRequest, 1)
+	queued := false
+	if !enqueueReport(context.Background(), requests, request, func() { queued = true }) {
+		t.Fatal("report was not queued on an open context")
+	}
+	if !queued {
+		t.Fatal("successful report enqueue did not run its callback")
+	}
+	if got := <-requests; got != request {
+		t.Fatalf("queued report = %p, want %p", got, request)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if enqueueReport(ctx, make(chan *pb.ReplicateRequest), request, func() {
+		t.Error("canceled report enqueue ran its callback")
+	}) {
+		t.Fatal("report was queued after its context was canceled")
+	}
+}
+
+func TestLegacySyncWaitAndPinChangeTimer(t *testing.T) {
+	interval := 5 * time.Second
+	if got := legacySyncWait(interval, false); got != interval {
+		t.Errorf("legacy wait without a pending report = %s, want %s", got, interval)
+	}
+	if got := legacySyncWait(interval, true); got != 0 {
+		t.Errorf("legacy wait with a pending report = %s, want immediate", got)
+	}
+
+	if got := expediteLegacySync(time.NewTimer(time.Hour), nil); got != nil {
+		t.Errorf("pin change without an active legacy timer returned %v, want nil", got)
+	}
+	timer := time.NewTimer(time.Hour)
+	timerC := timer.C
+	got := expediteLegacySync(timer, timerC)
+	if got != timer.C {
+		t.Fatal("pin change did not return the expedited timer channel")
+	}
+	select {
+	case <-got:
+	case <-time.After(time.Second):
+		t.Fatal("pin change did not expedite legacy reconciliation")
 	}
 }
 
