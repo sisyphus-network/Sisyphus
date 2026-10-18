@@ -454,6 +454,7 @@ func (m *Manager) expireChallenges(ctx context.Context, now time.Time) {
 		}
 	}
 	m.mu.Unlock()
+	slices.SortFunc(expired, func(a, b overdue) int { return strings.Compare(a.caller, b.caller) })
 
 	for _, item := range expired {
 		unlockChallenges := m.lockChallenges(item.caller)
@@ -641,8 +642,6 @@ func (m *Manager) assignmentLocked(now time.Time, caller string, f *follower, pi
 // what the list names taken back first, so that the answer is to hold it for
 // the store the node has now.
 func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.ReplicateRequest) *pb.ReplicateResponse {
-	unlockChallenges := m.lockChallenges(caller)
-	defer unlockChallenges()
 	now := time.Now()
 	store, holding, shown := req.GetStore(), req.GetHolding(), req.GetList()
 	vouched := shown != nil && m.signedHere(shown)
@@ -664,6 +663,10 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 			named[blob.GetCid()] = struct{}{}
 		}
 	}
+	// Taking back a signed list can fetch over the network. Do not let that
+	// slow restore hold up challenge deadlines for this or another follower.
+	unlockChallenges := m.lockChallenges(caller)
+	defer unlockChallenges()
 	pinned, order := m.pinned(now)
 
 	// What the follower was last asked to show it holds is checked, and
