@@ -1070,6 +1070,25 @@ test('development-only sample provider profiles are absent from the production a
   }
 })
 
+test('Access receives its empty paired-device state and keeps pairing disabled while remote access is off', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'Access')
+    await page.getByRole('status', { name: 'Remote access is off', exact: true }).waitFor()
+    await page.getByRole('heading', { name: 'Paired devices', exact: true }).waitFor()
+    await page.getByText('No devices have been paired yet.', { exact: true }).waitFor()
+
+    const accessSwitch = page.getByRole('switch', { name: 'Remote access' })
+    assert.equal(await accessSwitch.getAttribute('aria-checked'), 'false')
+    const pairing = page.getByRole('button', { name: 'Pair a browser', exact: true })
+    assert.equal(await pairing.isDisabled(), true, 'a browser can be paired while remote access is off')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('desktop Settings keeps the shell fixed and restores its own scroll position', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
