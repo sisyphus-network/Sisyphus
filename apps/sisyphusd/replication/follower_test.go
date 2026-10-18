@@ -587,6 +587,29 @@ func TestReceiveAssignmentsRejectsMissingListsAndCoalescesSnapshots(t *testing.T
 	}
 }
 
+func TestReceiveAssignmentsDeliversChallengeOnlyPushAfterCapabilityAck(t *testing.T) {
+	ctx := context.Background()
+	ready := make(chan struct{}, 2)
+	updates := make(chan *pb.ReplicateResponse, 1)
+	ended := make(chan error, 1)
+	stream := &replicationFrames{frames: []*pb.ReplicationFrame{
+		frameResponse(t, &pb.ReplicateResponse{}),
+		frameResponse(t, &pb.ReplicateResponse{Challenges: []*pb.Challenge{{Cid: "blob-cid", Nonce: []byte("challenge-nonce")}}}),
+	}}
+
+	(&Follower{}).receiveAssignments(ctx, stream, updates, ready, ended)
+	if len(ready) != 1 {
+		t.Fatalf("capability acknowledgements = %d, want 1", len(ready))
+	}
+	response := <-updates
+	if len(response.GetChallenges()) != 1 || string(response.GetChallenges()[0].GetNonce()) != "challenge-nonce" {
+		t.Fatalf("challenge-only push was not delivered intact: %v", response)
+	}
+	if err := <-ended; !errors.Is(err, io.EOF) {
+		t.Errorf("completed stream ended with %v, want EOF", err)
+	}
+}
+
 func TestReceiveAssignmentsStopsWhenCanceledWhileWaitingToQueue(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

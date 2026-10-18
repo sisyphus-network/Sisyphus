@@ -315,7 +315,7 @@ func (f *Follower) receiveAssignments(ctx context.Context, stream pb.BlobService
 			}
 			return
 		}
-		if response.GetList() == nil {
+		if response.GetList() == nil && len(response.GetChallenges()) == 0 {
 			if response.GetStore() == "" && len(response.GetHold()) == 0 && !response.GetShowList() {
 				// Capability acknowledgement is separate from snapshots: a slow
 				// snapshot application must not leave the stream in discovery mode.
