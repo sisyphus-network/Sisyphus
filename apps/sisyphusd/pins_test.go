@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"log/slog"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -199,7 +201,45 @@ func TestNodeWillNotStartIfItCannotUpdateItsPins(t *testing.T) {
 	}
 }
 
-func TestPeriodicCollection(t *testing.T) {
+func startEventCollector(t *testing.T, store *storage.Store, interval time.Duration, logs *syncBuffer) (context.CancelFunc, <-chan struct{}) {
+	t.Helper()
+	changes := newGCChangeSignals()
+	store.OnGCChange(changes.notify)
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		collectOnChanges(ctx, store, interval, changes, slog.New(slog.NewTextHandler(logs, nil)))
+	}()
+	return cancel, stopped
+}
+
+func TestGarbageCollectionOptions(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		args        []string
+		wantEnabled bool
+		wantEvery   time.Duration
+	}{
+		{name: "default event-driven", wantEnabled: true},
+		{name: "explicitly disabled", args: []string{"--gc-interval=0"}},
+		{name: "optional anti-entropy", args: []string{"--gc-interval=2m"}, wantEnabled: true, wantEvery: 2 * time.Minute},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			interval := fs.Duration("gc-interval", 0, "")
+			if err := fs.Parse(tt.args); err != nil {
+				t.Fatal(err)
+			}
+			got := garbageCollectionOptionsFrom(fs, *interval)
+			if got.enabled != tt.wantEnabled || got.interval != tt.wantEvery {
+				t.Fatalf("garbage collection options = %+v, want enabled=%t interval=%s", got, tt.wantEnabled, tt.wantEvery)
+			}
+		})
+	}
+}
+
+func TestEventDrivenCollectionSweepsAtStartupAndAfterUnpin(t *testing.T) {
 	dir := t.TempDir()
 	store, err := storage.OpenLocal(dir)
 	if err != nil {
@@ -207,45 +247,184 @@ func TestPeriodicCollection(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	lapsed, err := store.Put(ctx, strings.NewReader("pinned until a minute ago"))
+	orphan, err := store.Put(ctx, strings.NewReader("orphaned before startup"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, pin := range store.Pins() {
-		store.Unpin(pin.Owner, pin.CID)
-	}
-	if err := store.Pin(ctx, "user", time.Now().Add(-time.Minute), lapsed); err != nil {
+	if err := store.Unpin(storage.GraceOwner, orphan); err != nil {
 		t.Fatal(err)
 	}
 
 	logs := new(syncBuffer)
-	collecting, stop := context.WithCancel(ctx)
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		collectPeriodically(collecting, store, 5*time.Millisecond, slog.New(slog.NewTextHandler(logs, nil)))
-	}()
-	waitFor(t, func() bool { return strings.Contains(logs.String(), `msg="collected garbage" expired_pins=1 blocks=1`) })
-	if held, _ := store.Has(ctx, lapsed); held {
-		t.Error("the collector logged a collection but the blob is still there")
+	cancel, stopped := startEventCollector(t, store, 0, logs)
+	waitFor(t, func() bool {
+		held, _ := store.Has(ctx, orphan)
+		return !held
+	})
+
+	owned, err := store.PutFor(ctx, "user", strings.NewReader("released after startup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Unpin("user", owned); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		held, _ := store.Has(ctx, owned)
+		return !held
+	})
+	cancel()
+	<-stopped
+}
+
+func TestEventDrivenCollectionCoalescesPinReleases(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	orphan, err := store.Put(ctx, strings.NewReader("startup sweep"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Unpin(storage.GraceOwner, orphan); err != nil {
+		t.Fatal(err)
+	}
+	var cids []cid.Cid
+	for _, content := range []string{"first release", "second release", "third release"} {
+		cid, err := store.PutFor(ctx, "user", strings.NewReader(content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cids = append(cids, cid)
 	}
 
-	// A collection that fails is logged and the collector carries on.
-	// The collector may be using that very name at this instant, so take it
-	// when it is free.
+	logs := new(syncBuffer)
+	cancel, stopped := startEventCollector(t, store, 0, logs)
+	// Wait for the startup sweep to finish before releasing the other blobs;
+	// otherwise a release during its mark/sweep can correctly require a second pass.
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), `blocks=1`) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), `blocks=1`) {
+		cancel()
+		<-stopped
+		t.Fatalf("collector did not finish its startup sweep: %s", logs.String())
+	}
+	for _, cid := range cids {
+		if err := store.Unpin("user", cid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), `blocks=3`) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), `blocks=3`) {
+		cancel()
+		<-stopped
+		t.Fatalf("collector did not sweep all released blobs: %s", logs.String())
+	}
+	cancel()
+	<-stopped
+	time.Sleep(150 * time.Millisecond)
+	if n := strings.Count(logs.String(), "collected garbage"); n != 2 {
+		t.Errorf("startup plus coalesced releases caused %d collection sweeps, want 2", n)
+	}
+}
+
+func TestEventDrivenCollectionWaitsForPinExpiry(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	cid, err := store.PutFor(context.Background(), "temporary", strings.NewReader("expires on a deadline"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Pin(context.Background(), "temporary", time.Now().Add(40*time.Millisecond), cid); err != nil {
+		t.Fatal(err)
+	}
+	logs := new(syncBuffer)
+	cancel, stopped := startEventCollector(t, store, 0, logs)
+	waitFor(t, func() bool { return strings.Contains(logs.String(), `expired_pins=1 blocks=1`) })
+	if held, _ := store.Has(context.Background(), cid); held {
+		t.Error("the expired pin's blob survived its deadline collection")
+	}
+	cancel()
+	<-stopped
+}
+
+func TestEventDrivenCollectionRetriesFailureWithBackoff(t *testing.T) {
+	priorRetry, priorMaximum := gcRetryInitial, gcRetryMaximum
+	gcRetryInitial, gcRetryMaximum = 5*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { gcRetryInitial, gcRetryMaximum = priorRetry, priorMaximum })
+
+	dir := t.TempDir()
+	store, err := storage.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	cid, err := store.Put(context.Background(), strings.NewReader("retry after pin journal failure"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Unpin(storage.GraceOwner, cid); err != nil {
+		t.Fatal(err)
+	}
 	blocker := filepath.Join(dir, "pins.json.tmp")
-	waitFor(t, func() bool { return os.Mkdir(blocker, 0o700) == nil })
+	if err := os.Mkdir(blocker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	logs := new(syncBuffer)
+	cancel, stopped := startEventCollector(t, store, 0, logs)
 	waitFor(t, func() bool { return strings.Contains(logs.String(), "garbage collection failed") })
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
 	}
-
-	stop()
+	waitFor(t, func() bool {
+		held, _ := store.Has(context.Background(), cid)
+		return !held
+	})
+	cancel()
 	<-stopped
-	// Collections that found nothing said nothing.
-	if n := strings.Count(logs.String(), "collected garbage"); n != 1 {
-		t.Errorf("logged %d collections, want only the one that removed something", n)
+	if n := strings.Count(logs.String(), "garbage collection failed"); n != 1 {
+		t.Errorf("logged %d failed collections, want one before retry", n)
 	}
+}
+
+func TestPeriodicGarbageCollectionIsOptIn(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.PutFor(context.Background(), "held", strings.NewReader("still held")); err != nil {
+		t.Fatal(err)
+	}
+	logs := new(syncBuffer)
+	cancel, stopped := startEventCollector(t, store, 10*time.Millisecond, logs)
+	pinFile := filepath.Join(dir, "pins.json")
+	var first os.FileInfo
+	waitFor(t, func() bool {
+		first, err = os.Stat(pinFile)
+		return err == nil
+	})
+	waitFor(t, func() bool {
+		current, statErr := os.Stat(pinFile)
+		return statErr == nil && !os.SameFile(first, current)
+	})
+	cancel()
+	<-stopped
 }
 
 func TestJobPrunerWaitsForChangeAndDeadline(t *testing.T) {

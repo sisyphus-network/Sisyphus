@@ -161,6 +161,7 @@ func (s *Store) pinHeld(ctx context.Context, owner string, expires time.Time, li
 		}
 	}
 	s.tellPinsChangedLocked()
+	s.tellGCChangedLocked(false)
 	return s.savePinsLocked()
 }
 
@@ -172,13 +173,21 @@ func (s *Store) Unpin(owner string, cids ...cid.Cid) error {
 	}
 	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
+	changed := false
 	for _, c := range cids {
-		delete(s.pins, pinKey{c, owner})
-		if s.index != nil {
-			s.index.unchargeLocked(pinKey{c, owner})
+		key := pinKey{c, owner}
+		if _, held := s.pins[key]; held {
+			delete(s.pins, key)
+			changed = true
+			if s.index != nil {
+				s.index.unchargeLocked(key)
+			}
 		}
 	}
 	s.tellPinsChangedLocked()
+	if changed {
+		s.tellGCChangedLocked(true)
+	}
 	return s.savePinsLocked()
 }
 
@@ -188,15 +197,20 @@ func (s *Store) Unpin(owner string, cids ...cid.Cid) error {
 func (s *Store) UnpinPrefix(prefix string) error {
 	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
+	changed := false
 	for key := range s.pins {
 		if strings.HasPrefix(key.owner, prefix) {
 			delete(s.pins, key)
+			changed = true
 			if s.index != nil {
 				s.index.unchargeLocked(key)
 			}
 		}
 	}
 	s.tellPinsChangedLocked()
+	if changed {
+		s.tellGCChangedLocked(true)
+	}
 	return s.savePinsLocked()
 }
 
@@ -206,13 +220,18 @@ func (s *Store) UnpinPrefix(prefix string) error {
 func (s *Store) ExpireOpenPins(orphaned func(owner string) bool, at time.Time) error {
 	s.pinMu.Lock()
 	defer s.pinMu.Unlock()
+	changed := false
 	for key, expires := range s.pins {
 		if expires.IsZero() && orphaned(key.owner) {
 			s.pins[key] = at
+			changed = true
 			if s.index != nil {
 				s.index.retimeLocked(key, at)
 			}
 		}
+	}
+	if changed {
+		s.tellGCChangedLocked(false)
 	}
 	return s.savePinsLocked()
 }
@@ -269,9 +288,25 @@ func (s *Store) OnPinChange(f func()) {
 	s.pinsChanged = f
 }
 
+// OnGCChange has f called after every change to pin roots or expiry. The
+// mayCollect argument says whether a pin was removed; the listener must
+// re-read the pins either way. f is called with pins locked: it must return
+// at once and must not call the store.
+func (s *Store) OnGCChange(f func(mayCollect bool)) {
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	s.gcChanged = f
+}
+
 func (s *Store) tellPinsChangedLocked() {
 	if s.pinsChanged != nil {
 		s.pinsChanged()
+	}
+}
+
+func (s *Store) tellGCChangedLocked(mayCollect bool) {
+	if s.gcChanged != nil {
+		s.gcChanged(mayCollect)
 	}
 }
 
