@@ -27,7 +27,8 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 | `p2p/p2p.go`, `Host.call` | A failed dial to a node that has just been found | Retry | Random, 150 to 300 ms, three tries | Two nodes that dial each other at the same instant both fail. Waiting a different time each lets one get through. |
 | `daemon.go`, `collectPeriodically` | The interval | Maintenance | `--gc-interval`, 1 h; 0 turns it off | Deletes stored data nothing pins and prunes old job records. Nothing becomes garbage at a moment worth an event. |
 | `cluster.go`, `clusterPins.run` | A change to the store's pins, or the interval | Event and anti-entropy | `clusterSync`, 1 min | IPFS Cluster can change without the store hearing of it, as when a peer restarts. The minute catches that. |
-| `p2p/p2p.go`, `Host.keepPlaces` | The interval | Anti-entropy | `PlaceCheck`, 10 s | A relay that restarts drops this host's reservation without telling it. This check is what takes it back. See the candidates below. |
+| `p2p/p2p.go`, `Host.keepPlaces` | A change to the pool's relays, a connection made or lost, or the nearest renewal or retry | Event and deadline, with retry | Renewal at half a reservation's life; a failed attempt again after `PlaceCheck`, 10 s | A reservation expires whether or not anything changed, and a relay that did not answer gives no notice when it is back. Nothing is rescanned while all is well (#410). |
+| `worker/peers.go`, `Members.RunRelayWatch` | The coordinator's relay stream ending | Retry | Backoff from 1 s to 15 s, back to 1 s after a stream that delivered a list | The stream itself carries every change to the relays (#410). The timer only reconnects it. |
 | `replication/follower.go`, `Follower.Run` | The interval, or at once after a change it made | Anti-entropy | `replication.Interval`, 1 min | A storage follower asks its coordinator which blobs to hold. The coordinator has no stream to push that list on. See the candidates below. |
 | `reciprocal.go`, `reciprocity.pause` | A change to this node's trust, word from another node that its trust changed, or the interval | Event and anti-entropy | `reciprocityCheck`, 1 min | Whether another node trusts this one back is that node's state, so it is asked. Word of a change from either side wakes it at once, and the minute catches word that was lost. |
 | `pinning/client.go`, waiting for a remote pin | The interval, while a remote pinning service is still pinning | Retry (status poll) | The caller's `every` | The IPFS Pinning Service API has no notification, so status is the only way to learn a pin is done. It stops once the pin is pinned or failed. |
@@ -43,9 +44,8 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 
 ## Candidates
 
-Two anti-entropy loops have an event that could take over their normal case. Each would keep its timer as a backstop, so neither is urgent:
+One anti-entropy loop has an event that could take over its normal case, keeping its timer as a backstop:
 
-- **Relay places.** libp2p reports a lost connection to a relay (`EvtPeerConnectednessChanged`). Taking the place back on that event would make recovery immediate instead of up to 10 s late. The timer would stay for a reservation that lapses while the connection survives.
 - **Follower lists.** A coordinator already holds a stream to each worker. Sending a "your list changed" notice on it would let a follower ask straight away instead of within the minute. That needs a stream contract first, one that keeps what the minute gives today: signed-list recovery, blob challenges, convergence after a reconnect, and follower liveness. It is a design question for after V0 ([#413](https://github.com/sisyphus-network/Sisyphus/issues/413)), and the minute stays until it is settled.
 
-Relay places are being moved to events in [#410](https://github.com/sisyphus-network/Sisyphus/issues/410). Each change is its own PR, with tests for the event and for the backstop.
+Relay places, the other candidate, were moved to events and deadlines in [#410](https://github.com/sisyphus-network/Sisyphus/pull/410).
