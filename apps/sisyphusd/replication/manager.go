@@ -41,6 +41,11 @@ import (
 var (
 	// Interval is how often a follower asks its coordinator what to hold.
 	Interval = time.Minute
+	// LeaseInterval is how often a connected follower renews its stream lease.
+	LeaseInterval = 10 * time.Second
+	// LeaseTimeout is how long a coordinator waits without a stream lease
+	// renewal before reporting the follower absent.
+	LeaseTimeout = 30 * time.Second
 	// Grace is how long a coordinator goes on counting on a follower it has
 	// stopped hearing from. After that the follower's share is given to
 	// others. A coordinator that has just started waits as long before it
@@ -111,6 +116,8 @@ type Manager struct {
 
 	mu        sync.Mutex
 	followers map[string]*follower
+	leaseIDs  map[string]uint64
+	nextLease uint64
 	// changed is closed and replaced whenever a follower or the store may
 	// have changed an assignment. Watchers take the channel before checking
 	// the assignment so a change cannot be lost between the check and wait.
@@ -132,6 +139,13 @@ type Manager struct {
 type follower struct {
 	// asked is when it last asked what to hold.
 	asked time.Time
+	// leaseEnabled distinguishes stream followers from older followers that
+	// only prove liveness through Replicate. leaseLost starts the Grace period
+	// after the stream lease expires or the stream ends.
+	leaseEnabled bool
+	streamOpen   bool
+	leaseAt      time.Time
+	leaseLost    time.Time
 	// held is what it then said it holds, less what it was asked to show
 	// it holds and did not.
 	held map[string]struct{}
@@ -162,6 +176,7 @@ func New(cfg Config) *Manager {
 		log:       cfg.Log,
 		grace:     Grace,
 		followers: make(map[string]*follower),
+		leaseIDs:  make(map[string]uint64),
 		changed:   make(chan struct{}),
 		restored:  make(map[string]time.Time),
 	}
@@ -224,22 +239,118 @@ func later(a, b time.Time) bool {
 	return !b.IsZero() && (a.IsZero() || a.After(b))
 }
 
-// liveLocked returns the followers heard from within the grace period, in
-// order of ID, and forgets the rest.
-func (m *Manager) liveLocked(now time.Time) ([]string, bool) {
-	var live []string
-	changed := false
+// followersLocked returns followers present on their stream (or on the
+// legacy unary exchange), and those still retained for placement during
+// Grace. It expires stream leases promptly but keeps their shares reserved
+// until Grace ends.
+func (m *Manager) followersLocked(now time.Time) (present, retained []string, changed bool) {
 	for id, f := range m.followers {
-		if now.Sub(f.asked) > m.grace {
+		if f.leaseEnabled {
+			if f.leaseLost.IsZero() && !now.Before(f.leaseAt.Add(LeaseTimeout)) {
+				f.leaseLost = f.leaseAt.Add(LeaseTimeout)
+				changed = true
+				m.log.Warn("a storage follower's stream lease expired", "node", id, "after", LeaseTimeout.String())
+			}
+			if f.leaseLost.IsZero() {
+				present = append(present, id)
+				retained = append(retained, id)
+				continue
+			}
+			if now.Before(f.leaseLost.Add(m.grace)) {
+				retained = append(retained, id)
+				continue
+			}
+			delete(m.followers, id)
+			changed = true
+			m.log.Warn("a storage follower has been absent through Grace; others are to hold its share", "node", id, "for", m.grace.String())
+			continue
+		}
+		if !now.Before(f.asked.Add(m.grace)) {
 			delete(m.followers, id)
 			changed = true
 			m.log.Warn("a storage follower has not been heard from; others are to hold its share", "node", id, "for", m.grace.String())
 			continue
 		}
-		live = append(live, id)
+		present = append(present, id)
+		retained = append(retained, id)
 	}
-	sort.Strings(live)
-	return live, changed
+	sort.Strings(present)
+	sort.Strings(retained)
+	return present, retained, changed
+}
+
+// RenewLease records an application-level heartbeat from a replication
+// stream. It wakes watchers only when presence changes; ordinary renewals
+// leave assignment watchers asleep until an assignment or deadline changes.
+func (m *Manager) RenewLease(caller string, leaseID uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.leaseIDs[caller] != leaseID {
+		return
+	}
+	f := m.followers[caller]
+	if f == nil {
+		return
+	}
+	now := time.Now()
+	wasPresent := f.leaseEnabled && f.leaseLost.IsZero() && now.Sub(f.leaseAt) <= LeaseTimeout
+	f.leaseEnabled, f.streamOpen, f.leaseAt, f.leaseLost = true, true, now, time.Time{}
+	if !wasPresent {
+		m.notifyChangedLocked()
+	}
+}
+
+// BeginLease starts a new replication stream. The follower is considered a
+// legacy unary peer until its first explicit lease frame arrives, preserving
+// compatibility with clients that close the request side after their hello.
+func (m *Manager) BeginLease(caller string) uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextLease++
+	leaseID := m.nextLease
+	m.leaseIDs[caller] = leaseID
+	if f := m.followers[caller]; f != nil {
+		f.leaseEnabled, f.streamOpen, f.leaseAt, f.leaseLost = false, true, time.Time{}, time.Time{}
+		m.notifyChangedLocked()
+	}
+	return leaseID
+}
+
+// EndLease marks a stream follower absent immediately, while retaining its
+// placement until Grace elapses. It is harmless for legacy followers that
+// never sent a lease frame.
+func (m *Manager) EndLease(caller string, leaseID uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.leaseIDs[caller] != leaseID {
+		return
+	}
+	delete(m.leaseIDs, caller)
+	if f := m.followers[caller]; f != nil {
+		f.streamOpen = false
+		if f.leaseEnabled && f.leaseLost.IsZero() {
+			f.leaseLost = time.Now()
+			m.notifyChangedLocked()
+		}
+	}
+}
+
+func (m *Manager) nextFollowerDeadlineLocked() time.Time {
+	var next time.Time
+	for _, f := range m.followers {
+		deadline := f.asked.Add(m.grace)
+		if f.leaseEnabled {
+			if f.leaseLost.IsZero() {
+				deadline = f.leaseAt.Add(LeaseTimeout)
+			} else {
+				deadline = f.leaseLost.Add(m.grace)
+			}
+		}
+		if next.IsZero() || deadline.Before(next) {
+			next = deadline
+		}
+	}
+	return next
 }
 
 // PinsChanged wakes assignment streams after the store's pin roots or
@@ -265,6 +376,7 @@ func (m *Manager) WatchAssignments(ctx context.Context, caller string, last *pb.
 	for {
 		m.mu.Lock()
 		changed := m.changed
+		deadline := m.nextFollowerDeadlineLocked()
 		m.mu.Unlock()
 
 		list := m.changedAssignment(caller, last)
@@ -276,17 +388,36 @@ func (m *Manager) WatchAssignments(ctx context.Context, caller string, last *pb.
 			continue
 		}
 
+		var timer *time.Timer
+		var deadlineC <-chan time.Time
+		if !deadline.IsZero() {
+			timer = time.NewTimer(time.Until(deadline))
+			deadlineC = timer.C
+		}
 		select {
 		case <-changed:
+		case <-deadlineC:
+			m.mu.Lock()
+			_, _, expired := m.followersLocked(time.Now())
+			if expired {
+				m.notifyChangedLocked()
+			}
+			m.mu.Unlock()
 		case <-ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
 			return ctx.Err()
+		}
+		if timer != nil {
+			timer.Stop()
 		}
 	}
 }
 
 // changedAssignment returns a newly signed list if the follower's current
 // assignment differs from last. It does not refresh the follower's liveness;
-// only a Replicate request does that until stream leases are added.
+// a Replicate request or a stream lease does that.
 func (m *Manager) changedAssignment(caller string, last *pb.KeepList) *pb.KeepList {
 	now := time.Now()
 	pinned, order := m.pinned(now)
@@ -296,7 +427,7 @@ func (m *Manager) changedAssignment(caller string, last *pb.KeepList) *pb.KeepLi
 	if m.identity == nil {
 		return nil
 	}
-	live, expired := m.liveLocked(now)
+	_, retained, expired := m.followersLocked(now)
 	if expired {
 		m.notifyChangedLocked()
 	}
@@ -304,7 +435,7 @@ func (m *Manager) changedAssignment(caller string, last *pb.KeepList) *pb.KeepLi
 	if f == nil || len(f.stranded) > 0 {
 		return nil
 	}
-	hold := m.assignmentLocked(now, caller, f, pinned, order, live)
+	hold := m.assignmentLocked(now, caller, f, pinned, order, retained)
 	if sameKeepList(last, makeKeepList(m.storeID, hold, pinned)) {
 		return nil
 	}
@@ -403,6 +534,12 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	proven, failed := make(map[string]time.Time), make(map[string]struct{})
 	var pending []challenge
 	if prior := m.followers[caller]; prior != nil {
+		// A cleanly ended stream may belong to an older coordinator that
+		// ignores lease frames. Successful unary anti-entropy then remains its
+		// compatibility liveness signal until a stream is opened again.
+		if prior.leaseEnabled && !prior.streamOpen {
+			prior.leaseEnabled, prior.leaseAt, prior.leaseLost = false, time.Time{}, time.Time{}
+		}
 		pending = prior.pending
 		for _, id := range holding {
 			if at, was := prior.shown[id]; was {
@@ -452,14 +589,18 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 		m.log.Info("a storage follower is here", "node", caller, "holding", len(holding))
 		before = &follower{}
 	}
-	f := &follower{asked: now, held: make(map[string]struct{}, len(holding)), pending: ask, shown: proven, failed: failed}
+	f := &follower{
+		asked: now, leaseEnabled: before.leaseEnabled, streamOpen: before.streamOpen,
+		leaseAt: before.leaseAt, leaseLost: before.leaseLost,
+		held: make(map[string]struct{}, len(holding)), pending: ask, shown: proven, failed: failed,
+	}
 	for _, id := range holding {
 		if _, lacks := failed[id]; !lacks {
 			f.held[id] = struct{}{}
 		}
 	}
 	m.followers[caller] = f
-	live, _ := m.liveLocked(now)
+	_, retained, _ := m.followersLocked(now)
 	m.notifyChangedLocked()
 
 	// A list that is not this node's is as good as none. A follower that
@@ -469,7 +610,7 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 		m.log.Warn("a storage follower showed a list of what to hold that this node did not sign; it is ignored, and nothing is taken back on the strength of it", "node", caller, "store", shown.GetStore())
 	}
 
-	hold := m.assignmentLocked(now, caller, f, pinned, order, live)
+	hold := m.assignmentLocked(now, caller, f, pinned, order, retained)
 
 	// What a follower holds that is not pinned has been released, and it
 	// drops it, unless it holds it for a store this node had before: then
@@ -668,7 +809,7 @@ func (m *Manager) Status(only string) *pb.ReplicasResponse {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	live, expired := m.liveLocked(now)
+	live, _, expired := m.followersLocked(now)
 	if expired {
 		m.notifyChangedLocked()
 	}
@@ -720,14 +861,25 @@ func (m *Manager) strandedLocked(followers []string, unsigned bool) []string {
 // Holders returns the followers, other than asker, that say they hold a
 // blob and serve it, ordered by node ID.
 func (m *Manager) Holders(blob, asker string) []*pb.BlobHolder {
+	return m.holders(blob, asker, false)
+}
+
+// holders finds followers with an address. Recovery may try a follower whose
+// stream lease ended but whose share is still reserved through Grace: the
+// peer may remain reachable for data even though it is absent for placement.
+func (m *Manager) holders(blob, asker string, throughGrace bool) []*pb.BlobHolder {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var holders []*pb.BlobHolder
-	live, expired := m.liveLocked(time.Now())
+	present, retained, expired := m.followersLocked(time.Now())
 	if expired {
 		m.notifyChangedLocked()
 	}
-	for _, id := range live {
+	consider := present
+	if throughGrace {
+		consider = retained
+	}
+	var holders []*pb.BlobHolder
+	for _, id := range consider {
 		if _, has := m.followers[id].held[blob]; !has || id == asker {
 			continue
 		}
@@ -741,7 +893,7 @@ func (m *Manager) Holders(blob, asker string) []*pb.BlobHolder {
 // Recover copies a blob the store lacks back into it from a follower that
 // holds it, and reports whether it did.
 func (m *Manager) Recover(ctx context.Context, c cid.Cid) bool {
-	for _, holder := range m.Holders(c.String(), "") {
+	for _, holder := range m.holders(c.String(), "", true) {
 		err := m.fetch(ctx, holder, c, m.store)
 		if err == nil {
 			m.log.Info("fetched back from a storage follower a blob this node's store lacked", "cid", c.String(), "node", holder.GetNodeId())
@@ -759,11 +911,11 @@ func (m *Manager) Recover(ctx context.Context, c cid.Cid) bool {
 // signed by this node names is taken back without it.
 func (m *Manager) Restore(ctx context.Context, owner string) (restored int, failed []string) {
 	m.mu.Lock()
-	live, expired := m.liveLocked(time.Now())
+	_, retained, expired := m.followersLocked(time.Now())
 	if expired {
 		m.notifyChangedLocked()
 	}
-	stranded := m.strandedLocked(live, false)
+	stranded := m.strandedLocked(retained, false)
 	m.mu.Unlock()
 
 	done := make(map[string]struct{})

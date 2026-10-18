@@ -508,13 +508,64 @@ func (s *blobService) Replication(stream grpc.BidiStreamingServer[pb.Replication
 		return status.Errorf(codes.InvalidArgument, "invalid replication hello: %v", err)
 	}
 	caller := access.Caller(stream.Context())
+	leaseID := s.replication.BeginLease(caller)
 	response := s.replication.Replicate(stream.Context(), caller, request)
 	if err := sendReplicationFrames(response, stream.Send); err != nil {
+		s.replication.EndLease(caller, leaseID)
 		return err
 	}
-	return s.replication.WatchAssignments(stream.Context(), caller, response.GetList(), func(list *pb.KeepList) error {
+	if response.GetList() == nil {
+		// With replication disabled or no signing identity there is no
+		// assignment stream to keep open. The follower can use unary fallback.
+		s.replication.EndLease(caller, leaseID)
+		return nil
+	}
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+	leaseEnded := make(chan error, 1)
+	go func() {
+		err := watchReplicationLeases(ctx, stream.Recv, caller, leaseID, s.replication)
+		s.replication.EndLease(caller, leaseID)
+		leaseEnded <- err
+		if !errors.Is(err, io.EOF) {
+			cancel()
+		}
+	}()
+	watchErr := s.replication.WatchAssignments(ctx, caller, response.GetList(), func(list *pb.KeepList) error {
 		return sendReplicationFrames(&pb.ReplicateResponse{Store: list.GetStore(), List: list}, stream.Send)
 	})
+	cancel()
+	if watchErr != nil && !errors.Is(watchErr, context.Canceled) {
+		return watchErr
+	}
+	var leaseErr error
+	select {
+	case leaseErr = <-leaseEnded:
+	case <-stream.Context().Done():
+		return nil
+	}
+	if leaseErr == nil || errors.Is(leaseErr, io.EOF) || errors.Is(leaseErr, context.Canceled) {
+		return nil
+	}
+	return leaseErr
+}
+
+func watchReplicationLeases(ctx context.Context, recv func() (*pb.ReplicationHello, error), caller string, leaseID uint64, manager *replication.Manager) error {
+	for {
+		frame, err := recv()
+		if err != nil {
+			return err
+		}
+		if !frame.GetLease() || frame.GetSequence() != 0 || frame.GetIndex() != 0 || frame.GetCount() != 0 || len(frame.GetPayload()) != 0 {
+			return status.Error(codes.InvalidArgument, "replication stream expected a lease frame")
+		}
+		manager.RenewLease(caller, leaseID)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
 }
 
 func sendReplicationFrames(response *pb.ReplicateResponse, send func(*pb.ReplicationFrame) error) error {

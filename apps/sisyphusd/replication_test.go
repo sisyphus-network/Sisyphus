@@ -222,13 +222,12 @@ func TestALostFollowerIsReplacedAfterTheGracePeriod(t *testing.T) {
 		listed, err := p.client.ListNodes(p.ctx, &pb.ListNodesRequest{})
 		return err == nil && len(listed.GetNodes()) == 2
 	})
-	// It is still counted on, but nobody is sent to it for a blob.
+	// Its stream lease marks it absent at once, but its placement stays
+	// reserved until Grace has run out.
+	waitFor(t, func() bool { return len(p.replicas().GetFollowers()) == 2 })
 	_, asker := p.admit(access.Worker)
 	if holders := p.locate(asker, kept[0]); len(holders) != 1 || slices.Contains(holders, p.addresses[lost]) {
 		t.Errorf("with one of its two holders gone the first blob is said to be held at %v, want only the other's address", holders)
-	}
-	if listed := p.replicas(); len(listed.GetFollowers()) != 3 {
-		t.Errorf("a follower just lost is already given up on: %d are counted", len(listed.GetFollowers()))
 	}
 
 	// The two that remain end up holding everything between them.
@@ -251,7 +250,7 @@ func TestALostFollowerIsReplacedAfterTheGracePeriod(t *testing.T) {
 	if listed := p.replicas(); len(listed.GetFollowers()) != 2 || slices.Contains(listed.GetFollowers(), p.workerIdents[lost].ID()) {
 		t.Errorf("after the grace period the coordinator still counts on %v", listed.GetFollowers())
 	}
-	if !strings.Contains(p.logs.String(), "a storage follower has not been heard from") {
+	if !strings.Contains(p.logs.String(), "a storage follower has been absent through Grace") {
 		t.Error("the coordinator did not log that it gave up on a follower")
 	}
 }

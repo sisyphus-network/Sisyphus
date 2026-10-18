@@ -69,7 +69,7 @@ func ReadReplicationHello(recv func() (*pb.ReplicationHello, error)) (*pb.Replic
 	if err != nil {
 		return nil, err
 	}
-	if first.GetIndex() != 0 || first.GetCount() == 0 || first.GetCount() > maxReplicationFrames {
+	if first.GetLease() || first.GetIndex() != 0 || first.GetCount() == 0 || first.GetCount() > maxReplicationFrames {
 		return nil, fmt.Errorf("invalid first replication hello: index %d, count %d", first.GetIndex(), first.GetCount())
 	}
 	count, sequence := first.GetCount(), first.GetSequence()
@@ -83,7 +83,7 @@ func ReadReplicationHello(recv func() (*pb.ReplicationHello, error)) (*pb.Replic
 		if err != nil {
 			return nil, fmt.Errorf("receive replication hello %d of %d: %w", index, count, err)
 		}
-		if frame.GetIndex() != index || frame.GetCount() != count || frame.GetSequence() != sequence {
+		if frame.GetLease() || frame.GetIndex() != index || frame.GetCount() != count || frame.GetSequence() != sequence {
 			return nil, fmt.Errorf("inconsistent replication hello %d: sequence %d, index %d, count %d", index, frame.GetSequence(), frame.GetIndex(), frame.GetCount())
 		}
 		if len(frame.GetPayload()) > ReplicationFrameSize {

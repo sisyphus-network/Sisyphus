@@ -282,6 +282,33 @@ type replicationFrames struct {
 	index  int
 }
 
+type recordedLeaseFrames struct {
+	*replicationFrames
+	sent chan *pb.ReplicationHello
+}
+
+type failLeaseReplicationFrames struct {
+	*blockingReplicationFrames
+	err        error
+	failAfter  int
+	leaseSends int
+}
+
+func (s *failLeaseReplicationFrames) Send(frame *pb.ReplicationHello) error {
+	if frame.GetLease() {
+		s.leaseSends++
+		if s.leaseSends > s.failAfter {
+			return s.err
+		}
+	}
+	return nil
+}
+
+func (s *recordedLeaseFrames) Send(frame *pb.ReplicationHello) error {
+	s.sent <- frame
+	return nil
+}
+
 func (s *replicationFrames) Recv() (*pb.ReplicationFrame, error) {
 	if s.index == len(s.frames) {
 		return nil, io.EOF
@@ -295,6 +322,47 @@ func (*replicationFrames) Send(*pb.ReplicationHello) error { return nil }
 
 func (*replicationFrames) CloseSend() error { return nil }
 
+func TestFollowerRenewsItsReplicationLeaseOnTheOpenStream(t *testing.T) {
+	usual := LeaseInterval
+	LeaseInterval = 5 * time.Millisecond
+	t.Cleanup(func() { LeaseInterval = usual })
+	stream := &recordedLeaseFrames{replicationFrames: &replicationFrames{}, sent: make(chan *pb.ReplicationHello, 2)}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- (&Follower{}).sendLeases(ctx, stream) }()
+	for range 2 {
+		select {
+		case frame := <-stream.sent:
+			if !frame.GetLease() || frame.GetSequence() != 0 || frame.GetIndex() != 0 || frame.GetCount() != 0 || len(frame.GetPayload()) != 0 {
+				t.Fatalf("follower sent malformed lease frame: %v", frame)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("follower did not renew its stream lease")
+		}
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Errorf("lease sender returned %v, want context canceled", err)
+	}
+}
+
+func TestFollowerLeaseSenderReturnsRenewalError(t *testing.T) {
+	usual := LeaseInterval
+	LeaseInterval = time.Millisecond
+	t.Cleanup(func() { LeaseInterval = usual })
+	want := errors.New("lease send failed")
+	stream := &failLeaseReplicationFrames{
+		blockingReplicationFrames: &blockingReplicationFrames{replicationFrames: &replicationFrames{}},
+		err:                       want, failAfter: 1,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := (&Follower{}).sendLeases(ctx, stream)
+	if !errors.Is(err, want) {
+		t.Errorf("lease sender returned %v, want %v", err, want)
+	}
+}
+
 type blockingReplicationFrames struct {
 	*replicationFrames
 	ctx context.Context
@@ -307,6 +375,15 @@ func (s *blockingReplicationFrames) Recv() (*pb.ReplicationFrame, error) {
 	}
 	<-s.ctx.Done()
 	return nil, s.ctx.Err()
+}
+
+type eofOnLeaseReplicationFrames struct{ *blockingReplicationFrames }
+
+func (s *eofOnLeaseReplicationFrames) Send(frame *pb.ReplicationHello) error {
+	if frame.GetLease() {
+		return io.EOF
+	}
+	return nil
 }
 
 type failingReplicationFrames struct {
@@ -498,6 +575,83 @@ func TestRunKeepsUnaryReconciliationWhenCoordinatorClosesStreamCleanly(t *testin
 	}
 	if got := logs.count("the storage assignment stream ended; reconnecting"); got != 0 {
 		t.Errorf("logged %d stream reconnect warnings for a clean EOF, want none", got)
+	}
+}
+
+func TestRunWaitsForRecvAfterLeaseSendReturnsEOF(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 4), opened: make(chan struct{}, 4),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
+			return &eofOnLeaseReplicationFrames{blockingReplicationFrames: &blockingReplicationFrames{
+				replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+					frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+				}},
+				ctx: ctx,
+			}}, nil
+		},
+	}
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: new(logged).logger(),
+	}
+	stop := run(t, follower, 5*time.Millisecond)
+	select {
+	case <-client.calls:
+	case <-time.After(time.Second):
+		stop()
+		t.Fatal("unary anti-entropy did not continue after lease Send returned EOF")
+	}
+	stop()
+	if got := len(client.opened); got != 1 {
+		t.Errorf("opened assignment stream %d times, want one when Recv is still open", got)
+	}
+}
+
+func TestRunReconnectsWhenLeaseRenewalFails(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	want := errors.New("lease renewal failed")
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 4), opened: make(chan struct{}, 4),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
+			return &failLeaseReplicationFrames{
+				blockingReplicationFrames: &blockingReplicationFrames{
+					replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+						frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+					}},
+					ctx: ctx,
+				},
+				err: want,
+			}, nil
+		},
+	}
+	logs := new(logged)
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: logs.logger(),
+	}
+	stop := run(t, follower, time.Second)
+	defer stop()
+	deadline := time.After(time.Second)
+	for logs.count("the storage assignment lease could not be renewed; reconnecting") == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("failed lease renewal was not logged")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if got := len(client.opened); got < 1 {
+		t.Fatal("follower did not open its assignment stream")
 	}
 }
 
