@@ -114,10 +114,12 @@ type Manager struct {
 	// with the same blob listed do not race for its expiry.
 	taking sync.Mutex
 
-	mu        sync.Mutex
-	followers map[string]*follower
-	leaseIDs  map[string]uint64
-	nextLease uint64
+	mu               sync.Mutex
+	followers        map[string]*follower
+	leaseIDs         map[string]uint64
+	nextLease        uint64
+	challengeLocksMu sync.Mutex
+	challengeLocks   map[string]*challengeLock
 	// changed is closed and replaced whenever a follower or the store may
 	// have changed an assignment. Watchers take the channel before checking
 	// the assignment so a change cannot be lost between the check and wait.
@@ -133,6 +135,11 @@ type Manager struct {
 	// unshown counts the times a follower failed to show that it held a
 	// blob it said it held.
 	unshown uint32
+}
+
+type challengeLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 // follower is what a coordinator knows of one follower.
@@ -168,17 +175,18 @@ type follower struct {
 // New returns a manager for a coordinator that has just started.
 func New(cfg Config) *Manager {
 	m := &Manager{
-		identity:  cfg.Identity,
-		store:     cfg.Store,
-		replicas:  cfg.Replicas,
-		address:   cfg.Address,
-		fetch:     cfg.Fetch,
-		log:       cfg.Log,
-		grace:     Grace,
-		followers: make(map[string]*follower),
-		leaseIDs:  make(map[string]uint64),
-		changed:   make(chan struct{}),
-		restored:  make(map[string]time.Time),
+		identity:       cfg.Identity,
+		store:          cfg.Store,
+		replicas:       cfg.Replicas,
+		address:        cfg.Address,
+		fetch:          cfg.Fetch,
+		log:            cfg.Log,
+		grace:          Grace,
+		followers:      make(map[string]*follower),
+		leaseIDs:       make(map[string]uint64),
+		challengeLocks: make(map[string]*challengeLock),
+		changed:        make(chan struct{}),
+		restored:       make(map[string]time.Time),
 	}
 	if cfg.Identity != nil {
 		m.id = cfg.Identity.ID()
@@ -197,6 +205,28 @@ func New(cfg Config) *Manager {
 	m.atStart, _ = m.pinned(now)
 	m.settled = now.Add(m.grace)
 	return m
+}
+
+func (m *Manager) lockChallenges(caller string) func() {
+	m.challengeLocksMu.Lock()
+	lock := m.challengeLocks[caller]
+	if lock == nil {
+		lock = &challengeLock{}
+		m.challengeLocks[caller] = lock
+	}
+	lock.refs++
+	m.challengeLocksMu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		m.challengeLocksMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(m.challengeLocks, caller)
+		}
+		m.challengeLocksMu.Unlock()
+	}
 }
 
 // Off returns the manager of a node that asks nothing of followers.
@@ -353,6 +383,114 @@ func (m *Manager) nextFollowerDeadlineLocked() time.Time {
 	return next
 }
 
+func (m *Manager) nextChallengeDeadlineLocked() time.Time {
+	var next time.Time
+	for _, f := range m.followers {
+		if len(f.pending) == 0 {
+			continue
+		}
+		// Answers are valid through challengeWindow; wake just after that
+		// inclusive boundary so an answer at the deadline is not rejected.
+		deadline := f.pending[0].issued.Add(challengeWindow + time.Nanosecond)
+		if next.IsZero() || deadline.Before(next) {
+			next = deadline
+		}
+	}
+	return next
+}
+
+// Run expires unanswered blob challenges at their deadlines. It sleeps until
+// either replication state changes or the next challenge comes due; it does
+// not poll followers or scan on a fixed interval.
+func (m *Manager) Run(ctx context.Context) {
+	for {
+		m.mu.Lock()
+		changed := m.changed
+		deadline := m.nextChallengeDeadlineLocked()
+		m.mu.Unlock()
+		due, stopped := waitForChallenge(ctx, changed, deadline)
+		if stopped {
+			return
+		}
+		if due {
+			m.expireChallenges(ctx, time.Now())
+		}
+	}
+}
+
+func waitForChallenge(ctx context.Context, changed <-chan struct{}, deadline time.Time) (due, stopped bool) {
+	var timer *time.Timer
+	var deadlineC <-chan time.Time
+	if !deadline.IsZero() {
+		timer = time.NewTimer(time.Until(deadline))
+		deadlineC = timer.C
+	}
+	select {
+	case <-changed:
+	case <-deadlineC:
+		due = true
+	case <-ctx.Done():
+		if timer != nil {
+			timer.Stop()
+		}
+		return false, true
+	}
+	if timer != nil {
+		timer.Stop()
+	}
+	return due, false
+}
+
+func (m *Manager) expireChallenges(ctx context.Context, now time.Time) {
+	type overdue struct {
+		caller  string
+		pending []challenge
+	}
+	var expired []overdue
+	m.mu.Lock()
+	for caller, f := range m.followers {
+		if len(f.pending) > 0 && now.After(f.pending[0].issued.Add(challengeWindow)) {
+			expired = append(expired, overdue{caller: caller, pending: slices.Clone(f.pending)})
+		}
+	}
+	m.mu.Unlock()
+
+	for _, item := range expired {
+		unlockChallenges := m.lockChallenges(item.caller)
+		m.mu.Lock()
+		f := m.followers[item.caller]
+		stillExpired := f != nil && len(f.pending) > 0 && now.After(f.pending[0].issued.Add(challengeWindow))
+		m.mu.Unlock()
+		if !stillExpired {
+			unlockChallenges()
+			continue
+		}
+		if ctx.Err() != nil {
+			unlockChallenges()
+			return
+		}
+		verdicts := m.judge(ctx, now, item.pending, nil)
+		m.mu.Lock()
+		f = m.followers[item.caller]
+		if f == nil || len(f.pending) == 0 || !now.After(f.pending[0].issued.Add(challengeWindow)) {
+			m.mu.Unlock()
+			unlockChallenges()
+			continue
+		}
+		for id := range verdicts {
+			delete(f.shown, id)
+			delete(f.held, id)
+			f.failed[id] = struct{}{}
+			m.unshown++
+			m.log.Warn("a storage follower did not show that it holds a blob it says it holds; it is not counted as holding it until it does", "node", item.caller, "cid", id)
+		}
+		f.pending = nil
+		m.notifyChangedLocked()
+		m.mu.Unlock()
+		unlockChallenges()
+	}
+}
+
 // PinsChanged wakes assignment streams after the store's pin roots or
 // expiries change. It is safe to call while the store holds its pin lock.
 func (m *Manager) PinsChanged() {
@@ -503,6 +641,9 @@ func (m *Manager) assignmentLocked(now time.Time, caller string, f *follower, pi
 // what the list names taken back first, so that the answer is to hold it for
 // the store the node has now.
 func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.ReplicateRequest) *pb.ReplicateResponse {
+	unlockChallenges := m.lockChallenges(caller)
+	defer unlockChallenges()
+	now := time.Now()
 	store, holding, shown := req.GetStore(), req.GetHolding(), req.GetList()
 	vouched := shown != nil && m.signedHere(shown)
 	// A follower can reconnect with a list from before this manager's in-memory
@@ -523,7 +664,6 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 			named[blob.GetCid()] = struct{}{}
 		}
 	}
-	now := time.Now()
 	pinned, order := m.pinned(now)
 
 	// What the follower was last asked to show it holds is checked, and
@@ -567,7 +707,6 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 			continue
 		}
 		failed[id] = struct{}{}
-		m.log.Warn("a storage follower did not show that it holds a blob it says it holds; it is not counted as holding it until it does", "node", caller, "cid", id)
 	}
 	var ask []challenge
 	switch {
@@ -579,12 +718,13 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, held := range verdicts {
+	before, known := m.followers[caller]
+	for id, held := range verdicts {
 		if !held {
 			m.unshown++
+			m.log.Warn("a storage follower did not show that it holds a blob it says it holds; it is not counted as holding it until it does", "node", caller, "cid", id)
 		}
 	}
-	before, known := m.followers[caller]
 	if !known {
 		m.log.Info("a storage follower is here", "node", caller, "holding", len(holding))
 		before = &follower{}
