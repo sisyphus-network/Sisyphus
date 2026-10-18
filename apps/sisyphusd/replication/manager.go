@@ -110,6 +110,10 @@ type Manager struct {
 	// exchanges syncs: Interval, as it was when the manager started.
 	interval time.Duration
 
+	// challengeInterval is captured at construction so changing the package
+	// default in tests cannot race with a running manager.
+	challengeInterval time.Duration
+
 	// atStart holds the blobs that were pinned when the manager started,
 	// and settled is when it stops waiting for followers that may already
 	// hold them.
@@ -187,19 +191,20 @@ type follower struct {
 // New returns a manager for a coordinator that has just started.
 func New(cfg Config) *Manager {
 	m := &Manager{
-		identity:       cfg.Identity,
-		store:          cfg.Store,
-		replicas:       cfg.Replicas,
-		address:        cfg.Address,
-		fetch:          cfg.Fetch,
-		log:            cfg.Log,
-		grace:          Grace,
-		interval:       Interval,
-		followers:      make(map[string]*follower),
-		leaseIDs:       make(map[string]uint64),
-		challengeLocks: make(map[string]*challengeLock),
-		changed:        make(chan struct{}),
-		restored:       make(map[string]time.Time),
+		identity:          cfg.Identity,
+		store:             cfg.Store,
+		replicas:          cfg.Replicas,
+		address:           cfg.Address,
+		fetch:             cfg.Fetch,
+		log:               cfg.Log,
+		grace:             Grace,
+		interval:          Interval,
+		challengeInterval: ChallengeInterval,
+		followers:         make(map[string]*follower),
+		leaseIDs:          make(map[string]uint64),
+		challengeLocks:    make(map[string]*challengeLock),
+		changed:           make(chan struct{}),
+		restored:          make(map[string]time.Time),
 	}
 	if cfg.Identity != nil {
 		m.id = cfg.Identity.ID()
@@ -480,7 +485,7 @@ func (m *Manager) issueChallenges(ctx context.Context, now time.Time) {
 			if len(asked) == 0 {
 				// There is nothing to prove yet. Try again at the next proof
 				// deadline; pin or follower changes wake this loop sooner.
-				f.challengeAt = now.Add(ChallengeInterval)
+				f.challengeAt = now.Add(m.challengeInterval)
 			}
 			m.notifyChangedLocked()
 		}
@@ -557,7 +562,7 @@ func (m *Manager) expireChallenges(ctx context.Context, now time.Time) {
 			m.log.Warn("a storage follower did not show that it holds a blob it says it holds; it is not counted as holding it until it does", "node", item.caller, "cid", id)
 		}
 		f.pending = nil
-		f.challengeAt = item.pending[0].issued.Add(ChallengeInterval)
+		f.challengeAt = item.pending[0].issued.Add(m.challengeInterval)
 		f.challengeSent = false
 		m.notifyChangedLocked()
 		m.mu.Unlock()
@@ -834,7 +839,7 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	}
 	challengeAt := time.Time{}
 	if len(ask) == 0 && req.GetAnswersChallenges() {
-		challengeAt = now.Add(ChallengeInterval)
+		challengeAt = now.Add(m.challengeInterval)
 	}
 
 	m.mu.Lock()
