@@ -619,6 +619,49 @@ test('the workspace switches layouts live across tablet and desktop widths', asy
   }
 })
 
+test('the composer grows with what is typed, up to a cap, then scrolls, in both layouts', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    const composer = page.getByRole('textbox', { name: 'Message your Sisyphus planner…' })
+    // Its height, the height its text needs, and whether it scrolls, once
+    // a resize has had a frame and its 150 ms transition to settle.
+    const measure = async () => {
+      await page.waitForTimeout(400)
+      return composer.evaluate((field) => ({ height: field.getBoundingClientRect().height, needs: field.scrollHeight, scrolls: getComputedStyle(field).overflowY }))
+    }
+    const lines = (n) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n')
+    for (const [layout, size] of [['desktop', wide], ['compact', narrow]]) {
+      await size(app, page)
+      await composer.waitFor()
+      await page.waitForFunction(() => !document.querySelector('textarea')?.disabled)
+      await composer.fill('')
+      const empty = await measure()
+      assert.ok(empty.height >= 35 && empty.height <= 45, `${layout}: an empty composer is ${empty.height}px high`)
+
+      await composer.fill(lines(3))
+      const three = await measure()
+      assert.ok(three.height > empty.height + 20, `${layout}: three lines left the composer ${three.height}px high, from ${empty.height}px`)
+      assert.equal(three.scrolls, 'hidden', `${layout}: three lines that fit should not scroll`)
+
+      // Far more than fits: it stops at its cap and scrolls instead.
+      await composer.fill(lines(30))
+      const many = await measure()
+      assert.ok(Math.abs(many.height - 144) <= 1, `${layout}: thirty lines left the composer ${many.height}px high, want its 144px cap`)
+      assert.ok(many.needs > many.height, `${layout}: thirty lines need ${many.needs}px, no more than the ${many.height}px shown`)
+      assert.equal(many.scrolls, 'auto', `${layout}: a composer at its cap should scroll`)
+
+      // And it shrinks back when the text goes.
+      await composer.fill('')
+      const cleared = await measure()
+      assert.ok(Math.abs(cleared.height - empty.height) <= 1, `${layout}: a cleared composer is ${cleared.height}px high, not the ${empty.height}px it began at`)
+    }
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('an active conversation survives desktop and compact workspace remounts', async () => {
   const model = await standInModel('The active conversation survived the layout change.')
   planWith(node, model)
