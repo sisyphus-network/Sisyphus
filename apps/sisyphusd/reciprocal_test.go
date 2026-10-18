@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,10 +33,8 @@ type neighbourhood struct {
 	addresses map[string][]string
 	working   map[string]string // node ID to the address worked at
 	turnAway  map[string]chan struct{}
-	asked     map[string]int
-	// every is how often the node looks without being told to; nudge tells
-	// it to, and employed is its own account of whom it works for.
-	every    time.Duration
+	// notices pushes remote admission changes to the fake watcher streams.
+	notices  *notices
 	nudge    func()
 	employed func(id string) bool
 }
@@ -40,8 +42,7 @@ type neighbourhood struct {
 func newNeighbourhood() *neighbourhood {
 	return &neighbourhood{
 		trusting: make(map[string]bool), addresses: make(map[string][]string),
-		working: make(map[string]string), turnAway: make(map[string]chan struct{}), asked: make(map[string]int),
-		every: 5 * time.Millisecond,
+		working: make(map[string]string), turnAway: make(map[string]chan struct{}), notices: new(notices),
 	}
 }
 
@@ -62,6 +63,12 @@ func (n *neighbourhood) workingFor() []string {
 	return ids
 }
 
+func (n *neighbourhood) watching(id string) bool {
+	n.notices.mu.Lock()
+	defer n.notices.mu.Unlock()
+	return len(n.notices.watchers[id]) > 0
+}
+
 // start runs a node's reciprocity in the neighbourhood until the test ends
 // or stop is called, and returns what it logs.
 func (n *neighbourhood) start(t *testing.T, most int) (logs *syncBuffer, stop func()) {
@@ -78,14 +85,19 @@ func (n *neighbourhood) start(t *testing.T, most int) (logs *syncBuffer, stop fu
 			defer n.mu.Unlock()
 			return n.addresses[id]
 		},
-		ask: func(_ context.Context, id, addr string) bool {
-			n.mu.Lock()
-			defer n.mu.Unlock()
-			n.asked[id]++
-			// Only at its right address does a node answer at all.
-			return n.trusting[id] && strings.HasPrefix(addr, "right")
+		watch: func(ctx context.Context, id string) (net.Conn, error) {
+			client, server := net.Pipe()
+			go serveTrustState(ctx, server, id, n.notices, func(peerID string) bool {
+				n.mu.Lock()
+				defer n.mu.Unlock()
+				return peerID == id && n.trusting[id]
+			})
+			return client, nil
 		},
 		work: func(ctx context.Context, id, addr string) error {
+			if !strings.HasPrefix(addr, "right") {
+				return errors.New("unreachable address")
+			}
 			n.mu.Lock()
 			n.working[id] = addr
 			away := make(chan struct{})
@@ -99,7 +111,7 @@ func (n *neighbourhood) start(t *testing.T, most int) (logs *syncBuffer, stop fu
 				return errors.New("turned away")
 			}
 		},
-		every: n.every, most: most, log: slog.New(slog.NewTextHandler(logs, nil)),
+		most: most, log: slog.New(slog.NewTextHandler(logs, nil)),
 	})
 	n.nudge, n.employed = r.nudge, r.workingFor
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,29 +145,24 @@ func TestANodeWorksForThoseItTrustsThatTrustItBack(t *testing.T) {
 			t.Errorf("working for the node at %q, want the first address at which it answered", n.working["mutual"])
 		}
 	})
-	// The one that does not trust this node is asked again and again, in
-	// case it comes to.
-	waitFor(t, func() bool {
-		n.mu.Lock()
-		defer n.mu.Unlock()
-		return n.asked["one-sided"] >= 3
-	})
 	n.set(func() { n.trusting["one-sided"] = true })
+	n.notices.tell("one-sided")
 	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"mutual", "one-sided"}) })
 
-	// Turned away, by the other node ending its trust, it stops, and asks
-	// again later like anyone else.
+	// A streamed revocation cancels the work immediately.
 	n.set(func() {
 		n.trusting["mutual"] = false
 		close(n.turnAway["mutual"])
 	})
+	n.notices.tell("mutual")
 	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"one-sided"}) })
 	waitFor(t, func() bool {
-		return strings.Contains(logs.String(), `msg="stopped working for a node" node=mutual reason="turned away"`)
+		return strings.Contains(logs.String(), `msg="stopped working for a node" node=mutual`)
 	})
 
 	// Ending its own trust in a node, it stops working for it.
 	n.set(func() { n.trusted = []string{"mutual", "unreachable"} })
+	n.nudge()
 	waitFor(t, func() bool { return len(n.workingFor()) == 0 })
 	waitFor(t, func() bool {
 		return strings.Contains(logs.String(), "no longer working for a node this one no longer trusts")
@@ -163,6 +170,7 @@ func TestANodeWorksForThoseItTrustsThatTrustItBack(t *testing.T) {
 
 	// And stopping the node stops whatever is left.
 	n.set(func() { n.trusting["mutual"] = true })
+	n.notices.tell("mutual")
 	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"mutual"}) })
 	stop()
 	if left := n.workingFor(); len(left) != 0 {
@@ -172,25 +180,19 @@ func TestANodeWorksForThoseItTrustsThatTrustItBack(t *testing.T) {
 
 func TestWordOfAChangeIsActedOnAtOnce(t *testing.T) {
 	n := newNeighbourhood()
-	// Left to itself this node would not look again for an hour.
-	n.every = time.Hour
 	n.set(func() {
 		n.trusted = []string{"rig"}
 		n.addresses["rig"] = []string{"right:1"}
 	})
 	n.start(t, 16)
-	waitFor(t, func() bool {
-		n.mu.Lock()
-		defer n.mu.Unlock()
-		return n.asked["rig"] == 1
-	})
+	waitFor(t, func() bool { return n.watching("rig") })
 	if n.employed("rig") {
 		t.Fatal("working for a node that does not trust this one")
 	}
 
 	// The rig comes to trust this node, and sends word.
 	n.set(func() { n.trusting["rig"] = true })
-	n.nudge()
+	n.notices.tell("rig")
 	waitFor(t, func() bool { return n.employed("rig") })
 
 	// This node ends its own trust, which is news too.
@@ -216,6 +218,7 @@ func TestANodeWorksForOnlySoManyAtOnce(t *testing.T) {
 	}
 	// When one goes, the next has its turn.
 	n.set(func() { n.trusted = []string{"b", "c"} })
+	n.nudge()
 	waitFor(t, func() bool { return slices.Equal(n.workingFor(), []string{"b", "c"}) })
 }
 
@@ -232,28 +235,376 @@ func TestWhereANodeAsksAnotherForWork(t *testing.T) {
 	}
 }
 
-func TestAskingANodeWhetherItTrustsThisOne(t *testing.T) {
-	p := startPool(t, runtime.Builtin())
-	worker, _ := p.admit(access.Worker)
-	client, _ := p.admit(access.Client)
-	stranger := newIdentity(t)
+func TestTrustStreamStartsWithSnapshotAndStreamsChanges(t *testing.T) {
+	changes := new(notices)
+	var mu sync.Mutex
+	trusted := false
+	client, server := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		serveTrustState(ctx, server, "worker-id", changes, func(id string) bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return id == "worker-id" && trusted
+		})
+	}()
+	read := func() bool {
+		t.Helper()
+		var state [1]byte
+		if _, err := io.ReadFull(client, state[:]); err != nil {
+			t.Fatal(err)
+		}
+		if state[0] > 1 {
+			t.Fatalf("invalid trust state %d", state[0])
+		}
+		return state[0] == 1
+	}
+	if read() {
+		t.Fatal("initial state is trusted before admission")
+	}
+	mu.Lock()
+	trusted = true
+	mu.Unlock()
+	changes.tell("worker-id")
+	if !read() {
+		t.Fatal("stream did not publish the admission")
+	}
+	mu.Lock()
+	trusted = false
+	mu.Unlock()
+	changes.tell("worker-id")
+	if read() {
+		t.Fatal("stream did not publish revocation")
+	}
+	client.Close()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("trust stream handler did not stop after disconnect")
+	}
+}
 
-	if !trustsThisNode(p.ctx, worker, p.ident.ID(), p.addr) {
-		t.Error("a node admitted as a worker is not told it is trusted")
+func TestTrustStreamReconnectsFromFreshSnapshot(t *testing.T) {
+	var mu sync.Mutex
+	var servers []net.Conn
+	started, stopped := make(chan struct{}, 2), make(chan struct{}, 2)
+	r := newReciprocity(&reciprocity{
+		trusted:   func() []string { return []string{"peer"} },
+		addresses: func(string) []string { return []string{"right:1"} },
+		watch: func(ctx context.Context, id string) (net.Conn, error) {
+			client, server := net.Pipe()
+			mu.Lock()
+			servers = append(servers, server)
+			mu.Unlock()
+			go serveTrustState(ctx, server, id, new(notices), func(string) bool { return true })
+			return client, nil
+		},
+		work: func(ctx context.Context, _, _ string) error {
+			started <- struct{}{}
+			<-ctx.Done()
+			stopped <- struct{}{}
+			return ctx.Err()
+		},
+		most: 1, log: slog.New(slog.DiscardHandler),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.run(ctx)
+	}()
+	waitFor(t, func() bool { return len(started) == 1 })
+
+	mu.Lock()
+	first := servers[0]
+	mu.Unlock()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
 	}
-	// Being let use the pool is not being trusted to work for it.
-	if trustsThisNode(p.ctx, client, p.ident.ID(), p.addr) {
-		t.Error("a client was told it is trusted for compute")
+	waitFor(t, func() bool { return len(stopped) == 1 })
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(servers) == 2 && len(started) == 2
+	})
+
+	mu.Lock()
+	if got := len(servers); got != 2 {
+		mu.Unlock()
+		t.Fatalf("opened %d trust streams after disconnect, want 2", got)
 	}
-	if trustsThisNode(p.ctx, stranger, p.ident.ID(), p.addr) {
-		t.Error("a stranger was told it is trusted")
+	mu.Unlock()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("reciprocity did not stop after cancellation")
 	}
-	// Somebody else answering there, or nothing that is an address.
-	if trustsThisNode(p.ctx, worker, stranger.ID(), p.addr) {
-		t.Error("the wrong node at the address was taken for the right one")
+	waitFor(t, func() bool { return len(stopped) == 2 })
+}
+
+func TestFollowTrustRejectsInvalidState(t *testing.T) {
+	client, server := net.Pipe()
+	r := newReciprocity(&reciprocity{addresses: func(string) []string { return nil }, log: slog.New(slog.DiscardHandler)})
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := server.Write([]byte{2})
+		writeDone <- err
+	}()
+	_, err := r.followTrust(context.Background(), "peer", client)
+	if err == nil || err.Error() != "invalid reciprocal trust state" {
+		t.Fatalf("invalid trust state error = %v", err)
 	}
-	if trustsThisNode(p.ctx, worker, p.ident.ID(), "bad\x00address") {
-		t.Error("something that is no address answered")
+	client.Close()
+	server.Close()
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write invalid state: %v", err)
+	}
+}
+
+func TestSendTrustUpdateStopsWhenReaderIsDone(t *testing.T) {
+	stop := make(chan struct{})
+	updates := make(chan trustUpdate, 1)
+	updates <- trustUpdate{trusted: true}
+	close(stop)
+	if sendTrustUpdate(stop, updates, trustUpdate{trusted: false}) {
+		t.Fatal("sent an update after the reader stopped")
+	}
+}
+
+func TestTrustReaderStopsWhenItsUpdatesAreNoLongerNeeded(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	stop := make(chan struct{})
+	close(stop)
+	updates := make(chan trustUpdate, 1)
+	updates <- trustUpdate{trusted: true}
+
+	written := make(chan error, 1)
+	go func() {
+		_, err := server.Write([]byte{1})
+		written <- err
+	}()
+	readTrustUpdates(client, stop, updates)
+	if err := <-written; err != nil {
+		t.Fatalf("write trust state: %v", err)
+	}
+}
+
+func TestNoticesCoalescePendingWakeups(t *testing.T) {
+	changes := new(notices)
+	wake, forget := changes.watch("peer")
+	defer forget()
+	changes.tell("peer")
+	changes.tell("peer")
+	select {
+	case <-wake:
+	default:
+		t.Fatal("missing trust-change notification")
+	}
+	select {
+	case <-wake:
+		t.Fatal("duplicate notification was not coalesced")
+	default:
+	}
+	changes.tell("peer")
+	select {
+	case <-wake:
+	case <-time.After(time.Second):
+		t.Fatal("notification was lost after the previous one was consumed")
+	}
+}
+
+func TestFollowTrustRetriesWorkWithoutReopeningTrustStream(t *testing.T) {
+	client, server := net.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		serveTrustState(ctx, server, "peer", new(notices), func(string) bool { return true })
+	}()
+	started := make(chan struct{}, 2)
+	r := newReciprocity(&reciprocity{
+		addresses: func(string) []string { return []string{"right:1"} },
+		work: func(ctx context.Context, _, _ string) error {
+			started <- struct{}{}
+			if len(started) == 1 {
+				return errors.New("temporarily unavailable")
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		log: slog.New(slog.DiscardHandler),
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.followTrust(ctx, "peer", client)
+		done <- err
+	}()
+	waitFor(t, func() bool { return len(started) == 2 })
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("followTrust error = %v, want cancellation", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("followTrust did not stop")
+	}
+	client.Close()
+	server.Close()
+	select {
+	case <-serverDone:
+	case <-time.After(time.Second):
+		t.Fatal("trust stream server did not stop")
+	}
+}
+
+type failNthTrustWrite struct {
+	net.Conn
+	failAt int
+	writes int
+}
+
+func (c *failNthTrustWrite) Write(p []byte) (int, error) {
+	c.writes++
+	if c.writes == c.failAt {
+		return 0, errors.New("injected trust write failure")
+	}
+	return c.Conn.Write(p)
+}
+
+func TestTrustStreamStopsWhenItsInitialOrUpdatedStateCannotBeWritten(t *testing.T) {
+	for _, failAt := range []int{1, 2} {
+		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
+			client, server := net.Pipe()
+			if failAt == 1 {
+				client.Close()
+			}
+			wrapped := &failNthTrustWrite{Conn: server, failAt: failAt}
+			changes := new(notices)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				serveTrustState(ctx, wrapped, "peer", changes, func(string) bool { return true })
+			}()
+			if failAt == 1 {
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("server did not stop after its initial write failed")
+				}
+			} else {
+				var initial [1]byte
+				if _, err := io.ReadFull(client, initial[:]); err != nil || initial[0] != 1 {
+					t.Fatalf("initial trust state = %d, %v", initial[0], err)
+				}
+				changes.tell("peer")
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("server did not stop after its update write failed")
+				}
+			}
+			cancel()
+			client.Close()
+			server.Close()
+		})
+	}
+}
+
+func TestDialTrustWithCoversFailureCancellationAndOpenStream(t *testing.T) {
+	ctx := context.Background()
+	if conn, err := dialTrustWith(ctx, func(context.Context) (net.Conn, error) {
+		return nil, errors.New("dial failed")
+	}); err == nil || conn != nil {
+		t.Fatalf("failed dial = (%v, %v), want an error and no connection", conn, err)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	left, right := net.Pipe()
+	conn, err := dialTrustWith(canceled, func(context.Context) (net.Conn, error) {
+		cancel()
+		return left, nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || conn != nil {
+		t.Fatalf("canceled dial = (%v, %v), want deadline exceeded and no connection", conn, err)
+	}
+	right.Close()
+
+	left, right = net.Pipe()
+	conn, err = dialTrustWith(ctx, func(context.Context) (net.Conn, error) { return left, nil })
+	if err != nil {
+		t.Fatalf("open trust stream: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close trust stream: %v", err)
+	}
+	conn.Close()
+	right.Close()
+}
+
+func TestDialTrustTimeoutCancelsPendingDial(t *testing.T) {
+	conn, err := dialTrustWithTimeout(context.Background(), time.Millisecond, func(ctx context.Context) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	if conn != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("timed-out dial = (%v, %v), want no connection and cancellation", conn, err)
+	}
+}
+
+func TestCancelTrustDialUnlessOpened(t *testing.T) {
+	var opened atomic.Bool
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelTrustDialUnlessOpened(&opened, cancel)
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatal("a not-yet-opened stream was not canceled")
+	}
+	opened.Store(true)
+	ctx, cancel = context.WithCancel(context.Background())
+	cancelTrustDialUnlessOpened(&opened, cancel)
+	if ctx.Err() != nil {
+		t.Fatal("an opened stream was canceled by its dial timeout")
+	}
+	cancel()
+}
+
+func TestWorkAtAddressesStopsForCancellationAndReturnsLastFailure(t *testing.T) {
+	calls := 0
+	r := &reciprocity{work: func(context.Context, string, string) error {
+		calls++
+		return errors.New("unreachable")
+	}}
+	if err := r.workAtAddresses(context.Background(), "peer", nil); err != nil {
+		t.Fatalf("empty address list: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := r.workAtAddresses(ctx, "peer", []string{"right:1"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled work: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("worked at %d addresses after cancellation", calls)
+	}
+	want := errors.New("unreachable")
+	r.work = func(context.Context, string, string) error { return want }
+	if err := r.workAtAddresses(context.Background(), "peer", []string{"right:1"}); !errors.Is(err, want) {
+		t.Fatalf("last address error = %v, want %v", err, want)
+	}
+	workCtx, stop := context.WithCancel(context.Background())
+	r.work = func(context.Context, string, string) error {
+		stop()
+		return want
+	}
+	if err := r.workAtAddresses(workCtx, "peer", []string{"right:1"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("work canceled during address attempt: %v", err)
 	}
 }
 
@@ -689,16 +1040,23 @@ func TestAWorkerOnlyNodeCanWorkForASecondNode(t *testing.T) {
 			t.Errorf("the worker lists %s as %v", id, seen)
 		}
 	}
+	if _, err := onSecond.SetPeerComputePermissions(tokenOf(t, secondDir), &nodepb.SetPeerComputePermissionsRequest{PeerId: workerID, GivesWork: false}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		seen := peerSeenBy(t, onWorker, secondID)
+		return seen != nil && !seen.GetThisNodeWorksFor()
+	})
 }
 
 func TestNewsThatArrivesWhileANodeIsLookingIsNotMissed(t *testing.T) {
-	r := newReciprocity(&reciprocity{every: time.Hour})
+	r := newReciprocity(&reciprocity{})
 	ctx := context.Background()
 	// The node looks, and while it is looking something changes.
 	heard := r.heardSoFar()
 	r.nudge()
 	done := make(chan bool, 1)
-	go func() { done <- r.pause(ctx, &heard) }()
+	go func() { done <- r.pause(ctx, &heard, 0) }()
 	select {
 	case ended := <-done:
 		if ended {
@@ -708,7 +1066,7 @@ func TestNewsThatArrivesWhileANodeIsLookingIsNotMissed(t *testing.T) {
 		t.Fatal("news that arrived before the node paused was slept through")
 	}
 	// Having caught up, it waits for the next.
-	go func() { done <- r.pause(ctx, &heard) }()
+	go func() { done <- r.pause(ctx, &heard, 0) }()
 	select {
 	case <-done:
 		t.Fatal("the node did not wait though there was nothing new")
@@ -721,7 +1079,7 @@ func TestNewsThatArrivesWhileANodeIsLookingIsNotMissed(t *testing.T) {
 	cancel()
 	r.nudge()
 	// Asked twice, since a pause that reports a stop once must go on doing so.
-	if once, again := r.pause(stopped, &heard), r.pause(stopped, &heard); !once || !again {
+	if once, again := r.pause(stopped, &heard, 0), r.pause(stopped, &heard, 0); !once || !again {
 		t.Error("a pause on a stopped node did not report it")
 	}
 }

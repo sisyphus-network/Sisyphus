@@ -2,30 +2,30 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/p2p"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
-	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
+	"google.golang.org/grpc/credentials"
 )
 
 // Trust in a node for compute has two sides: this node gives it tasks, and
 // this node takes tasks from it. The first is the node's place in this
 // node's pool. The second is what this file does: for every node this one
-// will take tasks from, it asks now and then whether that node trusts it back, and when
-// it does, works for it, beside whatever else this node is doing. Neither
-// node is restarted, and either ends it by ending its trust.
+// will take tasks from, it watches whether that node trusts it back and,
+// while it does, works for it beside whatever else this node is doing.
+// Neither node is restarted, and either ends it by ending its trust.
 
 // reciprocity keeps a node working for the nodes it trusts that trust it.
 type reciprocity struct {
@@ -34,15 +34,16 @@ type reciprocity struct {
 	// addresses returns where a node might be asked, as host:port, best
 	// guess first.
 	addresses func(id string) []string
-	// ask asks the node at an address whether it trusts this one, and work
-	// works for it there until told to stop or turned away.
-	ask  func(ctx context.Context, id, addr string) bool
+	// watch opens a stream that first reports whether the node trusts this
+	// one, then reports each change until the stream ends.
+	watch func(ctx context.Context, id string) (net.Conn, error)
+	// work works for a node that trusts this one until told to stop.
 	work func(ctx context.Context, id, addr string) error
-	// every is how often the trusted are looked over and asked again, and
-	// most how many nodes are worked for at once.
-	every time.Duration
-	most  int
-	log   *slog.Logger
+	// changed publishes the locally visible reciprocal-work status.
+	changed func()
+	// most is how many nodes are worked for at once.
+	most int
+	log  *slog.Logger
 
 	mu sync.Mutex
 	// news is closed, and replaced, when something may have changed: this
@@ -65,11 +66,10 @@ func (r *reciprocity) nudge() {
 	r.news = make(chan struct{})
 }
 
-// pause waits for the usual interval, for news, or for ctx to end, and
-// reports whether ctx has. heard is how much news the caller had heard of
-// when it last looked, and is brought up to date: if there has been more
-// since, there is no waiting to do.
-func (r *reciprocity) pause(ctx context.Context, heard *int) (ended bool) {
+// pause waits for news or ctx to end. A positive retry delay also wakes a
+// disconnected watcher so it can retry; zero waits only for an event.
+// heard is advanced even when a change arrived while the caller was busy.
+func (r *reciprocity) pause(ctx context.Context, heard *int, retry time.Duration) (ended bool) {
 	r.mu.Lock()
 	news, fresh := r.news, r.told != *heard
 	*heard = r.told
@@ -77,8 +77,12 @@ func (r *reciprocity) pause(ctx context.Context, heard *int) (ended bool) {
 	if fresh {
 		return ctx.Err() != nil
 	}
+	var due <-chan time.Time
+	if retry > 0 {
+		due = time.After(retry)
+	}
 	select {
-	case <-time.After(r.every):
+	case <-due:
 	case <-news:
 	case <-ctx.Done():
 	}
@@ -101,8 +105,13 @@ func (r *reciprocity) workingFor(id string) bool {
 
 func (r *reciprocity) setEmployed(id string, employed bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	changed := r.employed[id] != employed
 	r.employed[id] = employed
+	publish := r.changed
+	r.mu.Unlock()
+	if changed && publish != nil {
+		publish()
+	}
 }
 
 // newReciprocity fills in what a reciprocity keeps for itself.
@@ -142,7 +151,7 @@ func (r *reciprocity) run(ctx context.Context) {
 				r.workFor(for_, id)
 			}()
 		}
-		if r.pause(ctx, &heard) {
+		if r.pause(ctx, &heard, 0) {
 			for _, e := range working {
 				e.stop()
 				<-e.ended
@@ -155,86 +164,334 @@ func (r *reciprocity) run(ctx context.Context) {
 // workFor works for one node whenever that node will have it, until ctx
 // ends.
 func (r *reciprocity) workFor(ctx context.Context, id string) {
+	const minRetry = time.Second
+	const maxRetry = time.Minute
+	backoff := minRetry
+	heard := r.heardSoFar()
 	for {
-		heard := r.heardSoFar()
-		for _, addr := range r.addresses(id) {
-			if !r.ask(ctx, id, addr) {
-				continue
+		conn, err := r.watch(ctx, id)
+		if err == nil {
+			var received bool
+			received, err = r.followTrust(ctx, id, conn)
+			conn.Close()
+			if received {
+				backoff = minRetry
 			}
-			r.log.Info("working for a node that trusts this one, as this one trusts it", "node", id, "addr", addr)
-			r.setEmployed(id, true)
-			err := r.work(ctx, id, addr)
-			r.setEmployed(id, false)
-			r.log.Info("stopped working for a node", "node", id, "reason", err)
-			break
 		}
-		if r.pause(ctx, &heard) {
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			r.log.Debug("reciprocal trust stream ended; reconnecting", "node", id, "error", err)
+		}
+		if r.pause(ctx, &heard, backoff) {
+			return
+		}
+		backoff = min(backoff*2, maxRetry)
+	}
+}
+
+type trustUpdate struct {
+	trusted bool
+	err     error
+}
+
+func sendTrustUpdate(stop <-chan struct{}, updates chan<- trustUpdate, update trustUpdate) bool {
+	select {
+	case updates <- update:
+		return true
+	case <-stop:
+		return false
+	}
+}
+
+func readTrustUpdates(conn net.Conn, stop <-chan struct{}, updates chan<- trustUpdate) {
+	for {
+		var state [1]byte
+		if _, err := io.ReadFull(conn, state[:]); err != nil {
+			sendTrustUpdate(stop, updates, trustUpdate{err: err})
+			return
+		}
+		if state[0] > 1 {
+			sendTrustUpdate(stop, updates, trustUpdate{err: errors.New("invalid reciprocal trust state")})
+			return
+		}
+		if !sendTrustUpdate(stop, updates, trustUpdate{trusted: state[0] == 1}) {
 			return
 		}
 	}
 }
 
-// trustProtocol names the streams on which one node's libp2p host tells
-// another that its trust in it has changed. Nothing is said on them beyond
-// that; the node told asks in the ordinary way what the news is.
-const trustProtocol = "/sisyphus/trust/1"
+// followTrust consumes the initial trust state and its live changes. Losing
+// the stream stops guest work; reconnecting starts with a fresh state snapshot.
+func (r *reciprocity) followTrust(ctx context.Context, id string, conn net.Conn) (received bool, err error) {
+	updates := make(chan trustUpdate, 1)
+	stopReading := make(chan struct{})
+	defer close(stopReading)
+	go readTrustUpdates(conn, stopReading, updates)
 
-// wordTimeout is how long a node spends getting word to another.
-const wordTimeout = 5 * time.Second
-
-// sendWord tells the node with the given ID that this node's trust in it
-// has changed, if it can be reached. A node that cannot be finds out when
-// it next asks.
-func sendWord(ctx context.Context, host *p2p.Host, id string) {
-	ctx, cancel := context.WithTimeout(ctx, wordTimeout)
-	defer cancel()
-	conn, err := host.Dial(ctx, id, trustProtocol)
-	if err != nil {
-		return
+	const minWorkRetry = time.Second
+	const maxWorkRetry = time.Minute
+	workRetryDelay := minWorkRetry
+	heard := r.heardSoFar()
+	trusted := false
+	var stop context.CancelFunc
+	var workDone <-chan error
+	var retry <-chan time.Time
+	startWork := func() {
+		if !trusted || stop != nil || retry != nil {
+			return
+		}
+		addresses := r.addresses(id)
+		if len(addresses) == 0 {
+			r.log.Debug("trusted node has no usable address yet", "node", id)
+			retry = time.After(workRetryDelay)
+			workRetryDelay = min(workRetryDelay*2, maxWorkRetry)
+			return
+		}
+		workCtx, cancel := context.WithCancel(ctx)
+		stop = cancel
+		done := make(chan error, 1)
+		workDone = done
+		r.setEmployed(id, true)
+		r.log.Info("working for a node that trusts this one, as this one trusts it", "node", id, "addr", addresses[0])
+		go func() { done <- r.workAtAddresses(workCtx, id, addresses) }()
 	}
-	// A stream is only opened in earnest when something is sent on it.
-	conn.SetDeadline(time.Now().Add(wordTimeout))
-	conn.Write([]byte{1})
-	conn.Read(make([]byte, 1))
-	conn.Close()
+	stopWork := func() {
+		if stop == nil {
+			return
+		}
+		stop()
+		workErr := <-workDone
+		r.log.Info("stopped working for a node", "node", id, "reason", workErr)
+		stop = nil
+		workDone = nil
+		r.setEmployed(id, false)
+	}
+	defer stopWork()
+
+	for {
+		r.mu.Lock()
+		news := r.news
+		fresh := r.told != heard
+		if fresh {
+			heard = r.told
+		}
+		r.mu.Unlock()
+		if fresh {
+			retry = nil
+			startWork()
+			continue
+		}
+		select {
+		case update := <-updates:
+			if update.err != nil {
+				return received, update.err
+			}
+			received = true
+			if !update.trusted {
+				trusted = false
+				retry = nil
+				workRetryDelay = minWorkRetry
+				stopWork()
+				continue
+			}
+			trusted = true
+			workRetryDelay = minWorkRetry
+			startWork()
+		case workErr := <-workDone:
+			r.setEmployed(id, false)
+			r.log.Info("stopped working for a node", "node", id, "reason", workErr)
+			stop()
+			stop = nil
+			workDone = nil
+			if trusted {
+				retry = time.After(workRetryDelay)
+				workRetryDelay = min(workRetryDelay*2, maxWorkRetry)
+			}
+		case <-retry:
+			retry = nil
+			startWork()
+		case <-news:
+			retry = nil
+			startWork()
+		case <-ctx.Done():
+			return received, ctx.Err()
+		}
+	}
 }
 
-// hearWord calls heard each time another node sends word, until lis is
-// closed.
-func hearWord(lis net.Listener, heard func()) {
+func (r *reciprocity) workAtAddresses(ctx context.Context, id string, addresses []string) error {
+	var last error
+	for _, addr := range addresses {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		last = r.work(ctx, id, addr)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+	return last
+}
+
+// trustProtocol names the versioned stream on which a coordinator reports
+// whether it currently trusts the authenticated peer as a worker, followed
+// by changes. Version 2 replaces the old one-shot nudge protocol.
+const trustProtocol = "/sisyphus/trust/2"
+
+// wordTimeout bounds a trust-state write that a peer has stopped reading.
+const wordTimeout = 5 * time.Second
+
+type cancelConn struct {
+	net.Conn
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (c *cancelConn) Close() error {
+	c.once.Do(c.cancel)
+	return c.Conn.Close()
+}
+
+// dialTrust opens a persistent stream. The deadline only bounds stream
+// establishment; after it opens, the stream lives until its peer or ctx ends.
+func dialTrust(ctx context.Context, host *p2p.Host, id string) (net.Conn, error) {
+	return dialTrustWith(ctx, func(ctx context.Context) (net.Conn, error) {
+		return host.Dial(ctx, id, trustProtocol)
+	})
+}
+
+func cancelTrustDialUnlessOpened(opened *atomic.Bool, cancel context.CancelFunc) {
+	if !opened.Load() {
+		cancel()
+	}
+}
+
+func dialTrustWith(ctx context.Context, dial func(context.Context) (net.Conn, error)) (net.Conn, error) {
+	return dialTrustWithTimeout(ctx, 15*time.Second, dial)
+}
+
+func dialTrustWithTimeout(ctx context.Context, timeout time.Duration, dial func(context.Context) (net.Conn, error)) (net.Conn, error) {
+	dialCtx, cancel := context.WithCancel(ctx)
+	var opened atomic.Bool
+	timer := time.AfterFunc(timeout, func() { cancelTrustDialUnlessOpened(&opened, cancel) })
+	conn, err := dial(dialCtx)
+	opened.Store(true)
+	timer.Stop()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	if dialCtx.Err() != nil {
+		conn.Close()
+		cancel()
+		return nil, context.DeadlineExceeded
+	}
+	return &cancelConn{Conn: conn, cancel: cancel}, nil
+}
+
+// serveTrustChanges answers each authenticated peer with its current worker
+// status and keeps that status current until the peer or node disconnects.
+func serveTrustChanges(ctx context.Context, lis net.Listener, changes *notices, trusts func(id string) bool) {
+	var handlers sync.WaitGroup
+	go func() {
+		<-ctx.Done()
+		lis.Close()
+	}()
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
+			break
+		}
+		handlers.Add(1)
+		go func() {
+			defer handlers.Done()
+			serveTrustChange(ctx, conn, changes, trusts)
+		}()
+	}
+	handlers.Wait()
+}
+
+func serveTrustChange(ctx context.Context, conn net.Conn, changes *notices, trusts func(id string) bool) {
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	peerID := conn.RemoteAddr().String()
+	serveTrustState(ctx, conn, peerID, changes, trusts)
+}
+
+func serveTrustState(ctx context.Context, conn net.Conn, peerID string, changes *notices, trusts func(id string) bool) {
+	changed, unsubscribe := changes.watch(peerID)
+	defer unsubscribe()
+	disconnected := make(chan struct{})
+	go func() {
+		var unexpected [1]byte
+		_, _ = conn.Read(unexpected[:])
+		close(disconnected)
+	}()
+	write := func() error {
+		conn.SetWriteDeadline(time.Now().Add(wordTimeout))
+		state := byte(0)
+		if trusts(peerID) {
+			state = 1
+		}
+		_, err := conn.Write([]byte{state})
+		return err
+	}
+	if err := write(); err != nil {
+		return
+	}
+	for {
+		select {
+		case <-changed:
+			if err := write(); err != nil {
+				return
+			}
+		case <-disconnected:
+			return
+		case <-ctx.Done():
 			return
 		}
-		conn.SetDeadline(time.Now().Add(wordTimeout))
-		conn.Read(make([]byte, 1))
-		conn.Close()
-		heard()
 	}
 }
 
-// notices passes news of whom this node trusts on to whoever has asked to
-// be told, once anyone has. The list of members is opened before there is
-// anyone to tell.
+// notices wakes active trust streams for a peer whose admission changed.
 type notices struct {
-	mu sync.Mutex
-	to func(id string)
+	mu       sync.Mutex
+	watchers map[string]map[chan struct{}]struct{}
 }
 
 func (n *notices) tell(id string) {
 	n.mu.Lock()
-	to := n.to
-	n.mu.Unlock()
-	if to != nil {
-		to(id)
+	for watcher := range n.watchers[id] {
+		select {
+		case watcher <- struct{}{}:
+		default:
+		}
 	}
+	n.mu.Unlock()
 }
 
-func (n *notices) listen(to func(id string)) {
+func (n *notices) watch(id string) (<-chan struct{}, func()) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.to = to
+	if n.watchers == nil {
+		n.watchers = make(map[string]map[chan struct{}]struct{})
+	}
+	watcher := make(chan struct{}, 1)
+	if n.watchers[id] == nil {
+		n.watchers[id] = make(map[chan struct{}]struct{})
+	}
+	n.watchers[id][watcher] = struct{}{}
+	return watcher, func() {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		delete(n.watchers[id], watcher)
+		if len(n.watchers[id]) == 0 {
+			delete(n.watchers, id)
+		}
+	}
 }
 
 // willing is the list of nodes this one will take tasks from: one side of
@@ -313,24 +570,6 @@ func whereToAsk(found []p2p.Peer, id string) []string {
 		}
 	}
 	return addrs
-}
-
-// askTimeout is how long a node is given to say whether it trusts this one.
-const askTimeout = 5 * time.Second
-
-// trustsThisNode asks the node expected at addr whether it has admitted
-// this one as a worker.
-func trustsThisNode(ctx context.Context, ident *identity.Identity, id, addr string) bool {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(credentials.NewTLS(ident.ClientTLS(id))))
-	if err != nil {
-		return false
-	}
-	defer conn.Close()
-	ctx, cancel := context.WithTimeout(ctx, askTimeout)
-	defer cancel()
-	// Joining with no invitation is asking exactly that.
-	joined, err := pb.NewPoolServiceClient(conn).Join(ctx, &pb.JoinRequest{})
-	return err == nil && joined.GetRole() == pb.Role_ROLE_WORKER
 }
 
 // guestWork is what a node needs to work for another beside its own pool.
