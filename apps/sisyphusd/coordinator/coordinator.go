@@ -1587,7 +1587,27 @@ func (c *Coordinator) settleLocked(job *jobmodel.Job) {
 // not failed because its blobs could not be pinned, which a worker naming a
 // blob the coordinator does not hold is enough to cause.
 func (c *Coordinator) pin(job *jobmodel.Job, expires time.Time, cids []string) {
-	if err := c.store.Pin(c.ctx, owner(job), expires, decode(cids)...); err != nil {
+	all := decode(cids)
+	err := c.store.Pin(c.ctx, owner(job), expires, all...)
+	if err == nil {
+		return
+	}
+	// A pin fails whole if one blob is not held: one a worker said it read
+	// and the pool does not have, say. The rest are still the job's, and
+	// are not to be left to collection for that.
+	var held []cid.Cid
+	for _, blob := range all {
+		if has, hasErr := c.store.Has(c.ctx, blob); hasErr == nil && has {
+			held = append(held, blob)
+		} else {
+			c.log.Warn("a job names a blob the pool does not hold, so it is not kept", "job", job.ID, "blob", blob.String())
+		}
+	}
+	if len(held) == len(all) {
+		c.log.Warn("could not pin a job's blobs", "job", job.ID, "error", err)
+		return
+	}
+	if err := c.store.Pin(c.ctx, owner(job), expires, held...); err != nil {
 		c.log.Warn("could not pin a job's blobs", "job", job.ID, "error", err)
 	}
 }
