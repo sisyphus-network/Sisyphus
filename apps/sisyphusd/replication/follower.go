@@ -53,6 +53,12 @@ type Follower struct {
 	// replication lists.
 	CoordinatorID string
 	Log           *slog.Logger
+
+	// stream and streamCancel are the persistent initial-baseline stream.
+	// Run consumes pushed assignments from it and reconnects after it ends.
+	stream       pb.BlobService_ReplicationClient
+	streamCancel context.CancelFunc
+	lastSequence uint64
 }
 
 // Run keeps the store as the coordinator would have it until ctx ends.
@@ -65,20 +71,168 @@ func (f *Follower) Run(ctx context.Context) {
 	failing := false
 	for {
 		changed, err := f.syncWith(ctx, initial)
-		initial = false
 		if err != nil && !failing && ctx.Err() == nil {
 			f.Log.Warn("could not bring this node's copies of its pool's data up to date; it keeps what it has and tries again", "every", interval.String(), "error", err)
 		}
 		failing = err != nil
+		if ctx.Err() != nil {
+			f.stopStream()
+			return
+		}
+		initial = false
+
+		stream, cancel := f.takeStream()
+		if err == nil && stream != nil {
+			updates := make(chan *pb.ReplicateResponse, 1)
+			streamEnded := make(chan error, 1)
+			go f.receiveAssignments(ctx, stream, updates, streamEnded)
+
+			wait := interval
+			if changed {
+				// Tell the coordinator at once what the baseline now holds.
+				wait = 0
+			}
+			timer := time.NewTimer(wait)
+			connected := true
+			for connected {
+				select {
+				case response := <-updates:
+					changed, err = f.applyPush(ctx, response)
+					if err != nil {
+						if !failing {
+							f.Log.Warn("could not apply a pushed storage assignment; it keeps what it has and reconnects", "error", err)
+						}
+						failing = true
+						connected = false
+						initial = true
+						break
+					}
+					failing = false
+					if changed {
+						// Report newly held copies promptly. A second request, if
+						// needed, reports the result after this response is applied.
+						for changed && err == nil {
+							changed, err = f.sync(ctx)
+						}
+						if err != nil {
+							if !failing {
+								f.Log.Warn("could not report the storage assignment just applied; it keeps what it has and reconnects", "error", err)
+							}
+							failing = true
+							connected = false
+							initial = true
+							break
+						}
+					}
+					resetTimer(timer, interval)
+				case err := <-streamEnded:
+					if ctx.Err() == nil && !failing {
+						f.Log.Warn("the storage assignment stream ended; reconnecting", "error", err)
+					}
+					failing = ctx.Err() == nil
+					connected = false
+					initial = true
+				case <-timer.C:
+					changed, err = f.sync(ctx)
+					if err != nil && !failing && ctx.Err() == nil {
+						f.Log.Warn("could not reconcile this node's copies with its pool; it keeps what it has and tries again", "every", interval.String(), "error", err)
+					}
+					failing = err != nil
+					wait := interval
+					if changed && err == nil {
+						wait = 0
+					}
+					timer.Reset(wait)
+				case <-ctx.Done():
+					connected = false
+				}
+			}
+			timer.Stop()
+			cancel()
+			if ctx.Err() != nil {
+				return
+			}
+			if initial {
+				if !sleepContext(ctx, interval) {
+					return
+				}
+			}
+			continue
+		}
+
 		wait := interval
 		if changed && err == nil {
 			// The coordinator is told at once what is now held.
 			wait = 0
 		}
-		select {
-		case <-time.After(wait):
-		case <-ctx.Done():
+		if !sleepContext(ctx, wait) {
 			return
+		}
+	}
+}
+
+func sleepContext(ctx context.Context, wait time.Duration) bool {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func resetTimer(timer *time.Timer, wait time.Duration) {
+	// Go 1.23+ timer channels cannot retain a stale tick after Stop returns
+	// false, so Reset needs no channel drain.
+	timer.Stop()
+	timer.Reset(wait)
+}
+
+func (f *Follower) takeStream() (pb.BlobService_ReplicationClient, context.CancelFunc) {
+	stream, cancel := f.stream, f.streamCancel
+	f.stream, f.streamCancel = nil, nil
+	return stream, cancel
+}
+
+func (f *Follower) stopStream() {
+	_, cancel := f.takeStream()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (f *Follower) receiveAssignments(ctx context.Context, stream pb.BlobService_ReplicationClient, updates chan *pb.ReplicateResponse, ended chan<- error) {
+	for {
+		response, err := ReadReplicationResponse(stream.Recv)
+		if err != nil {
+			select {
+			case ended <- err:
+			case <-ctx.Done():
+			}
+			return
+		}
+		if response.GetList() == nil {
+			select {
+			case ended <- fmt.Errorf("replication stream sent a response without a signed list"):
+			case <-ctx.Done():
+			}
+			return
+		}
+		select {
+		case updates <- response:
+		default:
+			// Lists are complete snapshots. If application falls behind, keep
+			// only the newest one rather than queueing every intermediate state.
+			select {
+			case <-updates:
+			default:
+			}
+			select {
+			case updates <- response:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }
@@ -103,6 +257,9 @@ func (f *Follower) sync(ctx context.Context) (changed bool, err error) {
 }
 
 func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, err error) {
+	if initial {
+		f.stopStream()
+	}
 	// held maps each blob held to the names it is pinned under: one, unless
 	// an earlier change of name was cut short.
 	held := make(map[cid.Cid][]string)
@@ -121,6 +278,13 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 	}
 	asked := &pb.ReplicateRequest{Holding: holding, Store: store, KeepsLists: true, AnswersChallenges: true}
 	var told *pb.ReplicateResponse
+	var activeStream pb.BlobService_ReplicationClient
+	var activeCancel context.CancelFunc
+	defer func() {
+		if activeCancel != nil {
+			activeCancel()
+		}
+	}()
 	if initial {
 		var list *pb.KeepList
 		if f.ListFile != "" {
@@ -128,9 +292,13 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 			list, unread = loadList(f.ListFile)
 			if unread != nil {
 				f.Log.Warn("could not read the list this node's coordinator signed of what to hold; without it the coordinator takes nothing back by itself", "error", unread)
+			} else if list != nil {
+				f.lastSequence = max(f.lastSequence, list.GetSequence())
 			}
 		}
-		stream, streamErr := f.Coordinator.Replication(ctx)
+		streamCtx, cancel := context.WithCancel(ctx)
+		activeCancel = cancel
+		stream, streamErr := f.Coordinator.Replication(streamCtx)
 		if streamErr == nil {
 			asked.List = list
 			var frames []*pb.ReplicationHello
@@ -144,8 +312,11 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 			if streamErr == nil {
 				told, streamErr = ReadReplicationResponse(stream.Recv)
 			}
+			if streamErr == nil {
+				activeStream, activeCancel = stream, cancel
+			}
 		}
-		if errors.Is(streamErr, io.EOF) {
+		if stream != nil && errors.Is(streamErr, io.EOF) {
 			// A server may have already ended an unsupported stream. grpc-go
 			// reports EOF from Send/CloseSend; Recv carries the real status.
 			_, streamErr = stream.Recv()
@@ -155,6 +326,8 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 			// will be offered only if that coordinator asks for it.
 			asked.List = nil
 			told, err = f.Coordinator.Replicate(ctx, asked)
+			activeCancel()
+			activeCancel = nil
 		} else {
 			err = streamErr
 		}
@@ -203,13 +376,46 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 	if err != nil {
 		return false, err
 	}
+	changed, err = f.applyResponse(ctx, told, held)
+	if err != nil {
+		return false, err
+	}
+	if activeStream != nil {
+		f.stream, f.streamCancel = activeStream, activeCancel
+		activeCancel = nil
+	}
+	return changed, nil
+}
+
+func (f *Follower) applyPush(ctx context.Context, response *pb.ReplicateResponse) (bool, error) {
+	list := response.GetList()
+	if list == nil {
+		return false, fmt.Errorf("pushed storage assignment has no signed list")
+	}
+	if err := f.verifyList(list); err != nil {
+		return false, err
+	}
+	if list.GetSequence() <= f.lastSequence {
+		return false, nil
+	}
+	held := make(map[cid.Cid][]string)
+	for _, pin := range f.Store.Pins() {
+		if _, ours := strings.CutPrefix(pin.Owner, ownerPrefix); ours {
+			held[pin.CID] = append(held[pin.CID], pin.Owner)
+		}
+	}
+	return f.applyResponse(ctx, response, held)
+}
+
+func (f *Follower) applyResponse(ctx context.Context, told *pb.ReplicateResponse, held map[cid.Cid][]string) (changed bool, err error) {
 	hold := told.GetHold()
 	if list := told.GetList(); list != nil {
-		// The list is kept before it is acted on, so that the one on disk
-		// never names less than what is held.
+		// Persist the signed list before acting on it, so the file never
+		// names less than what the follower is expected to keep.
 		if err := saveList(f.ListFile, list); err != nil {
 			return false, fmt.Errorf("keep the list the coordinator signed: %w", err)
 		}
+		f.lastSequence = max(f.lastSequence, list.GetSequence())
 		for _, blob := range list.GetBlobs() {
 			hold = append(hold, blob.GetCid())
 		}

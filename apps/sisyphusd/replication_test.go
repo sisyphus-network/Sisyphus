@@ -170,6 +170,30 @@ func TestPinnedDataEndsUpOnAsManyFollowersAsAsked(t *testing.T) {
 	}
 }
 
+func TestPinnedDataIsPushedToFollowersWithoutWaitingForReconciliation(t *testing.T) {
+	interval := replication.Interval
+	replication.Interval = time.Hour
+	t.Cleanup(func() { replication.Interval = interval })
+
+	p := startReplicatedPool(t, 1, "follower")
+	id := p.keep("a newly pinned blob is pushed to the connected follower")
+	blob := cid.MustParse(id)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		has, err := p.copies["follower"].Has(p.ctx, blob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if has {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the follower did not receive the pinned blob over the assignment stream")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestALostFollowerIsReplacedAfterTheGracePeriod(t *testing.T) {
 	// Leave enough time for the worker stream's disconnect to reach the
 	// coordinator even when the test process is under load. Replication still

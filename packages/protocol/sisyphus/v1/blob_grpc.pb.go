@@ -70,12 +70,12 @@ type BlobServiceClient interface {
 	// list, checks that the signature is its own, and takes back what the
 	// list names. A follower's word alone brings nothing back.
 	Replicate(ctx context.Context, in *ReplicateRequest, opts ...grpc.CallOption) (*ReplicateResponse, error)
-	// Replication is the follower's initial exchange on its existing blob
-	// connection. It sends its complete previous signed list (if any) and
-	// receives the coordinator's complete replacement in bounded frames. Both
-	// sides assemble before verifying or applying a list. Later protocol steps
-	// keep this stream open for pushed changes; unary Replicate remains the
-	// recovery path until those steps are complete.
+	// Replication is the follower's exchange on its existing blob connection.
+	// It sends its holdings and previous signed list, then receives the
+	// coordinator's complete assignment in bounded frames. The stream stays
+	// open for complete signed assignments pushed when the follower's placement
+	// changes. Unary Replicate remains anti-entropy for reported holdings and
+	// recovery until leases and reconnect recovery are complete.
 	Replication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ReplicationHello, ReplicationFrame], error)
 	// Replicas reports which followers hold each blob the node has pinned,
 	// against how many should.
@@ -268,12 +268,12 @@ type BlobServiceServer interface {
 	// list, checks that the signature is its own, and takes back what the
 	// list names. A follower's word alone brings nothing back.
 	Replicate(context.Context, *ReplicateRequest) (*ReplicateResponse, error)
-	// Replication is the follower's initial exchange on its existing blob
-	// connection. It sends its complete previous signed list (if any) and
-	// receives the coordinator's complete replacement in bounded frames. Both
-	// sides assemble before verifying or applying a list. Later protocol steps
-	// keep this stream open for pushed changes; unary Replicate remains the
-	// recovery path until those steps are complete.
+	// Replication is the follower's exchange on its existing blob connection.
+	// It sends its holdings and previous signed list, then receives the
+	// coordinator's complete assignment in bounded frames. The stream stays
+	// open for complete signed assignments pushed when the follower's placement
+	// changes. Unary Replicate remains anti-entropy for reported holdings and
+	// recovery until leases and reconnect recovery are complete.
 	Replication(grpc.BidiStreamingServer[ReplicationHello, ReplicationFrame]) error
 	// Replicas reports which followers hold each blob the node has pinned,
 	// against how many should.

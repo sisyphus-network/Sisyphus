@@ -520,6 +520,15 @@ func TestANodeThatAsksNothingOfFollowersGivesThemNothingToHold(t *testing.T) {
 	store := storage.NewMemory()
 	pinned := keep(t, store, "pinned on a node that keeps no copies")
 	off := Off(store)
+	if err := off.WatchAssignments(ctx, "a", nil, func(*pb.KeepList) error {
+		t.Error("an unsigned manager sent a streamed assignment")
+		return nil
+	}); err != nil {
+		t.Errorf("watching an unsigned manager: %v", err)
+	}
+	if list := off.changedAssignment("a", nil); list != nil {
+		t.Errorf("unsigned manager assignment = %v, want no signed list", list)
+	}
 	// It has no key to sign with, so even a follower that keeps lists is
 	// given none, and a list shown to it counts for nothing.
 	told := off.Replicate(ctx, "a", &pb.ReplicateRequest{Holding: []string{pinned}, KeepsLists: true, List: &pb.KeepList{Store: "/earlier"}})
@@ -531,5 +540,81 @@ func TestANodeThatAsksNothingOfFollowersGivesThemNothingToHold(t *testing.T) {
 	}
 	if status := off.Status(""); status.GetWanted() != 0 || len(status.GetBlobs()) != 1 {
 		t.Errorf("the node reports %v", status)
+	}
+}
+
+func TestWatchAssignmentsPushesChangedSignedSnapshots(t *testing.T) {
+	r := newRig(t, 1)
+	baseline := r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true}).GetList()
+	if baseline == nil {
+		t.Fatal("the follower did not receive its initial signed assignment")
+	}
+
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	updates := make(chan *pb.KeepList, 1)
+	ended := make(chan error, 1)
+	go func() {
+		ended <- r.WatchAssignments(watchCtx, "follower", baseline, func(list *pb.KeepList) error {
+			updates <- list
+			return nil
+		})
+	}()
+
+	blob := keep(t, r.store, "a pin change is pushed to the follower")
+	r.PinsChanged()
+	select {
+	case list := <-updates:
+		if list.GetSequence() <= baseline.GetSequence() {
+			t.Errorf("pushed sequence %d did not advance past %d", list.GetSequence(), baseline.GetSequence())
+		}
+		if !slices.ContainsFunc(list.GetBlobs(), func(kept *pb.KeptBlob) bool { return kept.GetCid() == blob }) {
+			t.Errorf("pushed assignment %v does not include newly pinned blob %s", list, blob)
+		}
+		if valid, err := identity.Verify(r.ident.ID(), signedBytes(list), list.GetSignature()); err != nil || !valid {
+			t.Errorf("pushed assignment signature valid = %v, error %v", valid, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pin change did not wake the assignment stream")
+	}
+
+	cancel()
+	select {
+	case err := <-ended:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("assignment watcher ended with %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("assignment watcher did not stop when its stream was canceled")
+	}
+
+	want := errors.New("follower disconnected")
+	if err := r.WatchAssignments(ctx, "follower", nil, func(*pb.KeepList) error { return want }); !errors.Is(err, want) {
+		t.Errorf("assignment send error = %v, want original error", err)
+	}
+}
+
+func TestExpiredFollowerPruningWakesAssignmentsAcrossManagerReads(t *testing.T) {
+	graceOf(t, time.Millisecond)
+	newFollower := func() *rig {
+		r := newRig(t, 1)
+		r.Replicate(ctx, "follower", &pb.ReplicateRequest{KeepsLists: true})
+		time.Sleep(2 * time.Millisecond)
+		return r
+	}
+
+	assignment := newFollower()
+	if list := assignment.changedAssignment("follower", nil); list != nil {
+		t.Errorf("expired follower received an assignment: %v", list)
+	}
+
+	holders := newFollower()
+	if got := holders.Holders("missing", ""); len(got) != 0 {
+		t.Errorf("expired follower remains a holder: %v", got)
+	}
+
+	restore := newFollower()
+	if count, failed := restore.Restore(ctx, "user"); count != 0 || len(failed) != 0 {
+		t.Errorf("restoring with no stranded blobs returned %d, %v", count, failed)
 	}
 }
