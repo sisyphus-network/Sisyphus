@@ -343,6 +343,15 @@ func (s *blockingReplicationFrames) Recv() (*pb.ReplicationFrame, error) {
 	return nil, s.ctx.Err()
 }
 
+type eofOnLeaseReplicationFrames struct{ *blockingReplicationFrames }
+
+func (s *eofOnLeaseReplicationFrames) Send(frame *pb.ReplicationHello) error {
+	if frame.GetLease() {
+		return io.EOF
+	}
+	return nil
+}
+
 type failingReplicationFrames struct {
 	*replicationFrames
 	err error
@@ -532,6 +541,41 @@ func TestRunKeepsUnaryReconciliationWhenCoordinatorClosesStreamCleanly(t *testin
 	}
 	if got := logs.count("the storage assignment stream ended; reconnecting"); got != 0 {
 		t.Errorf("logged %d stream reconnect warnings for a clean EOF, want none", got)
+	}
+}
+
+func TestRunWaitsForRecvAfterLeaseSendReturnsEOF(t *testing.T) {
+	ident := newIdentity(t)
+	baseline := &pb.KeepList{Store: "node/first", Sequence: 1}
+	baseline.Signature = ident.Sign(signedBytes(baseline))
+	client := &replicationClientStub{
+		calls: make(chan struct{}, 4), opened: make(chan struct{}, 4),
+		replicate: func(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+			return &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}, nil
+		},
+		stream: func(ctx context.Context) (pb.BlobService_ReplicationClient, error) {
+			return &eofOnLeaseReplicationFrames{blockingReplicationFrames: &blockingReplicationFrames{
+				replicationFrames: &replicationFrames{frames: []*pb.ReplicationFrame{
+					frameResponse(t, &pb.ReplicateResponse{Store: baseline.GetStore(), List: baseline}),
+				}},
+				ctx: ctx,
+			}}, nil
+		},
+	}
+	follower := &Follower{
+		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Coordinator: client, CoordinatorID: ident.ID(), Log: new(logged).logger(),
+	}
+	stop := run(t, follower, 5*time.Millisecond)
+	select {
+	case <-client.calls:
+	case <-time.After(time.Second):
+		stop()
+		t.Fatal("unary anti-entropy did not continue after lease Send returned EOF")
+	}
+	stop()
+	if got := len(client.opened); got != 1 {
+		t.Errorf("opened assignment stream %d times, want one when Recv is still open", got)
 	}
 }
 

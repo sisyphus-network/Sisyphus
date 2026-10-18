@@ -147,6 +147,13 @@ func (f *Follower) Run(ctx context.Context) {
 					connected = false
 					initial = true
 				case err := <-leaseEnded:
+					if errors.Is(err, io.EOF) {
+						// A coordinator may have finished its send side after the
+						// baseline. Let Recv decide whether it supports pushes or
+						// whether the stream really failed.
+						leaseEnded = nil
+						continue
+					}
 					if ctx.Err() == nil {
 						if !failing {
 							f.Log.Warn("the storage assignment lease could not be renewed; reconnecting", "error", err)

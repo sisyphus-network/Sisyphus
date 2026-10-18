@@ -139,6 +139,29 @@ type replicationExchange struct {
 	sent    []*pb.ReplicationFrame
 }
 
+type halfClosedReplicationExchange struct {
+	grpc.ServerStream
+	ctx      context.Context
+	hello    *pb.ReplicationHello
+	received bool
+	sent     chan *pb.ReplicationFrame
+}
+
+func (s *halfClosedReplicationExchange) Context() context.Context { return s.ctx }
+
+func (s *halfClosedReplicationExchange) Recv() (*pb.ReplicationHello, error) {
+	if !s.received {
+		s.received = true
+		return s.hello, nil
+	}
+	return nil, io.EOF
+}
+
+func (s *halfClosedReplicationExchange) Send(frame *pb.ReplicationFrame) error {
+	s.sent <- frame
+	return nil
+}
+
 func (s *replicationExchange) Context() context.Context { return context.Background() }
 
 func (s *replicationExchange) Recv() (*pb.ReplicationHello, error) {
@@ -201,6 +224,75 @@ func TestReplicationStreamFramesTheResponseAndReportsSendFailure(t *testing.T) {
 	}
 	if err := sendReplicationFrames(nil, func(*pb.ReplicationFrame) error { return nil }); status.Code(err) != codes.ResourceExhausted {
 		t.Errorf("unframeable replication response error = %v, want ResourceExhausted", err)
+	}
+}
+
+func TestReplicationPushStaysOpenAfterClientHalfClosesSendSide(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := storage.NewMemory()
+	manager := replication.New(replication.Config{
+		Identity: newIdentity(t), Store: store, StoreID: "test", Replicas: 1,
+		Address: func(string) string { return "127.0.0.1:7700" },
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	hellos, err := replication.ReplicationHellos(&pb.ReplicateRequest{KeepsLists: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &halfClosedReplicationExchange{
+		ctx: ctx, hello: hellos[0], sent: make(chan *pb.ReplicationFrame, 4),
+	}
+	service := &blobService{store: store, replication: manager}
+	done := make(chan error, 1)
+	go func() { done <- service.Replication(stream) }()
+
+	first, err := replication.ReadReplicationResponse(func() (*pb.ReplicationFrame, error) {
+		select {
+		case frame := <-stream.sent:
+			return frame, nil
+		case <-time.After(time.Second):
+			return nil, errors.New("timed out waiting for baseline assignment")
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.GetList().GetBlobs()) != 0 {
+		t.Fatalf("initial assignment has %d blobs, want none", len(first.GetList().GetBlobs()))
+	}
+
+	blob, err := store.Put(ctx, strings.NewReader("newly pinned after the client half-closed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Pin(ctx, "test", time.Time{}, blob); err != nil {
+		t.Fatal(err)
+	}
+	manager.PinsChanged()
+	push, err := replication.ReadReplicationResponse(func() (*pb.ReplicationFrame, error) {
+		select {
+		case frame := <-stream.sent:
+			return frame, nil
+		case <-time.After(time.Second):
+			return nil, errors.New("timed out waiting for pushed assignment after client EOF")
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(push.GetList().GetBlobs()); got != 1 || push.GetList().GetBlobs()[0].GetCid() != blob.String() {
+		t.Fatalf("pushed assignment has blobs %v, want only %s", push.GetList().GetBlobs(), blob)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("replication handler after client half-close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replication handler did not stop after the client canceled")
 	}
 }
 

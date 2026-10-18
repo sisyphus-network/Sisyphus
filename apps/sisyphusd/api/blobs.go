@@ -527,7 +527,9 @@ func (s *blobService) Replication(stream grpc.BidiStreamingServer[pb.Replication
 		err := watchReplicationLeases(ctx, stream.Recv, caller, leaseID, s.replication)
 		s.replication.EndLease(caller, leaseID)
 		leaseEnded <- err
-		cancel()
+		if !errors.Is(err, io.EOF) {
+			cancel()
+		}
 	}()
 	watchErr := s.replication.WatchAssignments(ctx, caller, response.GetList(), func(list *pb.KeepList) error {
 		return sendReplicationFrames(&pb.ReplicateResponse{Store: list.GetStore(), List: list}, stream.Send)
