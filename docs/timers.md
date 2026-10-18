@@ -46,15 +46,15 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 | `reciprocal.go`, `dialTrustWithTimeout` (15 s) | How long a trust stream may take to open. The timeout is stopped once the persistent stream is established. |
 | `reciprocal.go`, `wordTimeout` (5 s) | How long a trust-state write may block when the other peer has stopped reading. |
 | `web_access_runtime.go`, remote-access disable (750 ms) | Lets the current API request return before its own HTTPS listener is closed asynchronously. |
-| `p2p/p2p.go`, peer discovery and dialing | `meet` (10 s) for a newly discovered peer; 2 s each for the preferred relay and direct-dial attempt | Bounds one attempt in each connection stage; failure falls through to the next route or normal retry behavior. |
-| `daemon.go`, `gatewaysAddress`, `stunnedAddress`, and `lookUpCountry` | 10 s for NAT-PMP/STUN; 5 s for the country lookup | Bounds each external discovery request. A transient country lookup failure uses `Retry-After` with exponential backoff as a gate on the next location query. |
-| `daemon.go`, pool-member check and `carryName` | `memberCheck` (5 s); `kuboHandover` (30 s) | Bounds one coordinator admission check or one attempt to pass a name record to Kubo. |
-| `daemon.go` / `assistant.go`, attachment-pin replay and flush | `filePinTimeout` (10 s) | Bounds one attempt to replay queued pin work, including the flush after a chat is deleted; failures are retried by the event/retry loop above. |
+| `p2p/p2p.go`, peer discovery and dialing | `meet` (10 s) gives a newly discovered peer to answer; the preferred-relay and direct-dial attempts are each bounded to 2 s. Failure falls through to the next route or normal retry behavior. |
+| `daemon.go`, `gatewaysAddress`, `stunnedAddress`, and `lookUpCountry` | NAT-PMP/STUN calls are bounded to 10 s and the country lookup to 5 s. A transient country lookup failure uses `Retry-After` with exponential backoff as a gate on the next location query. |
+| `daemon.go`, pool-member check and `carryName` | `memberCheck` (5 s) bounds one coordinator admission check; `kuboHandover` (30 s) bounds one attempt to pass a name record to Kubo. |
+| `daemon.go` / `assistant.go`, attachment-pin replay and flush | `filePinTimeout` (10 s) bounds one attempt to replay queued pin work, including the flush after a chat is deleted; failures are retried by the event/retry loop above. |
 | `pinning/service.go`, `connectTimeout` (10 s) | Bounds Kubo's connection to each origin of a pin request; one unavailable origin does not consume the full fetch. |
 | `packages/hardware/hardware.go`, `Detect` (5 s) | Bounds the platform command used to read hardware details; unanswered probes leave those details unknown. |
 | `packages/runtime/chat.go` and `used.go`, `tagsWait` (3 s) | Bounds the Ollama version/model metadata lookups; failure leaves optional model-use metadata empty. |
 | `packages/runtime/container.go`, `Confined.Timeout` | Owner-configured maximum runtime for one workload; the coordinator's attempt deadline provides the corresponding assignment lifecycle bound. |
-| `mcpserver/extras.go`, `follow` | The caller-supplied wait | Stops waiting for a job's live events at the requested duration, then returns its current state; the job itself continues. |
+| `mcpserver/extras.go`, `follow` | The caller-supplied wait stops following a job's live events at the requested duration, then returns its current state; the job itself continues. |
 | `packages/kubo/daemon.go` and `packages/ipfscluster/daemon.go`, `stopGrace` (10 s) | How long a subprocess has to exit after an interrupt before it is killed. |
 
 ## Candidates
