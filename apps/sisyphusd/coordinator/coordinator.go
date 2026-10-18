@@ -1512,6 +1512,9 @@ func (c *Coordinator) aggregate(job *jobmodel.Job) {
 	now := time.Now()
 	job.NoteRead(touched.Read()...)
 	job.NoteResult(touched.Written()...)
+	if references, ok := workload.(runtime.ResultBlobs); ok {
+		job.NoteResult(references.ResultBlobs(result)...)
+	}
 	job.Finish(result, err, now)
 	c.settleLocked(job)
 	c.log.Info("job finished", "job", job.ID, "state", job.State.String(), "took", now.Sub(job.CreatedAt).String(), "by", workedBy(job))

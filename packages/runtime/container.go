@@ -432,6 +432,26 @@ func (Container) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte
 	return mustJSON(result), nil
 }
 
+// ResultBlobs are the task outputs the container result refers to by CID.
+func (Container) ResultBlobs(raw []byte) []string {
+	var result ContainerResult
+	if json.Unmarshal(raw, &result) != nil {
+		return nil
+	}
+	var cids []string
+	for _, task := range result.Tasks {
+		if task.Stdout != "" {
+			cids = append(cids, task.Stdout)
+		}
+		for _, c := range task.Files {
+			if c != "" {
+				cids = append(cids, c)
+			}
+		}
+	}
+	return cids
+}
+
 // CheckContainers reports, as an error, a machine on which container tasks
 // cannot be run: one where Docker is not installed, not running, or not
 // this user's to use.

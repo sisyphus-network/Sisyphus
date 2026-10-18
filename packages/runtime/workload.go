@@ -42,6 +42,13 @@ type Workload interface {
 	Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error)
 }
 
+// ResultBlobs names stored blobs referenced by a workload's aggregate result.
+// Such blobs are part of the result and must be retained with it, even when
+// they were first written by a task.
+type ResultBlobs interface {
+	ResultBlobs(result []byte) []string
+}
+
 // Described is a workload that can say, for someone deciding whether and
 // how to use it, what it does and what parameters it takes.
 type Described interface {
