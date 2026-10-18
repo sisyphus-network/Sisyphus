@@ -126,10 +126,6 @@ func (f *Follower) Run(ctx context.Context) {
 					}
 					resetTimer(timer, interval)
 				case err := <-streamEnded:
-					if ctx.Err() != nil {
-						connected = false
-						break
-					}
 					if errors.Is(err, io.EOF) {
 						// Older coordinators answer the initial baseline and then
 						// close the stream cleanly. Keep anti-entropy on the unary
@@ -151,6 +147,14 @@ func (f *Follower) Run(ctx context.Context) {
 						f.Log.Warn("could not reconcile this node's copies with its pool; it keeps what it has and tries again", "every", interval.String(), "error", err)
 					}
 					failing = err != nil
+					if err != nil && updates == nil {
+						// The coordinator may have restarted since the stream
+						// ended cleanly and now support pushes. Reopen it after a
+						// failed unary reconciliation.
+						connected = false
+						initial = true
+						break
+					}
 					wait := interval
 					if changed && err == nil {
 						wait = 0
@@ -165,12 +169,9 @@ func (f *Follower) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			if initial {
-				if !sleepContext(ctx, interval) {
-					return
-				}
-			}
-			continue
+			// A failed stream needs an initial exchange when it reconnects, but
+			// still waits the normal interval before trying again.
+			changed = false
 		}
 
 		wait := interval
