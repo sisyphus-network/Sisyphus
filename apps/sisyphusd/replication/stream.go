@@ -76,7 +76,7 @@ func ReadReplicationHello(recv func() (*pb.ReplicationHello, error)) (*pb.Replic
 	if len(first.GetPayload()) > ReplicationFrameSize {
 		return nil, fmt.Errorf("replication hello is %d bytes; limit is %d", len(first.GetPayload()), ReplicationFrameSize)
 	}
-	encoded := make([]byte, 0, len(first.GetPayload())*int(count))
+	encoded := make([]byte, 0, len(first.GetPayload()))
 	encoded = append(encoded, first.GetPayload()...)
 	for index := uint32(1); index < count; index++ {
 		frame, err := recv()
@@ -153,7 +153,7 @@ func ReadReplicationResponse(recv func() (*pb.ReplicationFrame, error)) (*pb.Rep
 	if len(first.GetPayload()) > ReplicationFrameSize {
 		return nil, fmt.Errorf("replication frame is %d bytes; limit is %d", len(first.GetPayload()), ReplicationFrameSize)
 	}
-	encoded := make([]byte, 0, len(first.GetPayload())*int(count))
+	encoded := make([]byte, 0, len(first.GetPayload()))
 	encoded = append(encoded, first.GetPayload()...)
 	for index := uint32(1); index < count; index++ {
 		frame, err := recv()

@@ -2,7 +2,9 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"slices"
 	"strings"
@@ -143,9 +145,15 @@ func (f *Follower) syncWith(ctx context.Context, initial bool) (changed bool, er
 				told, streamErr = ReadReplicationResponse(stream.Recv)
 			}
 		}
+		if errors.Is(streamErr, io.EOF) {
+			// A server may have already ended an unsupported stream. grpc-go
+			// reports EOF from Send/CloseSend; Recv carries the real status.
+			_, streamErr = stream.Recv()
+		}
 		if status.Code(streamErr) == codes.Unimplemented {
 			// Older coordinators keep the unary recovery path. The signed list
 			// will be offered only if that coordinator asks for it.
+			asked.List = nil
 			told, err = f.Coordinator.Replicate(ctx, asked)
 		} else {
 			err = streamErr

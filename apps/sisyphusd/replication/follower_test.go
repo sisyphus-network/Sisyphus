@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -159,22 +160,29 @@ func following(t *testing.T) (*scripted, *Follower, *storage.Store, *logged) {
 type legacyCoordinator struct {
 	pb.UnimplementedBlobServiceServer
 	response *pb.ReplicateResponse
+	requests chan *pb.ReplicateRequest
 }
 
-func (s legacyCoordinator) Replicate(context.Context, *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+func (s legacyCoordinator) Replicate(_ context.Context, request *pb.ReplicateRequest) (*pb.ReplicateResponse, error) {
+	s.requests <- request
 	return s.response, nil
 }
 
 func TestInitialReplicationFallsBackToAnOlderCoordinator(t *testing.T) {
 	ident := newIdentity(t)
-	list := &pb.KeepList{Store: ident.ID() + "/store", Sequence: 1}
-	list.Signature = ident.Sign(signedBytes(list))
+	store := ident.ID() + "/store"
+	responseList := &pb.KeepList{Store: store, Sequence: 1}
+	responseList.Signature = ident.Sign(signedBytes(responseList))
+	legacy := legacyCoordinator{
+		response: &pb.ReplicateResponse{Store: store, List: responseList},
+		requests: make(chan *pb.ReplicateRequest, 1),
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := grpc.NewServer()
-	pb.RegisterBlobServiceServer(server, legacyCoordinator{response: &pb.ReplicateResponse{Store: list.GetStore(), List: list}})
+	pb.RegisterBlobServiceServer(server, legacy)
 	go server.Serve(listener)
 	t.Cleanup(server.Stop)
 	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -182,12 +190,37 @@ func TestInitialReplicationFallsBackToAnOlderCoordinator(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	listFile := filepath.Join(t.TempDir(), "kept.list")
+	previousList := &pb.KeepList{Store: store, Sequence: 2}
+	for range 60_000 {
+		previousList.Blobs = append(previousList.Blobs, &pb.KeptBlob{Cid: strings.Repeat("b", 75)})
+	}
+	previousList.Signature = ident.Sign(signedBytes(previousList))
+	if err := saveList(listFile, previousList); err != nil {
+		t.Fatal(err)
+	}
+	request := &pb.ReplicateRequest{Store: store, List: previousList}
+	frames, err := ReplicationHellos(request)
+	if err != nil || len(frames) < 2 {
+		t.Fatalf("large recovery hello uses %d frame(s), error %v; want multiple frames", len(frames), err)
+	}
 	follower := &Follower{
-		Store: storage.NewMemory(), ListFile: filepath.Join(t.TempDir(), "kept.list"),
+		Store: storage.NewMemory(), ListFile: listFile,
 		Coordinator: pb.NewBlobServiceClient(conn), CoordinatorID: ident.ID(), Log: new(logged).logger(),
 	}
 	if _, err := follower.syncWith(context.Background(), true); err != nil {
 		t.Fatalf("initial sync with legacy coordinator: %v", err)
+	}
+	select {
+	case unary := <-legacy.requests:
+		if unary.GetList() != nil {
+			t.Fatal("legacy unary fallback resent the oversized signed list")
+		}
+		if size := proto.Size(unary); size >= 4<<20 {
+			t.Fatalf("legacy unary fallback is %d bytes; want below gRPC's 4 MiB limit", size)
+		}
+	default:
+		t.Fatal("large initial hello did not fall back to unary Replicate")
 	}
 }
 
