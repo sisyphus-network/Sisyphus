@@ -455,6 +455,52 @@ test('a collapsed workspace panel reopens by dragging its visible handle', async
   }
 })
 
+test('a double-click on a workspace panel handle closes and reopens the panel, and a single click does not', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    await page.evaluate(() => localStorage.setItem('sisyphus-workspace-layout', JSON.stringify({ chat: 58, network: 42, historyOpen: true, historyWidth: 320, topologyOpen: true })))
+    await page.reload()
+    const opened = (slot) => page.evaluate((slot) => document.querySelector(slot)?.getAttribute('data-open'), slot)
+    const toggles = async (name, slot) => {
+      const handle = page.getByRole('separator', { name })
+      await handle.waitFor()
+      await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'true', slot)
+      const box = await handle.boundingBox()
+      assert.ok(box, `the ${name} handle has no box`)
+      const x = box.x + box.width / 2
+      const y = box.y + box.height / 2
+      // One click is not a toggle: a handle is pressed on its way to a drag.
+      await page.mouse.click(x, y)
+      await page.waitForTimeout(600)
+      assert.equal(await opened(slot), 'true', `one click on the ${name} handle closed the panel`)
+      await page.mouse.dblclick(x, y)
+      await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'false', slot)
+      // The handle stays where it can be found, and a double-click on it
+      // where it now is brings the panel back.
+      await page.waitForTimeout(600)
+      const closed = await handle.boundingBox()
+      assert.ok(closed, `the collapsed ${name} handle disappeared`)
+      await page.mouse.dblclick(closed.x + closed.width / 2, closed.y + closed.height / 2)
+      await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'true', slot)
+    }
+
+    await toggles('Resize conversation history panel', '.workspace-history-slot')
+    const layout = await page.evaluate(() => JSON.parse(localStorage.getItem('sisyphus-workspace-layout') || '{}'))
+    assert.equal(layout.historyOpen, true, 'the reopened history panel was not saved as open')
+
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, even drawn in software, so the topology handle is not available')
+    }
+    await toggles('Resize topology panel', '.workspace-topology-slot')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('the topology canvas stays mounted and stable through repeated advanced-route transitions', async (t) => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
