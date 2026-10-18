@@ -599,6 +599,7 @@ bin/sisyphusd job submit --workload graph --params '{"steps":[
 - **Order.** A step waits for every step it refers to and any it names under `"after"`. Steps that wait for nothing run side by side. A graph in which a step waits, however indirectly, for itself is refused when submitted.
 - **Each step is an ordinary job**, with `parent_job_id` and `step` saying what it is a step of. `job get` and `job logs` work on it, and its tasks go to workers as any job's do. The graph's own tasks are its steps, carried out by the coordinator; no worker needs to know of graphs.
 - **Failure and stopping.** A step that fails, or whose job is cancelled, fails the graph, and steps not yet begun are not run. Cancelling the graph cancels the jobs its steps are running as.
+- **What the steps stored is the graph's.** The files each step stored are among the graph's own `output_blobs`, and are kept for `--retain` after the graph finishes, as well as after the step does. A graph whose last step ends long after its first still has the first one's files to hand.
 - **A restart** of the coordinator takes a graph up where it was: steps that had finished are not run again, and one that was running goes on as the job it was.
 - **A private graph** gives its key to every step.
 - Up to 64 steps. There are no loops or conditions: a step runs or the graph fails.

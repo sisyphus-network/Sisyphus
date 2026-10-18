@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,6 +65,19 @@ func TestAGraphRunsItsStepsAsJobsEachUsingWhatTheLastProduced(t *testing.T) {
 		}
 		if task := done.GetTasks()[i]; task.GetNodeName() != "coordinator" || task.GetState() != pb.TaskState_TASK_STATE_SUCCEEDED {
 			t.Errorf("the graph's task %d: %v", i, task)
+		}
+	}
+	// What a step stored is the graph's too, and is kept for as long as
+	// the graph is, not only for as long as the step that stored it.
+	pins := p.jobPins(done.GetJobId())
+	for _, step := range []string{"count", "again"} {
+		for _, blob := range steps[step][0].GetOutputBlobs() {
+			if !slices.Contains(done.GetOutputBlobs(), blob) {
+				t.Errorf("the graph does not list %s, which its step %s stored, among its outputs %v", blob, step, done.GetOutputBlobs())
+			}
+			if pin, ok := pins[blob]; !ok || !pin.Expires.Equal(done.GetFinishedAt().AsTime().Add(testRetain)) {
+				t.Errorf("the graph keeps %s, which its step %s stored, as %+v, want it for the graph's retention period", blob, step, pin)
+			}
 		}
 	}
 	if low := steps["low"][0]; len(low.GetTasks()) != 2 {
