@@ -74,7 +74,7 @@ These are UI lifecycle, retry, or feedback waits; none is a steady-state node sn
 | Where | What it waits for | Kind | Interval | Why it is a timer |
 | --- | --- | --- | --- | --- |
 | `apps/sisyphus/src/main/index.ts`, `scheduleReconnect` | A failed daemon connection or state stream | Retry | Exponential, 1 s to 15 s; reset after `getNodeInfo` succeeds | Restarts the Electron connection and obtains a fresh node baseline. |
-| `apps/sisyphus/src/renderer/src/lib/node-api.ts`, browser state session | A failed/ended daemon stream | Retry | 1.5 s | Re-fetches the browser snapshot before reopening the stream; no snapshot calls while the stream is healthy. |
+| `apps/sisyphus/src/renderer/src/lib/node-api.ts`, browser state session | A failed/ended daemon stream | Retry | Exponential, 1.5 s to 30 s; reset after a live update | Re-fetches the browser snapshot before reopening the stream; no snapshot calls while the stream is healthy. Bounded backoff prevents a disconnected browser from retrying at a fixed high rate. |
 | `apps/sisyphus/src/renderer/src/pages/AccessPage.tsx`, paired-device stream | A failed/ended `WatchPairedBrowsers` stream | Retry | Exponential, 500 ms to 30 s; reset on update | Reopens the change stream after failure. |
 | `apps/sisyphus/src/renderer/src/pages/NodeDetailsPage.tsx`, worker stream | A failed/ended `WatchWorkers` stream | Retry | Exponential, 500 ms to 30 s; reset on update | Reopens the worker change stream after failure. |
 | `apps/sisyphus/src/renderer/src/pages/AccessPage.tsx`, invitation countdown | Invitation time remaining | User-facing countdown | 1 s while an invitation is open; otherwise 60 s | Refreshes displayed expiry time, not daemon state. |
