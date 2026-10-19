@@ -955,6 +955,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			// names, and who on the node keeps each, stay here (#500).
 			files := &poolFiles{blobs: poolStore, client: pb.NewBlobServiceClient(poolConn), holds: db, coordinator: func() string { return w.JoinedPool().ID }, available: jobs.Available}
 			local.Store, local.Files, attachmentPins = files, db, files
+			local.FileScope = func() string { return w.JoinedPool().ID }
 			// Its planner plans on that pool too, and only while it may.
 			planningPool, offered = jobs, offeredBy(jobs.Nodes)
 			local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }

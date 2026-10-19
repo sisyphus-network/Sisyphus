@@ -89,8 +89,11 @@ type LocalConfig struct {
 	// Store, if set, is the pool's store, for the calls about files;
 	// Files is then the list of what was stored through them, and
 	// MaxStoreBytes the most disk the store may use, or zero for no limit.
-	Store         FileStore
-	Files         FileList
+	Store FileStore
+	Files FileList
+	// FileScope identifies the pool whose file catalogue this API serves.
+	// The empty scope is the node's own pool and preserves the local contract.
+	FileScope     func() string
 	MaxStoreBytes uint64
 	// SealingKey, if set, returns the key this node seals private files
 	// and jobs with, making one the first time it is asked.

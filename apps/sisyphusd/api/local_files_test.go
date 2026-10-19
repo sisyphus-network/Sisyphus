@@ -160,6 +160,47 @@ func TestFilesAreStoredListedFetchedAndRemoved(t *testing.T) {
 	}
 }
 
+func TestFileListingOnlyShowsTheCurrentPoolAndItsName(t *testing.T) {
+	ctx := context.Background()
+	store, db := storage.NewMemory(), newFileList(t)
+	current := "coordinator-a"
+	service := &localService{cfg: LocalConfig{Store: store, Files: db, FileScope: func() string { return current }}}
+	for _, entry := range []struct{ pool, name string }{{"coordinator-a", "a.txt"}, {"coordinator-b", "b.txt"}} {
+		current = entry.pool
+		if _, err := service.keep(ctx, entry.name, false, false, func() ([]byte, error) {
+			return []byte("same content"), io.EOF
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct{ pool, name string }{{"coordinator-a", "a.txt"}, {"coordinator-b", "b.txt"}} {
+		current = test.pool
+		listed, err := service.ListFiles(ctx, &nodepb.ListFilesRequest{})
+		if err != nil || len(listed.GetFiles()) != 1 || listed.Files[0].GetName() != test.name {
+			t.Errorf("files in %s: %v, %v; want only %q", test.pool, listed.GetFiles(), err, test.name)
+		}
+	}
+}
+
+func TestRemovingFileSupportsAFileListWithoutPoolScopes(t *testing.T) {
+	db := newFileList(t)
+	if err := db.AddFile(nodedb.File{CID: "legacy", Name: "legacy.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	service := &localService{cfg: LocalConfig{Files: unscopedFileList{FileList: db}}}
+	if err := service.removeFile("legacy"); err != nil {
+		t.Fatal(err)
+	}
+	files, err := db.Files()
+	if err != nil || len(files) != 0 {
+		t.Fatalf("legacy file list after removal: %v, %v", files, err)
+	}
+}
+
+// unscopedFileList preserves the original FileList interface without exposing
+// the pool-scoped methods implemented by nodedb.DB.
+type unscopedFileList struct{ FileList }
+
 func TestReferencedFilesStayPinnedUntilEveryOwnerReleasesThem(t *testing.T) {
 	store := storage.NewMemory()
 	db := newFileList(t)
@@ -686,11 +727,29 @@ func (f *flakyFiles) AddFile(file nodedb.File) error {
 	return f.DB.AddFile(file)
 }
 
+func (f *flakyFiles) AddFileInPool(pool string, file nodedb.File) error {
+	if f.add != nil {
+		return f.add
+	}
+	return f.DB.AddFileInPool(pool, file)
+}
+
+func (f *flakyFiles) FilesInPool(pool string) ([]nodedb.File, error) {
+	return f.DB.FilesInPool(pool)
+}
+
 func (f *flakyFiles) RemoveFile(c string) error {
 	if f.remove != nil {
 		return f.remove
 	}
 	return f.DB.RemoveFile(c)
+}
+
+func (f *flakyFiles) RemoveFileInPool(pool, c string) error {
+	if f.remove != nil {
+		return f.remove
+	}
+	return f.DB.RemoveFileInPool(pool, c)
 }
 
 // A file the store cannot let go of stays on the list, so that it can be
