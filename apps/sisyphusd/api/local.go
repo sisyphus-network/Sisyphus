@@ -76,6 +76,10 @@ type LocalConfig struct {
 	// A node that coordinates its own pool has joined none.
 	JoinedPool        func() *nodepb.JoinedPool
 	JoinedPoolChanges *NodeInfoChanges
+	// LeavePool, if set, has the node leave the pool it works for: the
+	// coordinator lets go of what it kept for the node, then the node
+	// forgets the pool (#509).
+	LeavePool func(ctx context.Context) error
 	// Jobs, if set, is the pool this node coordinates, for the calls about
 	// its workers and jobs. Workloads are the workloads the node knows.
 	Jobs      JobControl

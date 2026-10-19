@@ -135,6 +135,19 @@ service NodeService {
   // GetJoinedPool says which pool a node that works for another's pool has
   // joined, and how it stands with it. A node that coordinates its own pool
   // has joined none, and is answered FAILED_PRECONDITION.
+  // LeavePool has a node that works for another's pool leave it (#509). The
+  // pool's coordinator first lets go of what it kept for this node; only once
+  // it has said so does the node forget the pool: the files it stored there,
+  // who on it held them, the jobs it submitted, and where it found the
+  // coordinator. A chat keeps what it attached, and shows an attachment as
+  // gone only once it cannot be fetched (#518). If the coordinator cannot be
+  // asked, the node keeps all of it, and asking again is the retry.
+  //
+  // The node was started to work for that pool, so once it has left, it
+  // stops. To join another, start it again with that pool's --coordinator.
+  // A node that coordinates its own pool has joined none, and is answered
+  // FAILED_PRECONDITION.
+  rpc LeavePool(LeavePoolRequest) returns (LeavePoolResponse);
   rpc GetJoinedPool(GetJoinedPoolRequest) returns (JoinedPool);
   // WatchJoinedPool sends the joined pool as it stands, at once, and again,
   // whole, whenever it changes: on connecting, on losing the connection, and
@@ -821,6 +834,10 @@ message PoolMember {
 message RemoveMemberRequest { string peer_id = 1; }
 
 message RemoveMemberResponse {}
+
+message LeavePoolRequest {}
+
+message LeavePoolResponse {}
 
 message JoinPoolRequest {
   // Where the other node listens, as host:port.

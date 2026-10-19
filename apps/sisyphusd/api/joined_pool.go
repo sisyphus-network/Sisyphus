@@ -50,3 +50,17 @@ func (s *localService) WatchJoinedPool(_ *nodepb.GetJoinedPoolRequest, stream gr
 		}
 	}
 }
+
+// LeavePool has this node leave the pool it works for.
+func (s *localService) LeavePool(ctx context.Context, _ *nodepb.LeavePoolRequest) (*nodepb.LeavePoolResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if s.cfg.LeavePool == nil {
+		return nil, errNoJoinedPool
+	}
+	if err := s.cfg.LeavePool(ctx); err != nil {
+		return nil, asError(err)
+	}
+	return &nodepb.LeavePoolResponse{}, nil
+}

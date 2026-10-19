@@ -68,6 +68,7 @@ const (
 	NodeService_ListMembers_FullMethodName                  = "/sisyphus.node.v1.NodeService/ListMembers"
 	NodeService_RemoveMember_FullMethodName                 = "/sisyphus.node.v1.NodeService/RemoveMember"
 	NodeService_JoinPool_FullMethodName                     = "/sisyphus.node.v1.NodeService/JoinPool"
+	NodeService_LeavePool_FullMethodName                    = "/sisyphus.node.v1.NodeService/LeavePool"
 	NodeService_GetJoinedPool_FullMethodName                = "/sisyphus.node.v1.NodeService/GetJoinedPool"
 	NodeService_WatchJoinedPool_FullMethodName              = "/sisyphus.node.v1.NodeService/WatchJoinedPool"
 )
@@ -192,6 +193,19 @@ type NodeServiceClient interface {
 	// GetJoinedPool says which pool a node that works for another's pool has
 	// joined, and how it stands with it. A node that coordinates its own pool
 	// has joined none, and is answered FAILED_PRECONDITION.
+	// LeavePool has a node that works for another's pool leave it (#509). The
+	// pool's coordinator first lets go of what it kept for this node; only once
+	// it has said so does the node forget the pool: the files it stored there,
+	// who on it held them, the jobs it submitted, and where it found the
+	// coordinator. A chat keeps what it attached, and shows an attachment as
+	// gone only once it cannot be fetched (#518). If the coordinator cannot be
+	// asked, the node keeps all of it, and asking again is the retry.
+	//
+	// The node was started to work for that pool, so once it has left, it
+	// stops. To join another, start it again with that pool's --coordinator.
+	// A node that coordinates its own pool has joined none, and is answered
+	// FAILED_PRECONDITION.
+	LeavePool(ctx context.Context, in *LeavePoolRequest, opts ...grpc.CallOption) (*LeavePoolResponse, error)
 	GetJoinedPool(ctx context.Context, in *GetJoinedPoolRequest, opts ...grpc.CallOption) (*JoinedPool, error)
 	// WatchJoinedPool sends the joined pool as it stands, at once, and again,
 	// whole, whenever it changes: on connecting, on losing the connection, and
@@ -783,6 +797,16 @@ func (c *nodeServiceClient) JoinPool(ctx context.Context, in *JoinPoolRequest, o
 	return out, nil
 }
 
+func (c *nodeServiceClient) LeavePool(ctx context.Context, in *LeavePoolRequest, opts ...grpc.CallOption) (*LeavePoolResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LeavePoolResponse)
+	err := c.cc.Invoke(ctx, NodeService_LeavePool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *nodeServiceClient) GetJoinedPool(ctx context.Context, in *GetJoinedPoolRequest, opts ...grpc.CallOption) (*JoinedPool, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JoinedPool)
@@ -932,6 +956,19 @@ type NodeServiceServer interface {
 	// GetJoinedPool says which pool a node that works for another's pool has
 	// joined, and how it stands with it. A node that coordinates its own pool
 	// has joined none, and is answered FAILED_PRECONDITION.
+	// LeavePool has a node that works for another's pool leave it (#509). The
+	// pool's coordinator first lets go of what it kept for this node; only once
+	// it has said so does the node forget the pool: the files it stored there,
+	// who on it held them, the jobs it submitted, and where it found the
+	// coordinator. A chat keeps what it attached, and shows an attachment as
+	// gone only once it cannot be fetched (#518). If the coordinator cannot be
+	// asked, the node keeps all of it, and asking again is the retry.
+	//
+	// The node was started to work for that pool, so once it has left, it
+	// stops. To join another, start it again with that pool's --coordinator.
+	// A node that coordinates its own pool has joined none, and is answered
+	// FAILED_PRECONDITION.
+	LeavePool(context.Context, *LeavePoolRequest) (*LeavePoolResponse, error)
 	GetJoinedPool(context.Context, *GetJoinedPoolRequest) (*JoinedPool, error)
 	// WatchJoinedPool sends the joined pool as it stands, at once, and again,
 	// whole, whenever it changes: on connecting, on losing the connection, and
@@ -1095,6 +1132,9 @@ func (UnimplementedNodeServiceServer) RemoveMember(context.Context, *RemoveMembe
 }
 func (UnimplementedNodeServiceServer) JoinPool(context.Context, *JoinPoolRequest) (*JoinPoolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method JoinPool not implemented")
+}
+func (UnimplementedNodeServiceServer) LeavePool(context.Context, *LeavePoolRequest) (*LeavePoolResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LeavePool not implemented")
 }
 func (UnimplementedNodeServiceServer) GetJoinedPool(context.Context, *GetJoinedPoolRequest) (*JoinedPool, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetJoinedPool not implemented")
@@ -1931,6 +1971,24 @@ func _NodeService_JoinPool_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_LeavePool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LeavePoolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).LeavePool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_LeavePool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).LeavePool(ctx, req.(*LeavePoolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _NodeService_GetJoinedPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetJoinedPoolRequest)
 	if err := dec(in); err != nil {
@@ -2122,6 +2180,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "JoinPool",
 			Handler:    _NodeService_JoinPool_Handler,
+		},
+		{
+			MethodName: "LeavePool",
+			Handler:    _NodeService_LeavePool_Handler,
 		},
 		{
 			MethodName: "GetJoinedPool",

@@ -97,11 +97,29 @@ func joinPool(ctx context.Context, dataDir string, ident *identity.Identity, add
 		return 0, nil, err
 	}
 	known[addr] = inviter
-	data, _ := json.MarshalIndent(known, "", "\t") // a map of strings always encodes
-	if err := os.WriteFile(filepath.Join(dataDir, "known.json"), data, 0o600); err != nil {
+	if err := saveKnown(dataDir, known); err != nil {
 		return 0, nil, fmt.Errorf("remember the node joined: %w", err)
 	}
 	return joined.GetRole(), known, nil
+}
+
+func saveKnown(dataDir string, known map[string]string) error {
+	data, _ := json.MarshalIndent(known, "", "\t") // a map of strings always encodes
+	return os.WriteFile(filepath.Join(dataDir, "known.json"), data, 0o600)
+}
+
+// forgetKnown forgets which node is at addr, as once this node has left the
+// pool there.
+func forgetKnown(dataDir, addr string) error {
+	known, err := loadKnown(dataDir)
+	if err != nil {
+		return err
+	}
+	delete(known, addr)
+	if err := saveKnown(dataDir, known); err != nil {
+		return fmt.Errorf("forget the node left: %w", err)
+	}
+	return nil
 }
 
 var roleNames = map[pb.Role]string{pb.Role_ROLE_WORKER: "worker", pb.Role_ROLE_CLIENT: "client"}

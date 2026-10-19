@@ -942,6 +942,8 @@ func runDaemon(ctx context.Context, args []string) error {
 				}()
 			}
 		}
+		// leaving is how a worker-only node leaves the pool it works for.
+		var leaving *poolDeparture
 		if !isCoordinator {
 			seenAs = w.Observed
 			// A worker's pool, as far as it knows, is its coordinator.
@@ -956,6 +958,8 @@ func runDaemon(ctx context.Context, args []string) error {
 			files := &poolFiles{blobs: poolStore, client: pb.NewBlobServiceClient(poolConn), holds: db, coordinator: func() string { return w.JoinedPool().ID }, available: jobs.Available}
 			local.Store, local.Files, attachmentPins = files, db, files
 			local.FileScope = func() string { return w.JoinedPool().ID }
+			leaving = newPoolDeparture(pb.NewPoolServiceClient(poolConn), db.ForgetPool, coordinatorID, coordinatorAddr, *dataDir, log)
+			local.LeavePool = leaving.leave
 			// Its planner plans on that pool too, and only while it may.
 			planningPool, offered = jobs, offeredBy(jobs.Nodes)
 			local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
@@ -980,7 +984,11 @@ func runDaemon(ctx context.Context, args []string) error {
 		}()
 		go func() {
 			defer close(done)
-			stopped <- w.Run(ctx)
+			err := w.Run(ctx)
+			if leaving != nil {
+				err = leaving.workerStopped(ctx, err)
+			}
+			stopped <- err
 		}()
 	}
 
