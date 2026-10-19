@@ -53,10 +53,19 @@ export async function testNode({ coordinator, role = 'coordinator', invitationRo
       const poolArgs = role === 'worker'
         ? ['--role', 'worker', '--coordinator', coordinator.pool, '--join', poolInvitation(coordinator, invitationRole), '--name', name, '--slots', '1']
         : ['--listen', node.pool, '--name', name, '--slots', '2']
-      node.child = spawn(daemon, ['run', '--data-dir', dataDir, ...poolArgs, '--api-listen', node.api, '--discovery', 'off'], { stdio: role === 'worker' ? ['ignore', 'pipe', 'pipe'] : 'ignore' })
-      node.child.stdout?.on('data', (chunk) => { node.output += chunk })
-      node.child.stderr?.on('data', (chunk) => { node.output += chunk })
-      await until('the node answering on its local API', async () => existsSync(node.tokenFile) && await listening(api))
+      const child = spawn(daemon, ['run', '--data-dir', dataDir, ...poolArgs, '--api-listen', node.api, '--discovery', 'off'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      node.child = child
+      child.stdout.on('data', (chunk) => { node.output += chunk })
+      child.stderr.on('data', (chunk) => { node.output += chunk })
+      // A node that never comes up says why: whether it exited, and what it
+      // logged, which is otherwise lost with the test.
+      await until('the node answering on its local API', async () => {
+        if (child.exitCode !== null || child.signalCode) throw new Error('the node stopped before answering on its local API')
+        return existsSync(node.tokenFile) && await listening(api)
+      }).catch((error) => {
+        const exited = child.exitCode !== null ? `exited with ${child.exitCode}` : child.signalCode ? `killed by ${child.signalCode}` : 'still running'
+        throw new Error(`${error.message} (${role} ${name} on ${node.api}, ${exited})\n${node.output.slice(-4000)}`)
+      })
     },
     async stop() {
       const child = node.child
