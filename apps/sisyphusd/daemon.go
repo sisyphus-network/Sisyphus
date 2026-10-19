@@ -524,6 +524,8 @@ func runDaemon(ctx context.Context, args []string) error {
 
 	if isCoordinator {
 		recordChanges := make(chan struct{}, 1)
+		// coord is the pool this node coordinates, once it has been made.
+		var coord *coordinator.Coordinator
 		admitted, err := access.Open(db, ident.ID())
 		if err == nil {
 			// Earlier versions kept the list in a file of its own.
@@ -533,6 +535,10 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		admitted.OnChange(func(id string) {
+			// A connected worker is told the roles it now holds.
+			if coord != nil {
+				coord.RolesChanged(id)
+			}
 			trustChanged.tell(id)
 			select {
 			case recordChanges <- struct{}{}:
@@ -553,7 +559,6 @@ func runDaemon(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		var coord *coordinator.Coordinator
 		// With a cluster it is the cluster's peers that keep the copies, and
 		// storage followers are asked for none.
 		followerCopies := *replicas
@@ -601,6 +606,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 		pruneChanges := make(chan struct{}, 1)
 		coord = coordinator.New(coordinator.Config{
+			Name: *name, RolesOf: func(id string) []pb.Role { return rolesInPool(admitted, id) },
 			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: poolLimits.MaxJobsPerClient, MaxTasksPerClient: poolLimits.MaxTasksPerClient, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, MaxUploadBytesPerAttempt: poolLimits.MaxUploadBytesPerAttempt, MaxTaskTimeout: poolLimits.MaxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 			WorkersChanged: local.NodeInfoChanges.Notify,
 			JobsChanged:    local.NodeInfoChanges.Notify,
@@ -925,6 +931,9 @@ func runDaemon(ctx context.Context, args []string) error {
 			seenAs = w.Observed
 			// A worker's pool, as far as it knows, is its coordinator.
 			coordinatorAddr := *join
+			local.JoinedPool = func() *nodepb.JoinedPool { return joinedPool(w.JoinedPool(), coordinatorAddr) }
+			local.JoinedPoolChanges = api.NewNodeInfoChanges()
+			w.OnPool = local.JoinedPoolChanges.Notify
 			local.Peers = func() []*nodepb.Peer {
 				state := nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED
 				if w.Connected() {
@@ -2606,4 +2615,32 @@ func listOf(flag string) []string {
 		}
 	}
 	return items
+}
+
+// rolesInPool says what a member holds in this node's pool, as a coordinator
+// tells its workers.
+func rolesInPool(admitted *access.List, id string) []pb.Role {
+	var roles []pb.Role
+	for _, role := range []access.Role{access.Worker, access.Client} {
+		if admitted.Has(id, role) {
+			roles = append(roles, map[access.Role]pb.Role{access.Worker: pb.Role_ROLE_WORKER, access.Client: pb.Role_ROLE_CLIENT}[role])
+		}
+	}
+	return roles
+}
+
+// joinedPool says, for the local API, what a worker knows of the pool it
+// works for, reached at address.
+func joinedPool(pool worker.JoinedPool, address string) *nodepb.JoinedPool {
+	joined := &nodepb.JoinedPool{CoordinatorId: pool.ID, CoordinatorName: pool.Name, Address: address, State: nodepb.JoinedPoolState_JOINED_POOL_STATE_CONNECTING}
+	switch {
+	case pool.Connected:
+		joined.State = nodepb.JoinedPoolState_JOINED_POOL_STATE_CONNECTED
+	case pool.Welcomed:
+		joined.State = nodepb.JoinedPoolState_JOINED_POOL_STATE_DISCONNECTED
+	}
+	for _, role := range pool.Roles {
+		joined.Roles = append(joined.Roles, map[pb.Role]nodepb.PoolRole{pb.Role_ROLE_WORKER: nodepb.PoolRole_POOL_ROLE_WORKER, pb.Role_ROLE_CLIENT: nodepb.PoolRole_POOL_ROLE_CLIENT}[role])
+	}
+	return joined
 }

@@ -68,6 +68,8 @@ const (
 	NodeService_ListMembers_FullMethodName                  = "/sisyphus.node.v1.NodeService/ListMembers"
 	NodeService_RemoveMember_FullMethodName                 = "/sisyphus.node.v1.NodeService/RemoveMember"
 	NodeService_JoinPool_FullMethodName                     = "/sisyphus.node.v1.NodeService/JoinPool"
+	NodeService_GetJoinedPool_FullMethodName                = "/sisyphus.node.v1.NodeService/GetJoinedPool"
+	NodeService_WatchJoinedPool_FullMethodName              = "/sisyphus.node.v1.NodeService/WatchJoinedPool"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -187,6 +189,16 @@ type NodeServiceClient interface {
 	// from it, and start working for it, beside whatever else it is doing.
 	// It is what a node started with --join does, without the restart.
 	JoinPool(ctx context.Context, in *JoinPoolRequest, opts ...grpc.CallOption) (*JoinPoolResponse, error)
+	// GetJoinedPool says which pool a node that works for another's pool has
+	// joined, and how it stands with it. A node that coordinates its own pool
+	// has joined none, and is answered FAILED_PRECONDITION.
+	GetJoinedPool(ctx context.Context, in *GetJoinedPoolRequest, opts ...grpc.CallOption) (*JoinedPool, error)
+	// WatchJoinedPool sends the joined pool as it stands, at once, and again,
+	// whole, whenever it changes: on connecting, on losing the connection, and
+	// when the node's roles in the pool change. While the node is not
+	// connected, the pool's identity and the roles are the last known, and
+	// the state says so.
+	WatchJoinedPool(ctx context.Context, in *GetJoinedPoolRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JoinedPool], error)
 }
 
 type nodeServiceClient struct {
@@ -771,6 +783,35 @@ func (c *nodeServiceClient) JoinPool(ctx context.Context, in *JoinPoolRequest, o
 	return out, nil
 }
 
+func (c *nodeServiceClient) GetJoinedPool(ctx context.Context, in *GetJoinedPoolRequest, opts ...grpc.CallOption) (*JoinedPool, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JoinedPool)
+	err := c.cc.Invoke(ctx, NodeService_GetJoinedPool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) WatchJoinedPool(ctx context.Context, in *GetJoinedPoolRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JoinedPool], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[10], NodeService_WatchJoinedPool_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetJoinedPoolRequest, JoinedPool]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchJoinedPoolClient = grpc.ServerStreamingClient[JoinedPool]
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -888,6 +929,16 @@ type NodeServiceServer interface {
 	// from it, and start working for it, beside whatever else it is doing.
 	// It is what a node started with --join does, without the restart.
 	JoinPool(context.Context, *JoinPoolRequest) (*JoinPoolResponse, error)
+	// GetJoinedPool says which pool a node that works for another's pool has
+	// joined, and how it stands with it. A node that coordinates its own pool
+	// has joined none, and is answered FAILED_PRECONDITION.
+	GetJoinedPool(context.Context, *GetJoinedPoolRequest) (*JoinedPool, error)
+	// WatchJoinedPool sends the joined pool as it stands, at once, and again,
+	// whole, whenever it changes: on connecting, on losing the connection, and
+	// when the node's roles in the pool change. While the node is not
+	// connected, the pool's identity and the roles are the last known, and
+	// the state says so.
+	WatchJoinedPool(*GetJoinedPoolRequest, grpc.ServerStreamingServer[JoinedPool]) error
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -1044,6 +1095,12 @@ func (UnimplementedNodeServiceServer) RemoveMember(context.Context, *RemoveMembe
 }
 func (UnimplementedNodeServiceServer) JoinPool(context.Context, *JoinPoolRequest) (*JoinPoolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method JoinPool not implemented")
+}
+func (UnimplementedNodeServiceServer) GetJoinedPool(context.Context, *GetJoinedPoolRequest) (*JoinedPool, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetJoinedPool not implemented")
+}
+func (UnimplementedNodeServiceServer) WatchJoinedPool(*GetJoinedPoolRequest, grpc.ServerStreamingServer[JoinedPool]) error {
+	return status.Error(codes.Unimplemented, "method WatchJoinedPool not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -1874,6 +1931,35 @@ func _NodeService_JoinPool_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_GetJoinedPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetJoinedPoolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetJoinedPool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetJoinedPool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetJoinedPool(ctx, req.(*GetJoinedPoolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_WatchJoinedPool_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetJoinedPoolRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).WatchJoinedPool(m, &grpc.GenericServerStream[GetJoinedPoolRequest, JoinedPool]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchJoinedPoolServer = grpc.ServerStreamingServer[JoinedPool]
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2037,6 +2123,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "JoinPool",
 			Handler:    _NodeService_JoinPool_Handler,
 		},
+		{
+			MethodName: "GetJoinedPool",
+			Handler:    _NodeService_GetJoinedPool_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -2087,6 +2177,11 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "FetchFile",
 			Handler:       _NodeService_FetchFile_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "WatchJoinedPool",
+			Handler:       _NodeService_WatchJoinedPool_Handler,
 			ServerStreams: true,
 		},
 	},
