@@ -358,3 +358,79 @@ func TestRemovingAClientLetsGoOfWhatItKept(t *testing.T) {
 		t.Error("a missing store has pins, or a store has none")
 	}
 }
+
+// A member takes itself out of the pool as its owner would: off the list,
+// what it kept let go, and the key changed. It can take out no one else,
+// and may ask again until it has an answer (#509).
+func TestAMemberLeavesThePool(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	c, err := store.Put(ctx, strings.NewReader("kept"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := func(owner string) {
+		t.Helper()
+		if err := store.Pin(ctx, clientOwner+owner, time.Time{}, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kept := func(owner string) bool {
+		for _, pin := range store.Pins() {
+			if pin.Owner == clientOwner+owner {
+				return true
+			}
+		}
+		return false
+	}
+	keep("leaver")
+	list := newList(t)
+	list.Admit("leaver", access.Client, time.Now())
+	list.Admit("stayer", access.Worker, time.Now())
+	changes := 0
+	service := &poolService{id: "owner-id", access: list, coordinator: newCoordinator(t), swarm: network{rekeyed: &changes}, pins: store}
+	before := caller
+	who := "leaver"
+	caller = func(context.Context) string { return who }
+	t.Cleanup(func() { caller = before })
+
+	// What it kept cannot be let go: it has not left, and may ask again.
+	stuck := &poolService{id: "owner-id", access: list, coordinator: newCoordinator(t), swarm: network{rekeyed: &changes}, pins: unpinFails{store}}
+	if _, err := stuck.Leave(ctx, &pb.LeaveRequest{}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "has not left") {
+		t.Errorf("leaving with what it kept stuck: %v", err)
+	}
+	if _, onList := list.Roles("leaver"); !onList || changes != 0 {
+		t.Errorf("after a leave that failed, on the list: %v; key changed %d times", onList, changes)
+	}
+
+	if _, err := service.Leave(ctx, &pb.LeaveRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, onList := list.Roles("leaver"); onList || changes != 1 || kept("leaver") {
+		t.Errorf("after leaving, on the list: %v; key changed %d times, want once; still kept: %v", onList, changes, kept("leaver"))
+	}
+	if _, stays := list.Roles("stayer"); !stays {
+		t.Error("another member left with it")
+	}
+	// Asked again, as when the answer was lost, it has left: and anything
+	// it kept since is let go, without the key changing again.
+	keep("leaver")
+	if _, err := service.Leave(ctx, &pb.LeaveRequest{}); err != nil || changes != 1 || kept("leaver") {
+		t.Errorf("leaving again: %v; key changed %d times; still kept: %v", err, changes, kept("leaver"))
+	}
+
+	// A key that cannot be changed is the pool's to change: the node has
+	// left all the same.
+	failing := &poolService{id: "owner-id", access: list, coordinator: newCoordinator(t), swarm: network{rekeyed: &changes, rekeyErr: errors.New("kubo would not restart")}, pins: store}
+	who = "stayer"
+	if _, err := failing.Leave(ctx, &pb.LeaveRequest{}); err != nil {
+		t.Errorf("leaving when the key cannot be changed: %v", err)
+	}
+	if _, onList := list.Roles("stayer"); onList {
+		t.Error("a node that left while the key could not be changed is still on the list")
+	}
+	broken := &poolService{id: "owner-id", access: stuckList{newList(t)}, coordinator: newCoordinator(t)}
+	if _, err := broken.Leave(ctx, &pb.LeaveRequest{}); status.Code(err) != codes.Internal {
+		t.Errorf("leaving a pool whose list cannot be changed: %v", err)
+	}
+}

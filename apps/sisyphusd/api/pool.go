@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -245,6 +246,42 @@ func (s *poolService) SetWorkFor(_ context.Context, req *pb.SetWorkForRequest) (
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 	return &pb.SetWorkForResponse{}, nil
+}
+
+// Leave takes the caller out of the pool, as RemoveMember would take it out:
+// a member that is done with the pool goes without asking the owner, and
+// what it kept here as a client is let go with it (#509).
+//
+// It can be asked again until it has answered: what the caller kept goes
+// first, while it is still a member, and a caller that is no longer one is
+// told it has left. An error therefore means the caller has not been taken
+// off the list, and may ask again. Once it is off the list the leave has
+// committed; the key to the pool's private network is then changed if it
+// can be, and if not the failure is logged for the owner to run pool rekey.
+func (s *poolService) Leave(ctx context.Context, _ *pb.LeaveRequest) (*pb.LeaveResponse, error) {
+	id := caller(ctx)
+	if s.pins != nil {
+		if err := releaseClient(s.pins, id); err != nil {
+			return nil, status.Errorf(codes.Internal, "what this node kept here could not be let go, so it has not left; ask again: %v", err)
+		}
+	}
+	removed, err := s.access.Remove(id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "remove node: %v", err)
+	}
+	if !removed {
+		return &pb.LeaveResponse{}, nil
+	}
+	s.coordinator.Remove(id)
+	// The node has left. The key it holds to the pool's private network is
+	// the pool's to change, not its to wait for: a change that fails is
+	// said here, for the pool's owner, and can be made with pool rekey.
+	if s.swarm != nil {
+		if err := s.rekey(ctx); err != nil {
+			slog.Warn("a node left the pool, but the key to the pool's private IPFS network could not be changed; run pool rekey", "node", id, "error", err)
+		}
+	}
+	return &pb.LeaveResponse{}, nil
 }
 
 func (s *poolService) RemoveMember(ctx context.Context, req *pb.RemoveMemberRequest) (*pb.RemoveMemberResponse, error) {

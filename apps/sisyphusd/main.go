@@ -43,6 +43,7 @@ const usage = `Usage:
   sisyphusd pool join <invitation> join another node, to use it from this machine
   sisyphusd pool members           list the nodes admitted to this one
   sisyphusd pool remove <node-id>  take a node off that list and disconnect it
+  sisyphusd pool leave             take this node out of the pool at --addr
   sisyphusd pool work-for <node-id>  take tasks from a node whenever it will have this one (--stop to stop)
   sisyphusd pool rekey             change the key of the pool's private IPFS network
   sisyphusd pool cluster           show which of the pool's nodes hold each thing pinned, in a pool run with --cluster
