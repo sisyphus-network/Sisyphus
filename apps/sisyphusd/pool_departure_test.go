@@ -201,14 +201,26 @@ func TestALeaveThatCannotBeCarriedOutIsAskedAgain(t *testing.T) {
 	}
 }
 
-// loadKnown on a damaged known.json fails, and so does forgetting from it.
-func TestForgettingAPoolWhoseKnownNodesCannotBeRead(t *testing.T) {
+// Forgetting a pool fails while known.json cannot be read, or written back.
+func TestForgettingAPoolWhoseKnownNodesCannotBeReadOrWritten(t *testing.T) {
 	dataDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dataDir, "known.json"), []byte("not json"), 0o600); err != nil {
+	known := filepath.Join(dataDir, "known.json")
+	if err := os.WriteFile(known, []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := forgetKnown(dataDir, "rig:7700"); err == nil || !strings.Contains(err.Error(), "known nodes in") {
 		t.Errorf("forgetting from a damaged known.json: %v", err)
+	}
+	if err := os.WriteFile(known, []byte(`{"rig:7700":"rig-id"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A directory nothing can be written in takes no replacement.
+	if err := os.Chmod(dataDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dataDir, 0o700) })
+	if err := forgetKnown(dataDir, "rig:7700"); err == nil || !strings.Contains(err.Error(), "forget the node left") {
+		t.Errorf("forgetting where nothing can be written: %v", err)
 	}
 }
 
