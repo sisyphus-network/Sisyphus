@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -109,5 +110,36 @@ func waitSubscribed(t *testing.T, changes *NodeInfoChanges) {
 			return
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// Leaving takes the token, a pool joined, and says how the leave went.
+func TestANodeLeavesThePoolItWorksFor(t *testing.T) {
+	authed := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer secret"))
+	if _, err := (&localService{cfg: LocalConfig{Token: "secret"}}).LeavePool(authed, &nodepb.LeavePoolRequest{}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("LeavePool on a node that has joined no pool: %v", err)
+	}
+	var left int
+	result := error(nil)
+	s := &localService{cfg: LocalConfig{Token: "secret", LeavePool: func(context.Context) error { left++; return result }}}
+	if _, err := s.LeavePool(context.Background(), &nodepb.LeavePoolRequest{}); status.Code(err) != codes.PermissionDenied || left != 0 {
+		t.Errorf("LeavePool without the token: %v, left %d times", err, left)
+	}
+	if _, err := s.LeavePool(authed, &nodepb.LeavePoolRequest{}); err != nil || left != 1 {
+		t.Errorf("LeavePool: %v, left %d times", err, left)
+	}
+	// What the coordinator answers is passed on as it is; anything else is
+	// the node's own failure.
+	for _, tt := range []struct {
+		err  error
+		code codes.Code
+	}{
+		{status.Error(codes.Unavailable, "coordinator away"), codes.Unavailable},
+		{errors.New("disk full"), codes.Internal},
+	} {
+		result = tt.err
+		if _, err := s.LeavePool(authed, &nodepb.LeavePoolRequest{}); status.Code(err) != tt.code {
+			t.Errorf("LeavePool failing with %v: %v", tt.err, err)
+		}
 	}
 }

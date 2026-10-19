@@ -942,6 +942,8 @@ func runDaemon(ctx context.Context, args []string) error {
 				}()
 			}
 		}
+		// leaving is how a worker-only node leaves the pool it works for.
+		var leaving *poolDeparture
 		if !isCoordinator {
 			seenAs = w.Observed
 			// A worker's pool, as far as it knows, is its coordinator.
@@ -956,6 +958,8 @@ func runDaemon(ctx context.Context, args []string) error {
 			files := &poolFiles{blobs: poolStore, client: pb.NewBlobServiceClient(poolConn), holds: db, coordinator: func() string { return w.JoinedPool().ID }, available: jobs.Available}
 			local.Store, local.Files, attachmentPins = files, db, files
 			local.FileScope = func() string { return w.JoinedPool().ID }
+			leaving = newPoolDeparture(pb.NewPoolServiceClient(poolConn), db.ForgetPool, coordinatorID, coordinatorAddr, *dataDir, log)
+			local.LeavePool = leaving.leave
 			// Its planner plans on that pool too, and only while it may.
 			planningPool, offered = jobs, offeredBy(jobs.Nodes)
 			local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
@@ -980,7 +984,11 @@ func runDaemon(ctx context.Context, args []string) error {
 		}()
 		go func() {
 			defer close(done)
-			stopped <- w.Run(ctx)
+			err := w.Run(ctx)
+			if leaving != nil {
+				err = leaving.workerStopped(ctx, err)
+			}
+			stopped <- err
 		}()
 	}
 
@@ -1072,7 +1080,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		desktop := api.NewLocalServer(local)
-		defer desktop.Stop()
+		defer stopServing(desktop, localAPIGrace)
 		log.Info("local API listening", "addr", lis.Addr().String())
 		go desktop.Serve(lis)
 	}
@@ -1289,6 +1297,34 @@ func startSavedWebAccess(local *api.LocalConfig, webAccess *webAccessRuntime) er
 		}
 	}
 	return webAccess.startSaved()
+}
+
+// localAPIGrace is how long a stopping node lets the calls in progress on
+// its local API finish, as the LeavePool whose success stops it (#509),
+// before it ends those that would not, such as a watch.
+const localAPIGrace = time.Second
+
+// stoppable is a server that can stop at once, or once its calls in
+// progress are over. A *grpc.Server is one.
+type stoppable interface {
+	GracefulStop()
+	Stop()
+}
+
+// stopServing stops srv, letting the calls in progress finish for up to
+// grace and then ending the rest.
+func stopServing(srv stoppable, grace time.Duration) {
+	stopped := make(chan struct{})
+	go func() {
+		srv.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(grace):
+		srv.Stop()
+		<-stopped
+	}
 }
 
 func waitForDaemonStop(ctx context.Context, local *api.LocalConfig, webAccess *webAccessRuntime, stopped <-chan error, log *slog.Logger) error {
