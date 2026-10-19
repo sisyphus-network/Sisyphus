@@ -852,6 +852,52 @@ test('each advanced page has the one shared header beside the sidebar, with no b
   }
 })
 
+// Where a page has no data to show, it shows the shared state component,
+// centred where the data would be, not a blank card: on a node of its own,
+// the empty Jobs, Files and Pool lists and the empty peer list, and the
+// whole page when the node is unavailable (#99).
+test('pages with nothing to show use the shared empty and unavailable states, centred where the data would be', async () => {
+  const fresh = await testNode()
+  const profile = testProfile()
+  const { app, page } = await launch(fresh, profile)
+  try {
+    await wide(app, page)
+    // centred finds the shared state that says text, and reports how far its
+    // icon is from the middle of the box it is centred in.
+    const centred = (text, within, timeout) => page.waitForFunction(({ text, within }) => {
+      const state = [...document.querySelectorAll('[role="status"]')].find((element) => element.textContent?.includes(text))
+      const icon = state?.querySelector(':scope > span[aria-hidden="true"]')
+      const box = within ? document.querySelector(within) : state?.parentElement
+      if (!state || !icon || !box || getComputedStyle(state).textAlign !== 'center') return null
+      const style = getComputedStyle(box)
+      const rect = box.getBoundingClientRect()
+      // clientWidth leaves out a scrollbar, which the content cannot use.
+      const middle = rect.left + box.clientLeft + parseFloat(style.paddingLeft) + (box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / 2
+      const iconRect = icon.getBoundingClientRect()
+      const off = Math.abs(iconRect.left + iconRect.width / 2 - middle)
+      return off <= 2 ? { off } : null
+    }, { text, within }, { timeout })
+
+    await open(page, 'Operations')
+    await centred('No jobs yet.')
+    await page.getByRole('tab', { name: 'Files' }).click()
+    await centred('No files stored.')
+    await page.getByRole('tab', { name: 'Pool', exact: true }).click()
+    await centred('No pool members reported.')
+    await open(page, 'Node overview')
+    await centred('No peers connected yet')
+
+    // With the node gone, the whole page gives way to the same component,
+    // in the middle of the content area.
+    await fresh.stop()
+    await centred('Daemon unavailable', '.app-main', 30000)
+  } finally {
+    await app.close()
+    profile.remove()
+    await fresh.remove()
+  }
+})
+
 test('a job submitted in the window runs on the pool and shows its result', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
