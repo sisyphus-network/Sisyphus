@@ -1008,6 +1008,15 @@ test('node overview streams the joined pool without exposing worker counts to wo
     await poolSection.getByText('rig', { exact: true }).waitFor()
     await coordinator.start()
     await poolSection.getByText('Connected', { exact: true }).waitFor({ timeout: 15000 })
+    const clientInvitation = poolInvitation(coordinator, 'client')
+    const clientJoin = await page.evaluate(({ address, invitation }) => window.sisyphus.call('joinPool', { address, invitation }), { address: coordinator.pool, invitation: clientInvitation })
+    await page.getByText('Worker, Client', { exact: true }).waitFor().catch(async () => {
+      const current = await page.evaluate(() => window.sisyphus.call('getJoinedPool'))
+      throw new Error(`client role did not reach the renderer: ${JSON.stringify({ clientJoin, current })}\n${await page.locator('body').innerText()}`)
+    })
+    await page.getByText('Workers in pool', { exact: true }).waitFor()
+    const joinedState = await page.evaluate(() => window.sisyphus.call('getJoinedPool'))
+    await page.getByText(String(joinedState.workerCount), { exact: true }).last().waitFor()
   } finally {
     await app.close()
     profile.remove()
