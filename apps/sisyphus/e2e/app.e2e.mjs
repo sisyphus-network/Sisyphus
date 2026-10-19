@@ -1036,6 +1036,8 @@ test('Settings pickers open in full view, above every card and inside the window
         }).map((choice) => choice.textContent?.trim())
         return {
           box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom },
+          positioner: menu.parentElement?.getBoundingClientRect().toJSON(),
+          trigger: anchor,
           window: { width: window.innerWidth, height: window.innerHeight },
           // The trigger stays in sight to show what is chosen: the menu may
           // meet its edge, but is not over its middle.
@@ -1047,6 +1049,27 @@ test('Settings pickers open in full view, above every card and inside the window
       assert.ok(seen.box.top >= 0 && seen.box.left >= 0 && seen.box.bottom <= seen.window.height && seen.box.right <= seen.window.width, `the picker goes past the window: ${where}`)
       assert.ok(!seen.overlapsTrigger, `the picker is over the middle of its own trigger: ${where}`)
       assert.deepEqual(seen.covered, [], `choices are under something else: ${where}`)
+      if (within && name === 'Provider') {
+        const wizard = page.getByRole('dialog', { name: within, exact: true })
+        await page.waitForFunction(() => document.querySelector('[role="dialog"][aria-label="Provider"]')?.contains(document.activeElement))
+        assert.equal(await menu.evaluate((element) => element.contains(document.activeElement)), true, 'opening the nested Provider picker must move keyboard focus into its choices')
+        await page.keyboard.press('Escape')
+        await menu.waitFor({ state: 'detached' })
+        await wizard.waitFor()
+        assert.equal(await wizard.isVisible(), true, 'Escape should dismiss only the Provider picker, not its wizard')
+
+        await trigger.click()
+        await menu.waitFor()
+        await page.waitForFunction(() => document.querySelector('[role="dialog"][aria-label="Provider"]')?.contains(document.activeElement))
+        assert.equal(await menu.evaluate((element) => element.contains(document.activeElement)), true, 'reopening the Provider picker must restore its initial keyboard focus')
+        await menu.getByRole('button').filter({ hasText: 'Anthropic' }).first().focus()
+        await page.keyboard.press('Enter')
+        await menu.waitFor({ state: 'detached' })
+        assert.equal(await wizard.getByRole('button', { name: 'Provider', exact: true }).inputValue(), 'Anthropic')
+        await wizard.getByRole('button', { name: 'Cancel', exact: true }).click()
+        await wizard.waitFor({ state: 'detached' })
+        return
+      }
       // Its trigger closes it as it opened it.
       await trigger.click()
       await menu.waitFor({ state: 'detached' })
@@ -1428,6 +1451,22 @@ test('Access receives its empty paired-device state and keeps pairing disabled w
     assert.equal(await accessSwitch.getAttribute('aria-checked'), 'false')
     const pairing = page.getByRole('button', { name: 'Pair a browser', exact: true })
     assert.equal(await pairing.isDisabled(), true, 'a browser can be paired while remote access is off')
+
+    const interfacePicker = page.getByRole('combobox', { name: 'Node interface address', exact: true })
+    await interfacePicker.waitFor()
+    const triggerStructure = await interfacePicker.evaluate((trigger) => {
+      const root = trigger.parentElement
+      const focusable = [...(root?.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]') ?? [])]
+        .filter((item) => item.getClientRects().length > 0)
+      return { count: focusable.length, onlyTrigger: focusable.length === 1 && focusable[0] === trigger, wrapperRole: root?.getAttribute('role') ?? null }
+    })
+    assert.deepEqual(triggerStructure, { count: 1, onlyTrigger: true, wrapperRole: null }, 'the interface selector must expose exactly one focusable combobox, not a wrapper button around it')
+    await interfacePicker.focus()
+    await page.keyboard.press('Enter')
+    const interfaceMenu = page.getByRole('dialog', { name: 'Node interface address', exact: true })
+    await interfaceMenu.waitFor()
+    await page.keyboard.press('Escape')
+    await interfaceMenu.waitFor({ state: 'detached' })
   } finally {
     await app.close()
     profile.remove()
