@@ -870,6 +870,35 @@ test('each advanced page has the one shared header beside the sidebar, with no b
   }
 })
 
+test('advanced navigation switches between the sidebar and mobile dock as the window resizes', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    await open(page, 'Node overview')
+    await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
+    await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).waitFor()
+    const mobileNavigation = page.locator('.app-mobile-dock')
+    await mobileNavigation.waitFor({ state: 'detached' })
+
+    await narrow(app)
+    await page.waitForFunction(() => window.innerWidth <= 900)
+    await mobileNavigation.waitFor()
+    await page.getByRole('complementary').waitFor({ state: 'detached' })
+    await mobileNavigation.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
+
+    await wide(app, page)
+    await page.waitForFunction(() => window.innerWidth > 900)
+    await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).waitFor()
+    await mobileNavigation.waitFor({ state: 'detached' })
+    await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 // Where a page has no data to show, it shows the shared state component,
 // centred where the data would be, not a blank card: on a node of its own,
 // the empty Jobs, Files and Pool lists and the empty peer list, and the
