@@ -182,7 +182,7 @@ func TestPoolCommandUsage(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"pool"}, "expected pool invite, join, members, remove, work-for, rekey or cluster"},
+		{[]string{"pool"}, "expected pool invite, join, members, remove, leave, work-for, rekey or cluster"},
 		{[]string{"pool", "invite", "extra"}, `unexpected argument "extra"`},
 		{[]string{"pool", "invite", "--role", "admin"}, `unknown role "admin"`},
 		{[]string{"pool", "invite", "--ttl", "10ms"}, "--ttl must be at least a second"},
@@ -197,9 +197,11 @@ func TestPoolCommandUsage(t *testing.T) {
 		{[]string{"pool", "join", "--no-such-flag"}, "flag provided but not defined"},
 		{[]string{"pool", "members", "--no-such-flag"}, "flag provided but not defined"},
 		{[]string{"pool", "remove", "--no-such-flag"}, "flag provided but not defined"},
+		{[]string{"pool", "leave", "--no-such-flag"}, "flag provided but not defined"},
 		{[]string{"pool", "invite", "--addr", badAddr}, "invalid control character"},
 		{[]string{"pool", "members", "--addr", badAddr}, "invalid control character"},
 		{[]string{"pool", "remove", "--addr", badAddr, "12D3KooWexample"}, "invalid control character"},
+		{[]string{"pool", "leave", "--addr", badAddr}, "invalid control character"},
 		{[]string{"nodes", "--data-dir", badKey}, "is not PEM"},
 		{[]string{"nodes", "--data-dir", knownIsDir}, "read known nodes"},
 	}
@@ -316,5 +318,45 @@ func TestARemovedClientsFilesAreLetGo(t *testing.T) {
 	mustCLI(t, "pool", "remove", "--addr", addr, nodeID(t, laptop))
 	if kept := clientPins(t, addr, c); len(kept) != 0 {
 		t.Errorf("after the laptop was removed, the coordinator keeps its file as %q", kept)
+	}
+}
+
+// A client leaves the pool by itself: the coordinator lets go of what it
+// kept there and no longer lists it, and it is then refused as any other
+// stranger would be (#509).
+func TestAClientLeavesThePool(t *testing.T) {
+	addr, _ := startNode(t, "--name", "rig")
+	laptop := t.TempDir()
+	if _, err := as(t, laptop, "pool", "join", "--addr", addr, invite(t, addr, "client")); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(source, []byte("kept for the laptop until it leaves"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	put, err := as(t, laptop, "blob", "put", "--addr", addr, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := strings.TrimSpace(put)
+	if _, err := as(t, laptop, "blob", "pin", "--addr", addr, c); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := as(t, laptop, "pool", "leave", "--addr", addr, "extra"); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+		t.Errorf("leaving with an argument: %v", err)
+	}
+	out, err := as(t, laptop, "pool", "leave", "--addr", addr)
+	if err != nil || out != "left the pool at "+addr+"\n" {
+		t.Fatalf("pool leave printed %q, error %v", out, err)
+	}
+	if kept := clientPins(t, addr, c); len(kept) != 0 {
+		t.Errorf("after the laptop left, the coordinator keeps its file as %q", kept)
+	}
+	if members := mustCLI(t, "pool", "members", "--addr", addr); strings.Contains(members, nodeID(t, laptop)) {
+		t.Errorf("after the laptop left, the members are:\n%s", members)
+	}
+	if _, err := as(t, laptop, "pool", "leave", "--addr", addr); err == nil {
+		t.Error("leaving a pool the laptop has already left")
 	}
 }

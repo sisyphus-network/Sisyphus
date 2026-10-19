@@ -1247,6 +1247,78 @@ func (x *ClusterCopy) GetError() string {
 	return ""
 }
 
+type LeaveRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LeaveRequest) Reset() {
+	*x = LeaveRequest{}
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LeaveRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LeaveRequest) ProtoMessage() {}
+
+func (x *LeaveRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LeaveRequest.ProtoReflect.Descriptor instead.
+func (*LeaveRequest) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{24}
+}
+
+type LeaveResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LeaveResponse) Reset() {
+	*x = LeaveResponse{}
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LeaveResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LeaveResponse) ProtoMessage() {}
+
+func (x *LeaveResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_pool_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LeaveResponse.ProtoReflect.Descriptor instead.
+func (*LeaveResponse) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_pool_proto_rawDescGZIP(), []int{25}
+}
+
 var File_sisyphus_v1_pool_proto protoreflect.FileDescriptor
 
 const file_sisyphus_v1_pool_proto_rawDesc = "" +
@@ -1315,17 +1387,20 @@ const file_sisyphus_v1_pool_proto_rawDesc = "" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error*>\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\x0e\n" +
+	"\fLeaveRequest\"\x0f\n" +
+	"\rLeaveResponse*>\n" +
 	"\x04Role\x12\x14\n" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vROLE_WORKER\x10\x01\x12\x0f\n" +
-	"\vROLE_CLIENT\x10\x022\xb1\x06\n" +
+	"\vROLE_CLIENT\x10\x022\xf1\x06\n" +
 	"\vPoolService\x12;\n" +
 	"\x04Join\x12\x18.sisyphus.v1.JoinRequest\x1a\x19.sisyphus.v1.JoinResponse\x12>\n" +
 	"\x05Swarm\x12\x19.sisyphus.v1.SwarmRequest\x1a\x1a.sisyphus.v1.SwarmResponse\x12G\n" +
 	"\bIsMember\x12\x1c.sisyphus.v1.IsMemberRequest\x1a\x1d.sisyphus.v1.IsMemberResponse\x12A\n" +
 	"\x06Relays\x12\x1a.sisyphus.v1.RelaysRequest\x1a\x1b.sisyphus.v1.RelaysResponse\x12H\n" +
-	"\vWatchRelays\x12\x1a.sisyphus.v1.RelaysRequest\x1a\x1b.sisyphus.v1.RelaysResponse0\x01\x12A\n" +
+	"\vWatchRelays\x12\x1a.sisyphus.v1.RelaysRequest\x1a\x1b.sisyphus.v1.RelaysResponse0\x01\x12>\n" +
+	"\x05Leave\x12\x19.sisyphus.v1.LeaveRequest\x1a\x1a.sisyphus.v1.LeaveResponse\x12A\n" +
 	"\x06Invite\x12\x1a.sisyphus.v1.InviteRequest\x1a\x1b.sisyphus.v1.InviteResponse\x12P\n" +
 	"\vListMembers\x12\x1f.sisyphus.v1.ListMembersRequest\x1a .sisyphus.v1.ListMembersResponse\x12S\n" +
 	"\fRemoveMember\x12 .sisyphus.v1.RemoveMemberRequest\x1a!.sisyphus.v1.RemoveMemberResponse\x12M\n" +
@@ -1347,7 +1422,7 @@ func file_sisyphus_v1_pool_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_v1_pool_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sisyphus_v1_pool_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_sisyphus_v1_pool_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_sisyphus_v1_pool_proto_goTypes = []any{
 	(Role)(0),                     // 0: sisyphus.v1.Role
 	(*JoinRequest)(nil),           // 1: sisyphus.v1.JoinRequest
@@ -1374,15 +1449,17 @@ var file_sisyphus_v1_pool_proto_goTypes = []any{
 	(*ClusterMember)(nil),         // 22: sisyphus.v1.ClusterMember
 	(*ClusterPin)(nil),            // 23: sisyphus.v1.ClusterPin
 	(*ClusterCopy)(nil),           // 24: sisyphus.v1.ClusterCopy
-	(*timestamppb.Timestamp)(nil), // 25: google.protobuf.Timestamp
+	(*LeaveRequest)(nil),          // 25: sisyphus.v1.LeaveRequest
+	(*LeaveResponse)(nil),         // 26: sisyphus.v1.LeaveResponse
+	(*timestamppb.Timestamp)(nil), // 27: google.protobuf.Timestamp
 }
 var file_sisyphus_v1_pool_proto_depIdxs = []int32{
 	0,  // 0: sisyphus.v1.JoinResponse.role:type_name -> sisyphus.v1.Role
 	0,  // 1: sisyphus.v1.InviteRequest.role:type_name -> sisyphus.v1.Role
-	25, // 2: sisyphus.v1.InviteResponse.expires_at:type_name -> google.protobuf.Timestamp
+	27, // 2: sisyphus.v1.InviteResponse.expires_at:type_name -> google.protobuf.Timestamp
 	15, // 3: sisyphus.v1.ListMembersResponse.members:type_name -> sisyphus.v1.Member
 	0,  // 4: sisyphus.v1.Member.role:type_name -> sisyphus.v1.Role
-	25, // 5: sisyphus.v1.Member.joined_at:type_name -> google.protobuf.Timestamp
+	27, // 5: sisyphus.v1.Member.joined_at:type_name -> google.protobuf.Timestamp
 	0,  // 6: sisyphus.v1.Member.roles:type_name -> sisyphus.v1.Role
 	22, // 7: sisyphus.v1.ClusterStatusResponse.members:type_name -> sisyphus.v1.ClusterMember
 	23, // 8: sisyphus.v1.ClusterStatusResponse.pins:type_name -> sisyphus.v1.ClusterPin
@@ -1392,25 +1469,27 @@ var file_sisyphus_v1_pool_proto_depIdxs = []int32{
 	3,  // 12: sisyphus.v1.PoolService.IsMember:input_type -> sisyphus.v1.IsMemberRequest
 	5,  // 13: sisyphus.v1.PoolService.Relays:input_type -> sisyphus.v1.RelaysRequest
 	5,  // 14: sisyphus.v1.PoolService.WatchRelays:input_type -> sisyphus.v1.RelaysRequest
-	9,  // 15: sisyphus.v1.PoolService.Invite:input_type -> sisyphus.v1.InviteRequest
-	11, // 16: sisyphus.v1.PoolService.ListMembers:input_type -> sisyphus.v1.ListMembersRequest
-	16, // 17: sisyphus.v1.PoolService.RemoveMember:input_type -> sisyphus.v1.RemoveMemberRequest
-	13, // 18: sisyphus.v1.PoolService.SetWorkFor:input_type -> sisyphus.v1.SetWorkForRequest
-	18, // 19: sisyphus.v1.PoolService.Rekey:input_type -> sisyphus.v1.RekeyRequest
-	20, // 20: sisyphus.v1.PoolService.ClusterStatus:input_type -> sisyphus.v1.ClusterStatusRequest
-	2,  // 21: sisyphus.v1.PoolService.Join:output_type -> sisyphus.v1.JoinResponse
-	8,  // 22: sisyphus.v1.PoolService.Swarm:output_type -> sisyphus.v1.SwarmResponse
-	4,  // 23: sisyphus.v1.PoolService.IsMember:output_type -> sisyphus.v1.IsMemberResponse
-	6,  // 24: sisyphus.v1.PoolService.Relays:output_type -> sisyphus.v1.RelaysResponse
-	6,  // 25: sisyphus.v1.PoolService.WatchRelays:output_type -> sisyphus.v1.RelaysResponse
-	10, // 26: sisyphus.v1.PoolService.Invite:output_type -> sisyphus.v1.InviteResponse
-	12, // 27: sisyphus.v1.PoolService.ListMembers:output_type -> sisyphus.v1.ListMembersResponse
-	17, // 28: sisyphus.v1.PoolService.RemoveMember:output_type -> sisyphus.v1.RemoveMemberResponse
-	14, // 29: sisyphus.v1.PoolService.SetWorkFor:output_type -> sisyphus.v1.SetWorkForResponse
-	19, // 30: sisyphus.v1.PoolService.Rekey:output_type -> sisyphus.v1.RekeyResponse
-	21, // 31: sisyphus.v1.PoolService.ClusterStatus:output_type -> sisyphus.v1.ClusterStatusResponse
-	21, // [21:32] is the sub-list for method output_type
-	10, // [10:21] is the sub-list for method input_type
+	25, // 15: sisyphus.v1.PoolService.Leave:input_type -> sisyphus.v1.LeaveRequest
+	9,  // 16: sisyphus.v1.PoolService.Invite:input_type -> sisyphus.v1.InviteRequest
+	11, // 17: sisyphus.v1.PoolService.ListMembers:input_type -> sisyphus.v1.ListMembersRequest
+	16, // 18: sisyphus.v1.PoolService.RemoveMember:input_type -> sisyphus.v1.RemoveMemberRequest
+	13, // 19: sisyphus.v1.PoolService.SetWorkFor:input_type -> sisyphus.v1.SetWorkForRequest
+	18, // 20: sisyphus.v1.PoolService.Rekey:input_type -> sisyphus.v1.RekeyRequest
+	20, // 21: sisyphus.v1.PoolService.ClusterStatus:input_type -> sisyphus.v1.ClusterStatusRequest
+	2,  // 22: sisyphus.v1.PoolService.Join:output_type -> sisyphus.v1.JoinResponse
+	8,  // 23: sisyphus.v1.PoolService.Swarm:output_type -> sisyphus.v1.SwarmResponse
+	4,  // 24: sisyphus.v1.PoolService.IsMember:output_type -> sisyphus.v1.IsMemberResponse
+	6,  // 25: sisyphus.v1.PoolService.Relays:output_type -> sisyphus.v1.RelaysResponse
+	6,  // 26: sisyphus.v1.PoolService.WatchRelays:output_type -> sisyphus.v1.RelaysResponse
+	26, // 27: sisyphus.v1.PoolService.Leave:output_type -> sisyphus.v1.LeaveResponse
+	10, // 28: sisyphus.v1.PoolService.Invite:output_type -> sisyphus.v1.InviteResponse
+	12, // 29: sisyphus.v1.PoolService.ListMembers:output_type -> sisyphus.v1.ListMembersResponse
+	17, // 30: sisyphus.v1.PoolService.RemoveMember:output_type -> sisyphus.v1.RemoveMemberResponse
+	14, // 31: sisyphus.v1.PoolService.SetWorkFor:output_type -> sisyphus.v1.SetWorkForResponse
+	19, // 32: sisyphus.v1.PoolService.Rekey:output_type -> sisyphus.v1.RekeyResponse
+	21, // 33: sisyphus.v1.PoolService.ClusterStatus:output_type -> sisyphus.v1.ClusterStatusResponse
+	22, // [22:34] is the sub-list for method output_type
+	10, // [10:22] is the sub-list for method input_type
 	10, // [10:10] is the sub-list for extension type_name
 	10, // [10:10] is the sub-list for extension extendee
 	0,  // [0:10] is the sub-list for field type_name
@@ -1427,7 +1506,7 @@ func file_sisyphus_v1_pool_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_pool_proto_rawDesc), len(file_sisyphus_v1_pool_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -247,6 +247,16 @@ func (s *poolService) SetWorkFor(_ context.Context, req *pb.SetWorkForRequest) (
 	return &pb.SetWorkForResponse{}, nil
 }
 
+// Leave takes the caller out of the pool, as RemoveMember would take it out:
+// a member that is done with the pool goes without asking the owner, and
+// what it kept here as a client is let go with it (#509).
+func (s *poolService) Leave(ctx context.Context, _ *pb.LeaveRequest) (*pb.LeaveResponse, error) {
+	if err := s.removeMember(ctx, caller(ctx)); err != nil {
+		return nil, err
+	}
+	return &pb.LeaveResponse{}, nil
+}
+
 func (s *poolService) RemoveMember(ctx context.Context, req *pb.RemoveMemberRequest) (*pb.RemoveMemberResponse, error) {
 	if err := s.removeMember(ctx, req.GetNodeId()); err != nil {
 		return nil, err

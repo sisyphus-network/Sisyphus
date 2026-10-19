@@ -358,3 +358,45 @@ func TestRemovingAClientLetsGoOfWhatItKept(t *testing.T) {
 		t.Error("a missing store has pins, or a store has none")
 	}
 }
+
+// A member takes itself out of the pool as its owner would: off the list,
+// what it kept let go, and the key changed. It can take out no one else
+// (#509).
+func TestAMemberLeavesThePool(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	c, err := store.Put(ctx, strings.NewReader("kept"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Pin(ctx, clientOwner+"leaver", time.Time{}, c); err != nil {
+		t.Fatal(err)
+	}
+	list := newList(t)
+	list.Admit("leaver", access.Client, time.Now())
+	list.Admit("stayer", access.Worker, time.Now())
+	changes := 0
+	service := &poolService{id: "owner-id", access: list, coordinator: newCoordinator(t), swarm: network{rekeyed: &changes}, pins: store}
+	before := caller
+	caller = func(context.Context) string { return "leaver" }
+	t.Cleanup(func() { caller = before })
+
+	if _, err := service.Leave(ctx, &pb.LeaveRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, onList := list.Roles("leaver"); onList || changes != 1 {
+		t.Errorf("after leaving, on the list: %v; key changed %d times, want once", onList, changes)
+	}
+	if _, stays := list.Roles("stayer"); !stays {
+		t.Error("another member left with it")
+	}
+	for _, pin := range store.Pins() {
+		if pin.Owner == clientOwner+"leaver" {
+			t.Errorf("what the leaver kept is still kept: %v", pin)
+		}
+	}
+	// Gone, it has nothing more to leave.
+	if _, err := service.Leave(ctx, &pb.LeaveRequest{}); status.Code(err) != codes.NotFound {
+		t.Errorf("leaving twice: %v, want NotFound", err)
+	}
+}

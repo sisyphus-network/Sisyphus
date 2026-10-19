@@ -131,6 +131,8 @@ func poolCommand(ctx context.Context, args []string) error {
 			return poolMembers(ctx, args[1:])
 		case "remove":
 			return poolRemove(ctx, args[1:])
+		case "leave":
+			return poolLeave(ctx, args[1:])
 		case "rekey":
 			return poolRekey(ctx, args[1:])
 		case "work-for":
@@ -139,7 +141,7 @@ func poolCommand(ctx context.Context, args []string) error {
 			return showCluster(ctx, args[1:])
 		}
 	}
-	return errors.New("expected pool invite, join, members, remove, work-for, rekey or cluster")
+	return errors.New("expected pool invite, join, members, remove, leave, work-for, rekey or cluster")
 }
 
 func poolInvite(ctx context.Context, args []string) error {
@@ -284,6 +286,30 @@ func poolRemove(ctx context.Context, args []string) error {
 	defer conn.Close()
 	_, err = pb.NewPoolServiceClient(conn).RemoveMember(ctx, &pb.RemoveMemberRequest{NodeId: fs.Arg(0)})
 	return err
+}
+
+// poolLeave takes this node out of the pool at --addr: the coordinator
+// removes it as if its owner had, letting go of what it kept there.
+func poolLeave(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sisyphusd pool leave", flag.ContinueOnError)
+	node := targetFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+
+	conn, err := node.connect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := pb.NewPoolServiceClient(conn).Leave(ctx, &pb.LeaveRequest{}); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "left the pool at %s\n", *node.addr)
+	return nil
 }
 
 func poolRekey(ctx context.Context, args []string) error {

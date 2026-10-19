@@ -123,6 +123,7 @@ Anyone else can complete the handshake and is then refused.
 ```sh
 bin/sisyphusd pool members            # who has been admitted, as what, and what each client keeps here
 bin/sisyphusd pool remove <node-id>   # take a node off the list and disconnect it
+bin/sisyphusd pool leave --addr COORD:7700  # take this node out of that pool, letting go of its files there
 bin/sisyphusd pool rekey              # change the key of the pool's private IPFS network
 bin/sisyphusd pool cluster            # with --cluster: which nodes hold each thing pinned
 ```

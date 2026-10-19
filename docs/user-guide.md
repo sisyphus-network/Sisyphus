@@ -153,7 +153,7 @@ Two things to know:
 - **A machine with Ollama can lend its models.** Add `--models-from http://127.0.0.1:11434`. Its owner decides what the pool gets: `--models-only llama3.1,qwen3:8b` offers only those, `--models-gpu-layers 0` keeps the pool's work off the graphics card, and `--models-keep-alive 0` frees the model's memory as soon as it has answered. `sisyphusd nodes` then shows each model and how much of it is on the card. Some limits only Ollama itself can be told; the [daemon guide](../apps/sisyphusd/README.md) lists them.
 - **On Windows**, the first run of `sisyphusd.exe`, or of the app, may bring up "Windows protected your PC" and then the firewall asking about "Sisyphus node"; see [the warnings on first run](#the-warnings-on-first-run).
 
-Members are listed underneath, and **Remove** takes one out. [Testing a pool across machines](multi-machine-test.md) goes through all of it step by step, including what to do when a machine will not join.
+Members are listed underneath, and **Remove** takes one out. A member can also take itself out, from its own machine, with `sisyphusd pool leave --addr <coordinator>`: the coordinator then lets go of the files it kept there for that machine, as **Remove** does. [Testing a pool across machines](multi-machine-test.md) goes through all of it step by step, including what to do when a machine will not join.
 
 ```sh
 bin/sisyphusd pool invite
