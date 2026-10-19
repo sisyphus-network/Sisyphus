@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -655,5 +656,96 @@ func TestJoiningAPoolThroughTheLocalAPI(t *testing.T) {
 	}
 	if _, err := joins.JoinPool(context.Background(), req); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("joining without the token: %v, want PermissionDenied", err)
+	}
+}
+
+// awayStore is a store that cannot let anything go while unpin is set, as
+// the store of a pool this node has joined cannot while the node is away.
+type awayStore struct {
+	*storage.Store
+	unpin error
+}
+
+func (s *awayStore) Unpin(owner string, cids ...cid.Cid) error {
+	if s.unpin != nil {
+		return s.unpin
+	}
+	return s.Store.Unpin(owner, cids...)
+}
+
+// flakyFiles is a list of files that fails to add or remove as told.
+type flakyFiles struct {
+	*nodedb.DB
+	add, remove error
+}
+
+func (f *flakyFiles) AddFile(file nodedb.File) error {
+	if f.add != nil {
+		return f.add
+	}
+	return f.DB.AddFile(file)
+}
+
+func (f *flakyFiles) RemoveFile(c string) error {
+	if f.remove != nil {
+		return f.remove
+	}
+	return f.DB.RemoveFile(c)
+}
+
+// A file the store cannot let go of stays on the list, so that it can be
+// removed again once the store can, and the error says why, as the store
+// said it (#505).
+func TestAFileThatCannotBeLetGoStaysListed(t *testing.T) {
+	ctx := withToken("the-token")
+	store := &awayStore{Store: storage.NewMemory(), unpin: status.Error(codes.Unavailable, "away from the pool")}
+	files := &flakyFiles{DB: newFileList(t)}
+	client := serveLocal(t, LocalConfig{Store: store, Files: files})
+	listed := func() []string {
+		t.Helper()
+		all, err := files.Files()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, file := range all {
+			names = append(names, file.Name)
+		}
+		return names
+	}
+
+	if _, err := storeFile(ctx, client, "other.txt", "other data"); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := storeFile(ctx, client, "kept.txt", "data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: kept.GetCid()}); status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), "away from the pool") {
+		t.Errorf("removing while the store cannot let go: %v", err)
+	}
+	if names := listed(); len(names) != 2 || !slices.Contains(names, "kept.txt") {
+		t.Errorf("after a removal that failed, the list is %q", names)
+	}
+	// Back: removed for good, and only it.
+	store.unpin = nil
+	if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: kept.GetCid()}); err != nil {
+		t.Fatal(err)
+	}
+	if names := listed(); !slices.Equal(names, []string{"other.txt"}) {
+		t.Errorf("after the removal, the list is %q", names)
+	}
+
+	// Neither let go nor listed again: both are said.
+	if kept, err = storeFile(ctx, client, "kept.txt", "data"); err != nil {
+		t.Fatal(err)
+	}
+	store.unpin, files.add = errDisk, errList
+	if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: kept.GetCid()}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), errDisk.Error()) || !strings.Contains(err.Error(), "could not be listed again") {
+		t.Errorf("removing what can be neither let go nor listed again: %v", err)
+	}
+	files.add, files.remove = nil, errList
+	if _, err := client.RemoveFile(ctx, &nodepb.RemoveFileRequest{Cid: kept.GetCid()}); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), errList.Error()) {
+		t.Errorf("removing from a list that cannot remove: %v", err)
 	}
 }

@@ -50,11 +50,6 @@ func (s *localService) storeAvailable() error {
 	return nil
 }
 
-// errNoPoolAttachments is the answer to a chat attachment on a node that has
-// joined another's pool: what keeps an attachment for its chat is not yet
-// kept in the pool (#500).
-var errNoPoolAttachments = status.Error(codes.FailedPrecondition, "chat attachments are not yet kept in a pool this node has joined; store the file and give its CID to the job instead")
-
 const chatDraftRetention = 24 * time.Hour
 
 // StoreFile puts what the caller sends in the store, sealed first if it is
@@ -77,9 +72,6 @@ func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreF
 	start, started := first.GetData(), false
 	if first.GetChatAttachment() && !first.GetPrivate() {
 		return status.Error(codes.InvalidArgument, "chat attachments must be private")
-	}
-	if _, pooled := s.cfg.Store.(gated); pooled && first.GetChatAttachment() {
-		return errNoPoolAttachments
 	}
 	file, err := s.keep(ctx, first.GetName(), first.GetPrivate(), first.GetChatAttachment(), func() ([]byte, error) {
 		if !started {
@@ -240,6 +232,10 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", req.GetCid(), err)
 	}
+	files, err := s.cfg.Files.Files()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
 	// Off the list first: a file listed but no longer kept would be a
 	// promise the store does not make.
 	if err := s.cfg.Files.RemoveFile(c.String()); err != nil {
@@ -249,7 +245,23 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 	if err := unpinForUser(s.cfg.Store, c); err != nil {
-		return nil, status.Errorf(codes.Internal, "stop keeping file: %v", err)
+		// Still kept, so back on the list, where it can be removed again:
+		// a file kept with nothing to show for it would be kept for good,
+		// as one in a pool this node has joined would be by its
+		// coordinator, counted against this node's share (#505).
+		code := status.Code(err)
+		if code == codes.Unknown {
+			code = codes.Internal
+		}
+		for _, file := range files {
+			if file.CID != c.String() {
+				continue
+			}
+			if relisted := s.cfg.Files.AddFile(file); relisted != nil {
+				return nil, status.Errorf(code, "stop keeping file: %v; and it could not be listed again: %v", err, relisted)
+			}
+		}
+		return nil, status.Errorf(code, "stop keeping file: %v", err)
 	}
 	return &nodepb.RemoveFileResponse{}, nil
 }

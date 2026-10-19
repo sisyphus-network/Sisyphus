@@ -506,8 +506,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// coordinates, or the one it has joined, as a client of it.
 	var planningPool planner.Pool
 	// attachmentPins keeps chat attachments for their chats: the store of
-	// the pool the node coordinates. A node that has joined another's pool
-	// has none yet (#500).
+	// the pool the node coordinates, or of the one it has joined (#500).
 	var attachmentPins attachmentPinStore
 	// thinkingPool is the same pool as its models are asked of.
 	var thinkingPool inference.Pool
@@ -943,9 +942,10 @@ func runDaemon(ctx context.Context, args []string) error {
 			jobs := newPoolJobs(ctx, pb.NewNodeServiceClient(poolConn), db, w.JoinedPool, local.NodeInfoChanges.Notify)
 			local.Jobs = jobs
 			// Its user's files go to that pool too, kept there for this
-			// node as a client; their names stay here (#500).
-			local.Store = poolFiles{blobs: poolStore, client: pb.NewBlobServiceClient(poolConn), available: jobs.Available}
-			local.Files = db
+			// node as a client, and so do its chats' attachments; their
+			// names, and who on the node keeps each, stay here (#500).
+			files := &poolFiles{blobs: poolStore, client: pb.NewBlobServiceClient(poolConn), holds: db, coordinator: func() string { return w.JoinedPool().ID }, available: jobs.Available}
+			local.Store, local.Files, attachmentPins = files, db, files
 			// Its planner plans on that pool too, and only while it may.
 			planningPool, offered = jobs, offeredBy(jobs.Nodes)
 			local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }

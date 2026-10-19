@@ -327,10 +327,9 @@ func (a *assistant) AskWithFiles(ctx context.Context, chatID, text string, cids 
 		}
 	}
 	// Attachments are kept for their chat by pins this node holds. Where it
-	// keeps none, as on a node that has joined another's pool, a chat could
-	// name a file nothing kept (#500).
+	// keeps none, a chat could name a file nothing kept.
 	if len(cids) > 0 && a.filePins == nil {
-		return "", status.Error(codes.FailedPrecondition, "chat attachments are not yet kept in a pool this node has joined; store the file and give its CID to the job instead")
+		return "", status.Error(codes.FailedPrecondition, "this node keeps no files for its chats, so a chat here cannot have attachments")
 	}
 	if text == "" {
 		return "", status.Error(codes.InvalidArgument, "there is no question")

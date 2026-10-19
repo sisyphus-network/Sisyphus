@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -23,8 +24,9 @@ import (
 // A node that has joined another's pool as a client stores its user's files
 // in that pool through its own API: the coordinator holds each for it as a
 // client, sealed if it is private, a job there reads one by its CID, and
-// removing it lets the coordinator go. The names stay on the node. A node
-// that is only a worker, and a chat attachment, are refused (#500).
+// removing it lets the coordinator go. The names stay on the node. A chat's
+// attachments are kept there as long as the chat or their draft wants them.
+// A node that is only a worker is refused (#500).
 func TestAJoinedClientNodeKeepsItsFilesInThePool(t *testing.T) {
 	addr, _ := startNode(t, "--name", "rig")
 	workerDir, apiAddr := t.TempDir(), freeAddr(t)
@@ -33,13 +35,13 @@ func TestAJoinedClientNodeKeepsItsFilesInThePool(t *testing.T) {
 	poolAsSeenBy(t, client)
 	ctx, cancel := context.WithTimeout(tokenOf(t, workerDir), 2*time.Minute)
 	defer cancel()
-	refused := func(attachment bool) error {
+	refused := func() error {
 		t.Helper()
 		upload, err := client.StoreFile(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		upload.Send(&nodepb.StoreFileRequest{Name: "notes.txt", Private: attachment, ChatAttachment: attachment, Data: []byte("words")})
+		upload.Send(&nodepb.StoreFileRequest{Name: "notes.txt", Data: []byte("words")})
 		_, err = upload.CloseAndRecv()
 		return err
 	}
@@ -49,7 +51,7 @@ func TestAJoinedClientNodeKeepsItsFilesInThePool(t *testing.T) {
 		pool, err := client.GetJoinedPool(ctx, &nodepb.GetJoinedPoolRequest{})
 		return err == nil && pool.GetState() == nodepb.JoinedPoolState_JOINED_POOL_STATE_CONNECTED
 	})
-	if err := refused(false); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "not a client") {
+	if err := refused(); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "not a client") {
 		t.Fatalf("a worker alone storing a file: %v", err)
 	}
 
@@ -94,10 +96,48 @@ func TestAJoinedClientNodeKeepsItsFilesInThePool(t *testing.T) {
 		t.Error("the coordinator holds the private file in the clear")
 	}
 
-	// A chat attachment is not yet kept in a joined pool.
-	if err := refused(true); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "attachments") {
-		t.Errorf("a chat attachment on a joined node: %v", err)
+	// A chat attachment is kept in the pool too: for a while as a draft,
+	// for good once a chat has it, and for a while again once that chat is
+	// gone, since the draft still holds it.
+	attached := storeThroughDesktop(t, ctx, client, "attached.txt", text, true, true)
+	if kept := clientPins(t, addr, attached.GetCid()); len(kept) != 1 || strings.HasSuffix(kept[0], "released") {
+		t.Errorf("the coordinator keeps a draft attachment as %q", kept)
 	}
+	arguments := fmt.Sprintf(`{"workload":"wordcount","params":{"input":%q}}`, attached.GetCid())
+	served := newModel(t, wants("run_job", arguments), says("counted"))
+	if _, err := client.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", BaseUrl: served.URL, Model: "test-model"}); err != nil {
+		t.Fatal(err)
+	}
+	asked, err := client.Ask(ctx, &nodepb.AskRequest{Text: fmt.Sprintf("Count these words.\n\n[Sisyphus attachments]\n- \"attached.txt\" | cid:%s | image:false | private:true", attached.GetCid()), AttachmentCids: []string{attached.GetCid()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatID, counted := "", false
+	for {
+		event, err := asked.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		chatID = event.GetChatId()
+		counted = counted || event.GetKind() == "result" && strings.Contains(event.GetText(), `"state":"succeeded"`)
+	}
+	if !counted {
+		t.Error("the attachment was not counted in the pool")
+	}
+	waitFor(t, func() bool {
+		kept := clientPins(t, addr, attached.GetCid())
+		return len(kept) == 1 && strings.HasSuffix(kept[0], "released")
+	})
+	if _, err := client.DeleteChat(ctx, &nodepb.DeleteChatRequest{ChatId: chatID}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		kept := clientPins(t, addr, attached.GetCid())
+		return len(kept) == 1 && !strings.HasSuffix(kept[0], "released")
+	})
 
 	// Removed, the coordinator no longer keeps it for this client. Like
 	// any upload, it may still be held for a while after, by the
@@ -132,7 +172,8 @@ func (fakeBlobs) Open(context.Context, cid.Cid) (storage.Blob, error) {
 
 func (b fakeBlobs) Put(context.Context, io.Reader) (cid.Cid, error) { return cid.Undef, b.put }
 
-// pinningPool records what a joined node asks its coordinator to keep.
+// pinningPool records what a joined node asks its coordinator to keep, and
+// fails as told.
 type pinningPool struct {
 	pb.BlobServiceClient
 	pinned   []*pb.PinBlobRequest
@@ -141,47 +182,117 @@ type pinningPool struct {
 }
 
 func (p *pinningPool) Pin(_ context.Context, req *pb.PinBlobRequest, _ ...grpc.CallOption) (*pb.PinBlobResponse, error) {
-	p.pinned = append(p.pinned, req)
+	if p.err == nil {
+		p.pinned = append(p.pinned, req)
+	}
 	return &pb.PinBlobResponse{}, p.err
 }
 
 func (p *pinningPool) Unpin(_ context.Context, req *pb.UnpinBlobRequest, _ ...grpc.CallOption) (*pb.UnpinBlobResponse, error) {
-	p.unpinned = append(p.unpinned, req.GetCid())
+	if p.err == nil {
+		p.unpinned = append(p.unpinned, req.GetCid())
+	}
 	return &pb.UnpinBlobResponse{}, p.err
 }
 
-// What a joined node's file store does with owners other than the user,
-// with time limits, and when the pool or its coordinator fails it.
-func TestAJoinedNodesFileStoreKeepsOnlyTheUsersFiles(t *testing.T) {
-	ctx := context.Background()
-	c, _ := cid.Decode("bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy")
-	away := errors.New("away")
-	pool := &pinningPool{}
-	files := poolFiles{blobs: fakeBlobs{}, client: pool, available: func() error { return nil }}
+// memHolds keeps a joined node's holds on files in memory, failing as told.
+type memHolds struct {
+	held       map[[3]string]time.Time
+	load, save error
+}
 
-	if err := files.Pin(ctx, "chat-draft", time.Time{}, c); !errors.Is(err, errOnlyUserFiles) || len(pool.pinned) != 0 {
-		t.Errorf("pinning for a chat: %v, asked the pool %v", err, pool.pinned)
+func (h *memHolds) PoolFileHolds(coordinator, c string, _ time.Time) (map[string]time.Time, error) {
+	holds := make(map[string]time.Time)
+	for key, expires := range h.held {
+		if key[0] == coordinator && key[1] == c {
+			holds[key[2]] = expires
+		}
 	}
-	if err := files.Pin(ctx, api.UserOwner, time.Now().Add(time.Hour), c); err != nil || len(pool.pinned) != 1 || pool.pinned[0].GetTtlSeconds() < 3590 || pool.pinned[0].GetTtlSeconds() > 3600 {
-		t.Errorf("pinning for an hour: %v, asked the pool %v", err, pool.pinned)
+	return holds, h.load
+}
+
+func (h *memHolds) HoldPoolFile(coordinator, c, owner string, expires, _ time.Time) error {
+	if h.save == nil {
+		h.held[[3]string{coordinator, c, owner}] = expires
 	}
-	if err := files.Unpin("chat-draft", c); err != nil || len(pool.unpinned) != 0 {
-		t.Errorf("releasing for a chat: %v, asked the pool to release %v", err, pool.unpinned)
+	return h.save
+}
+
+func (h *memHolds) ReleasePoolFile(coordinator, c, owner string) error {
+	if h.save == nil {
+		delete(h.held, [3]string{coordinator, c, owner})
+	}
+	return h.save
+}
+
+// What a joined node's file store asks of its coordinator as the owners on
+// the node hold and let go of a file, and when the pool, its coordinator or
+// the node's own record fails it.
+func TestAJoinedNodesFilesAreKeptAsLongAsTheLongestHold(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	c, _ := cid.Decode("bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy")
+	other, _ := cid.Decode("bafkreie5cvv4h45feadgeuwhbcutmh6t2ceseocckahdoe6uat64zmz454")
+	away := errors.New("away")
+	pool, holds := &pinningPool{}, &memHolds{held: make(map[[3]string]time.Time)}
+	files := &poolFiles{blobs: fakeBlobs{}, client: pool, holds: holds, coordinator: func() string { return "c" }, available: func() error { return nil }}
+	ttl := func() uint64 { return pool.pinned[len(pool.pinned)-1].GetTtlSeconds() }
+	about := func(got uint64, want time.Duration) bool {
+		return got > uint64((want-10*time.Second)/time.Second) && got <= uint64(want/time.Second)
+	}
+
+	// A draft's hold, for an hour; then a chat's, for good; then the
+	// user's, for two hours, which changes nothing while the chat holds it.
+	if err := files.Pin(ctx, "chat-draft", time.Now().Add(time.Hour), c); err != nil || !about(ttl(), time.Hour) {
+		t.Errorf("held by a draft: %v, pinned for %ds", err, ttl())
+	}
+	if err := files.Pin(ctx, "chat:1", time.Time{}, c); err != nil || ttl() != 0 {
+		t.Errorf("held by a chat: %v, pinned for %ds", err, ttl())
+	}
+	if err := files.Pin(ctx, api.UserOwner, time.Now().Add(2*time.Hour), c); err != nil || ttl() != 0 {
+		t.Errorf("held by the user as well: %v, pinned for %ds", err, ttl())
+	}
+	// The chat lets go: the longest left is the user's.
+	if err := files.Unpin("chat:1", c); err != nil || !about(ttl(), 2*time.Hour) {
+		t.Errorf("after the chat let go: %v, pinned for %ds", err, ttl())
+	}
+	// A hold already over keeps a file a second, until the next change.
+	if err := files.Pin(ctx, "chat-draft", time.Now().Add(-time.Minute), other); err != nil || ttl() != 1 {
+		t.Errorf("held until a moment past: %v, pinned for %ds", err, ttl())
+	}
+	// The last to let go has the coordinator let go too.
+	if err := files.Unpin(api.UserOwner, c); err != nil || len(pool.unpinned) != 0 {
+		t.Errorf("after the user let go: %v, released %v", err, pool.unpinned)
+	}
+	if err := files.Unpin("chat-draft", c); err != nil || !slices.Equal(pool.unpinned, []string{c.String()}) {
+		t.Errorf("after the last let go: %v, released %v", err, pool.unpinned)
 	}
 	if size, err := files.Size(ctx); size != 0 || err != nil {
 		t.Errorf("Size = %d, %v", size, err)
 	}
 
-	pool.err = away
-	if err := files.Pin(ctx, api.UserOwner, time.Time{}, c); !errors.Is(err, away) {
-		t.Errorf("pinning with the coordinator failing: %v", err)
+	// The coordinator no longer has a file, or fails: nothing is noted.
+	pool.err = status.Error(codes.NotFound, "blob not found")
+	if err := files.Pin(ctx, "chat:2", time.Time{}, c); !errors.Is(err, storage.ErrNotFound) || len(holds.held) != 1 {
+		t.Errorf("pinning what the pool does not have: %v, holds %v", err, holds.held)
 	}
-	if err := files.Unpin(api.UserOwner, c, c); !errors.Is(err, away) {
-		t.Errorf("releasing with the coordinator failing: %v", err)
+	pool.err = away
+	if err := files.Unpin("chat-draft", other); !errors.Is(err, away) || len(holds.held) != 1 {
+		t.Errorf("releasing with the coordinator failing: %v, holds %v", err, holds.held)
+	}
+	pool.err = nil
+	// The node's record fails.
+	holds.save = away
+	if err := files.Pin(ctx, "chat:2", time.Time{}, c); !errors.Is(err, away) {
+		t.Errorf("noting a hold failing: %v", err)
+	}
+	holds.save, holds.load = nil, away
+	if err := files.Unpin("chat-draft", other); !errors.Is(err, away) {
+		t.Errorf("reading the holds failing: %v", err)
 	}
 
-	// Away from the pool, nothing is stored or read there.
-	gone := poolFiles{blobs: fakeBlobs{put: away}, client: pool, available: func() error { return errPoolAway }}
+	// Away from the pool, nothing is stored, read, held or let go there.
+	gone := &poolFiles{blobs: fakeBlobs{put: away}, client: pool, available: func() error { return errPoolAway }}
 	if _, err := gone.Put(ctx, strings.NewReader("x")); !errors.Is(err, errPoolAway) {
 		t.Errorf("storing while away: %v", err)
 	}
@@ -191,7 +302,10 @@ func TestAJoinedNodesFileStoreKeepsOnlyTheUsersFiles(t *testing.T) {
 	if err := gone.Available(); !errors.Is(err, errPoolAway) {
 		t.Errorf("Available while away: %v", err)
 	}
-	here := poolFiles{blobs: fakeBlobs{put: away}, client: pool, available: func() error { return nil }}
+	if err := gone.Unpin(api.UserOwner, c); !errors.Is(err, errPoolAway) {
+		t.Errorf("letting go while away: %v", err)
+	}
+	here := &poolFiles{blobs: fakeBlobs{put: away}, client: pool, available: func() error { return nil }}
 	if _, err := here.Put(ctx, strings.NewReader("x")); !errors.Is(err, away) {
 		t.Errorf("storing with the pool failing: %v", err)
 	}
