@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict'
-import { after, before, test } from 'node:test'
+import { after, afterEach, before, beforeEach, test } from 'node:test'
 import { hasWebgl, launch, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide } from './harness.mjs'
 
 let node
 before(async () => { node = await testNode() })
 after(async () => { await node?.remove() })
+
+// What the shared node said while a test ran, shown when the test fails:
+// without it, a test that waits on the node in vain says only that it
+// waited.
+let said = 0
+beforeEach(() => { said = node.output.length })
+afterEach((t) => {
+  if (!t.passed) console.error(`node output during "${t.name}":\n${node.output.slice(said).slice(-8000)}`)
+})
 
 async function openSettingsCategory(page, category) {
   await open(page, 'Settings')
