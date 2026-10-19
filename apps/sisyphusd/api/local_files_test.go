@@ -182,6 +182,25 @@ func TestFileListingOnlyShowsTheCurrentPoolAndItsName(t *testing.T) {
 	}
 }
 
+func TestRemovingFileSupportsAFileListWithoutPoolScopes(t *testing.T) {
+	db := newFileList(t)
+	if err := db.AddFile(nodedb.File{CID: "legacy", Name: "legacy.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	service := &localService{cfg: LocalConfig{Files: unscopedFileList{FileList: db}}}
+	if err := service.removeFile("legacy"); err != nil {
+		t.Fatal(err)
+	}
+	files, err := db.Files()
+	if err != nil || len(files) != 0 {
+		t.Fatalf("legacy file list after removal: %v, %v", files, err)
+	}
+}
+
+// unscopedFileList preserves the original FileList interface without exposing
+// the pool-scoped methods implemented by nodedb.DB.
+type unscopedFileList struct{ FileList }
+
 func TestReferencedFilesStayPinnedUntilEveryOwnerReleasesThem(t *testing.T) {
 	store := storage.NewMemory()
 	db := newFileList(t)
