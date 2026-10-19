@@ -5496,7 +5496,12 @@ type JoinedPool struct {
 	State   JoinedPoolState `protobuf:"varint,4,opt,name=state,proto3,enum=sisyphus.node.v1.JoinedPoolState" json:"state,omitempty"`
 	// What the node may do in the pool, worker before client, as the
 	// coordinator last said.
-	Roles         []PoolRole `protobuf:"varint,5,rep,packed,name=roles,proto3,enum=sisyphus.node.v1.PoolRole" json:"roles,omitempty"`
+	Roles []PoolRole `protobuf:"varint,5,rep,packed,name=roles,proto3,enum=sisyphus.node.v1.PoolRole" json:"roles,omitempty"`
+	// How many workers are connected to the pool, counting this node, as the
+	// coordinator last said. Set only while the node is connected and holds
+	// the client role; absent otherwise, so a count that is no longer live
+	// is never shown as if it were.
+	WorkerCount   *uint32 `protobuf:"varint,6,opt,name=worker_count,json=workerCount,proto3,oneof" json:"worker_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5564,6 +5569,13 @@ func (x *JoinedPool) GetRoles() []PoolRole {
 		return x.Roles
 	}
 	return nil
+}
+
+func (x *JoinedPool) GetWorkerCount() uint32 {
+	if x != nil && x.WorkerCount != nil {
+		return *x.WorkerCount
+	}
+	return 0
 }
 
 type CreateInvitationRequest struct {
@@ -7033,14 +7045,16 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x11RemoveFileRequest\x12\x10\n" +
 	"\x03cid\x18\x01 \x01(\tR\x03cid\"\x14\n" +
 	"\x12RemoveFileResponse\"\x16\n" +
-	"\x14GetJoinedPoolRequest\"\xe3\x01\n" +
+	"\x14GetJoinedPoolRequest\"\x9c\x02\n" +
 	"\n" +
 	"JoinedPool\x12%\n" +
 	"\x0ecoordinator_id\x18\x01 \x01(\tR\rcoordinatorId\x12)\n" +
 	"\x10coordinator_name\x18\x02 \x01(\tR\x0fcoordinatorName\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x127\n" +
 	"\x05state\x18\x04 \x01(\x0e2!.sisyphus.node.v1.JoinedPoolStateR\x05state\x120\n" +
-	"\x05roles\x18\x05 \x03(\x0e2\x1a.sisyphus.node.v1.PoolRoleR\x05roles\"j\n" +
+	"\x05roles\x18\x05 \x03(\x0e2\x1a.sisyphus.node.v1.PoolRoleR\x05roles\x12&\n" +
+	"\fworker_count\x18\x06 \x01(\rH\x00R\vworkerCount\x88\x01\x01B\x0f\n" +
+	"\r_worker_count\"j\n" +
 	"\x17CreateInvitationRequest\x12.\n" +
 	"\x04role\x18\x01 \x01(\x0e2\x1a.sisyphus.node.v1.PoolRoleR\x04role\x12\x1f\n" +
 	"\vttl_seconds\x18\x02 \x01(\x04R\n" +
@@ -7499,6 +7513,7 @@ func file_sisyphus_node_v1_node_proto_init() {
 	if File_sisyphus_node_v1_node_proto != nil {
 		return
 	}
+	file_sisyphus_node_v1_node_proto_msgTypes[87].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

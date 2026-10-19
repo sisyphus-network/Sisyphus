@@ -778,6 +778,11 @@ message JoinedPool {
   // What the node may do in the pool, worker before client, as the
   // coordinator last said.
   repeated PoolRole roles = 5;
+  // How many workers are connected to the pool, counting this node, as the
+  // coordinator last said. Set only while the node is connected and holds
+  // the client role; absent otherwise, so a count that is no longer live
+  // is never shown as if it were.
+  optional uint32 worker_count = 6;
 }
 
 enum PoolRole {

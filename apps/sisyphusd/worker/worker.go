@@ -269,7 +269,13 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 		case *pb.CoordinatorMessage_SwarmUpdate:
 			w.swarmChanged(kind.SwarmUpdate.GetSwarmFingerprint())
 		case *pb.CoordinatorMessage_RolesChanged:
-			w.setPool(func(pool *JoinedPool) { pool.Roles = kind.RolesChanged.GetRoles() })
+			w.setPool(func(pool *JoinedPool) {
+				pool.Roles = kind.RolesChanged.GetRoles()
+				// A node that is no longer a client is not told the count.
+				pool.Counted = pool.Counted && slices.Contains(pool.Roles, pb.Role_ROLE_CLIENT)
+			})
+		case *pb.CoordinatorMessage_WorkerCount:
+			w.setPool(func(pool *JoinedPool) { pool.Workers, pool.Counted = int(kind.WorkerCount.GetCount()), true })
 		case *pb.CoordinatorMessage_Welcome:
 			welcomed = true
 			w.connected.Store(true)
@@ -278,7 +284,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				welcome := kind.Welcome
 				*pool = JoinedPool{ID: welcome.GetCoordinatorId(), Name: welcome.GetCoordinatorName(), Roles: welcome.GetRoles(), Connected: true, Welcomed: true}
 			})
-			defer w.setPool(func(pool *JoinedPool) { pool.Connected = false })
+			defer w.setPool(func(pool *JoinedPool) { pool.Connected, pool.Counted = false, false })
 			w.swarmChanged(kind.Welcome.GetSwarmFingerprint())
 			// Only an address that is someone's on the internet says
 			// where this node is.
@@ -346,6 +352,11 @@ type JoinedPool struct {
 	// whether it has been since it started. While it is not, what it knew
 	// of the pool is kept.
 	Connected, Welcomed bool
+	// Workers is how many workers the pool has connected, as the
+	// coordinator last said, and Counted whether that count is live: the
+	// node is connected and, holding the client role, is told it.
+	Workers int
+	Counted bool
 }
 
 // JoinedPool returns what the worker knows of its pool.

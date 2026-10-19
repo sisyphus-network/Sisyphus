@@ -1233,6 +1233,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 		ObservedAddress: seenAt(c.sourceOf(stream.Context())),
 		CoordinatorName: c.name, Roles: c.roles(w.id),
 	}}})
+	c.countWorkersLocked()
 	c.scheduleLocked()
 	c.mu.Unlock()
 	if c.workersChanged != nil {
@@ -1364,7 +1365,24 @@ func (c *Coordinator) RolesChanged(id string) {
 	roles := c.roles(id)
 	if w, ok := c.workers[id]; ok {
 		w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_RolesChanged{RolesChanged: &pb.RolesChanged{Roles: roles}}})
+		if slices.Contains(roles, pb.Role_ROLE_CLIENT) {
+			w.send.add(c.workerCountLocked())
+		}
 	}
+}
+
+// countWorkersLocked tells each connected worker that holds the client role
+// how many workers are connected now.
+func (c *Coordinator) countWorkersLocked() {
+	for id, w := range c.workers {
+		if slices.Contains(c.roles(id), pb.Role_ROLE_CLIENT) {
+			w.send.add(c.workerCountLocked())
+		}
+	}
+}
+
+func (c *Coordinator) workerCountLocked() *pb.CoordinatorMessage {
+	return &pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_WorkerCount{WorkerCount: &pb.WorkerCount{Count: uint32(len(c.workers))}}}
 }
 
 // Remove disconnects the worker with the given ID, if it is connected. Its
@@ -1380,6 +1398,7 @@ func (c *Coordinator) Remove(id string) {
 func (c *Coordinator) disconnect(w *worker) {
 	c.mu.Lock()
 	delete(c.workers, w.id)
+	c.countWorkersLocked()
 	now := time.Now()
 	for _, a := range w.running {
 		if c.ctx.Err() != nil {
