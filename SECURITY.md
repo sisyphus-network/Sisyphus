@@ -1,22 +1,29 @@
-# Security
-
-Sisyphus is an early prototype. It has not had an independent security review, and the way private jobs are sealed in particular is waiting for one ([#91](https://github.com/sisyphus-network/Sisyphus/issues/91)). Do not rely on it yet to protect data that matters.
-
-[`docs/security-model.md`](docs/security-model.md) states what the system protects today and what it does not: who the parties are, what each is trusted with, and the exact construction a reviewer of the sealing would be checking.
+# Security policy
 
 ## Reporting a vulnerability
 
-Report it privately through GitHub: on the repository's **Security** tab, choose **Report a vulnerability**. Please do not open a public issue or pull request for it.
+Please do not open a public issue, discussion or pull request for a vulnerability.
 
-Say what you found, how to reproduce it, and which commit or release you saw it in. We will acknowledge the report, work out a fix with you, and credit you when it is published unless you would rather not be named.
+Report it privately through GitHub instead: on this repository's **Security** tab, choose **Report a vulnerability**. That opens a private advisory only the maintainers can see, where we can talk it through, agree a fix and credit you when it is published.
+
+Say what you found, how to reproduce it, and what an attacker could do with it. A failing test or a short script is the most useful thing you can send.
+
+We aim to acknowledge a report within three days, and to say within two weeks what we will do about it.
 
 ## What is in scope
 
-- The daemon, `sisyphusd`: its protocol between nodes, the local API and its token, pool membership and invitations, storage, sealing of private jobs, the MCP server.
-- The desktop app in `apps/sisyphus`: the bridge between its window and the node.
+Sisyphus is pre-release. Only the `dev` branch is supported; there are no released versions to backport fixes to.
 
-## What to know before reporting
+Read [`docs/security-model.md`](docs/security-model.md) first: it sets out what a pool protects today, what it does not, and whom each party has to trust. A way around any protection it describes is in scope. This includes:
 
-- A coordinator accepts whatever result a worker returns. A pool is only as trustworthy as the workers admitted to it; this is stated in the README and is not a vulnerability by itself.
-- A worker that runs container jobs runs images chosen by the pool's clients. It is opt-in for that reason.
-- There is no released version yet. Fixes land on `dev`.
+- a node joining a pool, or calling something, without the invitation or role that should be needed;
+- reading a private job's stored data, or a private file, from a node that should not be able to;
+- one client reading or changing another client's jobs or pins;
+- a worker breaking out of the confinement described for container jobs;
+- the local API acting for a caller without the node's token.
+
+Something the security model already lists under **Not protected against today** is a known limitation, not a vulnerability. If you think one of those matters more than the document says, an issue or a discussion is the right place.
+
+## Independent review
+
+Nothing here has had an independent security review yet. The sealing of private data is waiting for one ([#91](https://github.com/sisyphus-network/Sisyphus/issues/91)).
