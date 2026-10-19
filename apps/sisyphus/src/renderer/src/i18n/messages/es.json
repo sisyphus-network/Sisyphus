@@ -438,7 +438,7 @@
     "workersUnavailable": "La información de los trabajadores no está disponible",
     "joinedPool": "Pool unido", "poolLoading": "Comprobando conexión al pool", "poolUnavailable": "Estado del pool no disponible; reconectando",
     "poolName": "Pool", "poolAddress": "Dirección del coordinador", "poolRoles": "Tus roles", "poolWorkers": "Workers del pool",
-    "poolWorkerRole": "Worker", "poolClientRole": "Cliente", "poolConnected": "Conectado", "poolConnecting": "Conectando", "poolDisconnected": "Reconectando",
+    "poolWorkerRole": "Worker", "poolClientRole": "Cliente", "poolConnected": "Conectado", "poolConnecting": "Conectando", "poolDisconnected": "Reconectando", "leavePool": "Salir del pool", "leavePoolTitle": "¿Salir de este pool?", "leavePoolDescription": "El pool libera los archivos que guardaba para este nodo y el nodo olvida el pool; después se detiene. Para volver a unirte a un pool, inícialo con el coordinador de ese pool y una invitación nueva.", "leavingPool": "Saliendo…", "leftPool": "Has salido del pool. Este nodo se está deteniendo.", "leavePoolFailed": "No se pudo salir del pool",
     "noNodeDetails": "Los detalles del nodo aún no están disponibles",
     "nodeDetailsPending": "Los detalles aparecerán cuando el nodo envíe su próxima actualización."
   },

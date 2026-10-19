@@ -438,7 +438,7 @@
     "workersUnavailable": "معلومات العاملين غير متاحة",
     "joinedPool": "المجمّع المنضم إليه", "poolLoading": "جارٍ التحقق من اتصال المجمّع", "poolUnavailable": "حالة المجمّع غير متاحة؛ جارٍ إعادة الاتصال",
     "poolName": "المجمّع", "poolAddress": "عنوان المنسّق", "poolRoles": "أدوارك", "poolWorkers": "العاملون في المجمّع",
-    "poolWorkerRole": "عامل", "poolClientRole": "عميل", "poolConnected": "متصل", "poolConnecting": "جارٍ الاتصال", "poolDisconnected": "جارٍ إعادة الاتصال",
+    "poolWorkerRole": "عامل", "poolClientRole": "عميل", "poolConnected": "متصل", "poolConnecting": "جارٍ الاتصال", "poolDisconnected": "جارٍ إعادة الاتصال", "leavePool": "مغادرة المجمّع", "leavePoolTitle": "مغادرة هذا المجمّع؟", "leavePoolDescription": "سيحرر المجمّع الملفات التي احتفظ بها لهذه العقدة، وستنسى العقدة المجمّع ثم تتوقف. للانضمام إلى مجمّع مجددًا، شغّلها بمنسّق ذلك المجمّع ودعوة جديدة.", "leavingPool": "جارٍ المغادرة…", "leftPool": "تمت مغادرة المجمّع. العقدة تتوقف الآن.", "leavePoolFailed": "تعذّرت مغادرة المجمّع",
     "noNodeDetails": "تفاصيل العقدة غير متاحة بعد",
     "nodeDetailsPending": "ستظهر التفاصيل عند إرسال العقدة تحديثها التالي."
   },

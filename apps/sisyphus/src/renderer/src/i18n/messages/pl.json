@@ -438,7 +438,7 @@
     "workersUnavailable": "Informacje o wykonawcach są niedostępne",
     "joinedPool": "Dołączona pula", "poolLoading": "Sprawdzanie połączenia z pulą", "poolUnavailable": "Status puli niedostępny; ponowne łączenie",
     "poolName": "Pula", "poolAddress": "Adres koordynatora", "poolRoles": "Twoje role", "poolWorkers": "Wykonawcy w puli",
-    "poolWorkerRole": "Wykonawca", "poolClientRole": "Klient", "poolConnected": "Połączono", "poolConnecting": "Łączenie", "poolDisconnected": "Ponowne łączenie",
+    "poolWorkerRole": "Wykonawca", "poolClientRole": "Klient", "poolConnected": "Połączono", "poolConnecting": "Łączenie", "poolDisconnected": "Ponowne łączenie", "leavePool": "Opuść pulę", "leavePoolTitle": "Opuścić tę pulę?", "leavePoolDescription": "Pula zwalnia pliki przechowywane dla tego węzła, a węzeł zapomina pulę i się zatrzymuje. Aby ponownie dołączyć do puli, uruchom go z koordynatorem tej puli i nowym zaproszeniem.", "leavingPool": "Opuszczanie…", "leftPool": "Opuszczono pulę. Ten węzeł się zatrzymuje.", "leavePoolFailed": "Nie udało się opuścić puli",
     "noNodeDetails": "Szczegóły węzła nie są jeszcze dostępne",
     "nodeDetailsPending": "Szczegóły pojawią się po kolejnym uaktualnieniu z węzła."
   },

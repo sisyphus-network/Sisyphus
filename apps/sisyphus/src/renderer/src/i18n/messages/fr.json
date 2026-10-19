@@ -438,7 +438,7 @@
     "workersUnavailable": "Les informations des exécutants sont indisponibles",
     "joinedPool": "Pool rejoint", "poolLoading": "Vérification de la connexion au pool", "poolUnavailable": "État du pool indisponible ; reconnexion",
     "poolName": "Pool", "poolAddress": "Adresse du coordinateur", "poolRoles": "Vos rôles", "poolWorkers": "Exécutants du pool",
-    "poolWorkerRole": "Exécutant", "poolClientRole": "Client", "poolConnected": "Connecté", "poolConnecting": "Connexion", "poolDisconnected": "Reconnexion",
+    "poolWorkerRole": "Exécutant", "poolClientRole": "Client", "poolConnected": "Connecté", "poolConnecting": "Connexion", "poolDisconnected": "Reconnexion", "leavePool": "Quitter le pool", "leavePoolTitle": "Quitter ce pool ?", "leavePoolDescription": "Le pool libère les fichiers qu'il gardait pour ce nœud, puis le nœud oublie le pool et s'arrête. Pour rejoindre un pool, redémarrez-le avec le coordinateur de ce pool et une nouvelle invitation.", "leavingPool": "Départ…", "leftPool": "Pool quitté. Ce nœud s'arrête.", "leavePoolFailed": "Impossible de quitter le pool",
     "noNodeDetails": "Les détails du nœud ne sont pas encore disponibles",
     "nodeDetailsPending": "Les détails apparaîtront lors de la prochaine mise à jour du nœud."
   },

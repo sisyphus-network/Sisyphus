@@ -438,7 +438,7 @@
     "workersUnavailable": "פרטי העובדים אינם זמינים",
     "joinedPool": "מאגר מחובר", "poolLoading": "בודק חיבור למאגר", "poolUnavailable": "מצב המאגר אינו זמין; מנסה להתחבר מחדש",
     "poolName": "מאגר", "poolAddress": "כתובת המתאם", "poolRoles": "התפקידים שלך", "poolWorkers": "עובדים במאגר",
-    "poolWorkerRole": "עובד", "poolClientRole": "לקוח", "poolConnected": "מחובר", "poolConnecting": "מתחבר", "poolDisconnected": "מתחבר מחדש",
+    "poolWorkerRole": "עובד", "poolClientRole": "לקוח", "poolConnected": "מחובר", "poolConnecting": "מתחבר", "poolDisconnected": "מתחבר מחדש", "leavePool": "עזיבת המאגר", "leavePoolTitle": "לעזוב את המאגר?", "leavePoolDescription": "המאגר ישחרר את הקבצים ששמר עבור הצומת, והצומת ישכח את המאגר ויעצור. כדי להצטרף שוב למאגר, יש להפעיל אותו עם המתאם של אותו מאגר והזמנה חדשה.", "leavingPool": "עוזב…", "leftPool": "עזבת את המאגר. הצומת נעצר.", "leavePoolFailed": "לא ניתן לעזוב את המאגר",
     "noNodeDetails": "פרטי הצומת עדיין אינם זמינים",
     "nodeDetailsPending": "הפרטים יופיעו כשהצומת ישלח את העדכון הבא."
   },

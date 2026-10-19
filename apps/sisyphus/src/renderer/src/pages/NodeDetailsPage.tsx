@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode, type FormEvent } from 'react'
-import { Check, Copy, Cpu, Globe2, HardDrive, Link2, LoaderCircle, RefreshCw, Server, Signal, Wifi, type LucideIcon } from 'lucide-react'
+import { Check, Copy, Cpu, Globe2, HardDrive, Link2, LoaderCircle, LogOut, RefreshCw, Server, Signal, Wifi, type LucideIcon } from 'lucide-react'
 import type { JoinedPool, NodeSnapshot, Peer } from '../../../preload'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { toast } from 'sonner'
 import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { displayDaemonVersion } from '@/lib/daemon-version'
+import { ResponsiveActionDialog } from '@/components/ui/responsive-action-dialog'
 
 type Messages = ReturnType<typeof getMessages>
 function shortId(id: string) { return id.length > 22 ? `${id.slice(0, 12)}…${id.slice(-8)}` : id }
@@ -39,6 +40,8 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
   const [workers, setWorkers] = useState<{ peerId: string; name: string; hostname: string; os: string; arch: string; cpuCores: number; cpuModel: string; memoryBytes: string | number; taskSlots: number; runningTasks: number; workloads: string[]; models: string[]; gpus: { name: string; memoryBytes: string | number }[] }[]>([])
   const [joinedPool, setJoinedPool] = useState<JoinedPool | null>(null)
   const [joinedPoolState, setJoinedPoolState] = useState<'loading' | 'ready' | 'unavailable' | 'none'>('loading')
+  const [confirmingLeave, setConfirmingLeave] = useState(false)
+  const [leaving, setLeaving] = useState(false)
   const desktopApp = isDesktopApp()
   const connectedPeers = useMemo(() => snapshot.peers.filter(peerIsConnected).length, [snapshot.peers])
   const statusLabel = snapshot.status === 'connected' ? messages.connected : snapshot.status === 'connecting' ? messages.connecting : messages.offline
@@ -119,6 +122,19 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
     })
     return () => { active = false; if (retry !== undefined) window.clearTimeout(retry); cancel?.() }
   }, [snapshot.status, snapshot.endpoint])
+  // Leaving has the pool let go of what it kept for this node; the node then
+  // forgets the pool and stops, since it was started to work for it (#509).
+  async function leavePool() {
+    if (leaving) return
+    setLeaving(true)
+    try {
+      await getNodeApi().call('leavePool')
+      setConfirmingLeave(false)
+      toast.success(messages.nodeOverviewText.leftPool)
+    } catch (error) {
+      toast.error(messages.nodeOverviewText.leavePoolFailed, { description: error instanceof Error ? error.message : String(error) })
+    } finally { setLeaving(false) }
+  }
   async function reconnect() {
     setRefreshing(true)
     try {
@@ -177,8 +193,13 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
         <Detail label={labels.poolAddress} code value={joinedPool.address || '—'} />
         <Detail label={labels.poolRoles} value={[hasJoinedPoolRole(joinedPool, 'WORKER') && labels.poolWorkerRole, hasJoinedPoolRole(joinedPool, 'CLIENT') && labels.poolClientRole].filter(Boolean).join(', ') || '—'} />
         {joinedPoolState === 'ready' && joinedPoolStateCode(joinedPool.state) === 2 && hasJoinedPoolRole(joinedPool, 'CLIENT') && joinedPool.workerCount !== undefined && <Detail label={labels.poolWorkers} value={String(joinedPool.workerCount)} />}
+        <div className="sm:col-span-2"><Button type="button" variant="outline" className="gap-2" disabled={leaving || snapshot.status !== 'connected'} onClick={() => setConfirmingLeave(true)}><LogOut className="size-4" />{labels.leavePool}</Button></div>
       </CardContent> : <EmptyState icon={Link2} title={labels.poolUnavailable} />}
     </NodeSection>}
+    <ResponsiveActionDialog open={confirmingLeave} direction={document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'} title={labels.leavePoolTitle} description={labels.leavePoolDescription} icon={<LogOut className="size-6 text-destructive" />} onOpenChange={(open) => { if (!open && !leaving) setConfirmingLeave(false) }}>
+      {joinedPool && <code dir="ltr" className="block break-all rounded-xl bg-[var(--app-wash)] p-3 text-xs">{joinedPool.coordinatorName || joinedPool.coordinatorId}{joinedPool.address ? ` · ${joinedPool.address}` : ''}</code>}
+      <div className="mt-5 grid gap-2 sm:grid-cols-2"><Button type="button" variant="outline" disabled={leaving} onClick={() => setConfirmingLeave(false)}>{messages.cancel}</Button><Button type="button" variant="destructive" disabled={leaving} onClick={() => void leavePool()}>{leaving ? labels.leavingPool : labels.leavePool}</Button></div>
+    </ResponsiveActionDialog>
     <div className="mt-4 grid gap-4">
       <NodeSection icon={Cpu} title={labels.workers} count={workers.length} aside={<span className="text-xs text-muted-foreground">{labels.hardwareModels}</span>}>
         {workers.length === 0 ? <EmptyState icon={workersState === 'loading' ? LoaderCircle : Server} loading={workersState === 'loading'} title={workersState === 'loading' ? labels.workersLoading : workersState === 'error' ? labels.workersUnavailable : labels.noWorkers} description={workersState === 'ready' ? labels.noWorkersDescription : undefined} /> : <div className="divide-y divide-[var(--app-line)] px-5">

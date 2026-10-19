@@ -1045,6 +1045,40 @@ test('node overview streams the joined pool without exposing worker counts to wo
   }
 })
 
+test('node overview leaves the joined pool once asked to confirm, and the node stops', async () => {
+  const coordinator = await testNode()
+  const worker = await testNode({ role: 'worker', coordinator, name: 'leaving rig' })
+  const profile = testProfile()
+  const { app, page } = await launch(worker, profile)
+  try {
+    await open(page, 'Node overview')
+    const poolSection = page.locator('[class*=rounded-2xl]').filter({ hasText: 'Joined pool' }).last()
+    await poolSection.getByText('Connected', { exact: true }).waitFor({ timeout: 15000 })
+    assert.ok(poolMembers(coordinator).includes(worker.id()), 'the worker is not a member before it leaves')
+    // Asked, and turned down, nothing happens.
+    await poolSection.getByRole('button', { name: 'Leave pool' }).click()
+    const confirm = page.getByRole('dialog', { name: 'Leave this pool?' })
+    await confirm.waitFor()
+    await confirm.getByRole('button', { name: 'Cancel' }).click()
+    await confirm.waitFor({ state: 'detached' })
+    assert.ok(poolMembers(coordinator).includes(worker.id()), 'cancelling took the worker out of the pool')
+    // Confirmed, the node leaves, and stops of its own accord.
+    const exited = new Promise((done) => worker.child.once('exit', (code) => done(code)))
+    await poolSection.getByRole('button', { name: 'Leave pool' }).click()
+    await confirm.getByRole('button', { name: 'Leave pool' }).click()
+    await page.getByText('Left the pool. This node is stopping.').waitFor().catch(async () => {
+      throw new Error(`the leave was not confirmed:\n${await page.locator('body').innerText()}\nworker daemon:\n${worker.output}`)
+    })
+    assert.equal(await exited, 0, `the node did not stop cleanly after leaving:\n${worker.output}`)
+    assert.ok(!poolMembers(coordinator).includes(worker.id()), 'the coordinator still lists the node that left')
+  } finally {
+    await app.close()
+    profile.remove()
+    await worker.remove()
+    await coordinator.remove()
+  }
+})
+
 test('a language chosen with the keyboard turns the window round, and is still chosen at the next start', async () => {
   const profile = testProfile()
   let { app, page } = await launch(node, profile)
@@ -1091,7 +1125,11 @@ test('Settings pickers open in full view, above every card and inside the window
       await trigger.click()
       const menu = page.getByRole('dialog', { name, exact: true })
       await menu.waitFor()
-      await page.waitForTimeout(400) // its 220 ms entrance
+      await menu.evaluate(async (element) => {
+        await new Promise(requestAnimationFrame)
+        await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)))
+        await new Promise(requestAnimationFrame)
+      })
       const anchor = await trigger.boundingBox()
       const seen = await menu.evaluate((menu, { name, anchor }) => {
         const box = menu.getBoundingClientRect()
@@ -1104,7 +1142,6 @@ test('Settings pickers open in full view, above every card and inside the window
         }).map((choice) => choice.textContent?.trim())
         return {
           box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom },
-          positioner: menu.parentElement?.getBoundingClientRect().toJSON(),
           trigger: anchor,
           window: { width: window.innerWidth, height: window.innerHeight },
           // The trigger stays in sight to show what is chosen: the menu may
@@ -1150,8 +1187,12 @@ test('Settings pickers open in full view, above every card and inside the window
 
     // As tall as the tests' window, and as short as the app allows (650).
     for (const height of [800, 650]) {
-      await app.evaluate(({ BrowserWindow }, height) => BrowserWindow.getAllWindows()[0].setSize(1180, height), height)
-      await page.waitForFunction((height) => Math.abs(window.outerHeight - height) < 60, height)
+      let resized = false
+      for (let attempt = 0; attempt < 3 && !resized; attempt++) {
+        await app.evaluate(({ BrowserWindow }, height) => BrowserWindow.getAllWindows()[0].setSize(1180, height), height)
+        resized = await page.waitForFunction((height) => Math.abs(window.outerHeight - height) < 60, height, { timeout: 1500 }).then(() => true, () => false)
+      }
+      assert.ok(resized, `the window did not reach the requested ${height}px height after retries`)
       await opensInView('General', 'Language', height)
       await opensInView('General', 'Accent', height)
       // This one opens over the wizard's own dialog, not only over a card.
