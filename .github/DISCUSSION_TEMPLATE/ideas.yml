@@ -1,0 +1,24 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Something Sisyphus could do. Ideas are talked through here first; once there is a plan, one of us opens an issue for it and links back.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What someone cannot do today
+      description: The situation, and what goes wrong or is missing. This matters more than the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: How it might work. Rough is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Costs and open questions
+      description: What it would make harder, what it would cost the pool or its members, and what you are unsure of. See docs/security-model.md for what a pool protects today.
