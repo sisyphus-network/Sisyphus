@@ -942,6 +942,29 @@ func TestAnUploadThatCannotBeCountedFails(t *testing.T) {
 	}
 }
 
+// A worker that also holds the client role may upload without a task, but
+// that upload is still charged against the client's share.
+func TestAWorkerThatIsAlsoAClientIsHeldToItsShare(t *testing.T) {
+	before := caller
+	caller = func(context.Context) string { return "alice" }
+	t.Cleanup(func() { caller = before })
+	role := func(id string) bool { return id == "alice" }
+	service := &blobService{
+		store:     storage.NewMemory(),
+		owner:     "node",
+		clients:   role,
+		workers:   role,
+		perClient: 4,
+		stored: func(context.Context) (map[string]uint64, error) {
+			return map[string]uint64{"alice": 0}, nil
+		},
+	}
+	err := service.Put(&upload{chunks: [][]byte{[]byte("overs")}})
+	if status.Code(err) != codes.ResourceExhausted || !strings.Contains(err.Error(), "this client's share") {
+		t.Fatalf("an over-share worker+client upload: %v, want ResourceExhausted for the client share", err)
+	}
+}
+
 // A client's pin of a blob the store does not have is refused as not
 // found, whether or not it is held to a share.
 func TestAClientsPinOfAMissingBlobIsNotFound(t *testing.T) {
