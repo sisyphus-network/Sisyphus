@@ -360,4 +360,9 @@ func TestAClientLeavesThePool(t *testing.T) {
 	if out, err := as(t, laptop, "pool", "leave", "--addr", addr); err != nil || out != "left the pool at "+addr+"\n" {
 		t.Errorf("leaving again printed %q, error %v", out, err)
 	}
+	// A coordinator that cannot be reached cannot be left: the laptop is
+	// told, and may ask again.
+	if _, err := as(t, laptop, "pool", "leave", "--addr", freeAddr(t)); err == nil {
+		t.Error("leaving a pool nobody answers for")
+	}
 }
