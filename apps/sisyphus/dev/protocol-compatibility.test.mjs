@@ -38,6 +38,20 @@ test('jobs, files and events preserve bytes, enums and uint64 values', () => {
   assert.equal(event.taskIndex, -1)
   assert.equal(event.text, 'שלום')
 })
+test('joined-pool events preserve enum names and whether a live worker count exists', () => {
+  const method = service.GetJoinedPool
+  const workerOnly = method.responseDeserialize(method.responseSerialize({
+    coordinatorId: 'coordinator-id', coordinatorName: 'rig', state: 'JOINED_POOL_STATE_DISCONNECTED', roles: ['POOL_ROLE_WORKER'],
+  }))
+  assert.equal(workerOnly.state, 'JOINED_POOL_STATE_DISCONNECTED')
+  assert.deepEqual(workerOnly.roles, ['POOL_ROLE_WORKER'])
+  assert.equal(Object.hasOwn(workerOnly, 'workerCount'), false)
+  const client = method.responseDeserialize(method.responseSerialize({
+    state: 'JOINED_POOL_STATE_CONNECTED', roles: ['POOL_ROLE_WORKER', 'POOL_ROLE_CLIENT'], workerCount: 0,
+  }))
+  assert.equal(client.workerCount, 0)
+  assert.deepEqual(client.roles, ['POOL_ROLE_WORKER', 'POOL_ROLE_CLIENT'])
+})
 test('grpc-js serves a unary call and a token stream with this definition', async () => {
   const server = new grpc.Server()
   let receivedAttachments

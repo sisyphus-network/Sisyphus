@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode, type FormEvent } from 'react'
 import { Check, Copy, Cpu, Globe2, HardDrive, Link2, LoaderCircle, RefreshCw, Server, Signal, Wifi, type LucideIcon } from 'lucide-react'
-import type { NodeSnapshot, Peer } from '../../../preload'
+import type { JoinedPool, NodeSnapshot, Peer } from '../../../preload'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -15,6 +15,13 @@ import { displayDaemonVersion } from '@/lib/daemon-version'
 type Messages = ReturnType<typeof getMessages>
 function shortId(id: string) { return id.length > 22 ? `${id.slice(0, 12)}…${id.slice(-8)}` : id }
 function peerIsConnected(peer: Peer) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
+function joinedPoolStateCode(state: JoinedPool['state']) {
+  if (typeof state === 'number') return state
+  return state.endsWith('_CONNECTED') ? 2 : state.endsWith('_DISCONNECTED') ? 3 : state.endsWith('_CONNECTING') ? 1 : 0
+}
+function hasJoinedPoolRole(pool: JoinedPool, role: 'WORKER' | 'CLIENT') {
+  return pool.roles.some((value) => value === (role === 'WORKER' ? 1 : 2) || value === `POOL_ROLE_${role}`)
+}
 function formatBytes(value: string | number) {
   const bytes = Number(value)
   if (!Number.isFinite(bytes) || bytes <= 0) return '—'
@@ -30,6 +37,8 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
   const [workersState, setWorkersState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [peerIdCopied, setPeerIdCopied] = useState(false)
   const [workers, setWorkers] = useState<{ peerId: string; name: string; hostname: string; os: string; arch: string; cpuCores: number; cpuModel: string; memoryBytes: string | number; taskSlots: number; runningTasks: number; workloads: string[]; models: string[]; gpus: { name: string; memoryBytes: string | number }[] }[]>([])
+  const [joinedPool, setJoinedPool] = useState<JoinedPool | null>(null)
+  const [joinedPoolState, setJoinedPoolState] = useState<'loading' | 'ready' | 'unavailable' | 'none'>('loading')
   const desktopApp = isDesktopApp()
   const connectedPeers = useMemo(() => snapshot.peers.filter(peerIsConnected).length, [snapshot.peers])
   const statusLabel = snapshot.status === 'connected' ? messages.connected : snapshot.status === 'connecting' ? messages.connecting : messages.offline
@@ -63,6 +72,52 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
       if (retry !== undefined) window.clearTimeout(retry)
       cancel?.()
     }
+  }, [snapshot.status, snapshot.endpoint])
+  useEffect(() => {
+    if (snapshot.status !== 'connected') { setJoinedPoolState((current) => current === 'ready' ? 'unavailable' : current); return }
+    let active = true
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    const connect = () => {
+      if (!active) return
+      cancel = getNodeApi().stream<JoinedPool>('watchJoinedPool', {}, (event) => {
+        attempt = 0
+        setJoinedPool(event)
+        setJoinedPoolState('ready')
+      }, (error, code) => {
+        cancel = undefined
+        if (active) {
+          if (code === 9 || /has joined no other/i.test(error)) { setJoinedPool(null); setJoinedPoolState('none'); return }
+          setJoinedPoolState('unavailable')
+          retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        }
+      }, () => {
+        cancel = undefined
+        if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+      })
+    }
+    // Fetch the baseline before subscribing. WatchJoinedPool sends the current
+    // state as its first event too, closing the gap without allowing an older
+    // fetch response to overwrite a newer stream update.
+    void getNodeApi().call<JoinedPool>('getJoinedPool').then((initial) => {
+      if (!active) return
+      setJoinedPool(initial)
+      setJoinedPoolState('ready')
+      connect()
+    }).catch((error: unknown) => {
+      if (!active) return
+      // A coordinating node has joined no other pool; don't render a false
+      // error card for the normal standalone-node case.
+      if (/has joined no other|FAILED_PRECONDITION/i.test(error instanceof Error ? error.message : String(error))) {
+        setJoinedPool(null)
+        setJoinedPoolState('none')
+        return
+      }
+      setJoinedPoolState('unavailable')
+      connect()
+    })
+    return () => { active = false; if (retry !== undefined) window.clearTimeout(retry); cancel?.() }
   }, [snapshot.status, snapshot.endpoint])
   async function reconnect() {
     setRefreshing(true)
@@ -116,6 +171,14 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
       <MetricCard label={messages.connectedPeers} icon={Globe2} value={<>{connectedPeers}<span className="text-lg font-normal text-muted-foreground"> / {snapshot.peers.length}</span></>} detail={messages.activeKnownPeers} />
       <MetricCard label={messages.peerRevision} icon={Wifi} value={<span className="inline-flex items-center gap-2 text-xl"><span className={`size-2.5 rounded-full ${snapshot.status === 'connected' ? 'bg-teal-500' : snapshot.status === 'connecting' ? 'bg-amber-500' : 'bg-red-500'}`} />{statusLabel}</span>} statusTone={snapshot.status} centerValue className="sm:col-span-2 lg:col-span-1" />
     </section>
+    {(joinedPool || joinedPoolState === 'unavailable') && <NodeSection icon={Link2} title={labels.joinedPool} aside={joinedPool ? <Badge variant={joinedPoolState === 'unavailable' ? 'outline' : joinedPoolStateCode(joinedPool.state) === 2 ? 'secondary' : 'outline'} className={joinedPoolState === 'unavailable' ? 'text-amber-700 dark:text-amber-300' : joinedPoolStateCode(joinedPool.state) === 2 ? 'text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground'}>{joinedPoolState === 'unavailable' ? labels.poolUnavailable : joinedPoolStateCode(joinedPool.state) === 2 ? labels.poolConnected : joinedPoolStateCode(joinedPool.state) === 3 ? labels.poolDisconnected : labels.poolConnecting}</Badge> : undefined}>
+      {joinedPool ? <CardContent className="grid gap-5 sm:grid-cols-2">
+        <Detail label={labels.poolName} value={joinedPool.coordinatorName || joinedPool.coordinatorId || labels.poolConnecting} />
+        <Detail label={labels.poolAddress} code value={joinedPool.address || '—'} />
+        <Detail label={labels.poolRoles} value={[hasJoinedPoolRole(joinedPool, 'WORKER') && labels.poolWorkerRole, hasJoinedPoolRole(joinedPool, 'CLIENT') && labels.poolClientRole].filter(Boolean).join(', ') || '—'} />
+        {joinedPoolState === 'ready' && joinedPoolStateCode(joinedPool.state) === 2 && hasJoinedPoolRole(joinedPool, 'CLIENT') && joinedPool.workerCount !== undefined && <Detail label={labels.poolWorkers} value={String(joinedPool.workerCount)} />}
+      </CardContent> : <EmptyState icon={Link2} title={labels.poolUnavailable} />}
+    </NodeSection>}
     <div className="mt-4 grid gap-4">
       <NodeSection icon={Cpu} title={labels.workers} count={workers.length} aside={<span className="text-xs text-muted-foreground">{labels.hardwareModels}</span>}>
         {workers.length === 0 ? <EmptyState icon={workersState === 'loading' ? LoaderCircle : Server} loading={workersState === 'loading'} title={workersState === 'loading' ? labels.workersLoading : workersState === 'error' ? labels.workersUnavailable : labels.noWorkers} description={workersState === 'ready' ? labels.noWorkersDescription : undefined} /> : <div className="divide-y divide-[var(--app-line)] px-5">

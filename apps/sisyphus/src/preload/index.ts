@@ -61,18 +61,19 @@ export type LocationDiscoverySettings = { locateGateway: boolean; locateCountry:
 export type LocationDiscoveryState = { managed: boolean; configurable: boolean; configured: boolean; restartNeeded: boolean; gatewaySupported: boolean | null; saved: LocationDiscoverySettings; running: LocationDiscoverySettings }
 export type { PoolLimits }
 export type PoolLimitsState = { managed: boolean; configurable: boolean; configured: boolean; restartNeeded: boolean; coordinator: boolean; saved: PoolLimits; running: PoolLimits }
+export type JoinedPool = { coordinatorId: string; coordinatorName: string; address: string; state: number | string; roles: (number | string)[]; workerCount?: number }
 
 export type NodeRpcMethod =
   | 'getBootstrapPeers' | 'setBootstrapPeers' | 'listWorkers' | 'listPeers' | 'getNodeInfo'
   | 'submitJob' | 'getJob' | 'listJobs' | 'cancelJob'
   | 'getModelConfig' | 'setModelConfig' | 'listModelProfiles' | 'saveModelProfile' | 'deleteModelProfile' | 'listProviders' | 'listModels' | 'removeModel'
-  | 'getWebAccessConfig' | 'setWebAccessConfig' | 'listNetworkInterfaces'
+  | 'getWebAccessConfig' | 'setWebAccessConfig' | 'listNetworkInterfaces' | 'getJoinedPool'
   | 'getModelLending' | 'setModelLending' | 'inspectOllama'
   | 'listChats' | 'getChat' | 'deleteChat'
   | 'listFiles' | 'removeFile'
   | 'createInvitation' | 'listMembers' | 'removeMember' | 'joinPool'
 
-export type NodeStreamMethod = 'watchJobs' | 'watchJobEvents' | 'watchPairedBrowsers' | 'watchWorkers' | 'ask' | 'pullModel'
+export type NodeStreamMethod = 'watchJobs' | 'watchJobEvents' | 'watchPairedBrowsers' | 'watchWorkers' | 'watchJoinedPool' | 'ask' | 'pullModel'
 
 const api = {
   getSnapshot: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:get-snapshot'),

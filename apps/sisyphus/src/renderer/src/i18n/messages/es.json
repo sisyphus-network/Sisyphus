@@ -436,6 +436,9 @@
     "cores": "núcleos",
     "workersLoading": "Cargando trabajadores",
     "workersUnavailable": "La información de los trabajadores no está disponible",
+    "joinedPool": "Pool unido", "poolLoading": "Comprobando conexión al pool", "poolUnavailable": "Estado del pool no disponible; reconectando",
+    "poolName": "Pool", "poolAddress": "Dirección del coordinador", "poolRoles": "Tus roles", "poolWorkers": "Workers del pool",
+    "poolWorkerRole": "Worker", "poolClientRole": "Cliente", "poolConnected": "Conectado", "poolConnecting": "Conectando", "poolDisconnected": "Reconectando",
     "noNodeDetails": "Los detalles del nodo aún no están disponibles",
     "nodeDetailsPending": "Los detalles aparecerán cuando el nodo envíe su próxima actualización."
   },

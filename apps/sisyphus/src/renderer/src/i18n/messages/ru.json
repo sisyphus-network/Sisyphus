@@ -436,6 +436,9 @@
     "cores": "ядер",
     "workersLoading": "Загрузка исполнителей",
     "workersUnavailable": "Информация об исполнителях недоступна",
+    "joinedPool": "Подключённый пул", "poolLoading": "Проверка подключения к пулу", "poolUnavailable": "Статус пула недоступен; повторное подключение",
+    "poolName": "Пул", "poolAddress": "Адрес координатора", "poolRoles": "Ваши роли", "poolWorkers": "Исполнители в пуле",
+    "poolWorkerRole": "Исполнитель", "poolClientRole": "Клиент", "poolConnected": "Подключено", "poolConnecting": "Подключение", "poolDisconnected": "Повторное подключение",
     "noNodeDetails": "Данные узла пока недоступны",
     "nodeDetailsPending": "Данные появятся, когда узел отправит следующее обновление."
   },

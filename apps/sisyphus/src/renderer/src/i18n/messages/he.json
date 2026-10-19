@@ -436,6 +436,9 @@
     "cores": "ליבות",
     "workersLoading": "טוען עובדים",
     "workersUnavailable": "פרטי העובדים אינם זמינים",
+    "joinedPool": "מאגר מחובר", "poolLoading": "בודק חיבור למאגר", "poolUnavailable": "מצב המאגר אינו זמין; מנסה להתחבר מחדש",
+    "poolName": "מאגר", "poolAddress": "כתובת המתאם", "poolRoles": "התפקידים שלך", "poolWorkers": "עובדים במאגר",
+    "poolWorkerRole": "עובד", "poolClientRole": "לקוח", "poolConnected": "מחובר", "poolConnecting": "מתחבר", "poolDisconnected": "מתחבר מחדש",
     "noNodeDetails": "פרטי הצומת עדיין אינם זמינים",
     "nodeDetailsPending": "הפרטים יופיעו כשהצומת ישלח את העדכון הבא."
   },
