@@ -241,16 +241,21 @@ func TestALostFollowerIsReplacedAfterTheGracePeriod(t *testing.T) {
 	lost := p.copiesOf(kept[0])[0]
 	stops[lost]()
 	lostAt := time.Now()
-	// Stopping the worker returns before the coordinator's stream handler has
-	// necessarily processed EOF. Wait for that observable state before asking
-	// Locate, which should no longer direct a fetch to a disconnected worker.
+	// Stopping the worker returns before the coordinator has necessarily
+	// processed both of its independent worker and replication streams. Wait
+	// for the worker connection to close, then for this exact follower to
+	// leave the replication manager's live set before asking Locate. A count
+	// alone could reach two because a different follower's lease expired.
 	waitFor(t, func() bool {
 		listed, err := p.client.ListNodes(p.ctx, &pb.ListNodesRequest{})
 		return err == nil && len(listed.GetNodes()) == 2
 	})
 	// Its stream lease marks it absent at once, but its placement stays
 	// reserved until Grace has run out.
-	waitFor(t, func() bool { return len(p.replicas().GetFollowers()) == 2 })
+	waitFor(t, func() bool {
+		followers := p.replicas().GetFollowers()
+		return len(followers) == 2 && !slices.Contains(followers, p.workerIdents[lost].ID())
+	})
 	_, asker := p.admit(access.Worker)
 	if holders := p.locate(asker, kept[0]); len(holders) != 1 || slices.Contains(holders, p.addresses[lost]) {
 		t.Errorf("with one of its two holders gone the first blob is said to be held at %v, want only the other's address", holders)
