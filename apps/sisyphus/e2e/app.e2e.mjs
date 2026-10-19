@@ -812,6 +812,46 @@ test('an active conversation survives desktop and compact workspace remounts', a
   }
 })
 
+// Every advanced route shares one header, which sits beside the sidebar at
+// the top of the window, with the page's content directly under it (#99).
+test('each advanced page has the one shared header beside the sidebar, with no band between it and the content, in LTR and RTL', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    for (const dir of ['ltr', 'rtl']) {
+      await page.evaluate((dir) => localStorage.setItem('sisyphus-locale', dir === 'rtl' ? 'he' : 'en'), dir)
+      await page.reload()
+      await page.waitForFunction((dir) => document.documentElement.dir === dir, dir)
+      for (const route of ['/node', '/operations', '/settings', '/settings/general']) {
+        await page.evaluate((route) => { window.location.hash = route }, route)
+        await page.waitForFunction((route) => location.hash === `#${route}` && document.querySelector('.route-transition') && document.querySelector('.app-global-header') && document.querySelector('.advanced-sidebar'), route)
+        // Let the route's fade settle before measuring.
+        await page.waitForTimeout(300)
+        const at = await page.evaluate(() => {
+          const box = (selector) => { const rect = document.querySelector(selector)?.getBoundingClientRect(); return rect && { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right } }
+          return {
+            headers: document.querySelectorAll('.app-global-header').length,
+            header: box('.app-global-header'),
+            sidebar: box('.advanced-sidebar'),
+            main: box('.app-main'),
+            content: box('.route-transition'),
+          }
+        })
+        const where = `${dir} ${route}: ${JSON.stringify(at)}`
+        assert.equal(at.headers, 1, `${where}: want exactly one shared header`)
+        assert.ok(Math.abs(at.header.top) <= 1 && Math.abs(at.header.top - at.sidebar.top) <= 1, `${where}: the header is not at the top, level with the sidebar`)
+        const beside = dir === 'rtl' ? at.header.right - at.sidebar.left : at.header.left - at.sidebar.right
+        assert.ok(Math.abs(beside) <= 1, `${where}: the header is ${beside}px from the sidebar's edge, want it directly beside`)
+        assert.ok(Math.abs(at.main.top - at.header.bottom) <= 1 && Math.abs(at.content.top - at.header.bottom) <= 1, `${where}: a band between the header and the content`)
+      }
+    }
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('a job submitted in the window runs on the pool and shows its result', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
