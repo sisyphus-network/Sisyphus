@@ -9,6 +9,7 @@ type SessionOptions<Snapshot, State, Peers> = {
   onSnapshot: (snapshot: Snapshot) => void
   onError: (snapshot: Snapshot | undefined, error: unknown) => Snapshot
   retryDelayMs?: number
+  maxRetryDelayMs?: number
   wait?: (ms: number, signal: AbortSignal) => Promise<void>
 }
 
@@ -29,6 +30,11 @@ function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
 export function startBrowserNodeStateSession<Snapshot, State, Peers>(options: SessionOptions<Snapshot, State, Peers>): () => void {
   const controller = new AbortController()
   const wait = options.wait ?? waitForRetry
+  const initialRetryDelayMs = options.retryDelayMs ?? 1_500
+  const maxRetryDelayMs = options.maxRetryDelayMs ?? 30_000
+  if (!Number.isFinite(initialRetryDelayMs) || initialRetryDelayMs <= 0) throw new RangeError('The initial browser stream retry delay must be positive.')
+  if (!Number.isFinite(maxRetryDelayMs) || maxRetryDelayMs < initialRetryDelayMs) throw new RangeError('The maximum browser stream retry delay must be at least the initial delay.')
+  let retryDelayMs = initialRetryDelayMs
   let generation = 0
 
   const run = async () => {
@@ -45,6 +51,7 @@ export function startBrowserNodeStateSession<Snapshot, State, Peers>(options: Se
             if (controller.signal.aborted || currentGeneration !== generation) break
             if (!options.hasNodeDetails(state)) throw new Error('The node state stream returned no node details.')
             latest = options.applyNodeState(latest!, state)
+            retryDelayMs = initialRetryDelayMs
             options.onSnapshot(latest)
           }
           if (!controller.signal.aborted) throw new Error('The node state stream ended.')
@@ -54,6 +61,7 @@ export function startBrowserNodeStateSession<Snapshot, State, Peers>(options: Se
           for await (const peers of options.watchPeers(controller.signal)) {
             if (controller.signal.aborted || currentGeneration !== generation) break
             latest = options.applyPeers(latest!, peers)
+            retryDelayMs = initialRetryDelayMs
             options.onSnapshot(latest)
           }
           if (!controller.signal.aborted) throw new Error('The peer stream ended.')
@@ -62,7 +70,8 @@ export function startBrowserNodeStateSession<Snapshot, State, Peers>(options: Se
         if (controller.signal.aborted) break
         options.onSnapshot(options.onError(latest, error))
       }
-      await wait(options.retryDelayMs ?? 1_500, controller.signal)
+      await wait(retryDelayMs, controller.signal)
+      retryDelayMs = Math.min(retryDelayMs * 2, maxRetryDelayMs)
     }
   }
 

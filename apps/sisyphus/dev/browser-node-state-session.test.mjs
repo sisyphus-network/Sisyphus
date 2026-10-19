@@ -4,6 +4,11 @@ import { startBrowserNodeStateSession } from '../src/renderer/src/lib/browser-no
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 
+async function until(predicate) {
+  for (let attempt = 0; attempt < 20 && !predicate(); attempt++) await tick()
+  assert.ok(predicate(), 'expected browser state session to reach the requested point')
+}
+
 test('browser session does not refetch snapshots while its state stream is healthy', async () => {
   let snapshots = 0
   const published = []
@@ -59,6 +64,67 @@ test('browser session fetches a fresh baseline after stream failure, not on a ti
     await tick()
     assert.deepEqual(published, ['baseline-1', 'offline', 'baseline-2', 'live', 'offline'])
     assert.equal(snapshots, 2)
+  } finally { cancel() }
+})
+
+test('browser stream reconnect backs off during outages and resets after a live update', async () => {
+  const delays = []
+  const releases = []
+  const published = []
+  let streamCalls = 0
+  const cancel = startBrowserNodeStateSession({
+    getSnapshot: async () => ({ revision: 'baseline' }),
+    watchNodeState: async function* () {
+      streamCalls++
+      if (streamCalls < 3) throw new Error('connection reset')
+      yield { info: true, revision: 'live' }
+      throw new Error('connection reset')
+    },
+    watchPeers: async function* () {},
+    hasNodeDetails: (state) => Boolean(state.info),
+    isUnimplemented: () => false,
+    applyNodeState: (snapshot, state) => ({ ...snapshot, revision: state.revision }),
+    applyPeers: (snapshot) => snapshot,
+    onSnapshot: (snapshot) => published.push(snapshot.revision),
+    onError: () => ({ revision: 'offline' }),
+    wait: (ms) => new Promise((resolve) => { delays.push(ms); releases.push(resolve) }),
+  })
+
+  try {
+    await until(() => delays.length === 1)
+    assert.deepEqual(delays, [1_500])
+    releases.shift()()
+    await until(() => delays.length === 2)
+    assert.deepEqual(delays, [1_500, 3_000])
+    releases.shift()()
+    await until(() => delays.length === 3)
+    assert.deepEqual(delays, [1_500, 3_000, 1_500])
+    assert.deepEqual(published, ['baseline', 'offline', 'baseline', 'offline', 'baseline', 'live', 'offline'])
+  } finally { cancel() }
+})
+
+test('browser stream reconnect delay is capped during a prolonged outage', async () => {
+  const delays = []
+  const releases = []
+  const cancel = startBrowserNodeStateSession({
+    getSnapshot: async () => ({}),
+    watchNodeState: async function* () { throw new Error('connection reset') },
+    watchPeers: async function* () {},
+    hasNodeDetails: () => true,
+    isUnimplemented: () => false,
+    applyNodeState: (snapshot) => snapshot,
+    applyPeers: (snapshot) => snapshot,
+    onSnapshot() {},
+    onError: () => ({}),
+    wait: (ms) => new Promise((resolve) => { delays.push(ms); releases.push(resolve) }),
+  })
+
+  try {
+    for (let count = 1; count <= 7; count++) {
+      await until(() => delays.length === count)
+      releases.shift()()
+    }
+    assert.deepEqual(delays, [1_500, 3_000, 6_000, 12_000, 24_000, 30_000, 30_000])
   } finally { cancel() }
 })
 
