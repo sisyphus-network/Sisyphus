@@ -31,6 +31,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/api"
@@ -2641,6 +2642,9 @@ func joinedPool(pool worker.JoinedPool, address string) *nodepb.JoinedPool {
 	}
 	for _, role := range pool.Roles {
 		joined.Roles = append(joined.Roles, map[pb.Role]nodepb.PoolRole{pb.Role_ROLE_WORKER: nodepb.PoolRole_POOL_ROLE_WORKER, pb.Role_ROLE_CLIENT: nodepb.PoolRole_POOL_ROLE_CLIENT}[role])
+	}
+	if pool.Counted {
+		joined.WorkerCount = proto.Uint32(uint32(pool.Workers))
 	}
 	return joined
 }

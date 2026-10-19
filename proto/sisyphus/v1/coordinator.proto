@@ -107,6 +107,7 @@ message CoordinatorMessage {
     SwarmUpdate swarm_update = 3;
     TaskCancel cancel = 4;
     RolesChanged roles_changed = 5;
+    WorkerCount worker_count = 6;
   }
 }
 
@@ -115,6 +116,14 @@ message CoordinatorMessage {
 // invitation.
 message RolesChanged {
   repeated Role roles = 1;
+}
+
+// WorkerCount tells a connected worker that holds the client role how many
+// workers are connected to the pool, counting itself. It is sent after the
+// Welcome, after a RolesChanged that grants the client role, and whenever a
+// worker connects or goes. A worker without the client role is not sent it.
+message WorkerCount {
+  uint32 count = 1;
 }
 
 // TaskCancel tells a worker to stop a task it was given. Nothing is expected

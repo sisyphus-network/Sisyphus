@@ -55,3 +55,42 @@ func TestTheLastRolesAWorkerIsToldAreTheNewest(t *testing.T) {
 		t.Errorf("the last roles the worker is told are %v, want %v", last, want)
 	}
 }
+
+// Only a worker that holds the client role is told how many workers the pool
+// has: when the count changes, and straight after it is made a client.
+func TestOnlyAClientIsToldTheWorkerCount(t *testing.T) {
+	var mu sync.Mutex
+	clients := map[string]bool{"client": true}
+	c := &Coordinator{rolesOf: func(id string) []pb.Role {
+		mu.Lock()
+		defer mu.Unlock()
+		if clients[id] {
+			return []pb.Role{pb.Role_ROLE_WORKER, pb.Role_ROLE_CLIENT}
+		}
+		return []pb.Role{pb.Role_ROLE_WORKER}
+	}}
+	client, plain := &worker{id: "client", send: newOutbox()}, &worker{id: "plain", send: newOutbox()}
+	c.workers = map[string]*worker{"client": client, "plain": plain}
+
+	c.mu.Lock()
+	c.countWorkersLocked()
+	c.mu.Unlock()
+	if msg, _ := client.send.next(); msg.GetWorkerCount().GetCount() != 2 {
+		t.Errorf("the client is told %v, want a count of 2", msg)
+	}
+	if queued := len(plain.send.queue); queued != 0 {
+		t.Errorf("a worker that is not a client was sent %d messages", queued)
+	}
+
+	// Made a client, the other worker is told its roles and then the count.
+	mu.Lock()
+	clients["plain"] = true
+	mu.Unlock()
+	c.RolesChanged("plain")
+	if msg, _ := plain.send.next(); msg.GetRolesChanged() == nil {
+		t.Errorf("first the new client is sent %v, want its roles", msg)
+	}
+	if msg, _ := plain.send.next(); msg.GetWorkerCount().GetCount() != 2 {
+		t.Errorf("then the new client is sent %v, want a count of 2", msg)
+	}
+}
