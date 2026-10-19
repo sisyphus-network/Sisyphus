@@ -3,10 +3,13 @@ name: Release
 # Pushing a tag such as v0.1.0 builds sisyphusd for every supported platform,
 # packages the desktop app on Linux, Windows and macOS, and publishes all of
 # it as a GitHub release. A pull request that changes the release machinery
-# runs the same builds without publishing.
+# runs the same builds without publishing, and so does running it by hand on
+# a branch: the way to test the very binaries a release of that commit would
+# ship, as the V0 run does before its tag is pushed (#498).
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
   pull_request:
     paths:
       - .github/workflows/release.yml

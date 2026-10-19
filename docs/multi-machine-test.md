@@ -7,7 +7,7 @@ Before giving it the hour, [`examples/rehearsal.sh`](../examples/rehearsal.sh) r
 ## What you need
 
 - **Two or three machines** that can reach each other over a network. One will be the coordinator; call the others workers. Mixed hardware is good; at least one with many cores makes the timings clearer.
-- **`sisyphusd` on each.** Build it with `make build` on a machine with Go and copy `bin/sisyphusd` across, or cross-build with `scripts/build-release.sh v0.0.0-test dist` and take the binary for each machine's system from `dist/`. Check with `sisyphusd version`.
+- **`sisyphusd` on each.** Build it with `make build` on a machine with Go and copy `bin/sisyphusd` across, or cross-build with `scripts/build-release.sh v0.0.0-test dist` and take the binary for each machine's system from `dist/`. Check with `sisyphusd version`. To test what a release of a commit would ship, run the **Release** workflow by hand on that commit's branch (Actions → Release → Run workflow): it builds the daemon for every platform and the desktop app for each system, as the run's artifacts, and publishes nothing.
 - **One port open on the coordinator**: TCP 7700, from the workers. Nothing needs opening on the workers, and nothing more for the Kubo part.
 - For the Kubo part, **`ipfs` (Kubo) installed on every machine**, the same version if possible.
 - For the cluster part, **`ipfs-cluster-service` (IPFS Cluster) installed on every machine** as well. It needs at least three machines to show a copy moving.
