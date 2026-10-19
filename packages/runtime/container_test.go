@@ -93,6 +93,7 @@ func TestAContainerJobIsSplitIntoCopiesThatKnowWhichTheyAre(t *testing.T) {
 		"not JSON":              `image: alpine`,
 		"no image":              `{"command":["echo"]}`,
 		"an input that is none": `{"image":"alpine:3.20","input":"not-a-cid"}`,
+		"too many copies":       `{"image":"alpine:3.20","tasks":10001}`,
 	} {
 		if _, err := c.Split(context.Background(), nil, []byte(bad), 1); err == nil || !strings.Contains(err.Error(), "container parameters") {
 			t.Errorf("%s: %v", name, err)

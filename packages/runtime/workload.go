@@ -42,6 +42,11 @@ type Workload interface {
 	Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error)
 }
 
+// MaxTasks is the most tasks one job may be split into. The coordinator
+// asks for no more than this, and a workload whose parameters choose their
+// own count refuses to go past it.
+const MaxTasks = 10_000
+
 // ResultBlobs names task-produced blobs referenced by a workload's aggregate
 // result. Such blobs are part of the result and must be retained with it.
 type ResultBlobs interface {
