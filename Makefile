@@ -36,12 +36,15 @@ lint:
 fmt:
 	gofmt -w apps packages
 
-# Regenerates packages/protocol from proto/. Needs protoc and `make tools`.
+# Regenerates packages/protocol from proto/, and the desktop's TypeScript
+# client in packages/client from the node's local API. Needs protoc, `make
+# tools`, and `npm ci` in apps/sisyphus.
 proto:
 	protoc -I proto \
 		--go_out=packages/protocol --go_opt=paths=source_relative \
 		--go-grpc_out=packages/protocol --go-grpc_opt=paths=source_relative \
 		$(PROTO_FILES)
+	npm --prefix apps/sisyphus run proto:generate
 
 tools:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12

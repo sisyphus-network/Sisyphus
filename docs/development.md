@@ -16,7 +16,7 @@ make test    # go vet, then the tests under the race detector, allowing each pac
 make cover   # fails unless the tests execute every statement of hand-written code
 make lint    # go vet and staticcheck, for mistakes the compiler lets through
 make demo    # a three-node pool and a few jobs on this machine, in one terminal
-make proto   # regenerate packages/protocol after editing proto/
+make proto   # regenerate packages/protocol and packages/client after editing proto/
 make fmt
 ```
 

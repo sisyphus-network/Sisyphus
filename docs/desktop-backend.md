@@ -236,5 +236,5 @@ Open `http://127.0.0.1:50052`. The daemon serves the UI, Connect API, SPA routes
 
 `node.proto` is shared. After editing it:
 
-1. `make proto` regenerates the Go side.
+1. `make proto` regenerates the Go side and the desktop's TypeScript client in `packages/client`. Commit both with the change.
 2. Add new fields and calls; do not renumber or remove existing ones.
