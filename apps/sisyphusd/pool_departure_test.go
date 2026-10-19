@@ -233,3 +233,79 @@ func TestSavingKnownReplacesItWithACompletePrivateFile(t *testing.T) {
 		t.Errorf("temporary known files left behind: %v, %v", temps, err)
 	}
 }
+
+type knownTempFileFailure struct {
+	*os.File
+	writeErr error
+	syncErr  error
+	closeErr error
+}
+
+func (f *knownTempFileFailure) Write(data []byte) (int, error) {
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	return f.File.Write(data)
+}
+
+func (f *knownTempFileFailure) Sync() error {
+	if f.syncErr != nil {
+		return f.syncErr
+	}
+	return f.File.Sync()
+}
+
+func (f *knownTempFileFailure) Close() error {
+	return errors.Join(f.closeErr, f.File.Close())
+}
+
+func TestFailedKnownReplacementKeepsThePreviousFile(t *testing.T) {
+	for _, fail := range []string{"create", "write", "sync", "close", "rename"} {
+		t.Run(fail, func(t *testing.T) {
+			dataDir := t.TempDir()
+			original := map[string]string{"rig:7700": "rig-id"}
+			if err := saveKnown(dataDir, original); err != nil {
+				t.Fatal(err)
+			}
+			ops := knownFileOps{
+				create: func(dir string) (knownTempFile, error) { return os.CreateTemp(dir, ".known-*") },
+				remove: os.Remove,
+				rename: os.Rename,
+			}
+			if fail == "create" {
+				ops.create = func(string) (knownTempFile, error) { return nil, errors.New("create failed") }
+			} else if fail == "rename" {
+				ops.rename = func(string, string) error { return errors.New("rename failed") }
+			} else {
+				ops.create = func(dir string) (knownTempFile, error) {
+					file, err := os.CreateTemp(dir, ".known-*")
+					if err != nil {
+						return nil, err
+					}
+					f := &knownTempFileFailure{File: file}
+					switch fail {
+					case "write":
+						f.writeErr = errors.New("write failed")
+					case "sync":
+						f.syncErr = errors.New("sync failed")
+					case "close":
+						f.closeErr = errors.New("close failed")
+					}
+					return f, nil
+				}
+			}
+
+			if err := saveKnownBytes(dataDir, []byte(`{"other:7700":"other-id"}`), ops); err == nil {
+				t.Fatal("saving known nodes succeeded despite a simulated file error")
+			}
+			got, err := loadKnown(dataDir)
+			if err != nil || len(got) != 1 || got["rig:7700"] != "rig-id" {
+				t.Errorf("previous known nodes after failed replacement: %v, %v", got, err)
+			}
+			temps, err := filepath.Glob(filepath.Join(dataDir, ".known-*"))
+			if err != nil || len(temps) != 0 {
+				t.Errorf("temporary known files after failed replacement: %v, %v", temps, err)
+			}
+		})
+	}
+}

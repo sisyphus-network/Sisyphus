@@ -105,13 +105,34 @@ func joinPool(ctx context.Context, dataDir string, ident *identity.Identity, add
 
 func saveKnown(dataDir string, known map[string]string) error {
 	data, _ := json.MarshalIndent(known, "", "\t") // a map of strings always encodes
+	return saveKnownBytes(dataDir, data, knownFileOps{
+		create: func(dir string) (knownTempFile, error) { return os.CreateTemp(dir, ".known-*") },
+		remove: os.Remove,
+		rename: os.Rename,
+	})
+}
+
+type knownTempFile interface {
+	Name() string
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+type knownFileOps struct {
+	create func(string) (knownTempFile, error)
+	remove func(string) error
+	rename func(string, string) error
+}
+
+func saveKnownBytes(dataDir string, data []byte, ops knownFileOps) error {
 	path := filepath.Join(dataDir, "known.json")
-	tmp, err := os.CreateTemp(dataDir, ".known-*")
+	tmp, err := ops.create(dataDir)
 	if err != nil {
 		return fmt.Errorf("save known nodes in %s: %w", dataDir, err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer ops.remove(tmpPath)
 	if _, err := tmp.Write(data); err != nil {
 		return errors.Join(fmt.Errorf("save known nodes in %s: %w", dataDir, err), tmp.Close())
 	}
@@ -122,7 +143,7 @@ func saveKnown(dataDir string, known map[string]string) error {
 		return fmt.Errorf("save known nodes in %s: %w", dataDir, err)
 	}
 	// Keep the old file intact until the complete new JSON has been written.
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := ops.rename(tmpPath, path); err != nil {
 		return fmt.Errorf("save known nodes in %s: %w", dataDir, err)
 	}
 	return nil
