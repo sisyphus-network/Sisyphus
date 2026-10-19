@@ -49,6 +49,10 @@ var (
 	// LeaseTimeout is how long a coordinator waits without a stream lease
 	// renewal before reporting the follower absent.
 	LeaseTimeout = 30 * time.Second
+	// TakeBackRetry is how long a coordinator waits before it tries again to
+	// take back what a follower's signed list names and could not be taken
+	// back. The wait doubles after each failed try, up to Interval.
+	TakeBackRetry = time.Second
 	// Grace is how long a coordinator goes on counting on a follower it has
 	// stopped hearing from. After that the follower's share is given to
 	// others. A coordinator that has just started waits as long before it
@@ -113,6 +117,8 @@ type Manager struct {
 	// challengeInterval is captured at construction so changing the package
 	// default in tests cannot race with a running manager.
 	challengeInterval time.Duration
+	// takeBackRetry is TakeBackRetry, captured the same way.
+	takeBackRetry time.Duration
 
 	// atStart holds the blobs that were pinned when the manager started,
 	// and settled is when it stops waiting for followers that may already
@@ -186,6 +192,14 @@ type follower struct {
 	// refused whether a list it showed was found not to be this node's.
 	warned  bool
 	refused bool
+	// owedList is a list this node signed for an earlier store that the
+	// follower showed, of which something could not be taken back. It is
+	// tried again at owedAt, and owedWait is how long the try after that
+	// waits. It is kept in memory only: after a restart the follower shows
+	// its list again when it reconnects.
+	owedList *pb.KeepList
+	owedAt   time.Time
+	owedWait time.Duration
 }
 
 // New returns a manager for a coordinator that has just started.
@@ -200,6 +214,7 @@ func New(cfg Config) *Manager {
 		grace:             Grace,
 		interval:          Interval,
 		challengeInterval: ChallengeInterval,
+		takeBackRetry:     TakeBackRetry,
 		followers:         make(map[string]*follower),
 		leaseIDs:          make(map[string]uint64),
 		challengeLocks:    make(map[string]*challengeLock),
@@ -419,14 +434,18 @@ func (m *Manager) nextChallengeDeadlineLocked() time.Time {
 	return next
 }
 
-// Run expires unanswered blob challenges at their deadlines. It sleeps until
-// either replication state changes or the next challenge comes due; it does
-// not poll followers or scan on a fixed interval.
+// Run expires unanswered blob challenges at their deadlines, and tries
+// again to take back what a follower's signed list names and could not be
+// taken back. It sleeps until either replication state changes or the next
+// of those comes due; it does not poll followers or scan on a fixed interval.
 func (m *Manager) Run(ctx context.Context) {
 	for {
 		m.mu.Lock()
 		changed := m.changed
 		deadline := m.nextChallengeDeadlineLocked()
+		if owed := m.nextTakeBackLocked(); !owed.IsZero() && (deadline.IsZero() || owed.Before(deadline)) {
+			deadline = owed
+		}
 		m.mu.Unlock()
 		due, stopped := waitForChallenge(ctx, changed, deadline)
 		if stopped {
@@ -436,7 +455,63 @@ func (m *Manager) Run(ctx context.Context) {
 			now := time.Now()
 			m.expireChallenges(ctx, now)
 			m.issueChallenges(ctx, now)
+			m.retakeBack(ctx, now)
 		}
+	}
+}
+
+// nextTakeBackLocked is when the next follower's owed list is to be tried
+// again, or zero if none is.
+func (m *Manager) nextTakeBackLocked() time.Time {
+	var next time.Time
+	for _, f := range m.followers {
+		if f.owedList != nil && (next.IsZero() || f.owedAt.Before(next)) {
+			next = f.owedAt
+		}
+	}
+	return next
+}
+
+// retakeBack tries again, for each follower whose owed list has come due,
+// to take back what the list names. A follower whose hello arrived before
+// it connected as a worker, or whose copies could not be fetched, would
+// otherwise wait to be taken back until it next showed its list: on a
+// healthy stream, not until it reconnected. What comes back is no longer
+// stranded, and the follower is pushed a list for the store this node has.
+func (m *Manager) retakeBack(ctx context.Context, now time.Time) {
+	type due struct {
+		caller string
+		list   *pb.KeepList
+	}
+	var dues []due
+	m.mu.Lock()
+	for caller, f := range m.followers {
+		if f.owedList != nil && !now.Before(f.owedAt) {
+			dues = append(dues, due{caller, f.owedList})
+		}
+	}
+	m.mu.Unlock()
+	slices.SortFunc(dues, func(a, b due) int { return strings.Compare(a.caller, b.caller) })
+
+	for _, d := range dues {
+		owed := m.takeBack(ctx, d.caller, d.list)
+		m.mu.Lock()
+		// A follower that has since shown another list, or none, or gone,
+		// is left as its newer exchange left it.
+		if f := m.followers[d.caller]; f != nil && f.owedList == d.list {
+			f.stranded = slices.DeleteFunc(f.stranded, func(id string) bool {
+				_, still := owed[id]
+				return !still && !slices.Contains(f.unsigned, id)
+			})
+			if len(owed) == 0 {
+				f.owedList, f.owedAt, f.owedWait = nil, time.Time{}, 0
+			} else {
+				f.owedAt = time.Now().Add(f.owedWait)
+				f.owedWait = min(2*f.owedWait, m.interval)
+			}
+			m.notifyChangedLocked()
+		}
+		m.mu.Unlock()
 	}
 }
 
@@ -896,6 +971,22 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 	// it came back, and goes. A follower that shows a list of the store the
 	// node has now was told by that list what to drop, and stopped before
 	// it had.
+	// A report that shows no list of an earlier store is read against the
+	// list still being taken back, if there is one: what it names and the
+	// store has not pinned is still to come, not held on no list.
+	if named == nil && before.owedList != nil {
+		named, owed = make(map[string]struct{}), make(map[string]struct{})
+		for _, blob := range before.owedList.GetBlobs() {
+			named[blob.GetCid()] = struct{}{}
+			if _, kept := pinned[blob.GetCid()]; kept {
+				continue
+			}
+			if expires := blob.GetKeepUntil(); expires != nil && !expires.AsTime().After(now) {
+				continue
+			}
+			owed[blob.GetCid()] = struct{}{}
+		}
+	}
 	current := vouched && shown.GetStore() == m.storeID
 	earlier := !current && store != m.storeID && slices.ContainsFunc(m.earlier, func(prefix string) bool {
 		return strings.HasPrefix(store, prefix)
@@ -913,6 +1004,15 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 		}
 	}
 	sort.Strings(f.stranded)
+	// What could not be taken back is tried again on Run's schedule, so a
+	// follower on a healthy stream need not show its list again for it. A
+	// report that shows no list of an earlier store leaves a try pending.
+	switch {
+	case !(vouched && shown.GetStore() != m.storeID):
+		f.owedList, f.owedAt, f.owedWait = before.owedList, before.owedAt, before.owedWait
+	case len(owed) > 0:
+		f.owedList, f.owedAt, f.owedWait = shown, now.Add(m.takeBackRetry), min(2*m.takeBackRetry, m.interval)
+	}
 
 	// A follower that says it keeps lists is told what to hold in one.
 	lists := req.GetKeepsLists() && m.identity != nil
@@ -1040,7 +1140,7 @@ func (m *Manager) takeBack(ctx context.Context, caller string, list *pb.KeepList
 		m.mu.Unlock()
 	}
 	if len(owed) > 0 {
-		m.log.Warn("could not take back everything a list signed by this node names; the rest is tried again when the follower next asks", "node", caller, "blobs", len(owed), "error", first)
+		m.log.Warn("could not take back everything a list signed by this node names; the rest is tried again shortly, and whenever the follower shows its list", "node", caller, "blobs", len(owed), "error", first)
 	}
 	if took > 0 {
 		m.log.Info("took back from a storage follower what a store this node had before was keeping, on the strength of a list this node signed",
