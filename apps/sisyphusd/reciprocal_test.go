@@ -282,7 +282,7 @@ func TestTrustStreamStartsWithSnapshotAndStreamsChanges(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("trust stream handler did not stop after disconnect")
 	}
 }
@@ -414,7 +414,7 @@ func TestNoticesCoalescePendingWakeups(t *testing.T) {
 	changes.tell("peer")
 	select {
 	case <-wake:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("notification was lost after the previous one was consumed")
 	}
 }
@@ -460,7 +460,7 @@ func TestFollowTrustRetriesWorkWithoutReopeningTrustStream(t *testing.T) {
 	server.Close()
 	select {
 	case <-serverDone:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("trust stream server did not stop")
 	}
 }
@@ -497,7 +497,7 @@ func TestTrustStreamStopsWhenItsInitialOrUpdatedStateCannotBeWritten(t *testing.
 			if failAt == 1 {
 				select {
 				case <-done:
-				case <-time.After(time.Second):
+				case <-time.After(eventualWait):
 					t.Fatal("server did not stop after its initial write failed")
 				}
 			} else {
@@ -508,7 +508,7 @@ func TestTrustStreamStopsWhenItsInitialOrUpdatedStateCannotBeWritten(t *testing.
 				changes.tell("peer")
 				select {
 				case <-done:
-				case <-time.After(time.Second):
+				case <-time.After(eventualWait):
 					t.Fatal("server did not stop after its update write failed")
 				}
 			}

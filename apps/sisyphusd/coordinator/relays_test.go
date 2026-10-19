@@ -9,6 +9,12 @@ import (
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
+// eventualWait bounds every wait for something that must happen. Passing tests
+// never wait it out, so it is long: under the race detector and a full
+// parallel suite a stop or a notification can take more than a second (#466).
+// Windows in which something must not happen stay short.
+const eventualWait = 30 * time.Second
+
 func TestWatchRelaysSendsInitialListAndMembershipChanges(t *testing.T) {
 	c := New(Config{ID: "coordinator"})
 	defer c.Close()
@@ -29,7 +35,7 @@ func TestWatchRelaysSendsInitialListAndMembershipChanges(t *testing.T) {
 		if len(got) != 0 {
 			t.Fatalf("initial relays = %v, want none", got)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("watcher did not send its initial snapshot")
 	}
 
@@ -47,7 +53,7 @@ func TestWatchRelaysSendsInitialListAndMembershipChanges(t *testing.T) {
 		if len(got) != 1 || got[0] != relayAddress {
 			t.Fatalf("updated relays = %v, want [%s]", got, relayAddress)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("watcher did not send a relay membership update")
 	}
 
@@ -60,7 +66,7 @@ func TestWatchRelaysSendsInitialListAndMembershipChanges(t *testing.T) {
 		if len(got) != 0 {
 			t.Fatalf("relays after member left = %v, want none", got)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("watcher did not send a relay removal update")
 	}
 
@@ -70,7 +76,7 @@ func TestWatchRelaysSendsInitialListAndMembershipChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WatchRelays: %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("watcher did not stop after cancellation")
 	}
 }

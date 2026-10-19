@@ -15,6 +15,12 @@ import (
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
+// eventualWait bounds every wait for something that must happen. Passing tests
+// never wait it out, so it is long: under the race detector and a full
+// parallel suite a stop or a notification can take more than a second (#466).
+// Windows in which something must not happen stay short.
+const eventualWait = 30 * time.Second
+
 // roster is a coordinator's answer to "is this node a member?", counting how
 // often it is asked.
 type roster struct {
@@ -72,7 +78,7 @@ func TestMembersPublishesChangedRelaySnapshotsOnly(t *testing.T) {
 	stream.updates <- &pb.RelaysResponse{Addresses: addresses}
 	select {
 	case <-members.RelayChanges():
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("relay snapshot did not notify the consumer")
 	}
 	if got := members.Relays(ctx); !slices.Equal(got, addresses) {
@@ -89,7 +95,7 @@ func TestMembersPublishesChangedRelaySnapshotsOnly(t *testing.T) {
 	stream.updates <- &pb.RelaysResponse{}
 	select {
 	case <-members.RelayChanges():
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("relay removal did not notify the consumer")
 	}
 	if got := members.Relays(ctx); len(got) != 0 {
@@ -100,7 +106,7 @@ func TestMembersPublishesChangedRelaySnapshotsOnly(t *testing.T) {
 	close(stream.updates)
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("relay watcher did not stop")
 	}
 }
