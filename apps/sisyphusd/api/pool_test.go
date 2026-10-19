@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
+	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
@@ -34,6 +36,8 @@ type stuckList struct{ accessList }
 func (stuckList) Redeem(string, string, time.Time) (access.Role, error) { return "", errList }
 
 func (stuckList) Remove(string) (bool, error) { return false, errList }
+
+func (stuckList) Revoke(string, access.Role) (bool, error) { return false, errList }
 
 func newList(t *testing.T) *access.List {
 	t.Helper()
@@ -209,7 +213,7 @@ func TestRemovingAMemberChangesTheSwarmKey(t *testing.T) {
 	if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "was removed, but it still holds the key") {
 		t.Errorf("error %v, want a warning that the key is unchanged", err)
 	}
-	if _, onList := list.Role("another"); onList {
+	if _, onList := list.Roles("another"); onList {
 		t.Error("the node is still on the list")
 	}
 }
@@ -242,5 +246,32 @@ func TestRelaysAskedOnceAndWithoutAPool(t *testing.T) {
 	stream := &relaySnapshotStream{ctx: context.Background(), updates: make(chan *pb.RelaysResponse, 1)}
 	if err := (&poolService{}).WatchRelays(&pb.RelaysRequest{}, stream); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("WatchRelays without a pool: %v, want failed precondition", err)
+	}
+}
+
+// A member that holds both roles is listed with both, worker first, by the
+// pool and by the local API (#474).
+func TestAMemberWithBothRolesIsListedWithBoth(t *testing.T) {
+	const both = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	list := newList(t)
+	list.Admit(both, access.Client, time.Now())
+	list.Admit(both, access.Worker, time.Now())
+	pool := &poolService{id: "owner-id", access: list}
+
+	listed, err := pool.ListMembers(context.Background(), &pb.ListMembersRequest{})
+	if err != nil || len(listed.GetMembers()) != 1 {
+		t.Fatalf("ListMembers = %v, %v", listed, err)
+	}
+	if m := listed.GetMembers()[0]; m.GetRole() != pb.Role_ROLE_WORKER || !slices.Equal(m.GetRoles(), []pb.Role{pb.Role_ROLE_WORKER, pb.Role_ROLE_CLIENT}) {
+		t.Errorf("the pool lists the member as %v", m)
+	}
+
+	local := &localService{cfg: LocalConfig{Pool: &PoolAdmin{service: pool}}}
+	members, err := local.ListMembers(context.Background(), &nodepb.ListMembersRequest{})
+	if err != nil || len(members.GetMembers()) != 1 {
+		t.Fatalf("local ListMembers = %v, %v", members, err)
+	}
+	if m := members.GetMembers()[0]; m.GetRole() != nodepb.PoolRole_POOL_ROLE_WORKER || !slices.Equal(m.GetRoles(), []nodepb.PoolRole{nodepb.PoolRole_POOL_ROLE_WORKER, nodepb.PoolRole_POOL_ROLE_CLIENT}) {
+		t.Errorf("the local API lists the member as %v", m)
 	}
 }

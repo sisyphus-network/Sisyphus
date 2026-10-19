@@ -83,7 +83,7 @@ func (n *node) ListPeers(context.Context, *nodepb.ListPeersRequest, ...grpc.Call
 }
 
 func (n *node) ListMembers(context.Context, *nodepb.ListMembersRequest, ...grpc.CallOption) (*nodepb.ListMembersResponse, error) {
-	return &nodepb.ListMembersResponse{Members: []*nodepb.PoolMember{{PeerId: "peer-1", Role: nodepb.PoolRole_POOL_ROLE_WORKER}, {PeerId: "peer-3", Role: nodepb.PoolRole_POOL_ROLE_CLIENT}}}, n.fail("ListMembers")
+	return &nodepb.ListMembersResponse{Members: []*nodepb.PoolMember{{PeerId: "peer-1", Role: nodepb.PoolRole_POOL_ROLE_WORKER}, {PeerId: "peer-3", Role: nodepb.PoolRole_POOL_ROLE_WORKER, Roles: []nodepb.PoolRole{nodepb.PoolRole_POOL_ROLE_WORKER, nodepb.PoolRole_POOL_ROLE_CLIENT}}}}, n.fail("ListMembers")
 }
 
 func (n *node) GetModelConfig(context.Context, *nodepb.GetModelConfigRequest, ...grpc.CallOption) (*nodepb.ModelConfig, error) {
@@ -191,7 +191,7 @@ func TestTheFurtherToolsSayWhatTheNodeSaidAndWhenItFailsThem(t *testing.T) {
 		"ListChats":                 `"started":"2026-10-07T15:00:46Z"`,
 		"GetChat":                   `{"calls":[{"arguments":"{\"workload\":\"primes\"}","name":"run_job"}],"role":"assistant"}`,
 		"ListPeers":                 `"country":"NL"`,
-		"ListMembers":               `"peer_id":"peer-3","role":"client"`,
+		"ListMembers":               `"peer_id":"peer-3","role":"worker","roles":["worker","client"]`,
 		"GetBootstrapPeers":         `{"address":"/ip4/203.0.113.10/tcp/7700/p2p/peer-2","peer_id":"peer-2"}`,
 		"SetBootstrapPeers":         `{"forgot":"peer-1","peers":[{"address":"/ip4/203.0.113.10/tcp/7700/p2p/peer-2","peer_id":"peer-2"}]}`,
 		"GetModelConfig":            `{"has_key":true,"model":"llama3.1:8b","provider":"ollama","url":""}`,

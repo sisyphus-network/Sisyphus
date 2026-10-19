@@ -722,14 +722,18 @@ func (*SetWorkForResponse) Descriptor() ([]byte, []int) {
 }
 
 type Member struct {
-	state    protoimpl.MessageState `protogen:"open.v1"`
-	NodeId   string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	NodeId string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	// The first of roles, for readers that know a member by one role.
 	Role     Role                   `protobuf:"varint,2,opt,name=role,proto3,enum=sisyphus.v1.Role" json:"role,omitempty"`
 	JoinedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=joined_at,json=joinedAt,proto3" json:"joined_at,omitempty"`
 	// For a client, how many bytes it keeps in the coordinator's store: what
 	// its own pins and its jobs' pins keep, each blob counted once however
 	// many ways it keeps it, and in full though others keep it too.
-	StoredBytes   uint64 `protobuf:"varint,4,opt,name=stored_bytes,json=storedBytes,proto3" json:"stored_bytes,omitempty"`
+	StoredBytes uint64 `protobuf:"varint,4,opt,name=stored_bytes,json=storedBytes,proto3" json:"stored_bytes,omitempty"`
+	// Every role the member holds, worker before client: a worker that has
+	// redeemed a client invitation holds both.
+	Roles         []Role `protobuf:"varint,5,rep,packed,name=roles,proto3,enum=sisyphus.v1.Role" json:"roles,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -790,6 +794,13 @@ func (x *Member) GetStoredBytes() uint64 {
 		return x.StoredBytes
 	}
 	return 0
+}
+
+func (x *Member) GetRoles() []Role {
+	if x != nil {
+		return x.Roles
+	}
+	return nil
 }
 
 type RemoveMemberRequest struct {
@@ -1274,12 +1285,13 @@ const file_sisyphus_v1_pool_proto_rawDesc = "" +
 	"\x11SetWorkForRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
 	"\awilling\x18\x02 \x01(\bR\awilling\"\x14\n" +
-	"\x12SetWorkForResponse\"\xa4\x01\n" +
+	"\x12SetWorkForResponse\"\xcd\x01\n" +
 	"\x06Member\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12%\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x11.sisyphus.v1.RoleR\x04role\x127\n" +
 	"\tjoined_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bjoinedAt\x12!\n" +
-	"\fstored_bytes\x18\x04 \x01(\x04R\vstoredBytes\".\n" +
+	"\fstored_bytes\x18\x04 \x01(\x04R\vstoredBytes\x12'\n" +
+	"\x05roles\x18\x05 \x03(\x0e2\x11.sisyphus.v1.RoleR\x05roles\".\n" +
 	"\x13RemoveMemberRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"\x16\n" +
 	"\x14RemoveMemberResponse\"\x0e\n" +
@@ -1371,36 +1383,37 @@ var file_sisyphus_v1_pool_proto_depIdxs = []int32{
 	15, // 3: sisyphus.v1.ListMembersResponse.members:type_name -> sisyphus.v1.Member
 	0,  // 4: sisyphus.v1.Member.role:type_name -> sisyphus.v1.Role
 	25, // 5: sisyphus.v1.Member.joined_at:type_name -> google.protobuf.Timestamp
-	22, // 6: sisyphus.v1.ClusterStatusResponse.members:type_name -> sisyphus.v1.ClusterMember
-	23, // 7: sisyphus.v1.ClusterStatusResponse.pins:type_name -> sisyphus.v1.ClusterPin
-	24, // 8: sisyphus.v1.ClusterPin.copies:type_name -> sisyphus.v1.ClusterCopy
-	1,  // 9: sisyphus.v1.PoolService.Join:input_type -> sisyphus.v1.JoinRequest
-	7,  // 10: sisyphus.v1.PoolService.Swarm:input_type -> sisyphus.v1.SwarmRequest
-	3,  // 11: sisyphus.v1.PoolService.IsMember:input_type -> sisyphus.v1.IsMemberRequest
-	5,  // 12: sisyphus.v1.PoolService.Relays:input_type -> sisyphus.v1.RelaysRequest
-	5,  // 13: sisyphus.v1.PoolService.WatchRelays:input_type -> sisyphus.v1.RelaysRequest
-	9,  // 14: sisyphus.v1.PoolService.Invite:input_type -> sisyphus.v1.InviteRequest
-	11, // 15: sisyphus.v1.PoolService.ListMembers:input_type -> sisyphus.v1.ListMembersRequest
-	16, // 16: sisyphus.v1.PoolService.RemoveMember:input_type -> sisyphus.v1.RemoveMemberRequest
-	13, // 17: sisyphus.v1.PoolService.SetWorkFor:input_type -> sisyphus.v1.SetWorkForRequest
-	18, // 18: sisyphus.v1.PoolService.Rekey:input_type -> sisyphus.v1.RekeyRequest
-	20, // 19: sisyphus.v1.PoolService.ClusterStatus:input_type -> sisyphus.v1.ClusterStatusRequest
-	2,  // 20: sisyphus.v1.PoolService.Join:output_type -> sisyphus.v1.JoinResponse
-	8,  // 21: sisyphus.v1.PoolService.Swarm:output_type -> sisyphus.v1.SwarmResponse
-	4,  // 22: sisyphus.v1.PoolService.IsMember:output_type -> sisyphus.v1.IsMemberResponse
-	6,  // 23: sisyphus.v1.PoolService.Relays:output_type -> sisyphus.v1.RelaysResponse
-	6,  // 24: sisyphus.v1.PoolService.WatchRelays:output_type -> sisyphus.v1.RelaysResponse
-	10, // 25: sisyphus.v1.PoolService.Invite:output_type -> sisyphus.v1.InviteResponse
-	12, // 26: sisyphus.v1.PoolService.ListMembers:output_type -> sisyphus.v1.ListMembersResponse
-	17, // 27: sisyphus.v1.PoolService.RemoveMember:output_type -> sisyphus.v1.RemoveMemberResponse
-	14, // 28: sisyphus.v1.PoolService.SetWorkFor:output_type -> sisyphus.v1.SetWorkForResponse
-	19, // 29: sisyphus.v1.PoolService.Rekey:output_type -> sisyphus.v1.RekeyResponse
-	21, // 30: sisyphus.v1.PoolService.ClusterStatus:output_type -> sisyphus.v1.ClusterStatusResponse
-	20, // [20:31] is the sub-list for method output_type
-	9,  // [9:20] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	0,  // 6: sisyphus.v1.Member.roles:type_name -> sisyphus.v1.Role
+	22, // 7: sisyphus.v1.ClusterStatusResponse.members:type_name -> sisyphus.v1.ClusterMember
+	23, // 8: sisyphus.v1.ClusterStatusResponse.pins:type_name -> sisyphus.v1.ClusterPin
+	24, // 9: sisyphus.v1.ClusterPin.copies:type_name -> sisyphus.v1.ClusterCopy
+	1,  // 10: sisyphus.v1.PoolService.Join:input_type -> sisyphus.v1.JoinRequest
+	7,  // 11: sisyphus.v1.PoolService.Swarm:input_type -> sisyphus.v1.SwarmRequest
+	3,  // 12: sisyphus.v1.PoolService.IsMember:input_type -> sisyphus.v1.IsMemberRequest
+	5,  // 13: sisyphus.v1.PoolService.Relays:input_type -> sisyphus.v1.RelaysRequest
+	5,  // 14: sisyphus.v1.PoolService.WatchRelays:input_type -> sisyphus.v1.RelaysRequest
+	9,  // 15: sisyphus.v1.PoolService.Invite:input_type -> sisyphus.v1.InviteRequest
+	11, // 16: sisyphus.v1.PoolService.ListMembers:input_type -> sisyphus.v1.ListMembersRequest
+	16, // 17: sisyphus.v1.PoolService.RemoveMember:input_type -> sisyphus.v1.RemoveMemberRequest
+	13, // 18: sisyphus.v1.PoolService.SetWorkFor:input_type -> sisyphus.v1.SetWorkForRequest
+	18, // 19: sisyphus.v1.PoolService.Rekey:input_type -> sisyphus.v1.RekeyRequest
+	20, // 20: sisyphus.v1.PoolService.ClusterStatus:input_type -> sisyphus.v1.ClusterStatusRequest
+	2,  // 21: sisyphus.v1.PoolService.Join:output_type -> sisyphus.v1.JoinResponse
+	8,  // 22: sisyphus.v1.PoolService.Swarm:output_type -> sisyphus.v1.SwarmResponse
+	4,  // 23: sisyphus.v1.PoolService.IsMember:output_type -> sisyphus.v1.IsMemberResponse
+	6,  // 24: sisyphus.v1.PoolService.Relays:output_type -> sisyphus.v1.RelaysResponse
+	6,  // 25: sisyphus.v1.PoolService.WatchRelays:output_type -> sisyphus.v1.RelaysResponse
+	10, // 26: sisyphus.v1.PoolService.Invite:output_type -> sisyphus.v1.InviteResponse
+	12, // 27: sisyphus.v1.PoolService.ListMembers:output_type -> sisyphus.v1.ListMembersResponse
+	17, // 28: sisyphus.v1.PoolService.RemoveMember:output_type -> sisyphus.v1.RemoveMemberResponse
+	14, // 29: sisyphus.v1.PoolService.SetWorkFor:output_type -> sisyphus.v1.SetWorkForResponse
+	19, // 30: sisyphus.v1.PoolService.Rekey:output_type -> sisyphus.v1.RekeyResponse
+	21, // 31: sisyphus.v1.PoolService.ClusterStatus:output_type -> sisyphus.v1.ClusterStatusResponse
+	21, // [21:32] is the sub-list for method output_type
+	10, // [10:21] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_pool_proto_init() }

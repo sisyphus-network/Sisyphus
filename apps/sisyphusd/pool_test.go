@@ -221,7 +221,7 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 	})
 	srv := api.NewServer(
 		api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, Replication: replicated, MaxStoreBytesPerClient: clientShare, Names: api.NewNames(kept, func(id string) bool {
-			_, admitted := admitted.Role(id)
+			_, admitted := admitted.Roles(id)
 			return admitted
 		})},
 		grpc.StreamInterceptor(countBlobGets(gets)),

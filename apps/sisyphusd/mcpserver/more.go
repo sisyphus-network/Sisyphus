@@ -380,7 +380,11 @@ func (s *server) listMembers(ctx context.Context, _ none) (any, error) {
 	}
 	out := []map[string]any{}
 	for _, m := range listed.GetMembers() {
-		out = append(out, map[string]any{"peer_id": m.GetPeerId(), "role": role(m.GetRole()), "joined": when(m.GetJoinedAtMs())})
+		roles := []string{}
+		for _, r := range m.GetRoles() {
+			roles = append(roles, role(r))
+		}
+		out = append(out, map[string]any{"peer_id": m.GetPeerId(), "role": role(m.GetRole()), "roles": roles, "joined": when(m.GetJoinedAtMs())})
 	}
 	return out, nil
 }

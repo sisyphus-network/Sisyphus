@@ -137,12 +137,16 @@ message SetWorkForResponse {}
 
 message Member {
   string node_id = 1;
+  // The first of roles, for readers that know a member by one role.
   Role role = 2;
   google.protobuf.Timestamp joined_at = 3;
   // For a client, how many bytes it keeps in the coordinator's store: what
   // its own pins and its jobs' pins keep, each blob counted once however
   // many ways it keeps it, and in full though others keep it too.
   uint64 stored_bytes = 4;
+  // Every role the member holds, worker before client: a worker that has
+  // redeemed a client invitation holds both.
+  repeated Role roles = 5;
 }
 
 message RemoveMemberRequest {
