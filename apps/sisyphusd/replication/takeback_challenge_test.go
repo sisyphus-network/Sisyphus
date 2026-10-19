@@ -47,7 +47,7 @@ func TestSlowTakeBackDoesNotDelayOtherFollowersChallengeExpiry(t *testing.T) {
 	}()
 	select {
 	case <-enteredFetch:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("signed-list recovery did not enter its remote fetch")
 	}
 
@@ -64,7 +64,7 @@ func TestSlowTakeBackDoesNotDelayOtherFollowersChallengeExpiry(t *testing.T) {
 
 	select {
 	case <-expiredDone:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("challenge expiry waited for a follower's network restore")
 	}
 	if got := r.Status("").GetChallengesFailed(); got != 2 {
@@ -73,7 +73,7 @@ func TestSlowTakeBackDoesNotDelayOtherFollowersChallengeExpiry(t *testing.T) {
 	close(releaseFetch)
 	select {
 	case <-slowDone:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("signed-list recovery did not finish after releasing its fetch")
 	}
 }

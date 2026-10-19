@@ -208,7 +208,7 @@ func TestManagerExpiresAChallengeWithoutAnotherFollowerRequest(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("replication deadline loop did not stop after cancellation")
 	}
 }
@@ -269,13 +269,13 @@ func TestManagerPushesScheduledChallengesOverTheAssignmentStream(t *testing.T) {
 		if len(response.GetChallenges()) != 1 || response.GetList() != nil {
 			t.Fatalf("scheduled stream response = %v, want challenge-only response", response)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("coordinator did not push a scheduled challenge to the connected follower")
 	}
 	stopRun()
 	select {
 	case <-runDone:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("challenge scheduler did not stop after cancellation")
 	}
 	stopWatch()
@@ -284,7 +284,7 @@ func TestManagerPushesScheduledChallengesOverTheAssignmentStream(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("assignment watcher ended with %v, want cancellation", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("assignment watcher did not stop after cancellation")
 	}
 }
@@ -349,7 +349,7 @@ func TestExpireSkipsAChallengeChangedWhileWaitingForItsLock(t *testing.T) {
 	unlock()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("deadline handler did not finish after the challenge response settled")
 	}
 	if got := r.Status("").GetChallengesFailed(); got != 0 {
