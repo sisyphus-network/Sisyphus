@@ -591,7 +591,7 @@ func TestAttachmentRetentionFailureDoesNotCallTheModel(t *testing.T) {
 	served := newModel(t)
 	db := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
 	p := startPool(t, runtime.Builtin())
-	a := &assistant{store: db, pool: p.coord, workloads: runtime.Builtin(), offered: func(string) bool { return true }}
+	a := &assistant{store: db, pool: p.coord, workloads: runtime.Builtin(), offered: func(string) bool { return true }, filePins: p.store}
 	if err := a.SetModelConfig(nodedb.ModelConfig{Provider: ai.Ollama, BaseURL: served.URL, Model: "test-model"}); err != nil {
 		t.Fatal(err)
 	}
@@ -608,6 +608,33 @@ func TestAttachmentRetentionFailureDoesNotCallTheModel(t *testing.T) {
 	}
 	if messages, err := db.ChatMessages(id); err != nil || len(messages) != 0 {
 		t.Fatalf("rejected question was saved: %v, %v", messages, err)
+	}
+}
+
+// An assistant that keeps no pins for attachments, as on a node that has
+// joined another's pool, refuses a question with files before anything is
+// recorded or the model is asked (#500).
+func TestAnAssistantThatKeepsNoAttachmentsRefusesThem(t *testing.T) {
+	served := newModel(t)
+	db := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
+	p := startPool(t, runtime.Builtin())
+	a := &assistant{store: db, pool: p.coord, workloads: runtime.Builtin(), offered: func(string) bool { return true }}
+	if err := a.SetModelConfig(nodedb.ModelConfig{Provider: ai.Ollama, BaseURL: served.URL, Model: "test-model"}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := a.AskWithFiles(context.Background(), "", "Question", []string{"bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"}, func(string, planner.Event) {
+		t.Error("a refused question emitted planner events")
+	})
+	if id != "" || status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "attachments are not yet kept") {
+		t.Fatalf("AskWithFiles: %q, %v", id, err)
+	}
+	if chats, err := db.Chats(); err != nil || len(chats) != 0 {
+		t.Errorf("a refused question left chats %v, %v", chats, err)
+	}
+	served.mu.Lock()
+	defer served.mu.Unlock()
+	if len(served.asked) != 0 {
+		t.Error("the model was asked")
 	}
 }
 

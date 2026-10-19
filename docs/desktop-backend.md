@@ -169,7 +169,7 @@ sisyphusd run --role worker --coordinator <this node's address> --join <invitati
 
 Show the invitation with a copy button and its expiry. Once used, the machine appears in `ListMembers`, and in `ListWorkers` while it is connected. An invitation is the only secret involved, and it works once.
 
-These calls exist only on a node that coordinates a pool. On a worker-only node they fail with `FAILED_PRECONDITION`.
+Invitations exist only on a node that coordinates a pool. The file calls work there, and on a worker node that holds the client role in the pool it joined, where they keep files in that pool (see "Jobs in a pool this node has joined" below). On any other node, both fail with `FAILED_PRECONDITION`.
 
 ## Private files and jobs
 
@@ -192,6 +192,7 @@ It needs a node that runs a worker, which is every node unless it was started wi
 - `ListJobs` and `WatchJobs` list the jobs this node submitted there, newest first. `WatchJobs` is sent the list again as each of them changes. A job the pool no longer has drops out.
 - `Ask` plans on that pool. The model is told only of the workloads its workers run, and the jobs it asks for run there as this node's own. The conversation and the model's key stay on this machine.
 - `ListWorkers` and `WatchWorkers` list the pool's workers. They are another pool's machines, so show them in the joined-pool context, not as this node's peers.
+- `StoreFile`, `FetchFile`, `ListFiles` and `RemoveFile` keep the user's files in that pool. A stored file goes to the coordinator as this node and is kept there for it as a client, counted against the client's share (`max_store_bytes_per_client`). A `private` file is sealed with this node's key first, so the coordinator holds only ciphertext. The file's name stays in this node's own list, and `RemoveFile` releases the client's pin. A file's CID can go straight into a job's parameters. Chat attachments are not kept in a joined pool yet: a `chat_attachment` upload, or `Ask` with files, is answered `FAILED_PRECONDITION` (#500).
 
 A worker node without the client role is answered `FAILED_PRECONDITION`. While it is not connected to the pool, the answer is `UNAVAILABLE`, so the app can tell "not allowed" from "not reachable".
 

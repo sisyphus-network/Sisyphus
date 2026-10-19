@@ -28,6 +28,9 @@ const blobChunkSize = 256 << 10
 // userOwner is who pins made through the service are held for.
 const userOwner = "user"
 
+// UserOwner is who the user's own files are pinned for, as a store sees it.
+const UserOwner = userOwner
+
 type blobService struct {
 	pb.UnimplementedBlobServiceServer
 	store blobStore
@@ -213,7 +216,9 @@ func (s *blobService) Put(stream grpc.ClientStreamingServer[pb.PutBlobRequest, p
 func (s *blobService) attemptOf(ctx context.Context, first *pb.PutBlobRequest) (string, error) {
 	caller, isGuest := guest(ctx, s.owner)
 	if first.GetTaskId() == "" {
-		if isGuest && s.workers != nil && s.workers(caller) {
+		// A worker that is a client as well uploads as a client: what it
+		// sends is held to the client's share like any client's (#500).
+		if isGuest && s.workers != nil && s.workers(caller) && !(s.clients != nil && s.clients(caller)) {
 			return "", status.Error(codes.FailedPrecondition, "a worker uploads only for an attempt at a task it holds, and this upload names none")
 		}
 		return "", nil
