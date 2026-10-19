@@ -64,7 +64,7 @@ Anything on the machine can **read** what the node is, who it knows and who work
 | `RemoveFile` | yes | Stop keeping a file. |
 | `CreateInvitation` | yes | An invitation for another machine to join with, as a worker or as a client that only submits jobs. Works once; lasts an hour unless `ttl_seconds` says otherwise. |
 | `ListMembers` | | The nodes admitted to the pool, with their roles (`role` is the first; `roles` all of them, as a node can be both worker and client) and when they joined. |
-| `RemoveMember` | yes | Take a node out of the pool and disconnect it. |
+| `RemoveMember` | yes | Take a node out of the pool, disconnect it, and release the files it kept here as a client. |
 | `JoinPool` | yes | Join another node's pool with its address and an invitation from it, and start working for it. No restart. |
 | `GetJoinedPool`, `WatchJoinedPool` | | On a node started with `--role worker`: the pool it has joined and how it stands with it. See below. |
 

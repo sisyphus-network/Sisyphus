@@ -205,7 +205,7 @@ type PoolAdmin struct {
 // NewPoolAdmin returns the means to change the membership of cfg's pool.
 func NewPoolAdmin(cfg Config) *PoolAdmin {
 	return &PoolAdmin{service: &poolService{
-		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm,
+		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, pins: clientPinsOf(cfg.Store),
 	}}
 }
 

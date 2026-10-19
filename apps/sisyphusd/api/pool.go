@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -15,6 +17,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // defaultInviteTTL is how long an invitation lasts if its issuer does not say.
@@ -35,6 +38,58 @@ type poolService struct {
 	// workFor is the list of nodes this one takes work from, or nil if it
 	// keeps none.
 	workFor WorkFor
+	// pins is what the pool's store keeps for its clients, or nil if this
+	// node keeps no store.
+	pins ClientPins
+}
+
+// ClientPins is the part of a store that keeps pins for a pool's clients.
+// A *storage.Store is one.
+type ClientPins interface {
+	Pins() []storage.Pin
+	Unpin(owner string, cids ...cid.Cid) error
+}
+
+// clientPinsOf is a store's pins, or nil for no store.
+func clientPinsOf(store *storage.Store) ClientPins {
+	if store == nil {
+		return nil
+	}
+	return store
+}
+
+// releaseClient lets go of everything a store keeps for a client in its own
+// name: what it pinned counts against its share, and once it is no longer
+// a member nobody is left who could release it (#509).
+func releaseClient(store ClientPins, client string) error {
+	owner := clientOwner + client
+	var held []cid.Cid
+	for _, pin := range store.Pins() {
+		if pin.Owner == owner {
+			held = append(held, pin.CID)
+		}
+	}
+	if len(held) == 0 {
+		return nil
+	}
+	return store.Unpin(owner, held...)
+}
+
+// ReleaseFormerClients lets go of what a store keeps for each client that
+// is no longer a member: one removed while its release failed, or before
+// removal released anything at all (#509).
+func ReleaseFormerClients(store ClientPins, member func(id string) bool) error {
+	var gone []string
+	for _, pin := range store.Pins() {
+		if client, ok := strings.CutPrefix(pin.Owner, clientOwner); ok && !member(client) && !slices.Contains(gone, client) {
+			gone = append(gone, client)
+		}
+	}
+	var errs []error
+	for _, client := range gone {
+		errs = append(errs, releaseClient(store, client))
+	}
+	return errors.Join(errs...)
 }
 
 // Swarm is a private IPFS network this node is on.
@@ -212,12 +267,21 @@ func (s *poolService) removeMember(ctx context.Context, nodeID string) error {
 	// Being off the list stops it connecting again; this ends the
 	// connection it has now.
 	s.coordinator.Remove(nodeID)
+	// What it kept here as a client is let go, so that it no longer counts.
+	// If that fails, it is let go the next time the node starts.
+	var released error
+	if s.pins != nil {
+		released = releaseClient(s.pins, nodeID)
+	}
 	// It still holds the key to the pool's private network, so that changes
 	// too.
 	if s.swarm != nil {
 		if err := s.rekey(ctx); err != nil {
 			return status.Errorf(codes.Internal, "node %s was removed, but it still holds the key to the pool's private IPFS network, which could not be changed: %v", nodeID, err)
 		}
+	}
+	if released != nil {
+		return status.Errorf(codes.Internal, "node %s was removed, but what it kept here could not be let go yet; it will be when this node next starts: %v", nodeID, released)
 	}
 	return nil
 }
