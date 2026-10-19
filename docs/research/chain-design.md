@@ -1,6 +1,6 @@
 # The chain: what Dash and Evrmore each bring
 
-A design note for [#20](https://github.com/sisyphus-network/Sisyphus/issues/20). It is a proposal to argue with. No fork has been made and no chain node has been run for it. Facts about the two chains were gathered on 10 October 2026 from their own documents and source, and each says where it is from; a fact marked *unconfirmed* was recalled and not found in a source.
+A design note for [#20](https://github.com/sisyphus-network/Sisyphus/issues/20). It is a proposal to argue with. No fork has been made and no chain node has been run for it. Core design facts were gathered on 10 October 2026 from the chains' own documents and source, and each says where it is from; upstream release cadence below was measured on 19 October 2026. A fact marked *unconfirmed* was recalled and not found in a source.
 
 ## What each chain is
 
@@ -26,6 +26,21 @@ A design note for [#20](https://github.com/sisyphus-network/Sisyphus/issues/20).
 - **Limits.** No contracts and no rules on transfer beyond tags and freezing. One global namespace, first come first served. The burned fees pay nobody, so asset activity does not fund security.
 - **Evrmore** is a fork of Ravencoin's code and coin balances with a new first block in late October 2022; assets were not carried over ([repository](https://github.com/EvrmoreOrg/Evrmore)). It mines with EvrProgPow and, unlike Ravencoin, requires a tenth of every block reward to go to a development fund ([miner fund](https://raw.githubusercontent.com/EvrmoreOrg/Evrmore/master/src/minerdevfund.cpp)). Its asset layer on mainnet is Ravencoin's. Tolls on transfers, burning and reminting, and metadata that cannot be changed are in a test release and not on mainnet ([releases](https://github.com/EvrmoreOrg/Evrmore/releases)). Its maximum supply and the terms of its airdrop are *unconfirmed*.
 - **Licence.** MIT.
+
+### Upstream release and maintenance cadence
+
+I counted published GitHub releases dated **19 October 2024 through 19 October 2026** (inclusive; queried 19 October 2026), rather than counting every git tag:
+
+| Upstream | Published stable releases | Published pre-releases | Release range in the window |
+| --- | ---: | ---: | --- |
+| [Dash Core](https://github.com/dashpay/dash/releases) | 14 | 11 | `v21.1.1` (23 Oct 2024) to `v23.1.8` (3 Aug 2026); `v24.0.0-rc.3` was the latest pre-release (7 Oct 2026) |
+| [Evrmore Core](https://github.com/EvrmoreOrg/Evrmore/releases) | 2 | 1 | `v1.0.5.2` (10 Jun 2026) to `v1.1` (13 Aug 2026); `v2.0.0test` is testnet-only |
+
+This is a count of published releases, not a claim that every release needs to be merged. The release notes show why a fork cannot simply ignore the stream: Dash [`v22.0.0`](https://github.com/dashpay/dash/releases/tag/v22.0.0) was a required major upgrade, [`v23.1.7`](https://github.com/dashpay/dash/releases/tag/v23.1.7) was mandatory, and [`v23.1.8`](https://github.com/dashpay/dash/releases/tag/v23.1.8) fixes three remotely triggerable crashes. Evrmore [`v1.1`](https://github.com/EvrmoreOrg/Evrmore/releases/tag/v1.1) addresses a mining vulnerability and an asset-database/reindex bug. Those are upstream maintenance obligations even if Sisyphus never adopts their product features.
+
+The raw commit-graph distance is also uneven. GitHub's comparison reports **5,833 commits** from Dash `v21.1.1` to `v23.1.8`, versus **4 commits** from Evrmore `v1.0.5.2` to `v1.1` ([Dash comparison](https://github.com/dashpay/dash/compare/v21.1.1...v23.1.8), [Evrmore comparison](https://github.com/EvrmoreOrg/Evrmore/compare/v1.0.5.2...v1.1)). This measures ancestry distance between release tags, not the number of commits a fork must cherry-pick: it includes unrelated features, merges, and development history. It does show that "track upstream" means very different workloads for the two candidates.
+
+**Implication (inference):** a Dash-based fork needs a maintained upstream review lane, not occasional rebasing as an afterthought. At minimum, each stable release should be triaged for security fixes, consensus/serialization changes, RPC/API changes and build/dependency changes; mandatory or security releases need an explicit adopt, backport or reject decision, with regression/regtest evidence. Evrmore's lower release and tag distance is cheaper to inspect, but the release count alone cannot establish its security or maintenance quality. Neither count answers whether the two codebases build together or how much an asset-layer port costs; those still require the regtest/port spike in #20.
 
 ### What a network already on Evrmore found
 
@@ -100,6 +115,6 @@ Before implementation, decide whether Sisyphus connects only to an already-runni
 | What exactly does a quorum attest? | The dispute window and stake design from #19, written as a message format. |
 | Which of the three ways to have assets? | Both chains built and run in regtest; a spike of option 2. |
 | How does `sisyphusd` talk to the chain? | This interface sketch separates authenticated RPC from local, unauthenticated ZMQ notifications. A regtest prototype against a pinned Dash release should verify reconnect recovery, reorganisation handling and the wallet/credential boundary. |
-| How much of upstream can be tracked? | A count of Dash's releases over two years and of what a fork would have to carry across each. |
+| How much of upstream can be tracked? | The two-year release counts and tag-to-tag commit distances are measured above. Still needed: classify each relevant release's security, consensus, RPC/API and dependency changes, then test a sustainable review/backport lane on a pinned Dash release. |
 
 None of this costs money. All of it costs time with two large C++ codebases, and belongs to whoever knows them best.
