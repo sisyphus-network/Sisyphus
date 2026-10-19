@@ -1125,7 +1125,11 @@ test('Settings pickers open in full view, above every card and inside the window
       await trigger.click()
       const menu = page.getByRole('dialog', { name, exact: true })
       await menu.waitFor()
-      await page.waitForTimeout(400) // its 220 ms entrance
+      await menu.evaluate(async (element) => {
+        await new Promise(requestAnimationFrame)
+        await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)))
+        await new Promise(requestAnimationFrame)
+      })
       const anchor = await trigger.boundingBox()
       const seen = await menu.evaluate((menu, { name, anchor }) => {
         const box = menu.getBoundingClientRect()
@@ -1138,7 +1142,6 @@ test('Settings pickers open in full view, above every card and inside the window
         }).map((choice) => choice.textContent?.trim())
         return {
           box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom },
-          positioner: menu.parentElement?.getBoundingClientRect().toJSON(),
           trigger: anchor,
           window: { width: window.innerWidth, height: window.innerHeight },
           // The trigger stays in sight to show what is chosen: the menu may
@@ -1184,8 +1187,12 @@ test('Settings pickers open in full view, above every card and inside the window
 
     // As tall as the tests' window, and as short as the app allows (650).
     for (const height of [800, 650]) {
-      await app.evaluate(({ BrowserWindow }, height) => BrowserWindow.getAllWindows()[0].setSize(1180, height), height)
-      await page.waitForFunction((height) => Math.abs(window.outerHeight - height) < 60, height)
+      let resized = false
+      for (let attempt = 0; attempt < 3 && !resized; attempt++) {
+        await app.evaluate(({ BrowserWindow }, height) => BrowserWindow.getAllWindows()[0].setSize(1180, height), height)
+        resized = await page.waitForFunction((height) => Math.abs(window.outerHeight - height) < 60, height, { timeout: 1500 }).then(() => true, () => false)
+      }
+      assert.ok(resized, `the window did not reach the requested ${height}px height after retries`)
       await opensInView('General', 'Language', height)
       await opensInView('General', 'Accent', height)
       // This one opens over the wizard's own dialog, not only over a card.
