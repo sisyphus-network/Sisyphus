@@ -513,10 +513,23 @@ func (s *localService) WatchPeers(_ *nodepb.WatchPeersRequest, stream grpc.Serve
 // errNoPool is the answer to a call about a pool on a node that runs none.
 var errNoPool = status.Error(codes.FailedPrecondition, "this node coordinates no pool, so it has no workers or jobs of its own")
 
+// jobsAvailable says whether the node has a pool's workers and jobs to
+// offer: those of the pool it coordinates, or, on a node that has joined
+// another's pool, that pool's, when the JobControl says it may reach them.
+func (s *localService) jobsAvailable() error {
+	if s.cfg.Jobs == nil {
+		return errNoPool
+	}
+	if gated, ok := s.cfg.Jobs.(interface{ Available() error }); ok {
+		return gated.Available()
+	}
+	return nil
+}
+
 // ListWorkers lists the nodes connected to this one as its workers.
 func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) (*nodepb.ListWorkersResponse, error) {
-	if s.cfg.Jobs == nil {
-		return nil, errNoPool
+	if err := s.jobsAvailable(); err != nil {
+		return nil, err
 	}
 	return s.workerList(), nil
 }
@@ -526,8 +539,8 @@ func (s *localService) WatchWorkers(_ *nodepb.ListWorkersRequest, stream grpc.Se
 	if err := s.authorize(stream.Context()); err != nil {
 		return err
 	}
-	if s.cfg.Jobs == nil {
-		return errNoPool
+	if err := s.jobsAvailable(); err != nil {
+		return err
 	}
 	var changes <-chan struct{}
 	var unsubscribe func()
@@ -565,8 +578,8 @@ func (s *localService) SubmitJob(ctx context.Context, req *nodepb.SubmitJobReque
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	if s.cfg.Jobs == nil {
-		return nil, errNoPool
+	if err := s.jobsAvailable(); err != nil {
+		return nil, err
 	}
 	spec := &pb.JobSpec{
 		Workload: req.GetWorkload(), Params: req.GetParams(), Mode: pb.ScheduleMode(req.GetMode()), MaxTasks: req.GetMaxTasks(),
@@ -593,8 +606,8 @@ func (s *localService) CancelJob(ctx context.Context, req *nodepb.CancelJobReque
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	if s.cfg.Jobs == nil {
-		return nil, errNoPool
+	if err := s.jobsAvailable(); err != nil {
+		return nil, err
 	}
 	job, err := s.cfg.Jobs.Cancel(req.GetJobId())
 	if err != nil {
@@ -613,8 +626,8 @@ func (s *localService) WatchJobEvents(req *nodepb.WatchJobEventsRequest, stream 
 	if err := s.authorize(stream.Context()); err != nil {
 		return err
 	}
-	if s.cfg.Jobs == nil {
-		return errNoPool
+	if err := s.jobsAvailable(); err != nil {
+		return err
 	}
 	return s.cfg.Jobs.WatchEvents(stream.Context(), req.GetJobId(), req.GetAfterSeq(), func(e *pb.JobEvent) error {
 		return stream.Send(&nodepb.JobEvent{
@@ -627,8 +640,8 @@ func (s *localService) GetJob(ctx context.Context, req *nodepb.GetJobRequest) (*
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	if s.cfg.Jobs == nil {
-		return nil, errNoPool
+	if err := s.jobsAvailable(); err != nil {
+		return nil, err
 	}
 	job, err := s.cfg.Jobs.Get(req.GetJobId())
 	if err != nil {
@@ -642,8 +655,8 @@ func (s *localService) ListJobs(ctx context.Context, _ *nodepb.ListJobsRequest) 
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	if s.cfg.Jobs == nil {
-		return nil, errNoPool
+	if err := s.jobsAvailable(); err != nil {
+		return nil, err
 	}
 	return &nodepb.ListJobsResponse{Jobs: s.jobs(), Revision: 1}, nil
 }
@@ -654,8 +667,8 @@ func (s *localService) WatchJobs(_ *nodepb.WatchJobsRequest, stream grpc.ServerS
 	if err := s.authorize(stream.Context()); err != nil {
 		return err
 	}
-	if s.cfg.Jobs == nil {
-		return errNoPool
+	if err := s.jobsAvailable(); err != nil {
+		return err
 	}
 	var changes <-chan struct{}
 	var unsubscribe func()
