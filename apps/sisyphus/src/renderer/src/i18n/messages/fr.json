@@ -436,6 +436,9 @@
     "cores": "cœurs",
     "workersLoading": "Chargement des exécutants",
     "workersUnavailable": "Les informations des exécutants sont indisponibles",
+    "joinedPool": "Pool rejoint", "poolLoading": "Vérification de la connexion au pool", "poolUnavailable": "État du pool indisponible ; reconnexion",
+    "poolName": "Pool", "poolAddress": "Adresse du coordinateur", "poolRoles": "Vos rôles", "poolWorkers": "Exécutants du pool",
+    "poolWorkerRole": "Exécutant", "poolClientRole": "Client", "poolConnected": "Connecté", "poolConnecting": "Connexion", "poolDisconnected": "Reconnexion",
     "noNodeDetails": "Les détails du nœud ne sont pas encore disponibles",
     "nodeDetailsPending": "Les détails apparaîtront lors de la prochaine mise à jour du nœud."
   },

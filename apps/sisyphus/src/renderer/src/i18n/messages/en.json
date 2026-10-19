@@ -436,6 +436,9 @@
     "cores": "cores",
     "workersLoading": "Loading workers",
     "workersUnavailable": "Worker information is unavailable",
+    "joinedPool": "Joined pool", "poolLoading": "Checking pool connection", "poolUnavailable": "Pool status is unavailable; reconnecting",
+    "poolName": "Pool", "poolAddress": "Coordinator address", "poolRoles": "Your roles", "poolWorkers": "Workers in pool",
+    "poolWorkerRole": "Worker", "poolClientRole": "Client", "poolConnected": "Connected", "poolConnecting": "Connecting", "poolDisconnected": "Reconnecting",
     "noNodeDetails": "Node details are not available yet",
     "nodeDetailsPending": "Details will appear when the node sends its next snapshot."
   },

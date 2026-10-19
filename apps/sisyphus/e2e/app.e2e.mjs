@@ -55,6 +55,9 @@ test('the window shows the node it is connected to', async () => {
     // The node the window describes is the one it was started against,
     // and that node's own worker is listed with what it can run.
     await page.getByText(node.id(), { exact: true }).waitFor()
+    // A coordinator has no joined pool; don't show an error-shaped pool panel
+    // for the normal standalone-node case.
+    await page.getByText('Joined pool', { exact: true }).waitFor({ state: 'detached' })
     const worker = page.getByRole('article').filter({ hasText: 'rig' })
     await worker.getByText('primes').waitFor()
     assert.match(await worker.innerText(), /0\/2\s*Tasks/)
@@ -973,6 +976,62 @@ test('the Pool view joins a coordinator with an invitation', async () => {
     await app.close()
     profile.remove()
     await joiningNode.remove()
+    await coordinator.remove()
+  }
+})
+
+test('node overview streams the joined pool without exposing worker counts to worker-only nodes', async () => {
+  const coordinator = await testNode()
+  const worker = await testNode({ role: 'worker', coordinator, name: 'joining rig' })
+  let secondWorker
+  const profile = testProfile()
+  const { app, page } = await launch(worker, profile)
+  try {
+    await open(page, 'Node overview')
+    await page.getByText('Joined pool', { exact: true }).waitFor().catch(async () => {
+      throw new Error(`joined-pool panel did not appear:\n${await page.locator('body').innerText()}\nworker daemon:\n${worker.output}`)
+    })
+    const poolSection = page.locator('[class*=rounded-2xl]').filter({ hasText: 'Joined pool' }).last()
+    await poolSection.getByText('rig', { exact: true }).waitFor()
+    await poolSection.getByText('Connected', { exact: true }).waitFor().catch(async () => {
+      const apiState = await page.evaluate(() => window.sisyphus.call('getJoinedPool').catch((error) => String(error)))
+      const streamEvents = await page.evaluate(() => new Promise((resolve) => {
+        const events = []
+        const stop = window.sisyphus.stream('watchJoinedPool', {}, (event) => events.push(event))
+        setTimeout(() => { stop(); resolve(events) }, 1000)
+      }))
+      throw new Error(`worker did not reach the coordinator in the UI:\n${worker.output}\nAPI says: ${JSON.stringify(apiState)}\nstream says: ${JSON.stringify(streamEvents)}\n${await page.locator('body').innerText()}`)
+    })
+    await poolSection.getByText('Worker', { exact: true }).waitFor()
+    await poolSection.getByText('Workers in pool', { exact: true }).waitFor({ state: 'detached' })
+    await coordinator.stop()
+    await poolSection.getByText('Reconnecting', { exact: true }).waitFor({ timeout: 15000 })
+    await poolSection.getByText('rig', { exact: true }).waitFor()
+    await coordinator.start()
+    await poolSection.getByText('Connected', { exact: true }).waitFor({ timeout: 15000 })
+    const clientInvitation = poolInvitation(coordinator, 'client')
+    const clientJoin = await page.evaluate(({ address, invitation }) => window.sisyphus.call('joinPool', { address, invitation }), { address: coordinator.pool, invitation: clientInvitation })
+    await page.getByText('Worker, Client', { exact: true }).waitFor().catch(async () => {
+      const current = await page.evaluate(() => window.sisyphus.call('getJoinedPool'))
+      throw new Error(`client role did not reach the renderer: ${JSON.stringify({ clientJoin, current })}\n${await page.locator('body').innerText()}`)
+    })
+    await page.getByText('Workers in pool', { exact: true }).waitFor()
+    const joinedState = await page.evaluate(() => window.sisyphus.call('getJoinedPool'))
+    await page.getByText(String(joinedState.workerCount), { exact: true }).last().waitFor()
+    secondWorker = await testNode({ role: 'worker', coordinator, name: 'second worker' })
+    await page.getByText(String(joinedState.workerCount + 1), { exact: true }).last().waitFor({ timeout: 15000 })
+    await coordinator.stop()
+    await poolSection.getByText('Reconnecting', { exact: true }).waitFor({ timeout: 15000 })
+    await page.getByText('Workers in pool', { exact: true }).waitFor({ state: 'detached' })
+    await coordinator.start()
+    await poolSection.getByText('Connected', { exact: true }).waitFor({ timeout: 15000 })
+    await page.getByText('Workers in pool', { exact: true }).waitFor()
+    await page.getByText(String(joinedState.workerCount + 1), { exact: true }).last().waitFor({ timeout: 15000 })
+  } finally {
+    await app.close()
+    profile.remove()
+    await secondWorker?.remove()
+    await worker.remove()
     await coordinator.remove()
   }
 })

@@ -436,6 +436,9 @@
     "cores": "أنوية",
     "workersLoading": "جارٍ تحميل العاملين",
     "workersUnavailable": "معلومات العاملين غير متاحة",
+    "joinedPool": "المجمّع المنضم إليه", "poolLoading": "جارٍ التحقق من اتصال المجمّع", "poolUnavailable": "حالة المجمّع غير متاحة؛ جارٍ إعادة الاتصال",
+    "poolName": "المجمّع", "poolAddress": "عنوان المنسّق", "poolRoles": "أدوارك", "poolWorkers": "العاملون في المجمّع",
+    "poolWorkerRole": "عامل", "poolClientRole": "عميل", "poolConnected": "متصل", "poolConnecting": "جارٍ الاتصال", "poolDisconnected": "جارٍ إعادة الاتصال",
     "noNodeDetails": "تفاصيل العقدة غير متاحة بعد",
     "nodeDetailsPending": "ستظهر التفاصيل عند إرسال العقدة تحديثها التالي."
   },

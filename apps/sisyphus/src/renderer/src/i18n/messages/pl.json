@@ -436,6 +436,9 @@
     "cores": "rdzeni",
     "workersLoading": "Ładowanie wykonawców",
     "workersUnavailable": "Informacje o wykonawcach są niedostępne",
+    "joinedPool": "Dołączona pula", "poolLoading": "Sprawdzanie połączenia z pulą", "poolUnavailable": "Status puli niedostępny; ponowne łączenie",
+    "poolName": "Pula", "poolAddress": "Adres koordynatora", "poolRoles": "Twoje role", "poolWorkers": "Wykonawcy w puli",
+    "poolWorkerRole": "Wykonawca", "poolClientRole": "Klient", "poolConnected": "Połączono", "poolConnecting": "Łączenie", "poolDisconnected": "Ponowne łączenie",
     "noNodeDetails": "Szczegóły węzła nie są jeszcze dostępne",
     "nodeDetailsPending": "Szczegóły pojawią się po kolejnym uaktualnieniu z węzła."
   },

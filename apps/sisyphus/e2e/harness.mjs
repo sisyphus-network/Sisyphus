@@ -43,14 +43,19 @@ export async function until(what, met, seconds = 30) {
 }
 
 /** A node of the tests' own. start() can be called again after stop(), and the node comes back as it was. */
-export async function testNode() {
+export async function testNode({ coordinator, role = 'coordinator', invitationRole = 'worker', name = 'rig' } = {}) {
   if (!existsSync(daemon)) throw new Error(`no daemon at ${daemon}: run "make build" in the repository first, or set SISYPHUS_DAEMON_PATH`)
   const dataDir = mkdtempSync(join(tmpdir(), 'sisyphus-e2e-node-'))
   const [pool, api] = [await freePort(), await freePort()]
   const node = {
-    dataDir, api: `127.0.0.1:${api}`, pool: `127.0.0.1:${pool}`, tokenFile: join(dataDir, 'api.token'), child: null,
+    dataDir, api: `127.0.0.1:${api}`, pool: `127.0.0.1:${pool}`, tokenFile: join(dataDir, 'api.token'), child: null, output: '',
     async start() {
-      node.child = spawn(daemon, ['run', '--data-dir', dataDir, '--listen', node.pool, '--api-listen', node.api, '--name', 'rig', '--slots', '2', '--discovery', 'off'], { stdio: 'ignore' })
+      const poolArgs = role === 'worker'
+        ? ['--role', 'worker', '--coordinator', coordinator.pool, '--join', poolInvitation(coordinator, invitationRole), '--name', name, '--slots', '1']
+        : ['--listen', node.pool, '--name', name, '--slots', '2']
+      node.child = spawn(daemon, ['run', '--data-dir', dataDir, ...poolArgs, '--api-listen', node.api, '--discovery', 'off'], { stdio: role === 'worker' ? ['ignore', 'pipe', 'pipe'] : 'ignore' })
+      node.child.stdout?.on('data', (chunk) => { node.output += chunk })
+      node.child.stderr?.on('data', (chunk) => { node.output += chunk })
       await until('the node answering on its local API', async () => existsSync(node.tokenFile) && await listening(api))
     },
     async stop() {
