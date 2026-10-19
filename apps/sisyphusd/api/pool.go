@@ -255,7 +255,9 @@ func (s *poolService) SetWorkFor(_ context.Context, req *pb.SetWorkForRequest) (
 // It can be asked again until it has answered: what the caller kept goes
 // first, while it is still a member, and a caller that is no longer one is
 // told it has left. An error therefore means the caller has not been taken
-// off the list, and may ask again.
+// off the list, and may ask again. Once it is off the list the leave has
+// committed; the key to the pool's private network is then changed if it
+// can be, and if not the failure is logged for the owner to run pool rekey.
 func (s *poolService) Leave(ctx context.Context, _ *pb.LeaveRequest) (*pb.LeaveResponse, error) {
 	id := caller(ctx)
 	if s.pins != nil {

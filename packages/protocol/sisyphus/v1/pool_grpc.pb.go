@@ -59,12 +59,14 @@ type PoolServiceClient interface {
 	// one joins or leaves. Workers use it to keep relay reservations current
 	// without repeatedly asking for the same list.
 	WatchRelays(ctx context.Context, in *RelaysRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RelaysResponse], error)
-	// Leave takes the caller out of the pool, as RemoveMember would: what it
-	// kept here as a client released, off the list, disconnected, and with
-	// the pool's private IPFS network rekeyed. A node calls it for itself,
-	// and for nobody else. It may be called again until it has succeeded: a
-	// node that is not, or no longer, a member is told it has left, and an
-	// error means the caller is still a member.
+	// Leave takes the caller out of the pool. What it kept here as a client
+	// is released first; the leave then commits: it is taken off the list and
+	// disconnected. A node calls it for itself, and for nobody else. It may be
+	// called again until it has succeeded: a node that is not, or no longer, a
+	// member is told it has left, and an error means the caller is still a
+	// member. After the leave has committed, the coordinator tries to change
+	// the key of the pool's private IPFS network; if that fails, the leave
+	// still succeeds and the coordinator's owner must run `pool rekey`.
 	Leave(ctx context.Context, in *LeaveRequest, opts ...grpc.CallOption) (*LeaveResponse, error)
 	// Invite issues a token for one node to join with.
 	Invite(ctx context.Context, in *InviteRequest, opts ...grpc.CallOption) (*InviteResponse, error)
@@ -250,12 +252,14 @@ type PoolServiceServer interface {
 	// one joins or leaves. Workers use it to keep relay reservations current
 	// without repeatedly asking for the same list.
 	WatchRelays(*RelaysRequest, grpc.ServerStreamingServer[RelaysResponse]) error
-	// Leave takes the caller out of the pool, as RemoveMember would: what it
-	// kept here as a client released, off the list, disconnected, and with
-	// the pool's private IPFS network rekeyed. A node calls it for itself,
-	// and for nobody else. It may be called again until it has succeeded: a
-	// node that is not, or no longer, a member is told it has left, and an
-	// error means the caller is still a member.
+	// Leave takes the caller out of the pool. What it kept here as a client
+	// is released first; the leave then commits: it is taken off the list and
+	// disconnected. A node calls it for itself, and for nobody else. It may be
+	// called again until it has succeeded: a node that is not, or no longer, a
+	// member is told it has left, and an error means the caller is still a
+	// member. After the leave has committed, the coordinator tries to change
+	// the key of the pool's private IPFS network; if that fails, the leave
+	// still succeeds and the coordinator's owner must run `pool rekey`.
 	Leave(context.Context, *LeaveRequest) (*LeaveResponse, error)
 	// Invite issues a token for one node to join with.
 	Invite(context.Context, *InviteRequest) (*InviteResponse, error)

@@ -33,12 +33,14 @@ service PoolService {
   // without repeatedly asking for the same list.
   rpc WatchRelays(RelaysRequest) returns (stream RelaysResponse);
 
-  // Leave takes the caller out of the pool, as RemoveMember would: what it
-  // kept here as a client released, off the list, disconnected, and with
-  // the pool's private IPFS network rekeyed. A node calls it for itself,
-  // and for nobody else. It may be called again until it has succeeded: a
-  // node that is not, or no longer, a member is told it has left, and an
-  // error means the caller is still a member.
+  // Leave takes the caller out of the pool. What it kept here as a client
+  // is released first; the leave then commits: it is taken off the list and
+  // disconnected. A node calls it for itself, and for nobody else. It may be
+  // called again until it has succeeded: a node that is not, or no longer, a
+  // member is told it has left, and an error means the caller is still a
+  // member. After the leave has committed, the coordinator tries to change
+  // the key of the pool's private IPFS network; if that fails, the leave
+  // still succeeds and the coordinator's owner must run `pool rekey`.
   rpc Leave(LeaveRequest) returns (LeaveResponse);
 
   // The rest may be called only by the node's owner: its own command line.
