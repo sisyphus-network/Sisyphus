@@ -147,15 +147,23 @@ func TestALeaveThatCannotBeCarriedOutIsAskedAgain(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	// Nor can it forget where the pool is.
+	// Nor can it read where the pool is remembered.
 	forgetErr = nil
-	if err := os.Chmod(filepath.Join(dataDir, "known.json"), 0o400); err != nil {
+	knownPath := filepath.Join(dataDir, "known.json")
+	backupPath := filepath.Join(dataDir, "known.saved")
+	if err := os.Rename(knownPath, backupPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.leave(context.Background()); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "forget the node left") {
-		t.Errorf("leaving while known.json cannot be written: %v", err)
+	if err := os.Mkdir(knownPath, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if err := os.Chmod(filepath.Join(dataDir, "known.json"), 0o600); err != nil {
+	if err := l.leave(context.Background()); status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "read known nodes") {
+		t.Errorf("leaving while known.json cannot be read: %v", err)
+	}
+	if err := os.Remove(knownPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(backupPath, knownPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,5 +209,27 @@ func TestForgettingAPoolWhoseKnownNodesCannotBeRead(t *testing.T) {
 	}
 	if err := forgetKnown(dataDir, "rig:7700"); err == nil || !strings.Contains(err.Error(), "known nodes in") {
 		t.Errorf("forgetting from a damaged known.json: %v", err)
+	}
+}
+
+func TestSavingKnownReplacesItWithACompletePrivateFile(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := saveKnown(dataDir, map[string]string{"rig:7700": "rig-id"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveKnown(dataDir, map[string]string{"other:7700": "other-id"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadKnown(dataDir)
+	if err != nil || len(got) != 1 || got["other:7700"] != "other-id" {
+		t.Errorf("known nodes after replacement: %v, %v", got, err)
+	}
+	info, err := os.Stat(filepath.Join(dataDir, "known.json"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("known.json permissions: %v, %v", info, err)
+	}
+	temps, err := filepath.Glob(filepath.Join(dataDir, ".known-*"))
+	if err != nil || len(temps) != 0 {
+		t.Errorf("temporary known files left behind: %v, %v", temps, err)
 	}
 }

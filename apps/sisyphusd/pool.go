@@ -105,7 +105,27 @@ func joinPool(ctx context.Context, dataDir string, ident *identity.Identity, add
 
 func saveKnown(dataDir string, known map[string]string) error {
 	data, _ := json.MarshalIndent(known, "", "\t") // a map of strings always encodes
-	return os.WriteFile(filepath.Join(dataDir, "known.json"), data, 0o600)
+	path := filepath.Join(dataDir, "known.json")
+	tmp, err := os.CreateTemp(dataDir, ".known-*")
+	if err != nil {
+		return fmt.Errorf("save known nodes in %s: %w", dataDir, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		return errors.Join(fmt.Errorf("save known nodes in %s: %w", dataDir, err), tmp.Close())
+	}
+	if err := tmp.Sync(); err != nil {
+		return errors.Join(fmt.Errorf("save known nodes in %s: %w", dataDir, err), tmp.Close())
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("save known nodes in %s: %w", dataDir, err)
+	}
+	// Keep the old file intact until the complete new JSON has been written.
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("save known nodes in %s: %w", dataDir, err)
+	}
+	return nil
 }
 
 // forgetKnown forgets which node is at addr, as once this node has left the
