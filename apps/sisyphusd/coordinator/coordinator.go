@@ -42,7 +42,7 @@ const (
 	// Losing the worker mid-task counts as an attempt.
 	maxAttempts = 3
 	// maxTasksPerJob bounds how finely a submitter can ask to split a job.
-	maxTasksPerJob = 10_000
+	maxTasksPerJob = runtime.MaxTasks
 	// maxVerify bounds how many workers a submitter can ask to have run
 	// each task of a job; see verify.go.
 	maxVerify = 10
