@@ -313,3 +313,65 @@ func TestAJoinedNodesFilesAreKeptAsLongAsTheLongestHold(t *testing.T) {
 		t.Errorf("reading what the pool does not have: %v", err)
 	}
 }
+
+// A node that has kept files in one pool and then joins another lists only
+// the files kept in the pool it is in now, and the first pool's again when
+// it goes back (#509).
+func TestAJoinedNodeListsOnlyThePoolItIsInNow(t *testing.T) {
+	first, _ := startNode(t, "--name", "first")
+	second, _ := startNode(t, "--name", "second")
+	workerDir, apiAddr := t.TempDir(), freeAddr(t)
+	run := func(coordinator string, join ...string) (nodepb.NodeServiceClient, context.Context, func()) {
+		t.Helper()
+		args := []string{"--role", "worker", "--coordinator", coordinator, "--data-dir", workerDir, "--name", "hand", "--slots", "1", "--api-listen", apiAddr}
+		stop := startDaemon(t, append(args, join...)...)
+		client := desktop(t, apiAddr)
+		poolAsSeenBy(t, client)
+		ctx := tokenOf(t, workerDir)
+		waitFor(t, func() bool {
+			pool, err := client.GetJoinedPool(ctx, &nodepb.GetJoinedPoolRequest{})
+			return err == nil && pool.GetState() == nodepb.JoinedPoolState_JOINED_POOL_STATE_CONNECTED
+		})
+		return client, ctx, stop
+	}
+	asClient := func(client nodepb.NodeServiceClient, ctx context.Context, coordinator string) {
+		t.Helper()
+		if _, err := as(t, workerDir, "pool", "join", "--addr", coordinator, invite(t, coordinator, "client")); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, func() bool {
+			pool, err := client.GetJoinedPool(ctx, &nodepb.GetJoinedPoolRequest{})
+			return err == nil && slices.Contains(pool.GetRoles(), nodepb.PoolRole_POOL_ROLE_CLIENT)
+		})
+	}
+	listed := func(client nodepb.NodeServiceClient, ctx context.Context) []string {
+		t.Helper()
+		var names []string
+		waitFor(t, func() bool {
+			files, err := client.ListFiles(ctx, &nodepb.ListFilesRequest{})
+			names = nil
+			for _, file := range files.GetFiles() {
+				names = append(names, file.GetName())
+			}
+			return err == nil
+		})
+		return names
+	}
+
+	client, ctx, stop := run(first, "--join", invite(t, first, "worker"))
+	asClient(client, ctx, first)
+	storeThroughDesktop(t, ctx, client, "first.txt", "kept in the first pool", false)
+	stop()
+
+	client, ctx, stop = run(second, "--join", invite(t, second, "worker"))
+	asClient(client, ctx, second)
+	if names := listed(client, ctx); len(names) != 0 {
+		t.Errorf("in the second pool the node lists %q", names)
+	}
+	stop()
+
+	client, ctx, _ = run(first)
+	if names := listed(client, ctx); !slices.Equal(names, []string{"first.txt"}) {
+		t.Errorf("back in the first pool the node lists %q", names)
+	}
+}
