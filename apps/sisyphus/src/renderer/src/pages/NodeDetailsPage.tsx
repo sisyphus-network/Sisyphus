@@ -109,7 +109,7 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
       if (!active) return
       // A coordinating node has joined no other pool; don't render a false
       // error card for the normal standalone-node case.
-      if (/has joined no other|FAILED_PRECONDITION/i.test(error instanceof Error ? error.message : String(error))) {
+      if (/has joined no other/i.test(error instanceof Error ? error.message : String(error))) {
         setJoinedPool(null)
         setJoinedPoolState('none')
         return
