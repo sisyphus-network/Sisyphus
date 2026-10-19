@@ -43,8 +43,10 @@ var allowed = map[string][]Role{
 	pb.PoolService_Relays_FullMethodName:      {Worker},
 	pb.PoolService_WatchRelays_FullMethodName: {Worker},
 	// A member takes itself out of the pool; the caller's own identity
-	// is the one removed (#509).
-	pb.PoolService_Leave_FullMethodName: {Worker, Client},
+	// is the one removed. One that has already left may ask again, and is
+	// told it has, so that a leave whose answer was lost can be finished
+	// (#509).
+	pb.PoolService_Leave_FullMethodName: {Worker, Client, anyone},
 	// A storage follower asks what to hold. Asking changes nothing that
 	// this node keeps.
 	pb.BlobService_Replicate_FullMethodName:   {Worker},

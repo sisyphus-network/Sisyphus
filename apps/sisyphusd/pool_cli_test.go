@@ -322,8 +322,8 @@ func TestARemovedClientsFilesAreLetGo(t *testing.T) {
 }
 
 // A client leaves the pool by itself: the coordinator lets go of what it
-// kept there and no longer lists it, and it is then refused as any other
-// stranger would be (#509).
+// kept there and no longer lists it, and asking again tells it it has left
+// (#509).
 func TestAClientLeavesThePool(t *testing.T) {
 	addr, _ := startNode(t, "--name", "rig")
 	laptop := t.TempDir()
@@ -356,7 +356,8 @@ func TestAClientLeavesThePool(t *testing.T) {
 	if members := mustCLI(t, "pool", "members", "--addr", addr); strings.Contains(members, nodeID(t, laptop)) {
 		t.Errorf("after the laptop left, the members are:\n%s", members)
 	}
-	if _, err := as(t, laptop, "pool", "leave", "--addr", addr); err == nil {
-		t.Error("leaving a pool the laptop has already left")
+	// Asked again, as when the first answer was lost, it has left.
+	if out, err := as(t, laptop, "pool", "leave", "--addr", addr); err != nil || out != "left the pool at "+addr+"\n" {
+		t.Errorf("leaving again printed %q, error %v", out, err)
 	}
 }
