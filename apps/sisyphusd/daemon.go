@@ -325,6 +325,9 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 	}
 	creds := credentials.NewTLS(ident.ClientTLS(coordinatorID))
+	// poolConn is a worker node's connection to its coordinator, through
+	// which it also reaches the pool's jobs as a client of it.
+	var poolConn grpc.ClientConnInterface
 
 	// With --kubo, Kubo runs as the same peer as this node, on a repository
 	// beside the node's other data, and is stopped when the node stops. A
@@ -782,6 +785,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			return credentials.NewTLS(ident.ClientTLS(nodeID))
 		}
 		blobs = remote
+		poolConn = remote.Conn()
 		members := worker.NewMembers(remote.Conn())
 		go members.RunRelayWatch(ctx, log)
 		// A storage follower keeps a second store, a durable one, for the
@@ -934,7 +938,14 @@ func runDaemon(ctx context.Context, args []string) error {
 			coordinatorAddr := *join
 			local.JoinedPool = func() *nodepb.JoinedPool { return joinedPool(w.JoinedPool(), coordinatorAddr) }
 			local.JoinedPoolChanges = api.NewNodeInfoChanges()
-			w.OnPool = local.JoinedPoolChanges.Notify
+			jobs := newPoolJobs(ctx, pb.NewNodeServiceClient(poolConn), db, w.JoinedPool, local.NodeInfoChanges.Notify)
+			local.Jobs = jobs
+			local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
+			w.OnPool = func() {
+				local.JoinedPoolChanges.Notify()
+				local.NodeInfoChanges.Notify()
+				jobs.Resume()
+			}
 			local.Peers = func() []*nodepb.Peer {
 				state := nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED
 				if w.Connected() {

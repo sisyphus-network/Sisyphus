@@ -187,9 +187,16 @@ It needs a node that runs a worker, which is every node unless it was started wi
 
 **Which pool a worker node has joined.** A node started with `--role worker --coordinator <address>` answers `GetJoinedPool` with its coordinator's ID and name, the address it reaches it at, its `state` (`CONNECTING` until first welcomed, `CONNECTED`, `DISCONNECTED` once it has lost the connection and is trying again) its `roles` in that pool and, while it is `CONNECTED` and holds the client role, `worker_count`: how many workers are connected to the pool, counting itself. `WatchJoinedPool` sends that at once, and again, whole, each time it changes: on connecting, on losing the connection, when the coordinator says its roles have changed, and when a worker joins or leaves the pool. While the node is `DISCONNECTED`, the ID, name and roles are the last it knew, not live, and `worker_count` is absent, as it is for a node that is only a worker, so a count is never shown that is not live. A node that coordinates its own pool has joined none, and is answered `FAILED_PRECONDITION`.
 
+**Jobs in a pool this node has joined.** On a worker node that holds the client role in its pool, the jobs calls work on that pool:
+- `SubmitJob`, `GetJob`, `CancelJob` and `WatchJobEvents` go to the pool's coordinator, as this node, and the coordinator checks the client role on every call. A `private` job is sealed with this node's own key, which goes to the pool with the job, as with `job submit --key-file`.
+- `ListJobs` and `WatchJobs` list the jobs this node submitted there, newest first. `WatchJobs` is sent the list again as each of them changes. A job the pool no longer has drops out.
+- `ListWorkers` and `WatchWorkers` list the pool's workers. They are another pool's machines, so show them in the joined-pool context, not as this node's peers.
+
+A worker node without the client role is answered `FAILED_PRECONDITION`. While it is not connected to the pool, the answer is `UNAVAILABLE`, so the app can tell "not allowed" from "not reachable".
+
 ## What the API does not have yet
 
-- **Submitting jobs to a pool this node has joined as a client.** `SubmitJob` gives work to this node's own pool.
+- **The planner on a joined pool.** On a worker node, the planner does not yet submit to the pool the node has joined.
 - **Choosing the key** private files are sealed with, or having more than one.
 - **Reading a job's record.** The API gives its ID in `record_cid`. The record itself is read with `sisyphusd job record <job-id>`, or `GetJobRecord` on the pool's own API.
 
