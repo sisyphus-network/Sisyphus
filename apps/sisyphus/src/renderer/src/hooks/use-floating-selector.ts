@@ -15,15 +15,26 @@ export function useFloatingSelector() {
     const updatePlacement = () => {
       const rect = rootRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const estimatedHeight = contentRef.current?.getBoundingClientRect().height ?? 250;
+      // The panel's natural height, not its capped one, so a panel that was
+      // shrunk to fit is not taken to be small enough to fit anywhere.
+      const content = contentRef.current;
+      const estimatedHeight = content ? Math.max(content.scrollHeight, content.getBoundingClientRect().height) : 250;
       const spaceBelow = window.innerHeight - rect.bottom;
-      const nextPlacement = spaceBelow < estimatedHeight && rect.top > estimatedHeight ? "top" : "bottom";
+      const spaceAbove = rect.top;
+      // Below if it fits there, or if below has the more room; then it gets
+      // the room it has, and scrolls, rather than running off the window.
+      const nextPlacement = spaceBelow - 16 >= estimatedHeight || spaceBelow >= spaceAbove ? "bottom" : "top";
+      // Never let the preferred minimum exceed the actual available space:
+      // on a very short visual viewport, staying inside it matters more than
+      // keeping the usual 120px menu height.
+      const availableSpace = nextPlacement === "top" ? spaceAbove : spaceBelow;
+      const room = Math.max(0, availableSpace - 16);
       const left = Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8));
       const top = nextPlacement === "top"
-        ? Math.max(8, rect.top - estimatedHeight - 8)
-        : Math.min(window.innerHeight - 8, rect.bottom + 8);
+        ? Math.max(8, rect.top - Math.min(estimatedHeight, room) - 8)
+        : rect.bottom + 8;
       setPlacement(nextPlacement);
-      setFloatingStyle({ position: "fixed", top, left, width: rect.width, maxHeight: "calc(100dvh - 16px)" });
+      setFloatingStyle({ position: "fixed", top, left, width: rect.width, maxHeight: room });
     };
     const handleOutsidePointer = (event: PointerEvent) => {
       const target = event.target as Node;
