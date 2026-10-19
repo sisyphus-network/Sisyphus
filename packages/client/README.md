@@ -8,6 +8,8 @@ are checked in under `src/gen`; regenerate them from the repository root with:
 nix develop --command npm --prefix apps/sisyphus run proto:generate
 ```
 
+`make proto` runs the same step after regenerating the Go code, so a change to `node.proto` keeps both in step.
+
 `createNodeServiceClient()` creates a typed Connect client for a node API. In a
 browser it defaults to the current origin, so a node can eventually serve the UI
 and API together. Supply `getAuthorization` to provide a short-lived credential
