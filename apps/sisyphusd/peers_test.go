@@ -288,7 +288,7 @@ func TestTheCoordinatorKnowsWhichWorkersRelayAndWhatTheyHaveCarried(t *testing.T
 	stopWatching()
 	select {
 	case <-watchDone:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("relay watcher did not stop after cancellation")
 	}
 	// The latest snapshot remains available locally after the stream closes.

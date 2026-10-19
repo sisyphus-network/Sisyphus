@@ -24,6 +24,12 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
+// eventualWait bounds every wait for something that must happen. Passing tests
+// never wait it out, so it is long: under the race detector and a full
+// parallel suite a stop or a notification can take more than a second (#466).
+// Windows in which something must not happen stay short.
+const eventualWait = 30 * time.Second
+
 func writeFile(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "file")
@@ -270,7 +276,7 @@ func TestResetTimerAtClampsPastDeadline(t *testing.T) {
 	}
 	select {
 	case <-timer.C:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("a past deadline did not fire immediately")
 	}
 }
@@ -647,7 +653,7 @@ func TestJobPrunerWaitsForChangeAndDeadline(t *testing.T) {
 	changed <- struct{}{}
 	select {
 	case <-prunedOnce:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("the job was not pruned at its retention deadline")
 	}
 	cancel()
@@ -673,7 +679,7 @@ func TestJobPrunerStopsWaitingOnCancellation(t *testing.T) {
 	cancel()
 	select {
 	case <-stopped:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("the pruner did not stop when its context was cancelled")
 	}
 }
@@ -701,7 +707,7 @@ func TestJobPrunerHandlesAnAlreadyDueDeadline(t *testing.T) {
 	}()
 	select {
 	case <-pruned:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("an overdue record was not pruned")
 	}
 	cancel()
