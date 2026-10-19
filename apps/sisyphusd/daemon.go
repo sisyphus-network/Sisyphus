@@ -106,6 +106,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	reciprocate := fs.Bool("work-for-trusted", true, "a node with both roles: also work for the nodes it trusts for compute, whenever they trust it back")
 	relayAt := fs.String("relay", "", "worker-only node: listen on this address, as host:port, for the other members' libp2p hosts and relay between them; the port must be open to them. A coordinator relays already")
 	discovery := fs.String("discovery", "on", "whether to look for other nodes, on this network and through the nodes already known, and let them find this one: on or off")
+	discoveryNetwork := fs.String("discovery-network", "", "with --discovery on, look only for nodes started with the same --discovery-network, and be found only by them: a separate network, such as one for a test run, of 1 to 32 lowercase letters, digits and hyphens. Empty is the network every Sisyphus node is on")
 	bootstrap := fs.String("bootstrap", "", "addresses of nodes to connect to at startup, besides those in the address book: comma-separated, each ending in /p2p/<node ID>")
 	stunServer := fs.String("stun-server", "", "if the node cannot tell which country it is in from its own addresses, its pool's view of it or its gateway, ask this STUN server, host or host:port (port 3478 if none is given), which address its traffic comes from. The server learns that address, so none is asked unless named here. Only a Binding request is sent; no port is opened. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
 	byGateway := fs.Bool("locate-gateway", false, "if the node cannot tell which country it is in from its own addresses or its pool's view of it, ask its default gateway for its external address by NAT-PMP. Only that read-only request is sent, and only to the gateway; no port is opened. The system's default route is used on Linux, macOS, the BSDs and Windows. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
@@ -665,7 +666,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// for which it relays so that two of them with no port open can
 		// still reach each other. The nodes whose work this one takes are
 		// let in too: it is in their pools, if not they in its own.
-		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *listen, Relay: true, Discover: *discovery == "on", Log: log, PeerChanged: local.NodeInfoChanges.Notify, Allow: func(id string) bool {
+		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *listen, Relay: true, Discover: *discovery == "on", Network: *discoveryNetwork, Log: log, PeerChanged: local.NodeInfoChanges.Notify, Allow: func(id string) bool {
 			_, admitted := admitted.Roles(id)
 			return admitted || slices.Contains(takes.List(), id)
 		}})
@@ -840,7 +841,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// do. Only the coordinator and the pool's members are let in.
 		// One that has a port open for the purpose relays as the coordinator
 		// does, and every worker keeps a place on each member that relays.
-		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, MoreRelaysChanged: members.RelayChanges(), Discover: *discovery == "on", Log: log, PeerChanged: func() {
+		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *relayAt, Relay: *relayAt != "", Via: relayAddrs(*join, coordinatorID), MoreRelays: members.Relays, MoreRelaysChanged: members.RelayChanges(), Discover: *discovery == "on", Network: *discoveryNetwork, Log: log, PeerChanged: func() {
 			local.NodeInfoChanges.Notify()
 			if watcher := mutual.Load(); watcher != nil {
 				watcher.nudge()

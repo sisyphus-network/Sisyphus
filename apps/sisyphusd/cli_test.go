@@ -41,6 +41,9 @@ func TestMain(m *testing.M) {
 // started that outlives it, such as a container shared between tests.
 var stopAtExit []func()
 
+// testNetwork is the discovery network every node this run starts is on.
+var testNetwork = "test-" + strconv.FormatUint(rand.Uint64(), 36)
+
 // dataDirs records, for each address a test node listens on, the data
 // directory holding that node's key. Commands sent to the address are run
 // from that directory, which makes them the node's owner.
@@ -111,6 +114,11 @@ func startDaemon(t *testing.T, args ...string) (stop func()) {
 	// each other: there may be many on this machine at once.
 	if !slices.Contains(args, "--discovery") {
 		args = append(args, "--discovery", "off")
+	}
+	// A test that turns discovery on finds only the nodes of this run, not
+	// real ones nearby or another run's (#533).
+	if !slices.Contains(args, "--discovery-network") {
+		args = append(args, "--discovery-network", testNetwork)
 	}
 	if i := slices.Index(args, "--coordinator"); i >= 0 && !slices.Contains(args, "--join") && !joined(dataDir) {
 		args = append(args, "--join", invite(t, args[i+1], "worker"))
@@ -306,6 +314,7 @@ func TestCLIRejectsBadUsage(t *testing.T) {
 		{[]string{"run", "--coordinator", "example:1"}, "worker-only nodes"},
 		{[]string{"run", "--slots", "0"}, "at least 1"},
 		{[]string{"run", "extra"}, `unexpected argument "extra"`},
+		{[]string{"run", "--discovery-network", "Not_Valid"}, "discovery network"},
 	}
 	for _, tt := range tests {
 		_, err := cli(t, tt.args...)

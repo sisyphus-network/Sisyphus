@@ -41,6 +41,8 @@ A pull request that changes only documentation skips the tests. One that touches
 | Desktop end to end | Playwright driving the built Electron app against a node of its own; Settings selectors cover viewport placement, keyboard dismissal and, for the Access interface picker, Hebrew RTL controls with an LTR interface/IP list | `npm run test:e2e` in `apps/sisyphus` |
 | Agents | A live trial of the MCP server from Claude Code, by hand, recorded on [#88](https://github.com/sisyphus-network/Sisyphus/issues/88) | by hand |
 
+A node a test starts does not look for other nodes unless the test is about that, and then only on a discovery network of the run's own (`--discovery-network`). The rehearsal's nodes do the same. So no test meets the real nodes on the machine it runs on or on its network, and two runs at once never meet each other ([#533](https://github.com/sisyphus-network/Sisyphus/issues/533)).
+
 What has no automated test: the desktop app has no coverage measure, and nothing drives the app on Windows or macOS beyond building its package and starting its daemon.
 
 ## Where things are

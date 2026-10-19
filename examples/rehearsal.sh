@@ -78,13 +78,16 @@ chmod -R a+rX "$bin"
 down
 docker network create $P-a >/dev/null
 docker network create $P-b >/dev/null
+# Every node here is on a discovery network of the rehearsal's own, so that
+# none of them meets, or is met by, a real node on this machine's network
+# (#533). North, on the host's network, would otherwise announce itself there.
 # start <node> <network> <sisyphusd run arguments...>
 start() {
 	local node=$1 network=$2
 	shift 2
 	docker run -d --name "$P-$node" --hostname "$node" --network "$network" --network-alias "$node" \
 		--add-host host.docker.internal:host-gateway -v "$bin:/sisyphus:ro" "$IMAGE" \
-		/sisyphus/sisyphusd run "$@" >/dev/null
+		/sisyphus/sisyphusd run --discovery-network $P "$@" >/dev/null
 }
 
 echo "the coordinator, on both networks"
@@ -105,7 +108,7 @@ else
 	# coordinator by the address it has on the first network.
 	at=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$P-a\").IPAddress}}" $P-coordinator)
 	docker run -d --name $P-north --network host -v "$bin:/sisyphus:ro" "$IMAGE" \
-		/sisyphus/sisyphusd run --role worker --coordinator "$at:7700" --join "$north_invitation" --name north --slots 2 \
+		/sisyphus/sisyphusd run --discovery-network $P --role worker --coordinator "$at:7700" --join "$north_invitation" --name north --slots 2 \
 		--data-dir /tmp/north --models-from http://127.0.0.1:11434 >/dev/null
 fi
 start south $P-b --role worker --coordinator coordinator:7700 --join "$south_invitation" --name south --slots 2
@@ -115,7 +118,7 @@ if docker exec $P-south ping -c 1 -W 1 north >/dev/null 2>&1; then bad "the work
 
 echo "an invitation is good once"
 docker run -d --name $P-stray --network $P-a -v "$bin:/sisyphus:ro" "$IMAGE" \
-	/sisyphus/sisyphusd run --role worker --coordinator coordinator:7700 --join "$north_invitation" --name stray >/dev/null
+	/sisyphus/sisyphusd run --discovery-network $P --role worker --coordinator coordinator:7700 --join "$north_invitation" --name stray >/dev/null
 sleep 3
 if on coordinator nodes | has stray; then bad "a used invitation is refused"; else ok "a used invitation is refused"; fi
 docker rm -f $P-stray >/dev/null 2>&1
