@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -395,12 +396,19 @@ func TestRevokingARole(t *testing.T) {
 	// One that cannot be saved takes nothing.
 	l.Admit("kept", Worker, now)
 	l.Admit("kept", Client, now)
+	l.Admit("alone", Worker, now)
 	l.store = stuck{l.store}
 	if revoked, err := l.Revoke("kept", Client); revoked || !errors.Is(err, errStore) {
 		t.Errorf("Revoke with a store that cannot save = %v, %v", revoked, err)
 	}
 	if roles, _ := l.Roles("kept"); !slices.Equal(roles, []Role{Worker, Client}) {
 		t.Errorf("after a revocation that could not be saved, the node has %q", roles)
+	}
+	if revoked, err := l.Revoke("alone", Worker); revoked || !errors.Is(err, errStore) {
+		t.Errorf("Revoke of a last role with a store that cannot save = %v, %v", revoked, err)
+	}
+	if !l.Has("alone", Worker) {
+		t.Error("a member whose last role could not be taken is gone")
 	}
 }
 
@@ -413,5 +421,39 @@ func TestRolesAreReadAsAStoreKeepsThem(t *testing.T) {
 		if got := rolesOf(stored); !slices.Equal(got, want) {
 			t.Errorf("rolesOf(%q) = %q, want %q", stored, got, want)
 		}
+	}
+}
+
+// Taking a member's last role and admitting it in another, at once, never
+// loses the role admitted: either it was admitted first and outlives the
+// one taken, or the member went first and was admitted again. Were the
+// role and the member to go apart, an admission landing between them would
+// be lost; the many tries make that all but certain to show.
+func TestARoleAdmittedWhileTheLastIsTakenIsKept(t *testing.T) {
+	l := open(t, "")
+	for range 20000 {
+		if err := l.Admit("node", Worker, now); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			l.Admit("node", Client, now)
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			l.Revoke("node", Worker)
+		}()
+		close(start)
+		wg.Wait()
+		if !l.Has("node", Client) {
+			t.Fatal("a client role admitted while the worker role was taken was lost")
+		}
+		l.Remove("node")
 	}
 }

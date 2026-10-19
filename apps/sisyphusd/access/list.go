@@ -272,12 +272,14 @@ func (l *List) Revoke(id string, role Role) (bool, error) {
 		return false, nil
 	}
 	m.Roles = slices.DeleteFunc(slices.Clone(m.Roles), func(r Role) bool { return r == role })
+	// The member and its last role go together, under the one lock, so a
+	// role admitted meanwhile is not taken with them.
+	var err error
 	if len(m.Roles) == 0 {
-		l.mu.Unlock()
-		return l.Remove(id)
-	}
-	err := l.store.SaveMember(nodedb.Member{ID: id, Role: stored(m.Roles), Joined: m.Joined})
-	if err == nil {
+		if err = l.store.DeleteMember(id); err == nil {
+			delete(l.members, id)
+		}
+	} else if err = l.store.SaveMember(nodedb.Member{ID: id, Role: stored(m.Roles), Joined: m.Joined}); err == nil {
 		l.members[id] = m
 	}
 	l.mu.Unlock()
