@@ -978,9 +978,13 @@ func (m *Manager) Replicate(ctx context.Context, caller string, req *pb.Replicat
 		named, owed = make(map[string]struct{}), make(map[string]struct{})
 		for _, blob := range before.owedList.GetBlobs() {
 			named[blob.GetCid()] = struct{}{}
-			if _, kept := pinned[blob.GetCid()]; !kept {
-				owed[blob.GetCid()] = struct{}{}
+			if _, kept := pinned[blob.GetCid()]; kept {
+				continue
 			}
+			if expires := blob.GetKeepUntil(); expires != nil && !expires.AsTime().After(now) {
+				continue
+			}
+			owed[blob.GetCid()] = struct{}{}
 		}
 	}
 	current := vouched && shown.GetStore() == m.storeID

@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -20,6 +21,15 @@ func (r *rig) owedOf(id string) (list *pb.KeepList, at time.Time, wait time.Dura
 	return f.owedList, f.owedAt, f.owedWait
 }
 
+func (r *rig) strandedOf(id string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if f := r.Manager.followers[id]; f != nil {
+		return slices.Clone(f.stranded)
+	}
+	return nil
+}
+
 // A follower whose list is shown before it has connected as a worker has
 // nothing taken back at first. What its list names is tried again on the
 // manager's own schedule, without the follower showing its list again, and
@@ -30,10 +40,14 @@ func TestWhatCouldNotBeTakenBackIsTriedAgainWithoutTheFollowerAsking(t *testing.
 	r := newRig(t, 1)
 	theirs := storage.NewMemory()
 	blob := put(t, theirs, "held for the store that was lost")
-	list := signedBy(r.ident, r.old, listed(blob, time.Time{}))
+	expired := put(t, theirs, "whose old keep time has passed")
+	list := signedBy(r.ident, r.old,
+		listed(blob, time.Time{}),
+		listed(expired, time.Now().Add(-time.Second)),
+	)
 
 	// Not yet connected as a worker, the follower serves nothing.
-	told := r.show("a", list, blob)
+	told := r.show("a", list, blob, expired)
 	if told.GetStore() != r.old || len(restoredPins(r.store)) != 0 {
 		t.Fatalf("before the follower serves anything it is told %v, and the node has taken back %v", told, restoredPins(r.store))
 	}
@@ -43,9 +57,12 @@ func TestWhatCouldNotBeTakenBackIsTriedAgainWithoutTheFollowerAsking(t *testing.
 	}
 
 	// A report on the stream that shows no list leaves the try pending.
-	r.Replicate(ctx, "a", &pb.ReplicateRequest{Store: r.old, Holding: []string{blob}, KeepsLists: true})
+	reported := r.Replicate(ctx, "a", &pb.ReplicateRequest{Store: r.old, Holding: []string{blob, expired}, KeepsLists: true})
 	if again, _, _ := r.owedOf("a"); again != list {
 		t.Fatal("a report that showed no list dropped what was still to be taken back")
+	}
+	if slices.Contains(reported.GetHold(), expired) {
+		t.Error("a blob whose signed keep time expired was left stranded while another blob is still owed")
 	}
 
 	// Not yet due, nothing is tried.
@@ -69,6 +86,26 @@ func TestWhatCouldNotBeTakenBackIsTriedAgainWithoutTheFollowerAsking(t *testing.
 	}
 	if status := r.Status(""); status.GetFromEarlierStore() != 0 || status.GetRestored() != 1 {
 		t.Errorf("the node reports %v, want nothing left from the earlier store", status)
+	}
+}
+
+// A stream report without its old signed list must not make a blob the
+// coordinator already has look as if it is still owed by the follower.
+func TestAStreamReportDoesNotTreatAnAlreadyPinnedBlobAsOwed(t *testing.T) {
+	graceOf(t, time.Minute)
+	r := newRig(t, 1)
+	present := keep(t, r.store, "already pinned in the current store")
+	theirs := storage.NewMemory()
+	pending := put(t, theirs, "still to come from the old store")
+	list := signedBy(r.ident, r.old, listed(present, time.Time{}), listed(pending, time.Time{}))
+	r.show("a", list, present, pending)
+
+	// This later stream report has no signed list, but the old list is still
+	// retained while one of its blobs remains to be taken back.
+	r.Replicate(ctx, "a", &pb.ReplicateRequest{Store: r.old, Holding: []string{present, pending}, KeepsLists: true})
+	stranded := r.strandedOf("a")
+	if slices.Contains(stranded, present) || !slices.Contains(stranded, pending) {
+		t.Errorf("the report leaves %v stranded; want only the outstanding blob %q", stranded, pending)
 	}
 }
 
