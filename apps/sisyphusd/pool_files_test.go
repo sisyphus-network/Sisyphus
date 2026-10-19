@@ -375,3 +375,56 @@ func TestAJoinedNodeListsOnlyThePoolItIsInNow(t *testing.T) {
 		t.Errorf("back in the first pool the node lists %q", names)
 	}
 }
+
+// A joined node that loses its pool for a while, and finds it again, has
+// left nothing: it is still a member, the coordinator still keeps its file,
+// and its list still shows it (#509). Only leaving forgets.
+func TestAJoinedNodeKeepsItsFilesAcrossAReconnect(t *testing.T) {
+	coordinatorDir, workerDir := t.TempDir(), t.TempDir()
+	addr, apiAddr := freeAddr(t), freeAddr(t)
+	stopCoordinator := startDaemon(t, "--data-dir", coordinatorDir, "--listen", addr, "--slots", "1")
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--data-dir", workerDir, "--name", "hand", "--slots", "1", "--api-listen", apiAddr)
+	client := desktop(t, apiAddr)
+	ctx := tokenOf(t, workerDir)
+	state := func() nodepb.JoinedPoolState {
+		pool, _ := client.GetJoinedPool(ctx, &nodepb.GetJoinedPoolRequest{})
+		return pool.GetState()
+	}
+	waitFor(t, func() bool { return state() == nodepb.JoinedPoolState_JOINED_POOL_STATE_CONNECTED })
+	if _, err := as(t, workerDir, "pool", "join", "--addr", addr, invite(t, addr, "client")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		pool, err := client.GetJoinedPool(ctx, &nodepb.GetJoinedPoolRequest{})
+		return err == nil && slices.Contains(pool.GetRoles(), nodepb.PoolRole_POOL_ROLE_CLIENT)
+	})
+	stored := storeThroughDesktop(t, ctx, client, "notes.txt", "kept in the pool across a reconnect", false)
+	listed := func() ([]string, error) {
+		files, err := client.ListFiles(ctx, &nodepb.ListFilesRequest{})
+		var names []string
+		for _, file := range files.GetFiles() {
+			names = append(names, file.GetName())
+		}
+		return names, err
+	}
+
+	stopCoordinator()
+	waitFor(t, func() bool { return state() == nodepb.JoinedPoolState_JOINED_POOL_STATE_DISCONNECTED })
+	// While the pool is away its files cannot be listed, and the node says
+	// why rather than that it has none.
+	if names, err := listed(); status.Code(err) != codes.Unavailable {
+		t.Errorf("listing files while the pool is away: %q, %v", names, err)
+	}
+
+	startDaemon(t, "--data-dir", coordinatorDir, "--listen", addr, "--slots", "1")
+	waitFor(t, func() bool { return state() == nodepb.JoinedPoolState_JOINED_POOL_STATE_CONNECTED })
+	if names, err := listed(); err != nil || !slices.Equal(names, []string{"notes.txt"}) {
+		t.Errorf("after reconnecting the node lists %q, %v", names, err)
+	}
+	if kept := clientPins(t, addr, stored.GetCid()); len(kept) != 1 {
+		t.Errorf("after the node reconnected, the coordinator keeps its file as %q", kept)
+	}
+	if members := mustCLI(t, "pool", "members", "--addr", addr); !strings.Contains(members, nodeID(t, workerDir)) {
+		t.Errorf("after the node reconnected, the members are:\n%s", members)
+	}
+}
