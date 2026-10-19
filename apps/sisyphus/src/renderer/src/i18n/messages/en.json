@@ -438,7 +438,7 @@
     "workersUnavailable": "Worker information is unavailable",
     "joinedPool": "Joined pool", "poolLoading": "Checking pool connection", "poolUnavailable": "Pool status is unavailable; reconnecting",
     "poolName": "Pool", "poolAddress": "Coordinator address", "poolRoles": "Your roles", "poolWorkers": "Workers in pool",
-    "poolWorkerRole": "Worker", "poolClientRole": "Client", "poolConnected": "Connected", "poolConnecting": "Connecting", "poolDisconnected": "Reconnecting",
+    "poolWorkerRole": "Worker", "poolClientRole": "Client", "poolConnected": "Connected", "poolConnecting": "Connecting", "poolDisconnected": "Reconnecting", "leavePool": "Leave pool", "leavePoolTitle": "Leave this pool?", "leavePoolDescription": "The pool lets go of the files it kept for this node, and the node forgets the pool, then stops. To join a pool again, start it with that pool's coordinator and a new invitation.", "leavingPool": "Leaving…", "leftPool": "Left the pool. This node is stopping.", "leavePoolFailed": "Could not leave the pool",
     "noNodeDetails": "Node details are not available yet",
     "nodeDetailsPending": "Details will appear when the node sends its next snapshot."
   },
