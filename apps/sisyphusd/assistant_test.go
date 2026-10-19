@@ -611,9 +611,8 @@ func TestAttachmentRetentionFailureDoesNotCallTheModel(t *testing.T) {
 	}
 }
 
-// An assistant that keeps no pins for attachments, as on a node that has
-// joined another's pool, refuses a question with files before anything is
-// recorded or the model is asked (#500).
+// An assistant that keeps no pins for attachments refuses a question with
+// files before anything is recorded or the model is asked.
 func TestAnAssistantThatKeepsNoAttachmentsRefusesThem(t *testing.T) {
 	served := newModel(t)
 	db := journalIn(t, filepath.Join(t.TempDir(), "node.db"))
@@ -625,7 +624,7 @@ func TestAnAssistantThatKeepsNoAttachmentsRefusesThem(t *testing.T) {
 	id, err := a.AskWithFiles(context.Background(), "", "Question", []string{"bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"}, func(string, planner.Event) {
 		t.Error("a refused question emitted planner events")
 	})
-	if id != "" || status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "attachments are not yet kept") {
+	if id != "" || status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "cannot have attachments") {
 		t.Fatalf("AskWithFiles: %q, %v", id, err)
 	}
 	if chats, err := db.Chats(); err != nil || len(chats) != 0 {
