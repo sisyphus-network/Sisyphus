@@ -18,6 +18,13 @@ on:
 permissions:
   contents: read
 
+# A pull request's newer push replaces its older run, which builds for every
+# platform and so holds many runners. A tag, or a run by hand, has a group of
+# its own, so that it is never cancelled or kept waiting by another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   daemon:
     runs-on: ubuntu-26.04
