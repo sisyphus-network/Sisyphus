@@ -302,7 +302,7 @@ func TestReplicationPushStaysOpenAfterClientHalfClosesSendSide(t *testing.T) {
 		select {
 		case frame := <-stream.sent:
 			return frame, nil
-		case <-time.After(time.Second):
+		case <-time.After(eventualWait):
 			return nil, errors.New("timed out waiting for baseline assignment")
 		}
 	})
@@ -325,7 +325,7 @@ func TestReplicationPushStaysOpenAfterClientHalfClosesSendSide(t *testing.T) {
 		select {
 		case frame := <-stream.sent:
 			return frame, nil
-		case <-time.After(time.Second):
+		case <-time.After(eventualWait):
 			return nil, errors.New("timed out waiting for pushed assignment after client EOF")
 		}
 	})
@@ -342,7 +342,7 @@ func TestReplicationPushStaysOpenAfterClientHalfClosesSendSide(t *testing.T) {
 		if err != nil {
 			t.Errorf("replication handler after client half-close: %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("replication handler did not stop after the client canceled")
 	}
 }
@@ -374,7 +374,7 @@ func TestReplicationReturnsAssignmentPushSendError(t *testing.T) {
 		select {
 		case frame := <-stream.sent:
 			return frame, nil
-		case <-time.After(time.Second):
+		case <-time.After(eventualWait):
 			return nil, errors.New("timed out waiting for baseline assignment")
 		}
 	}); err != nil {
@@ -393,7 +393,7 @@ func TestReplicationReturnsAssignmentPushSendError(t *testing.T) {
 		if !errors.Is(err, want) {
 			t.Errorf("replication handler returned %v, want %v", err, want)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("replication handler did not return after assignment push failed")
 	}
 }
@@ -424,7 +424,7 @@ func TestReplicationReturnsWhenStreamContextEndsBeforeLeaseRecv(t *testing.T) {
 		select {
 		case frame := <-stream.sent:
 			return frame, nil
-		case <-time.After(time.Second):
+		case <-time.After(eventualWait):
 			return nil, errors.New("timed out waiting for baseline assignment")
 		}
 	}); err != nil {
@@ -436,7 +436,7 @@ func TestReplicationReturnsWhenStreamContextEndsBeforeLeaseRecv(t *testing.T) {
 		if err != nil {
 			t.Errorf("replication handler after stream cancellation: %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("replication handler waited for a blocked lease receive after cancellation")
 	}
 	close(release)
@@ -626,7 +626,7 @@ func TestFollowerRecoversEventGapOverReplicationStreamWithoutUnaryPolling(t *tes
 	}
 	waitFor := func(description string, condition func() bool) {
 		t.Helper()
-		deadline := time.Now().Add(3 * time.Second)
+		deadline := time.Now().Add(eventualWait)
 		for !condition() && time.Now().Before(deadline) {
 			time.Sleep(5 * time.Millisecond)
 		}
@@ -693,15 +693,20 @@ func TestFollowerRecoversEventGapOverReplicationStreamWithoutUnaryPolling(t *tes
 	waitStopped(t, managerDone, "manager challenge scheduler did not stop")
 }
 
-// waitStopped waits for done as long as the test's other waits do. Under the
-// race detector and a full parallel suite a stop can take more than a second
-// (#462); if it never comes, every goroutine's stack is shown, so a real hang
-// says where it is stuck.
+// eventualWait bounds every wait for something that must happen. Passing tests
+// never wait it out, so it is long: under the race detector and a full
+// parallel suite a stop can take more than a second (#462, #466). Windows in
+// which something must not happen stay short.
+const eventualWait = 30 * time.Second
+
+// waitStopped waits for done as long as the test's other waits do. If it never
+// comes, every goroutine's stack is shown, so a real hang says where it is
+// stuck.
 func waitStopped(t *testing.T, done <-chan struct{}, failure string) {
 	t.Helper()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventualWait):
 		stacks := make([]byte, 1<<20)
 		t.Fatalf("%s; goroutines:\n%s", failure, stacks[:runtime.Stack(stacks, true)])
 	}
