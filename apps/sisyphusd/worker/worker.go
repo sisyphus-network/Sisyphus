@@ -79,6 +79,13 @@ type Worker struct {
 	// pool's private IPFS network whenever the coordinator states it: on
 	// joining, and when the key changes. It must not block for long.
 	OnSwarm func(fingerprint string)
+	// OnPool, if set, is called whenever what JoinedPool says changes: on
+	// being welcomed, on losing the connection, and when the coordinator
+	// says the node's roles have changed. It must not block for long.
+	OnPool func()
+	// pool is what the node knows of the pool it works for; see JoinedPool.
+	poolMu sync.Mutex
+	pool   JoinedPool
 	// connected is whether the coordinator has this node in its pool right
 	// now.
 	connected atomic.Bool
@@ -261,10 +268,17 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 		switch kind := msg.GetKind().(type) {
 		case *pb.CoordinatorMessage_SwarmUpdate:
 			w.swarmChanged(kind.SwarmUpdate.GetSwarmFingerprint())
+		case *pb.CoordinatorMessage_RolesChanged:
+			w.setPool(func(pool *JoinedPool) { pool.Roles = kind.RolesChanged.GetRoles() })
 		case *pb.CoordinatorMessage_Welcome:
 			welcomed = true
 			w.connected.Store(true)
 			defer w.connected.Store(false)
+			w.setPool(func(pool *JoinedPool) {
+				welcome := kind.Welcome
+				*pool = JoinedPool{ID: welcome.GetCoordinatorId(), Name: welcome.GetCoordinatorName(), Roles: welcome.GetRoles(), Connected: true, Welcomed: true}
+			})
+			defer w.setPool(func(pool *JoinedPool) { pool.Connected = false })
 			w.swarmChanged(kind.Welcome.GetSwarmFingerprint())
 			// Only an address that is someone's on the internet says
 			// where this node is.
@@ -319,6 +333,34 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				}
 			}()
 		}
+	}
+}
+
+// JoinedPool is what a worker knows of the pool it works for.
+type JoinedPool struct {
+	// ID and Name are the coordinator's, and Roles what the node holds in
+	// its pool, worker before client, as the coordinator last said.
+	ID, Name string
+	Roles    []pb.Role
+	// Connected is whether the node is in the pool now, and Welcomed
+	// whether it has been since it started. While it is not, what it knew
+	// of the pool is kept.
+	Connected, Welcomed bool
+}
+
+// JoinedPool returns what the worker knows of its pool.
+func (w *Worker) JoinedPool() JoinedPool {
+	w.poolMu.Lock()
+	defer w.poolMu.Unlock()
+	return w.pool
+}
+
+func (w *Worker) setPool(change func(*JoinedPool)) {
+	w.poolMu.Lock()
+	change(&w.pool)
+	w.poolMu.Unlock()
+	if w.OnPool != nil {
+		w.OnPool()
 	}
 }
 

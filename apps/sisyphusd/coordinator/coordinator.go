@@ -117,8 +117,13 @@ func (noStandings) SaveStanding(jobmodel.Standing) error        { return nil }
 func (noStandings) LoadStandings() ([]jobmodel.Standing, error) { return nil, nil }
 
 type Config struct {
-	// ID names this coordinator to its workers.
-	ID string
+	// ID names this coordinator to its workers, and Name is what its owner
+	// calls it, for people to know the pool by.
+	ID   string
+	Name string
+	// RolesOf, if set, says what a worker holds in the pool, worker before
+	// client. A worker is told on joining, and again by RolesChanged.
+	RolesOf func(id string) []pb.Role
 	// Sign, if set, signs with the key of the node named ID. A job's
 	// record is then kept with the coordinator's attestation of it.
 	Sign      func([]byte) []byte
@@ -197,7 +202,8 @@ type Config struct {
 type Coordinator struct {
 	pb.UnimplementedCoordinatorServiceServer
 
-	id string
+	id, name string
+	rolesOf  func(id string) []pb.Role
 	// sign, if set, signs with the coordinator's node key; see Config.Sign.
 	sign      func([]byte) []byte
 	workloads *runtime.Registry
@@ -388,6 +394,8 @@ func New(cfg Config) *Coordinator {
 	}
 	c := &Coordinator{
 		id:             cfg.ID,
+		name:           cfg.Name,
+		rolesOf:        cfg.RolesOf,
 		sign:           cfg.Sign,
 		workloads:      cfg.Workloads,
 		audits:         cfg.Audits,
@@ -1223,6 +1231,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 	w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_Welcome{Welcome: &pb.Welcome{
 		CoordinatorId: c.id, SwarmFingerprint: c.swarmFingerprint,
 		ObservedAddress: seenAt(c.sourceOf(stream.Context())),
+		CoordinatorName: c.name, Roles: c.roles(w.id),
 	}}})
 	c.scheduleLocked()
 	c.mu.Unlock()
@@ -1333,6 +1342,28 @@ func (c *Coordinator) AnnounceSwarm(fingerprint string) {
 	c.swarmFingerprint = fingerprint
 	for _, w := range c.workers {
 		w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_SwarmUpdate{SwarmUpdate: &pb.SwarmUpdate{SwarmFingerprint: fingerprint}}})
+	}
+}
+
+// roles is what the worker with the given ID holds in the pool, as RolesOf
+// says, or nothing if there is no RolesOf.
+func (c *Coordinator) roles(id string) []pb.Role {
+	if c.rolesOf == nil {
+		return nil
+	}
+	return c.rolesOf(id)
+}
+
+// RolesChanged tells the worker with the given ID, if it is connected, the
+// roles it now holds. The roles are read under the coordinator's lock, so
+// two changes in quick succession are sent in the order they were read and
+// the last the worker is told is the newest.
+func (c *Coordinator) RolesChanged(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	roles := c.roles(id)
+	if w, ok := c.workers[id]; ok {
+		w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_RolesChanged{RolesChanged: &pb.RolesChanged{Roles: roles}}})
 	}
 }
 

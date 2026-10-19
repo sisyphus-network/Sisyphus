@@ -132,6 +132,16 @@ service NodeService {
   // from it, and start working for it, beside whatever else it is doing.
   // It is what a node started with --join does, without the restart.
   rpc JoinPool(JoinPoolRequest) returns (JoinPoolResponse);
+  // GetJoinedPool says which pool a node that works for another's pool has
+  // joined, and how it stands with it. A node that coordinates its own pool
+  // has joined none, and is answered FAILED_PRECONDITION.
+  rpc GetJoinedPool(GetJoinedPoolRequest) returns (JoinedPool);
+  // WatchJoinedPool sends the joined pool as it stands, at once, and again,
+  // whole, whenever it changes: on connecting, on losing the connection, and
+  // when the node's roles in the pool change. While the node is not
+  // connected, the pool's identity and the roles are the last known, and
+  // the state says so.
+  rpc WatchJoinedPool(GetJoinedPoolRequest) returns (stream JoinedPool);
 }
 
 message GetNodeInfoRequest {}
@@ -746,6 +756,29 @@ message ListFilesResponse { repeated File files = 1; }
 message RemoveFileRequest { string cid = 1; }
 
 message RemoveFileResponse {}
+
+message GetJoinedPoolRequest {}
+
+enum JoinedPoolState {
+  JOINED_POOL_STATE_UNSPECIFIED = 0;
+  // Not yet welcomed into the pool since the node started.
+  JOINED_POOL_STATE_CONNECTING = 1;
+  JOINED_POOL_STATE_CONNECTED = 2;
+  // Welcomed once, and not connected now; it is trying again.
+  JOINED_POOL_STATE_DISCONNECTED = 3;
+}
+
+message JoinedPool {
+  // Empty until the coordinator has first welcomed the node.
+  string coordinator_id = 1;
+  string coordinator_name = 2;
+  // Where the node reaches its coordinator, as it was told to.
+  string address = 3;
+  JoinedPoolState state = 4;
+  // What the node may do in the pool, worker before client, as the
+  // coordinator last said.
+  repeated PoolRole roles = 5;
+}
 
 enum PoolRole {
   POOL_ROLE_UNSPECIFIED = 0;

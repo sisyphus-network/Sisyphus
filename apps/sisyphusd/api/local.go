@@ -71,6 +71,11 @@ type LocalConfig struct {
 	NodeInfoChanges *NodeInfoChanges
 	// BrowserDeviceChanges publishes changes to the enrolled browser list.
 	BrowserDeviceChanges *NodeInfoChanges
+	// JoinedPool, if set, says which pool this node works for and how it
+	// stands with it, and JoinedPoolChanges publishes each change to that.
+	// A node that coordinates its own pool has joined none.
+	JoinedPool        func() *nodepb.JoinedPool
+	JoinedPoolChanges *NodeInfoChanges
 	// Jobs, if set, is the pool this node coordinates, for the calls about
 	// its workers and jobs. Workloads are the workloads the node knows.
 	Jobs      JobControl

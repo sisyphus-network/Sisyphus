@@ -63,9 +63,10 @@ Anything on the machine can **read** what the node is, who it knows and who work
 | `FetchFile` | yes | The content under a CID, as a stream: a stored file, or anything in a job's `output_blobs`. |
 | `RemoveFile` | yes | Stop keeping a file. |
 | `CreateInvitation` | yes | An invitation for another machine to join with, as a worker or as a client that only submits jobs. Works once; lasts an hour unless `ttl_seconds` says otherwise. |
-| `ListMembers` | | The nodes admitted to the pool, with role and when they joined. |
+| `ListMembers` | | The nodes admitted to the pool, with their roles (`role` is the first; `roles` all of them, as a node can be both worker and client) and when they joined. |
 | `RemoveMember` | yes | Take a node out of the pool and disconnect it. |
 | `JoinPool` | yes | Join another node's pool with its address and an invitation from it, and start working for it. No restart. |
+| `GetJoinedPool`, `WatchJoinedPool` | | On a node started with `--role worker`: the pool it has joined and how it stands with it. See below. |
 
 The two `Watch` calls are the ones to build live views on. Each message carries a `revision` that counts up from one.
 
@@ -182,7 +183,9 @@ The key is one the node makes the first time it is needed and keeps in `private.
 
 `JoinPool` takes the other node's address as `host:port` and an invitation its owner made (`CreateInvitation` on their side, or `pool invite`). On success this node is a worker of that pool and starts taking its tasks within a moment, beside its own work; the peer appears in `ListPeers` with `takes_work` and then `this_node_works_for` set. To leave, set `takes_work` to false with `SetPeerComputePermissions`.
 
-It needs a node that runs a worker, which is every node unless it was started with `--role coordinator`. An invitation for a client is accepted too, and then no work is taken.
+It needs a node that runs a worker, which is every node unless it was started with `--role coordinator`. An invitation for a client is accepted too, and then no work is taken. A worker that redeems a client invitation holds both roles: it goes on working, and may submit jobs to that pool as well.
+
+**Which pool a worker node has joined.** A node started with `--role worker --coordinator <address>` answers `GetJoinedPool` with its coordinator's ID and name, the address it reaches it at, its `state` (`CONNECTING` until first welcomed, `CONNECTED`, `DISCONNECTED` once it has lost the connection and is trying again) and its `roles` in that pool. `WatchJoinedPool` sends that at once, and again, whole, each time it changes: on connecting, on losing the connection, and when the coordinator says its roles have changed. While the node is `DISCONNECTED`, the ID, name and roles are the last it knew, not live. A node that coordinates its own pool has joined none, and is answered `FAILED_PRECONDITION`.
 
 ## What the API does not have yet
 
