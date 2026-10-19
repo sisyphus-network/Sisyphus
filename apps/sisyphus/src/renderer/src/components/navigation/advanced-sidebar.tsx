@@ -5,6 +5,7 @@ import type { LucideIcon } from 'lucide-react'
 import type { NodeSnapshot } from '../../../../preload'
 import type { getMessages } from '@/i18n/messages'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { logoUrl } from '@/lib/brand'
 
 type Messages = ReturnType<typeof getMessages>
 type NavigationItem = { to: string; label: string; icon: LucideIcon; end?: boolean }
@@ -71,10 +72,10 @@ export function AdvancedSidebar({ snapshot, connectedPeers, statusLabel, message
     <div className="advanced-sidebar__inner">
       <div className="advanced-sidebar__brand-row">
         {isExpanded ? <Link to="/" className="advanced-sidebar__brand" aria-label="Sisyphus">
-          <img className="advanced-sidebar__logo" src="/logo.png" alt="" />
+          <img className="advanced-sidebar__logo" src={logoUrl} alt="" />
           <span className="advanced-sidebar__brand-name">Sisyphus</span>
         </Link> : <button type="button" className="advanced-sidebar__brand advanced-sidebar__brand--collapsed-trigger" onPointerDown={captureTogglePointer} onClick={handleToggleClick} aria-label={messages.preferences}>
-          <img className="advanced-sidebar__logo" src="/logo.png" alt="" />
+          <img className="advanced-sidebar__logo" src={logoUrl} alt="" />
           <span className="advanced-sidebar__brand-name">Sisyphus</span>
           <PanelLeftOpen className="advanced-sidebar__expand-icon size-5" aria-hidden="true" />
         </button>}
