@@ -773,8 +773,11 @@ message ListMembersResponse { repeated PoolMember members = 1; }
 
 message PoolMember {
   string peer_id = 1;
+  // The first of roles, for readers that know a member by one role.
   PoolRole role = 2;
   int64 joined_at_ms = 3;
+  // Every role the member holds, worker before client.
+  repeated PoolRole roles = 4;
 }
 
 message RemoveMemberRequest { string peer_id = 1; }

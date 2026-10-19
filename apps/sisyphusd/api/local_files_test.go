@@ -480,7 +480,7 @@ func TestInvitationsAndMembersThroughTheLocalAPI(t *testing.T) {
 	if _, err := client.RemoveMember(ctx, &nodepb.RemoveMemberRequest{PeerId: worker}); err != nil {
 		t.Fatal(err)
 	}
-	if _, member := list.Role(worker); member {
+	if _, member := list.Roles(worker); member {
 		t.Error("a removed node is still a member")
 	}
 	if _, err := client.RemoveMember(ctx, &nodepb.RemoveMemberRequest{PeerId: worker}); status.Code(err) != codes.NotFound {

@@ -106,6 +106,20 @@ func joinPool(ctx context.Context, dataDir string, ident *identity.Identity, add
 
 var roleNames = map[pb.Role]string{pb.Role_ROLE_WORKER: "worker", pb.Role_ROLE_CLIENT: "client"}
 
+// memberRoles names every role a member holds, as "worker,client" for one
+// that holds both. A coordinator that says only one role is taken at its
+// word.
+func memberRoles(m *pb.Member) string {
+	if len(m.GetRoles()) == 0 {
+		return roleNames[m.GetRole()]
+	}
+	names := make([]string, len(m.GetRoles()))
+	for i, role := range m.GetRoles() {
+		names[i] = roleNames[role]
+	}
+	return strings.Join(names, ",")
+}
+
 func poolCommand(ctx context.Context, args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
@@ -213,7 +227,7 @@ func poolMembers(ctx context.Context, args []string) error {
 		fmt.Fprintln(tw, "NODE\tROLE\tJOINED\tSTORED")
 	}
 	for _, m := range listed.GetMembers() {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", m.GetNodeId(), roleNames[m.GetRole()], m.GetJoinedAt().AsTime().UTC().Format(time.RFC3339), storedOf(m))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", m.GetNodeId(), memberRoles(m), m.GetJoinedAt().AsTime().UTC().Format(time.RFC3339), storedOf(m))
 	}
 	tw.Flush()
 	// The other side of trust: whom this node will take tasks from.

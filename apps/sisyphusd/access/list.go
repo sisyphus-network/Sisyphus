@@ -14,7 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,11 +37,37 @@ const (
 	Client Role = "client"
 )
 
-// Member is a node that has been admitted.
+// Member is a node that has been admitted. It holds one role or both: a
+// worker that has also redeemed a client invitation is both.
 type Member struct {
-	ID     string    `json:"id"`
-	Role   Role      `json:"role"`
-	Joined time.Time `json:"joined"`
+	ID string
+	// Roles are what it may do, worker before client.
+	Roles  []Role
+	Joined time.Time
+}
+
+// Has reports whether the member holds role.
+func (m Member) Has(role Role) bool { return slices.Contains(m.Roles, role) }
+
+// rolesOf reads roles as a store keeps them: one, or several joined by
+// commas, in any order. It returns them worker before client.
+func rolesOf(stored string) []Role {
+	var roles []Role
+	for _, role := range []Role{Worker, Client} {
+		if slices.Contains(strings.Split(stored, ","), string(role)) {
+			roles = append(roles, role)
+		}
+	}
+	return roles
+}
+
+// stored is how a store keeps roles.
+func stored(roles []Role) string {
+	names := make([]string, len(roles))
+	for i, role := range roles {
+		names[i] = string(role)
+	}
+	return strings.Join(names, ",")
 }
 
 // Store is where a list keeps its members and the invitations it has
@@ -85,7 +113,7 @@ func Open(store Store, ownerID string) (*List, error) {
 		return nil, err
 	}
 	for _, m := range saved {
-		l.members[m.ID] = Member{ID: m.ID, Role: Role(m.Role), Joined: m.Joined}
+		l.members[m.ID] = Member{ID: m.ID, Roles: rolesOf(m.Role), Joined: m.Joined}
 	}
 	return l, nil
 }
@@ -135,7 +163,12 @@ func (l *List) Import(file string) error {
 	if err != nil {
 		return fmt.Errorf("read access list: %w", err)
 	}
-	var members []Member
+	// Earlier versions gave each member one role.
+	var members []struct {
+		ID     string    `json:"id"`
+		Role   Role      `json:"role"`
+		Joined time.Time `json:"joined"`
+	}
 	if err := json.Unmarshal(data, &members); err != nil {
 		return fmt.Errorf("access list %s: %w", file, err)
 	}
@@ -150,16 +183,24 @@ func (l *List) Import(file string) error {
 	return nil
 }
 
-// Role returns the role of the node with the given ID, and whether it has
-// one at all.
-func (l *List) Role(id string) (Role, bool) {
+// Roles returns the roles of the node with the given ID, and whether it has
+// any at all. The owner's one role is Owner.
+func (l *List) Roles(id string) ([]Role, bool) {
 	if id == l.owner {
-		return Owner, true
+		return []Role{Owner}, true
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	m, ok := l.members[id]
-	return m.Role, ok
+	return m.Roles, ok
+}
+
+// Has reports whether the node with the given ID has been admitted in role.
+// The owner is not a member and has no member's role.
+func (l *List) Has(id string, role Role) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.members[id].Has(role)
 }
 
 // Invite returns a token that admits whichever node first presents it, in
@@ -189,7 +230,7 @@ func hashed(token string) string {
 var ErrBadInvite = errors.New("invitation is not valid")
 
 // Redeem admits the node with the given ID in the role its token was issued
-// for. A token works once.
+// for, beside any it already has. A token works once.
 func (l *List) Redeem(token, id string, now time.Time) (Role, error) {
 	role, expires, found, err := l.store.TakeInvitation(hashed(token))
 	if err != nil {
@@ -201,18 +242,50 @@ func (l *List) Redeem(token, id string, now time.Time) (Role, error) {
 	return Role(role), l.Admit(id, Role(role), now)
 }
 
-// Admit admits a node directly, without an invitation.
+// Admit admits a node directly, without an invitation, in role. A member
+// keeps the roles it has and the time it first joined.
 func (l *List) Admit(id string, role Role, now time.Time) error {
 	l.mu.Lock()
-	err := l.store.SaveMember(nodedb.Member{ID: id, Role: string(role), Joined: now})
+	m, known := l.members[id]
+	if !known {
+		m = Member{ID: id, Joined: now}
+	}
+	m.Roles = rolesOf(stored(append(slices.Clone(m.Roles), role)))
+	err := l.store.SaveMember(nodedb.Member{ID: id, Role: stored(m.Roles), Joined: m.Joined})
 	if err == nil {
-		l.members[id] = Member{ID: id, Role: role, Joined: now}
+		l.members[id] = m
 	}
 	l.mu.Unlock()
 	if err == nil {
 		l.tell(id)
 	}
 	return err
+}
+
+// Revoke takes role from a member, and takes the member off the list if it
+// has no other. It reports whether the member held role.
+func (l *List) Revoke(id string, role Role) (bool, error) {
+	l.mu.Lock()
+	m, known := l.members[id]
+	if !known || !m.Has(role) {
+		l.mu.Unlock()
+		return false, nil
+	}
+	m.Roles = slices.DeleteFunc(slices.Clone(m.Roles), func(r Role) bool { return r == role })
+	if len(m.Roles) == 0 {
+		l.mu.Unlock()
+		return l.Remove(id)
+	}
+	err := l.store.SaveMember(nodedb.Member{ID: id, Role: stored(m.Roles), Joined: m.Joined})
+	if err == nil {
+		l.members[id] = m
+	}
+	l.mu.Unlock()
+	if err != nil {
+		return false, err
+	}
+	l.tell(id)
+	return true, nil
 }
 
 // Remove takes a node off the list. It reports whether the node was on it.

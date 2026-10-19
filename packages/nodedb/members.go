@@ -10,7 +10,8 @@ import (
 // Member is a node admitted to this one.
 type Member struct {
 	ID string
-	// Role is "worker" or "client".
+	// Role is "worker", "client", or "worker,client" for a member that holds
+	// both.
 	Role   string
 	Joined time.Time
 }

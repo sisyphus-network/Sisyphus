@@ -844,13 +844,19 @@ func (s *localService) permit(ctx context.Context, id string, gives, takes bool)
 	}
 	if s.cfg.Pool != nil {
 		pool := s.cfg.Pool.service
-		role, member := pool.access.Role(id)
 		switch {
-		case gives && role != access.Worker:
+		case gives && !pool.access.Has(id, access.Worker):
 			if err := pool.access.Admit(id, access.Worker, time.Now()); err != nil {
 				return status.Errorf(codes.Internal, "admit node: %v", err)
 			}
-		case !gives && member && role == access.Worker:
+		case !gives && pool.access.Has(id, access.Worker) && pool.access.Has(id, access.Client):
+			// It stays a client: it stops being given work, and only the
+			// connection it works on ends.
+			if _, err := pool.access.Revoke(id, access.Worker); err != nil {
+				return status.Errorf(codes.Internal, "stop giving the node work: %v", err)
+			}
+			pool.coordinator.Remove(id)
+		case !gives && pool.access.Has(id, access.Worker):
 			if err := pool.removeMember(ctx, id); err != nil {
 				return err
 			}

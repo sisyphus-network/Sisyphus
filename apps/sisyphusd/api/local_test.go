@@ -600,15 +600,15 @@ func TestChangingTrustAdmitsAndRemovesWorkers(t *testing.T) {
 	if err != nil || !got.GetTrusted() {
 		t.Fatalf("trusting a peer: %v, %v", got, err)
 	}
-	if role, ok := n.list.Role(peer); !ok || role != access.Worker {
-		t.Errorf("a trusted peer has role %q (%v), want worker", role, ok)
+	if roles, _ := n.list.Roles(peer); !n.list.Has(peer, access.Worker) {
+		t.Errorf("a trusted peer has roles %q, want worker", roles)
 	}
 
 	got, err = n.client.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: peer, Trusted: false})
 	if err != nil || got.GetTrusted() {
 		t.Fatalf("ending trust in a peer: %v, %v", got, err)
 	}
-	if _, ok := n.list.Role(peer); ok {
+	if _, ok := n.list.Roles(peer); ok {
 		t.Error("a peer no longer trusted is still a member")
 	}
 	// Ending trust that is not there leaves things as they should be.
@@ -635,7 +635,7 @@ func TestChangesNeedTheNodesToken(t *testing.T) {
 			t.Errorf("%s: %v, want a refusal that says where the token is", name, err)
 		}
 	}
-	if _, ok := n.list.Role(peer); ok {
+	if _, ok := n.list.Roles(peer); ok {
 		t.Error("a refused change admitted the peer")
 	}
 	// Reading what the node is and who it knows needs none.
@@ -895,8 +895,7 @@ func TestTheTwoSidesOfTrustAreSetSeparately(t *testing.T) {
 	}}
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
 	state := func() (gives, willing bool) {
-		role, _ := list.Role(peerID)
-		return role == access.Worker, slices.Contains(takes.ids, peerID)
+		return list.Has(peerID, access.Worker), slices.Contains(takes.ids, peerID)
 	}
 	set := func(gives, willing bool) {
 		t.Helper()
@@ -936,8 +935,23 @@ func TestTheTwoSidesOfTrustAreSetSeparately(t *testing.T) {
 	if _, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: client}); err != nil {
 		t.Fatal(err)
 	}
-	if role, _ := list.Role(client); role != access.Client {
-		t.Errorf("a client given no work now has role %q", role)
+	if roles, _ := list.Roles(client); !slices.Equal(roles, []access.Role{access.Client}) {
+		t.Errorf("a client given no work now has roles %q", roles)
+	}
+
+	// A client trusted for work holds both roles; given no work again, it
+	// stays the client it was (#474).
+	if _, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: client, GivesWork: true}); err != nil {
+		t.Fatal(err)
+	}
+	if roles, _ := list.Roles(client); !slices.Equal(roles, []access.Role{access.Worker, access.Client}) {
+		t.Errorf("a client trusted for work has roles %q, want both", roles)
+	}
+	if _, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: client}); err != nil {
+		t.Fatal(err)
+	}
+	if roles, _ := list.Roles(client); !slices.Equal(roles, []access.Role{access.Client}) {
+		t.Errorf("a client that was also a worker, given no work, has roles %q, want client", roles)
 	}
 
 	for name, tt := range map[string]struct {
@@ -982,8 +996,8 @@ func TestANodeSetsOnlyTheSidesOfTrustItHas(t *testing.T) {
 	if _, err := coordinatorOnly.SetPeerComputeTrust(ctx, &nodepb.SetPeerComputeTrustRequest{PeerId: peerID, Trusted: true}); err != nil {
 		t.Errorf("trusting from a node with no worker: %v", err)
 	}
-	if role, _ := list.Role(peerID); role != access.Worker {
-		t.Errorf("the trusted node's role is %q", role)
+	if roles, _ := list.Roles(peerID); !list.Has(peerID, access.Worker) {
+		t.Errorf("the trusted node's roles are %q", roles)
 	}
 }
 
@@ -1027,6 +1041,11 @@ func TestEndingTheGivingOfWorkReportsAListThatCannotBeSaved(t *testing.T) {
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
 	if _, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID}); status.Code(err) != codes.Internal {
 		t.Errorf("error %v, want Internal", err)
+	}
+	// So does one that is a client too, which only loses its worker role.
+	list.Admit(peerID, access.Client, time.Now())
+	if _, err := service.SetPeerComputePermissions(ctx, &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID}); status.Code(err) != codes.Internal {
+		t.Errorf("a client too: error %v, want Internal", err)
 	}
 }
 

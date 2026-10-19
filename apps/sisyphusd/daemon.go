@@ -643,7 +643,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// still reach each other. The nodes whose work this one takes are
 		// let in too: it is in their pools, if not they in its own.
 		host, err = p2p.New(p2p.Config{Identity: ident, MaxConnections: *maxConnections, Listen: *listen, Relay: true, Discover: *discovery == "on", Log: log, PeerChanged: local.NodeInfoChanges.Notify, Allow: func(id string) bool {
-			_, admitted := admitted.Role(id)
+			_, admitted := admitted.Roles(id)
 			return admitted || slices.Contains(takes.List(), id)
 		}})
 		if err != nil {
@@ -656,8 +656,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		go func() {
 			defer close(trustDone)
 			serveTrustChanges(trustCtx, trustListener, trustChanged, func(id string) bool {
-				role, admitted := admitted.Role(id)
-				return admitted && role == access.Worker
+				return admitted.Has(id, access.Worker)
 			})
 		}()
 		defer func() {
@@ -669,7 +668,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// it has admitted. With Kubo, what it is handed goes on to the
 		// pool's private network as well.
 		held = api.NewNames(db, func(id string) bool {
-			_, admitted := admitted.Role(id)
+			_, admitted := admitted.Roles(id)
 			return admitted
 		})
 		if sidecar != nil {
@@ -1831,7 +1830,7 @@ func poolPeers(self string, connected []*pb.NodeInfo, members []access.Member) [
 			state = nodepb.PeerConnectionState_PEER_CONNECTION_STATE_CONNECTED
 		}
 		peers = append(peers, &nodepb.Peer{
-			PeerId: member.ID, ConnectionState: state, GivesWork: member.Role == access.Worker,
+			PeerId: member.ID, ConnectionState: state, GivesWork: member.Has(access.Worker),
 			// A member whose worker is connected is working for this node.
 			WorksForThisNode: online[member.ID],
 		})

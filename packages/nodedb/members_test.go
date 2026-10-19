@@ -36,9 +36,18 @@ func TestMembersAreKeptAcrossReopening(t *testing.T) {
 	if len(got) != 2 || got[0].ID != want[0].ID || got[1].Role != "client" || !got[0].Joined.Equal(want[0].Joined) || !got[1].Joined.Equal(want[1].Joined) {
 		t.Errorf("members after reopening: %+v, want %+v", got, want)
 	}
-	// Only the roles there are can be recorded.
-	if err := db.SaveMember(Member{"12D3KooWd", "owner", joined}); err == nil || !strings.Contains(err.Error(), "save member") {
-		t.Errorf("saving a member as owner: %v", err)
+	// Only the roles there are can be recorded: one, or both, worker first.
+	for _, role := range []string{"owner", "client,worker", "worker,owner"} {
+		if err := db.SaveMember(Member{"12D3KooWd", role, joined}); err == nil || !strings.Contains(err.Error(), "save member") {
+			t.Errorf("saving a member as %q: %v", role, err)
+		}
+	}
+	if err := db.SaveMember(Member{"12D3KooWa", "worker,client", joined}); err != nil {
+		t.Fatal(err)
+	}
+	db = reopen(t, db, file)
+	if got, _ := db.Members(); len(got) != 2 || got[0].Role != "worker,client" {
+		t.Errorf("a member with both roles reads back as %+v", got)
 	}
 }
 

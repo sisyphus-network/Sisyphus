@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -73,8 +74,10 @@ type accessList interface {
 	Redeem(token, id string, now time.Time) (access.Role, error)
 	Remove(id string) (bool, error)
 	Members() []access.Member
-	Role(id string) (access.Role, bool)
+	Roles(id string) ([]access.Role, bool)
+	Has(id string, role access.Role) bool
 	Admit(id string, role access.Role, now time.Time) error
+	Revoke(id string, role access.Role) (bool, error)
 }
 
 var (
@@ -86,11 +89,11 @@ func (s *poolService) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRe
 	if req.GetToken() == "" {
 		// A node can be admitted without an invitation, by this node's
 		// owner trusting it directly. It joins by asking whether it has been.
-		role, admitted := s.access.Role(access.Caller(ctx))
-		if !admitted || role == access.Owner {
+		roles, admitted := s.access.Roles(access.Caller(ctx))
+		if !admitted || slices.Contains(roles, access.Owner) {
 			return nil, status.Error(codes.PermissionDenied, "this node has not been trusted by the node it is joining; ask its owner to trust it, or for an invitation")
 		}
-		return &pb.JoinResponse{Role: fromRole[role]}, nil
+		return &pb.JoinResponse{Role: fromRole[roles[0]]}, nil
 	}
 	role, err := s.access.Redeem(req.GetToken(), access.Caller(ctx), time.Now())
 	if errors.Is(err, access.ErrBadInvite) {
@@ -116,7 +119,7 @@ func (s *poolService) WatchRelays(_ *pb.RelaysRequest, stream grpc.ServerStreami
 }
 
 func (s *poolService) IsMember(_ context.Context, req *pb.IsMemberRequest) (*pb.IsMemberResponse, error) {
-	_, member := s.access.Role(req.GetNodeId())
+	_, member := s.access.Roles(req.GetNodeId())
 	return &pb.IsMemberResponse{Member: member}, nil
 }
 
@@ -164,7 +167,11 @@ func (s *poolService) ListMembers(ctx context.Context, _ *pb.ListMembersRequest)
 	}
 	var res pb.ListMembersResponse
 	for _, m := range s.access.Members() {
-		res.Members = append(res.Members, &pb.Member{NodeId: m.ID, Role: fromRole[m.Role], JoinedAt: timestamppb.New(m.Joined), StoredBytes: stored[m.ID]})
+		member := &pb.Member{NodeId: m.ID, Role: fromRole[m.Roles[0]], JoinedAt: timestamppb.New(m.Joined), StoredBytes: stored[m.ID]}
+		for _, role := range m.Roles {
+			member.Roles = append(member.Roles, fromRole[role])
+		}
+		res.Members = append(res.Members, member)
 	}
 	if s.workFor != nil {
 		res.WorksFor = s.workFor.List()

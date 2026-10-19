@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -94,20 +95,20 @@ func (l *List) authorize(ctx context.Context, method string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	role, _ := l.Role(id)
-	if role == Owner {
+	roles, _ := l.Roles(id)
+	if slices.Contains(roles, Owner) {
 		return id, nil
 	}
 	for _, permitted := range allowed[method] {
-		if role == permitted {
+		if slices.Contains(roles, permitted) || (permitted == anyone && len(roles) == 0) {
 			return id, nil
 		}
 	}
 	name := method[strings.LastIndex(method, "/")+1:]
-	if role == anyone {
+	if len(roles) == 0 {
 		return "", status.Errorf(codes.PermissionDenied, "node %s has not been admitted to this node", id)
 	}
-	return "", status.Errorf(codes.PermissionDenied, "node %s is admitted as a %s, which may not call %s", id, role, name)
+	return "", status.Errorf(codes.PermissionDenied, "node %s is admitted as a %s, which may not call %s", id, strings.ReplaceAll(stored(roles), ",", " and "), name)
 }
 
 type callerKey struct{}

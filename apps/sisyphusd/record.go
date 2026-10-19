@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -43,7 +44,7 @@ type recordMember struct {
 func describeNode(id, version string, workloads []string, members []access.Member) []byte {
 	record := nodeRecord{ID: id, Version: version, Workloads: workloads, Members: []recordMember{}}
 	for _, member := range members {
-		record.Members = append(record.Members, recordMember{ID: member.ID, Role: string(member.Role)})
+		record.Members = append(record.Members, recordMember{ID: member.ID, Role: recordRoles(member.Roles)})
 	}
 	document, _ := json.MarshalIndent(record, "", "  ") // strings always encode
 	return append(document, '\n')
@@ -162,4 +163,14 @@ func (k *recordKeeper) publish(ctx context.Context, now time.Time) error {
 	k.published, k.at = document, stored
 	k.log.Info("published this node's record under its name", "name", record.Name, "cid", stored.String(), "sequence", sequence)
 	return nil
+}
+
+// recordRoles is how a node record names a member's roles: one, or both
+// joined by a comma, worker first.
+func recordRoles(roles []access.Role) string {
+	names := make([]string, len(roles))
+	for i, role := range roles {
+		names[i] = string(role)
+	}
+	return strings.Join(names, ",")
 }

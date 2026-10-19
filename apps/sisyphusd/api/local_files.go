@@ -265,7 +265,11 @@ func (s *localService) ListMembers(context.Context, *nodepb.ListMembersRequest) 
 	}
 	var res nodepb.ListMembersResponse
 	for _, m := range s.cfg.Pool.service.access.Members() {
-		res.Members = append(res.Members, &nodepb.PoolMember{PeerId: m.ID, Role: toLocalRole[m.Role], JoinedAtMs: m.Joined.UnixMilli()})
+		member := &nodepb.PoolMember{PeerId: m.ID, Role: toLocalRole[m.Roles[0]], JoinedAtMs: m.Joined.UnixMilli()}
+		for _, role := range m.Roles {
+			member.Roles = append(member.Roles, toLocalRole[role])
+		}
+		res.Members = append(res.Members, member)
 	}
 	return &res, nil
 }

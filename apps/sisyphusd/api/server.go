@@ -79,14 +79,8 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 			return mergeHolders(cfg.Coordinator.Holders(blob, asker), cfg.Replication.Holders(blob, asker))
 		},
 		replication: cfg.Replication, owner: cfg.Identity.ID(),
-		clients: func(id string) bool {
-			role, admitted := cfg.Access.Role(id)
-			return admitted && role == access.Client
-		},
-		workers: func(id string) bool {
-			role, admitted := cfg.Access.Role(id)
-			return admitted && role == access.Worker
-		},
+		clients:      func(id string) bool { return cfg.Access.Has(id, access.Client) },
+		workers:      func(id string) bool { return cfg.Access.Has(id, access.Worker) },
 		uploading:    cfg.Coordinator.Uploading,
 		chargeUpload: cfg.Coordinator.ChargeUpload,
 		perClient:    cfg.MaxStoreBytesPerClient,

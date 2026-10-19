@@ -144,12 +144,17 @@ func try(conn *grpc.ClientConn) map[string]codes.Code {
 
 func TestEachRoleMayMakeOnlyItsOwnCalls(t *testing.T) {
 	g := startGuarded(t)
-	worker, client, stranger := newIdentity(t), newIdentity(t), newIdentity(t)
+	worker, client, both, stranger := newIdentity(t), newIdentity(t), newIdentity(t), newIdentity(t)
 	if err := g.list.Admit(worker.ID(), Worker, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.list.Admit(client.ID(), Client, now); err != nil {
 		t.Fatal(err)
+	}
+	for _, role := range []Role{Worker, Client} {
+		if err := g.list.Admit(both.ID(), role, now); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	const yes, no, stub = codes.OK, codes.PermissionDenied, codes.Unimplemented
@@ -172,6 +177,12 @@ func TestEachRoleMayMakeOnlyItsOwnCalls(t *testing.T) {
 			"list nodes": yes, "submit job": stub, "stat blob": stub, "get blob": yes, "collect garbage": stub,
 			"take tasks": no, "join": stub, "invite": no, "remove member": no, "swarm key": stub,
 			"watch relays": no, "ask what to hold": no, "replication hello": no, "list copies": stub, "restore": stub,
+		}},
+		// One that holds both roles may make what either may (#474).
+		{"a worker that is also a client", both, map[string]codes.Code{
+			"list nodes": yes, "submit job": stub, "stat blob": stub, "get blob": yes, "collect garbage": stub,
+			"take tasks": stub, "join": stub, "invite": no, "remove member": no, "swarm key": stub,
+			"watch relays": stub, "ask what to hold": stub, "replication hello": stub, "list copies": stub, "restore": stub,
 		}},
 		{"a node never admitted", stranger, map[string]codes.Code{
 			"list nodes": no, "submit job": no, "stat blob": no, "get blob": no, "collect garbage": no,
@@ -234,6 +245,14 @@ func TestRefusalsSayWhoWasRefusedAndWhy(t *testing.T) {
 	_, err = pb.NewNodeServiceClient(g.dialAs(stranger)).ListNodes(ctx, &pb.ListNodesRequest{})
 	if want := "node " + stranger.ID() + " has not been admitted"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("a stranger's refusal: %v, want %q", err, want)
+	}
+	// One with both roles is told both.
+	if err := g.list.Admit(worker.ID(), Client, now); err != nil {
+		t.Fatal(err)
+	}
+	_, err = pb.NewPoolServiceClient(g.dialAs(worker)).Invite(ctx, &pb.InviteRequest{})
+	if want := "node " + worker.ID() + " is admitted as a worker and client, which may not call Invite"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("a refusal of a node with both roles: %v, want %q", err, want)
 	}
 }
 
