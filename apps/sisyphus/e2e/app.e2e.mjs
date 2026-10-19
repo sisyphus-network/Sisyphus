@@ -1268,7 +1268,7 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
     const menuBounds = await accentMenu.boundingBox()
     const viewportHeight = await page.evaluate(() => window.innerHeight)
     assert.ok(menuBounds && menuBounds.y >= 0 && menuBounds.y + menuBounds.height <= viewportHeight, `the accent popover is clipped: ${JSON.stringify({ menuBounds, viewportHeight })}`)
-    assert.equal(await accentMenu.evaluate((element) => getComputedStyle(element).position), 'fixed')
+    assert.equal(await accentMenu.evaluate((element) => getComputedStyle(element.parentElement).position), 'fixed')
     assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="dialog"]')?.getAttribute('aria-label'), { x: menuBounds.x + menuBounds.width / 2, y: menuBounds.y + menuBounds.height / 2 }), 'Accent', 'the popover is underneath another Settings layer')
     await accentMenu.getByRole('button', { name: 'Blue' }).click()
     await page.waitForFunction(() => document.documentElement.dataset.themeStyle === 'blue')

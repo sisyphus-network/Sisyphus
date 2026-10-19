@@ -59,7 +59,14 @@ export function ResponsiveSelector({ label, direction, trigger, triggerOverlay, 
         <PopoverPrimitive.Root open={open} onOpenChange={setOpen} modal={false}>
           <PopoverPrimitive.Trigger nativeButton={false} render={trigger(api) as ReactElement} />
           <PopoverPrimitive.Portal>
-            <PopoverPrimitive.Positioner side={placement} sideOffset={8} collisionPadding={8} style={{ display: "contents" }}>
+            <PopoverPrimitive.Positioner
+              positionMethod="fixed"
+              side={placement}
+              sideOffset={8}
+              collisionPadding={8}
+              collisionAvoidance={{ fallbackAxisSide: "none" }}
+              className="z-[1000] w-(--anchor-width)"
+            >
               <PopoverPrimitive.Popup
                 ref={contentRef}
                 aria-label={label}
@@ -87,8 +94,7 @@ export function ResponsiveSelector({ label, direction, trigger, triggerOverlay, 
                   }
                 }}
                 className={cn(
-                  "liquid-glass-menu z-[1000] overflow-y-auto rounded-2xl p-2 outline-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-                  placement === "top" ? "origin-bottom" : "origin-top",
+                  "liquid-glass-menu max-h-(--available-height) w-full overflow-y-auto rounded-2xl p-2 outline-none duration-200 data-[side=top]:origin-bottom data-[side=bottom]:origin-top data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
                 )}
               >
                 {children(api)}
