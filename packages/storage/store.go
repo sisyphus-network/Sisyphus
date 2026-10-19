@@ -49,6 +49,10 @@ var cidBuilder = cid.V1Builder{Codec: cid.DagProtobuf, MhType: multihash.SHA2_25
 // ErrNotFound reports that a store does not hold the requested blob.
 var ErrNotFound = errors.New("blob not found")
 
+// ErrInUse reports that another process, most often another node on the
+// same machine, has a store's directory open.
+var ErrInUse = errors.New("in use by another process")
+
 // Store holds blobs addressed by CID. It is safe for concurrent use.
 type Store struct {
 	blocks blockstore.Blockstore
@@ -107,7 +111,7 @@ func openDisk(dir string, durable, syncWrites bool) (*Store, error) {
 		return nil, fmt.Errorf("open blob store %s: %w", dir, err)
 	}
 	if !locked {
-		return nil, fmt.Errorf("open blob store %s: in use by another process", dir)
+		return nil, fmt.Errorf("open blob store %s: %w", dir, ErrInUse)
 	}
 	// The same on-disk layout Kubo uses for its block store.
 	ds, err := flatfs.CreateOrOpen(filepath.Join(dir, "blocks"), flatfs.NextToLast(2), syncWrites)

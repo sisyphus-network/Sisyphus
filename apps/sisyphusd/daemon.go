@@ -413,7 +413,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		log.Info("stored data is kept in a bucket", "endpoint", *s3Endpoint, "bucket", *s3Bucket)
 		pinsDir = filepath.Join(*dataDir, "s3-pins")
 		if store, err = storage.OpenBucket(bucket, pinsDir); err != nil {
-			return fmt.Errorf("%w (nodes sharing a machine each need their own --data-dir)", err)
+			return explainStoreError(err)
 		}
 	case isCoordinator && *useKubo:
 		pinsDir = filepath.Join(*dataDir, "kubo-pins")
@@ -426,7 +426,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		store, err = storage.OpenCache(filepath.Join(*dataDir, "cache"), *syncCache)
 	}
 	if err != nil {
-		return fmt.Errorf("%w (nodes sharing a machine each need their own --data-dir)", err)
+		return explainStoreError(err)
 	}
 	defer store.Close()
 	// A node that is its own coordinator reads and writes the one store
@@ -2634,6 +2634,18 @@ func defaultName() string {
 		return "node"
 	}
 	return name
+}
+
+// explainStoreError says what to do when a node cannot open its store. The
+// usual reason a data directory is in use is the desktop app: it starts a
+// node of its own on the same directory when it opens, and keeps it for a
+// few seconds after its window closes, so a node started by hand alongside
+// it fails (#530).
+func explainStoreError(err error) error {
+	if errors.Is(err, storage.ErrInUse) {
+		return fmt.Errorf("%w: another node on this machine has this data directory open. If the Sisyphus app is open, it is most likely the app's own node: quit the app, or wait a few seconds after closing its window, and start this one again. Otherwise, nodes sharing a machine each need their own --data-dir", err)
+	}
+	return err
 }
 
 // defaultDataDir is ~/.sisyphus, falling back to the working directory when
