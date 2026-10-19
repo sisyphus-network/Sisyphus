@@ -28,6 +28,42 @@ type FileList interface {
 	RemoveFile(cid string) error
 }
 
+// scopedFileList keeps a separate catalogue entry for each pool a node has
+// used, while sharing the content-addressed file itself.
+type scopedFileList interface {
+	FilesInPool(coordinatorID string) ([]nodedb.File, error)
+	AddFileInPool(coordinatorID string, file nodedb.File) error
+	RemoveFileInPool(coordinatorID, cid string) error
+}
+
+func (s *localService) fileScope() string {
+	if s.cfg.FileScope != nil {
+		return s.cfg.FileScope()
+	}
+	return ""
+}
+
+func (s *localService) addFile(file nodedb.File) error {
+	if scoped, ok := s.cfg.Files.(scopedFileList); ok {
+		return scoped.AddFileInPool(s.fileScope(), file)
+	}
+	return s.cfg.Files.AddFile(file)
+}
+
+func (s *localService) removeFile(cid string) error {
+	if scoped, ok := s.cfg.Files.(scopedFileList); ok {
+		return scoped.RemoveFileInPool(s.fileScope(), cid)
+	}
+	return s.cfg.Files.RemoveFile(cid)
+}
+
+func (s *localService) filesInScope() ([]nodedb.File, error) {
+	if scoped, ok := s.cfg.Files.(scopedFileList); ok {
+		return scoped.FilesInPool(s.fileScope())
+	}
+	return s.cfg.Files.Files()
+}
+
 // errNoStore is the answer to a call about files on a node that keeps no
 // store for a pool.
 var errNoStore = status.Error(codes.FailedPrecondition, "this node coordinates no pool, so it has no store of files")
@@ -114,7 +150,7 @@ func (s *localService) keep(ctx context.Context, name string, private, attachmen
 		return nil, status.Errorf(codes.Internal, "keep file: %v", err)
 	}
 	file := nodedb.File{CID: c.String(), Name: name, Size: size, Stored: time.Now(), Private: private}
-	if err := s.cfg.Files.AddFile(file); err != nil {
+	if err := s.addFile(file); err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 	return localFile(file), nil
@@ -179,7 +215,7 @@ func (s *localService) ListFiles(ctx context.Context, _ *nodepb.ListFilesRequest
 	if err := s.storeAvailable(); err != nil {
 		return nil, err
 	}
-	files, err := s.cfg.Files.Files()
+	files, err := s.filesInScope()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
@@ -232,13 +268,13 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", req.GetCid(), err)
 	}
-	files, err := s.cfg.Files.Files()
+	files, err := s.filesInScope()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 	// Off the list first: a file listed but no longer kept would be a
 	// promise the store does not make.
-	if err := s.cfg.Files.RemoveFile(c.String()); err != nil {
+	if err := s.removeFile(c.String()); err != nil {
 		if errors.Is(err, nodedb.ErrFileReferenced) {
 			return nil, status.Error(codes.FailedPrecondition, "file is still referenced; release its owners before removing it")
 		}
@@ -257,7 +293,7 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 			if file.CID != c.String() {
 				continue
 			}
-			if relisted := s.cfg.Files.AddFile(file); relisted != nil {
+			if relisted := s.addFile(file); relisted != nil {
 				return nil, status.Errorf(code, "stop keeping file: %v; and it could not be listed again: %v", err, relisted)
 			}
 		}
