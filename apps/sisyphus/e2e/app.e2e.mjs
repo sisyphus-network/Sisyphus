@@ -914,6 +914,46 @@ test('Settings pickers open in full view, above every card and inside the window
       // This one opens over the wizard's own dialog, not only over a card.
       await opensInView('Model provider', 'Provider', height, 'Add provider')
     }
+
+    // A keyboard or short landscape viewport can leave less than the normal
+    // 120px menu floor. The menu must use the actual remaining room instead.
+    await openSettingsCategory(page, 'General')
+    const trigger = page.getByRole('button', { name: 'Language', exact: true })
+    await trigger.scrollIntoViewIfNeeded()
+    const restoreViewport = await trigger.evaluate((input) => {
+      const root = input.closest('.relative')?.parentElement?.parentElement
+      if (!root) throw new Error('could not find the Language selector root')
+      const previousStyle = root.getAttribute('style')
+      const previousHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight')
+      root.style.position = 'fixed'
+      root.style.top = '100px'
+      root.style.left = '100px'
+      root.style.width = '300px'
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 250 })
+      window.dispatchEvent(new Event('resize'))
+      return { previousStyle, previousHeight }
+    })
+    try {
+      await trigger.click()
+      const menu = page.getByRole('dialog', { name: 'Language', exact: true })
+      await menu.waitFor()
+      await page.waitForTimeout(300)
+      const bounds = await menu.boundingBox()
+      assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 250, `the picker exceeds a 250px viewport: ${JSON.stringify(bounds)}`)
+    } finally {
+      await trigger.click()
+      await page.evaluate(({ previousStyle, previousHeight }) => {
+        const input = document.querySelector('#settings-language')
+        const root = input?.closest('.relative')?.parentElement?.parentElement
+        if (root) {
+          if (previousStyle === null) root.removeAttribute('style')
+          else root.setAttribute('style', previousStyle)
+        }
+        if (previousHeight) Object.defineProperty(window, 'innerHeight', previousHeight)
+        else Reflect.deleteProperty(window, 'innerHeight')
+        window.dispatchEvent(new Event('resize'))
+      }, restoreViewport)
+    }
   } finally {
     await app.close()
     profile.remove()
