@@ -1285,6 +1285,25 @@ test('model settings load and save a local provider used by the planner', async 
   }
 })
 
+test('assistant math and Mermaid markdown render with the patched KaTeX dependency', async () => {
+  const model = await standInModel('The answer is $$x^2 + 1$$.\n\n```mermaid\ngraph TD\n  A[Start] --> B[Done]\n```')
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Show math and a small diagram.')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    const answer = page.locator('.is-assistant').filter({ hasText: 'The answer is' }).last()
+    await answer.locator('.katex').waitFor()
+    await answer.locator('[data-streamdown="mermaid"] svg[aria-roledescription="flowchart-v2"]').waitFor()
+    assert.match(await answer.innerText(), /The answer is/)
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
 test('model provider setup retries a failed model-list request', async () => {
   const model = await standInModel()
   model.failTags = true
