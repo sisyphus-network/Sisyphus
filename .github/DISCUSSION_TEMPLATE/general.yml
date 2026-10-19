@@ -1,0 +1,16 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Anything about Sisyphus that is not a question, an idea or a run to show: how the project works, what you would like to see in the docs, or a thread for a topic that spans several issues. A how-to question gets an answer faster in Q&A; a bug belongs in an issue.
+  - type: textarea
+    id: topic
+    attributes:
+      label: What you want to talk about
+    validations:
+      required: true
+  - type: textarea
+    id: links
+    attributes:
+      label: Related issues, pull requests or docs
+      description: Links help others pick the thread up.
