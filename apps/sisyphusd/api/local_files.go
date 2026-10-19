@@ -232,6 +232,10 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid CID %q: %v", req.GetCid(), err)
 	}
+	files, err := s.cfg.Files.Files()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
 	// Off the list first: a file listed but no longer kept would be a
 	// promise the store does not make.
 	if err := s.cfg.Files.RemoveFile(c.String()); err != nil {
@@ -241,7 +245,23 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 	if err := unpinForUser(s.cfg.Store, c); err != nil {
-		return nil, status.Errorf(codes.Internal, "stop keeping file: %v", err)
+		// Still kept, so back on the list, where it can be removed again:
+		// a file kept with nothing to show for it would be kept for good,
+		// as one in a pool this node has joined would be by its
+		// coordinator, counted against this node's share (#505).
+		code := status.Code(err)
+		if code == codes.Unknown {
+			code = codes.Internal
+		}
+		for _, file := range files {
+			if file.CID != c.String() {
+				continue
+			}
+			if relisted := s.cfg.Files.AddFile(file); relisted != nil {
+				return nil, status.Errorf(code, "stop keeping file: %v; and it could not be listed again: %v", err, relisted)
+			}
+		}
+		return nil, status.Errorf(code, "stop keeping file: %v", err)
 	}
 	return &nodepb.RemoveFileResponse{}, nil
 }
