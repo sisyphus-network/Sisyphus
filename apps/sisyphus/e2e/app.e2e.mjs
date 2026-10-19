@@ -501,6 +501,72 @@ test('a double-click on a workspace panel handle closes and reopens the panel, a
   }
 })
 
+// Dragged narrower, a panel stops at its minimum width, stays open until the
+// drag goes 72 px past that minimum, and closes beyond it. Which way is
+// narrower follows the writing direction (#98).
+test('a workspace panel dragged narrower stops at its minimum width and closes only past its threshold, in LTR and RTL', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    const webgl = await hasWebgl(page)
+    if (!webgl) assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+    const state = (slot, handle) => page.evaluate(({ slot, handle }) => ({
+      open: document.querySelector(slot)?.getAttribute('data-open'),
+      width: Number(document.querySelector(handle)?.getAttribute('aria-valuenow')),
+    }), { slot, handle })
+    // narrows drags a panel's handle, in one gesture, to raw widths that
+    // first clamp at the minimum, then sit just inside the threshold, then
+    // go past it. sign is which way of the pointer makes the panel narrower.
+    const narrows = async ({ name, slot, handle, sign }) => {
+      // By class: in Hebrew the handle's name is translated.
+      const separator = page.locator(handle)
+      await separator.waitFor()
+      await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'true', slot)
+      await page.waitForTimeout(450)
+      const start = (await state(slot, handle)).width
+      assert.ok(start > 320, `${name}: the panel starts at ${start}px, too narrow to test its minimum`)
+      const box = await separator.boundingBox()
+      assert.ok(box, `${name}: the handle has no box`)
+      const x = box.x + box.width / 2
+      const y = box.y + box.height / 2
+      const to = (width) => page.mouse.move(x + sign * (start - width), y, { steps: 8 })
+      await page.mouse.move(x, y)
+      await page.mouse.down()
+      try {
+        await to(240)
+        await page.waitForFunction(({ slot, handle }) => document.querySelector(slot)?.getAttribute('data-open') === 'true' &&
+          Math.abs(Number(document.querySelector(handle)?.getAttribute('aria-valuenow')) - 280) <= 1, { slot, handle })
+        await to(212)
+        await page.waitForTimeout(150)
+        const inside = await state(slot, handle)
+        assert.ok(inside.open === 'true' && Math.abs(inside.width - 280) <= 1, `${name}: at 212 px the panel was ${JSON.stringify(inside)}, want open at its 280 px minimum`)
+        await to(200)
+        await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'false', slot)
+      } finally {
+        await page.mouse.up()
+      }
+    }
+
+    for (const dir of ['ltr', 'rtl']) {
+      await page.evaluate((dir) => {
+        localStorage.setItem('sisyphus-locale', dir === 'rtl' ? 'he' : 'en')
+        localStorage.setItem('sisyphus-workspace-layout', JSON.stringify({ chat: 50, network: 50, historyOpen: true, historyWidth: 420, topologyOpen: true }))
+      }, dir)
+      await page.reload()
+      await page.waitForFunction((dir) => document.documentElement.dir === dir, dir)
+      // History sits at the start edge: narrower is toward it.
+      await narrows({ name: 'Resize conversation history panel', slot: '.workspace-history-slot', handle: '.workspace-history-resize-handle', sign: dir === 'rtl' ? 1 : -1 })
+      // Topology sits at the end edge: narrower is toward that.
+      if (webgl) await narrows({ name: 'Resize topology panel', slot: '.workspace-topology-slot', handle: '.workspace-topology-resize-handle', sign: dir === 'rtl' ? -1 : 1 })
+    }
+    if (!webgl) t.diagnostic('this machine gives the window no WebGL, so only the history panel was checked')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('the topology canvas stays mounted and stable through repeated advanced-route transitions', async (t) => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
