@@ -33,6 +33,28 @@ type FileList interface {
 var errNoStore = status.Error(codes.FailedPrecondition, "this node coordinates no pool, so it has no store of files")
 
 const chatDraftOwner = "chat-draft"
+
+// gated is a store that may not be reachable at every moment: the store of
+// a pool this node has joined, which it reaches as a client while connected.
+type gated interface{ Available() error }
+
+// storeAvailable says whether the node has a store of files to offer: its
+// own, or that of a pool it has joined, while it may reach it.
+func (s *localService) storeAvailable() error {
+	if s.cfg.Store == nil {
+		return errNoStore
+	}
+	if store, ok := s.cfg.Store.(gated); ok {
+		return store.Available()
+	}
+	return nil
+}
+
+// errNoPoolAttachments is the answer to a chat attachment on a node that has
+// joined another's pool: what keeps an attachment for its chat is not yet
+// kept in the pool (#500).
+var errNoPoolAttachments = status.Error(codes.FailedPrecondition, "chat attachments are not yet kept in a pool this node has joined; store the file and give its CID to the job instead")
+
 const chatDraftRetention = 24 * time.Hour
 
 // StoreFile puts what the caller sends in the store, sealed first if it is
@@ -42,8 +64,8 @@ func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreF
 	if err := s.authorize(ctx); err != nil {
 		return err
 	}
-	if s.cfg.Store == nil {
-		return errNoStore
+	if err := s.storeAvailable(); err != nil {
+		return err
 	}
 	// The first message says what the file is called and whether to seal
 	// it, and may hold the start of it too. A caller that sends nothing has
@@ -55,6 +77,9 @@ func (s *localService) StoreFile(stream grpc.ClientStreamingServer[nodepb.StoreF
 	start, started := first.GetData(), false
 	if first.GetChatAttachment() && !first.GetPrivate() {
 		return status.Error(codes.InvalidArgument, "chat attachments must be private")
+	}
+	if _, pooled := s.cfg.Store.(gated); pooled && first.GetChatAttachment() {
+		return errNoPoolAttachments
 	}
 	file, err := s.keep(ctx, first.GetName(), first.GetPrivate(), first.GetChatAttachment(), func() ([]byte, error) {
 		if !started {
@@ -128,8 +153,8 @@ func (s *localService) FetchFile(req *nodepb.FetchFileRequest, stream grpc.Serve
 	if err := s.authorize(ctx); err != nil {
 		return err
 	}
-	if s.cfg.Store == nil {
-		return errNoStore
+	if err := s.storeAvailable(); err != nil {
+		return err
 	}
 	blob, err := openBlob(ctx, s.cfg.Store, req.GetCid())
 	if err != nil {
@@ -159,8 +184,8 @@ func (s *localService) FetchFile(req *nodepb.FetchFileRequest, stream grpc.Serve
 }
 
 func (s *localService) ListFiles(ctx context.Context, _ *nodepb.ListFilesRequest) (*nodepb.ListFilesResponse, error) {
-	if s.cfg.Store == nil {
-		return nil, errNoStore
+	if err := s.storeAvailable(); err != nil {
+		return nil, err
 	}
 	files, err := s.cfg.Files.Files()
 	if err != nil {
@@ -208,8 +233,8 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	if s.cfg.Store == nil {
-		return nil, errNoStore
+	if err := s.storeAvailable(); err != nil {
+		return nil, err
 	}
 	c, err := cid.Decode(req.GetCid())
 	if err != nil {

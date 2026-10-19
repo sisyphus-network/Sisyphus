@@ -328,6 +328,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// poolConn is a worker node's connection to its coordinator, through
 	// which it also reaches the pool's jobs as a client of it.
 	var poolConn grpc.ClientConnInterface
+	var poolStore poolBlobs
 
 	// With --kubo, Kubo runs as the same peer as this node, on a repository
 	// beside the node's other data, and is stopped when the node stops. A
@@ -504,6 +505,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	// planningPool is the pool the node's planner computes on: the one it
 	// coordinates, or the one it has joined, as a client of it.
 	var planningPool planner.Pool
+	// attachmentPins keeps chat attachments for their chats: the store of
+	// the pool the node coordinates. A node that has joined another's pool
+	// has none yet (#500).
+	var attachmentPins attachmentPinStore
 	// thinkingPool is the same pool as its models are asked of.
 	var thinkingPool inference.Pool
 	// offered says whether any worker now connected runs a workload. The
@@ -717,6 +722,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		local.Pool = api.NewPoolAdmin(config)
 		local.Jobs = coord
 		local.Store, local.Files, local.MaxStoreBytes = kept, db, *maxStore
+		attachmentPins = kept
 		local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
 		planningPool, thinkingPool = coord, coord
 		offered = offeredBy(coord.Nodes)
@@ -781,7 +787,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			return credentials.NewTLS(ident.ClientTLS(nodeID))
 		}
 		blobs = remote
-		poolConn = remote.Conn()
+		poolConn, poolStore = remote.Conn(), remote
 		members := worker.NewMembers(remote.Conn())
 		go members.RunRelayWatch(ctx, log)
 		// A storage follower keeps a second store, a durable one, for the
@@ -936,6 +942,10 @@ func runDaemon(ctx context.Context, args []string) error {
 			local.JoinedPoolChanges = api.NewNodeInfoChanges()
 			jobs := newPoolJobs(ctx, pb.NewNodeServiceClient(poolConn), db, w.JoinedPool, local.NodeInfoChanges.Notify)
 			local.Jobs = jobs
+			// Its user's files go to that pool too, kept there for this
+			// node as a client; their names stay here (#500).
+			local.Store = poolFiles{blobs: poolStore, client: pb.NewBlobServiceClient(poolConn), available: jobs.Available}
+			local.Files = db
 			// Its planner plans on that pool too, and only while it may.
 			planningPool, offered = jobs, offeredBy(jobs.Nodes)
 			local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
@@ -967,7 +977,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// The node's planner is there whatever its role, so that its model can
 	// be set and its conversations read; it has something to compute on
 	// only where the node coordinates a pool.
-	planning := &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey, filePins: local.Store, filePinChanges: make(chan struct{}, 1)}
+	planning := &assistant{store: db, pool: planningPool, workloads: workloads, offered: offered, sealingKey: local.SealingKey, filePins: attachmentPins, filePinChanges: make(chan struct{}, 1)}
 	local.Assistant = planning
 	// What a conversation's attachments ask of the store is queued with the
 	// conversation, and applied here: at once, for what a stop left
