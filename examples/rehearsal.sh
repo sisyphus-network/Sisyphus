@@ -138,7 +138,9 @@ if echo "$out" | has '"words"'; then ok "a file stored by the client was read by
 
 echo "a job checked by both workers"
 checked=$(on laptop job submit --addr coordinator:7700 --workload primes --params '{"from":0,"to":2000000}' --tasks 4 --verify 2 --detach | tail -1)
-finished() { on laptop job get --addr coordinator:7700 "$1" | has succeeded; }
+# The job's own line, not a task's: "task 0 succeeded on north" appears while
+# the job is still running.
+finished() { on laptop job get --addr coordinator:7700 "$1" | has "^job $1: succeeded,"; }
 if until_ok 60 finished "$checked" && on laptop job get --addr coordinator:7700 "$checked" | has '"count":148933'; then ok "each task run by both workers, which are at different addresses, and their results the same: 148,933 primes below 2,000,000"; else bad "a verified job: $(on laptop job get --addr coordinator:7700 "$checked" 2>&1 | head -3)"; fi
 if on laptop job logs --addr coordinator:7700 "$checked" 2>&1 | has "returned the same result"; then ok "the job's events say which workers agreed"; else bad "the verified job's events name the workers that agreed"; fi
 
@@ -184,7 +186,7 @@ sleep 2
 docker restart $P-coordinator >/dev/null
 back() { on coordinator nodes | has north; }
 if until_ok 60 back; then ok "the worker that was left came back to it unasked"; else bad "the worker came back after the coordinator restarted"; fi
-check "the job it had finished is still on record" bash -c "docker exec $P-laptop /sisyphus/sisyphusd job get --addr coordinator:7700 $job | grep succeeded >/dev/null"
+check "the job it had finished is still on record" bash -c "docker exec $P-laptop /sisyphus/sisyphusd job get --addr coordinator:7700 $job | grep '^job $job: succeeded,' >/dev/null"
 if until_ok 240 finished "$running"; then ok "and the job that was running when it stopped finished all the same"; else bad "a job running across the coordinator's restart: $(on laptop job get --addr coordinator:7700 "$running" 2>&1 | head -3)"; fi
 
 if [ -n "$MODEL" ]; then
