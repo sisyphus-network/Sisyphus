@@ -1051,6 +1051,7 @@ test('Settings pickers open in full view, above every card and inside the window
       assert.deepEqual(seen.covered, [], `choices are under something else: ${where}`)
       if (within && name === 'Provider') {
         const wizard = page.getByRole('dialog', { name: within, exact: true })
+        await page.waitForFunction(() => document.querySelector('[role="dialog"][aria-label="Provider"]')?.contains(document.activeElement))
         assert.equal(await menu.evaluate((element) => element.contains(document.activeElement)), true, 'opening the nested Provider picker must move keyboard focus into its choices')
         await page.keyboard.press('Escape')
         await menu.waitFor({ state: 'detached' })
