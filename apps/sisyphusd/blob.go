@@ -57,7 +57,7 @@ func blobPut(ctx context.Context, args []string) error {
 	ttl := fs.Duration("ttl", 0, "how long the node keeps the blob; 0 keeps it until unpinned")
 	noPin := fs.Bool("no-pin", false, "do not pin the blob: the node may delete it after an hour")
 	keyFile := fs.String("key-file", "", "seal the file with this key before it leaves this machine, so that only holders of the key can read it")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -107,7 +107,7 @@ func blobGet(ctx context.Context, args []string) error {
 	node := targetFlags(fs)
 	output := fs.String("o", "", "file to write the blob to (default: standard output)")
 	keyFile := fs.String("key-file", "", "the key the blob was sealed with, to unseal it after fetching")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -233,7 +233,7 @@ func keyCommand(args []string) error {
 func blobStat(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob stat", flag.ContinueOnError)
 	node := targetFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -257,7 +257,7 @@ func blobPin(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob pin", flag.ContinueOnError)
 	node := targetFlags(fs)
 	ttl := fs.Duration("ttl", 0, "how long the node keeps the blob; 0 keeps it until unpinned")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -277,7 +277,7 @@ func blobPin(ctx context.Context, args []string) error {
 func blobUnpin(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob unpin", flag.ContinueOnError)
 	node := targetFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

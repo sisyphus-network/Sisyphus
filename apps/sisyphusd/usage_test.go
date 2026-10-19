@@ -141,6 +141,14 @@ func TestJobGetShowsAJobThatHasNotFinished(t *testing.T) {
 	if want := "job " + id + ": pending, workload primes\n  task 0 pending\n"; out != want {
 		t.Errorf("printed %q, want %q", out, want)
 	}
+	// The flags may also follow the ID, as docs/multi-machine-test.md writes it.
+	after, err := cli(t, "job", "get", id, "--addr", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != out {
+		t.Errorf("with the flags after the ID printed %q, want %q", after, out)
+	}
 }
 
 // scriptedJobs is a node client that replays a fixed sequence of job updates.

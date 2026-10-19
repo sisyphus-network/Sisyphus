@@ -35,7 +35,7 @@ func namePublish(ctx context.Context, args []string) error {
 	node := targetFlags(fs)
 	lifetime := fs.Duration("lifetime", names.DefaultLifetime, "how long the record is good for; publish again before then to keep the name working")
 	ttl := fs.Duration("ttl", names.DefaultTTL, "how long whoever reads the record may go on using it before asking again")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -90,7 +90,7 @@ func namePublish(ctx context.Context, args []string) error {
 func nameResolve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd name resolve", flag.ContinueOnError)
 	node := targetFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
