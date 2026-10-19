@@ -274,12 +274,100 @@ sisyphusd pool cluster
 
 ✎ The pin is gone from the list at once, and from `ipfs pin ls` on the worker that held it within a few seconds.
 
+## Part 4: the whole of V0 from the desktop app
+
+Parts 1 to 3 drive the pool from a terminal. The exit test for V0 ([#18](https://github.com/sisyphus-network/Sisyphus/issues/18)) is the same pool driven from the desktop app, in one go: a question typed into the app, a plan from the planner's model, tasks spread across the machines, a real workload run on them, the results gathered, and a follow-up from the model that reads them.
+
+**The app goes on the coordinator.** The planner, jobs, the list of workers, files and invitations all exist only on a node that coordinates a pool. A worker-only node serves the app too, but every one of those views fails there with `FAILED_PRECONDITION`, and nothing is passed on to the coordinator it joined ([desktop backend](desktop-backend.md#files-and-invitations)). So sit at the machine with the graphics card, make it the coordinator, and run the app there. The other machines join it as workers.
+
+You need, on the machine with the graphics card:
+
+- the app installed ([installing a packaged build](user-guide.md#installing-a-packaged-build)), or built from this repository;
+- [Ollama](https://ollama.com) with a model that can call tools, such as `llama3.1:8b`. This is what plans, and the card is what makes it quick.
+
+On every other machine, `sisyphusd` as in part 1.
+
+### 1. Start the coordinator for the app
+
+The node the app starts for itself listens only on its own machine, so no other machine could join. Start it yourself first, listening where the workers can reach it, with its local API where the app looks and in the data directory the app uses:
+
+```powershell
+# Windows, in PowerShell. sisyphusd.exe is in the app's install folder, under resources\bin.
+& "$env:LOCALAPPDATA\Programs\Sisyphus\resources\bin\sisyphusd.exe" run `
+    --listen 0.0.0.0:7700 --api-listen 127.0.0.1:50051 --data-dir "$env:LOCALAPPDATA\sisyphus"
+```
+
+```sh
+# Linux or macOS. The app's data directory is ~/.local/share/sisyphus on Linux
+# and ~/Library/Application Support/sisyphus on macOS.
+sisyphusd run --listen 0.0.0.0:7700 --api-listen 127.0.0.1:50051 --data-dir ~/.local/share/sisyphus
+```
+
+If a `.sisyphus` directory exists in your home directory, the app uses that one instead; give it as `--data-dir`. Leave the node running, and allow it through the firewall on private networks when asked ([the warnings on first run](user-guide.md#the-warnings-on-first-run)).
+
+Open the app. It finds the node on `127.0.0.1:50051`, uses it and leaves it alone.
+
+✎ Does **Node overview** show this machine as a worker, with its graphics card?
+
+### 2. Give the planner its model
+
+In **Settings → Model provider**, choose Ollama and the model, or from a terminal on the same machine:
+
+```sh
+sisyphusd model set --data-dir <the data directory above> --model llama3.1:8b
+```
+
+✎ Record the model, and whether `ollama ps` shows it on the card (`100% GPU`) once the planner has answered its first question.
+
+### 3. Add the workers
+
+In **Operations → Pool**, choose **Invite worker** and copy the invitation. On each other machine:
+
+```sh
+sisyphusd run --role worker --coordinator COORD:7700 --join <invitation> --name <a-name> --data-dir ~/sisyphus-v0
+```
+
+`COORD` is now the address of the machine with the graphics card. A fresh `--data-dir` keeps this apart from any pool the machine was in for parts 1 to 3.
+
+✎ Does **Node overview** list every machine, each with its processor, memory and free slots?
+
+### 4. Ask, and follow up
+
+In the workspace, start a new conversation and ask something that needs computing and is large enough to be spread out, for example:
+
+> How many primes are there below two hundred billion? Split the work into 100 tasks across the pool.
+
+While it runs, watch **Operations → Jobs** and **Node overview**: the job's tasks should go to every machine. When the answer comes, open **Finished planning** under it.
+
+Then, in the same conversation, ask a follow-up that needs the first result, for example:
+
+> And how many are there between two hundred and four hundred billion? Is that more or fewer than the first range, and by how much?
+
+✎ For each question, record:
+
+1. what you asked;
+2. the job or jobs the planner ran, with their workload and parameters, from **Finished planning**;
+3. how many of the job's tasks ran on each machine (`sisyphusd job get <job-id> --data-dir <the data directory above>` on the coordinator lists each task's worker);
+4. the result the pool returned, and whether the answer above it says the same;
+5. the time from asking to the answer.
+
+Check each count against a terminal on the coordinator: `sisyphusd job submit --data-dir <the data directory above> --params '{"from":0,"to":200000000000}'` must give the same number. On the two machines of 13 October, a range twice that size took about a minute and a half.
+
+### 5. Break something while it plans
+
+Ask a third question, large enough to take a few minutes, such as how many primes there are below a trillion. While its job is running, stop one of the workers (Ctrl-C), then start it again with the same command, without `--join`.
+
+✎ Did the planner still answer, with the same count a terminal gives? Did the app show the worker leave and come back?
+
+That is the last box of [#18](https://github.com/sisyphus-network/Sisyphus/issues/18) once every ✎ in this part went as described.
+
 ## What to report
 
 Add a comment to [#18](https://github.com/sisyphus-network/Sisyphus/issues/18) with:
 
 - the machines, as recorded at the start;
 - the times from part 1 step 3 and part 2 step 3;
+- for part 4, the answers to every ✎, with what you asked and what the planner ran;
 - every row of the "break things" table that did not go as described, with the log lines from around it;
 - every ✎ where the answer was not what the guide said to expect.
 
