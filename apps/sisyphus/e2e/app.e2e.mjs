@@ -983,6 +983,7 @@ test('the Pool view joins a coordinator with an invitation', async () => {
 test('node overview streams the joined pool without exposing worker counts to worker-only nodes', async () => {
   const coordinator = await testNode()
   const worker = await testNode({ role: 'worker', coordinator, name: 'joining rig' })
+  let secondWorker
   const profile = testProfile()
   const { app, page } = await launch(worker, profile)
   try {
@@ -1017,9 +1018,19 @@ test('node overview streams the joined pool without exposing worker counts to wo
     await page.getByText('Workers in pool', { exact: true }).waitFor()
     const joinedState = await page.evaluate(() => window.sisyphus.call('getJoinedPool'))
     await page.getByText(String(joinedState.workerCount), { exact: true }).last().waitFor()
+    secondWorker = await testNode({ role: 'worker', coordinator, name: 'second worker' })
+    await page.getByText(String(joinedState.workerCount + 1), { exact: true }).last().waitFor({ timeout: 15000 })
+    await coordinator.stop()
+    await poolSection.getByText('Reconnecting', { exact: true }).waitFor({ timeout: 15000 })
+    await page.getByText('Workers in pool', { exact: true }).waitFor({ state: 'detached' })
+    await coordinator.start()
+    await poolSection.getByText('Connected', { exact: true }).waitFor({ timeout: 15000 })
+    await page.getByText('Workers in pool', { exact: true }).waitFor()
+    await page.getByText(String(joinedState.workerCount + 1), { exact: true }).last().waitFor({ timeout: 15000 })
   } finally {
     await app.close()
     profile.remove()
+    await secondWorker?.remove()
     await worker.remove()
     await coordinator.remove()
   }
