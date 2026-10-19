@@ -72,10 +72,14 @@ type BlobServiceClient interface {
 	Replicate(ctx context.Context, in *ReplicateRequest, opts ...grpc.CallOption) (*ReplicateResponse, error)
 	// Replication is the follower's exchange on its existing blob connection.
 	// It sends its holdings and previous signed list, then receives the
-	// coordinator's complete assignment in bounded frames. The stream stays
-	// open for complete signed assignments pushed when the follower's placement
-	// changes. Unary Replicate remains anti-entropy for reported holdings and
-	// recovery until leases and reconnect recovery are complete.
+	// coordinator's complete assignment in bounded frames. After the baseline,
+	// leases keep the follower present and later bounded request frames report
+	// changed holdings and challenge answers; the coordinator pushes complete
+	// signed assignments when placement changes and proof challenges on their
+	// deadlines. A response with no fields acknowledges support for live
+	// reports. Unary Replicate remains for coordinators that close cleanly
+	// after the baseline; every reconnect sends a fresh baseline and the last
+	// signed list.
 	Replication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ReplicationHello, ReplicationFrame], error)
 	// Replicas reports which followers hold each blob the node has pinned,
 	// against how many should.
@@ -270,10 +274,14 @@ type BlobServiceServer interface {
 	Replicate(context.Context, *ReplicateRequest) (*ReplicateResponse, error)
 	// Replication is the follower's exchange on its existing blob connection.
 	// It sends its holdings and previous signed list, then receives the
-	// coordinator's complete assignment in bounded frames. The stream stays
-	// open for complete signed assignments pushed when the follower's placement
-	// changes. Unary Replicate remains anti-entropy for reported holdings and
-	// recovery until leases and reconnect recovery are complete.
+	// coordinator's complete assignment in bounded frames. After the baseline,
+	// leases keep the follower present and later bounded request frames report
+	// changed holdings and challenge answers; the coordinator pushes complete
+	// signed assignments when placement changes and proof challenges on their
+	// deadlines. A response with no fields acknowledges support for live
+	// reports. Unary Replicate remains for coordinators that close cleanly
+	// after the baseline; every reconnect sends a fresh baseline and the last
+	// signed list.
 	Replication(grpc.BidiStreamingServer[ReplicationHello, ReplicationFrame]) error
 	// Replicas reports which followers hold each blob the node has pinned,
 	// against how many should.
