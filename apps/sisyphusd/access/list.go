@@ -192,7 +192,8 @@ func (l *List) Roles(id string) ([]Role, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	m, ok := l.members[id]
-	return m.Roles, ok
+	// A copy, so that what the caller does with it does not change the list.
+	return slices.Clone(m.Roles), ok
 }
 
 // Has reports whether the node with the given ID has been admitted in role.
@@ -318,6 +319,7 @@ func (l *List) Members() []Member {
 	defer l.mu.Unlock()
 	members := make([]Member, 0, len(l.members))
 	for _, m := range l.members {
+		m.Roles = slices.Clone(m.Roles)
 		members = append(members, m)
 	}
 	sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })

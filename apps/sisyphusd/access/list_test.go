@@ -457,3 +457,17 @@ func TestARoleAdmittedWhileTheLastIsTakenIsKept(t *testing.T) {
 		l.Remove("node")
 	}
 }
+
+// What Roles and Members return is the caller's: changing it does not change
+// the list.
+func TestRolesHandedOutAreCopies(t *testing.T) {
+	l := open(t, "")
+	l.Admit("node", Worker, now)
+	l.Admit("node", Client, now)
+	roles, _ := l.Roles("node")
+	roles[0] = Owner
+	l.Members()[0].Roles[1] = Owner
+	if got, _ := l.Roles("node"); !slices.Equal(got, []Role{Worker, Client}) {
+		t.Errorf("after the roles handed out were changed, the list says %q", got)
+	}
+}
