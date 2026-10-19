@@ -729,7 +729,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		srv := api.NewServer(config)
 		local.Pool = api.NewPoolAdmin(config)
 		local.Jobs = coord
-		local.Store, local.Files, local.MaxStoreBytes = kept, db, *maxStore
+		local.Store, local.Files, local.MaxStoreBytes = kept, poolFileList{files: db, pool: func() string { return "" }}, *maxStore
 		attachmentPins = kept
 		local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
 		planningPool, thinkingPool = coord, coord
@@ -954,7 +954,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			// node as a client, and so do its chats' attachments; their
 			// names, and who on the node keeps each, stay here (#500).
 			files := &poolFiles{blobs: poolStore, client: pb.NewBlobServiceClient(poolConn), holds: db, coordinator: func() string { return w.JoinedPool().ID }, available: jobs.Available}
-			local.Store, local.Files, attachmentPins = files, db, files
+			local.Store, local.Files, attachmentPins = files, poolFileList{files: db, pool: func() string { return w.JoinedPool().ID }}, files
 			// Its planner plans on that pool too, and only while it may.
 			planningPool, offered = jobs, offeredBy(jobs.Nodes)
 			local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
