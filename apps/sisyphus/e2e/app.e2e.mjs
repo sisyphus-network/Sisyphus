@@ -1630,6 +1630,47 @@ test('Access receives its empty paired-device state and keeps pairing disabled w
     await interfaceMenu.waitFor()
     await page.keyboard.press('Escape')
     await interfaceMenu.waitFor({ state: 'detached' })
+
+    // The picker is used with Hebrew UI too: keep the control and search
+    // direction RTL, but leave the interface list LTR so names and IPs read
+    // naturally. Its popup must remain anchored inside the viewport.
+    await page.evaluate(() => localStorage.setItem('sisyphus-locale', 'he'))
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.lang === 'he' && document.documentElement.dir === 'rtl')
+    const hebrewPicker = page.getByRole('combobox', { name: 'כתובת ההאזנה של הצומת', exact: true })
+    await hebrewPicker.focus()
+    await page.keyboard.press('Enter')
+    const hebrewMenu = page.getByRole('dialog', { name: 'כתובת ההאזנה של הצומת', exact: true })
+    await hebrewMenu.waitFor()
+    const search = hebrewMenu.getByRole('searchbox', { name: 'חיפוש ממשקים או כתובות…', exact: true })
+    const listbox = hebrewMenu.getByRole('listbox', { name: 'כתובת ההאזנה של הצומת', exact: true })
+    const directionAndBounds = await hebrewMenu.evaluate((menu) => {
+      const rect = menu.getBoundingClientRect()
+      const list = menu.querySelector('[role="listbox"]')
+      const input = menu.querySelector('input[type="search"]')
+      return {
+        menu: getComputedStyle(menu).direction,
+        list: list && getComputedStyle(list).direction,
+        search: input && getComputedStyle(input).direction,
+        bounds: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        viewport: { width: innerWidth, height: innerHeight },
+      }
+    })
+    assert.equal(directionAndBounds.menu, 'rtl')
+    assert.equal(directionAndBounds.list, 'ltr', 'network names and numeric IP addresses should keep their natural reading order')
+    assert.equal(directionAndBounds.search, 'rtl', 'the Hebrew search prompt should align RTL')
+    assert.ok(directionAndBounds.bounds.left >= 0 && directionAndBounds.bounds.top >= 0 && directionAndBounds.bounds.right <= directionAndBounds.viewport.width && directionAndBounds.bounds.bottom <= directionAndBounds.viewport.height, `the RTL interface picker leaves the viewport: ${JSON.stringify(directionAndBounds)}`)
+    await search.fill('definitely-no-interface-match')
+    await hebrewMenu.getByText('לא נמצאו ממשקים תואמים.', { exact: true }).waitFor()
+    await hebrewMenu.getByRole('button', { name: 'סיום', exact: true }).click()
+    await hebrewMenu.waitFor({ state: 'detached' })
+    assert.equal(await hebrewPicker.getAttribute('aria-expanded'), 'false')
+
+    await hebrewPicker.focus()
+    await page.keyboard.press('Enter')
+    await hebrewMenu.waitFor()
+    await page.keyboard.press('Escape')
+    await hebrewMenu.waitFor({ state: 'detached' })
   } finally {
     await app.close()
     profile.remove()

@@ -38,7 +38,7 @@ A pull request that changes only documentation skips the tests. One that touches
 | The race detector | Every test is run with it | `make test` |
 | Across machines | `examples/rehearsal.sh`: each node in a container with its own address and disk, 26 checks; CI runs it on every pull request | `examples/rehearsal.sh` |
 | Desktop unit tests | Node's own test runner over the app's modules | `npm test` in `apps/sisyphus` |
-| Desktop end to end | Playwright driving the built Electron app against a node of its own | `npm run test:e2e` in `apps/sisyphus` |
+| Desktop end to end | Playwright driving the built Electron app against a node of its own; Settings selectors cover viewport placement, keyboard dismissal and, for the Access interface picker, Hebrew RTL controls with an LTR interface/IP list | `npm run test:e2e` in `apps/sisyphus` |
 | Agents | A live trial of the MCP server from Claude Code, by hand, recorded on [#88](https://github.com/sisyphus-network/Sisyphus/issues/88) | by hand |
 
 What has no automated test: the desktop app has no coverage measure, and nothing drives the app on Windows or macOS beyond building its package and starting its daemon.
