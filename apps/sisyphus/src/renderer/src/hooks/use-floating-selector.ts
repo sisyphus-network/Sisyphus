@@ -29,12 +29,10 @@ export function useFloatingSelector() {
       // keeping the usual 120px menu height.
       const availableSpace = nextPlacement === "top" ? spaceAbove : spaceBelow;
       const room = Math.max(0, availableSpace - 16);
-      const left = Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8));
-      const top = nextPlacement === "top"
-        ? Math.max(8, rect.top - Math.min(estimatedHeight, room) - 8)
-        : rect.bottom + 8;
       setPlacement(nextPlacement);
-      setFloatingStyle({ position: "fixed", top, left, width: rect.width, maxHeight: room });
+      // Base UI owns the coordinates. Keeping only a measured size constraint
+      // here avoids competing with its flip/shift positioning calculations.
+      setFloatingStyle({ maxHeight: room });
     };
     const handleOutsidePointer = (event: PointerEvent) => {
       const target = event.target as Node;
