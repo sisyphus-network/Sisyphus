@@ -496,6 +496,12 @@ test('a double-click on a workspace panel handle closes and reopens the panel, a
       assert.ok(closed, `the collapsed ${name} handle disappeared`)
       await page.mouse.dblclick(closed.x + closed.width / 2, closed.y + closed.height / 2)
       await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'true', slot)
+      // The next handle can move while this panel or a nested element is
+      // transitioning. Wait for subtree animations before measuring/clicking it.
+      await page.locator(slot).evaluate(async (element) => {
+        await Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)))
+        await new Promise(requestAnimationFrame)
+      })
     }
 
     await toggles('Resize conversation history panel', '.workspace-history-slot')
