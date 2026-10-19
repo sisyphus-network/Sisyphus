@@ -278,3 +278,43 @@ func TestAWorkerRestartsWithTheCommandThatFirstStartedIt(t *testing.T) {
 	startDaemon(t, command...)
 	waitForOutput(t, "steady", "nodes", "--addr", addr)
 }
+
+// What a client keeps on the coordinator counts against its share for as
+// long as it is a member. It is let go when the client is removed, and a
+// restart in between keeps it (#509).
+func TestARemovedClientsFilesAreLetGo(t *testing.T) {
+	dataDir, laptop := t.TempDir(), t.TempDir()
+	addr := freeAddr(t)
+	stop := startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--slots", "1")
+	if _, err := as(t, laptop, "pool", "join", "--addr", addr, invite(t, addr, "client")); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(source, []byte("kept for the laptop"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	put, err := as(t, laptop, "blob", "put", "--addr", addr, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := strings.TrimSpace(put)
+	if _, err := as(t, laptop, "blob", "pin", "--addr", addr, c); err != nil {
+		t.Fatal(err)
+	}
+	if kept := clientPins(t, addr, c); len(kept) != 1 {
+		t.Fatalf("the coordinator keeps the laptop's file as %q", kept)
+	}
+
+	// A member's files are kept across a restart.
+	stop()
+	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--slots", "1")
+	waitForOutput(t, "primes", "nodes", "--addr", addr)
+	if kept := clientPins(t, addr, c); len(kept) != 1 {
+		t.Fatalf("after a restart, the coordinator keeps the laptop's file as %q", kept)
+	}
+
+	mustCLI(t, "pool", "remove", "--addr", addr, nodeID(t, laptop))
+	if kept := clientPins(t, addr, c); len(kept) != 0 {
+		t.Errorf("after the laptop was removed, the coordinator keeps its file as %q", kept)
+	}
+}

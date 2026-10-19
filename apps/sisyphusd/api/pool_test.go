@@ -15,6 +15,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/ipfs/go-cid"
+
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
@@ -273,5 +275,86 @@ func TestAMemberWithBothRolesIsListedWithBoth(t *testing.T) {
 	}
 	if m := members.GetMembers()[0]; m.GetRole() != nodepb.PoolRole_POOL_ROLE_WORKER || !slices.Equal(m.GetRoles(), []nodepb.PoolRole{nodepb.PoolRole_POOL_ROLE_WORKER, nodepb.PoolRole_POOL_ROLE_CLIENT}) {
 		t.Errorf("the local API lists the member as %v", m)
+	}
+}
+
+// unpinFails is a store whose pins cannot be let go.
+type unpinFails struct{ *storage.Store }
+
+func (unpinFails) Unpin(string, ...cid.Cid) error { return errDisk }
+
+// Removing a client lets go of what it kept in its own name, and nobody
+// else's; if that fails, the node is still removed and the key still
+// changed, and the caller is told (#509).
+func TestRemovingAClientLetsGoOfWhatItKept(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	a, err := store.Put(ctx, strings.NewReader("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := store.Put(ctx, strings.NewReader("b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pin := range []struct {
+		owner string
+		c     cid.Cid
+	}{{clientOwner + "leaver", a}, {clientOwner + "leaver", b}, {clientOwner + "another", a}, {userOwner, b}} {
+		if err := store.Pin(ctx, pin.owner, time.Time{}, pin.c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Who holds pins, apart from the store's own grace pins on uploads.
+	owners := func() []string {
+		var held []string
+		for _, pin := range store.Pins() {
+			if pin.Expires.IsZero() {
+				held = append(held, pin.Owner)
+			}
+		}
+		slices.Sort(held)
+		return slices.Compact(held)
+	}
+	list := newList(t)
+	list.Admit("leaver", access.Client, time.Now())
+	list.Admit("another", access.Client, time.Now())
+	list.Admit("quiet", access.Client, time.Now())
+	changes := 0
+	service := &poolService{id: "owner-id", access: list, coordinator: newCoordinator(t), swarm: network{rekeyed: &changes}, pins: store}
+
+	if _, err := service.RemoveMember(ctx, &pb.RemoveMemberRequest{NodeId: "leaver"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := owners(); !slices.Equal(got, []string{userOwner, clientOwner + "another"}) {
+		t.Errorf("after the leaver was removed, pins are held for %q", got)
+	}
+	// One that kept nothing is removed all the same.
+	if _, err := service.RemoveMember(ctx, &pb.RemoveMemberRequest{NodeId: "quiet"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stuck := &poolService{id: "owner-id", access: list, coordinator: newCoordinator(t), swarm: network{rekeyed: &changes}, pins: unpinFails{store}}
+	_, err = stuck.RemoveMember(ctx, &pb.RemoveMemberRequest{NodeId: "another"})
+	if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "could not be let go yet") {
+		t.Errorf("removing a client whose pins cannot be let go: %v", err)
+	}
+	if _, onList := list.Roles("another"); onList || changes != 3 {
+		t.Errorf("the client is still on the list (%v), or the key was changed %d times, want 3", onList, changes)
+	}
+
+	// The next start lets go of what is left for former members, and of
+	// nothing a member keeps.
+	if err := ReleaseFormerClients(unpinFails{store}, func(string) bool { return false }); !errors.Is(err, errDisk) {
+		t.Errorf("letting go with a store that cannot: %v", err)
+	}
+	if err := ReleaseFormerClients(store, func(id string) bool { return id == "another" }); err != nil || !slices.Equal(owners(), []string{userOwner, clientOwner + "another"}) {
+		t.Errorf("letting go of former members' pins with another still a member: %v, held for %q", err, owners())
+	}
+	if err := ReleaseFormerClients(store, func(string) bool { return false }); err != nil || !slices.Equal(owners(), []string{userOwner}) {
+		t.Errorf("letting go of former members' pins: %v, held for %q", err, owners())
+	}
+	if clientPinsOf(nil) != nil || clientPinsOf(store) == nil {
+		t.Error("a missing store has pins, or a store has none")
 	}
 }

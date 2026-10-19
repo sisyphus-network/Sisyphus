@@ -636,6 +636,15 @@ func runDaemon(ctx context.Context, args []string) error {
 				return coordinator.OwnsPin(owner) && !coord.Holds(owner)
 			}, time.Now().Add(*retain))
 		}
+		if err == nil {
+			// What a client kept here is let go when it is removed. One
+			// whose release failed, or was removed before releasing was
+			// done, is let go now.
+			err = api.ReleaseFormerClients(store, func(id string) bool {
+				_, member := admitted.Roles(id)
+				return member
+			})
+		}
 		if err != nil {
 			return err
 		}

@@ -87,7 +87,7 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 		stored:       func(ctx context.Context) (map[string]uint64, error) { return cfg.Coordinator.Stored(), nil },
 	})
 	pb.RegisterPoolServiceServer(srv, &poolService{
-		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, cluster: cfg.Cluster, workFor: cfg.WorkFor,
+		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, cluster: cfg.Cluster, workFor: cfg.WorkFor, pins: clientPinsOf(cfg.Store),
 	})
 	pb.RegisterNameServiceServer(srv, &nameService{names: cfg.Names})
 	tunnels := &tunnelService{}
