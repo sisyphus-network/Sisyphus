@@ -300,7 +300,7 @@ func TestWatchNodeStatePublishesNodeAndPeerChanges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("country discovery event was not streamed")
 	}
 	secondUpdate, err := secondStream.Recv()
@@ -326,7 +326,7 @@ func TestWatchNodeStatePublishesNodeAndPeerChanges(t *testing.T) {
 		}
 	case err := <-errors:
 		t.Fatal(err)
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("peer change was not detected by the state stream")
 	}
 	thirdUpdate, err := secondStream.Recv()

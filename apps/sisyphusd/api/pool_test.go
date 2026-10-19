@@ -169,7 +169,7 @@ func TestWatchRelaysSendsInitialSnapshotAndStops(t *testing.T) {
 		if len(update.GetAddresses()) != 0 {
 			t.Fatalf("initial relay list = %v, want empty", update.GetAddresses())
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("WatchRelays did not send its initial snapshot")
 	}
 	cancel()
@@ -178,7 +178,7 @@ func TestWatchRelaysSendsInitialSnapshotAndStops(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WatchRelays: %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("WatchRelays did not stop after cancellation")
 	}
 }

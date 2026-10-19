@@ -41,7 +41,7 @@ func TestRevokingPairedBrowserCancelsActiveRequests(t *testing.T) {
 	}
 	select {
 	case <-ctx.Done():
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("revoking the browser did not cancel its active request immediately")
 	}
 	if _, _, ok := devices.authorizeRequest(deviceID+"."+token, context.Background()); ok {
@@ -463,7 +463,7 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	}
 	select {
 	case <-deviceChanges:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("pairing did not notify paired-device subscribers")
 	}
 	var cookie *http.Cookie
@@ -569,7 +569,7 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	}
 	select {
 	case <-deviceChanges:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("revocation did not notify paired-device subscribers")
 	}
 	res = request(http.MethodPost, nodeInfo, `{}`, cookie, false)
@@ -672,7 +672,7 @@ func TestRevocationIsSharedAcrossLocalAndRemoteWebListeners(t *testing.T) {
 	}
 	select {
 	case <-ctx.Done():
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("local-listener revocation did not cancel the remote-listener request")
 	}
 	res = request(remote, http.MethodPost, nodeInfo, `{}`, cookie, false)
