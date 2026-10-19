@@ -1355,11 +1355,13 @@ func (c *Coordinator) roles(id string) []pb.Role {
 }
 
 // RolesChanged tells the worker with the given ID, if it is connected, the
-// roles it now holds.
+// roles it now holds. The roles are read under the coordinator's lock, so
+// two changes in quick succession are sent in the order they were read and
+// the last the worker is told is the newest.
 func (c *Coordinator) RolesChanged(id string) {
-	roles := c.roles(id)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	roles := c.roles(id)
 	if w, ok := c.workers[id]; ok {
 		w.send.add(&pb.CoordinatorMessage{Kind: &pb.CoordinatorMessage_RolesChanged{RolesChanged: &pb.RolesChanged{Roles: roles}}})
 	}
