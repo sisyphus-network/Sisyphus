@@ -78,6 +78,12 @@ func keep(t *testing.T, store *storage.Store, text string) string {
 	return id
 }
 
+// eventualWait bounds every wait for something that must happen, as eventually
+// already did. Passing tests never wait it out, so it is long: under the race
+// detector and a full parallel suite a stop or a reconnect can take more than
+// a second (#466). Windows in which something must not happen stay short.
+const eventualWait = 30 * time.Second
+
 // newIdentity makes a node key that lasts for the test.
 func newIdentity(t *testing.T) *identity.Identity {
 	t.Helper()
@@ -459,7 +465,7 @@ func TestAssignmentWatchUsesLeaseAndGraceDeadlines(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("assignment watcher ended with %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("assignment watcher did not stop after cancellation")
 	}
 }
@@ -753,7 +759,7 @@ func TestWatchAssignmentsPushesChangedSignedSnapshots(t *testing.T) {
 		if valid, err := identity.Verify(r.ident.ID(), signedBytes(list), list.GetSignature()); err != nil || !valid {
 			t.Errorf("pushed assignment signature valid = %v, error %v", valid, err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("pin change did not wake the assignment stream")
 	}
 
@@ -763,7 +769,7 @@ func TestWatchAssignmentsPushesChangedSignedSnapshots(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("assignment watcher ended with %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("assignment watcher did not stop when its stream was canceled")
 	}
 
@@ -801,7 +807,7 @@ func TestWatchAssignmentsPushesWhenAPinExpires(t *testing.T) {
 		if len(update.GetList().GetBlobs()) != 0 {
 			t.Errorf("assignment after expiry still has blobs: %v", update.GetList().GetBlobs())
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("pin expiry did not wake the assignment stream")
 	}
 	cancel()
@@ -851,7 +857,7 @@ func TestIssueChallengesSkipsFollowerWhoseStreamClosedWhileWaitingForItsLock(t *
 		close(done)
 	}()
 
-	deadline := time.After(time.Second)
+	deadline := time.After(eventualWait)
 	for {
 		m.challengeLocksMu.Lock()
 		lock := m.challengeLocks["follower"]
@@ -875,7 +881,7 @@ func TestIssueChallengesSkipsFollowerWhoseStreamClosedWhileWaitingForItsLock(t *
 	unlock()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("challenge scheduler did not skip the now-closed follower stream")
 	}
 }

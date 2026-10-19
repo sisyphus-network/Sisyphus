@@ -364,7 +364,7 @@ func TestFollowerRenewsItsReplicationLeaseOnTheOpenStream(t *testing.T) {
 			if !frame.GetLease() || frame.GetSequence() != 0 || frame.GetIndex() != 0 || frame.GetCount() != 0 || len(frame.GetPayload()) != 0 {
 				t.Fatalf("follower sent malformed lease frame: %v", frame)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(eventualWait):
 			t.Fatal("follower did not renew its stream lease")
 		}
 	}
@@ -420,12 +420,12 @@ func TestRunReportsAppliedPushOnTheOpenStream(t *testing.T) {
 	defer stop()
 	select {
 	case <-created:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("follower did not open its replication stream")
 	}
 	// The initial bounded hello and the first lease are the only outbound
 	// messages until the coordinator pushes a new signed assignment.
-	deadline := time.After(time.Second)
+	deadline := time.After(eventualWait)
 	for {
 		select {
 		case frame := <-stream.sent:
@@ -455,7 +455,7 @@ leased:
 			if !frame.GetLease() {
 				first = frame
 			}
-		case <-time.After(time.Second):
+		case <-time.After(eventualWait):
 			t.Fatal("follower did not report the applied push on its open stream")
 		}
 	}
@@ -488,7 +488,7 @@ leased:
 			if !frame.GetLease() {
 				changedFirst = frame
 			}
-		case <-time.After(time.Second):
+		case <-time.After(eventualWait):
 			t.Fatal("follower did not report a local pin change on its open stream")
 		}
 	}
@@ -797,7 +797,7 @@ func TestLegacySyncWaitAndPinChangeTimer(t *testing.T) {
 	}
 	select {
 	case <-got:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("pin change did not expedite legacy reconciliation")
 	}
 }
@@ -851,12 +851,12 @@ func TestRunImmediatelyReportsChangedLegacyBaseline(t *testing.T) {
 	stop := run(t, follower, time.Hour)
 	select {
 	case <-client.calls:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("legacy baseline did not make its initial unary request")
 	}
 	select {
 	case <-client.calls:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		t.Fatal("changed legacy baseline was not reported immediately")
 	}
 	stop()
@@ -932,7 +932,7 @@ func TestRunWaitsForRecvAfterLeaseSendReturnsEOF(t *testing.T) {
 	stop := run(t, follower, 5*time.Millisecond)
 	select {
 	case <-client.calls:
-	case <-time.After(time.Second):
+	case <-time.After(eventualWait):
 		stop()
 		t.Fatal("unary anti-entropy did not continue after lease Send returned EOF")
 	}
@@ -971,7 +971,7 @@ func TestRunReconnectsWhenLeaseRenewalFails(t *testing.T) {
 	}
 	stop := run(t, follower, time.Second)
 	defer stop()
-	deadline := time.After(time.Second)
+	deadline := time.After(eventualWait)
 	for logs.count("the storage assignment lease could not be renewed; reconnecting") == 0 {
 		select {
 		case <-deadline:
@@ -1107,7 +1107,7 @@ func TestRunReconnectsAfterRejectingAnInvalidPushedAssignment(t *testing.T) {
 	for range 2 {
 		select {
 		case <-client.opened:
-		case <-time.After(time.Second):
+		case <-time.After(eventualWait):
 			stop()
 			t.Fatal("the follower did not reconnect after rejecting the foreign assignment")
 		}
@@ -1219,7 +1219,7 @@ func run(t *testing.T, f *Follower, interval time.Duration) (stop func()) {
 
 func eventually(t *testing.T, what string, condition func() bool) {
 	t.Helper()
-	for deadline := time.Now().Add(30 * time.Second); !condition(); time.Sleep(2 * time.Millisecond) {
+	for deadline := time.Now().Add(eventualWait); !condition(); time.Sleep(2 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatalf("never happened: %s", what)
 		}
