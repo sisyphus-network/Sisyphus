@@ -1,0 +1,23 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For maintainers: what landed, what changed for people running a node, and what comes next. Keep it to what a user or contributor needs to know; link the pull requests for the detail.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What changed
+      description: In a few sentences, for someone who runs a node or the desktop app.
+    validations:
+      required: true
+  - type: textarea
+    id: action
+    attributes:
+      label: What to do
+      description: Anything a node operator must do, such as upgrading, a new flag or a changed default. Write "Nothing" if there is nothing.
+    validations:
+      required: true
+  - type: textarea
+    id: links
+    attributes:
+      label: Pull requests and issues

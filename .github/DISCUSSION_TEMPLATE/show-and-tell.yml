@@ -1,0 +1,24 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Something you ran on a pool, built on Sisyphus, or measured. Real runs are the most useful: they show what works on machines other than ours.
+  - type: textarea
+    id: what
+    attributes:
+      label: What you ran
+      description: The workload, the machines and roles in the pool, and how you started it.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened
+      description: Output, timings, screenshots. Leave out api.token, invitations and keys.
+    validations:
+      required: true
+  - type: textarea
+    id: learned
+    attributes:
+      label: What surprised you
+      description: Anything that was slower, harder or easier than you expected.
