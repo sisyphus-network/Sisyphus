@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"path/filepath"
@@ -116,7 +117,9 @@ func try(conn *grpc.ClientConn) map[string]codes.Code {
 	result["ask what to hold"] = status.Code(err)
 	replication, err := pb.NewBlobServiceClient(conn).Replication(ctx)
 	if err == nil {
-		if err = replication.Send(&pb.ReplicationHello{Count: 1}); err == nil {
+		// A server that refuses the stream may end it before the hello is
+		// sent; Send then reports io.EOF and Recv carries the real status.
+		if err = replication.Send(&pb.ReplicationHello{Count: 1}); err == nil || errors.Is(err, io.EOF) {
 			_, err = replication.Recv()
 		}
 	}
