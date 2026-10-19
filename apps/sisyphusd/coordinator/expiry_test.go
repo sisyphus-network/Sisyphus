@@ -45,7 +45,7 @@ func TestRunningAttemptExpiresAtItsDeadline(t *testing.T) {
 	c.notifyExpiryChangedLocked()
 	c.mu.Unlock()
 
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(eventualWait)
 	for time.Now().Before(deadline) {
 		c.mu.Lock()
 		state := job.State

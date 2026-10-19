@@ -145,7 +145,7 @@ func TestRemoteWebAccessIsOptInTLSAndCanBeDisabled(t *testing.T) {
 	if err := failedListener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventualWait)
 	for {
 		live, _, retryRequired, err := runtime.Get()
 		if err != nil {

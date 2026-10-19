@@ -563,7 +563,7 @@ func TestEventDrivenCollectionRetriesFailureWithBackoff(t *testing.T) {
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(eventualWait)
 	for time.Now().Before(deadline) {
 		held, err := store.Has(ctx, cid)
 		if err != nil {
