@@ -499,7 +499,7 @@ test('a double-click on a workspace panel handle closes and reopens the panel, a
       // The next handle can move while this panel's flex-basis transition
       // finishes. Wait for the actual transition before measuring/clicking it.
       await page.locator(slot).evaluate(async (element) => {
-        await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)))
+        await Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)))
         await new Promise(requestAnimationFrame)
       })
     }
