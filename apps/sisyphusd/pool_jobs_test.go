@@ -145,6 +145,10 @@ func (f *fakePool) ListNodes(context.Context, *pb.ListNodesRequest, ...grpc.Call
 	return &pb.ListNodesResponse{}, f.list
 }
 
+func (f *fakePool) WatchJob(context.Context, *pb.WatchJobRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.WatchJobResponse], error) {
+	return nil, f.watch
+}
+
 func (f *fakePool) WatchJobEvents(context.Context, *pb.WatchJobEventsRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pb.JobEvent], error) {
 	if f.watch != nil {
 		return nil, f.watch
@@ -229,6 +233,10 @@ func TestAJoinedClientNodesJobsWhenThingsFail(t *testing.T) {
 	}
 	if err := newJobs(&fakePool{events: []*pb.JobEvent{{Seq: 1}}, recvErr: io.EOF}, &fakeRecords{}).WatchEvents(context.Background(), "j", 0, func(*pb.JobEvent) error { return broken }); !errors.Is(err, broken) {
 		t.Errorf("a watch whose receiver gave up: %v", err)
+	}
+
+	if err := newJobs(&fakePool{watch: broken}, &fakeRecords{}).Watch(context.Background(), "j", func(*pb.Job) error { return nil }); !errors.Is(err, broken) {
+		t.Errorf("a planner's watch the pool refused: %v", err)
 	}
 
 	// Resuming with the record unreadable follows nothing.

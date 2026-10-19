@@ -278,7 +278,7 @@ sisyphusd pool cluster
 
 Parts 1 to 3 drive the pool from a terminal. The exit test for V0 ([#18](https://github.com/sisyphus-network/Sisyphus/issues/18)) is the same pool driven from the desktop app, in one go: a question typed into the app, a plan from the planner's model, tasks spread across the machines, a real workload run on them, the results gathered, and a follow-up from the model that reads them.
 
-**The app goes on the coordinator.** The planner, jobs, the list of workers, files and invitations all exist only on a node that coordinates a pool. A worker-only node serves the app too, but every one of those views fails there with `FAILED_PRECONDITION`, and nothing is passed on to the coordinator it joined ([desktop backend](desktop-backend.md#files-and-invitations)). So sit at the machine with the graphics card, make it the coordinator, and run the app there. The other machines join it as workers.
+**The app goes on the coordinator.** Files and invitations exist only on a node that coordinates a pool. A worker node gets the planner, jobs and the list of workers only once it also holds the client role in its pool (it redeems a client invitation as well). Then they work on the pool it joined. Without that role those views fail with `FAILED_PRECONDITION` ([desktop backend](desktop-backend.md#files-and-invitations)). For this test, sit at the machine with the graphics card, make it the coordinator, and run the app there. The other machines join it as workers.
 
 You need, on the machine with the graphics card:
 

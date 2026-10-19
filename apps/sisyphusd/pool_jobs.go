@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -101,15 +102,31 @@ func (p *poolJobs) WatchEvents(ctx context.Context, jobID string, after uint64, 
 	if err != nil {
 		return err
 	}
+	return receive(stream, fn)
+}
+
+// Watch calls fn with the job as it stands, and again each time it changes,
+// until it is over: what the node's planner waits on.
+func (p *poolJobs) Watch(ctx context.Context, jobID string, fn func(*pb.Job) error) error {
+	stream, err := p.client.WatchJob(ctx, &pb.WatchJobRequest{JobId: jobID})
+	if err != nil {
+		return err
+	}
+	return receive(stream, func(res *pb.WatchJobResponse) error { return fn(res.GetJob()) })
+}
+
+// receive calls fn with each message on a stream from the pool until the
+// stream ends, and says how it ended.
+func receive[T any](stream grpc.ServerStreamingClient[T], fn func(*T) error) error {
 	for {
-		event, err := stream.Recv()
+		msg, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if err := fn(event); err != nil {
+		if err := fn(msg); err != nil {
 			return err
 		}
 	}

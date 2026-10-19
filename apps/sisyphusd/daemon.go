@@ -501,8 +501,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	// trustChanged hears of each node the coordinator admits or removes, and
 	// worksFor says whether this node is working for another.
 	trustChanged := new(notices)
-	// planningPool is the pool the node's planner computes on, if it
-	// coordinates one.
+	// planningPool is the pool the node's planner computes on: the one it
+	// coordinates, or the one it has joined, as a client of it.
 	var planningPool planner.Pool
 	// thinkingPool is the same pool as its models are asked of.
 	var thinkingPool inference.Pool
@@ -719,11 +719,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		local.Store, local.Files, local.MaxStoreBytes = kept, db, *maxStore
 		local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
 		planningPool, thinkingPool = coord, coord
-		offered = func(workload string) bool {
-			return slices.ContainsFunc(coord.Nodes(), func(node *pb.NodeInfo) bool {
-				return slices.Contains(node.GetCapabilities().GetWorkloads(), workload)
-			})
-		}
+		offered = offeredBy(coord.Nodes)
 		local.Peers = func() []*nodepb.Peer { return poolPeers(ident.ID(), coord.Nodes(), admitted.Members()) }
 		// Workers hold streams open indefinitely, so a graceful stop would
 		// never finish. The coordinator is closed first, so that it knows
@@ -940,6 +936,8 @@ func runDaemon(ctx context.Context, args []string) error {
 			local.JoinedPoolChanges = api.NewNodeInfoChanges()
 			jobs := newPoolJobs(ctx, pb.NewNodeServiceClient(poolConn), db, w.JoinedPool, local.NodeInfoChanges.Notify)
 			local.Jobs = jobs
+			// Its planner plans on that pool too, and only while it may.
+			planningPool, offered = jobs, offeredBy(jobs.Nodes)
 			local.SealingKey = func() (sealed.Key, error) { return sealingKey(filepath.Join(*dataDir, "private.key")) }
 			w.OnPool = func() {
 				local.JoinedPoolChanges.Notify()
@@ -2639,6 +2637,17 @@ func rolesInPool(admitted *access.List, id string) []pb.Role {
 		}
 	}
 	return roles
+}
+
+// offeredBy says whether any of a pool's workers now runs a workload. The
+// planner is told only of those, so that it asks for nothing the pool would
+// leave waiting.
+func offeredBy(nodes func() []*pb.NodeInfo) func(workload string) bool {
+	return func(workload string) bool {
+		return slices.ContainsFunc(nodes(), func(node *pb.NodeInfo) bool {
+			return slices.Contains(node.GetCapabilities().GetWorkloads(), workload)
+		})
+	}
 }
 
 // joinedPool says, for the local API, what a worker knows of the pool it

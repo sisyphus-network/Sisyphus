@@ -28,8 +28,8 @@ import (
 // questions. It is what the local API's planner calls are answered from.
 type assistant struct {
 	store assistantStore
-	// pool is the pool the planner computes on, or nil on a node that
-	// coordinates none.
+	// pool is the pool the planner computes on: the one the node
+	// coordinates, or the one it has joined.
 	pool      planner.Pool
 	workloads *runtime.Registry
 	// offered says whether the pool has a worker that runs a workload now.
@@ -320,8 +320,11 @@ func (a *assistant) Ask(ctx context.Context, chatID, text string, report func(ch
 // AskWithFiles binds explicit uploaded CIDs before any model/tool execution.
 // Retention survives a failed answer; deleting the chat releases its owners.
 func (a *assistant) AskWithFiles(ctx context.Context, chatID, text string, cids []string, report func(chatID string, e planner.Event)) (string, error) {
-	if a.pool == nil {
-		return "", status.Error(codes.FailedPrecondition, "this node coordinates no pool, so its planner has nothing to compute on")
+	// A pool joined as a client says whether it may be used now.
+	if gated, ok := a.pool.(interface{ Available() error }); ok {
+		if err := gated.Available(); err != nil {
+			return "", err
+		}
 	}
 	if text == "" {
 		return "", status.Error(codes.InvalidArgument, "there is no question")

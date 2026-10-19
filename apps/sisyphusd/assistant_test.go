@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -107,6 +108,14 @@ func newModel(t *testing.T, replies ...string) *model {
 	}))
 	t.Cleanup(m.Close)
 	return m
+}
+
+// messagesAskedSoFar returns how many times the model has been asked to
+// continue a conversation.
+func (m *model) messagesAskedSoFar() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.asked)
 }
 
 // messagesAsked returns how many messages the model was sent the nth time
@@ -342,7 +351,10 @@ func TestAModelThatFailsPartWayLeavesTheConversationAsItHappened(t *testing.T) {
 	}
 }
 
-func TestANodeWithNoPoolCanBeToldItsModelButHasNothingToPlanWith(t *testing.T) {
+// A worker node that is not a client of the pool it has joined can be told
+// its model, but has nothing to plan with: its planner may not submit to
+// that pool, and says so.
+func TestAWorkerNodeCanBeToldItsModelButHasNothingToPlanWith(t *testing.T) {
 	served := newModel(t)
 	addr, apiAddr := freeAddr(t), freeAddr(t)
 	workerDir := t.TempDir()
@@ -355,8 +367,53 @@ func TestANodeWithNoPoolCanBeToldItsModelButHasNothingToPlanWith(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream, _ := client.Ask(ctx, &nodepb.AskRequest{Text: "Anything."})
-	if _, err := stream.Recv(); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "coordinates no pool") {
-		t.Errorf("asking a node with no pool: %v", err)
+	if _, err := stream.Recv(); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "not a client") {
+		t.Errorf("asking a worker node that is not the pool's client: %v", err)
+	}
+	if asked := served.messagesAskedSoFar(); asked != 0 {
+		t.Errorf("the model was asked %d times", asked)
+	}
+}
+
+// A worker node that is a client of the pool it has joined plans on that
+// pool: the model is told of the workloads the pool's workers run, and the
+// jobs it asks for run there (#474).
+func TestAClientNodesPlannerComputesOnTheJoinedPool(t *testing.T) {
+	served := newModel(t,
+		wants("run_job", `{"workload":"primes","params":{"from":0,"to":100}}`),
+		says("There are 25 primes below 100."),
+	)
+	addr, _ := startNode(t, "--name", "rig")
+	workerDir, apiAddr := t.TempDir(), freeAddr(t)
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--join", invite(t, addr, "worker"), "--data-dir", workerDir, "--name", "hand", "--slots", "1", "--api-listen", apiAddr)
+	client := desktop(t, apiAddr)
+	poolAsSeenBy(t, client)
+	if _, err := as(t, workerDir, "pool", "join", "--addr", addr, invite(t, addr, "client")); err != nil {
+		t.Fatal(err)
+	}
+	ctx := tokenOf(t, workerDir)
+	waitFor(t, func() bool {
+		pool, err := client.GetJoinedPool(ctx, &nodepb.GetJoinedPoolRequest{})
+		return err == nil && pool.GetState() == nodepb.JoinedPoolState_JOINED_POOL_STATE_CONNECTED && slices.Contains(pool.GetRoles(), nodepb.PoolRole_POOL_ROLE_CLIENT)
+	})
+	if _, err := client.SetModelConfig(ctx, &nodepb.SetModelConfigRequest{Provider: "ollama", BaseUrl: served.URL, Model: "test-model"}); err != nil {
+		t.Fatal(err)
+	}
+	out := mustCLI(t, "ask", "--data-dir", workerDir, "--api", apiAddr, "How", "many", "primes", "below", "100?")
+	for _, want := range []string{`"result":{"count":25}`, `"state":"succeeded"`, "There are 25 primes below 100."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ask printed, without %q:\n%s", want, out)
+		}
+	}
+	served.mu.Lock()
+	told := served.asked[0]["messages"].([]any)[0].(map[string]any)["content"].(string)
+	served.mu.Unlock()
+	if !strings.Contains(told, "- primes:") || strings.Contains(told, "- container:") {
+		t.Errorf("the model was told:\n%s", told)
+	}
+	// The job is the node's own in the pool, listed with the others.
+	if jobs, err := client.ListJobs(ctx, &nodepb.ListJobsRequest{}); err != nil || len(jobs.GetJobs()) != 1 || string(jobs.GetJobs()[0].GetResult()) != `{"count":25}` {
+		t.Errorf("jobs after the question: %v, %v", jobs, err)
 	}
 }
 
