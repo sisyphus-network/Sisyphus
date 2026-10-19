@@ -54,6 +54,31 @@ func targetFlags(fs *flag.FlagSet) *target {
 	}
 }
 
+// parseInterspersed parses a command's flags wherever they come, before or
+// after its arguments, so that `job get ID --data-dir DIR` works as well as
+// `job get --data-dir DIR ID`. The standard library stops at the first
+// argument, which made the first form fail with "expected exactly one job
+// ID". After "--", everything is an argument, as with the standard library.
+func parseInterspersed(fs *flag.FlagSet, args []string) error {
+	var arguments []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		if consumed := args[:len(args)-len(rest)]; len(consumed) > 0 && consumed[len(consumed)-1] == "--" {
+			arguments = append(arguments, rest...)
+			break
+		}
+		arguments = append(arguments, rest[0])
+		args = rest[1:]
+	}
+	return fs.Parse(append([]string{"--"}, arguments...))
+}
+
 // connect opens a connection to the target, as this node, that succeeds only
 // if the node expected at that address answers.
 func (t *target) connect() (*grpc.ClientConn, error) {
@@ -243,7 +268,7 @@ func poolInvite(ctx context.Context, args []string) error {
 func poolJoin(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd pool join", flag.ContinueOnError)
 	node := targetFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -306,7 +331,7 @@ func poolWorkFor(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd pool work-for", flag.ContinueOnError)
 	node := targetFlags(fs)
 	stop := fs.Bool("stop", false, "stop working for the node, and take no more tasks from it")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -331,7 +356,7 @@ func poolWorkFor(ctx context.Context, args []string) error {
 func poolRemove(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd pool remove", flag.ContinueOnError)
 	node := targetFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

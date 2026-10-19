@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"math/rand/v2"
 	"net"
 	"os"
@@ -295,6 +296,8 @@ func TestCLIRejectsBadUsage(t *testing.T) {
 		{[]string{"frobnicate"}, `unknown command "frobnicate"`},
 		{[]string{"job"}, `expected job submit, get, logs, cancel or record`},
 		{[]string{"job", "get"}, "expected exactly one job ID"},
+		{[]string{"job", "get", "a", "b"}, "expected exactly one job ID"},
+		{[]string{"job", "get", "a", "--bogus"}, "flag provided but not defined: -bogus"},
 		{[]string{"job", "submit", "--mode", "sideways"}, `unknown mode "sideways"`},
 		{[]string{"job", "submit", "extra"}, `unexpected argument "extra"`},
 		{[]string{"nodes", "extra"}, `unexpected argument "extra"`},
@@ -321,6 +324,31 @@ func TestLoopbackRewritesOnlyWildcardAddresses(t *testing.T) {
 	for _, tt := range tests {
 		if got := loopback(&net.TCPAddr{IP: net.ParseIP(tt.ip), Port: 7700}); got != tt.want {
 			t.Errorf("loopback(%s) = %s, want %s", tt.ip, got, tt.want)
+		}
+	}
+}
+
+func TestParseInterspersedTakesFlagsOnEitherSideOfTheArguments(t *testing.T) {
+	tests := []struct {
+		args     []string
+		wantAddr string
+		wantRest []string
+	}{
+		{[]string{"--addr", "x", "id"}, "x", []string{"id"}},
+		{[]string{"id", "--addr", "x"}, "x", []string{"id"}},
+		{[]string{"a", "--addr", "x", "b"}, "x", []string{"a", "b"}},
+		{[]string{"a", "--", "--addr", "x"}, "", []string{"a", "--addr", "x"}},
+		{[]string{"--", "-a"}, "", []string{"-a"}},
+		{nil, "", nil},
+	}
+	for _, tt := range tests {
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		addr := fs.String("addr", "", "")
+		if err := parseInterspersed(fs, tt.args); err != nil {
+			t.Fatalf("%v: %v", tt.args, err)
+		}
+		if *addr != tt.wantAddr || !slices.Equal(fs.Args(), tt.wantRest) {
+			t.Errorf("%v: addr %q, arguments %q; want %q, %q", tt.args, *addr, fs.Args(), tt.wantAddr, tt.wantRest)
 		}
 	}
 }

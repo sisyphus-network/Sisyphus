@@ -169,7 +169,7 @@ func blobPinsRemote(ctx context.Context, args []string) error {
 func blobUnpinRemote(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd blob unpin-remote", flag.ContinueOnError)
 	service := serviceFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

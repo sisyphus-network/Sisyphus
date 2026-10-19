@@ -164,7 +164,7 @@ func followJob(ctx context.Context, client pb.NodeServiceClient, job *pb.Job) er
 func jobGet(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd job get", flag.ContinueOnError)
 	node := targetFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -199,7 +199,7 @@ func jobGet(ctx context.Context, args []string) error {
 func jobCancel(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd job cancel", flag.ContinueOnError)
 	node := targetFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -222,7 +222,7 @@ func jobCancel(ctx context.Context, args []string) error {
 func jobLogs(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sisyphusd job logs", flag.ContinueOnError)
 	node := targetFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -256,7 +256,7 @@ func jobRecord(ctx context.Context, args []string) error {
 	node := targetFlags(fs)
 	verify := fs.Bool("verify", false, "work the record out again from the job, and fail if it is not the record the job names or the coordinator's signature on it does not hold")
 	keyFile := fs.String("key-file", "", "a private job's key: verify the record, and also check its commitments against the values the node holds")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
