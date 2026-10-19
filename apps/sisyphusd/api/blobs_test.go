@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -647,11 +648,7 @@ func TestFollowerRecoversEventGapOverReplicationStreamWithoutUnaryPolling(t *tes
 		return len(status.GetBlobs()) == 1 && len(status.GetBlobs()[0].GetShown()) > 0
 	})
 	stopFollower()
-	select {
-	case <-followerDone:
-	case <-time.After(time.Second):
-		t.Fatal("follower did not stop its first stream")
-	}
+	waitStopped(t, followerDone, "follower did not stop its first stream")
 	waitFor("the coordinator to observe the disconnected follower", func() bool {
 		return len(manager.Status("").GetFollowers()) == 0
 	})
@@ -691,16 +688,22 @@ func TestFollowerRecoversEventGapOverReplicationStreamWithoutUnaryPolling(t *tes
 		t.Errorf("stream-capable coordinator used unary Replicate %d times, want none", got)
 	}
 	stopFollower()
-	select {
-	case <-followerDone:
-	case <-time.After(time.Second):
-		t.Fatal("follower did not stop its restarted stream")
-	}
+	waitStopped(t, followerDone, "follower did not stop its restarted stream")
 	cancelManager()
+	waitStopped(t, managerDone, "manager challenge scheduler did not stop")
+}
+
+// waitStopped waits for done as long as the test's other waits do. Under the
+// race detector and a full parallel suite a stop can take more than a second
+// (#462); if it never comes, every goroutine's stack is shown, so a real hang
+// says where it is stuck.
+func waitStopped(t *testing.T, done <-chan struct{}, failure string) {
+	t.Helper()
 	select {
-	case <-managerDone:
-	case <-time.After(time.Second):
-		t.Fatal("manager challenge scheduler did not stop")
+	case <-done:
+	case <-time.After(3 * time.Second):
+		stacks := make([]byte, 1<<20)
+		t.Fatalf("%s; goroutines:\n%s", failure, stacks[:runtime.Stack(stacks, true)])
 	}
 }
 
