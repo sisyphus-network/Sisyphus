@@ -13,6 +13,8 @@ npm install
 npm run dev
 ```
 
+`package.json` temporarily overrides KaTeX to `^0.18.2`: the math and Mermaid rendering plugins currently constrain older KaTeX versions affected by [GHSA-238p-pmpm-9mq7](https://github.com/advisories/GHSA-238p-pmpm-9mq7). The lockfile resolves the override to a patched 0.18.x release. Keep the override until both upstream dependency ranges accept a patched release; the Electron regression test exercises math and Mermaid rendering against it.
+
 The Model provider page in the development build includes six sample profiles for previewing card layouts. They are gated to development and are not persisted or included in the production app; the end-to-end suite checks their absence from the built app.
 
 Build the Go daemon from the repository root before starting the desktop:

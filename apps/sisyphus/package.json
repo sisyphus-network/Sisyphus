@@ -58,7 +58,8 @@
   "overrides": {
     "@grpc/proto-loader": {
       "protobufjs": "8.8.1"
-    }
+    },
+    "katex": "^0.18.2"
   },
   "devDependencies": {
     "@electron/asar": "4.3.1",
