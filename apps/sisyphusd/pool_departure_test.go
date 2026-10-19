@@ -309,3 +309,26 @@ func TestFailedKnownReplacementKeepsThePreviousFile(t *testing.T) {
 		})
 	}
 }
+
+// stalledServer is a server whose calls in progress end only when it is
+// stopped at once.
+type stalledServer struct{ stopped chan struct{} }
+
+func (s stalledServer) GracefulStop() { <-s.stopped }
+func (s stalledServer) Stop()         { close(s.stopped) }
+
+// A node stopping lets the calls in progress finish, and ends those that
+// would not after a while.
+func TestAStoppingNodeEndsTheCallsThatWouldNotFinish(t *testing.T) {
+	srv := stalledServer{stopped: make(chan struct{})}
+	start := time.Now()
+	stopServing(srv, 10*time.Millisecond)
+	select {
+	case <-srv.stopped:
+	default:
+		t.Error("a call that would not finish was not ended")
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("stopping took %v", took)
+	}
+}

@@ -1080,7 +1080,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			return err
 		}
 		desktop := api.NewLocalServer(local)
-		defer desktop.Stop()
+		defer stopServing(desktop, localAPIGrace)
 		log.Info("local API listening", "addr", lis.Addr().String())
 		go desktop.Serve(lis)
 	}
@@ -1297,6 +1297,34 @@ func startSavedWebAccess(local *api.LocalConfig, webAccess *webAccessRuntime) er
 		}
 	}
 	return webAccess.startSaved()
+}
+
+// localAPIGrace is how long a stopping node lets the calls in progress on
+// its local API finish, as the LeavePool whose success stops it (#509),
+// before it ends those that would not, such as a watch.
+const localAPIGrace = time.Second
+
+// stoppable is a server that can stop at once, or once its calls in
+// progress are over. A *grpc.Server is one.
+type stoppable interface {
+	GracefulStop()
+	Stop()
+}
+
+// stopServing stops srv, letting the calls in progress finish for up to
+// grace and then ending the rest.
+func stopServing(srv stoppable, grace time.Duration) {
+	stopped := make(chan struct{})
+	go func() {
+		srv.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(grace):
+		srv.Stop()
+		<-stopped
+	}
 }
 
 func waitForDaemonStop(ctx context.Context, local *api.LocalConfig, webAccess *webAccessRuntime, stopped <-chan error, log *slog.Logger) error {
