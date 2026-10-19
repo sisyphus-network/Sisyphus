@@ -1450,6 +1450,22 @@ test('Access receives its empty paired-device state and keeps pairing disabled w
     assert.equal(await accessSwitch.getAttribute('aria-checked'), 'false')
     const pairing = page.getByRole('button', { name: 'Pair a browser', exact: true })
     assert.equal(await pairing.isDisabled(), true, 'a browser can be paired while remote access is off')
+
+    const interfacePicker = page.getByRole('combobox', { name: 'Node interface address', exact: true })
+    await interfacePicker.waitFor()
+    const triggerStructure = await interfacePicker.evaluate((trigger) => {
+      const root = trigger.parentElement
+      const focusable = [...(root?.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]') ?? [])]
+        .filter((item) => item.getClientRects().length > 0)
+      return { count: focusable.length, onlyTrigger: focusable.length === 1 && focusable[0] === trigger, wrapperRole: root?.getAttribute('role') ?? null }
+    })
+    assert.deepEqual(triggerStructure, { count: 1, onlyTrigger: true, wrapperRole: null }, 'the interface selector must expose exactly one focusable combobox, not a wrapper button around it')
+    await interfacePicker.focus()
+    await page.keyboard.press('Enter')
+    const interfaceMenu = page.getByRole('dialog', { name: 'Node interface address', exact: true })
+    await interfaceMenu.waitFor()
+    await page.keyboard.press('Escape')
+    await interfaceMenu.waitFor({ state: 'detached' })
   } finally {
     await app.close()
     profile.remove()

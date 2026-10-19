@@ -28,20 +28,22 @@ type ResponsiveSelectorProps = {
   label: string;
   direction: "rtl" | "ltr" | "auto";
   trigger: (api: SelectorApi) => ReactNode;
+  triggerOverlay?: (api: SelectorApi) => ReactNode;
   children: (api: SelectorApi) => ReactNode;
   className?: string;
 };
 
-export function ResponsiveSelector({ label, direction, trigger, children, className }: ResponsiveSelectorProps) {
+export function ResponsiveSelector({ label, direction, trigger, triggerOverlay, children, className }: ResponsiveSelectorProps) {
   const { rootRef, contentRef, open, setOpen, placement, floatingStyle } = useFloatingSelector();
   const compact = useSyncExternalStore(subscribeToCompactViewport, getCompactViewport, () => false);
   const api = { open, setOpen };
 
   return (
-    <div ref={rootRef} className={cn("relative", className)}>
+    <div ref={rootRef} dir={direction} className={cn("relative", className)}>
       {compact ? (
         <>
           {trigger(api)}
+          {triggerOverlay?.(api)}
           <Drawer.Root open={open} onOpenChange={setOpen} direction="bottom">
             <Drawer.Portal>
               <Drawer.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-sm" />
@@ -95,6 +97,7 @@ export function ResponsiveSelector({ label, direction, trigger, children, classN
           </PopoverPrimitive.Portal>
         </PopoverPrimitive.Root>
       )}
+      {!compact && triggerOverlay?.(api)}
     </div>
   );
 }
