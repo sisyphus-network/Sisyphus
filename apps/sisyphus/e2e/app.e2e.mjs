@@ -1281,7 +1281,9 @@ test('Settings pickers open in full view, above every card and inside the window
 
     // A keyboard or short landscape viewport can leave less than the normal
     // 120px menu floor. The menu must use the actual remaining room instead.
-    await openSettingsCategory(page, 'General')
+    if (!await page.getByRole('heading', { name: 'General', level: 1 }).isVisible().catch(() => false)) {
+      await openSettingsCategory(page, 'General')
+    }
     const trigger = page.getByRole('button', { name: 'Language', exact: true })
     await trigger.scrollIntoViewIfNeeded()
     const restoreViewport = await trigger.evaluate((input) => {
