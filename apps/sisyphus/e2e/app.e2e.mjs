@@ -2071,6 +2071,36 @@ test('a question with a file attached is planned, computed on the pool and answe
   }
 })
 
+test('a job the planner runs is tracked in the chat, task by task and worker by worker', async () => {
+  const model = await standInModel(
+    { tool: 'run_job', arguments: { workload: 'primes', params: { from: 0, to: 1000 }, tasks: 4 } },
+    'There are 168 primes below 1000.',
+  )
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('How many primes are there below 1000?')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByText('There are 168 primes below 1000.').waitFor({ timeout: 30000 })
+
+    // Once the job is over, the tracker stays as its summary: every task done,
+    // and the worker that did them.
+    const tracker = page.getByRole('group', { name: 'Job progress' })
+    await tracker.getByText('Computed on the pool').waitFor()
+    await tracker.getByText('4 of 4 tasks done').waitFor()
+    await tracker.getByRole('listitem').filter({ hasText: 'rig' }).getByText('0 running · 4 done').waitFor()
+    const bar = tracker.getByRole('progressbar', { name: 'Job progress' })
+    assert.equal(await bar.getAttribute('aria-valuenow'), '4')
+    assert.equal(await bar.getAttribute('aria-valuemax'), '4')
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
 test('reloading the Electron renderer cancels an in-flight planner stream', async () => {
   const model = await standInModel({ defer: true, content: 'This late answer must not reach the reloaded window.' })
   planWith(node, model)

@@ -88,6 +88,8 @@ A small local model works for simple questions and makes mistakes on harder ones
 
 Type a question and press Enter. If answering needs computing, the planner writes a job, the pool runs it, and the planner answers from the result. **Finished planning** opens to show what it did: here, one job, with its ID and the result the pool returned. The answer above it comes from that result, not from the model's memory.
 
+While the job runs, the line above says **Running a compute job**, and a tracker under it shows how many of the job's tasks are done, with a row for each worker that has run some: how many it is running and how many it has finished. A task given out again, because the worker running it was lost or ran out of time, is counted as **retried**. Once the job is over, the tracker stays as its summary.
+
 A follow-up that compares two results is given the comparison already worked out, so the model only has to repeat it. If the answer still quotes a number that is one or two digits off a result the pool returned, a **Note** under it gives the job and the number it actually returned ([#532](https://github.com/sisyphus-network/Sisyphus/issues/532)). The result under **Finished planning** is always the pool's own.
 
 The **+** beside the box attaches a file to the question. An attached file is stored sealed, and the job that reads it is private.
