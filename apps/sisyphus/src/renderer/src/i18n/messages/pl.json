@@ -295,6 +295,12 @@
     "confirmDescription": "Zadania w toku tutaj: {jobs}. Połączone workery: {workers}. Ponowne uruchomienie zatrzymuje zadania w toku tego węzła i rozłącza jego workery; pula ponownie zaplanuje niedokończone zadania, gdy węzeł wróci.",
     "confirm": "Uruchom ponownie mimo to"
   },
+  "tray": {
+    "open": "Otwórz Sisyphus",
+    "quit": "Zakończ Sisyphus",
+    "stillRunningTitle": "Sisyphus nadal działa",
+    "stillRunningBody": "Węzeł nadal pracuje dla swojej puli. Otwórz lub zamknij Sisyphus ikoną w zasobniku systemowym albo na pasku menu."
+  },
   "poolLimitsSettings": {
     "title": "Limity puli",
     "description": "Ile zasobów tego węzła może wykorzystać każdy inny członek jego puli, dopóki ten węzeł koordynuje pulę. Pozostaw pole puste, aby nie ustawiać limitu. Zapisane limity zaczynają obowiązywać po ponownym uruchomieniu węzła. Praca zlecana przez sam ten węzeł nie jest ograniczana.",

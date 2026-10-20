@@ -135,6 +135,8 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
     },
     savePoolHosting: async (): Promise<PoolHostingState> => { throw new Error('Hosting a pool is set in the desktop app.') },
     restartNode: async (): Promise<NodeSnapshot> => { throw new Error('Only the desktop app restarts a node it started.') },
+    // A browser has no tray to label.
+    setAppLocale: async () => {},
     reconnect: getSnapshot,
     connectPeer: async (address) => (await node.connectPeer({ address })).peerId,
     setPeerComputeTrust: async (peerId, trusted) => { await node.setPeerComputeTrust({ peerId, trusted }) },

@@ -295,6 +295,12 @@
     "confirmDescription": "Tâches en cours ici : {jobs}. Workers connectés : {workers}. Le redémarrage arrête les tâches en cours de ce nœud et déconnecte ses workers ; le pool replanifie les tâches inachevées quand le nœud revient.",
     "confirm": "Redémarrer quand même"
   },
+  "tray": {
+    "open": "Ouvrir Sisyphus",
+    "quit": "Quitter Sisyphus",
+    "stillRunningTitle": "Sisyphus est toujours en cours d’exécution",
+    "stillRunningBody": "Votre nœud continue de travailler pour son pool. Ouvrez ou quittez Sisyphus depuis son icône dans la zone de notification ou la barre des menus."
+  },
   "poolLimitsSettings": {
     "title": "Limites du pool",
     "description": "Ce que chaque autre membre du pool de ce nœud peut utiliser ici tant que ce nœud coordonne le pool. Laissez un champ vide pour ne fixer aucune limite. Les limites enregistrées s’appliquent au redémarrage du nœud. Le travail soumis par ce nœud lui-même n’est pas limité.",

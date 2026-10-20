@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, type IpcMainInvokeEvent } from 'electron'
 import { readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isIP } from 'node:net'
@@ -16,6 +16,15 @@ import { collectDownload } from './file-download'
 import { firstUploadMessage } from './file-upload'
 import { startNodeStateSession } from './node-state-session'
 import { createReconnectBackoff } from './reconnect-backoff'
+import { AppTray, statusNotifierWatcherRunning } from './app-tray'
+import { loadTrayPreferences, quitsWhenWindowsClose, saveTrayPreferences, trayHostAvailable, trayLabelsFor, type TrayLabels } from './tray-policy'
+import en from '../renderer/src/i18n/messages/en.json'
+import he from '../renderer/src/i18n/messages/he.json'
+import ar from '../renderer/src/i18n/messages/ar.json'
+import ru from '../renderer/src/i18n/messages/ru.json'
+import pl from '../renderer/src/i18n/messages/pl.json'
+import es from '../renderer/src/i18n/messages/es.json'
+import fr from '../renderer/src/i18n/messages/fr.json'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
@@ -31,6 +40,16 @@ const initialLocationDiscoverySettings = loadLocationDiscoverySettings(locationD
 // Unlike the settings above, hosting belongs to the node this app starts, so
 // the app keeps it: a node run by hand is reached at whatever --listen says.
 const poolHostingPath = join(app.getPath('userData'), 'pool-hosting.json')
+// The tray keeps the app's own node working while its window is closed.
+const trayPreferencesPath = join(app.getPath('userData'), 'tray.json')
+let trayPreferences = loadTrayPreferences(trayPreferencesPath)
+const trayDictionaries = Object.fromEntries(Object.entries({ en, he, ar, ru, pl, es, fr }).map(([locale, messages]) => [locale, {
+  ...messages.tray, connected: messages.connected, connecting: messages.connecting, offline: messages.offline,
+}])) as Record<'en' | 'he' | 'ar' | 'ru' | 'pl' | 'es' | 'fr', TrayLabels>
+const trayLabels = () => trayLabelsFor(trayDictionaries, 'en', trayPreferences.locale)
+let appTray: AppTray | null = null
+// Settles once the tray is up or known to be unavailable; it never rejects.
+let traySetup: Promise<void> = Promise.resolve()
 // What the app's node last connected with; a restart from Settings replaces
 // this only after the new process is confirmed reachable.
 let runningPoolHostingSettings = loadPoolHostingSettings(poolHostingPath)
@@ -436,10 +455,14 @@ app.whenReady().then(() => {
     app.quit()
     return
   }
-  app.on('second-instance', () => {
-    const window = BrowserWindow.getAllWindows()[0]
-    if (window?.isMinimized()) window.restore()
-    window?.focus()
+  app.on('second-instance', showWindow)
+  // The window tells the tray which language to use, and the tray keeps it for
+  // the next start, when it shows before any window has loaded.
+  handleNode('app:set-locale', (_event, locale: unknown) => {
+    if (typeof locale !== 'string' || !Object.hasOwn(trayDictionaries, locale) || locale === trayPreferences.locale) return
+    trayPreferences = { ...trayPreferences, locale }
+    saveTrayPreferences(trayPreferencesPath, trayPreferences)
+    appTray?.setLabels(trayLabels())
   })
   handleNode('node:get-snapshot', () => snapshot)
   handleNode('node:get-location-discovery-settings', async () => {
@@ -656,9 +679,8 @@ app.whenReady().then(() => {
   })
   createWindow()
   connectToNode()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  traySetup = setUpTray().catch((error: unknown) => console.error('Could not show the tray icon:', error))
+  app.on('activate', showWindow)
 }).catch((error: unknown) => {
   console.error('Failed to start Sisyphus desktop:', error)
   app.quit()
@@ -679,6 +701,43 @@ app.on('before-quit', (event) => {
   }
 })
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+function showWindow() {
+  const window = BrowserWindow.getAllWindows()[0]
+  if (!window) {
+    createWindow()
+    return
+  }
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+}
+
+async function setUpTray() {
+  if (!await trayHostAvailable(process.platform, statusNotifierWatcherRunning) || isQuitting) return
+  // A packaged app ships the icon beside its resources; a development build
+  // runs from out/main, two levels below the icons.
+  const iconPath = app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(here, '../../build/icons/256x256.png')
+  appTray = AppTray.create({ iconPath, labels: trayLabels(), status: snapshot.status, onOpen: showWindow, onQuit: () => app.quit() })
+  // The tray follows the node state the window shows; it polls nothing itself.
+  if (appTray) snapshotListeners.add((next) => appTray?.setStatus(next.status))
+}
+
+// On Linux the tray host check can take a couple of seconds, so a window
+// closed while it runs waits for the tray before deciding whether to quit.
+app.on('window-all-closed', () => { void traySetup.then(windowsClosed) })
+
+function windowsClosed() {
+  // A window opened meanwhile, or a quit already under way, decides instead.
+  if (BrowserWindow.getAllWindows().length > 0 || isQuitting) return
+  const keepsRunning = desktopDaemon.managesDaemon && appTray !== null
+  if (quitsWhenWindowsClose({ platform: process.platform, managesDaemon: desktopDaemon.managesDaemon, trayShown: appTray !== null })) {
+    app.quit()
+    return
+  }
+  if (keepsRunning && !trayPreferences.noticeShown && Notification.isSupported()) {
+    const labels = trayLabels()
+    new Notification({ title: labels.stillRunningTitle, body: labels.stillRunningBody }).show()
+    trayPreferences = { ...trayPreferences, noticeShown: true }
+    saveTrayPreferences(trayPreferencesPath, trayPreferences)
+  }
+}

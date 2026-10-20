@@ -295,6 +295,12 @@
     "confirmDescription": "Jobs running here: {jobs}. Workers connected: {workers}. Restarting stops this node’s jobs in progress and disconnects its workers; the pool reschedules unfinished tasks when the node is back.",
     "confirm": "Restart anyway"
   },
+  "tray": {
+    "open": "Open Sisyphus",
+    "quit": "Quit Sisyphus",
+    "stillRunningTitle": "Sisyphus is still running",
+    "stillRunningBody": "Your node keeps working for its pool. Open or quit Sisyphus from its icon in the system tray or menu bar."
+  },
   "poolLimitsSettings": {
     "title": "Pool limits",
     "description": "What each other member of this node’s pool may use here while this node coordinates the pool. Leave a field empty for no limit. Saved limits apply when the node restarts. Work this node submits itself is not limited.",

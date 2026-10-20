@@ -86,6 +86,7 @@ function App() {
     document.documentElement.lang = locale
     document.documentElement.dir = direction
     window.localStorage.setItem('sisyphus-locale', locale)
+    if (isDesktopApp()) void getNodeApi().setAppLocale(locale).catch(() => { /* The tray keeps its last language. */ })
   }, [direction, locale])
 
   const statusLabel = snapshot.status === 'connected' ? messages.connected : snapshot.status === 'connecting' ? messages.connecting : messages.offline
