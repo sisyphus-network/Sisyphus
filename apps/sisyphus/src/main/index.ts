@@ -30,8 +30,10 @@ const initialLocationDiscoverySettings = loadLocationDiscoverySettings(locationD
 // Unlike the settings above, hosting belongs to the node this app starts, so
 // the app keeps it: a node run by hand is reached at whatever --listen says.
 const poolHostingPath = join(app.getPath('userData'), 'pool-hosting.json')
-const initialPoolHostingSettings = loadPoolHostingSettings(poolHostingPath)
-const initialHosting = autoStartManagedDaemon ? hostingListen(initialPoolHostingSettings, hostAddresses()) : null
+// What the app's node was last started with; a restart from Settings
+// replaces both.
+let runningPoolHostingSettings = loadPoolHostingSettings(poolHostingPath)
+let runningHosting = autoStartManagedDaemon ? hostingListen(runningPoolHostingSettings, hostAddresses()) : null
 // The daemon lets anything on this machine read from its local API, but only
 // a holder of its token change it. The token is in the daemon's data
 // directory, readable by the user who runs the daemon.
@@ -47,7 +49,7 @@ const desktopDaemon = new DesktopDaemon({
   // A custom endpoint/token belongs to its operator, not this desktop process.
   enabled: autoStartManagedDaemon,
   locationDiscovery: effectiveLocationDiscoverySettings(initialLocationDiscoverySettings, supportsGatewayDiscovery(process.platform)),
-  hostingListen: initialHosting && 'listen' in initialHosting ? initialHosting.listen : undefined,
+  hostingListen: runningHosting && 'listen' in runningHosting ? runningHosting.listen : undefined,
   onError: (message) => { daemonStartupError = message },
 })
 
@@ -308,6 +310,15 @@ function scheduleReconnect(error: string, generation: number) {
   }, reconnectBackoff.next())
 }
 
+function reconnectNow() {
+  if (retryTimer) clearTimeout(retryTimer)
+  retryTimer = null
+  reconnecting = false
+  reconnectBackoff.reset()
+  clearConnection()
+  connectToNode()
+}
+
 function connectToNode() {
   if (reconnecting || isQuitting) return
   reconnecting = true
@@ -443,12 +454,12 @@ app.whenReady().then(() => {
     const result = await callUnary('setLocationDiscoverySettings', { settings }) as Record<string, unknown>
     return locationDiscoveryState(result)
   })
-  let savedPoolHostingSettings = initialPoolHostingSettings
+  let savedPoolHostingSettings = runningPoolHostingSettings
   const currentPoolHosting = () => poolHostingState({
     managed: desktopDaemon.managesDaemon,
     saved: savedPoolHostingSettings,
-    running: initialHosting && 'listen' in initialHosting ? initialPoolHostingSettings : { ...initialPoolHostingSettings, enabled: false },
-    unavailable: initialHosting !== null && 'unavailable' in initialHosting,
+    running: runningHosting && 'listen' in runningHosting ? runningPoolHostingSettings : { ...runningPoolHostingSettings, enabled: false },
+    unavailable: runningHosting !== null && 'unavailable' in runningHosting,
     addresses: hostAddresses(),
     platform: process.platform,
   })
@@ -472,12 +483,21 @@ app.whenReady().then(() => {
     return poolLimitsState(await callUnary('setPoolLimits', { limits }) as Record<string, unknown>)
   })
   handleNode('node:reconnect', () => {
-    if (retryTimer) clearTimeout(retryTimer)
-    retryTimer = null
-    reconnecting = false
-    reconnectBackoff.reset()
-    clearConnection()
-    connectToNode()
+    reconnectNow()
+    return snapshot
+  })
+  // Restarting applies the settings that wait for a start: hosting is read
+  // again here, and the node reads its own saved settings as it starts.
+  handleNode('node:restart-node', async () => {
+    const settings = loadPoolHostingSettings(poolHostingPath)
+    const hosting = hostingListen(settings, hostAddresses())
+    await desktopDaemon.restart({
+      hostingListen: hosting && 'listen' in hosting ? hosting.listen : undefined,
+      locationDiscovery: effectiveLocationDiscoverySettings(loadLocationDiscoverySettings(locationDiscoveryPath), supportsGatewayDiscovery(process.platform)),
+    })
+    runningPoolHostingSettings = settings
+    runningHosting = hosting
+    reconnectNow()
     return snapshot
   })
   handleNode('node:connect-peer', (_event, address: unknown) => new Promise<string>((resolve, reject) => {

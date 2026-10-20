@@ -285,6 +285,15 @@
     "firewall": "Les workers ont besoin que le pare-feu de cet ordinateur autorise les connexions TCP entrantes sur le port {port}.",
     "unavailable": "Les autres machines ne peuvent pas rejoindre le pool : {address} n’est plus une adresse de cet ordinateur. Choisissez-en une autre dans Paramètres → Ce nœud et rouvrez Sisyphus."
   },
+  "restartNode": {
+    "restart": "Redémarrer le nœud",
+    "restarting": "Redémarrage…",
+    "restarted": "Nœud redémarré avec les réglages enregistrés",
+    "failed": "Impossible de redémarrer le nœud",
+    "confirmTitle": "Redémarrer le nœud maintenant ?",
+    "confirmDescription": "Tâches en cours ici : {jobs}. Workers connectés : {workers}. Le redémarrage arrête les tâches en cours de ce nœud et déconnecte ses workers ; le pool replanifie les tâches inachevées quand le nœud revient.",
+    "confirm": "Redémarrer quand même"
+  },
   "poolLimitsSettings": {
     "title": "Limites du pool",
     "description": "Ce que chaque autre membre du pool de ce nœud peut utiliser ici tant que ce nœud coordonne le pool. Laissez un champ vide pour ne fixer aucune limite. Les limites enregistrées s’appliquent au redémarrage du nœud. Le travail soumis par ce nœud lui-même n’est pas limité.",

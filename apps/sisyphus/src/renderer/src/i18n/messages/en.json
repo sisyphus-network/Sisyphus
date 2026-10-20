@@ -285,6 +285,15 @@
     "firewall": "Workers need incoming TCP connections on port {port} allowed by this computer’s firewall.",
     "unavailable": "Other machines cannot join: {address} is not one of this computer’s addresses now. Choose another in Settings → This node and reopen Sisyphus."
   },
+  "restartNode": {
+    "restart": "Restart node",
+    "restarting": "Restarting…",
+    "restarted": "Node restarted with the saved settings",
+    "failed": "Could not restart the node",
+    "confirmTitle": "Restart the node now?",
+    "confirmDescription": "Jobs running here: {jobs}. Workers connected: {workers}. Restarting stops this node’s jobs in progress and disconnects its workers; the pool reschedules unfinished tasks when the node is back.",
+    "confirm": "Restart anyway"
+  },
   "poolLimitsSettings": {
     "title": "Pool limits",
     "description": "What each other member of this node’s pool may use here while this node coordinates the pool. Leave a field empty for no limit. Saved limits apply when the node restarts. Work this node submits itself is not limited.",

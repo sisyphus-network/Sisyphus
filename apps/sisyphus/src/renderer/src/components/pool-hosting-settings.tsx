@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 import { allInterfaces, formForHosting } from '../../../shared/pool-hosting.ts'
 import { toast } from 'sonner'
+import { RestartNodeButton } from '@/components/restart-node-button'
 
 type Messages = ReturnType<typeof getMessages>
 
@@ -20,6 +21,7 @@ export function PoolHostingSettingsCard({ messages }: { messages: Messages }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
+  const [loads, setLoads] = useState(0)
   useEffect(() => {
     let active = true
     void getNodeApi().getPoolHosting().then((result) => {
@@ -32,7 +34,7 @@ export function PoolHostingSettingsCard({ messages }: { messages: Messages }) {
       if (active) toast.error(labels.loadFailed, { description: error instanceof Error ? error.message : String(error) })
     }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [labels.loadFailed])
+  }, [labels.loadFailed, loads])
 
   const port = /^\d+$/.test(portText) ? Number(portText) : NaN
   const portValid = Number.isInteger(port) && port >= 1 && port <= 65535
@@ -88,7 +90,7 @@ export function PoolHostingSettingsCard({ messages }: { messages: Messages }) {
         {!portValid && <p role="alert" className="text-xs text-destructive">{labels.portInvalid}</p>}
         {state?.managed && <div className="mt-3 flex flex-col-reverse justify-between gap-3 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:items-center">
           <p role="status" className="text-xs leading-relaxed text-muted-foreground">{state.restartNeeded ? labels.restartRequired : labels.restartHint}</p>
-          <Button type="button" disabled={!dirty || saving || !portValid || addressMissing} onClick={() => void save()} className="gap-2"><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</Button>
+          <div className="flex flex-wrap gap-2">{state.restartNeeded && <RestartNodeButton messages={messages} onRestarted={() => setLoads((n) => n + 1)} />}<Button type="button" disabled={!dirty || saving || !portValid || addressMissing} onClick={() => void save()} className="gap-2"><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</Button></div>
         </div>}
       </>}
     </CardContent>

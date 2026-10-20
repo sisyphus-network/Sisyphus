@@ -111,6 +111,19 @@ export class DesktopDaemon {
     }
   }
 
+  /**
+   * Stops the node this app started and starts it again, with whatever of
+   * its settings changed since. A node the app did not start is not ours.
+   */
+  async restart(update: Pick<Partial<Options>, 'hostingListen' | 'locationDiscovery'> = {}): Promise<void> {
+    if (!this.launched) throw new Error('This app did not start the node, so it cannot restart it. Restart it where it was started.')
+    await this.stop()
+    Object.assign(this.options, update)
+    this.stopping = false
+    this.attempted = false
+    await this.ensureStarted()
+  }
+
   async stop(): Promise<void> {
     this.stopping = true
     await this.pending
