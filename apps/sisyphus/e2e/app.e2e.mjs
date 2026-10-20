@@ -1301,6 +1301,15 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
     await systemMode.click()
     assert.equal(await systemMode.getAttribute('aria-pressed'), 'true')
     assert.equal(await page.evaluate(() => localStorage.getItem('sisyphus-theme')), 'system')
+    // System follows the operating system's setting, and keeps following it
+    // when that changes while the app is open, with no explicit theme set.
+    const html = page.locator('html')
+    for (const colorScheme of ['dark', 'light']) {
+      await page.emulateMedia({ colorScheme })
+      await page.waitForFunction((dark) => document.documentElement.classList.contains('dark') === dark, colorScheme === 'dark')
+      assert.equal(await html.getAttribute('data-theme'), null, `System mode should not pin a theme while the system is ${colorScheme}`)
+    }
+    await page.emulateMedia({ colorScheme: null })
     await lightMode.click()
     assert.equal(await lightMode.getAttribute('aria-pressed'), 'true')
     assert.equal(await page.locator('html').getAttribute('data-theme'), 'light')
