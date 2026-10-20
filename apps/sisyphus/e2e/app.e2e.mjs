@@ -1414,9 +1414,32 @@ test('model provider setup retries a failed model-list request', async () => {
     await until('the retried model-list request', () => model.tagRequests === 2)
     assert.equal(model.tagRequests, 2, 'the explicit retry should make exactly one new request')
 
+    let resized = false
+    for (let attempt = 0; attempt < 3 && !resized; attempt++) {
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 650))
+      resized = await page.waitForFunction(() => Math.abs(window.outerHeight - 650) < 60, null, { timeout: 1500 }).then(() => true, () => false)
+    }
+    assert.ok(resized, 'the provider wizard window did not reach the short desktop viewport')
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
-    await page.getByRole('button', { name: 'Model', exact: true }).click()
-    await page.getByRole('dialog', { name: 'Model' }).getByRole('button', { name: 'test-model', exact: true }).waitFor()
+    const modelTrigger = page.getByRole('button', { name: 'Model', exact: true })
+    await modelTrigger.focus()
+    await page.keyboard.press('Enter')
+    const modelPicker = page.getByRole('dialog', { name: 'Model', exact: true })
+    await modelPicker.waitFor()
+    await modelPicker.evaluate(async (element) => {
+      await new Promise(requestAnimationFrame)
+      await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)))
+    })
+    const bounds = await modelPicker.boundingBox()
+    const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+    assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width && bounds.y + bounds.height <= viewport.height, `the Model picker leaves the short viewport: ${JSON.stringify({ bounds, viewport })}`)
+    await modelPicker.getByRole('button', { name: 'test-model', exact: true }).waitFor()
+    await page.keyboard.press('Escape')
+    await modelPicker.waitFor({ state: 'detached' })
+    assert.equal(await page.getByRole('dialog', { name: 'Add provider', exact: true }).isVisible(), true, 'Escape should close the model picker without closing its wizard')
+    await modelTrigger.focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('dialog', { name: 'Model', exact: true }).getByRole('button', { name: 'test-model', exact: true }).click()
   } finally {
     await app.close()
     profile.remove()
