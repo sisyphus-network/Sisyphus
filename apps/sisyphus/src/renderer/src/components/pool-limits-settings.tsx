@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { byteUnits, bytesForForm, countForForm, daemonErrorMessage, durationForForm, durationUnits, maxPoolLimitCount, noPoolLimits, parseAmount, samePoolLimits, type ByteUnit, type DurationUnit, type ParsedAmount } from '../../../shared/pool-limits.ts'
 import { formatMessage } from '@/i18n/messages'
 import { toast } from 'sonner'
+import { RestartNodeButton } from '@/components/restart-node-button'
 import type { getMessages } from '@/i18n/messages'
 
 type Messages = ReturnType<typeof getMessages>
@@ -174,7 +175,7 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
         {row('upload', Upload, labels.uploadTitle, labels.uploadDescription, { value: form.uploadUnit, options: Object.keys(byteUnits), onChange: (value) => setForm((current) => ({ ...current, uploadUnit: value as ByteUnit })) })}
         {state?.configurable && <div className="mt-3 flex flex-col-reverse justify-between gap-3 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:items-center">
           <p role="status" className="text-xs leading-relaxed text-muted-foreground">{restartNeeded ? (state.managed ? labels.restartRequired : labels.restartDaemonRequired) : (state.managed ? labels.restartHint : labels.restartDaemonHint)}</p>
-          <Button type="button" disabled={!dirty || saving || !valid} onClick={() => void save()} className="gap-2"><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</Button>
+          <div className="flex flex-wrap gap-2">{restartNeeded && state.managed && <RestartNodeButton messages={messages} />}<Button type="button" disabled={!dirty || saving || !valid} onClick={() => void save()} className="gap-2"><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</Button></div>
         </div>}
       </>}
     </CardContent>

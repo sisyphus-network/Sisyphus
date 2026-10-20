@@ -285,6 +285,15 @@
     "firewall": "Los workers necesitan que el cortafuegos de este equipo permita conexiones TCP entrantes en el puerto {port}.",
     "unavailable": "Otras máquinas no pueden unirse: {address} ya no es una de las direcciones de este equipo. Elige otra en Configuración → Este nodo y vuelve a abrir Sisyphus."
   },
+  "restartNode": {
+    "restart": "Reiniciar nodo",
+    "restarting": "Reiniciando…",
+    "restarted": "Nodo reiniciado con los ajustes guardados",
+    "failed": "No se pudo reiniciar el nodo",
+    "confirmTitle": "¿Reiniciar el nodo ahora?",
+    "confirmDescription": "Trabajos en curso aquí: {jobs}. Workers conectados: {workers}. Al reiniciar se detienen los trabajos en curso de este nodo y se desconectan sus workers; el pool vuelve a programar las tareas pendientes cuando el nodo regresa.",
+    "confirm": "Reiniciar de todos modos"
+  },
   "poolLimitsSettings": {
     "title": "Límites del pool",
     "description": "Lo que cada otro miembro del pool de este nodo puede usar aquí mientras este nodo coordina el pool. Deja un campo vacío para no poner límite. Los límites guardados se aplican cuando el nodo se reinicia. El trabajo que envía este mismo nodo no tiene límite.",

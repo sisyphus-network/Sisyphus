@@ -116,6 +116,8 @@ test('hosting a pool is the app’s own node’s setting, so a node run by hand 
     assert.equal(await page.getByRole('switch', { name: 'Let other machines join this pool' }).isDisabled(), true)
     assert.equal(await page.getByRole('combobox', { name: 'Address' }).isDisabled(), true)
     assert.equal(await page.getByRole('button', { name: 'Save hosting settings' }).count(), 0)
+    // Nor can it restart a node it did not start.
+    assert.equal(await page.getByRole('button', { name: 'Restart node' }).count(), 0)
     await open(page, 'Node overview')
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
     assert.equal(await page.getByRole('heading', { name: 'Other machines join this pool here' }).count(), 0)

@@ -289,7 +289,7 @@ On every other machine, `sisyphusd` as in part 1.
 
 ### 1. Start the coordinator for the app
 
-The node the app starts for itself listens only on its own machine until it is told to host. In the app, open **Settings → This node**, turn on **Let other machines join this pool**, pick this machine's address on the network the workers share with it, keep port 7700, and **Save**. Then quit and reopen the app. Allow `sisyphusd` through the firewall on private networks when asked ([the warnings on first run](user-guide.md#the-warnings-on-first-run)). **Node overview** then shows the address the workers join at. On Windows it also shows a firewall command to run once as administrator, for when workers still cannot connect.
+The node the app starts for itself listens only on its own machine until it is told to host. In the app, open **Settings → This node**, turn on **Let other machines join this pool**, pick this machine's address on the network the workers share with it, keep port 7700, and **Save**. Then press **Restart node** beside it. Allow `sisyphusd` through the firewall on private networks when asked ([the warnings on first run](user-guide.md#the-warnings-on-first-run)). **Node overview** then shows the address the workers join at. On Windows it also shows a firewall command to run once as administrator, for when workers still cannot connect.
 
 To run the coordinator from a terminal instead, start it before opening the app, listening where the workers can reach it, with its local API where the app looks and in the data directory the app uses:
 

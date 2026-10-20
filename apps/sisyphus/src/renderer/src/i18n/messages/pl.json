@@ -285,6 +285,15 @@
     "firewall": "Workery potrzebują, aby zapora tego komputera przepuszczała przychodzące połączenia TCP na porcie {port}.",
     "unavailable": "Inne maszyny nie mogą dołączyć: {address} nie jest już adresem tego komputera. Wybierz inny w Ustawienia → Ten węzeł i otwórz Sisyphus ponownie."
   },
+  "restartNode": {
+    "restart": "Uruchom węzeł ponownie",
+    "restarting": "Ponowne uruchamianie…",
+    "restarted": "Węzeł uruchomiony ponownie z zapisanymi ustawieniami",
+    "failed": "Nie udało się ponownie uruchomić węzła",
+    "confirmTitle": "Uruchomić węzeł ponownie teraz?",
+    "confirmDescription": "Zadania w toku tutaj: {jobs}. Połączone workery: {workers}. Ponowne uruchomienie zatrzymuje zadania w toku tego węzła i rozłącza jego workery; pula ponownie zaplanuje niedokończone zadania, gdy węzeł wróci.",
+    "confirm": "Uruchom ponownie mimo to"
+  },
   "poolLimitsSettings": {
     "title": "Limity puli",
     "description": "Ile zasobów tego węzła może wykorzystać każdy inny członek jego puli, dopóki ten węzeł koordynuje pulę. Pozostaw pole puste, aby nie ustawiać limitu. Zapisane limity zaczynają obowiązywać po ponownym uruchomieniu węzła. Praca zlecana przez sam ten węzeł nie jest ograniczana.",

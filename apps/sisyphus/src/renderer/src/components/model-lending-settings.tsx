@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { getNodeApi } from '@/lib/node-api'
 import { toast } from 'sonner'
+import { RestartNodeButton } from '@/components/restart-node-button'
 import type { getMessages } from '@/i18n/messages'
 
 type Messages = ReturnType<typeof getMessages>
@@ -25,6 +26,7 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
   const [inspecting, setInspecting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [supported, setSupported] = useState(true)
+  const [loads, setLoads] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -36,7 +38,7 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
       setSupported(true)
     }).catch(() => { if (active) setSupported(false) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [])
+  }, [loads])
 
   const selected = useMemo(() => new Set(form.only), [form.only])
   const dirty = Boolean(state?.saved && JSON.stringify(state.saved) !== JSON.stringify(form))
@@ -143,7 +145,7 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
       </details>
       <div className="flex flex-col-reverse items-stretch justify-between gap-3 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:items-center">
         <p className="text-xs text-muted-foreground">{state?.restartNeeded ? labels.restartNeeded : state?.running?.enabled ? labels.lendingRunning : labels.lendingStopped}</p>
-        <Button type="button" disabled={!dirty || saving} onClick={() => void save()} className="gap-2">{saving && <LoaderCircle className="size-4 animate-spin" />}{labels.saveLending}</Button>
+        <div className="flex flex-wrap gap-2">{state?.restartNeeded && <RestartNodeButton messages={messages} onRestarted={() => setLoads((n) => n + 1)} />}<Button type="button" disabled={!dirty || saving} onClick={() => void save()} className="gap-2">{saving && <LoaderCircle className="size-4 animate-spin" />}{labels.saveLending}</Button></div>
       </div>
   </div>
 

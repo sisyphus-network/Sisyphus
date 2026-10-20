@@ -134,6 +134,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
       return { managed: false, saved: settings, running: settings, restartNeeded: false, unavailable: false, addresses: [], platform: '' }
     },
     savePoolHosting: async (): Promise<PoolHostingState> => { throw new Error('Hosting a pool is set in the desktop app.') },
+    restartNode: async (): Promise<NodeSnapshot> => { throw new Error('Only the desktop app restarts a node it started.') },
     reconnect: getSnapshot,
     connectPeer: async (address) => (await node.connectPeer({ address })).peerId,
     setPeerComputeTrust: async (peerId, trusted) => { await node.setPeerComputeTrust({ peerId, trusted }) },

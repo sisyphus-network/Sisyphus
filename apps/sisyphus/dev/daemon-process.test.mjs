@@ -79,6 +79,31 @@ test('a hosting node listens where the owner chose and is discoverable', async (
   await daemon.stop()
 })
 
+test('a restart stops the owned node gracefully and starts it again with changed settings', async () => {
+  const { daemon, launches, signals } = fixture({ unused: async (address) => address !== '127.0.0.1:7700' })
+  await daemon.ensureStarted()
+  assert.deepEqual(launches[0].args.slice(5, 8), ['--listen', '127.0.0.1:0', '--discovery'])
+  await daemon.restart({ hostingListen: '192.168.137.133:7700', locationDiscovery: { locateGateway: true, locateCountry: false, stunServer: '' } })
+  assert.deepEqual(signals, ['SIGTERM'])
+  assert.equal(launches.length, 2)
+  assert.deepEqual(launches[1].args, ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '192.168.137.133:7700', '--web-listen', '127.0.0.1:50052', '--locate-gateway'])
+  assert.equal(daemon.ownsProcess, true)
+  await daemon.restart({ hostingListen: undefined })
+  assert.equal(launches.length, 3)
+  assert.deepEqual(launches[2].args.slice(5, 8), ['--listen', '127.0.0.1:0', '--discovery'])
+  await daemon.stop()
+})
+
+test('a node the app did not start cannot be restarted from the app', async () => {
+  for (const options of [{ unused: async () => false }, { enabled: false }]) {
+    const { daemon, launches, signals } = fixture(options)
+    await daemon.ensureStarted()
+    await assert.rejects(daemon.restart(), /did not start the node/)
+    assert.equal(launches.length, 0)
+    assert.deepEqual(signals, [])
+  }
+})
+
 test('refuses an invalid or occupied web API address without spawning the daemon', async () => {
   for (const options of [
     { webListenAddress: '0.0.0.0:50052' },
