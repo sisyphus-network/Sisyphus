@@ -179,7 +179,7 @@ bin/sisyphusd pool members
 
 **Lend this machine's models** offers the models of an Ollama on this machine to the pool, without the command line:
 
-1. Turn lending on and give Ollama's address (`http://127.0.0.1:11434` for one on this machine). **Check connection** shows the models it has and which are loaded now.
+1. Turn lending on. The address starts as `http://127.0.0.1:11434`, an Ollama on this machine; change it for one elsewhere. **Check connection** shows the models it has and which are loaded now. Saving checks too, and so does opening the page while lending is on.
 2. Tick the models to offer. Then set the limits:
    - **GPU layers:** how much of a model goes on the graphics card. `0` keeps the pool's work off it, `-1` puts on as much as fits.
    - **CPU threads**, **context length**, and **keep loaded**, which is how long a model stays in memory after it answers.
