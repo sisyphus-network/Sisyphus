@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events'
 import { createServer } from 'node:net'
 import { spawn } from 'node:child_process'
 import { DesktopDaemon, daemonShutdownGraceMs, localApiAddress, portIsUnused } from '../src/main/daemon-process.ts'
+import { restartManagedNode } from '../src/main/restart-managed-node.ts'
 
 test('only explicit loopback API addresses may start a daemon', () => {
   for (const endpoint of ['example.com:50051', '0.0.0.0:50051', '127.0.0.1:0', 'localhost:65536', 'unix:/tmp/node']) assert.equal(localApiAddress(endpoint), null)
@@ -91,6 +92,47 @@ test('a restart stops the owned node gracefully and starts it again with changed
   await daemon.restart({ hostingListen: undefined })
   assert.equal(launches.length, 3)
   assert.deepEqual(launches[2].args.slice(5, 8), ['--listen', '127.0.0.1:0', '--discovery'])
+  await daemon.stop()
+})
+
+test('a child that exits immediately after restart cannot apply running settings', async () => {
+  const children = []
+  const listeners = new Set()
+  let current = { status: 'connected' }
+  const daemon = new DesktopDaemon({
+    executable: '/test/sisyphusd', endpoint: '127.0.0.1:50051', dataDir: '/test/data', enabled: true,
+    unused: async () => true,
+    launch: () => {
+      const child = new EventEmitter()
+      child.kill = (signal) => { setImmediate(() => child.emit('close', 0, signal)); return true }
+      children.push(child)
+      if (children.length === 2) setImmediate(() => child.emit('exit', 1, null))
+      return child
+    },
+    onError: () => {
+      current = { status: 'disconnected' }
+      for (const listener of listeners) listener(current)
+    },
+  })
+  await daemon.ensureStarted()
+  let runningSettings = 'old'
+  await assert.rejects(restartManagedNode({
+    restart: () => daemon.restart({ hostingListen: '192.168.1.5:7700' }),
+    reconnect: () => {
+      current = { status: 'connecting' }
+      for (const listener of listeners) listener(current)
+    },
+    snapshots: {
+      getSnapshot: async () => current,
+      onSnapshot: (listener) => { listeners.add(listener); return () => listeners.delete(listener) },
+    },
+    timeoutMs: 20,
+    timeoutMessage: 'reconnect timed out',
+    onConnected: () => { runningSettings = 'new' },
+  }), /reconnect timed out/)
+  assert.equal(children.length, 2)
+  assert.equal(daemon.ownsProcess, false)
+  assert.equal(runningSettings, 'old')
   await daemon.stop()
 })
 

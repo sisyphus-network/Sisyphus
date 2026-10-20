@@ -4,7 +4,7 @@ import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { Button } from '@/components/ui/button'
 import { ResponsiveActionDialog } from '@/components/ui/responsive-action-dialog'
 import { formatMessage, type getMessages } from '@/i18n/messages'
-import { waitForConnectedSnapshot } from '@/lib/wait-for-connected-snapshot'
+import { waitForConnectedSnapshot } from '../../../shared/wait-for-connected-snapshot.ts'
 import { restartImpact } from '../../../shared/restart-impact.ts'
 import { toast } from 'sonner'
 
@@ -33,7 +33,7 @@ export function RestartNodeButton({ messages, onRestarted }: { messages: Message
     setBusy(true)
     try {
       const api = getNodeApi()
-      const after = await api.restartNode()
+      const after = await api.restartNode(labels.reconnectTimeout)
       // The cards read their settings from the node, so they wait for it to
       // answer again before they reload.
       if (after.status !== 'connected') await waitForConnectedSnapshot(api, 30_000, labels.reconnectTimeout)

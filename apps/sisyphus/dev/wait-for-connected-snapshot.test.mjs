@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { waitForConnectedSnapshot } from '../src/renderer/src/lib/wait-for-connected-snapshot.ts'
+import { waitForConnectedSnapshot } from '../src/shared/wait-for-connected-snapshot.ts'
 
 function snapshot(status) { return { status } }
 

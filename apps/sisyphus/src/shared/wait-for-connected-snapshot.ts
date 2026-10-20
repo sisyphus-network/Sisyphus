@@ -1,9 +1,11 @@
-import type { NodeSnapshot, SisyphusBridge } from '../../../preload'
+type Snapshot = { status: string }
+type SnapshotSource<T extends Snapshot> = {
+  getSnapshot: () => Promise<T>
+  onSnapshot: (callback: (snapshot: T) => void) => () => void
+}
 
-type SnapshotApi = Pick<SisyphusBridge, 'getSnapshot' | 'onSnapshot'>
-
-/** Wait until the restarted node is confirmed connected, or fail after the timeout. */
-export function waitForConnectedSnapshot(api: SnapshotApi, timeoutMs: number, timeoutMessage: string): Promise<void> {
+/** Resolve only after a connected snapshot; reject if the deadline expires. */
+export function waitForConnectedSnapshot<T extends Snapshot>(source: SnapshotSource<T>, timeoutMs: number, timeoutMessage: string): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false
     let unsubscribe = () => {}
@@ -16,16 +18,16 @@ export function waitForConnectedSnapshot(api: SnapshotApi, timeoutMs: number, ti
       if (error) reject(error)
       else resolve()
     }
-    const onSnapshot = (snapshot: NodeSnapshot) => {
+    const onSnapshot = (snapshot: T) => {
       if (snapshot.status === 'connected') finish()
     }
 
     // Subscribe before fetching the current state so a fast reconnect cannot
     // land in the gap between the initial read and the event listener.
-    unsubscribe = api.onSnapshot(onSnapshot)
+    unsubscribe = source.onSnapshot(onSnapshot)
     if (settled) unsubscribe()
     if (settled) return
     timer = setTimeout(() => finish(new Error(timeoutMessage)), timeoutMs)
-    void api.getSnapshot().then(onSnapshot).catch(() => {})
+    void source.getSnapshot().then(onSnapshot).catch(() => {})
   })
 }

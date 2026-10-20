@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WindowStreams } from './window-streams'
 import { createIpcLogEntry } from './ipc-logger'
 import { DesktopDaemon } from './daemon-process'
+import { restartManagedNode } from './restart-managed-node'
 import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, normalizeLocationDiscoverySettings, supportsGatewayDiscovery } from './location-discovery-settings'
 import { hostAddresses, hostingListen, loadPoolHostingSettings, poolHostingState, savePoolHostingSettings } from './pool-hosting-settings'
 import { normalizePoolLimits, validatePoolLimits } from '../shared/pool-limits.ts'
@@ -30,8 +31,8 @@ const initialLocationDiscoverySettings = loadLocationDiscoverySettings(locationD
 // Unlike the settings above, hosting belongs to the node this app starts, so
 // the app keeps it: a node run by hand is reached at whatever --listen says.
 const poolHostingPath = join(app.getPath('userData'), 'pool-hosting.json')
-// What the app's node was last started with; a restart from Settings
-// replaces both.
+// What the app's node last connected with; a restart from Settings replaces
+// this only after the new process is confirmed reachable.
 let runningPoolHostingSettings = loadPoolHostingSettings(poolHostingPath)
 let runningHosting = autoStartManagedDaemon ? hostingListen(runningPoolHostingSettings, hostAddresses()) : null
 // The daemon lets anything on this machine read from its local API, but only
@@ -228,6 +229,7 @@ const initialSnapshot = (): NodeSnapshot => ({
 })
 
 let snapshot = initialSnapshot()
+const snapshotListeners = new Set<(snapshot: NodeSnapshot) => void>()
 let client: GrpcNodeService | null = null
 let nodeStateSession: (() => void) | null = null
 let retryTimer: NodeJS.Timeout | null = null
@@ -281,6 +283,9 @@ function callUnary(method: string, request: Record<string, unknown>): Promise<un
 
 function publish(next: Partial<NodeSnapshot>) {
   snapshot = { ...snapshot, ...next }
+  for (const listener of snapshotListeners) {
+    try { listener(snapshot) } catch { /* A snapshot observer cannot interrupt state publication. */ }
+  }
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send('node:snapshot', snapshot)
@@ -488,16 +493,26 @@ app.whenReady().then(() => {
   })
   // Restarting applies the settings that wait for a start: hosting is read
   // again here, and the node reads its own saved settings as it starts.
-  handleNode('node:restart-node', async () => {
+  handleNode('node:restart-node', async (_event, timeoutMessage: unknown) => {
     const settings = loadPoolHostingSettings(poolHostingPath)
     const hosting = hostingListen(settings, hostAddresses())
-    await desktopDaemon.restart({
-      hostingListen: hosting && 'listen' in hosting ? hosting.listen : undefined,
-      locationDiscovery: effectiveLocationDiscoverySettings(loadLocationDiscoverySettings(locationDiscoveryPath), supportsGatewayDiscovery(process.platform)),
+    await restartManagedNode({
+      restart: () => desktopDaemon.restart({
+        hostingListen: hosting && 'listen' in hosting ? hosting.listen : undefined,
+        locationDiscovery: effectiveLocationDiscoverySettings(loadLocationDiscoverySettings(locationDiscoveryPath), supportsGatewayDiscovery(process.platform)),
+      }),
+      reconnect: reconnectNow,
+      snapshots: {
+        getSnapshot: async () => snapshot,
+        onSnapshot: (callback) => { snapshotListeners.add(callback); return () => { snapshotListeners.delete(callback) } },
+      },
+      timeoutMs: 30_000,
+      timeoutMessage: typeof timeoutMessage === 'string' && timeoutMessage ? timeoutMessage : 'The node did not reconnect within 30 seconds.',
+      onConnected: () => {
+        runningPoolHostingSettings = settings
+        runningHosting = hosting
+      },
     })
-    runningPoolHostingSettings = settings
-    runningHosting = hosting
-    reconnectNow()
     return snapshot
   })
   handleNode('node:connect-peer', (_event, address: unknown) => new Promise<string>((resolve, reject) => {
