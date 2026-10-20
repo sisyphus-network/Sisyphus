@@ -127,13 +127,36 @@ func TestANodeToldToRunContainersChecksThatItCan(t *testing.T) {
 		asked = confined
 		return errors.New("Docker here has no runtime called runsc")
 	}
-	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--container-runtime", "runsc", "--containers-read-only", "--containers-tmp-mb", "32", "--containers-network", "--containers-memory-mb", "512", "--containers-cpus", "1.5", "--containers-timeout", "1h")
-	if err == nil || !strings.Contains(err.Error(), "--containers: Docker here has no runtime called runsc") || asked != (runtime.Confinement{Runtime: "runsc", ReadOnly: true, TmpMB: 32, Network: true, MemoryMB: 512, CPUs: 1.5, Timeout: time.Hour}) {
+	taskDir := t.TempDir()
+	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--task-dir", taskDir, "--container-runtime", "runsc", "--containers-read-only", "--containers-tmp-mb", "32", "--containers-network", "--containers-memory-mb", "512", "--containers-cpus", "1.5", "--containers-timeout", "1h")
+	if err == nil || !strings.Contains(err.Error(), "--containers: Docker here has no runtime called runsc") || asked != (runtime.Confinement{TaskDir: taskDir, Runtime: "runsc", ReadOnly: true, TmpMB: 32, Network: true, MemoryMB: 512, CPUs: 1.5, Timeout: time.Hour}) {
 		t.Errorf("error %v, asked for %+v, want the node not started for want of the runtime", err, asked)
 	}
-	for _, flags := range [][]string{{"--container-runtime", "runsc"}, {"--containers-read-only"}, {"--containers-memory-mb", "512"}, {"--containers-cpus", "2"}, {"--containers-timeout", "1h"}, {"--containers-tmp-mb", "64"}, {"--containers-network"}} {
+	workingDir, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relativeTaskDir, err := filepath.Rel(workingDir, taskDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--task-dir", relativeTaskDir)
+	if err == nil || !strings.Contains(err.Error(), "Docker here has no runtime called runsc") || asked.TaskDir != taskDir {
+		t.Errorf("relative --task-dir passed to worker as %q; want absolute %q (error %v)", asked.TaskDir, taskDir, err)
+	}
+	for _, flags := range [][]string{{"--task-dir", t.TempDir()}, {"--container-runtime", "runsc"}, {"--containers-read-only"}, {"--containers-memory-mb", "512"}, {"--containers-cpus", "2"}, {"--containers-timeout", "1h"}, {"--containers-tmp-mb", "64"}, {"--containers-network"}} {
 		if _, err := cli(t, append([]string{"run", "--data-dir", t.TempDir(), "--listen", freeAddr(t)}, flags...)...); err == nil || !strings.Contains(err.Error(), "need --containers") {
 			t.Errorf("%v without --containers: %v", flags, err)
+		}
+	}
+	missing := filepath.Join(t.TempDir(), "missing")
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{missing, file} {
+		if _, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--task-dir", path); err == nil || !strings.Contains(err.Error(), "--task-dir must name an existing") {
+			t.Errorf("--task-dir %q: %v", path, err)
 		}
 	}
 	// What a task may use is at most something.
@@ -150,6 +173,39 @@ func TestANodeToldToRunContainersChecksThatItCan(t *testing.T) {
 	// A sized /tmp means something only where the root cannot be written.
 	if _, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--containers-tmp-mb", "64"); err == nil || !strings.Contains(err.Error(), "needs it") {
 		t.Errorf("--containers-tmp-mb without --containers-read-only: %v", err)
+	}
+}
+
+func TestCheckTaskDirReportsAnUnwritableVolume(t *testing.T) {
+	dir := t.TempDir()
+	want := errors.New("no space")
+	err := checkTaskDirWith(dir, os.Stat, func(string, string) (*os.File, error) {
+		return nil, want
+	})
+	if !errors.Is(err, want) || !strings.Contains(err.Error(), "existing, writable directory") {
+		t.Errorf("checkTaskDir error = %v", err)
+	}
+}
+
+func TestResolveTaskDirReportsAnUnresolvablePath(t *testing.T) {
+	want := errors.New("working directory is unavailable")
+	_, err := resolveTaskDir("tasks", func(string) (string, error) {
+		return "", want
+	})
+	if !errors.Is(err, want) || !strings.Contains(err.Error(), "resolve --task-dir") {
+		t.Errorf("resolveTaskDir error = %v", err)
+	}
+}
+
+func TestDaemonReportsAnUnresolvableTaskDir(t *testing.T) {
+	old := absoluteTaskDir
+	absoluteTaskDir = func(string) (string, error) {
+		return "", errors.New("working directory is unavailable")
+	}
+	defer func() { absoluteTaskDir = old }()
+
+	if _, err := cli(t, "run", "--data-dir", t.TempDir(), "--listen", freeAddr(t), "--containers", "--task-dir", "tasks"); err == nil || !strings.Contains(err.Error(), "resolve --task-dir: working directory is unavailable") {
+		t.Errorf("unresolvable --task-dir error = %v", err)
 	}
 }
 

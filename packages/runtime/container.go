@@ -37,7 +37,8 @@ type Container struct {
 	// Engine runs a container engine's command to its end, giving what it
 	// prints to stdout and stderr, and returns the status it exited with.
 	// Nil means Docker.
-	Engine func(ctx context.Context, args []string, stdout, stderr io.Writer) (status int, err error)
+	Engine      func(ctx context.Context, args []string, stdout, stderr io.Writer) (status int, err error)
+	prepareDirs func(input, output string) error
 	// MaxOutput is how many bytes of files a task may leave in /output to
 	// be stored. Zero means maxOutput.
 	MaxOutput int64
@@ -49,6 +50,11 @@ type Container struct {
 // Confinement is what a worker's owner asks of the containers that run the
 // pool's tasks, beyond what every one of them is held to.
 type Confinement struct {
+	// TaskDir is an existing directory under which task workspaces and
+	// staged inputs are created. Operators can put it on a dedicated,
+	// quota-backed filesystem to contain disk exhaustion. Empty uses the
+	// operating system's temporary directory.
+	TaskDir string
 	// Runtime is the runtime the engine is to run them with, by the name
 	// the engine knows it under, in place of its usual: a sandboxed one
 	// such as gVisor's runsc, which stands between the task and the
@@ -92,9 +98,8 @@ func heldTo[N int | float64](asked, most N) N {
 // workers that have it.
 const NetworkLabel = "container-network"
 
-// BoundedTmpLabel marks a worker whose containers can write nowhere but
-// /output, which is capped, and a /tmp of a size its owner set: one whose
-// tasks cannot fill its disk or its memory with what they write.
+// BoundedTmpLabel marks a worker whose containers have a read-only root and
+// a sized /tmp. It does not bound writes to /output while a task is running.
 // SandboxedLabel marks one that runs them with a runtime that stands
 // between a task and the machine's kernel, gVisor's or Kata's, which the
 // worker found Docker has before it started.
@@ -298,17 +303,17 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 		engine = docker
 	}
 	// The task's files live in a directory of its own for as long as it runs.
-	dir, err := os.MkdirTemp("", "sisyphus-task-")
+	dir, err := os.MkdirTemp(c.Confined.TaskDir, "sisyphus-task-")
 	if err != nil {
 		return nil, fmt.Errorf("make the task's directory: %w", err)
 	}
 	defer os.RemoveAll(dir)
 	input, output := filepath.Join(dir, "input"), filepath.Join(dir, "output")
-	os.Mkdir(input, 0o755)  // in a directory just made, these cannot fail
-	os.Mkdir(output, 0o777) // the command may run as anyone
-	os.Chmod(output, 0o777)
+	if err := c.prepareTaskDirs(input, output); err != nil {
+		return nil, err
+	}
 	if task.Input != "" {
-		shared, release, err := inputs.take(ctx, blobs, task.Job, task.Input)
+		shared, release, err := inputs.take(ctx, blobs, c.Confined.TaskDir, task.Job, task.Input)
 		if err != nil {
 			return nil, err
 		}
@@ -435,6 +440,13 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	return mustJSON(out), nil
 }
 
+func (c Container) prepareTaskDirs(input, output string) error {
+	if c.prepareDirs != nil {
+		return c.prepareDirs(input, output)
+	}
+	return makeTaskDirs(input, output, os.Mkdir, os.Chmod)
+}
+
 func (Container) Aggregate(_ context.Context, _ Blobs, outputs [][]byte) ([]byte, error) {
 	result := ContainerResult{Tasks: make([]ContainerOutput, len(outputs))}
 	for i, output := range outputs {
@@ -543,7 +555,7 @@ type sharedInput struct {
 
 // take returns a directory holding the input with the given CID as the
 // file "data", and what to call when the task is done with it.
-func (s *sharedInputs) take(ctx context.Context, blobs Blobs, job, id string) (dir string, release func(), err error) {
+func (s *sharedInputs) take(ctx context.Context, blobs Blobs, base, job, id string) (dir string, release func(), err error) {
 	key := job + "/" + id
 	s.mu.Lock()
 	in := s.held[key]
@@ -567,7 +579,7 @@ func (s *sharedInputs) take(ctx context.Context, blobs Blobs, job, id string) (d
 	in.fetching.Lock()
 	defer in.fetching.Unlock()
 	if in.dir == "" {
-		made, err := os.MkdirTemp("", "sisyphus-input-")
+		made, err := os.MkdirTemp(base, "sisyphus-input-")
 		if err == nil {
 			if err = fetchTo(ctx, blobs, id, filepath.Join(made, "data")); err != nil {
 				os.RemoveAll(made)
@@ -590,12 +602,35 @@ func fetchTo(ctx context.Context, blobs Blobs, id, path string) error {
 		return fmt.Errorf("container input %s: %w", id, err)
 	}
 	defer blob.Close()
-	// In a directory just made for the task this cannot fail, and if it
-	// somehow did the copy below would say so.
-	file, _ := os.Create(path)
-	defer file.Close()
-	if _, err := io.Copy(file, blob); err != nil {
+	return writeStagedInput(id, path, blob, func(path string) (io.WriteCloser, error) {
+		return os.Create(path)
+	})
+}
+
+func makeTaskDirs(input, output string, mkdir func(string, os.FileMode) error, chmod func(string, os.FileMode) error) error {
+	if err := mkdir(input, 0o755); err != nil {
+		return fmt.Errorf("make the task's input directory: %w", err)
+	}
+	if err := mkdir(output, 0o777); err != nil {
+		return fmt.Errorf("make the task's output directory: %w", err)
+	}
+	if err := chmod(output, 0o777); err != nil {
+		return fmt.Errorf("make the task's output directory writable: %w", err)
+	}
+	return nil
+}
+
+func writeStagedInput(id, path string, source io.Reader, create func(string) (io.WriteCloser, error)) error {
+	file, err := create(path)
+	if err != nil {
+		return fmt.Errorf("container input %s: make staged file: %w", id, err)
+	}
+	if _, err := io.Copy(file, source); err != nil {
+		file.Close()
 		return fmt.Errorf("container input %s: %w", id, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("container input %s: finish staged file: %w", id, err)
 	}
 	return nil
 }
