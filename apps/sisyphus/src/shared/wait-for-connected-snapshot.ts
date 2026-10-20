@@ -25,8 +25,10 @@ export function waitForConnectedSnapshot<T extends Snapshot>(source: SnapshotSou
     // Subscribe before fetching the current state so a fast reconnect cannot
     // land in the gap between the initial read and the event listener.
     unsubscribe = source.onSnapshot(onSnapshot)
-    if (settled) unsubscribe()
-    if (settled) return
+    if (settled) {
+      unsubscribe()
+      return
+    }
     timer = setTimeout(() => finish(new Error(timeoutMessage)), timeoutMs)
     void source.getSnapshot().then(onSnapshot).catch(() => {})
   })
