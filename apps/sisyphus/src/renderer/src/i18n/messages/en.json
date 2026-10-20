@@ -290,6 +290,7 @@
     "restarting": "Restarting…",
     "restarted": "Node restarted with the saved settings",
     "failed": "Could not restart the node",
+    "reconnectTimeout": "The node did not reconnect within 30 seconds.",
     "confirmTitle": "Restart the node now?",
     "confirmDescription": "Jobs running here: {jobs}. Workers connected: {workers}. Restarting stops this node’s jobs in progress and disconnects its workers; the pool reschedules unfinished tasks when the node is back.",
     "confirm": "Restart anyway"
