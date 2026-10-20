@@ -95,6 +95,7 @@ What they check today (`e2e/app.e2e.mjs`):
 - the window shows the node it is connected to, its ID and its worker;
 - a window with no WebGL is offered no topology (no pane, no handle, no dock entry when narrow), its chat fills the room and answers; a window with WebGL has the topology wide and narrow;
 - a job submitted in Operations runs on the pool, and its result and events are shown;
+- a job the planner runs is tracked in the chat: its tasks done, and each worker's share;
 - a file stored as private is listed, and an invitation is issued;
 - the language picker opens from the keyboard and keeps the focus among its choices, Hebrew turns the window right-to-left without a sideways scroll, and the choice is still there at the next start;
 - a node that stops is said to be gone with the sidebar left in place, and the window finds it again when it returns;

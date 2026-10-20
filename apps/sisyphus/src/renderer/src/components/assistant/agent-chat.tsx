@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Message, MessageContent, MessageResponse } from '@/components/ai-elements/message'
 import { SisyphusPrompt, type ChatAttachment } from '@/components/assistant/sisyphus-prompt'
 import { DeleteChatConfirmation } from '@/components/assistant/delete-chat-confirmation'
+import { JobTracker } from '@/components/assistant/job-tracker'
 import { getMessageDirection } from '@/lib/text-direction'
 import { logoUrl } from '@/lib/brand'
 import { getJobHref } from '@/lib/job-navigation'
@@ -49,13 +50,15 @@ function ActivityTimeline({ activities, direction, messages }: { activities: Act
   const incomplete = activities.some((action) => action.state === 'interrupted' || action.state === 'failed')
   const current = findLast(activities, (action) => action.state === 'working') ?? activities[activities.length - 1]
   const CurrentIcon = current.tool === 'run_job' ? Boxes : current.tool === 'get_job' ? Search : Wrench
-  const summary = working ? toolLabel(current.tool, messages) : incomplete ? messages.agentActionIncomplete : activities.length === 1 ? messages.agentActionComplete : `${messages.agentActions} · ${activities.length}`
+  const tracked = findLast(activities, (action) => action.tool === 'run_job' && Boolean(action.jobId))
+  const summary = working ? (current.tool === 'run_job' && current.jobId ? messages.agentActionRunningJob : toolLabel(current.tool, messages)) : incomplete ? messages.agentActionIncomplete : activities.length === 1 ? messages.agentActionComplete : `${messages.agentActions} · ${activities.length}`
   return <div dir={direction} className="sisyphus-agent-actions mx-auto w-full max-w-2xl text-start">
     <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className="group flex min-h-9 w-full items-center justify-center gap-2 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-[var(--app-wash)]">
       <AnimatePresence initial={false} mode="wait"><motion.span key={working ? current.id : `done-${current.id}`} initial={{ opacity: 0, scale: .85 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: .85 }} className="grid size-6 shrink-0 place-items-center">{working ? <LoaderCircle className="size-4 animate-spin" /> : <CurrentIcon className="size-4" />}</motion.span></AnimatePresence>
       <AnimatePresence initial={false} mode="wait"><motion.span key={summary} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -3 }} className="min-w-0 max-w-[min(100%,32rem)] truncate text-start font-semibold">{working ? <ShinyText text={summary} speed={2.4} delay={.7} direction={direction === 'rtl' ? 'right' : 'left'} /> : summary}</motion.span></AnimatePresence>
       <ChevronDown className={`size-3.5 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
     </button>
+    {tracked?.jobId && <JobTracker key={tracked.jobId} jobId={tracked.jobId} messages={messages} />}
     <motion.div initial={false} animate={{ height: expanded ? 'auto' : 0, opacity: expanded ? 1 : 0 }} transition={{ duration: .24, ease: [.22, 1, .36, 1] }} aria-hidden={!expanded} className="overflow-hidden" style={{ pointerEvents: expanded ? 'auto' : 'none' }}>
       {activities.map((action) => {
         const Icon = action.tool === 'run_job' ? Boxes : action.tool === 'get_job' ? Search : Wrench
