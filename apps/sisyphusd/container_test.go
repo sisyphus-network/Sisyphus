@@ -26,6 +26,36 @@ func requireDocker(t *testing.T) {
 	}
 }
 
+// waitForContainerJob waits for the container integration test's job to finish.
+// If its deadline expires, capture the engine and task logs before cancelling
+// the job and stopping the worker, so the failed run shows whether Docker ever
+// created the containers and where their task output stopped.
+func waitForContainerJob(t *testing.T, within time.Duration, addr, id string) string {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	var last string
+	var lastErr error
+	for {
+		callWithin := min(30*time.Second, time.Until(deadline))
+		if callWithin <= 0 {
+			callWithin = time.Nanosecond
+		}
+		last, lastErr = cliWithin(t, callWithin, "job", "get", "--addr", addr, id)
+		if lastErr == nil && strings.Contains(last, "succeeded in") {
+			return last
+		}
+		if time.Now().After(deadline) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			containers, dockerErr := exec.CommandContext(ctx, "docker", "ps", "-a", "--no-trunc", "--filter", "name=sisyphus-", "--format", "{{.ID}} {{.Names}} {{.Status}} {{.Image}}").CombinedOutput()
+			cancel()
+			_, cancelErr := cliWithin(t, 5*time.Second, "job", "cancel", "--addr", addr, id)
+			logs, logsErr := cliWithin(t, 5*time.Second, "job", "logs", "--addr", addr, id)
+			t.Fatalf("job did not finish within %s; last job get %q (error %v); matching Docker containers %q (error %v); cancel error %v; job logs %q (error %v)", within, last, lastErr, containers, dockerErr, cancelErr, logs, logsErr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 	requireDocker(t)
 	addr := freeAddr(t)
@@ -52,7 +82,7 @@ func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 	// Three containers started at once are slow to start on a machine busy
 	// with the rest of the tests: alone this takes seconds, but with the
 	// whole suite running it has taken over twenty.
-	out := waitForOutputWithin(t, time.Minute, "succeeded in", "job", "get", "--addr", addr, id)
+	out := waitForContainerJob(t, time.Minute, addr, id)
 	if strings.Contains(out, "on plain") {
 		t.Errorf("a container task ran on the worker that does not run them:\n%s", out)
 	}

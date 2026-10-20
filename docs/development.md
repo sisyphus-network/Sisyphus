@@ -8,6 +8,8 @@ Some tests run a real IPFS daemon and need the `ipfs` program ([Kubo](https://gi
 
 CI downloads those pinned releases with a bounded retry for transient GitHub API/network errors. The Kubo SHA-512 and IPFS Cluster SHA-256 checks still run after download; a checksum mismatch or other permanent download error still fails the job.
 
+The Docker-backed container-task integration test allows up to a minute for three tasks to finish. If it times out, it records any remaining `sisyphus-*` containers, cancels the job, and captures its event log to distinguish a task/engine stall from a scheduling delay.
+
 The same goes for the tests of `--cluster`, which run real cluster peers and need `ipfs-cluster-service` ([IPFS Cluster](https://github.com/ipfs-cluster/ipfs-cluster/releases)) on the PATH as well, at the version pinned in the same file. `ipfs-cluster-ctl` is not needed. Setting `SISYPHUS_REQUIRE_KUBO`, `SISYPHUS_REQUIRE_CLUSTER` or `SISYPHUS_REQUIRE_DOCKER` makes a test that finds its program missing fail instead of being skipped. CI sets all three, and so does `make cover` unless one is set already: `make cover SISYPHUS_REQUIRE_DOCKER=` skips the Docker tests, and then reports what they would have covered.
 
 ```sh

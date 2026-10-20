@@ -53,6 +53,10 @@ var dataDirs sync.Map
 // addressed to a test node is run as that node's owner unless it names a
 // data directory of its own.
 func cli(t *testing.T, args ...string) (string, error) {
+	return cliWithin(t, 30*time.Second, args...)
+}
+
+func cliWithin(t *testing.T, within time.Duration, args ...string) (string, error) {
 	t.Helper()
 	if !slices.Contains(args, "--data-dir") {
 		if i := slices.Index(args, "--addr"); i >= 0 && i+1 < len(args) {
@@ -64,7 +68,7 @@ func cli(t *testing.T, args ...string) (string, error) {
 	var out bytes.Buffer
 	stdout = &out
 	defer func() { stdout = os.Stdout }()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), within)
 	defer cancel()
 	err := run(ctx, args)
 	return out.String(), err
