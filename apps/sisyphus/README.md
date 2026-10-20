@@ -17,6 +17,8 @@ npm run dev
 
 It also overrides `global-agent` to `^4.1.3`. Electron Builder's copy of `@electron/get` 3.x asks for `global-agent` 3, which reaches `sprintf-js` 1.1.3 through `roarr`. That `sprintf-js` version is affected by [GHSA-hp3w-g68c-fv3c](https://github.com/advisories/GHSA-hp3w-g68c-fv3c), and no patched release exists (#507). `global-agent` 4 depends on neither, and it keeps the CommonJS `bootstrap()` that `@electron/get` calls when `ELECTRON_GET_USE_PROXY` is set. It is only a build tool and never ships in the app. Drop the override once Electron Builder moves to an `@electron/get` that no longer uses `global-agent`.
 
+UI components come from shadcn, but the `shadcn` package isn't installed: its CLI pulled in `braces` ≤3.0.3 ([GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm), no patched release yet, #556), and the app only needs its stylesheet. That stylesheet is vendored, with its MIT notice, as `src/renderer/src/design-system/shadcn-tailwind.css`. To add a component, run the CLI at a pinned version, for example `npx shadcn@4.21.4 add dialog`. If a newer CLI changes `dist/tailwind.css`, copy the new file over the vendored one.
+
 The Model provider page in the development build includes six sample profiles for previewing card layouts. They are gated to development and are not persisted or included in the production app; the end-to-end suite checks their absence from the built app.
 
 Build the Go daemon from the repository root before starting the desktop:
