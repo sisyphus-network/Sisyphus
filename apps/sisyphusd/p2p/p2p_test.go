@@ -65,8 +65,19 @@ func (p *pool) admit(id string) {
 }
 
 // start starts a host for a new member of the pool.
+// testNetwork keeps the hosts this run starts to discover to themselves,
+// apart from real nodes and from other runs on the same network (#533).
+var testNetwork = func() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return fmt.Sprintf("test-%x", b)
+}()
+
 func (p *pool) start(cfg Config) *Host {
 	p.t.Helper()
+	if cfg.Network == "" {
+		cfg.Network = testNetwork
+	}
 	cfg.Identity = newIdentity(p.t)
 	cfg.Allow = p.allow
 	cfg.Log = quiet
@@ -879,7 +890,7 @@ func TestNodesOnOneNetworkFindEachOther(t *testing.T) {
 // on the network, so that what they find, they find another way.
 func withoutLAN(t *testing.T, err error) {
 	old := announce
-	announce = func(host.Host, mdns.Notifee) (io.Closer, error) { return io.NopCloser(nil), err }
+	announce = func(host.Host, string, mdns.Notifee) (io.Closer, error) { return io.NopCloser(nil), err }
 	t.Cleanup(func() { announce = old })
 }
 
@@ -942,7 +953,7 @@ func TestAStrangerMayConnectToANodeThatDiscoversButIsNotRelayedFor(t *testing.T)
 func TestANodeThatCannotAnnounceItselfStartsAllTheSame(t *testing.T) {
 	withoutLAN(t, errors.New("no multicast here"))
 	logs := new(bytes.Buffer)
-	h, err := New(Config{Identity: newIdentity(t), Allow: func(string) bool { return true }, Discover: true, Log: slog.New(slog.NewTextHandler(logs, nil))})
+	h, err := New(Config{Identity: newIdentity(t), Allow: func(string) bool { return true }, Discover: true, Network: testNetwork, Log: slog.New(slog.NewTextHandler(logs, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -965,7 +976,7 @@ func TestACallThatFailsIsMadeAgain(t *testing.T) {
 	go func() {
 		// It is some milliseconds in starting, and the first call is
 		// refused at once; the calls made again wait far longer in all.
-		h, err := New(Config{Identity: identity, Listen: "127.0.0.1:" + port, Allow: p.allow, Discover: true, Log: quiet})
+		h, err := New(Config{Identity: identity, Listen: "127.0.0.1:" + port, Allow: p.allow, Discover: true, Network: testNetwork, Log: quiet})
 		if err != nil {
 			t.Error(err)
 		}
@@ -1083,7 +1094,10 @@ func TestAHostsRoomComesOfWhatItsMachineCanHoldOpen(t *testing.T) {
 func TestAClosingHostTakesUpNoNodeAnnouncedOnItsNetwork(t *testing.T) {
 	var told mdns.Notifee
 	old := announce
-	announce = func(_ host.Host, each mdns.Notifee) (io.Closer, error) { told = each; return io.NopCloser(nil), nil }
+	announce = func(_ host.Host, _ string, each mdns.Notifee) (io.Closer, error) {
+		told = each
+		return io.NopCloser(nil), nil
+	}
 	t.Cleanup(func() { announce = old })
 	p := newPool(t)
 	a := p.start(Config{Discover: true})
@@ -1147,5 +1161,28 @@ func TestTheNextPlaceIsTheNearestDeadline(t *testing.T) {
 	h.renew["due"] = time.Now().Add(-time.Second)
 	if wait := h.untilNextPlace(); wait != 0 {
 		t.Errorf("untilNextPlace with one due = %v, want 0", wait)
+	}
+}
+
+func TestADiscoveryNetworkHasATableAndALocalServiceOfItsOwn(t *testing.T) {
+	table, lan, err := discoveryNames("")
+	if err != nil || table != "/sisyphus" || lan != "_sisyphus._udp" {
+		t.Errorf("the shared network: %q, %q, %v", table, lan, err)
+	}
+	table, lan, err = discoveryNames("ci-run-1")
+	if err != nil || table != "/sisyphus/network/ci-run-1" {
+		t.Errorf("table %q, %v", table, err)
+	}
+	// A DNS-SD service name may be no longer than 15 characters.
+	if name := strings.TrimSuffix(strings.TrimPrefix(lan, "_"), "._udp"); !strings.HasPrefix(name, "sisyphus-") || len(name) > 15 {
+		t.Errorf("service %q", lan)
+	}
+	if _, other, _ := discoveryNames("ci-run-2"); other == lan {
+		t.Errorf("two networks share the service %q", lan)
+	}
+	for _, bad := range []string{"Upper", "has space", "under_score", strings.Repeat("a", 33)} {
+		if _, err := New(Config{Identity: newIdentity(t), Discover: true, Network: bad, Log: quiet}); err == nil || !strings.Contains(err.Error(), "discovery network") {
+			t.Errorf("%q: error %v", bad, err)
+		}
 	}
 }

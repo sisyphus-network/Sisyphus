@@ -13,6 +13,7 @@ package p2p
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/netip"
+	"regexp"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -85,6 +87,11 @@ type Config struct {
 	// which is what lets strangers find each other. What a stranger can do
 	// once connected is for the services on the host to decide.
 	Discover bool
+	// Network keeps discovery to the nodes given the same name, and lets
+	// only they find this host: a network of its own, such as one for a
+	// test run. Empty is the network every Sisyphus node is on. A name is
+	// one to 32 lowercase letters, digits and hyphens.
+	Network string
 	// AddrsFactory overrides which listening addresses this host advertises.
 	// Nil keeps libp2p's default address selection.
 	AddrsFactory func([]ma.Multiaddr) []ma.Multiaddr
@@ -235,6 +242,10 @@ func resources(asked int) network.ResourceManager {
 
 // New starts a host.
 func New(cfg Config) (*Host, error) {
+	table, lan, err := discoveryNames(cfg.Network)
+	if err != nil {
+		return nil, err
+	}
 	key, _ := crypto.UnmarshalPrivateKey(cfg.Identity.Libp2pKey()) // a node's key is always one libp2p can read
 	// Left to itself the host takes a port of the system's choosing, on
 	// both kinds of address.
@@ -307,7 +318,7 @@ func New(cfg Config) (*Host, error) {
 				// Every node answers as well as asks, so the table needs no
 				// servers of its own. It is Sisyphus's, not IPFS's.
 				dht.Mode(dht.ModeServer),
-				dht.ProtocolPrefix(tablePrefix),
+				dht.ProtocolPrefix(protocol.ID(table)),
 				// The stock table keeps only nodes with public addresses.
 				// A pool on one private network has none.
 				dht.RoutingTableFilter(func(any, peer.ID) bool { return true }),
@@ -329,7 +340,7 @@ func New(cfg Config) (*Host, error) {
 		// Nodes on the same network announce themselves to each other.
 		// Where multicast is not to be had this finds nobody, which is no
 		// reason not to start.
-		if h.lan, err = announce(started, found{h}); err != nil {
+		if h.lan, err = announce(started, lan, found{h}); err != nil {
 			cfg.Log.Warn("cannot look for nodes on this network; others must be given this node's address", "error", err)
 		}
 	}
@@ -368,6 +379,23 @@ const (
 	lanService  = "_sisyphus._udp"
 )
 
+// discoveryNames gives the hash table's protocol prefix and the local
+// service name for a discovery network. A service name may be no longer
+// than 15 characters, so another network's is told apart by a short hash
+// of its name; its table, which has no such limit, by the name itself.
+func discoveryNames(network string) (table, lan string, err error) {
+	if network == "" {
+		return tablePrefix, lanService, nil
+	}
+	if !networkName.MatchString(network) {
+		return "", "", fmt.Errorf("p2p: discovery network %q: use 1 to 32 lowercase letters, digits and hyphens", network)
+	}
+	sum := sha256.Sum256([]byte(network))
+	return tablePrefix + "/network/" + network, fmt.Sprintf("_sisyphus-%x._udp", sum[:3]), nil
+}
+
+var networkName = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+
 // meet is how long a host gives a node it has just heard of to answer.
 const meet = 10 * time.Second
 
@@ -396,8 +424,8 @@ func (f found) HandlePeerFound(info peer.AddrInfo) {
 
 // announce starts announcing a host on its own network and listening for
 // others doing the same.
-var announce = func(h host.Host, each mdns.Notifee) (io.Closer, error) {
-	service := mdns.NewMdnsService(h, lanService, each)
+var announce = func(h host.Host, lan string, each mdns.Notifee) (io.Closer, error) {
+	service := mdns.NewMdnsService(h, lan, each)
 	return service, service.Start()
 }
 
