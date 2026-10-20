@@ -326,6 +326,120 @@ func TestContainerTasksThatFail(t *testing.T) {
 	}
 }
 
+func TestAContainerTaskKeepsItsWorkspaceAndStagedInputUnderTaskDir(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemory()
+	input, err := store.Put(ctx, strings.NewReader("staged input"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	var taskDir, inputDir string
+	engine := &pretend{do: func(args []string, _, _ io.Writer) (int, error) {
+		taskDir = filepath.Dir(volume(args, "/output"))
+		inputDir = volume(args, "/input")
+		return 0, nil
+	}}
+	payloads, err := (Container{}).Split(ctx, store, mustJSON(ContainerParams{Image: "alpine:3.20", Input: input.String()}), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confined := Confinement{TaskDir: base}
+	if _, err := (Container{Engine: engine.engine, Confined: confined}).Execute(ctx, store, payloads[0]); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{"task workspace": taskDir, "staged input": inputDir} {
+		rel, err := filepath.Rel(base, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			t.Errorf("%s path %q is not under task directory %q (relative %q, error %v)", name, path, base, rel, err)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s path %q remains after the task: %v", name, path, err)
+		}
+	}
+}
+
+func TestTaskWorkspaceDirectoryErrorsAreReturned(t *testing.T) {
+	for name, tt := range map[string]struct {
+		mkdir func(string, os.FileMode) error
+		chmod func(string, os.FileMode) error
+		want  string
+	}{
+		"input directory": {
+			mkdir: func(string, os.FileMode) error { return errors.New("full") },
+			chmod: func(string, os.FileMode) error { return nil },
+			want:  "make the task's input directory: full",
+		},
+		"output directory": {
+			mkdir: func(path string, _ os.FileMode) error {
+				if path == "output" {
+					return errors.New("full")
+				}
+				return nil
+			},
+			chmod: func(string, os.FileMode) error { return nil },
+			want:  "make the task's output directory: full",
+		},
+		"output permissions": {
+			mkdir: func(string, os.FileMode) error { return nil },
+			chmod: func(string, os.FileMode) error { return errors.New("denied") },
+			want:  "make the task's output directory writable: denied",
+		},
+	} {
+		err := makeTaskDirs("input", "output", tt.mkdir, tt.chmod)
+		if err == nil || err.Error() != tt.want {
+			t.Errorf("%s: %v, want %q", name, err, tt.want)
+		}
+	}
+}
+
+func TestContainerTaskReturnsWhenItsDirectoriesCannotBeMade(t *testing.T) {
+	payloads, err := (Container{}).Split(context.Background(), nil, []byte(`{"image":"alpine:3.20"}`), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("volume is full")
+	c := Container{
+		Confined:    Confinement{TaskDir: t.TempDir()},
+		prepareDirs: func(string, string) error { return want },
+		Engine: func(context.Context, []string, io.Writer, io.Writer) (int, error) {
+			t.Error("the engine ran without task directories")
+			return 0, nil
+		},
+	}
+	if _, err := c.Execute(context.Background(), storage.NewMemory(), payloads[0]); !errors.Is(err, want) {
+		t.Errorf("execute error = %v, want %v", err, want)
+	}
+}
+
+type closeFailWriter struct {
+	bytes.Buffer
+	err error
+}
+
+func (w *closeFailWriter) Close() error { return w.err }
+
+func TestStagingInputReportsCreateAndCloseFailures(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		want := errors.New("full")
+		err := writeStagedInput("input-cid", "data", strings.NewReader("input"), func(string) (io.WriteCloser, error) {
+			return nil, want
+		})
+		if !errors.Is(err, want) || !strings.Contains(err.Error(), "make staged file") {
+			t.Errorf("staging error = %v", err)
+		}
+	})
+	t.Run("close", func(t *testing.T) {
+		want := errors.New("full")
+		err := writeStagedInput("input-cid", "data", strings.NewReader("input"), func(string) (io.WriteCloser, error) {
+			return &closeFailWriter{err: want}, nil
+		})
+		if !errors.Is(err, want) || !strings.Contains(err.Error(), "finish staged file") {
+			t.Errorf("staging error = %v", err)
+		}
+	})
+}
+
 func TestAContainerTaskThatIsStoppedHasItsContainerKilled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	engine := &pretend{}
@@ -637,7 +751,7 @@ func TestTasksOfAJobOnOneMachineShareOneCopyOfItsInput(t *testing.T) {
 
 	// With nowhere to put it, the input is not had.
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-such-directory"))
-	if _, _, err := inputs.take(ctx, store, "job", input.String()); err == nil || len(inputs.held) != 0 {
+	if _, _, err := inputs.take(ctx, store, "", "job", input.String()); err == nil || len(inputs.held) != 0 {
 		t.Errorf("with no temporary directory: %v, holding %v", err, inputs.held)
 	}
 }

@@ -87,6 +87,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	name := fs.String("name", defaultName(), "a label for people to recognise this node by")
 	slots := fs.Int("slots", goruntime.NumCPU(), "worker role: how many tasks to run at once")
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory for this node's stored data; nodes sharing a machine each need their own")
+	taskDir := fs.String("task-dir", "", "with --containers: existing directory for task workspaces and staged inputs; put it on a dedicated filesystem or quota-backed mount to contain disk exhaustion")
 	containerRuntime := fs.String("container-runtime", "", "with --containers: have Docker run the pool's tasks with this runtime in place of its usual, such as runsc (gVisor) or kata-runtime, which keep a task further from this machine than an ordinary container does; it must be installed and known to Docker")
 	containersReadOnly := fs.Bool("containers-read-only", false, "with --containers: give a task nowhere to write but /output and /tmp, the second held in memory; an image that writes anywhere else will fail")
 	containersTmp := fs.Int("containers-tmp-mb", 0, "with --containers-read-only: the most a task may write to /tmp, in megabytes; 0 leaves it to the task's memory")
@@ -258,9 +259,9 @@ func runDaemon(ctx context.Context, args []string) error {
 	// A node can take in, split and combine any workload, since that needs
 	// nothing but itself. What it will run as a worker is another matter:
 	// container images only if its owner has said so.
-	confined := runtime.Confinement{Runtime: *containerRuntime, ReadOnly: *containersReadOnly, TmpMB: *containersTmp, Network: *containersNetwork, MemoryMB: *containersMemory, CPUs: *containersCPUs, Timeout: *containersTimeout}
+	confined := runtime.Confinement{TaskDir: *taskDir, Runtime: *containerRuntime, ReadOnly: *containersReadOnly, TmpMB: *containersTmp, Network: *containersNetwork, MemoryMB: *containersMemory, CPUs: *containersCPUs, Timeout: *containersTimeout}
 	if confined != (runtime.Confinement{}) && !*containers {
-		return errors.New("--container-runtime, --containers-read-only, --containers-tmp-mb, --containers-network, --containers-memory-mb, --containers-cpus and --containers-timeout say how containers are run, and need --containers")
+		return errors.New("--task-dir, --container-runtime, --containers-read-only, --containers-tmp-mb, --containers-network, --containers-memory-mb, --containers-cpus and --containers-timeout say how containers are run, and need --containers")
 	}
 	if confined.MemoryMB < 0 || confined.CPUs < 0 || confined.Timeout < 0 || confined.TmpMB < 0 {
 		return errors.New("--containers-memory-mb, --containers-cpus, --containers-timeout and --containers-tmp-mb are the most a task may use, and cannot be less than nothing")
@@ -275,6 +276,11 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	if confined.TmpMB > 0 && !confined.ReadOnly {
 		return errors.New("--containers-tmp-mb sizes the /tmp that --containers-read-only gives a task, and needs it: without it a task can write anywhere in its image")
+	}
+	if *taskDir != "" {
+		if err := checkTaskDir(*taskDir); err != nil {
+			return err
+		}
 	}
 	workloads, runs := runtime.WithContainers(), runtime.Builtin()
 	if *containers {
@@ -1165,6 +1171,30 @@ type locationDiscoveryFlagOverrides struct {
 	LocateGateway *bool
 	LocateCountry *bool
 	StunServer    *string
+}
+
+func checkTaskDir(dir string) error {
+	return checkTaskDirWith(dir, os.Stat, os.CreateTemp)
+}
+
+func checkTaskDirWith(dir string, stat func(string) (os.FileInfo, error), createTemp func(string, string) (*os.File, error)) error {
+	info, err := stat(dir)
+	if err != nil {
+		return fmt.Errorf("--task-dir must name an existing, writable directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("--task-dir must name an existing directory: %s is not a directory", dir)
+	}
+	probe, err := createTemp(dir, ".sisyphus-write-check-")
+	if err != nil {
+		return fmt.Errorf("--task-dir must name an existing, writable directory: %w", err)
+	}
+	name := probe.Name()
+	defer func() {
+		probe.Close()
+		os.Remove(name)
+	}()
+	return nil
 }
 
 func locationDiscoveryFlagOverridesFrom(fs *flag.FlagSet, locateGateway, locateCountry *bool, stunServer *string) locationDiscoveryFlagOverrides {
