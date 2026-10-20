@@ -1278,10 +1278,15 @@ test('Settings pickers open in full view, above every card and inside the window
     await opensInView('General', 'Accent', 800, undefined, true)
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 800))
     await page.waitForFunction(() => Math.abs(window.outerWidth - 1180) < 60)
+    await page.getByRole('heading', { name: 'General', level: 1 }).waitFor({ state: 'visible' })
+    await page.locator('#settings-language').waitFor({ state: 'visible' })
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
 
     // A keyboard or short landscape viewport can leave less than the normal
     // 120px menu floor. The menu must use the actual remaining room instead.
-    await openSettingsCategory(page, 'General')
+    if (!await page.getByRole('heading', { name: 'General', level: 1 }).isVisible().catch(() => false)) {
+      await openSettingsCategory(page, 'General')
+    }
     const trigger = page.getByRole('button', { name: 'Language', exact: true })
     await trigger.scrollIntoViewIfNeeded()
     const restoreViewport = await trigger.evaluate((input) => {
