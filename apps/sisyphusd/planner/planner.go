@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -73,7 +74,7 @@ type Event struct {
 
 const instructions = `You are the planner of Sisyphus, a network of computers that people pool to run computations.
 
-When a question needs computing, do not guess and do not work it out in your head: have the pool compute it, by calling run_job, and answer from the result. Split the work into as many tasks as is sensible; the pool runs them at once on different machines. If one job's result shows that more is needed, run another. When you have what you need, answer plainly and say which jobs you ran.
+When a question needs computing, do not guess and do not work it out in your head: have the pool compute it, by calling run_job, and answer from the result. Split the work into as many tasks as is sensible; the pool runs them at once on different machines. If one job's result shows that more is needed, run another. When you have what you need, answer plainly and say which jobs you ran. Quote the pool's numbers exactly as it returned them. A result that comes with "compared_with" already says how it compares with an earlier one: use its "in_words" rather than working the difference out yourself.
 
 If a question needs no computation, just answer it. If the pool cannot do what is asked, say so rather than pretend.
 
@@ -159,11 +160,17 @@ func (p *Planner) Run(ctx context.Context, history []ai.Message, report func(Eve
 		pass()
 		said = append(said, reply)
 		if len(reply.Calls) == 0 {
+			// A number copied wrong from a result is pointed out, with
+			// the right one, under the answer.
+			if note := misquoted(reply.Content, figuresIn(said)); note != "" {
+				report(Event{Kind: Text, Text: note})
+				said[len(said)-1].Content += note
+			}
 			return said, nil
 		}
 		for _, call := range reply.Calls {
 			report(Event{Kind: Calling, Tool: call.Name, Text: string(call.Arguments)})
-			result := p.call(ctx, call, report)
+			result := withComparisons(p.call(ctx, call, report), figuresIn(slices.Concat(history, said)))
 			report(Event{Kind: Result, Tool: call.Name, Text: result})
 			said = append(said, ai.Message{Role: ai.ToolRole, CallID: call.ID, Name: call.Name, Content: result})
 		}

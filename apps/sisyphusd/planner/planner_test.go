@@ -51,8 +51,11 @@ type office struct {
 	submitted []*pb.JobSpec
 	jobs      map[string]*pb.Job
 	result    string
-	refuse    error
-	lose      error
+	// results, if set, are the results of the jobs in the order they are
+	// submitted, in place of result.
+	results []string
+	refuse  error
+	lose    error
 }
 
 func (o *office) Submit(_ context.Context, spec *pb.JobSpec) (*pb.Job, error) {
@@ -63,13 +66,20 @@ func (o *office) Submit(_ context.Context, spec *pb.JobSpec) (*pb.Job, error) {
 	at := time.Unix(1_700_000_000, 0)
 	job := &pb.Job{
 		JobId: fmt.Sprintf("job-%d", len(o.submitted)), Spec: spec, State: pb.JobState_JOB_STATE_SUCCEEDED,
-		Result: []byte(o.result), Tasks: make([]*pb.Task, 2), CreatedAt: timestamppb.New(at), FinishedAt: timestamppb.New(at.Add(1500 * time.Millisecond)),
+		Result: []byte(o.resultOf(len(o.submitted))), Tasks: make([]*pb.Task, 2), CreatedAt: timestamppb.New(at), FinishedAt: timestamppb.New(at.Add(1500 * time.Millisecond)),
 	}
 	if o.jobs == nil {
 		o.jobs = make(map[string]*pb.Job)
 	}
 	o.jobs[job.GetJobId()] = job
 	return &pb.Job{JobId: job.GetJobId(), Spec: spec, State: pb.JobState_JOB_STATE_PENDING}, nil
+}
+
+func (o *office) resultOf(n int) string {
+	if n <= len(o.results) {
+		return o.results[n-1]
+	}
+	return o.result
 }
 
 func (o *office) Watch(_ context.Context, id string, fn func(*pb.Job) error) error {
