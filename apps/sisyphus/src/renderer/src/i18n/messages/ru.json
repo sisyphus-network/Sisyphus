@@ -400,6 +400,7 @@
   "jobTrackerTasks": "Готово задач: {done} из {total}",
   "jobTrackerRetried": "Повторено: {count}",
   "jobTrackerWorker": "Выполняется: {running} · готово: {done}",
+  "agentThinking": "Думаю…",
   "agentActionIncomplete": "Некоторые действия не завершены",
   "agentActions": "Действия агента",
   "jobId": "Задача",
