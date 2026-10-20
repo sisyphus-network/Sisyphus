@@ -290,6 +290,7 @@
     "restarting": "Redémarrage…",
     "restarted": "Nœud redémarré avec les réglages enregistrés",
     "failed": "Impossible de redémarrer le nœud",
+    "reconnectTimeout": "Le nœud ne s’est pas reconnecté dans les 30 secondes.",
     "confirmTitle": "Redémarrer le nœud maintenant ?",
     "confirmDescription": "Tâches en cours ici : {jobs}. Workers connectés : {workers}. Le redémarrage arrête les tâches en cours de ce nœud et déconnecte ses workers ; le pool replanifie les tâches inachevées quand le nœud revient.",
     "confirm": "Redémarrer quand même"

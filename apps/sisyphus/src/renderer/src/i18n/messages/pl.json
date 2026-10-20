@@ -290,6 +290,7 @@
     "restarting": "Ponowne uruchamianie…",
     "restarted": "Węzeł uruchomiony ponownie z zapisanymi ustawieniami",
     "failed": "Nie udało się ponownie uruchomić węzła",
+    "reconnectTimeout": "Węzeł nie połączył się ponownie w ciągu 30 sekund.",
     "confirmTitle": "Uruchomić węzeł ponownie teraz?",
     "confirmDescription": "Zadania w toku tutaj: {jobs}. Połączone workery: {workers}. Ponowne uruchomienie zatrzymuje zadania w toku tego węzła i rozłącza jego workery; pula ponownie zaplanuje niedokończone zadania, gdy węzeł wróci.",
     "confirm": "Uruchom ponownie mimo to"

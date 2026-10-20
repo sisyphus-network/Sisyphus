@@ -290,6 +290,7 @@
     "restarting": "Reiniciando…",
     "restarted": "Nodo reiniciado con los ajustes guardados",
     "failed": "No se pudo reiniciar el nodo",
+    "reconnectTimeout": "El nodo no volvió a conectarse en 30 segundos.",
     "confirmTitle": "¿Reiniciar el nodo ahora?",
     "confirmDescription": "Trabajos en curso aquí: {jobs}. Workers conectados: {workers}. Al reiniciar se detienen los trabajos en curso de este nodo y se desconectan sus workers; el pool vuelve a programar las tareas pendientes cuando el nodo regresa.",
     "confirm": "Reiniciar de todos modos"
