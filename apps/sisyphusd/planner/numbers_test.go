@@ -3,6 +3,8 @@ package planner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -134,5 +136,26 @@ func TestFiguresAreReadOnlyFromJobResultsTheToolsReturned(t *testing.T) {
 	}
 	if abs(3) != 3 {
 		t.Error("abs of a positive number")
+	}
+}
+
+// A result can be any whole number, so a difference too large or small for
+// an int64 is left out, never wrapped round or quoted with the wrong sign.
+func TestAComparisonThatWouldOverflowIsLeftOut(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		this, earlier int64
+	}{
+		{"above the largest", math.MaxInt64, -1},
+		{"below the smallest", math.MinInt64, 1},
+		{"exactly the smallest", -1, math.MaxInt64},
+	} {
+		result := fmt.Sprintf(`{"job_id":"j2","result":{"count":%d}}`, tt.this)
+		if got := withComparisons(result, []figure{{job: "j1", field: "count", value: tt.earlier}}); got != result {
+			t.Errorf("%s: %s", tt.name, got)
+		}
+	}
+	if d, held := subtract(math.MaxInt64, 1); !held || d != math.MaxInt64-1 {
+		t.Errorf("a difference that fits: %d, %v", d, held)
 	}
 }

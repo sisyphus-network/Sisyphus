@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -96,7 +97,12 @@ func withComparisons(result string, earlier []figure) string {
 			if e.job == job || e.field != field {
 				continue
 			}
-			difference := value - e.value
+			difference, held := subtract(value, e.value)
+			if !held {
+				// A result may be any whole number; one whose
+				// difference would overflow is left uncompared.
+				continue
+			}
 			compared = append(compared, map[string]any{
 				"job_id": e.job, "field": field, "this": value, "earlier": e.value, "difference": difference,
 				"in_words": inWords(field, difference, e),
@@ -203,6 +209,17 @@ func grouped(n int64) string {
 		out.WriteRune(d)
 	}
 	return sign + out.String()
+}
+
+// subtract is a-b, and whether it is held without overflowing. MinInt64 is
+// taken not to be, since it has no positive counterpart to be quoted as
+// "less" or "fewer".
+func subtract(a, b int64) (int64, bool) {
+	d := a - b
+	if (b > 0 && d > a) || (b < 0 && d < a) || d == math.MinInt64 {
+		return 0, false
+	}
+	return d, true
 }
 
 func abs(n int64) int64 {
