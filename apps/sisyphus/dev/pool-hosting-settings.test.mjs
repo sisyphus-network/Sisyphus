@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaultPoolHostingSettings, hostAddresses, hostingListen, isLanAddress, loadPoolHostingSettings, normalizePoolHostingSettings, poolHostingState, samePoolHostingSettings, savePoolHostingSettings, validatePoolHostingSettings } from '../src/main/pool-hosting-settings.ts'
-import { allInterfaces, formForHosting } from '../src/shared/pool-hosting.ts'
+import { allInterfaces, formForHosting, hostingJoinAddresses, windowsFirewallCommand } from '../src/shared/pool-hosting.ts'
 
 const entry = (address, overrides = {}) => ({ address, family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '00:00:00:00:00:00', cidr: `${address}/24`, ...overrides })
 
@@ -77,7 +77,7 @@ test('a restart is needed only when the hosting the node runs with would change'
   assert.equal(samePoolHostingSettings(on, off), false)
   assert.equal(samePoolHostingSettings(on, { ...on, port: 7701 }), false)
   assert.equal(samePoolHostingSettings(on, { ...on, address: allInterfaces }), false)
-  const state = { managed: true, saved: on, running: off, unavailable: false, addresses: [] }
+  const state = { managed: true, saved: on, running: off, unavailable: false, addresses: [], platform: 'win32' }
   assert.equal(poolHostingState(state).restartNeeded, true)
   assert.equal(poolHostingState({ ...state, managed: false }).restartNeeded, false)
   assert.equal(poolHostingState({ ...state, running: on }).restartNeeded, false)
@@ -90,4 +90,15 @@ test('a new form offers a LAN address, never all interfaces', () => {
   assert.deepEqual(formForHosting({ saved: off, addresses: [] }), off)
   const saved = { enabled: true, address: allInterfaces, port: 7700 }
   assert.deepEqual(formForHosting({ saved, addresses: [{ address: '192.168.1.5', lan: true }] }), saved)
+})
+
+test('workers are told every address the hosting node takes them at', () => {
+  const addresses = [{ address: '192.168.1.5', lan: true }, { address: '100.64.0.7', lan: false }]
+  assert.deepEqual(hostingJoinAddresses({ running: { enabled: false, address: '192.168.1.5', port: 7700 }, addresses }), [])
+  assert.deepEqual(hostingJoinAddresses({ running: { enabled: true, address: '192.168.1.5', port: 7700 }, addresses }), ['192.168.1.5:7700'])
+  assert.deepEqual(hostingJoinAddresses({ running: { enabled: true, address: allInterfaces, port: 7701 }, addresses }), ['192.168.1.5:7701', '100.64.0.7:7701'])
+})
+
+test('the Windows firewall rule opens only the pool port, on private networks', () => {
+  assert.equal(windowsFirewallCommand(7700), 'netsh advfirewall firewall add rule name="Sisyphus pool (TCP 7700)" dir=in action=allow protocol=TCP localport=7700 profile=private')
 })
