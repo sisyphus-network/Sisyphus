@@ -529,7 +529,9 @@ test('a double-click on a workspace panel handle closes and reopens the panel, a
       const y = box.y + box.height / 2
       // One click is not a toggle: a handle is pressed on its way to a drag.
       await page.mouse.click(x, y)
-      await waitForPanelTransition()
+      // Let the 450 ms double-tap window expire so the next double-click
+      // cannot accidentally pair its first click with this single click.
+      await page.waitForTimeout(600)
       assert.equal(await opened(slot), 'true', `one click on the ${name} handle closed the panel`)
       await page.mouse.dblclick(x, y)
       await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'false', slot)
