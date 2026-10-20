@@ -54,6 +54,18 @@ export function trayStatusLabel(labels: TrayLabels, status: NodeStatus): string 
   return status === 'connected' ? labels.connected : status === 'connecting' ? labels.connecting : labels.offline
 }
 
+/**
+ * The tray icon for a node state, from the folder drawn by
+ * scripts/make-icons.py. A badge's shape says the state: none when
+ * connected, a hollow ring while connecting, a slash while offline. macOS
+ * gets a template image, which the menu bar tints for its appearance.
+ * Electron takes the file's @2x twin on sharper screens by itself.
+ */
+export function trayIconFile(platform: NodeJS.Platform, status: NodeStatus): string {
+  const state = status === 'disconnected' ? 'offline' : status
+  return platform === 'darwin' ? `${state}Template.png` : `${state}.png`
+}
+
 /** The tray's labels in the window's language, or English for one it does not know. */
 export function trayLabelsFor<Locale extends string>(dictionaries: Record<Locale, TrayLabels>, fallback: Locale, locale: unknown): TrayLabels {
   return typeof locale === 'string' && Object.hasOwn(dictionaries, locale) ? dictionaries[locale as Locale] : dictionaries[fallback]

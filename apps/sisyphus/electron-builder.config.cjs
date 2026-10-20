@@ -18,6 +18,8 @@ module.exports = {
     { from: '.packaging/bin', to: 'bin', filter: ['sisyphusd', 'sisyphusd.exe'] },
     // Linux takes a window's icon from the window, not from the package.
     { from: 'build/icons/256x256.png', to: 'icon.png' },
+    // The tray icon in each node state, drawn by scripts/make-icons.py.
+    { from: 'build/tray', to: 'tray' },
   ],
   artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
   // The icons in build/ are drawn from assets/logo.png by scripts/make-icons.py.
