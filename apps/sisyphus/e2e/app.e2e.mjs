@@ -942,6 +942,59 @@ test('advanced navigation switches between the sidebar and mobile dock as the wi
   }
 })
 
+test('collapsed sidebar navigation tooltips stay beside the sidebar and inside the window in LTR and RTL', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    await open(page, 'Node overview')
+    await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
+    const sidebar = page.locator('.advanced-sidebar')
+    for (const dir of ['ltr', 'rtl']) {
+      await page.evaluate((dir) => {
+        localStorage.setItem('sisyphus-locale', dir === 'rtl' ? 'he' : 'en')
+        localStorage.setItem('sisyphus-advanced-sidebar-open', 'true')
+      }, dir)
+      await page.reload()
+      await page.waitForFunction((dir) => document.documentElement.dir === dir, dir)
+      await sidebar.waitFor()
+      await sidebar.locator('.advanced-sidebar__toggle').click()
+      await page.waitForFunction(() => document.querySelector('.advanced-sidebar')?.getAttribute('data-open') === 'false')
+
+      const item = sidebar.locator('a[href="#/node"]')
+      const label = (await item.innerText()).trim()
+      await item.hover()
+      const tooltip = page.locator('[data-slot="tooltip-content"]', { hasText: label }).last()
+      await tooltip.waitFor()
+      const placement = await page.evaluate((tooltip) => {
+        const popup = tooltip.getBoundingClientRect()
+        const sidebar = document.querySelector('.advanced-sidebar').getBoundingClientRect()
+        const viewport = { width: window.innerWidth, height: window.innerHeight }
+        const center = document.elementFromPoint(popup.left + popup.width / 2, popup.top + popup.height / 2)
+        return {
+          popup: { left: popup.left, right: popup.right, top: popup.top, bottom: popup.bottom },
+          sidebar: { left: sidebar.left, right: sidebar.right },
+          popupCenterX: popup.left + popup.width / 2,
+          viewport,
+          topLayer: center?.closest('[data-slot="tooltip-content"]') === tooltip,
+          direction: document.documentElement.dir,
+        }
+      }, await tooltip.elementHandle())
+      const where = `${dir}: ${JSON.stringify(placement)}`
+      assert.ok(placement.popup.left >= 0 && placement.popup.right <= placement.viewport.width, `${where}: tooltip is clipped horizontally`)
+      assert.ok(placement.popup.top >= 0 && placement.popup.bottom <= placement.viewport.height, `${where}: tooltip is clipped vertically`)
+      assert.ok(placement.topLayer, `${where}: tooltip is hidden under page content`)
+      if (dir === 'ltr') assert.ok(placement.popupCenterX > placement.sidebar.right, `${where}: tooltip is not on the content side of the LTR sidebar`)
+      else assert.ok(placement.popupCenterX < placement.sidebar.left, `${where}: tooltip is not on the content side of the RTL sidebar`)
+      await page.mouse.move(0, 0)
+      await tooltip.waitFor({ state: 'detached' })
+    }
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 // Where a page has no data to show, it shows the shared state component,
 // centred where the data would be, not a blank card: on a node of its own,
 // the empty Jobs, Files and Pool lists and the empty peer list, and the
