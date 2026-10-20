@@ -48,6 +48,8 @@ const trayDictionaries = Object.fromEntries(Object.entries({ en, he, ar, ru, pl,
 }])) as Record<'en' | 'he' | 'ar' | 'ru' | 'pl' | 'es' | 'fr', TrayLabels>
 const trayLabels = () => trayLabelsFor(trayDictionaries, 'en', trayPreferences.locale)
 let appTray: AppTray | null = null
+// Settles once the tray is up or known to be unavailable; it never rejects.
+let traySetup: Promise<void> = Promise.resolve()
 // What the app's node last connected with; a restart from Settings replaces
 // this only after the new process is confirmed reachable.
 let runningPoolHostingSettings = loadPoolHostingSettings(poolHostingPath)
@@ -677,7 +679,7 @@ app.whenReady().then(() => {
   })
   createWindow()
   connectToNode()
-  void setUpTray()
+  traySetup = setUpTray().catch((error: unknown) => console.error('Could not show the tray icon:', error))
   app.on('activate', showWindow)
 }).catch((error: unknown) => {
   console.error('Failed to start Sisyphus desktop:', error)
@@ -720,7 +722,13 @@ async function setUpTray() {
   if (appTray) snapshotListeners.add((next) => appTray?.setStatus(next.status))
 }
 
-app.on('window-all-closed', () => {
+// On Linux the tray host check can take a couple of seconds, so a window
+// closed while it runs waits for the tray before deciding whether to quit.
+app.on('window-all-closed', () => { void traySetup.then(windowsClosed) })
+
+function windowsClosed() {
+  // A window opened meanwhile, or a quit already under way, decides instead.
+  if (BrowserWindow.getAllWindows().length > 0 || isQuitting) return
   const keepsRunning = desktopDaemon.managesDaemon && appTray !== null
   if (quitsWhenWindowsClose({ platform: process.platform, managesDaemon: desktopDaemon.managesDaemon, trayShown: appTray !== null })) {
     app.quit()
@@ -732,4 +740,4 @@ app.on('window-all-closed', () => {
     trayPreferences = { ...trayPreferences, noticeShown: true }
     saveTrayPreferences(trayPreferencesPath, trayPreferences)
   }
-})
+}
