@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,6 +65,61 @@ func clusterPeerOf(t *testing.T, dataDir string) *ipfscluster.Client {
 	return ipfscluster.NewClient(parts[2]+":"+parts[4], settings.API.REST.Accounts["sisyphusd"])
 }
 
+// waitForClusterMembers waits, as waitForOutput would for each name in
+// turn, until the pool's cluster lists all the named nodes, and returns
+// its last report. It notes how long after the wait began each node first
+// appeared, so a wait that runs out says which node was late and by how
+// much rather than only that one never came (#314).
+func waitForClusterMembers(t *testing.T, addr string, names ...string) string {
+	t.Helper()
+	start := time.Now()
+	joined := map[string]time.Duration{}
+	var out string
+	var err error
+	for _, name := range names {
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			out, err = cli(t, "pool", "cluster", "--addr", addr)
+			if err == nil {
+				for _, n := range names {
+					if _, seen := joined[n]; !seen && strings.Contains(out, n) {
+						joined[n] = time.Since(start)
+					}
+				}
+			}
+			if _, seen := joined[name]; seen {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal(clusterJoinReport(names, joined, time.Since(start), out, err))
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	t.Logf("cluster members joined: %s", clusterJoinTimes(names, joined, time.Since(start)))
+	return out
+}
+
+// clusterJoinTimes says when each named node joined, or that it had not
+// after waiting so long.
+func clusterJoinTimes(names []string, joined map[string]time.Duration, waited time.Duration) string {
+	parts := make([]string, len(names))
+	for i, name := range names {
+		if at, seen := joined[name]; seen {
+			parts[i] = fmt.Sprintf("%s after %s", name, at.Round(time.Millisecond))
+		} else {
+			parts[i] = fmt.Sprintf("%s not after %s", name, waited.Round(time.Millisecond))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// clusterJoinReport is what a cluster wait that ran out says.
+func clusterJoinReport(names []string, joined map[string]time.Duration, waited time.Duration, last string, err error) string {
+	return fmt.Sprintf("the pool's cluster never listed every node; joined: %s; last `pool cluster` output %q, error %v",
+		clusterJoinTimes(names, joined, waited), last, err)
+}
+
 // copiesOf waits until the pool's cluster reports want for a pin, such as
 // "2/2", and returns the report.
 func copiesOf(t *testing.T, addr, id, want string) string {
@@ -88,8 +145,7 @@ func TestAPoolWithAClusterKeepsWhatItsCoordinatorPinsOnSeveralNodes(t *testing.T
 	}
 	// The three cluster peers find each other, each as the node it serves.
 	// The workers have no way to the coordinator's but through its port.
-	waitForOutput(t, "south", "pool", "cluster", "--addr", addr)
-	members := waitForOutput(t, "north", "pool", "cluster", "--addr", addr)
+	members := waitForClusterMembers(t, addr, "south", "north")
 	for _, dir := range []string{coordinatorDir, dirs["north"], dirs["south"]} {
 		if !strings.Contains(members, nodeID(t, dir)) {
 			t.Errorf("node %s is not among the cluster's members:\n%s", nodeID(t, dir), members)
@@ -154,8 +210,7 @@ func TestAPoolWithAClusterKeepsWhatItsCoordinatorPinsOnSeveralNodes(t *testing.T
 	// A restarted coordinator finds its cluster again, and the workers it.
 	stopCoordinator()
 	startDaemon(t, "--role", "coordinator", "--kubo", "--cluster", "--listen", addr, "--data-dir", coordinatorDir, "--name", "hub")
-	waitForOutput(t, "north", "pool", "cluster", "--addr", addr)
-	waitForOutput(t, "south", "pool", "cluster", "--addr", addr)
+	waitForClusterMembers(t, addr, "north", "south")
 	copiesOf(t, addr, id, "2/2")
 
 	// Once nothing pins it on the node, nothing pins it on the cluster.
@@ -205,5 +260,16 @@ func TestAPoolsClusterFollowsItsNetworkToANewKey(t *testing.T) {
 	id := strings.TrimSpace(mustCLI(t, "blob", "put", "--addr", addr, writeFile(t, "stored after the change of key")))
 	if held := copiesOf(t, addr, id, "2/2"); !strings.Contains(held, "hand") {
 		t.Errorf("after the change of key the pin is held by: %s", held)
+	}
+}
+
+// A cluster wait that runs out says how long each node took to join, or
+// that it had not, and what the cluster last said.
+func TestAClusterWaitThatRunsOutSaysWhichNodeWasLate(t *testing.T) {
+	joined := map[string]time.Duration{"north": 4200 * time.Millisecond}
+	got := clusterJoinReport([]string{"south", "north"}, joined, 30*time.Second+123*time.Millisecond, "MEMBER  NAME\nhub\n", errors.New("refused"))
+	want := "the pool's cluster never listed every node; joined: south not after 30.123s, north after 4.2s; last `pool cluster` output \"MEMBER  NAME\\nhub\\n\", error refused"
+	if got != want {
+		t.Errorf("report\n got %s\nwant %s", got, want)
 	}
 }
