@@ -278,6 +278,12 @@ func runDaemon(ctx context.Context, args []string) error {
 		return errors.New("--containers-tmp-mb sizes the /tmp that --containers-read-only gives a task, and needs it: without it a task can write anywhere in its image")
 	}
 	if *taskDir != "" {
+		abs, err := resolveTaskDir(*taskDir, absoluteTaskDir)
+		if err != nil {
+			return err
+		}
+		*taskDir = abs
+		confined.TaskDir = abs
 		if err := checkTaskDir(*taskDir); err != nil {
 			return err
 		}
@@ -1175,6 +1181,16 @@ type locationDiscoveryFlagOverrides struct {
 
 func checkTaskDir(dir string) error {
 	return checkTaskDirWith(dir, os.Stat, os.CreateTemp)
+}
+
+var absoluteTaskDir = filepath.Abs
+
+func resolveTaskDir(dir string, abs func(string) (string, error)) (string, error) {
+	resolved, err := abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve --task-dir: %w", err)
+	}
+	return resolved, nil
 }
 
 func checkTaskDirWith(dir string, stat func(string) (os.FileInfo, error), createTemp func(string, string) (*os.File, error)) error {
