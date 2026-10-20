@@ -40,12 +40,12 @@ func TestAHardenedCoordinatorGivesContainerWorkOnlyToHardenedWorkers(t *testing.
 	}
 	half := newWorker("half", runtime.SandboxedLabel)
 	hardened.workers = map[string]*worker{"half": half}
-	if got := hardened.pickWorkerLocked(job, &jobmodel.Task{}); got != nil {
+	if got, _ := hardened.pickWorkerLocked(job, &jobmodel.Task{}); got != nil {
 		t.Errorf("a worker that is only sandboxed was picked")
 	}
 	whole := newWorker("whole", runtime.SandboxedLabel, runtime.BoundedTmpLabel)
 	hardened.workers["whole"] = whole
-	if got := hardened.pickWorkerLocked(job, &jobmodel.Task{}); got != whole {
+	if got, _ := hardened.pickWorkerLocked(job, &jobmodel.Task{}); got != whole {
 		t.Errorf("picked %v, want the hardened worker", got)
 	}
 }

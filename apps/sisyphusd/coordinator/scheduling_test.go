@@ -26,7 +26,7 @@ func TestPickWorkerSpreadsModelTasksBeforePreferringGPU(t *testing.T) {
 	cpu := newWorker("cpu", "loaded:"+model+"=0")
 	c := &Coordinator{workers: map[string]*worker{"gpu": gpu, "cpu": cpu}}
 	task = &jobmodel.Task{History: []jobmodel.Attempt{{NodeID: "gpu", State: jobmodel.Running}}}
-	if got := c.pickWorkerLocked(job, task); got != cpu {
+	if got, _ := c.pickWorkerLocked(job, task); got != cpu {
 		if got == nil {
 			t.Fatal("picked no worker, want the idle worker so model requests are spread")
 		}
@@ -36,7 +36,7 @@ func TestPickWorkerSpreadsModelTasksBeforePreferringGPU(t *testing.T) {
 	// Once both servers have equal model load, prefer the model already on a card.
 	cpu.running["cpu-task"] = assignment{job: &jobmodel.Job{Needs: job.Needs}, task: &jobmodel.Task{ID: "cpu-task"}}
 	task = &jobmodel.Task{}
-	if got := c.pickWorkerLocked(job, task); got != gpu {
+	if got, _ := c.pickWorkerLocked(job, task); got != gpu {
 		if got == nil {
 			t.Fatal("picked no worker, want the equally loaded GPU worker")
 		}
@@ -46,7 +46,7 @@ func TestPickWorkerSpreadsModelTasksBeforePreferringGPU(t *testing.T) {
 	// A worker with no loaded-model report ranks below one that reports the
 	// model resident, all else being equal.
 	cpu.capabilities.Labels = []string{"model:" + model}
-	if got := c.pickWorkerLocked(job, task); got != gpu {
+	if got, _ := c.pickWorkerLocked(job, task); got != gpu {
 		if got == nil {
 			t.Fatal("picked no worker, want the worker reporting the model loaded")
 		}

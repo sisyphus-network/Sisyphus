@@ -357,7 +357,7 @@ Check each count against a terminal on the coordinator: `sisyphusd job submit --
 
 Ask a third question, large enough to take a few minutes, such as how many primes there are below a trillion. While its job is running, stop one of the workers (Ctrl-C), then start it again with the same command, without `--join`.
 
-✎ Did the planner still answer, with the same count a terminal gives? Did the app show the worker leave and come back?
+✎ Did the planner still answer, with the same count a terminal gives? Did the app show the worker leave and come back? The worker should be given tasks again within a second or two of rejoining; the tasks it lost go to the other machines first ([#541](https://github.com/sisyphus-network/Sisyphus/issues/541)).
 
 That is the last box of [#18](https://github.com/sisyphus-network/Sisyphus/issues/18) once every ✎ in this part went as described.
 
