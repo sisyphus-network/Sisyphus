@@ -1170,10 +1170,16 @@ test('Settings pickers open in full view, above every card and inside the window
   try {
     // Opens a picker and checks its choices can all be seen and reached:
     // inside the window, clear of its own trigger, and not under a card.
-    const opensInView = async (category, name, height, within) => {
-      await openSettingsCategory(page, category)
+    const opensInView = async (category, name, height, within, stayOnCategory = false) => {
+      if (!stayOnCategory && !await page.getByRole('heading', { name: category, level: 1 }).isVisible().catch(() => false)) {
+        await openSettingsCategory(page, category)
+      }
       if (within) await page.getByRole('button', { name: within }).first().click()
-      const trigger = page.getByRole('button', { name, exact: true })
+      const trigger = name === 'Language'
+        ? page.locator('#settings-language')
+        : name === 'Accent'
+          ? page.locator('#settings-theme-style')
+        : page.getByRole('button', { name, exact: true })
       await trigger.waitFor({ timeout: 30000 })
       await trigger.scrollIntoViewIfNeeded()
       await trigger.click()
@@ -1192,7 +1198,7 @@ test('Settings pickers open in full view, above every card and inside the window
           if (at.bottom <= box.top || at.top >= box.bottom) return false // scrolled out of the menu's own view
           const x = at.left + at.width / 2
           const y = Math.max(at.top, box.top) + Math.min(at.height, box.bottom - at.top) / 2
-          return document.elementFromPoint(x, y)?.closest('[role="dialog"]')?.getAttribute('aria-label') !== name
+          return !menu.contains(document.elementFromPoint(x, y))
         }).map((choice) => choice.textContent?.trim())
         return {
           box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom },
@@ -1206,7 +1212,7 @@ test('Settings pickers open in full view, above every card and inside the window
       }, { name, anchor })
       const where = `${name} in ${category}, ${height}px high: ${JSON.stringify(seen)}`
       assert.ok(seen.box.top >= 0 && seen.box.left >= 0 && seen.box.bottom <= seen.window.height && seen.box.right <= seen.window.width, `the picker goes past the window: ${where}`)
-      assert.ok(!seen.overlapsTrigger, `the picker is over the middle of its own trigger: ${where}`)
+      if (seen.window.width > 767) assert.ok(!seen.overlapsTrigger, `the picker is over the middle of its own trigger: ${where}`)
       assert.deepEqual(seen.covered, [], `choices are under something else: ${where}`)
       if (within && name === 'Provider') {
         const wizard = page.getByRole('dialog', { name: within, exact: true })
@@ -1229,8 +1235,10 @@ test('Settings pickers open in full view, above every card and inside the window
         await wizard.waitFor({ state: 'detached' })
         return
       }
-      // Its trigger closes it as it opened it.
-      await trigger.click()
+      // Its trigger closes it as it opened it. On compact widths the selector
+      // is a modal drawer, so Escape is the accessible dismissal path.
+      if (seen.window.width <= 767) await page.keyboard.press('Escape')
+      else await trigger.click()
       await menu.waitFor({ state: 'detached' })
       if (within) {
         const holder = page.getByRole('dialog', { name: within, exact: true })
@@ -1252,6 +1260,24 @@ test('Settings pickers open in full view, above every card and inside the window
       // This one opens over the wizard's own dialog, not only over a card.
       await opensInView('Model provider', 'Provider', height, 'Add provider')
     }
+
+    // A phone-width window exercises the same anchored popovers in the
+    // compact settings layout, where the trigger and menu have much less room.
+    await openSettingsCategory(page, 'General')
+    let narrowWindow = false
+    for (let attempt = 0; attempt < 3 && !narrowWindow; attempt++) {
+      await app.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        window.setMinimumSize(320, 320)
+        window.setSize(390, 800)
+      })
+      narrowWindow = await page.waitForFunction(() => Math.abs(window.outerWidth - 390) < 60, null, { timeout: 1500 }).then(() => true, () => false)
+    }
+    assert.ok(narrowWindow, 'the window did not reach a phone-width viewport after retries')
+    await opensInView('General', 'Language', 800, undefined, true)
+    await opensInView('General', 'Accent', 800, undefined, true)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 800))
+    await page.waitForFunction(() => Math.abs(window.outerWidth - 1180) < 60)
 
     // A keyboard or short landscape viewport can leave less than the normal
     // 120px menu floor. The menu must use the actual remaining room instead.
