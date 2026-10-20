@@ -48,9 +48,12 @@ func waitForContainerJob(t *testing.T, within time.Duration, addr, id string) st
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			containers, dockerErr := exec.CommandContext(ctx, "docker", "ps", "-a", "--no-trunc", "--filter", "name=sisyphus-", "--format", "{{.ID}} {{.Names}} {{.Status}} {{.Image}}").CombinedOutput()
 			cancel()
+			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+			image, imageErr := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", "alpine:3.20").CombinedOutput()
+			cancel()
 			_, cancelErr := cliWithin(t, 5*time.Second, "job", "cancel", "--addr", addr, id)
 			logs, logsErr := cliWithin(t, 5*time.Second, "job", "logs", "--addr", addr, id)
-			t.Fatalf("job did not finish within %s; last job get %q (error %v); matching Docker containers %q (error %v); cancel error %v; job logs %q (error %v)", within, last, lastErr, containers, dockerErr, cancelErr, logs, logsErr)
+			t.Fatalf("job did not finish within %s; last job get %q (error %v); matching Docker containers %q (error %v); alpine:3.20 image %q (error %v); cancel error %v; job logs %q (error %v)", within, last, lastErr, containers, dockerErr, image, imageErr, cancelErr, logs, logsErr)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
