@@ -15,6 +15,8 @@ npm run dev
 
 `package.json` temporarily overrides KaTeX to `^0.18.2`: the math and Mermaid rendering plugins currently constrain older KaTeX versions affected by [GHSA-238p-pmpm-9mq7](https://github.com/advisories/GHSA-238p-pmpm-9mq7). The lockfile resolves the override to a patched 0.18.x release. Keep the override until both upstream dependency ranges accept a patched release; the Electron regression test exercises math and Mermaid rendering against it.
 
+It also overrides `global-agent` to `^4.1.3`. Electron Builder's copy of `@electron/get` 3.x asks for `global-agent` 3, which reaches `sprintf-js` 1.1.3 through `roarr`. That `sprintf-js` version is affected by [GHSA-hp3w-g68c-fv3c](https://github.com/advisories/GHSA-hp3w-g68c-fv3c), and no patched release exists (#507). `global-agent` 4 depends on neither, and it keeps the CommonJS `bootstrap()` that `@electron/get` calls when `ELECTRON_GET_USE_PROXY` is set. It is only a build tool and never ships in the app. Drop the override once Electron Builder moves to an `@electron/get` that no longer uses `global-agent`.
+
 The Model provider page in the development build includes six sample profiles for previewing card layouts. They are gated to development and are not persisted or included in the production app; the end-to-end suite checks their absence from the built app.
 
 Build the Go daemon from the repository root before starting the desktop:
