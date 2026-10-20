@@ -12,7 +12,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -295,14 +297,14 @@ func (p *Planner) runJob(ctx context.Context, arguments json.RawMessage, report 
 	var args struct {
 		Workload string          `json:"workload"`
 		Params   json.RawMessage `json:"params"`
-		Tasks    uint32          `json:"tasks"`
-		Private  bool            `json:"private"`
+		Tasks    looseCount      `json:"tasks"`
+		Private  looseFlag       `json:"private"`
 	}
 	if err := json.Unmarshal(arguments, &args); err != nil {
 		return nil, fmt.Errorf("the arguments are not what run_job takes: %w", err)
 	}
-	spec := &pb.JobSpec{Workload: args.Workload, Params: args.Params, MaxTasks: args.Tasks}
-	if args.Private || p.requirePrivate {
+	spec := &pb.JobSpec{Workload: args.Workload, Params: args.Params, MaxTasks: uint32(args.Tasks)}
+	if bool(args.Private) || p.requirePrivate {
 		if p.SealingKey == nil {
 			return nil, errors.New("private jobs are unavailable: this node has no sealing key provider")
 		}
@@ -347,6 +349,51 @@ func hasPrivateAttachments(history []ai.Message) bool {
 		}
 	}
 	return false
+}
+
+// looseFlag is a true or false the model gave, as JSON's true and false or
+// as the words in quotes: small models often quote them, and a job should
+// not fail for it.
+type looseFlag bool
+
+func (f *looseFlag) UnmarshalJSON(data []byte) error {
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		*f = looseFlag(b)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("%s is not true or false", data)
+	}
+	b, err := strconv.ParseBool(strings.TrimSpace(s))
+	if err != nil {
+		return fmt.Errorf("%q is not true or false", s)
+	}
+	*f = looseFlag(b)
+	return nil
+}
+
+// looseCount is a count the model gave, as a JSON number or as one in
+// quotes, for the same reason as looseFlag.
+type looseCount uint32
+
+func (c *looseCount) UnmarshalJSON(data []byte) error {
+	var n uint32
+	if err := json.Unmarshal(data, &n); err == nil {
+		*c = looseCount(n)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("%s is not a whole number from 0 to %d", data, uint32(math.MaxUint32))
+	}
+	u, err := strconv.ParseUint(strings.TrimSpace(s), 10, 32)
+	if err != nil {
+		return fmt.Errorf("%q is not a whole number from 0 to %d", s, uint32(math.MaxUint32))
+	}
+	*c = looseCount(u)
+	return nil
 }
 
 func (p *Planner) getJob(arguments json.RawMessage) (any, error) {
