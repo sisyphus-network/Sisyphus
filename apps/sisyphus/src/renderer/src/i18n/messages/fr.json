@@ -274,6 +274,17 @@
     "saveFailed": "Impossible d’enregistrer les réglages d’hébergement",
     "loadFailed": "Impossible de charger les réglages d’hébergement"
   },
+  "poolHostingOverview": {
+    "title": "Les autres machines rejoignent ce pool ici",
+    "description": "Donnez cette adresse à un worker avec --coordinator, avec une invitation créée dans Opérations → Pool.",
+    "noAddresses": "Cet ordinateur n’a pour l’instant aucune adresse réseau utilisable par d’autres machines.",
+    "copyAddress": "Copier l’adresse",
+    "copied": "Copié",
+    "copyCommand": "Copier la commande",
+    "windowsFirewall": "Si le Pare-feu Windows bloque les workers, exécutez ceci une fois dans PowerShell ouvert en tant qu’administrateur. Cela laisse les machines des réseaux privés joindre le port du pool, et rien d’autre :",
+    "firewall": "Les workers ont besoin que le pare-feu de cet ordinateur autorise les connexions TCP entrantes sur le port {port}.",
+    "unavailable": "Les autres machines ne peuvent pas rejoindre le pool : {address} n’est plus une adresse de cet ordinateur. Choisissez-en une autre dans Paramètres → Ce nœud et rouvrez Sisyphus."
+  },
   "poolLimitsSettings": {
     "title": "Limites du pool",
     "description": "Ce que chaque autre membre du pool de ce nœud peut utiliser ici tant que ce nœud coordonne le pool. Laissez un champ vide pour ne fixer aucune limite. Les limites enregistrées s’appliquent au redémarrage du nœud. Le travail soumis par ce nœud lui-même n’est pas limité.",

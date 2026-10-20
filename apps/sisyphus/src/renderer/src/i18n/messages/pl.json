@@ -274,6 +274,17 @@
     "saveFailed": "Nie udało się zapisać ustawień hostowania",
     "loadFailed": "Nie udało się wczytać ustawień hostowania"
   },
+  "poolHostingOverview": {
+    "title": "Tutaj inne maszyny dołączają do tej puli",
+    "description": "Podaj workerowi ten adres w --coordinator, razem z zaproszeniem z Operacje → Pula.",
+    "noAddresses": "Ten komputer nie ma teraz adresu sieciowego, którego mogłyby użyć inne maszyny.",
+    "copyAddress": "Kopiuj adres",
+    "copied": "Skopiowano",
+    "copyCommand": "Kopiuj polecenie",
+    "windowsFirewall": "Jeśli Zapora systemu Windows blokuje workery, uruchom to raz w PowerShell otwartym jako administrator. Pozwala to maszynom z sieci prywatnych łączyć się z portem puli i z niczym więcej:",
+    "firewall": "Workery potrzebują, aby zapora tego komputera przepuszczała przychodzące połączenia TCP na porcie {port}.",
+    "unavailable": "Inne maszyny nie mogą dołączyć: {address} nie jest już adresem tego komputera. Wybierz inny w Ustawienia → Ten węzeł i otwórz Sisyphus ponownie."
+  },
   "poolLimitsSettings": {
     "title": "Limity puli",
     "description": "Ile zasobów tego węzła może wykorzystać każdy inny członek jego puli, dopóki ten węzeł koordynuje pulę. Pozostaw pole puste, aby nie ustawiać limitu. Zapisane limity zaczynają obowiązywać po ponownym uruchomieniu węzła. Praca zlecana przez sam ten węzeł nie jest ograniczana.",

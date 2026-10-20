@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { displayDaemonVersion } from '@/lib/daemon-version'
 import { ResponsiveActionDialog } from '@/components/ui/responsive-action-dialog'
+import { PoolHostingOverview } from '@/components/pool-hosting-overview'
 
 type Messages = ReturnType<typeof getMessages>
 function shortId(id: string) { return id.length > 22 ? `${id.slice(0, 12)}…${id.slice(-8)}` : id }
@@ -187,6 +188,7 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
       <MetricCard label={messages.connectedPeers} icon={Globe2} value={<>{connectedPeers}<span className="text-lg font-normal text-muted-foreground"> / {snapshot.peers.length}</span></>} detail={messages.activeKnownPeers} />
       <MetricCard label={messages.peerRevision} icon={Wifi} value={<span className="inline-flex items-center gap-2 text-xl"><span className={`size-2.5 rounded-full ${snapshot.status === 'connected' ? 'bg-teal-500' : snapshot.status === 'connecting' ? 'bg-amber-500' : 'bg-red-500'}`} />{statusLabel}</span>} statusTone={snapshot.status} centerValue className="sm:col-span-2 lg:col-span-1" />
     </section>
+    <PoolHostingOverview messages={messages} />
     {(joinedPool || joinedPoolState === 'unavailable') && <NodeSection icon={Link2} title={labels.joinedPool} aside={joinedPool ? <Badge variant={joinedPoolState === 'unavailable' ? 'outline' : joinedPoolStateCode(joinedPool.state) === 2 ? 'secondary' : 'outline'} className={joinedPoolState === 'unavailable' ? 'text-amber-700 dark:text-amber-300' : joinedPoolStateCode(joinedPool.state) === 2 ? 'text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground'}>{joinedPoolState === 'unavailable' ? labels.poolUnavailable : joinedPoolStateCode(joinedPool.state) === 2 ? labels.poolConnected : joinedPoolStateCode(joinedPool.state) === 3 ? labels.poolDisconnected : labels.poolConnecting}</Badge> : undefined}>
       {joinedPool ? <CardContent className="grid gap-5 sm:grid-cols-2">
         <Detail label={labels.poolName} value={joinedPool.coordinatorName || joinedPool.coordinatorId || labels.poolConnecting} />

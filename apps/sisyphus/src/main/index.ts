@@ -450,6 +450,7 @@ app.whenReady().then(() => {
     running: initialHosting && 'listen' in initialHosting ? initialPoolHostingSettings : { ...initialPoolHostingSettings, enabled: false },
     unavailable: initialHosting !== null && 'unavailable' in initialHosting,
     addresses: hostAddresses(),
+    platform: process.platform,
   })
   handleNode('node:get-pool-hosting', () => currentPoolHosting())
   handleNode('node:save-pool-hosting', (_event, value: unknown) => {

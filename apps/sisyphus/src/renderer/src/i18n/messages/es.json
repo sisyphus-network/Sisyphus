@@ -274,6 +274,17 @@
     "saveFailed": "No se pudieron guardar los ajustes de alojamiento",
     "loadFailed": "No se pudieron cargar los ajustes de alojamiento"
   },
+  "poolHostingOverview": {
+    "title": "Otras máquinas se unen a este pool aquí",
+    "description": "Da a un worker esta dirección con --coordinator, junto con una invitación de Operaciones → Pool.",
+    "noAddresses": "Este equipo no tiene ahora ninguna dirección de red que otras máquinas puedan usar.",
+    "copyAddress": "Copiar dirección",
+    "copied": "Copiado",
+    "copyCommand": "Copiar comando",
+    "windowsFirewall": "Si el Firewall de Windows bloquea a los workers, ejecuta esto una vez en PowerShell abierto como administrador. Permite que las máquinas de redes privadas lleguen al puerto del pool, y nada más:",
+    "firewall": "Los workers necesitan que el cortafuegos de este equipo permita conexiones TCP entrantes en el puerto {port}.",
+    "unavailable": "Otras máquinas no pueden unirse: {address} ya no es una de las direcciones de este equipo. Elige otra en Configuración → Este nodo y vuelve a abrir Sisyphus."
+  },
   "poolLimitsSettings": {
     "title": "Límites del pool",
     "description": "Lo que cada otro miembro del pool de este nodo puede usar aquí mientras este nodo coordina el pool. Deja un campo vacío para no poner límite. Los límites guardados se aplican cuando el nodo se reinicia. El trabajo que envía este mismo nodo no tiene límite.",

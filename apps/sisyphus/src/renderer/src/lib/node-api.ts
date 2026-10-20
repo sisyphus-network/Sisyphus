@@ -131,7 +131,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
     // Only the desktop app starts a node of its own to host from.
     getPoolHosting: async (): Promise<PoolHostingState> => {
       const settings = { enabled: false, address: '', port: 7700 }
-      return { managed: false, saved: settings, running: settings, restartNeeded: false, unavailable: false, addresses: [] }
+      return { managed: false, saved: settings, running: settings, restartNeeded: false, unavailable: false, addresses: [], platform: '' }
     },
     savePoolHosting: async (): Promise<PoolHostingState> => { throw new Error('Hosting a pool is set in the desktop app.') },
     reconnect: getSnapshot,

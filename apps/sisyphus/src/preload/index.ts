@@ -62,7 +62,7 @@ export type LocationDiscoveryState = { managed: boolean; configurable: boolean; 
 export type { PoolLimits }
 export type PoolHostingSettings = { enabled: boolean; address: string; port: number }
 export type HostAddress = { address: string; interface: string; lan: boolean }
-export type PoolHostingState = { managed: boolean; saved: PoolHostingSettings; running: PoolHostingSettings; restartNeeded: boolean; unavailable: boolean; addresses: HostAddress[] }
+export type PoolHostingState = { managed: boolean; saved: PoolHostingSettings; running: PoolHostingSettings; restartNeeded: boolean; unavailable: boolean; addresses: HostAddress[]; platform: string }
 export type PoolLimitsState = { managed: boolean; configurable: boolean; configured: boolean; restartNeeded: boolean; coordinator: boolean; saved: PoolLimits; running: PoolLimits }
 export type JoinedPool = { coordinatorId: string; coordinatorName: string; address: string; state: number | string; roles: (number | string)[]; workerCount?: number }
 

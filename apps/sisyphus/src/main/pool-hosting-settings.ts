@@ -109,6 +109,7 @@ export type PoolHostingState = {
   /** Hosting was on, but its address was not this computer's when the node started. */
   unavailable: boolean
   addresses: HostAddress[]
+  platform: string
 }
 
 export function samePoolHostingSettings(a: PoolHostingSettings, b: PoolHostingSettings): boolean {
