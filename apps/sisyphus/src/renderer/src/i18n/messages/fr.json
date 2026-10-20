@@ -160,6 +160,8 @@
   "geoInitialDaemonFetch": "Chargement initial du daemon",
   "geoRealtime": "Temps réel",
   "geoUnavailable": "Indisponible",
+  "unplacedLink": "Non placé : activer la détection de position",
+  "unplacedHint": "Ce nœud ne se connaît que par une adresse de réseau domestique, qu’aucune table ne peut placer. Interroger le routeur, un serveur STUN ou un service de recherche peut trouver son adresse publique.",
   "countryEstimateDisclaimer": "Estimation basée sur l’adresse réseau ; elle peut être inexacte",
   "peerMultiaddress": "Multiaddr du nœud",
   "peerConnectionHint": "Une connexion libp2p directe sera tentée. La connexion n’autorise pas le nœud à exécuter des calculs.",

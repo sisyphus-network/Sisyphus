@@ -160,6 +160,8 @@
   "geoInitialDaemonFetch": "Initial daemon fetch",
   "geoRealtime": "Realtime",
   "geoUnavailable": "Not available",
+  "unplacedLink": "Not placed: turn on location discovery",
+  "unplacedHint": "This node knows itself only by a home-network address, which no table can place. Asking your router, a STUN server or a lookup service can find its public address.",
   "countryEstimateDisclaimer": "An estimate from network address data; may be inaccurate",
   "peerMultiaddress": "Peer multiaddress",
   "peerConnectionHint": "Connect attempts a direct libp2p connection. Connecting does not authorize the peer to run compute.",

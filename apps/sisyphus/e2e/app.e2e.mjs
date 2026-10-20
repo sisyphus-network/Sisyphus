@@ -70,6 +70,11 @@ test('the window shows the node it is connected to', async () => {
     const worker = page.getByRole('article').filter({ hasText: 'rig' })
     await worker.getByText('primes').waitFor()
     assert.match(await worker.innerText(), /0\/2\s*Tasks/)
+    // A node known only by a loopback or home-network address is not placed,
+    // and the page says how to have it placed.
+    await page.getByText(/knows itself only by a home-network address/).waitFor()
+    await page.getByRole('link', { name: 'Not placed: turn on location discovery' }).first().click()
+    await page.getByText('Location discovery', { exact: true }).first().waitFor()
   } finally {
     await app.close()
     profile.remove()
