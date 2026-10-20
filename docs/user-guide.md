@@ -150,7 +150,7 @@ sisyphusd run --role worker --coordinator <your-address>:7700 --join <invitation
 
 Two things to know:
 
-- **Your node must be listening where the other machine can reach it.** A node the app started for itself listens only on your own machine. Start the node yourself with `--listen 0.0.0.0:7700`, and open TCP port 7700 to the other machine.
+- **Your node must be listening where the other machine can reach it.** A node the app starts for itself listens only on your own machine until you turn on **Let other machines join this pool** in **Settings → This node** (see [Settings](#settings)). A node you start yourself listens where its `--listen` says, such as `--listen 0.0.0.0:7700`. Either way, open TCP port 7700 to the other machine.
 - **Invite client** is for a machine that submits work and stores files but runs none.
 - **A machine with Ollama can lend its models.** Add `--models-from http://127.0.0.1:11434`. Its owner decides what the pool gets: `--models-only llama3.1,qwen3:8b` offers only those, `--models-gpu-layers 0` keeps the pool's work off the graphics card, and `--models-keep-alive 0` frees the model's memory as soon as it has answered. `sisyphusd nodes` then shows each model and how much of it is on the card. Some limits only Ollama itself can be told; the [daemon guide](../apps/sisyphusd/README.md) lists them.
 - **On Windows**, the first run of `sisyphusd.exe`, or of the app, may bring up "Windows protected your PC" and then the firewall asking about "Sisyphus node"; see [the warnings on first run](#the-warnings-on-first-run).
@@ -167,6 +167,8 @@ bin/sisyphusd pool members
 ![Settings: the node, the interface language, and the planner's model](images/settings.png)
 
 **Settings** holds what belongs to the window (language, theme and accent, which are kept on this device) and the planner's model, which is kept on the node. The app is in seven languages, two of them written right to left.
+
+**Let other machines join this pool**, under **This node**, is off until you turn it on. When it is on, the node the app starts takes workers at the address and port you choose, port 7700 unless you change it. The address list shows this computer's own addresses, those on a home or office network first. **All interfaces** is there too, but it also opens the port to a VPN or a public Wi-Fi network the computer happens to be on. Hosting also turns on discovery, so other Sisyphus nodes can find this one, with its ID and addresses. Being found admits no one: a machine still joins only with an invitation from your pool, and the app's own control connection stays on this computer. The change applies the next time you open the app. If the chosen address is no longer this computer's when the app starts (on another Wi-Fi network, say), the node listens only on this computer and the setting says so. The setting is for the node the app starts. A node you started yourself listens where its `--listen` says.
 
 **Lend this machine's models** offers the models of an Ollama on this machine to the pool, without the command line:
 

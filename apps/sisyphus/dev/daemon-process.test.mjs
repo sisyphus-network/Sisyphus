@@ -72,6 +72,13 @@ test('passes only explicitly enabled location discovery flags to the managed dae
   await namedStun.daemon.stop()
 })
 
+test('a hosting node listens where the owner chose and is discoverable', async () => {
+  const { daemon, launches } = fixture({ hostingListen: '192.168.137.133:7700', unused: async (address) => address !== '127.0.0.1:7700' })
+  await daemon.ensureStarted()
+  assert.deepEqual(launches[0].args, ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '192.168.137.133:7700', '--web-listen', '127.0.0.1:50052'])
+  await daemon.stop()
+})
+
 test('refuses an invalid or occupied web API address without spawning the daemon', async () => {
   for (const options of [
     { webListenAddress: '0.0.0.0:50052' },

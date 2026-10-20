@@ -106,6 +106,22 @@ test('location discovery controls configure an independently managed daemon and 
   }
 })
 
+test('hosting a pool is the app’s own node’s setting, so a node run by hand keeps its own address', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'This node')
+    await page.getByRole('heading', { name: 'Let other machines join this pool' }).waitFor()
+    await page.getByText('This app is connected to a node it did not start.', { exact: false }).waitFor()
+    assert.equal(await page.getByRole('switch', { name: 'Let other machines join this pool' }).isDisabled(), true)
+    assert.equal(await page.getByRole('combobox', { name: 'Address' }).isDisabled(), true)
+    assert.equal(await page.getByRole('button', { name: 'Save hosting settings' }).count(), 0)
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 function poolLimitsCard(page) {
   return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Pool limits' }) })
 }
