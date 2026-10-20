@@ -361,3 +361,28 @@ func TestParseInterspersedTakesFlagsOnEitherSideOfTheArguments(t *testing.T) {
 		}
 	}
 }
+
+// A node started by hand on the data directory the desktop app's own node
+// has open is told that the app is the likely holder (#530).
+func TestASecondNodeOnADataDirectoryInUseIsToldWhatLikelyHoldsIt(t *testing.T) {
+	dir, addr := t.TempDir(), freeAddr(t)
+	startDaemon(t, "--data-dir", dir, "--listen", addr)
+	// Only once the first node answers is its store certainly open.
+	waitForOutput(t, "", "nodes", "--addr", addr)
+	_, err := cli(t, "run", "--data-dir", dir, "--listen", freeAddr(t), "--discovery", "off")
+	if err == nil || !strings.Contains(err.Error(), "in use by another process") || !strings.Contains(err.Error(), "most likely the app's own node") || !strings.Contains(err.Error(), "their own --data-dir") {
+		t.Errorf("error %v, want the store in use and what to do about it", err)
+	}
+}
+
+// A store that cannot be opened for any other reason is reported as it is.
+func TestAStoreThatCannotBeOpenedIsReportedWithoutTheHint(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "blobs"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cli(t, "run", "--data-dir", dir, "--listen", freeAddr(t), "--discovery", "off")
+	if err == nil || !strings.Contains(err.Error(), "open blob store") || strings.Contains(err.Error(), "--data-dir") {
+		t.Errorf("error %v, want the store's own error alone", err)
+	}
+}

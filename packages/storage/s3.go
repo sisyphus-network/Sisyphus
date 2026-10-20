@@ -51,7 +51,7 @@ func OpenBucket(bucket Bucket, dir string) (*Store, error) {
 		return nil, fmt.Errorf("open blob store %s: %w", dir, err)
 	}
 	if !locked {
-		return nil, fmt.Errorf("open blob store %s: in use by another process", dir)
+		return nil, fmt.Errorf("open blob store %s: %w", dir, ErrInUse)
 	}
 	held := bucketBlocks{bucket}
 	store := newStoreOver(held, false)

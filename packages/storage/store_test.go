@@ -244,6 +244,8 @@ func TestLocalStoreIsExclusive(t *testing.T) {
 	if second, err := OpenLocal(dir); err == nil {
 		second.Close()
 		t.Fatal("opened a store directory that is already open")
+	} else if !errors.Is(err, ErrInUse) {
+		t.Fatalf("a store directory already open: %v, want ErrInUse", err)
 	}
 
 	if err := first.Close(); err != nil {
