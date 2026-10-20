@@ -60,6 +60,9 @@ export type PairedBrowser = { id: string; name: string; createdAt: string }
 export type LocationDiscoverySettings = { locateGateway: boolean; locateCountry: boolean; stunServer: string }
 export type LocationDiscoveryState = { managed: boolean; configurable: boolean; configured: boolean; restartNeeded: boolean; gatewaySupported: boolean | null; saved: LocationDiscoverySettings; running: LocationDiscoverySettings }
 export type { PoolLimits }
+export type PoolHostingSettings = { enabled: boolean; address: string; port: number }
+export type HostAddress = { address: string; interface: string; lan: boolean }
+export type PoolHostingState = { managed: boolean; saved: PoolHostingSettings; running: PoolHostingSettings; restartNeeded: boolean; unavailable: boolean; addresses: HostAddress[] }
 export type PoolLimitsState = { managed: boolean; configurable: boolean; configured: boolean; restartNeeded: boolean; coordinator: boolean; saved: PoolLimits; running: PoolLimits }
 export type JoinedPool = { coordinatorId: string; coordinatorName: string; address: string; state: number | string; roles: (number | string)[]; workerCount?: number }
 
@@ -80,6 +83,8 @@ const api = {
   getLocationDiscoverySettings: (): Promise<LocationDiscoveryState> => ipcRenderer.invoke('node:get-location-discovery-settings'),
   saveLocationDiscoverySettings: (settings: LocationDiscoverySettings): Promise<LocationDiscoveryState> => ipcRenderer.invoke('node:save-location-discovery-settings', settings),
   getPoolLimits: (): Promise<PoolLimitsState> => ipcRenderer.invoke('node:get-pool-limits'),
+  getPoolHosting: (): Promise<PoolHostingState> => ipcRenderer.invoke('node:get-pool-hosting'),
+  savePoolHosting: (settings: PoolHostingSettings): Promise<PoolHostingState> => ipcRenderer.invoke('node:save-pool-hosting', settings),
   savePoolLimits: (limits: PoolLimits): Promise<PoolLimitsState> => ipcRenderer.invoke('node:save-pool-limits', limits),
   reconnect: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:reconnect'),
   connectPeer: (address: string): Promise<string> => ipcRenderer.invoke('node:connect-peer', address),

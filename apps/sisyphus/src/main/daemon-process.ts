@@ -34,6 +34,8 @@ type Options = {
   dataDir: string
   enabled: boolean
   locationDiscovery?: { locateGateway: boolean; locateCountry: boolean; stunServer: string }
+  /** Where other machines reach this node's pool, if it hosts one for them. */
+  hostingListen?: string
   unused?: (endpoint: string) => Promise<boolean>
   launch?: (executable: string, args: string[]) => ChildProcess
   onError: (message: string) => void
@@ -69,11 +71,17 @@ export class DesktopDaemon {
     try {
       const unused = this.options.unused ?? portIsUnused
       if (!await unused(this.options.endpoint) || this.stopping) return
-      const preferred = '127.0.0.1:7700'
-      const listen = localApiAddress(this.options.endpoint)?.port !== 7700 && await unused(preferred) ? preferred : '127.0.0.1:0'
+      // A hosting node is found through discovery as well as by its address;
+      // being found admits no one: joining still takes an invitation.
+      const args = ['run', '--api-listen', this.options.endpoint, '--data-dir', this.options.dataDir]
+      if (this.options.hostingListen) {
+        args.push('--listen', this.options.hostingListen)
+      } else {
+        const preferred = '127.0.0.1:7700'
+        const listen = localApiAddress(this.options.endpoint)?.port !== 7700 && await unused(preferred) ? preferred : '127.0.0.1:0'
+        args.push('--listen', listen, '--discovery', 'off')
+      }
       if (this.stopping) return
-      const args = ['run', '--api-listen', this.options.endpoint, '--data-dir', this.options.dataDir,
-        '--listen', listen, '--discovery', 'off']
       if (this.options.webListenAddress) {
         const webAddress = localApiAddress(this.options.webListenAddress)
         if (!webAddress || webAddress.host === 'localhost') {

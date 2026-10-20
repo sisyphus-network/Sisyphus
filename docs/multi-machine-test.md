@@ -289,7 +289,9 @@ On every other machine, `sisyphusd` as in part 1.
 
 ### 1. Start the coordinator for the app
 
-The node the app starts for itself listens only on its own machine, so no other machine could join. Start it yourself first, listening where the workers can reach it, with its local API where the app looks and in the data directory the app uses:
+The node the app starts for itself listens only on its own machine until it is told to host. In the app, open **Settings → This node**, turn on **Let other machines join this pool**, pick this machine's address on the network the workers share with it, keep port 7700, and **Save**. Then quit and reopen the app. Allow `sisyphusd` through the firewall on private networks when asked ([the warnings on first run](user-guide.md#the-warnings-on-first-run)). The workers join at that address.
+
+To run the coordinator from a terminal instead, start it before opening the app, listening where the workers can reach it, with its local API where the app looks and in the data directory the app uses:
 
 ```powershell
 # Windows, in PowerShell. sisyphusd.exe is in the app's install folder, under resources\bin.
@@ -305,7 +307,7 @@ sisyphusd run --listen 0.0.0.0:7700 --api-listen 127.0.0.1:50051 --data-dir ~/.l
 
 If a `.sisyphus` directory exists in your home directory, the app uses that one instead; give it as `--data-dir`. Leave the node running, and allow it through the firewall on private networks when asked ([the warnings on first run](user-guide.md#the-warnings-on-first-run)).
 
-Open the app. It finds the node on `127.0.0.1:50051`, uses it and leaves it alone.
+Open the app. It finds the node on `127.0.0.1:50051`, uses it and leaves it alone. The hosting setting does not apply to a node started this way.
 
 ✎ Does **Node overview** show this machine as a worker, with its graphics card?
 

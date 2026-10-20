@@ -1,4 +1,4 @@
-import type { LocationDiscoverySettings, LocationDiscoveryState, NodeSnapshot, PoolLimits, PoolLimitsState, SisyphusBridge } from '../../../preload'
+import type { LocationDiscoverySettings, LocationDiscoveryState, NodeSnapshot, PoolHostingState, PoolLimits, PoolLimitsState, SisyphusBridge } from '../../../preload'
 import { normalizePoolLimits } from '../../../shared/pool-limits.ts'
 import { startBrowserNodeStateSession } from './browser-node-state-session.ts'
 import { createBrowserPairing, createSisyphusClient, isAuthenticationError, listPairedBrowsers, revokePairedBrowser, type NodeServiceClient, type SisyphusClient } from '@sisyphus/client'
@@ -128,6 +128,12 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
         maxStoreBytesPerClient: BigInt(limits.maxStoreBytesPerClient),
         maxUploadBytesPerAttempt: BigInt(limits.maxUploadBytesPerAttempt),
       } })),
+    // Only the desktop app starts a node of its own to host from.
+    getPoolHosting: async (): Promise<PoolHostingState> => {
+      const settings = { enabled: false, address: '', port: 7700 }
+      return { managed: false, saved: settings, running: settings, restartNeeded: false, unavailable: false, addresses: [] }
+    },
+    savePoolHosting: async (): Promise<PoolHostingState> => { throw new Error('Hosting a pool is set in the desktop app.') },
     reconnect: getSnapshot,
     connectPeer: async (address) => (await node.connectPeer({ address })).peerId,
     setPeerComputeTrust: async (peerId, trusted) => { await node.setPeerComputeTrust({ peerId, trusted }) },

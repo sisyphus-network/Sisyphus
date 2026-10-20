@@ -8,6 +8,7 @@ import { WindowStreams } from './window-streams'
 import { createIpcLogEntry } from './ipc-logger'
 import { DesktopDaemon } from './daemon-process'
 import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, normalizeLocationDiscoverySettings, supportsGatewayDiscovery } from './location-discovery-settings'
+import { hostAddresses, hostingListen, loadPoolHostingSettings, poolHostingState, savePoolHostingSettings } from './pool-hosting-settings'
 import { normalizePoolLimits, validatePoolLimits } from '../shared/pool-limits.ts'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
@@ -26,6 +27,11 @@ const webApiAddress = process.env.SISYPHUS_WEB_API_ADDRESS ?? '127.0.0.1:50052'
 const autoStartManagedDaemon = process.env.SISYPHUS_AUTO_START_DAEMON !== '0' && !process.env.SISYPHUS_API_ADDRESS && !process.env.SISYPHUS_API_TOKEN_FILE
 const locationDiscoveryPath = join(app.getPath('userData'), 'location-discovery.json')
 const initialLocationDiscoverySettings = loadLocationDiscoverySettings(locationDiscoveryPath)
+// Unlike the settings above, hosting belongs to the node this app starts, so
+// the app keeps it: a node run by hand is reached at whatever --listen says.
+const poolHostingPath = join(app.getPath('userData'), 'pool-hosting.json')
+const initialPoolHostingSettings = loadPoolHostingSettings(poolHostingPath)
+const initialHosting = autoStartManagedDaemon ? hostingListen(initialPoolHostingSettings, hostAddresses()) : null
 // The daemon lets anything on this machine read from its local API, but only
 // a holder of its token change it. The token is in the daemon's data
 // directory, readable by the user who runs the daemon.
@@ -41,6 +47,7 @@ const desktopDaemon = new DesktopDaemon({
   // A custom endpoint/token belongs to its operator, not this desktop process.
   enabled: autoStartManagedDaemon,
   locationDiscovery: effectiveLocationDiscoverySettings(initialLocationDiscoverySettings, supportsGatewayDiscovery(process.platform)),
+  hostingListen: initialHosting && 'listen' in initialHosting ? initialHosting.listen : undefined,
   onError: (message) => { daemonStartupError = message },
 })
 
@@ -435,6 +442,19 @@ app.whenReady().then(() => {
     const settings = validateLocationDiscoverySettings(value)
     const result = await callUnary('setLocationDiscoverySettings', { settings }) as Record<string, unknown>
     return locationDiscoveryState(result)
+  })
+  let savedPoolHostingSettings = initialPoolHostingSettings
+  const currentPoolHosting = () => poolHostingState({
+    managed: desktopDaemon.managesDaemon,
+    saved: savedPoolHostingSettings,
+    running: initialHosting && 'listen' in initialHosting ? initialPoolHostingSettings : { ...initialPoolHostingSettings, enabled: false },
+    unavailable: initialHosting !== null && 'unavailable' in initialHosting,
+    addresses: hostAddresses(),
+  })
+  handleNode('node:get-pool-hosting', () => currentPoolHosting())
+  handleNode('node:save-pool-hosting', (_event, value: unknown) => {
+    savedPoolHostingSettings = savePoolHostingSettings(poolHostingPath, value)
+    return currentPoolHosting()
   })
   handleNode('node:get-pool-limits', async () => {
     try {
