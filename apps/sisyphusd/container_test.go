@@ -14,6 +14,8 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
+const containerTestImage = "alpine:3.20"
+
 // requireDocker skips a test that needs Docker where there is none, unless
 // that is not to be let pass.
 func requireDocker(t *testing.T) {
@@ -49,7 +51,7 @@ func waitForContainerJob(t *testing.T, within time.Duration, addr, id string) st
 			containers, dockerErr := exec.CommandContext(ctx, "docker", "ps", "-a", "--no-trunc", "--filter", "name=sisyphus-", "--format", "{{.ID}} {{.Names}} {{.Status}} {{.Image}}").CombinedOutput()
 			cancel()
 			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-			image, imageErr := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", "alpine:3.20").CombinedOutput()
+			image, imageErr := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", containerTestImage).CombinedOutput()
 			cancel()
 			_, cancelErr := cliWithin(t, 5*time.Second, "job", "cancel", "--addr", addr, id)
 			logs, logsErr := cliWithin(t, 5*time.Second, "job", "logs", "--addr", addr, id)
@@ -67,7 +69,7 @@ func TestAPoolRunsAContainerOnEachTask(t *testing.T) {
 	waitForOutput(t, "plain", "nodes", "--addr", addr)
 
 	// With no worker that runs containers, such a job is taken in and waits.
-	params := `{"image":"alpine:3.20","command":["sh","-c","echo I am task $SISYPHUS_TASK_INDEX of $SISYPHUS_TASK_COUNT; echo $SISYPHUS_TASK_INDEX > /output/index"]}`
+	params := `{"image":"` + containerTestImage + `","command":["sh","-c","echo I am task $SISYPHUS_TASK_INDEX of $SISYPHUS_TASK_COUNT; echo $SISYPHUS_TASK_INDEX > /output/index"]}`
 	id := strings.TrimSpace(mustCLI(t, "job", "submit", "--addr", addr, "--detach", "--workload", "container", "--tasks", "3", "--params", params))
 	if out := mustCLI(t, "job", "get", "--addr", addr, id); !strings.Contains(out, "pending") {
 		t.Errorf("a container job with nobody to run it:\n%s", out)
