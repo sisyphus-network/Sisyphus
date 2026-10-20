@@ -714,10 +714,10 @@ function showWindow() {
 
 async function setUpTray() {
   if (!await trayHostAvailable(process.platform, statusNotifierWatcherRunning) || isQuitting) return
-  // A packaged app ships the icon beside its resources; a development build
-  // runs from out/main, two levels below the icons.
-  const iconPath = app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(here, '../../build/icons/256x256.png')
-  appTray = AppTray.create({ iconPath, labels: trayLabels(), status: snapshot.status, onOpen: showWindow, onQuit: () => app.quit() })
+  // A packaged app ships the tray icons beside its resources; a development
+  // build runs from out/main, two levels below them.
+  const iconDirectory = app.isPackaged ? join(process.resourcesPath, 'tray') : join(here, '../../build/tray')
+  appTray = AppTray.create({ iconDirectory, labels: trayLabels(), status: snapshot.status, onOpen: showWindow, onQuit: () => app.quit() })
   // The tray follows the node state the window shows; it polls nothing itself.
   if (appTray) snapshotListeners.add((next) => appTray?.setStatus(next.status))
 }

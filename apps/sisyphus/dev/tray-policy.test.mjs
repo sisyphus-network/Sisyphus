@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { defaultTrayPreferences, loadTrayPreferences, quitsWhenWindowsClose, saveTrayPreferences, trayHostAvailable, trayLabelsFor, trayMenu, trayStatusLabel } from '../src/main/tray-policy.ts'
+import { defaultTrayPreferences, loadTrayPreferences, quitsWhenWindowsClose, saveTrayPreferences, trayHostAvailable, trayIconFile, trayLabelsFor, trayMenu, trayStatusLabel } from '../src/main/tray-policy.ts'
 
 const labels = { open: 'Open Sisyphus', quit: 'Quit Sisyphus', connected: 'Connected', connecting: 'Connecting…', offline: 'Offline', stillRunningTitle: 'Still running', stillRunningBody: 'Quit from the tray.' }
 
@@ -38,6 +38,30 @@ test('the menu shows the node state above Open and Quit', () => {
   ])
   assert.equal(trayStatusLabel(labels, 'connecting'), 'Connecting…')
   assert.equal(trayStatusLabel(labels, 'disconnected'), 'Offline')
+})
+
+test('the icon’s badge says the node state, and macOS gets an image it can tint', () => {
+  assert.equal(trayIconFile('win32', 'connected'), 'connected.png')
+  assert.equal(trayIconFile('linux', 'connecting'), 'connecting.png')
+  assert.equal(trayIconFile('win32', 'disconnected'), 'offline.png')
+  assert.equal(trayIconFile('darwin', 'connected'), 'connectedTemplate.png')
+  assert.equal(trayIconFile('darwin', 'disconnected'), 'offlineTemplate.png')
+})
+
+test('every tray icon is drawn, at 16 pixels and twice that', () => {
+  const folder = join(import.meta.dirname, '..', 'build', 'tray')
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    for (const status of ['connected', 'connecting', 'disconnected']) {
+      const file = trayIconFile(platform, status)
+      for (const [name, size] of [[file, 16], [file.replace('.png', '@2x.png'), 32]]) {
+        const path = join(folder, name)
+        assert.ok(existsSync(path), `Missing tray icon ${name}`)
+        // A PNG's width and height follow its signature and header name.
+        const png = readFileSync(path)
+        assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [size, size], name)
+      }
+    }
+  }
 })
 
 test('the tray speaks the window’s language, and English for one it does not know', () => {

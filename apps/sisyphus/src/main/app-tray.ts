@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
-import { Menu, Tray, nativeImage } from 'electron'
-import { trayMenu, trayStatusLabel, type NodeStatus, type TrayLabels } from './tray-policy'
+import { join } from 'node:path'
+import { Menu, Tray, nativeImage, type NativeImage } from 'electron'
+import { trayIconFile, trayMenu, trayStatusLabel, type NodeStatus, type TrayLabels } from './tray-policy'
 
 /** Whether a Linux desktop runs a StatusNotifier host that can show the icon. */
 export function statusNotifierWatcherRunning(): Promise<boolean> {
@@ -12,31 +13,34 @@ export function statusNotifierWatcherRunning(): Promise<boolean> {
 }
 
 /**
- * The notification-area icon for the node this app started. Its menu follows
- * the node state the window shows, and is rebuilt only when that changes.
+ * The notification-area icon for the node this app started. Its picture and
+ * menu follow the node state the window shows, and change only when it does.
  */
 export class AppTray {
   private readonly tray: Tray
+  private readonly images: Record<NodeStatus, NativeImage>
   private labels: TrayLabels
   private status: NodeStatus
   private readonly onOpen: () => void
   private readonly onQuit: () => void
 
-  private constructor(tray: Tray, options: { labels: TrayLabels; status: NodeStatus; onOpen: () => void; onQuit: () => void }) {
-    this.tray = tray
+  private constructor(images: Record<NodeStatus, NativeImage>, options: { labels: TrayLabels; status: NodeStatus; onOpen: () => void; onQuit: () => void }) {
+    this.images = images
+    this.tray = new Tray(images[options.status])
     this.labels = options.labels
     this.status = options.status
     this.onOpen = options.onOpen
     this.onQuit = options.onQuit
-    tray.on('click', () => this.onOpen())
+    this.tray.on('click', () => this.onOpen())
     this.render()
   }
 
-  /** Returns null when the icon cannot be loaded, so the app keeps closing with its window. */
-  static create(options: { iconPath: string; labels: TrayLabels; status: NodeStatus; onOpen: () => void; onQuit: () => void }): AppTray | null {
-    const image = nativeImage.createFromPath(options.iconPath)
-    if (image.isEmpty()) return null
-    return new AppTray(new Tray(image.resize({ width: 16, height: 16 })), options)
+  /** Returns null when an icon cannot be loaded, so the app keeps closing with its window. */
+  static create(options: { iconDirectory: string; labels: TrayLabels; status: NodeStatus; onOpen: () => void; onQuit: () => void }): AppTray | null {
+    const statuses: NodeStatus[] = ['connected', 'connecting', 'disconnected']
+    const images = Object.fromEntries(statuses.map((status) => [status, nativeImage.createFromPath(join(options.iconDirectory, trayIconFile(process.platform, status)))])) as Record<NodeStatus, NativeImage>
+    if (statuses.some((status) => images[status].isEmpty())) return null
+    return new AppTray(images, options)
   }
 
   setStatus(status: NodeStatus) {
@@ -51,6 +55,7 @@ export class AppTray {
   }
 
   private render() {
+    this.tray.setImage(this.images[this.status])
     this.tray.setToolTip(`Sisyphus · ${trayStatusLabel(this.labels, this.status)}`)
     this.tray.setContextMenu(Menu.buildFromTemplate(trayMenu(this.labels, this.status).map((item) => {
       if (item.kind === 'separator') return { type: 'separator' as const }

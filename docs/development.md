@@ -137,7 +137,7 @@ Push a tag such as `v0.1.0`. The release workflow builds every supported platfor
 
 ### Icons
 
-Every icon is drawn from `assets/logo.png` by `scripts/make-icons.py` (it needs Pillow), which sets the logo on a dark rounded plate so that it shows on a light taskbar. What it writes is committed. After changing the logo:
+Every icon is drawn from `assets/logo.png` by `scripts/make-icons.py` (it needs Pillow), which sets the logo on a dark rounded plate so that it shows on a light taskbar. It also draws the tray icon in each node state into `apps/sisyphus/build/tray/`, at 16 pixels and `@2x`: the plated logo with a ring (connecting) or a slash (offline) badge, and for macOS a black template image of the globe, which the menu bar tints. What it writes is committed. After changing the logo:
 
 ```sh
 python3 scripts/make-icons.py

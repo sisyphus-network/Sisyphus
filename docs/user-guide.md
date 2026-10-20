@@ -27,7 +27,10 @@ npm run dev                                       # the desktop app, connected t
 
 If no node is answering on `127.0.0.1:50051`, the app starts one itself and stops it when you quit. A node it finds already running is used and left alone.
 
-While the app runs a node of its own, it puts an icon in the system tray (the menu bar on macOS). The icon's menu shows whether the node is connected, and has **Open Sisyphus** and **Quit Sisyphus**. Closing the window then leaves the app and its node running, so work for the pool carries on; the first time, the app says so. **Quit Sisyphus** stops the node and the app together. On Linux the icon needs a desktop that shows tray icons (a StatusNotifier host, as KDE and most others have, or GNOME with the AppIndicator extension). Without one, closing the window quits the app as before. A node you started yourself is never kept running by the app: closing the window quits the app and leaves that node alone.
+While the app runs a node of its own, it puts an icon in the system tray (the menu bar on macOS). The icon shows the node's state: a plain logo while it is connected, a small hollow ring while it connects, and a slash while it is offline. Its menu and tooltip say the same in words, and the menu has **Open Sisyphus** and **Quit Sisyphus**. Closing the window then leaves the app and its node running, so work for the pool carries on; the first time, the app says so. **Quit Sisyphus** stops the node and the app together. On Linux the icon needs a desktop that shows tray icons (a StatusNotifier host, as KDE and most others have, or GNOME with the AppIndicator extension). Without one, closing the window quits the app as before. A node you started yourself is never kept running by the app: closing the window quits the app and leaves that node alone.
+
+![The tray icon connected, connecting and offline, each at normal and double size: the first two rows as Windows and Linux show it on a light and a dark taskbar, the last two as a macOS menu bar tints it in light and dark appearance](images/tray-states.png)
+
 
 ### Installing a packaged build
 

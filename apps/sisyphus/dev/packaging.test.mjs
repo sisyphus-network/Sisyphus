@@ -8,11 +8,12 @@ import { packageResourcesDirectory } from './package-layout.mjs'
 const require = createRequire(import.meta.url)
 const config = require('../electron-builder.config.cjs')
 
-test('packaging puts only the application, native daemon and window icon in the runtime', () => {
+test('packaging puts only the application, native daemon, window icon and tray icons in the runtime', () => {
   assert.deepEqual(config.files, ['out/**/*', 'package.json'])
   assert.deepEqual(config.extraResources, [
     { from: '.packaging/bin', to: 'bin', filter: ['sisyphusd', 'sisyphusd.exe'] },
     { from: 'build/icons/256x256.png', to: 'icon.png' },
+    { from: 'build/tray', to: 'tray' },
   ])
   assert.equal(config.asar, true)
   assert.deepEqual(config.linux.target, ['tar.gz', 'AppImage'])

@@ -10,6 +10,7 @@ writes. It needs Pillow: pip install pillow.
   apps/sisyphus/build/icon.ico      Windows: the app, the installer, shortcuts
   apps/sisyphus/build/icons/*.png   Linux: the menu entry, in each size
   apps/sisyphusd/winres/icon.png    Windows: the daemon's own executable
+  apps/sisyphus/build/tray/*.png    the tray icon in each node state
 """
 from pathlib import Path
 
@@ -55,6 +56,58 @@ def main() -> None:
     daemon = ROOT / "apps/sisyphusd/winres"
     daemon.mkdir(parents=True, exist_ok=True)
     full.resize((256, 256), Image.LANCZOS).save(daemon / "icon.png", optimize=True)
+    tray_icons(full, desktop / "tray")
+
+
+def mark(draw: ImageDraw.ImageDraw, state: str, unit: float, ink) -> None:
+    """The badge's mark, in the bottom-right corner of a picture 16 units
+    wide: a hollow ring while the node connects, a slash while it is offline.
+    Its shape says the state, so it reads without colour."""
+    cx = cy = 11.5 * unit
+    width = round(1.3 * unit)
+    if state == "connecting":
+        r = 2.9 * unit
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=ink, width=width)
+    elif state == "offline":
+        d = 2.3 * unit
+        draw.line((cx - d, cy + d, cx + d, cy - d), fill=ink, width=width)
+        for x, y in ((cx - d, cy + d), (cx + d, cy - d)):  # round ends
+            draw.ellipse((x - width / 2, y - width / 2, x + width / 2, y + width / 2), fill=ink)
+
+
+def tray_icons(full: Image.Image, folder: Path) -> None:
+    """The tray icon in each node state, at 16 pixels and twice that for
+    sharper screens. Windows and Linux show the plated logo with the mark on
+    a dark disc. macOS tints a black template image itself to suit a light
+    or dark menu bar, so its icon is the logo's globe in black, with the
+    mark cut out of it."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for state in ("connected", "connecting", "offline"):
+        for n, suffix in ((16, ""), (32, "@2x")):
+            big = n * 4  # draw large and shrink, for smooth edges
+            unit = big / 16
+            colour = full.resize((big, big), Image.LANCZOS)
+            draw = ImageDraw.Draw(colour)
+            if state != "connected":
+                r = 4.5 * unit
+                draw.ellipse((11.5 * unit - r, 11.5 * unit - r, 11.5 * unit + r, 11.5 * unit + r), fill=PLATE)
+                mark(draw, state, unit, (242, 244, 248, 255))
+            colour.resize((n, n), Image.LANCZOS).save(folder / f"{state}{suffix}.png", optimize=True)
+
+            shape = Image.new("L", (big, big), 0)
+            draw = ImageDraw.Draw(shape)
+            r = 7 * unit
+            draw.ellipse((8 * unit - r, 8 * unit - r, 8 * unit + r, 8 * unit + r), fill=255)
+            line = round(unit)
+            draw.ellipse((5 * unit, 1.8 * unit, 11 * unit, 14.2 * unit), outline=0, width=line)
+            draw.line((1 * unit, 8 * unit, 15 * unit, 8 * unit), fill=0, width=line)
+            if state != "connected":
+                r = 5 * unit
+                draw.ellipse((11.5 * unit - r, 11.5 * unit - r, 11.5 * unit + r, 11.5 * unit + r), fill=0)
+                mark(draw, state, unit, 255)
+            template = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+            template.putalpha(shape)
+            template.resize((n, n), Image.LANCZOS).save(folder / f"{state}Template{suffix}.png", optimize=True)
 
 
 if __name__ == "__main__":
