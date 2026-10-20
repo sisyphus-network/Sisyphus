@@ -517,6 +517,10 @@ test('a double-click on a workspace panel handle closes and reopens the panel, a
     const opened = (slot) => page.evaluate((slot) => document.querySelector(slot)?.getAttribute('data-open'), slot)
     const toggles = async (name, slot) => {
       const handle = page.getByRole('separator', { name })
+      const waitForPanelTransition = async () => page.locator(slot).evaluate(async (element) => {
+        await Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)))
+        await new Promise(requestAnimationFrame)
+      })
       await handle.waitFor()
       await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'true', slot)
       const box = await handle.boundingBox()
@@ -525,23 +529,20 @@ test('a double-click on a workspace panel handle closes and reopens the panel, a
       const y = box.y + box.height / 2
       // One click is not a toggle: a handle is pressed on its way to a drag.
       await page.mouse.click(x, y)
-      await page.waitForTimeout(600)
+      await waitForPanelTransition()
       assert.equal(await opened(slot), 'true', `one click on the ${name} handle closed the panel`)
       await page.mouse.dblclick(x, y)
       await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'false', slot)
       // The handle stays where it can be found, and a double-click on it
       // where it now is brings the panel back.
-      await page.waitForTimeout(600)
+      await waitForPanelTransition()
       const closed = await handle.boundingBox()
       assert.ok(closed, `the collapsed ${name} handle disappeared`)
       await page.mouse.dblclick(closed.x + closed.width / 2, closed.y + closed.height / 2)
       await page.waitForFunction((slot) => document.querySelector(slot)?.getAttribute('data-open') === 'true', slot)
       // The next handle can move while this panel or a nested element is
       // transitioning. Wait for subtree animations before measuring/clicking it.
-      await page.locator(slot).evaluate(async (element) => {
-        await Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)))
-        await new Promise(requestAnimationFrame)
-      })
+      await waitForPanelTransition()
     }
 
     await toggles('Resize conversation history panel', '.workspace-history-slot')
