@@ -67,3 +67,41 @@ func TestATaskThatFailedWaitsForAnotherWorkerThatIsBusy(t *testing.T) {
 		t.Errorf("the task ended on %q", got.GetNodeName())
 	}
 }
+
+// A task that waits for another worker holds up only itself: the worker it
+// went wrong on still gets the job's other tasks, rather than sit idle with
+// free slots until every task it lost has gone elsewhere (#541). That is
+// what a worker that rejoins a pool after losing its tasks runs into.
+func TestATaskThatWaitsForAnotherWorkerDoesNotHoldUpTheRestOfItsJob(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	busy := p.connectRaw(hello("busy", 1, "primes"))
+	busy.welcome()
+	other := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED, 1)).GetJobId()
+	holding := busy.assignment()
+
+	failing := p.connectRaw(hello("failing", 2, "primes"))
+	failing.welcome()
+	id := p.submit(primesJob(pb.ScheduleMode_SCHEDULE_MODE_DISTRIBUTED, 3)).GetJobId()
+	first, second := failing.assignment(), failing.assignment()
+	failing.fails(first, "the model server is not answering")
+
+	// The failed task waits for the busy worker; the job's third task does
+	// not wait with it.
+	third := failing.assignment()
+	if third.GetTaskId() == first.GetTaskId() || third.GetTaskId() == second.GetTaskId() || third.GetAttempt() != 1 {
+		t.Fatalf("the worker with a slot free was handed %v, want the job's untouched task", third)
+	}
+	failing.returns(second, `{"count":1}`)
+	failing.returns(third, `{"count":1}`)
+	busy.returns(holding, `{"count":148933}`)
+	again := busy.assignment()
+	if again.GetTaskId() != first.GetTaskId() || again.GetAttempt() != 2 {
+		t.Fatalf("the worker that came free was handed %v, want the task that failed", again)
+	}
+	busy.returns(again, `{"count":1}`)
+	for _, job := range []string{other, id} {
+		if done := p.wait(job); done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+			t.Errorf("job %s: %v %s", job, done.GetState(), done.GetError())
+		}
+	}
+}

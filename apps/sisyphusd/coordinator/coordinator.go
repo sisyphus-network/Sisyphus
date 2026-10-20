@@ -2082,10 +2082,14 @@ func (c *Coordinator) scheduleLocked() {
 		}
 		next := waiting[i]
 		task := next.tasks[0]
-		switch w := c.pickWorkerLocked(next.job, task); {
-		case w == nil && next.copies:
-			// Every free worker has this task already; another of the
-			// job's tasks may still have one it has not asked.
+		switch w, held := c.pickWorkerLocked(next.job, task); {
+		case w == nil && (next.copies || held):
+			// Every free worker has this task already, or it is waiting
+			// for a busy worker rather than go back to a free one it went
+			// wrong on. Either way the job's other tasks may still go to
+			// a free one: a worker that comes back after losing its tasks
+			// is given the rest of the job, not left idle until every task
+			// it lost has gone elsewhere (#541).
 			next.tasks = next.tasks[1:]
 		case w == nil:
 			// Nowhere to put it now; the rest of the job waits with it.
@@ -2170,7 +2174,8 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 }
 
 // pickWorkerLocked returns the worker with the most free slots that supports
-// the workload, or nil if none has a free slot. A worker that has a copy of
+// the workload, or nil if none has a free slot. held reports a nil that is
+// only the task waiting for a busy worker while one it went wrong on is free. A worker that has a copy of
 // the task, or has returned a result for it, is passed over: only a task of
 // a verified job has such workers while it waits for another.
 //
@@ -2184,7 +2189,7 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 // or nearly, however many slots its worker has. Among those, it goes to the
 // one with the model in memory and most of it on a graphics card, where the
 // reply comes soonest.
-func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) *worker {
+func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) (picked *worker, held bool) {
 	model := runtime.ModelNeeded(job.Needs)
 	var best, again *worker
 	var bestRank, againRank rank
@@ -2209,9 +2214,9 @@ func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) *
 		}
 	}
 	if best == nil && !elsewhere {
-		return again
+		return again, false
 	}
-	return best
+	return best, best == nil && again != nil
 }
 
 // rank is what decides between workers that could be given a task.
