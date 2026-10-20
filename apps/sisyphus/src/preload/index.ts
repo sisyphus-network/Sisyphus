@@ -88,6 +88,7 @@ const api = {
   savePoolLimits: (limits: PoolLimits): Promise<PoolLimitsState> => ipcRenderer.invoke('node:save-pool-limits', limits),
   reconnect: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:reconnect'),
   restartNode: (timeoutMessage?: string): Promise<NodeSnapshot> => ipcRenderer.invoke('node:restart-node', timeoutMessage),
+  setAppLocale: (locale: string): Promise<void> => ipcRenderer.invoke('app:set-locale', locale),
   connectPeer: (address: string): Promise<string> => ipcRenderer.invoke('node:connect-peer', address),
   setPeerComputeTrust: (peerId: string, trusted: boolean): Promise<void> => ipcRenderer.invoke('node:set-peer-compute-trust', { peerId, trusted }),
   setPeerComputePermissions: (peerId: string, givesWork: boolean, takesWork: boolean): Promise<void> => ipcRenderer.invoke('node:set-peer-compute-permissions', { peerId, givesWork, takesWork }),

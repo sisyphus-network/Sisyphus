@@ -76,6 +76,25 @@ test('the window shows the node it is connected to', async () => {
   }
 })
 
+test('closing the window quits the app when its node is not the app’s own, and leaves that node running', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    // The tray keeps only a node the app started working with the window
+    // closed; this one was started by hand, so the app closes with its window.
+    const closed = new Promise((resolve) => app.once('close', resolve))
+    await page.close()
+    await Promise.race([closed, new Promise((_, reject) => setTimeout(() => reject(new Error('the app kept running with its window closed')), 15_000))])
+    // The node someone else started is theirs, and keeps running.
+    assert.equal(node.child.exitCode, null)
+    assert.equal(node.child.signalCode, null)
+  } finally {
+    await app.close().catch(() => { /* already closed */ })
+    profile.remove()
+  }
+})
+
 test('location discovery controls configure an independently managed daemon and persist across restart', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
