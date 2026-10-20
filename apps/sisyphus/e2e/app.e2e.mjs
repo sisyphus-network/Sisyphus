@@ -1679,10 +1679,17 @@ test('Access receives its empty paired-device state and keeps pairing disabled w
       return { count: focusable.length, onlyTrigger: focusable.length === 1 && focusable[0] === trigger, wrapperRole: root?.getAttribute('role') ?? null }
     })
     assert.deepEqual(triggerStructure, { count: 1, onlyTrigger: true, wrapperRole: null }, 'the interface selector must expose exactly one focusable combobox, not a wrapper button around it')
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 650))
+    await page.waitForFunction(() => Math.abs(window.outerHeight - 650) < 60, null, { timeout: 5000 })
     await interfacePicker.focus()
     await page.keyboard.press('Enter')
     const interfaceMenu = page.getByRole('dialog', { name: 'Node interface address', exact: true })
     await interfaceMenu.waitFor()
+    const ltrBounds = await interfaceMenu.evaluate((menu) => {
+      const rect = menu.getBoundingClientRect()
+      return { bounds: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }, viewport: { width: innerWidth, height: innerHeight } }
+    })
+    assert.ok(ltrBounds.bounds.left >= 0 && ltrBounds.bounds.top >= 0 && ltrBounds.bounds.right <= ltrBounds.viewport.width && ltrBounds.bounds.bottom <= ltrBounds.viewport.height, `the LTR interface picker leaves the short viewport: ${JSON.stringify(ltrBounds)}`)
     await page.keyboard.press('Escape')
     await interfaceMenu.waitFor({ state: 'detached' })
 
@@ -1714,7 +1721,8 @@ test('Access receives its empty paired-device state and keeps pairing disabled w
     assert.equal(directionAndBounds.menu, 'rtl')
     assert.equal(directionAndBounds.list, 'ltr', 'network names and numeric IP addresses should keep their natural reading order')
     assert.equal(directionAndBounds.search, 'rtl', 'the Hebrew search prompt should align RTL')
-    assert.ok(directionAndBounds.bounds.left >= 0 && directionAndBounds.bounds.top >= 0 && directionAndBounds.bounds.right <= directionAndBounds.viewport.width && directionAndBounds.bounds.bottom <= directionAndBounds.viewport.height, `the RTL interface picker leaves the viewport: ${JSON.stringify(directionAndBounds)}`)
+    assert.equal(directionAndBounds.viewport.height <= 700, true, 'the Hebrew picker should be exercised in the short window')
+    assert.ok(directionAndBounds.bounds.left >= 0 && directionAndBounds.bounds.top >= 0 && directionAndBounds.bounds.right <= directionAndBounds.viewport.width && directionAndBounds.bounds.bottom <= directionAndBounds.viewport.height, `the RTL interface picker leaves the short viewport: ${JSON.stringify(directionAndBounds)}`)
     await search.fill('definitely-no-interface-match')
     await hebrewMenu.getByText('לא נמצאו ממשקים תואמים.', { exact: true }).waitFor()
     await hebrewMenu.getByRole('button', { name: 'סיום', exact: true }).click()
