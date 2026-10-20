@@ -38,7 +38,7 @@ A pull request that changes only documentation skips the tests. One that touches
 | The race detector | Every test is run with it | `make test` |
 | Across machines | `examples/rehearsal.sh`: each node in a container with its own address and disk, 26 checks; CI runs it on every pull request | `examples/rehearsal.sh` |
 | Desktop unit tests | Node's own test runner over the app's modules | `npm test` in `apps/sisyphus` |
-| Desktop end to end | Playwright driving the built Electron app against a node of its own; Settings selectors cover short-viewport placement and keyboard dismissal, with Hebrew RTL controls and an LTR interface/IP list for Access | `npm run test:e2e` in `apps/sisyphus` |
+| Desktop end to end | Playwright driving the built Electron app against a node of its own; Settings selectors cover short-viewport placement and keyboard dismissal, Hebrew RTL controls, an LTR interface/IP list for Access, and theme-mode switching, persistence and narrow-window fit | `npm run test:e2e` in `apps/sisyphus` |
 | Agents | A live trial of the MCP server from Claude Code, by hand, recorded on [#88](https://github.com/sisyphus-network/Sisyphus/issues/88) | by hand |
 
 A node a test starts does not look for other nodes unless the test is about that, and then only on a discovery network of the run's own (`--discovery-network`). The rehearsal's nodes do the same. So no test meets the real nodes on the machine it runs on or on its network, and two runs at once never meet each other ([#533](https://github.com/sisyphus-network/Sisyphus/issues/533)).

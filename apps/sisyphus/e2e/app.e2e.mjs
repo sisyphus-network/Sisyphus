@@ -1294,6 +1294,38 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
 
     await openSettingsCategory(page, 'General')
     await page.getByRole('heading', { name: 'General', level: 1 }).waitFor()
+    const themeSwitch = page.getByRole('group', { name: /Switch theme:/ })
+    const systemMode = themeSwitch.getByRole('button', { name: 'System', exact: true })
+    const lightMode = themeSwitch.getByRole('button', { name: 'Light', exact: true })
+    const darkMode = themeSwitch.getByRole('button', { name: 'Dark', exact: true })
+    await systemMode.click()
+    assert.equal(await systemMode.getAttribute('aria-pressed'), 'true')
+    assert.equal(await page.evaluate(() => localStorage.getItem('sisyphus-theme')), 'system')
+    // System follows the operating system's setting, and keeps following it
+    // when that changes while the app is open, with no explicit theme set.
+    const html = page.locator('html')
+    for (const colorScheme of ['dark', 'light']) {
+      await page.emulateMedia({ colorScheme })
+      await page.waitForFunction((dark) => document.documentElement.classList.contains('dark') === dark, colorScheme === 'dark')
+      assert.equal(await html.getAttribute('data-theme'), null, `System mode should not pin a theme while the system is ${colorScheme}`)
+    }
+    await page.emulateMedia({ colorScheme: null })
+    await lightMode.click()
+    assert.equal(await lightMode.getAttribute('aria-pressed'), 'true')
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'light')
+    assert.equal(await page.evaluate(() => localStorage.getItem('sisyphus-theme')), 'light')
+    await darkMode.click()
+    assert.equal(await darkMode.getAttribute('aria-pressed'), 'true')
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark')
+    assert.equal(await page.evaluate(() => localStorage.getItem('sisyphus-theme')), 'dark')
+
+    await narrow(app)
+    const switchBounds = await themeSwitch.boundingBox()
+    const modeBounds = await Promise.all([systemMode, lightMode, darkMode].map((button) => button.boundingBox()))
+    assert.ok(switchBounds && modeBounds.every((bounds) => bounds && bounds.x >= switchBounds.x && bounds.x + bounds.width <= switchBounds.x + switchBounds.width), 'theme options should fit inside the switch at the narrow window width')
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'the narrow General settings view should not overflow horizontally')
+    await wide(app, page)
+
     const accentPicker = page.getByRole('button', { name: 'Accent', exact: true })
     await accentPicker.scrollIntoViewIfNeeded()
     await accentPicker.click()
