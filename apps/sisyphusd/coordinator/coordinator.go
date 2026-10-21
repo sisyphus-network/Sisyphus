@@ -722,6 +722,7 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 	}
 	for _, job := range jobs {
 		job.Needs = c.needs(job.Workload, job.Params, len(job.Key) > 0)
+		job.Cards = c.workloads.GPUsNeeded(job.Workload, job.Params)
 		c.keys[job.ID] = keys[job.ID]
 		// What happened to it before comes back with it. A job whose events
 		// cannot be read is still a job.
@@ -982,9 +983,13 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		return nil, status.Errorf(codes.InvalidArgument, "%s gives results that can differ from one run to the next, and verify and audit_share check a task by comparing what two runs returned, so honest workers would be taken for wrong ones: they are for work that gives the same result every time", workload.Name())
 	}
 	needs := c.needs(workload.Name(), spec.GetParams(), len(spec.GetKey()) > 0)
-	// A job needs as many graphics cards as it asks for, or as its
-	// workload says each of its tasks takes, whichever is more.
-	minGPUs := max(int(spec.GetMinGpus()), c.workloads.GPUsNeeded(workload.Name(), spec.GetParams()))
+	// A job goes to workers with as many graphics cards as it asks for, or
+	// as its workload says each of its tasks holds, whichever is more. Only
+	// the cards its tasks hold limit how many run at once on a worker: a
+	// job that only asks for cards may want a machine that has them for
+	// work that does not use them.
+	cards := c.workloads.GPUsNeeded(workload.Name(), spec.GetParams())
+	minGPUs := max(int(spec.GetMinGpus()), cards)
 
 	parts := 1
 	if mode == jobmodel.Distributed {
@@ -993,7 +998,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 			// A task of a verified job takes a slot on each worker it is
 			// handed to.
 			c.mu.Lock()
-			parts = max(c.slotsLocked(workload.Name(), spec.GetMinMemoryBytes(), minGPUs, needs)/max(verify, 1), 1)
+			parts = max(c.slotsLocked(workload.Name(), spec.GetMinMemoryBytes(), minGPUs, cards, needs)/max(verify, 1), 1)
 			c.mu.Unlock()
 		}
 	}
@@ -1063,7 +1068,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		job.TaskTimeout = c.maxTaskTimeout
 	}
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), minGPUs
-	job.Needs = needs
+	job.Needs, job.Cards = needs, cards
 	job.Parent, job.Step = parent, step
 	job.NoteRead(touched.Read()...)
 	// A job is accepted only once it is on record: its submitter is about
@@ -2214,7 +2219,7 @@ func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) (
 		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) || c.besideLocked(task, w.id) {
 			continue
 		}
-		r := rank{free: w.freeFor(job.MinGPUs), id: w.id}
+		r := rank{free: w.freeFor(job.Cards), id: w.id}
 		if model != "" {
 			r.onModel, r.onCard = w.onModel(model), onCard(w.capabilities.GetLabels(), model)
 		}
@@ -2247,7 +2252,7 @@ func (w *worker) freeFor(gpus int) int {
 	}
 	cards := len(w.capabilities.GetGpus())
 	for _, a := range w.running {
-		cards -= a.job.MinGPUs
+		cards -= a.job.Cards
 	}
 	return min(free, cards/gpus)
 }
@@ -2300,15 +2305,15 @@ func onCard(labels []string, model string) int {
 }
 
 // slotsLocked counts task slots across connected workers that support the
-// workload: for tasks that hold graphics cards, as many as each worker's
-// cards can run at once.
-func (c *Coordinator) slotsLocked(workload string, minMemory uint64, minGPUs int, needs []string) int {
+// workload: for tasks that hold so many graphics cards each, as many as each
+// worker's cards can run at once.
+func (c *Coordinator) slotsLocked(workload string, minMemory uint64, minGPUs, cards int, needs []string) int {
 	total := 0
 	for _, w := range c.workers {
 		if suits(w.capabilities, workload, minMemory, minGPUs, needs) {
 			slots := int(w.capabilities.GetTaskSlots())
-			if minGPUs > 0 {
-				slots = min(slots, len(w.capabilities.GetGpus())/minGPUs)
+			if cards > 0 {
+				slots = min(slots, len(w.capabilities.GetGpus())/cards)
 			}
 			total += slots
 		}

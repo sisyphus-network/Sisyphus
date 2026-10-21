@@ -208,3 +208,43 @@ func TestAGraphicsCardRunsOneTaskAtATimeAndTheOtherSlotsTakeTheRest(t *testing.T
 		t.Errorf("the job that needs two graphics cards ran on %s", job.GetTasks()[0].GetNodeName())
 	}
 }
+
+// asking is a gated workload of another name, whose tasks hold no cards.
+type asking struct{ gated }
+
+func (asking) Name() string { return "asking" }
+
+func TestAJobThatOnlyAsksForCardsTakesEverySlotOfAMachineWithThem(t *testing.T) {
+	cards := carded{gated{started: make(chan struct{}, 16), release: make(chan struct{})}}
+	plain := asking{gated{started: make(chan struct{}, 16), release: make(chan struct{})}}
+	p := startPool(t, runtime.NewRegistry(cards, plain))
+	p.startMachine("laptop", 4, hardware.Info{MemoryBytes: 16 << 30, GPUs: []hardware.GPU{{Name: "RTX 4050", MemoryBytes: 6 << 30}}})
+	p.startMachine("r620", 4, hardware.Info{MemoryBytes: 64 << 30})
+	p.waitForWorkers(2)
+
+	// The laptop's one card is held by a task that needs it.
+	onCard := p.submit(&pb.JobSpec{Workload: "carded", Params: []byte(`{"gpus":1}`), MaxTasks: 1})
+	<-cards.started
+	// A job that asks for a machine with a card, for work that needs none,
+	// goes only to the laptop, is split across all its slots, and takes
+	// every one the card's task leaves free.
+	picky := p.submit(&pb.JobSpec{Workload: "asking", MinGpus: 1})
+	for range 3 {
+		<-plain.started
+	}
+	if job := p.job(picky.GetJobId()); len(job.GetTasks()) != 4 || job.GetSpec().GetMinGpus() != 1 {
+		t.Errorf("a job that only asks for a card: %d tasks, asking for %d cards", len(job.GetTasks()), job.GetSpec().GetMinGpus())
+	}
+	close(cards.release)
+	close(plain.release)
+	p.wait(onCard.GetJobId())
+	job := p.wait(picky.GetJobId())
+	if job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("job %v: %s", job.GetState(), job.GetError())
+	}
+	for _, task := range job.GetTasks() {
+		if task.GetNodeName() != "laptop" {
+			t.Errorf("a task of a job that asks for a card ran on %s", task.GetNodeName())
+		}
+	}
+}
