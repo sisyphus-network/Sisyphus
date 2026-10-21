@@ -72,6 +72,10 @@ func TestATranscodeJobIsAContainerJobWithTheImageAndCommandFixed(t *testing.T) {
 }
 
 func TestTheTranscodingImageIsBuiltOnlyWhereItIsMissing(t *testing.T) {
+	// A temporary directory of its own, so that images other tests or other
+	// jobs on the machine are building at the same time are not taken for
+	// build directories this test left behind.
+	t.Setenv("TMPDIR", t.TempDir())
 	store := storage.NewMemory()
 	ctx := context.Background()
 	video, _ := store.Put(ctx, strings.NewReader("a video"))
