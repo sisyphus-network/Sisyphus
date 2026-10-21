@@ -71,14 +71,16 @@ func TestATranscribeJobIsAContainerJobWithTheImageAndCommandFixed(t *testing.T) 
 	}
 
 	for params, want := range map[string]string{
-		`not json`:                             "transcribe parameters",
-		`{}`:                                   "input is not the CID of a stored recording",
-		`{"input":"somewhere"}`:                "input is not the CID of a stored recording",
-		`{"input":"CID","language":"en;"}`:     `language is "en;", and must be a code such as en, or auto`,
-		`{"input":"CID","language":"EN"}`:      `language is "EN"`,
-		`{"input":"CID","language":"english"}`: `language is "english"`,
-		`{"input":"CID","model":"large"}`:      `model is "large", and must be one of tiny, tiny.en, base, base.en, small, small.en, large-v3-turbo-q5_0, large-v3-q5_0, medium, medium.en, large-v3-turbo, large-v1, large-v2, large-v3`,
-		`{"input":"CID","segments":-1}`:        "segments is -1, and must be 0 or more",
+		`not json`:                                          "transcribe parameters",
+		`{}`:                                                "input is not the CID of a stored recording",
+		`{"input":"somewhere"}`:                             "input is not the CID of a stored recording",
+		`{"input":"CID","language":"en;"}`:                  `language is "en;", and must be a code such as en, or auto`,
+		`{"input":"CID","language":"EN"}`:                   `language is "EN"`,
+		`{"input":"CID","language":"english"}`:              `language is "english"`,
+		`{"input":"CID","model":"large"}`:                   `model is "large", and must be one of tiny, tiny.en, base, base.en, small, small.en, large-v3-turbo-q5_0, large-v3-q5_0, medium, medium.en, large-v3-turbo, large-v1, large-v2, large-v3`,
+		`{"input":"CID","segments":-1}`:                     "segments is -1, and must be 0 or more",
+		`{"input":"CID","model":"base.en","language":"fr"}`: `the model base.en understands only English, and language is "fr"`,
+		`{"input":"CID","model":"Base"}`:                    `model is "Base"`,
 	} {
 		params = strings.Replace(params, "CID", recording.String(), 1)
 		if _, err := (Transcribe{}).Split(ctx, store, []byte(params), 2); err == nil || !strings.Contains(err.Error(), want) {
