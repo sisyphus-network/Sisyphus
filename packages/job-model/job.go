@@ -82,6 +82,10 @@ type Task struct {
 	// across a restart: an attempt in progress then is lost anyway.
 	Progress  float64
 	StartedAt time.Time
+
+	// compare is how the task's results are compared, if not byte for
+	// byte; see Job.CompareBy.
+	compare Comparer
 }
 
 type Job struct {

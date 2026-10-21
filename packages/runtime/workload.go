@@ -4,6 +4,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -65,9 +66,55 @@ type Described interface {
 // graphics card, or whatever a container's image does. Its work cannot be
 // checked by comparing the bytes two runs return, which is how a job is
 // verified or audited, since honest workers would disagree. Varies says
-// whether that is so.
+// whether that is so, unless it is also Comparing: then its results are
+// compared with its own Compare, and it is checked like any other.
 type Varying interface {
 	Varies() bool
+}
+
+// Comparing is a workload that says itself whether two outputs of one task
+// are the same result, for work whose honest results agree only to some
+// precision: numbers computed on different processors that differ in their
+// last digits. Two outputs of one task are compared with Compare, where the
+// workload has it, and are otherwise the same only if their bytes are; see
+// Compare below.
+//
+// The tolerance is the workload's to choose, and it is all that stands
+// between a verified result and a made-up one: it must be tight enough that
+// a result that was not computed, or was computed wrongly, falls outside
+// it. Compare must be symmetric, and must hold for an output compared with
+// itself; it need not be transitive, and the coordinator does not take it
+// to be.
+type Comparing interface {
+	// Compare reports whether a and b, two outputs of the same task
+	// payload, are the same result, and if they are not, says why: what
+	// differed, and by how much, for whoever looks into it. It must not
+	// fail on outputs it cannot read: those are not the same.
+	Compare(a, b []byte) (same bool, why string)
+}
+
+// Compare reports whether two outputs of one task of a workload are the
+// same result: by the workload's own Compare, if it is Comparing, and
+// otherwise by their bytes. Outputs whose bytes are equal are the same
+// either way. why says what differed, when the workload said; it is empty
+// for outputs whose bytes alone were compared.
+func Compare(w Workload, a, b []byte) (same bool, why string) {
+	if bytes.Equal(a, b) {
+		return true, ""
+	}
+	if c, ok := w.(Comparing); ok {
+		return c.Compare(a, b)
+	}
+	return false, ""
+}
+
+// Checkable reports whether a workload's tasks can be checked by comparing
+// two runs' results, as verify and audit_share do: it gives the same result
+// every time, or it compares its results itself.
+func Checkable(w Workload) bool {
+	varying, varies := w.(Varying)
+	_, compares := w.(Comparing)
+	return !varies || !varying.Varies() || compares
 }
 
 // Needy is a workload whose tasks cannot run on just any worker that has

@@ -26,6 +26,22 @@ import (
 //     blobs their attempts stored have the same CIDs.
 //     That holds for a private job too: sealing gives the same blob for
 //     the same key and data, so the same work stores the same CIDs.
+//   - Unless the workload compares its results itself (runtime.Comparing),
+//     for work whose honest results agree only to some precision. Then two
+//     results are the same if their blobs have the same CIDs and the
+//     workload's Compare says their outputs are. Where it says they are
+//     not, what it says of why is in the job's events, beside the workers
+//     that returned them.
+//   - Results compared that way need not fall into sides of their own
+//     accord: a may be within the workload's tolerance of b, and b of c,
+//     without a being within it of c. So a side is drawn around one result,
+//     as the result and every other that is the same as it, and the side
+//     that settles a task is the one drawn around whichever result most
+//     others are the same as (jobmodel.Task.Sides). The task is given the
+//     result it was drawn around, which agrees with each of the results that
+//     settled it; it takes as many of those as it would take identical
+//     ones. For results compared byte for byte that is exactly the largest
+//     set of identical results, as it has always been.
 //   - A task is handed to as many workers at once as must agree. No worker
 //     is asked twice for a result: one that has returned a result for a
 //     task, or has a copy of it, is not given it again.
@@ -213,7 +229,7 @@ func (c *Coordinator) returnedLocked(w *worker, a assignment, output []byte, sto
 	case task.State == jobmodel.Succeeded:
 		said := names(sides[0]) + " returned the same result"
 		for _, other := range sides[1:] {
-			said += "; " + names(other) + " returned another"
+			said += "; " + names(other) + " returned another" + because(task, sides[0][0], other[0])
 		}
 		c.recordLocked(job, eventTaskSucceeded, task.Index, "", said)
 		c.countLocked(task, sides)
@@ -232,8 +248,8 @@ func (c *Coordinator) returnedLocked(w *worker, a assignment, output []byte, sto
 			allDone = false
 		}
 	case len(sides) > 1:
-		c.log.Warn("workers returned different results for a task", "task", task.ID, "results", describe(sides))
-		c.recordLocked(job, eventTaskDisagreed, task.Index, "", describe(sides))
+		c.log.Warn("workers returned different results for a task", "task", task.ID, "results", describe(task, sides))
+		c.recordLocked(job, eventTaskDisagreed, task.Index, "", describe(task, sides))
 		if why := c.unsettledLocked(job, task, sides); why != "" {
 			job.Dispute(task, why, time.Now())
 		}
@@ -255,7 +271,7 @@ func (c *Coordinator) unsettledLocked(job *jobmodel.Job, task *jobmodel.Task, si
 	}
 	return fmt.Sprintf("task %d could not be verified: its workers returned different results, no %d of them the same, %s (%s). "+
 		"Verification is for work that gives the same result every time it is run: either this workload does not, or a worker returned a wrong result",
-		task.Index, task.Verify, why, describe(sides))
+		task.Index, task.Verify, why, describe(task, sides))
 }
 
 // unaskedLocked counts the connected workers that could be given a task of
@@ -381,13 +397,39 @@ func names(side []jobmodel.Result) string {
 	return strings.Join(workers, ", ")
 }
 
-// describe says which workers returned which result, side by side.
-func describe(sides [][]jobmodel.Result) string {
+// describe says which workers returned which result, side by side, and,
+// for a workload that compares its results itself, why each side's differs
+// from the first's.
+func describe(task *jobmodel.Task, sides [][]jobmodel.Result) string {
 	said := make([]string, 0, len(sides))
-	for _, side := range sides {
-		said = append(said, names(side)+" returned "+short(side[0]))
+	for at, side := range sides {
+		line := names(side) + " returned " + short(side[0])
+		if at > 0 {
+			line += because(task, sides[0][0], side[0])
+		}
+		said = append(said, line)
 	}
 	return strings.Join(said, "; ")
+}
+
+// because says, in parentheses, why a result is not the same as another
+// for the task, as its workload put it, or nothing where it said nothing:
+// results compared byte for byte differ in their bytes, and that is all.
+func because(task *jobmodel.Task, settled, other jobmodel.Result) string {
+	if _, why := task.Same(settled, other); why != "" {
+		return " (" + why + ")"
+	}
+	return ""
+}
+
+// comparer is how the results of a workload's tasks are compared, for
+// verify and audit_share alike: by runtime.Compare, for a workload that
+// compares its results itself, and otherwise byte for byte, which is nil.
+func comparer(workload runtime.Workload) jobmodel.Comparer {
+	if _, compares := workload.(runtime.Comparing); !compares {
+		return nil
+	}
+	return func(a, b []byte) (bool, string) { return runtime.Compare(workload, a, b) }
 }
 
 // Audits. A job may ask that a share of its tasks be checked by the
@@ -401,7 +443,10 @@ func describe(sides [][]jobmodel.Result) string {
 // It needs no second worker, so it is what a pool with one worker has, and
 // it is not fooled by workers that agree with each other. It costs the
 // coordinating machine the work of each task it checks, and like every
-// comparison here it is for work that gives the same result each time.
+// comparison here it is for work that gives the same result each time, or
+// whose workload compares its results within its own tolerance: then the
+// two are compared as two workers' results are, and where they differ the
+// events say why.
 
 // runsItself reports whether this node can run a workload's tasks itself.
 func (c *Coordinator) runsItself(workload string) bool {
@@ -455,7 +500,7 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 		// stands as it would have with no audit.
 		job.NoteAudit(task, jobmodel.AuditInconclusive)
 		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, fmt.Sprintf("the coordinator could not run the task itself to check it (%v), so the result is taken unchecked", err))
-	case mine.Digest() == theirs.Digest():
+	case sameAudited(task, mine, theirs):
 		standing.Agree()
 		job.NoteAudit(task, jobmodel.AuditMatched)
 		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, "the coordinator ran the task itself and got the same result")
@@ -466,7 +511,7 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 		job.NoteRead(touched.Read()...)
 		job.NoteTaskOutput(touched.Written()...)
 		c.log.Warn("a worker returned another result for a task than this node got by running it itself", "task", task.ID, "node", nodeID, "returned", short(theirs), "got", short(mine))
-		c.recordLocked(job, eventTaskDisagreed, task.Index, "", fmt.Sprintf("%s returned %s; the coordinator ran the task itself and got %s", who, short(theirs), short(mine)))
+		c.recordLocked(job, eventTaskDisagreed, task.Index, "", fmt.Sprintf("%s returned %s; the coordinator ran the task itself and got %s%s", who, short(theirs), short(mine), because(task, mine, theirs)))
 		c.recordLocked(job, eventTaskSucceeded, task.Index, "", "the coordinator's own result is taken, and not "+who+"'s")
 	}
 	if err == nil {
@@ -482,4 +527,12 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 	c.settleLocked(job)
 	c.notifyLocked(job)
 	c.scheduleLocked()
+}
+
+// sameAudited reports whether what the coordinator got by running a task
+// itself is the same result as what its worker returned, compared as the
+// task's results are compared when workers check each other.
+func sameAudited(task *jobmodel.Task, mine, theirs jobmodel.Result) bool {
+	same, _ := task.Same(mine, theirs)
+	return same
 }

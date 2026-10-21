@@ -42,6 +42,38 @@ func (r Result) same(other Result) bool {
 	return bytes.Equal(r.Output, other.Output) && slices.Equal(r.Blobs, other.Blobs)
 }
 
+// Comparer reports whether two outputs of one task are the same result, and
+// if they are not, why: it is a workload's own comparison, for work whose
+// honest results agree only to some precision. It is symmetric and holds
+// for an output compared with itself, but need not be transitive: a is
+// within a tolerance of b, and b of c, without a being within it of c.
+type Comparer func(a, b []byte) (same bool, why string)
+
+// CompareBy has the results of the job's tasks compared by compare instead
+// of byte for byte; nil goes back to bytes. Like Needs, it follows from the
+// job's workload and is not saved: whoever holds the job sets it again.
+func (j *Job) CompareBy(compare Comparer) {
+	for _, t := range j.Tasks {
+		t.compare = compare
+	}
+}
+
+// Same reports whether two results for the task are the same, and if they
+// are not and the task's results are compared by its workload, why not.
+// Results compared that way must still have stored the same blobs: the
+// workload compares outputs, and blobs are named by what they hold.
+// Otherwise they are the same only if their outputs are the same bytes and
+// they stored the same blobs, and why is empty.
+func (t *Task) Same(a, b Result) (same bool, why string) {
+	switch {
+	case t.compare == nil:
+		return a.same(b), ""
+	case !slices.Equal(a.Blobs, b.Blobs):
+		return false, "they stored different blobs"
+	}
+	return t.compare(a.Output, b.Output)
+}
+
 // Digest is a name for what a result holds, by which results that differ
 // can be told apart without printing them: the SHA-256, in hex, of the
 // output and of the name of each blob, each preceded by its length as eight
@@ -140,20 +172,63 @@ func (t *Task) MaxResults() int {
 }
 
 // Sides returns a task's results sorted into sides: the results that are
-// the same as each other, in the order of their attempts. The side with the
-// most results comes first, and of two as large the one heard from first. A
-// task whose results all agree has one side, and one with none has none.
+// the same as each other. The side with the most results comes first, and
+// of two as large the one heard from first. A task whose results all agree
+// has one side, and one with none has none.
+//
+// Where results are compared by their workload, being the same need not be
+// transitive, and results do not fall into sides of their own accord. So a
+// side is drawn around one result, its anchor: it is the anchor and every
+// result left that is the same as the anchor. The first side is drawn
+// around whichever result the most others are the same as, the first heard
+// from of those that tie; its results are taken out, and the next side is
+// drawn from those left in the same way, until none are. The anchor comes
+// first in its side, and the rest follow in the order of their attempts.
+// Every result of a side is then the same as the first, which is the one a
+// task that side settles is given: the task's result agrees with each
+// result it was settled by, though those need not all agree with each
+// other.
+//
+// For results compared byte for byte, the sides are the results that are
+// identical, each in the order of their attempts, since the first heard
+// from of identical results is the one drawn around.
 func (t *Task) Sides() [][]Result {
-	var sides [][]Result
-	for _, r := range t.Results {
-		at := slices.IndexFunc(sides, func(side []Result) bool { return side[0].same(r) })
-		if at < 0 {
-			sides = append(sides, []Result{r})
-			continue
+	n := len(t.Results)
+	// Each pair is compared once: a comparison may take some work.
+	same := make([][]bool, n)
+	for i := range same {
+		same[i] = make([]bool, n)
+		same[i][i] = true
+		for j := range i {
+			same[i][j], _ = t.Same(t.Results[j], t.Results[i])
+			same[j][i] = same[i][j]
 		}
-		sides[at] = append(sides[at], r)
 	}
-	slices.SortStableFunc(sides, func(a, b []Result) int { return len(b) - len(a) })
+	var sides [][]Result
+	left := make([]int, n)
+	for i := range left {
+		left[i] = i
+	}
+	for len(left) > 0 {
+		var side []int
+		for _, anchor := range left {
+			around := []int{anchor}
+			for _, i := range left {
+				if i != anchor && same[anchor][i] {
+					around = append(around, i)
+				}
+			}
+			if len(around) > len(side) {
+				side = around
+			}
+		}
+		results := make([]Result, 0, len(side))
+		for _, i := range side {
+			results = append(results, t.Results[i])
+		}
+		sides = append(sides, results)
+		left = slices.DeleteFunc(left, func(i int) bool { return slices.Contains(side, i) })
+	}
 	return sides
 }
 
