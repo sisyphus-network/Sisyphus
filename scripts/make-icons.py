@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Draw the application icons from assets/app-icon.png.
 
-The app icon is a glowing network globe on transparency, which disappears on
-a light taskbar, so each icon sets it on a dark rounded plate the colour of
-the app's window. Run this again whenever the artwork changes, and commit
-what it writes. It needs Pillow: pip install pillow.
+The app icon is a glowing network globe on transparency. Keep that
+transparency in every desktop and tray variant. Run this again whenever the
+artwork changes, and commit what it writes. It needs Pillow: pip install pillow.
 
   apps/sisyphus/build/icon.icns     macOS: the app, the Dock, the disk image
   apps/sisyphus/build/icon.ico      Windows: the app, the installer, shortcuts
@@ -18,14 +17,11 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "assets/app-icon.png"
-PLATE = (16, 20, 26, 255)  # the window's background, #10141a
 BIG = 1024
 
 
-def plate(inset: float, radius: float, padding: float) -> Image.Image:
-    """The artwork on a rounded square. inset is the gap between the square
-    and the edge of the picture, radius its corners and padding the gap
-    between the square's edge and the artwork, each as a share of the picture."""
+def app_icon(padding: float) -> Image.Image:
+    """Center the cropped artwork on a transparent square with a small margin."""
     artwork = Image.open(SOURCE).convert("RGBA")
     # Ignore faint edge pixels in artwork exported against transparency; a
     # single alpha value across the canvas would otherwise defeat cropping.
@@ -33,14 +29,8 @@ def plate(inset: float, radius: float, padding: float) -> Image.Image:
     if bounds is None:
         raise ValueError(f"{SOURCE} has no visible artwork")
     artwork = artwork.crop(bounds)
-    # Draw at four times the size and shrink, for smooth corners.
-    size = BIG * 4
-    mask = Image.new("L", (size, size), 0)
-    edge = round(size * inset)
-    ImageDraw.Draw(mask).rounded_rectangle((edge, edge, size - edge - 1, size - edge - 1), round(size * radius), fill=255)
     icon = Image.new("RGBA", (BIG, BIG), (0, 0, 0, 0))
-    icon.paste(Image.new("RGBA", (BIG, BIG), PLATE), mask=mask.resize((BIG, BIG), Image.LANCZOS))
-    room = BIG * (1 - 2 * inset - 2 * padding)
+    room = BIG * (1 - 2 * padding)
     scale = room / max(artwork.size)
     artwork = artwork.resize((round(artwork.width * scale), round(artwork.height * scale)), Image.LANCZOS)
     icon.alpha_composite(artwork, ((BIG - artwork.width) // 2, (BIG - artwork.height) // 2))
@@ -50,12 +40,10 @@ def plate(inset: float, radius: float, padding: float) -> Image.Image:
 def main() -> None:
     desktop = ROOT / "apps/sisyphus/build"
     (desktop / "icons").mkdir(parents=True, exist_ok=True)
-    # macOS draws no plate of its own: its icons leave a margin around a
-    # square with wide corners, so that they sit level with the others.
-    mac = plate(inset=0.098, radius=0.18, padding=0.07)
+    # Leave a little more transparent breathing room around the macOS icon.
+    mac = app_icon(padding=0.08)
     mac.save(desktop / "icon.icns", sizes=[(n, n) for n in (16, 32, 64, 128, 256, 512, 1024)])
-    # Windows and Linux icons fill the picture.
-    full = plate(inset=0.0, radius=0.2, padding=0.06)
+    full = app_icon(padding=0.04)
     full.save(desktop / "icon.ico", sizes=[(n, n) for n in (16, 24, 32, 48, 64, 128, 256)])
     for n in (16, 32, 48, 64, 128, 256, 512):
         full.resize((n, n), Image.LANCZOS).save(desktop / "icons" / f"{n}x{n}.png", optimize=True)
@@ -83,10 +71,9 @@ def mark(draw: ImageDraw.ImageDraw, state: str, unit: float, ink) -> None:
 
 def tray_icons(full: Image.Image, folder: Path) -> None:
     """The tray icon in each node state, at 16 pixels and twice that for
-    sharper screens. Windows and Linux show the plated logo with the mark on
-    a dark disc. macOS tints a black template image itself to suit a light
-    or dark menu bar, so its icon is the logo's globe in black, with the
-    mark cut out of it."""
+    sharper screens. Windows and Linux retain the artwork's transparency;
+    the state mark clears only its own small area. macOS tints a monochrome
+    template to suit the menu bar, preserving the globe's bright network lines."""
     folder.mkdir(parents=True, exist_ok=True)
     for state in ("connected", "connecting", "offline"):
         for n, suffix in ((16, ""), (32, "@2x")):
@@ -96,7 +83,7 @@ def tray_icons(full: Image.Image, folder: Path) -> None:
             draw = ImageDraw.Draw(colour)
             if state != "connected":
                 r = 4.5 * unit
-                draw.ellipse((11.5 * unit - r, 11.5 * unit - r, 11.5 * unit + r, 11.5 * unit + r), fill=PLATE)
+                draw.ellipse((11.5 * unit - r, 11.5 * unit - r, 11.5 * unit + r, 11.5 * unit + r), fill=(0, 0, 0, 0))
                 mark(draw, state, unit, (242, 244, 248, 255))
             colour.resize((n, n), Image.LANCZOS).save(folder / f"{state}{suffix}.png", optimize=True)
 
