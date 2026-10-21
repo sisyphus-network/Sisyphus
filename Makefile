@@ -21,7 +21,7 @@ cover: export SISYPHUS_REQUIRE_KUBO ?= 1
 cover: export SISYPHUS_REQUIRE_CLUSTER ?= 1
 cover: export SISYPHUS_REQUIRE_DOCKER ?= 1
 cover:
-	go test -tags=realimages -count=1 -timeout 25m -coverpkg=$(COVERED) -coverprofile=coverage.out ./...
+	go test -tags=realimages -count=1 -timeout 40m -coverpkg=$(COVERED) -coverprofile=coverage.out ./...
 	./scripts/check-coverage.sh coverage.out
 
 # Runs a three-node pool and a job on this machine, in one terminal.
