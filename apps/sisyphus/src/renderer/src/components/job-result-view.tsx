@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { getNodeApi } from '@/lib/node-api'
 import { formatJobResult } from '@/lib/job-result'
+import { nameInResult, outputFileName, resultFileName } from '@/lib/output-names'
 import { type getMessages } from '@/i18n/messages'
 
 type Messages = ReturnType<typeof getMessages>
@@ -21,7 +22,7 @@ export function JobResult({ job, messages, open = false }: { job: FinishedJob; m
     const url = URL.createObjectURL(new Blob([new Uint8Array(result).buffer]))
     const link = document.createElement('a')
     link.href = url
-    link.download = `${job.jobId}-result`
+    link.download = resultFileName(job)
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
@@ -33,17 +34,17 @@ export function JobResult({ job, messages, open = false }: { job: FinishedJob; m
   </details>
 }
 
-async function downloadOutput(cid: string, jobId: string, index: number, messages: Messages) {
+async function downloadOutput(cid: string, job: FinishedJob, index: number, messages: Messages) {
   try {
     const data = await getNodeApi().fetchFile(cid)
     const bytes = new Uint8Array(data.byteLength); bytes.set(data)
     const url = URL.createObjectURL(new Blob([bytes.buffer]))
-    const link = document.createElement('a'); link.href = url; link.download = `${jobId}-output-${index + 1}`; link.click(); URL.revokeObjectURL(url)
+    const link = document.createElement('a'); link.href = url; link.download = outputFileName(job, cid, index, bytes); link.click(); URL.revokeObjectURL(url)
   } catch (error) { toast.error(messages.operationText.fetchOutputFailed, { description: error instanceof Error ? error.message : String(error) }) }
 }
 
 // JobOutputs offers each file a finished job wrote to save.
 export function JobOutputs({ job, messages }: { job: FinishedJob; messages: Messages }) {
   if (!job.outputBlobs?.length) return null
-  return <div className="mt-2 flex flex-wrap gap-2">{job.outputBlobs.map((cid, index) => <Button key={cid} type="button" size="sm" variant="outline" onClick={() => void downloadOutput(cid, job.jobId, index, messages)}><Download className="me-1 size-3" />{messages.output} {index + 1}</Button>)}</div>
+  return <div className="mt-2 flex flex-wrap gap-2">{job.outputBlobs.map((cid, index) => <Button key={cid} type="button" size="sm" variant="outline" onClick={() => void downloadOutput(cid, job, index, messages)}><Download className="me-1 size-3" /><bdi>{nameInResult(job.result, cid) ?? `${messages.output} ${index + 1}`}</bdi></Button>)}</div>
 }
