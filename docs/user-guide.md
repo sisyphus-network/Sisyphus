@@ -123,6 +123,8 @@ What the other members of your pool see, for each choice:
 
 The rounding is done on your machine, before anything is sent, so the pool never receives more than you chose. Change the pin or the share while the node runs and the pool sees the change at once; one made with `sisyphusd location set` while the node runs reaches the pool the next time it connects. Your own node always shows your pin as precisely as you gave it.
 
+Without a pin, a node can still be placed near its city rather than in the middle of its country. `sisyphusd location city-table download` fetches DB-IP's free city table, some 90 MB, and keeps it on the node; `location city-table status` says which month's it is and `location city-table remove` deletes it. It is downloaded only when you ask, and downloading it shows db-ip.com your machine's address; after that, finding the city asks no one. The city is an estimate, often tens of kilometres off, since an address is placed where the provider's network is. Your own pin always wins over it, and it is not sent to the pool. IP Geolocation by [DB-IP](https://db-ip.com).
+
 ```sh
 bin/sisyphusd id
 bin/sisyphusd nodes

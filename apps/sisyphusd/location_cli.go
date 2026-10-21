@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/sisyphus-network/Sisyphus/packages/geo"
+	"github.com/sisyphus-network/Sisyphus/packages/geo/citytable"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 )
 
@@ -18,9 +21,12 @@ import (
 // it is asked for its info, and its pools see it from when it next connects
 // to them. The desktop app sets it through the running node, whose pools
 // see it at once.
-func locationCommand(args []string) error {
+func locationCommand(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errLocationCommand
+	}
+	if args[0] == "city-table" {
+		return cityTableCommand(ctx, args[1:])
 	}
 	fs := flag.NewFlagSet("sisyphusd location "+args[0], flag.ContinueOnError)
 	dataDir := fs.String("data-dir", defaultDataDir(), "directory holding the node's data")
@@ -89,7 +95,7 @@ func locationCommand(args []string) error {
 	return nil
 }
 
-var errLocationCommand = errors.New("expected location show, set or clear")
+var errLocationCommand = errors.New("expected location show, set, clear or city-table")
 
 func degrees(value float64) string { return strconv.FormatFloat(value, 'f', -1, 64) }
 
@@ -117,3 +123,64 @@ func poolSees(location nodedb.OwnerLocation) string {
 	}
 	return fmt.Sprintf("its pools see %s, %s from when it next connects", degrees(latitude), degrees(longitude))
 }
+
+// cityTableURL is where the city table is downloaded from, with the month
+// in place of %s; tests point it elsewhere.
+var cityTableURL = citytable.DefaultURL
+
+// cityTableCommand downloads, describes and removes the free city table,
+// DB-IP's "IP to City Lite", by which the node finds the city its public
+// address is in. Like the rest of location it works on the node's data
+// directory, so the node need not be running; one that is uses the table,
+// or stops using it, the next time it is asked for its info.
+func cityTableCommand(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return errCityTableCommand
+	}
+	fs := flag.NewFlagSet("sisyphusd location city-table "+args[0], flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage of %s:\n%s\n", fs.Name(), cityTableHelp)
+		fs.PrintDefaults()
+	}
+	dataDir := fs.String("data-dir", defaultDataDir(), "directory holding the node's data")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	store := citytable.Store{Dir: *dataDir, URL: cityTableURL}
+	var status citytable.Status
+	var err error
+	switch args[0] {
+	case "download":
+		fmt.Fprintln(stdout, "downloading the city table from db-ip.com, which sees this machine's address")
+		status, err = store.Download(ctx)
+	case "status":
+		status, err = store.Status()
+	case "remove":
+		err = store.Remove()
+	default:
+		return errCityTableCommand
+	}
+	if err != nil {
+		return err
+	}
+	if !status.Installed {
+		fmt.Fprintln(stdout, "no city table is downloaded")
+		return nil
+	}
+	fmt.Fprintf(stdout, "edition:    %s\nsize:       %.1f MB\ndownloaded: %s\n%s, %s\n",
+		status.Edition, float64(status.Bytes)/1e6, status.Downloaded.Format(time.RFC3339), citytable.Attribution, citytable.AttributionURL)
+	return nil
+}
+
+const cityTableHelp = `download fetches DB-IP's free "IP to City Lite" table (CC BY 4.0), this
+month's or last month's, some 90 MB, and keeps it in the data directory.
+Downloading it shows db-ip.com this machine's address; looking an address
+up in it afterwards asks no one. The city it gives is an estimate, often
+tens of kilometres off. status says which edition is kept, and remove
+deletes it. IP Geolocation by DB-IP, https://db-ip.com.`
+
+var errCityTableCommand = errors.New("expected location city-table download, status or remove")

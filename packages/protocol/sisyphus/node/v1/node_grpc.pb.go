@@ -26,6 +26,9 @@ const (
 	NodeService_SetLocationDiscoverySettings_FullMethodName = "/sisyphus.node.v1.NodeService/SetLocationDiscoverySettings"
 	NodeService_GetNodeLocation_FullMethodName              = "/sisyphus.node.v1.NodeService/GetNodeLocation"
 	NodeService_SetNodeLocation_FullMethodName              = "/sisyphus.node.v1.NodeService/SetNodeLocation"
+	NodeService_GetCityTable_FullMethodName                 = "/sisyphus.node.v1.NodeService/GetCityTable"
+	NodeService_DownloadCityTable_FullMethodName            = "/sisyphus.node.v1.NodeService/DownloadCityTable"
+	NodeService_RemoveCityTable_FullMethodName              = "/sisyphus.node.v1.NodeService/RemoveCityTable"
 	NodeService_GetPoolLimits_FullMethodName                = "/sisyphus.node.v1.NodeService/GetPoolLimits"
 	NodeService_SetPoolLimits_FullMethodName                = "/sisyphus.node.v1.NodeService/SetPoolLimits"
 	NodeService_GetWebAccessConfig_FullMethodName           = "/sisyphus.node.v1.NodeService/GetWebAccessConfig"
@@ -97,6 +100,17 @@ type NodeServiceClient interface {
 	// it. Nothing is sent to the pool yet.
 	GetNodeLocation(ctx context.Context, in *GetNodeLocationRequest, opts ...grpc.CallOption) (*GetNodeLocationResponse, error)
 	SetNodeLocation(ctx context.Context, in *SetNodeLocationRequest, opts ...grpc.CallOption) (*GetNodeLocationResponse, error)
+	// The free city table, DB-IP's "IP to City Lite" (CC BY 4.0), by which
+	// the node finds the city its public address is in. It is downloaded only
+	// when asked for, and kept in the node's data directory. GetCityTable says
+	// whether it is there, and anything on the machine may ask.
+	// DownloadCityTable fetches this month's, or last month's if this month's
+	// is not out yet, and waits for it; downloading it shows db-ip.com this
+	// machine's address. Looking an address up in it asks no one.
+	// RemoveCityTable deletes it. Both need the node's API token.
+	GetCityTable(ctx context.Context, in *GetCityTableRequest, opts ...grpc.CallOption) (*CityTableState, error)
+	DownloadCityTable(ctx context.Context, in *DownloadCityTableRequest, opts ...grpc.CallOption) (*CityTableState, error)
+	RemoveCityTable(ctx context.Context, in *RemoveCityTableRequest, opts ...grpc.CallOption) (*CityTableState, error)
 	// The limits a coordinator holds each member to. Changes are saved by the
 	// node and take effect after it restarts, whether the desktop starts it
 	// or not; a node that does not run the coordinator role holds no one to
@@ -319,6 +333,36 @@ func (c *nodeServiceClient) SetNodeLocation(ctx context.Context, in *SetNodeLoca
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetNodeLocationResponse)
 	err := c.cc.Invoke(ctx, NodeService_SetNodeLocation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetCityTable(ctx context.Context, in *GetCityTableRequest, opts ...grpc.CallOption) (*CityTableState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CityTableState)
+	err := c.cc.Invoke(ctx, NodeService_GetCityTable_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) DownloadCityTable(ctx context.Context, in *DownloadCityTableRequest, opts ...grpc.CallOption) (*CityTableState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CityTableState)
+	err := c.cc.Invoke(ctx, NodeService_DownloadCityTable_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) RemoveCityTable(ctx context.Context, in *RemoveCityTableRequest, opts ...grpc.CallOption) (*CityTableState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CityTableState)
+	err := c.cc.Invoke(ctx, NodeService_RemoveCityTable_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -901,6 +945,17 @@ type NodeServiceServer interface {
 	// it. Nothing is sent to the pool yet.
 	GetNodeLocation(context.Context, *GetNodeLocationRequest) (*GetNodeLocationResponse, error)
 	SetNodeLocation(context.Context, *SetNodeLocationRequest) (*GetNodeLocationResponse, error)
+	// The free city table, DB-IP's "IP to City Lite" (CC BY 4.0), by which
+	// the node finds the city its public address is in. It is downloaded only
+	// when asked for, and kept in the node's data directory. GetCityTable says
+	// whether it is there, and anything on the machine may ask.
+	// DownloadCityTable fetches this month's, or last month's if this month's
+	// is not out yet, and waits for it; downloading it shows db-ip.com this
+	// machine's address. Looking an address up in it asks no one.
+	// RemoveCityTable deletes it. Both need the node's API token.
+	GetCityTable(context.Context, *GetCityTableRequest) (*CityTableState, error)
+	DownloadCityTable(context.Context, *DownloadCityTableRequest) (*CityTableState, error)
+	RemoveCityTable(context.Context, *RemoveCityTableRequest) (*CityTableState, error)
 	// The limits a coordinator holds each member to. Changes are saved by the
 	// node and take effect after it restarts, whether the desktop starts it
 	// or not; a node that does not run the coordinator role holds no one to
@@ -1061,6 +1116,15 @@ func (UnimplementedNodeServiceServer) GetNodeLocation(context.Context, *GetNodeL
 }
 func (UnimplementedNodeServiceServer) SetNodeLocation(context.Context, *SetNodeLocationRequest) (*GetNodeLocationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetNodeLocation not implemented")
+}
+func (UnimplementedNodeServiceServer) GetCityTable(context.Context, *GetCityTableRequest) (*CityTableState, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCityTable not implemented")
+}
+func (UnimplementedNodeServiceServer) DownloadCityTable(context.Context, *DownloadCityTableRequest) (*CityTableState, error) {
+	return nil, status.Error(codes.Unimplemented, "method DownloadCityTable not implemented")
+}
+func (UnimplementedNodeServiceServer) RemoveCityTable(context.Context, *RemoveCityTableRequest) (*CityTableState, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveCityTable not implemented")
 }
 func (UnimplementedNodeServiceServer) GetPoolLimits(context.Context, *GetPoolLimitsRequest) (*PoolLimitsState, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPoolLimits not implemented")
@@ -1335,6 +1399,60 @@ func _NodeService_SetNodeLocation_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeServiceServer).SetNodeLocation(ctx, req.(*SetNodeLocationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetCityTable_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCityTableRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetCityTable(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetCityTable_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetCityTable(ctx, req.(*GetCityTableRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_DownloadCityTable_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DownloadCityTableRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).DownloadCityTable(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_DownloadCityTable_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).DownloadCityTable(ctx, req.(*DownloadCityTableRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_RemoveCityTable_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveCityTableRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).RemoveCityTable(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_RemoveCityTable_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).RemoveCityTable(ctx, req.(*RemoveCityTableRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2162,6 +2280,18 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetNodeLocation",
 			Handler:    _NodeService_SetNodeLocation_Handler,
+		},
+		{
+			MethodName: "GetCityTable",
+			Handler:    _NodeService_GetCityTable_Handler,
+		},
+		{
+			MethodName: "DownloadCityTable",
+			Handler:    _NodeService_DownloadCityTable_Handler,
+		},
+		{
+			MethodName: "RemoveCityTable",
+			Handler:    _NodeService_RemoveCityTable_Handler,
 		},
 		{
 			MethodName: "GetPoolLimits",
