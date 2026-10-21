@@ -15,6 +15,15 @@ type LendingState = { saved?: Lending; running?: Lending; restartNeeded?: boolea
 type LoadedModel = { name: string; onCardPercent: number }
 const emptyLending: Lending = { enabled: false, ollamaUrl: 'http://127.0.0.1:11434', only: [], gpuLayers: -1, threads: 0, context: 0, keepAlive: '' }
 
+// withDefaults fills in what the node leaves out of lending never set up: it
+// says an empty address, which would blank the field, so the local Ollama's
+// address stands in for it.
+function withDefaults(saved?: Partial<Lending>): Lending {
+  const lending = { ...emptyLending, ...saved }
+  if (!lending.ollamaUrl?.trim()) lending.ollamaUrl = emptyLending.ollamaUrl
+  return lending
+}
+
 export function ModelLendingSettings({ messages, embedded = false }: { messages: Messages; embedded?: boolean }) {
   const labels = messages.modelSettings
   const [form, setForm] = useState<Lending>(emptyLending)
@@ -32,16 +41,18 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
     let active = true
     void getNodeApi().call<LendingState>('getModelLending').then((result) => {
       if (!active) return
-      const saved = { ...emptyLending, ...result.saved }
+      const saved = withDefaults(result.saved)
       setState(result)
       setForm(saved)
       setSupported(true)
+      // Lending that is on says at once what its Ollama has, without being asked.
+      if (saved.enabled) void inspect(saved.ollamaUrl)
     }).catch(() => { if (active) setSupported(false) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [loads])
 
   const selected = useMemo(() => new Set(form.only), [form.only])
-  const dirty = Boolean(state?.saved && JSON.stringify(state.saved) !== JSON.stringify(form))
+  const dirty = Boolean(state?.saved && JSON.stringify(withDefaults(state.saved)) !== JSON.stringify(form))
   const remoteEndpoint = useMemo(() => {
     try {
       const endpoint = new URL(form.ollamaUrl.trim())
@@ -53,10 +64,10 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
   }, [form.ollamaUrl])
   function change<K extends keyof Lending>(key: K, value: Lending[K]) { setForm((current) => ({ ...current, [key]: value })) }
 
-  async function inspect() {
+  async function inspect(url = form.ollamaUrl) {
     setInspecting(true)
     try {
-      const result = await getNodeApi().call<{ version?: string; error?: string; models?: string[]; loaded?: LoadedModel[] }>('inspectOllama', { url: form.ollamaUrl, only: [] })
+      const result = await getNodeApi().call<{ version?: string; error?: string; models?: string[]; loaded?: LoadedModel[] }>('inspectOllama', { url, only: [] })
       if (result.error) throw new Error(result.error)
       setAvailable(result.models ?? [])
       setLoaded(result.loaded ?? [])
@@ -80,9 +91,13 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
     setSaving(true)
     try {
       const result = await getNodeApi().call<LendingState>('setModelLending', { lending: form })
+      const saved = withDefaults(result.saved)
       setState(result)
-      setForm({ ...emptyLending, ...result.saved })
+      setForm(saved)
       toast.success(labels.lendingSaved)
+      // Saved without checking first: check now, so a wrong address shows
+      // before the node is restarted with it.
+      if (saved.enabled) void inspect(saved.ollamaUrl)
     } catch (error) {
       toast.error(labels.saveFailed, { description: error instanceof Error ? error.message : String(error) })
     } finally { setSaving(false) }

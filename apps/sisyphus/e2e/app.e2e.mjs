@@ -1651,11 +1651,14 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
   try {
     await openSettingsCategory(page, 'This node')
     await page.getByText('Lend Ollama models to the pool', { exact: true }).waitFor()
+    // Lending never set up offers this computer's own Ollama.
+    assert.equal(await page.getByRole('textbox', { name: 'Ollama address' }).inputValue(), 'http://127.0.0.1:11434')
     await page.getByRole('textbox', { name: 'Ollama address' }).fill(ollama.url)
-    await page.getByRole('button', { name: 'Check connection' }).click()
+    // Saving without checking first checks all the same.
+    await page.getByRole('checkbox', { name: 'Make models from this Ollama endpoint available to the pool' }).check()
+    await page.getByRole('button', { name: 'Save lending settings' }).click()
     await page.getByRole('checkbox', { name: 'test-model' }).waitFor()
     await page.getByRole('checkbox', { name: 'second-model' }).uncheck()
-    await page.getByRole('checkbox', { name: 'Make models from this Ollama endpoint available to the pool' }).check()
     await page.getByRole('spinbutton', { name: /GPU layers/ }).fill('24')
     await page.getByRole('spinbutton', { name: /CPU threads/ }).fill('6')
     await page.getByRole('spinbutton', { name: /Context length/ }).fill('8192')
@@ -1664,7 +1667,7 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
     await page.getByText('Restart to apply lending or address changes', { exact: true }).first().waitFor()
     await page.reload()
     await openSettingsCategory(page, 'This node')
-    await page.getByRole('button', { name: 'Check connection' }).click()
+    // Lending that is on lists its Ollama's models without being asked to check.
     await page.getByRole('checkbox', { name: 'Make models from this Ollama endpoint available to the pool', checked: true }).waitFor()
     await page.getByRole('checkbox', { name: 'test-model', checked: true }).waitFor()
     await page.getByRole('checkbox', { name: 'second-model', checked: false }).waitFor()
