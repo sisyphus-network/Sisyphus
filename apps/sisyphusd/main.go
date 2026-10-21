@@ -49,6 +49,7 @@ const usage = `Usage:
   sisyphusd pool cluster           show which of the pool's nodes hold each thing pinned, in a pool run with --cluster
   sisyphusd model set|show|list    which language model this node plans with (set --provider --model [--url] [--api-key-file])
   sisyphusd model providers|pull|remove  the kinds of model service, and fetching a model into Ollama or deleting one
+  sisyphusd location show|set|clear  where this node is, as its owner says (set --lat --lon [--share exact|about-1km|city|country|nothing])
   sisyphusd ask <question>         put a question to a running node's planner (--chat <id> to carry on a conversation)
   sisyphusd mcp                    offer a running node to an AI agent, as a Model Context Protocol server on standard input and output
   sisyphusd inference              offer the language models of a pool this machine has joined, to programs on this machine (--addr, --listen)
@@ -117,6 +118,8 @@ func run(ctx context.Context, args []string) error {
 		return poolCommand(ctx, args[1:])
 	case "model":
 		return modelCommand(ctx, args[1:])
+	case "location":
+		return locationCommand(args[1:])
 	case "ask":
 		return ask(ctx, args[1:])
 	case "mcp":

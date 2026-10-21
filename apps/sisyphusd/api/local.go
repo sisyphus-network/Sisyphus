@@ -119,6 +119,9 @@ type LocalConfig struct {
 	LocationDiscovery         LocationDiscoveryStore
 	LocationDiscoveryRunning  nodedb.LocationDiscovery
 	GatewayDiscoverySupported bool
+	// OwnerLocation, if set, keeps where the owner says the node is. A
+	// change takes effect at once.
+	OwnerLocation OwnerLocationStore
 	// PoolLimits stores the limits the node, as a coordinator, holds each
 	// member to. The saved limits take effect when the daemon restarts;
 	// running values are the limits it started with. RunsCoordinator says
@@ -334,11 +337,14 @@ type attachmentAssistant interface {
 	AskWithFiles(context.Context, string, string, []string, func(string, planner.Event)) (string, error)
 }
 
-func (s *localService) GetNodeInfo(context.Context, *nodepb.GetNodeInfoRequest) (*nodepb.GetNodeInfoResponse, error) {
-	return s.nodeInfo(), nil
+func (s *localService) GetNodeInfo(ctx context.Context, _ *nodepb.GetNodeInfoRequest) (*nodepb.GetNodeInfoResponse, error) {
+	return s.nodeInfo(ctx), nil
 }
 
-func (s *localService) nodeInfo() *nodepb.GetNodeInfoResponse {
+// nodeInfo describes the node to the caller of ctx. Anything on the machine
+// may ask, so where the owner says the node is goes only to a caller with
+// the node's API token.
+func (s *localService) nodeInfo(ctx context.Context) *nodepb.GetNodeInfoResponse {
 	info := &nodepb.GetNodeInfoResponse{
 		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, Workloads: s.cfg.Workloads,
 	}
@@ -352,6 +358,10 @@ func (s *localService) nodeInfo() *nodepb.GetNodeInfoResponse {
 		info.Capabilities = append(info.Capabilities, "chat-file-references-v1")
 		info.Capabilities = append(info.Capabilities, "chat-attachment-retention-v1")
 	}
+	if s.cfg.OwnerLocation != nil && s.authorize(ctx) == nil {
+		// A location that cannot be read is left out, as an unknown country is.
+		info.OwnerLocation, _ = s.ownerLocation()
+	}
 	return info
 }
 
@@ -364,7 +374,7 @@ func (s *localService) WatchNodeState(_ *nodepb.GetNodeInfoRequest, stream grpc.
 		changes, unsubscribe = s.cfg.NodeInfoChanges.subscribe()
 		defer unsubscribe()
 	}
-	return watchNodeState(stream.Context(), changes, s.nodeState, stream.Send)
+	return watchNodeState(stream.Context(), changes, func() *nodepb.NodeState { return s.nodeState(stream.Context()) }, stream.Send)
 }
 
 // WatchPairedBrowsers streams the authorized paired-device list on changes.
@@ -423,8 +433,8 @@ func (s *localService) pairedBrowsers() (*nodepb.PairedBrowsersState, error) {
 	return state, nil
 }
 
-func (s *localService) nodeState() *nodepb.NodeState {
-	state := &nodepb.NodeState{Info: s.nodeInfo()}
+func (s *localService) nodeState(ctx context.Context) *nodepb.NodeState {
+	state := &nodepb.NodeState{Info: s.nodeInfo(ctx)}
 	if s.cfg.Peers != nil {
 		state.Peers = s.cfg.Peers()
 	}

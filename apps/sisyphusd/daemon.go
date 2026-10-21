@@ -469,6 +469,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	local.LocationDiscovery = db
 	local.LocationDiscoveryRunning = locationDiscoveryRunning
 	local.GatewayDiscoverySupported = gatewayDiscoverySupported
+	local.OwnerLocation = db
 	poolLimits, err := startupPoolLimits(db, nodedb.PoolLimits{
 		MaxJobsPerClient:         *maxJobsPerClient,
 		MaxTasksPerClient:        *maxTasksPerClient,

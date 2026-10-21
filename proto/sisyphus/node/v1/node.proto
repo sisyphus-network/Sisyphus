@@ -16,6 +16,12 @@ service NodeService {
   // effect after it restarts, whether the desktop starts it or not.
   rpc GetLocationDiscoverySettings(GetLocationDiscoverySettingsRequest) returns (LocationDiscoverySettingsState);
   rpc SetLocationDiscoverySettings(SetLocationDiscoverySettingsRequest) returns (LocationDiscoverySettingsState);
+  // Where the owner says this node is, and how much of it other members of
+  // a pool may see. Both need the node's API token. A change is saved by the
+  // node and takes effect at once; a SetNodeLocation with no location clears
+  // it. Nothing is sent to the pool yet.
+  rpc GetNodeLocation(GetNodeLocationRequest) returns (GetNodeLocationResponse);
+  rpc SetNodeLocation(SetNodeLocationRequest) returns (GetNodeLocationResponse);
   // The limits a coordinator holds each member to. Changes are saved by the
   // node and take effect after it restarts, whether the desktop starts it
   // or not; a node that does not run the coordinator role holds no one to
@@ -178,6 +184,10 @@ message GetNodeInfoResponse {
   // country found by the pool is where the node's traffic comes from, as
   // the pool sees it, which behind a VPN is not where the machine is.
   string country_source = 7;
+  // Where the owner says this node is, as they gave it, whatever they chose
+  // to share with others. Set only for a caller that presents the node's API
+  // token, and only once the owner has given a location.
+  NodeLocation owner_location = 8;
 }
 
 message GetWebAccessConfigRequest {}
@@ -868,6 +878,44 @@ message LocationDiscoverySettingsState {
 
 message GetLocationDiscoverySettingsRequest {}
 message SetLocationDiscoverySettingsRequest { LocationDiscoverySettings settings = 1; }
+
+// LocationShare is how much of the node's location other members of a pool
+// may see. This node itself always knows the location as it was given.
+enum LocationShare {
+  // Saved as COUNTRY, so that a stranger in a pool does not see where the
+  // owner lives unless the owner says so.
+  LOCATION_SHARE_UNSPECIFIED = 0;
+  // Not even the country.
+  LOCATION_SHARE_NOTHING = 1;
+  // The country only, and no coordinates.
+  LOCATION_SHARE_COUNTRY = 2;
+  // The coordinates rounded to 0.1 degree.
+  LOCATION_SHARE_CITY = 3;
+  // The coordinates rounded to 0.01 degree, about a kilometre.
+  LOCATION_SHARE_ABOUT_1KM = 4;
+  // The coordinates as given.
+  LOCATION_SHARE_EXACT = 5;
+}
+
+message NodeLocation {
+  // In degrees: the latitude from -90 to 90 and the longitude from -180 to
+  // 180, north and east positive.
+  double latitude = 1;
+  double longitude = 2;
+  LocationShare share = 3;
+}
+
+message GetNodeLocationRequest {}
+
+message GetNodeLocationResponse {
+  // Absent if the owner has given no location.
+  NodeLocation location = 1;
+}
+
+message SetNodeLocationRequest {
+  // Absent to clear the saved location.
+  NodeLocation location = 1;
+}
 
 // PoolLimits are what a coordinator lets one member use. 0 means no limit
 // in each field. The node's own jobs are not held to the per-client ones.
