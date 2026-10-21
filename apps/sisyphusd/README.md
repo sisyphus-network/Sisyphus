@@ -1016,10 +1016,11 @@ This was checked against a database made by the Rust daemon itself, which is kep
 - **`container`** runs a container image, once for each task of the job. This is how real programs run on a pool: anything that can be put in an image. See [Running containers](#running-containers) below.
 - **`transcode`** re-encodes a video. It is the first workload that does a job people have: see [Transcoding video](#transcoding-video) below.
 - **`md`** simulates a molecule with OpenMM, as replicas spread over the pool: see [Molecular dynamics](#molecular-dynamics) below.
+- **`render`** renders a Blender scene, by frames or by strips of one frame, across the pool: see [3D rendering](#3d-rendering) below.
 - **`primes`** counts the primes in `[from, to)`. Parameters and results are a few bytes and travel inline. It is a stand-in that exercises the pool.
 - **`wordcount`** counts word frequencies in a stored file. It exercises the storage path: the input is fetched by CID, each task reads only its byte range, task outputs are stored as blobs, and the result is a blob too. The result's CID is the same however the job is split, so two runs can be compared by CID alone.
 
-A workload may also describe its parameters as a form, so that a program can ask for them field by field instead of having JSON written by hand. Each field has its JSON key; its kind, which is a stored file's CID, an integer, a number, a line of text, one of a list of choices, or a toggle; a label and a sentence of help; and a default, bounds and a step for a number, and whether a job is refused without it. A form sent with its defaults unchanged is a job the workload accepts. `primes`, `wordcount`, `transcode` and `md` have forms. The local API's `ListWorkloads` lists every workload the node takes jobs of, with what it does, its form, and how many of the connected workers offer it, busy or not. A graph is marked `composite`, since the coordinator carries it out itself. Like `ListWorkers`, it needs no token, as it says what the pool can do and nothing of what anyone has done with it. A node that coordinates no pool answers it with `FAILED_PRECONDITION`. An agent's `list_workloads` reads it, and the desktop's Run page (#585) is to build its forms from it.
+A workload may also describe its parameters as a form, so that a program can ask for them field by field instead of having JSON written by hand. Each field has its JSON key; its kind, which is a stored file's CID, an integer, a number, a line of text, one of a list of choices, or a toggle; a label and a sentence of help; and a default, bounds and a step for a number, and whether a job is refused without it. A form sent with its defaults unchanged is a job the workload accepts. `primes`, `wordcount`, `transcode`, `md` and `render` have forms. The local API's `ListWorkloads` lists every workload the node takes jobs of, with what it does, its form, and how many of the connected workers offer it, busy or not. A graph is marked `composite`, since the coordinator carries it out itself. Like `ListWorkers`, it needs no token, as it says what the pool can do and nothing of what anyone has done with it. A node that coordinates no pool answers it with `FAILED_PRECONDITION`. An agent's `list_workloads` reads it, and the desktop's Run page (#585) is to build its forms from it.
 
 ### Running containers
 
@@ -1042,7 +1043,7 @@ examples/render.sh                                                       # a pic
   - `--task-dir /mnt/sisyphus-tasks` puts both task workspaces and staged inputs under an existing directory. It does not set a byte limit itself. Put it on a dedicated filesystem or quota-backed mount if you need filesystem-enforced containment; the worker checks that the directory exists and is writable before starting. If the filesystem fills, staging or a task fails rather than the worker exiting. Several tasks share that filesystem, so its limit is per worker, not per task.
 - **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container. So does a task running past the worker's own `--containers-timeout`, which its owner sets whatever the job allows; the attempt then fails and is tried again like any other.
 - **A job is taken in by any coordinator**, and waits until a worker that runs containers is connected, and one that allows the network if the job asks for it.
-- **A coordinator can insist on hardened workers.** Started with `--containers-hardened`, it gives `container`, `transcode` and `md` jobs only to workers that run containers with a sandboxing `--container-runtime` (gVisor's `runsc` or a Kata runtime, which the worker found Docker has before it started) and with `--containers-read-only` plus a sized `/tmp`. Such a worker says so in its labels, `container-sandboxed` and `container-bounded-tmp`, and `sisyphusd nodes` says it in words beneath the table, as in `laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp`. These settings do not cap `/output` while a task runs; `--task-dir` can place all task files on a separate, quota-backed filesystem, but that bound is shared across tasks on the worker. A job waits while no qualifying worker is connected. It is for a pool that takes container work from people its workers' owners do not know; a private pool has no need of it.
+- **A coordinator can insist on hardened workers.** Started with `--containers-hardened`, it gives `container`, `transcode`, `md` and `render` jobs only to workers that run containers with a sandboxing `--container-runtime` (gVisor's `runsc` or a Kata runtime, which the worker found Docker has before it started) and with `--containers-read-only` plus a sized `/tmp`. Such a worker says so in its labels, `container-sandboxed` and `container-bounded-tmp`, and `sisyphusd nodes` says it in words beneath the table, as in `laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp`. These settings do not cap `/output` while a task runs; `--task-dir` can place all task files on a separate, quota-backed filesystem, but that bound is shared across tasks on the worker. A job waits while no qualifying worker is connected. It is for a pool that takes container work from people its workers' owners do not know; a private pool has no need of it.
 - **Tasks of a job that run on one machine share one copy of its input**, fetched once. Tasks of different jobs share nothing.
 
 - **Graphics cards.** `"gpus": 1` gives each task that many of the machine's cards, which needs Docker set up for them (the NVIDIA Container Toolkit). Submit the job with `--min-gpus` as well, so that its tasks go only to machines that have them. This has not been tried on a machine with a card.
@@ -1098,6 +1099,49 @@ The result gives the replicas' mean potential energy and its spread, and for eac
 - **CPU only, for now.** The script uses CUDA where OpenMM finds it, but the image does not yet carry OpenMM's CUDA plugin, nor does the job ask for a graphics card. That is the next step.
 - **Results are not checked by a second worker.** OpenMM's numbers depend on the machine and the number of threads, so two honest replicas with the same seed need not agree to the last digit, and `verify` and `audit_share` refuse md jobs. Checking them by what they mean (energies in range, a structure that held together) is for later.
 - **Private jobs**: as with transcode, a sealed PDB file and a job with its key should work; this has not been tried.
+
+### 3D rendering
+
+```sh
+cid=$(bin/sisyphusd blob put scene.blend)
+bin/sisyphusd job submit --workload render --params "{\"input\":\"$cid\",\"frame_start\":1,\"frame_end\":240}"
+bin/sisyphusd job submit --workload render --params "{\"input\":\"$cid\",\"split\":\"tiles\",\"tasks\":8,\"samples\":512}"
+```
+
+Each task runs [Blender](https://www.blender.org) 4.5 LTS from its command line, with no window, in a container, on the stored `.blend` file. A job is shared out in one of two ways:
+
+- **By frames** (`"split":"frames"`, the default), for an animation. The frames are cut into as many contiguous runs as the job has tasks, and each task renders its run. The result lists every frame, in order, and a zip file of them all.
+- **By tiles** (`"split":"tiles"`), for one large or slow frame. The frame is cut into as many horizontal strips as the job has tasks; each task renders its strip with Blender's border rendering, cropped to the border, and the coordinator puts the strips back together into one PNG.
+
+| Parameter | Meaning |
+| --- | --- |
+| `input` | The CID of the stored `.blend` file. A task has nothing but this file, so whatever it uses must be packed into it: in Blender, **File → External Data → Pack Resources** before saving. Images that are not are named in the task's log and render pink. Linked libraries are not supported. |
+| `frame_start`, `frame_end` | The first and last frame to render, from 0. Either left out is the file's own, which each task reads from the file itself. Split by tiles, the one frame rendered is `frame_start`, or the file's current frame without it. The file's frame step is kept. |
+| `engine` | `CYCLES` (default) or `BLENDER_EEVEE_NEXT`. Cycles runs on the processor. EEVEE needs OpenGL, which the image gives it through Mesa's software renderer, llvmpipe: it works with no graphics card, but slowly (below). Whichever is chosen replaces the file's. |
+| `samples` | Samples per pixel, in place of the file's: Cycles' render samples, or EEVEE's. More is less noise and longer. |
+| `resolution_percent` | The size to render at, as a percentage of the file's resolution, from 1 to 1000. Left out, the file's. |
+| `format` | `PNG` (default), 8-bit RGBA, or `EXR`, OpenEXR's floating point, for frames to be graded later. Split by tiles, only PNG. |
+| `split` | `frames` or `tiles`. |
+| `tasks` | How many runs of frames, or strips. Default: one for each free slot. By frames, never more than there are frames, when the job names both ends; a task renders at most 1,000 frames, and more tasks are made for a longer animation. |
+
+The result:
+
+```json
+{"split":"frames","frames":240,"images":["<CID of frame 1>","..."],"archive":"<CID of the zip>","width":1920,"height":1080,"engine":"CYCLES","seconds":5130.2}
+{"split":"tiles","frames":1,"image":"<CID of the whole frame>","tiles":8,"width":1920,"height":1080,"engine":"CYCLES","seconds":402.7}
+```
+
+`seconds` is the time the tasks spent rendering, added up, without Blender's start. The frames, the zip file and the whole frame are all kept with the result, and the desktop app saves them as `images-000.png` and so on, `archive.zip` and `image.png`.
+
+- **It runs on workers started with `--containers`**, with the image and the command fixed. A worker builds the image the first time it is needed: Debian with the few libraries Blender loads, and Blender's own release for Linux from download.blender.org, checked against the SHA-256 blender.org publishes for it, so a changed download stops the build. That is a 378 MB download, once; the image is 2.1 GB on disk.
+- **Python in the file is not run.** A `.blend` file can carry Python that Blender would run on opening it: a text registered to run, a driver's expression. Blender is started with `--disable-autoexec`, and the tests check that a file carrying such a script does not run it. A scene that needs its own Python to render, rigs driven by expressions among them, renders without it.
+- **Speed.** On the R620 (two 8-core Xeon E5-2660, no graphics card, shared with CI runners at the time), Blender took 4 to 25 s to start before a task rendered anything, so a task should have more than a few seconds of work. The test scene, a lit cube, rendered with Cycles at 640 by 640 pixels and 128 samples in 14 s for the one frame (18 s with Blender's start), and its four 64 by 64 frames at four samples in 2 s. EEVEE through llvmpipe took 20 to 80 s a frame for those 64 by 64 frames, most of it compiling shaders: it is offered because it works with no graphics card, but Cycles is the faster choice on processors.
+- **When to split by tiles.** The strips of one frame are independent, so a frame that takes an hour can take minutes on a pool. Each task still loads the whole scene and builds its BVH, which is a fixed cost for every strip. Cycles' denoiser sees each strip on its own, which can leave a faint seam where strips meet: for tiles, render enough samples to need no denoising, or turn it off in the file. The coordinator holds the strips and the whole frame in memory as it puts them together, so a frame split by tiles may have at most 134 million pixels, 16,384 by 8,192.
+- **No MP4.** Putting the frames into a video needs ffmpeg, and the coordinator, which combines results, runs no containers. Fetch the zip and run `ffmpeg -framerate 24 -i frame_%07d.png -pix_fmt yuv420p out.mp4`, or submit the frames to a container job.
+- **No graphics card yet.** Cycles uses the processor only: rendering with CUDA or OptiX needs the job to ask for a card and the worker to give one, which follows [#601](https://github.com/sisyphus-network/Sisyphus/issues/601).
+- **Results are not checked by a second worker.** Cycles' noise depends on the processor's arithmetic and how the work is shared among threads, so two honest renders need not agree to the bit, and `verify` and `audit_share` refuse render jobs.
+- **Licences.** Blender is GPL 2 or later. The image runs Blender's own release, unmodified, as a separate program, which the GPL allows without touching the licence of this repository; what Blender renders belongs to whoever made the scene. Anyone given the image can get Blender's source from blender.org.
+- **Private jobs**: as with transcode, a sealed `.blend` file and a job with its key should work; this has not been tried.
 
 ## Layout
 
