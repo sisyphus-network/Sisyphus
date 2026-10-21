@@ -404,6 +404,7 @@ bpy.ops.wm.save_as_mainfile(filepath="/work/scene.blend")
 // by frames and by strips put together, with the Python it carries left
 // unrun.
 func TestARealSceneIsRendered(t *testing.T) {
+	requireRealImages(t)
 	requireDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()

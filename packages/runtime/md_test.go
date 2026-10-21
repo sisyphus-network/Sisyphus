@@ -216,6 +216,7 @@ func TestTheReplicasAreSummedUp(t *testing.T) {
 // in real containers, held in as far as an owner can ask without another
 // runtime, and summed up.
 func TestRealReplicasAreSimulated(t *testing.T) {
+	requireRealImages(t)
 	requireDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()

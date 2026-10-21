@@ -480,6 +480,7 @@
       "wordcount": { "title": "Compter les mots", "description": "Compte combien de fois chaque mot apparaît dans un fichier texte." },
       "transcode": { "title": "Réencoder une vidéo", "description": "Réencode une vidéo en H.264, par tronçons encodés par différents exécutants." },
       "render": { "title": "Rendre une scène 3D", "description": "Rend une scène Blender avec Cycles ou EEVEE, par images ou par bandes d’une image, sur tout le pool." },
+      "transcribe": { "title": "Transcrire la parole", "description": "Transforme la parole d’un enregistrement en texte et sous-titres, par tronçons sur tout le pool." },
       "md": { "title": "Simuler une molécule", "description": "Exécute une dynamique moléculaire en répliques sur tout le pool." }
     }
   },

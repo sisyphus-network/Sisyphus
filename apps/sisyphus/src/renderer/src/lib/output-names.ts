@@ -1,12 +1,13 @@
 // Names for the files a finished job left, so that saving one gives it a
 // name and a type the owner's programs know: a re-encoded video as .ts, a
-// molecule's last frame as .pdb, a rendered frame as .png, a file a
-// container wrote by its own name.
+// molecule's last frame as .pdb, a rendered frame as .png, a transcript as
+// .txt and its subtitles as .srt, a file a container wrote by its own name.
 
 // What a result calls a file, and the extension that kind of file has.
 const kinds: Record<string, string> = {
   output: '.ts', final: '.pdb', energies: '.csv', trajectory: '.dcd', stdout: '.txt',
   image: '.png', images: '.png', archive: '.zip',
+  text: '.txt', subtitles: '.srt',
 }
 
 function decode(result?: Uint8Array): unknown {
