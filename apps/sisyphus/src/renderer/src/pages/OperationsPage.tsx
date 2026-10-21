@@ -10,6 +10,7 @@ import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { getNodeApi } from '@/lib/node-api'
 import { type getMessages } from '@/i18n/messages'
 import { getSelectedJobId, includeLinkedJob } from '@/lib/job-navigation'
+import { createJobSnapshotGate } from '@/lib/job-snapshot'
 import { validTaskTimeout } from '@/lib/job-result'
 import { JobOutputs, JobResult, prettyBytes } from '@/components/job-result-view'
 import { appendJobEvent, type JobEvent } from '@/lib/job-events'
@@ -21,6 +22,14 @@ type Job = { jobId: string; workload: string; mode: string | number; state: stri
 type StoredFile = { cid: string; name: string; sizeBytes: string | number; private: boolean; storedAtMs: string | number }
 type Member = { peerId: string; role: string | number; joinedAtMs: string | number }
 type PoolWorker = { peerId: string; loadedModels?: { name: string; onCardPercent: number }[] }
+
+function normalizeJobs(jobs: Job[] = []): Job[] {
+  return jobs.map((job) => ({
+    ...job,
+    state: typeof job.state === 'string' ? job.state : ({ 1: 'JOB_STATE_PENDING', 2: 'JOB_STATE_RUNNING', 3: 'JOB_STATE_SUCCEEDED', 4: 'JOB_STATE_FAILED', 5: 'JOB_STATE_CANCELLED' }[job.state] ?? 'JOB_STATE_UNSPECIFIED'),
+    mode: typeof job.mode === 'string' ? job.mode : ({ 1: 'JOB_MODE_DISTRIBUTED', 2: 'JOB_MODE_FULL_WORKER' }[job.mode] ?? 'JOB_MODE_UNSPECIFIED'),
+  }))
+}
 
 function JobTimeline({ jobId, eventLabels, messages }: { jobId: string; eventLabels: Record<string, string>; messages: Messages }) {
   const [events, setEvents] = useState<JobEvent[]>([])
@@ -66,6 +75,7 @@ export function OperationsPage({ messages }: { messages: Messages }) {
   const scrolledJobId = useRef('')
   const [tab, setTab] = useState<'jobs' | 'files' | 'pool'>('jobs')
   const [jobs, setJobs] = useState<Job[]>([])
+  const jobsSnapshot = useRef(createJobSnapshotGate())
   const [timelineJobId, setTimelineJobId] = useState('')
   const [files, setFiles] = useState<StoredFile[]>([])
   const [members, setMembers] = useState<Member[]>([])
@@ -125,6 +135,7 @@ export function OperationsPage({ messages }: { messages: Messages }) {
 
   async function refresh() {
     const api = getNodeApi()
+    const jobsSnapshotToken = jobsSnapshot.current.begin()
     const results = await Promise.allSettled([
       api.call<{ jobs?: Job[] }>('listJobs'),
       api.call<{ files?: StoredFile[] }>('listFiles'),
@@ -134,11 +145,14 @@ export function OperationsPage({ messages }: { messages: Messages }) {
     if (results[1].status === 'fulfilled') setFiles((results[1].value.files ?? []).map((file) => ({ cid: file.cid ?? '', name: file.name || file.cid || '', sizeBytes: file.sizeBytes ?? 0, private: file.private ?? false, storedAtMs: file.storedAtMs ?? 0 })))
     if (results[2].status === 'fulfilled') setMembers(results[2].value.members ?? [])
     if (results[3].status === 'fulfilled') setWorkers(results[3].value.workers ?? [])
-    if (results[0].status === 'fulfilled') setJobs((results[0].value.jobs ?? []).map((job) => ({ ...job, state: typeof job.state === 'string' ? job.state : ({ 1: 'JOB_STATE_PENDING', 2: 'JOB_STATE_RUNNING', 3: 'JOB_STATE_SUCCEEDED', 4: 'JOB_STATE_FAILED', 5: 'JOB_STATE_CANCELLED' }[job.state] ?? 'JOB_STATE_UNSPECIFIED'), mode: typeof job.mode === 'string' ? job.mode : ({ 1: 'JOB_MODE_DISTRIBUTED', 2: 'JOB_MODE_FULL_WORKER' }[job.mode] ?? 'JOB_MODE_UNSPECIFIED') })))
+    if (results[0].status === 'fulfilled' && jobsSnapshot.current.accept(jobsSnapshotToken)) setJobs(normalizeJobs(results[0].value.jobs))
   }
   useEffect(() => {
     void refresh()
-    const stop = getNodeApi().stream<{ jobs?: Job[] }>('watchJobs', {}, (result) => setJobs((result.jobs ?? []).map((job) => ({ ...job, state: typeof job.state === 'string' ? job.state : ({ 1: 'JOB_STATE_PENDING', 2: 'JOB_STATE_RUNNING', 3: 'JOB_STATE_SUCCEEDED', 4: 'JOB_STATE_FAILED', 5: 'JOB_STATE_CANCELLED' }[job.state] ?? 'JOB_STATE_UNSPECIFIED'), mode: typeof job.mode === 'string' ? job.mode : ({ 1: 'JOB_MODE_DISTRIBUTED', 2: 'JOB_MODE_FULL_WORKER' }[job.mode] ?? 'JOB_MODE_UNSPECIFIED') }))), () => {})
+    const stop = getNodeApi().stream<{ jobs?: Job[] }>('watchJobs', {}, (result) => {
+      jobsSnapshot.current.changed()
+      setJobs(normalizeJobs(result.jobs))
+    }, () => {})
     return stop
   }, [])
 
@@ -148,7 +162,10 @@ export function OperationsPage({ messages }: { messages: Messages }) {
       const parsed = JSON.parse(params)
       if (!validTaskTimeout(taskTimeout)) throw new Error(labels.invalidTaskTimeout)
       const result = await getNodeApi().call<{ job?: Job }>('submitJob', { workload, params: new TextEncoder().encode(JSON.stringify(parsed)), mode: mode === 'JOB_MODE_FULL_WORKER' ? 2 : 1, maxTasks, taskTimeoutSeconds: taskTimeout, minMemoryBytes: minMemory, minGpus, private: jobPrivate })
-      if (result.job) setJobs((current) => [result.job!, ...current.filter((job) => job.jobId !== result.job!.jobId)])
+      if (result.job) {
+        jobsSnapshot.current.changed()
+        setJobs((current) => [result.job!, ...current.filter((job) => job.jobId !== result.job!.jobId)])
+      }
       toast.success(labels.jobSubmitted)
     } catch (error) { toast.error(labels.submitFailed, { description: error instanceof Error ? error.message : String(error) }) }
     finally { setBusy(false) }
