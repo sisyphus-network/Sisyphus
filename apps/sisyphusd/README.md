@@ -1036,6 +1036,7 @@ This was checked against a database made by the Rust daemon itself, which is kep
 - **`qchem`** computes the energies, optimised geometries or frequencies of a file of conformers or molecules with xtb, in runs across the pool: see [Quantum chemistry](#quantum-chemistry) below.
 - **`ocr`** reads the text in a scanned PDF or picture with Tesseract, by runs of pages across the pool, as plain text or a searchable PDF: see [Text from scans](#text-from-scans) below.
 - **`traj`** analyses molecular dynamics trajectories with AmberTools' cpptraj, by runs of frames or whole trajectories across the pool: RMSD, radius of gyration, a distance, hydrogen bonds, secondary structure and RMSF: see [Trajectory analysis](#trajectory-analysis) below.
+- **`prep`** prepares Amber systems with AmberTools' tleap, by runs of PDB files across the pool: each protein or nucleic acid given its hydrogens, a box of water, the ions that make it neutral and any salt asked for, as the prmtop and inpcrd `md` takes: see [Amber system preparation](#amber-system-preparation) below.
 - **`primes`** counts the primes in `[from, to)`. Parameters and results are a few bytes and travel inline. It is a stand-in that exercises the pool.
 - **`wordcount`** counts word frequencies in a stored file. It exercises the storage path: the input is fetched by CID, each task reads only its byte range, task outputs are stored as blobs, and the result is a blob too. The result's CID is the same however the job is split, so two runs can be compared by CID alone.
 
@@ -1063,7 +1064,7 @@ examples/render.sh                                                       # a pic
   - `--task-dir /mnt/sisyphus-tasks` puts both task workspaces and staged inputs under an existing directory. It does not set a byte limit itself. Put it on a dedicated filesystem or quota-backed mount if you need filesystem-enforced containment; the worker checks that the directory exists and is writable before starting. If the filesystem fills, staging or a task fails rather than the worker exiting. Several tasks share that filesystem, so its limit is per worker, not per task.
 - **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container. So does a task running past the worker's own `--containers-timeout`, which its owner sets whatever the job allows; the attempt then fails and is tried again like any other.
 - **A job is taken in by any coordinator**, and waits until a worker that runs containers is connected, and one that allows the network if the job asks for it.
-- **A coordinator can insist on hardened workers.** Started with `--containers-hardened`, it gives `container`, `transcode`, `md`, `render`, `transcribe`, `qchem`, `ocr` and `traj` jobs only to workers that run containers with a sandboxing `--container-runtime` (gVisor's `runsc` or a Kata runtime, which the worker found Docker has before it started) and with `--containers-read-only` plus a sized `/tmp`. Such a worker says so in its labels, `container-sandboxed` and `container-bounded-tmp`, and `sisyphusd nodes` says it in words beneath the table, as in `laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp`. These settings do not cap `/output` while a task runs; `--task-dir` can place all task files on a separate, quota-backed filesystem, but that bound is shared across tasks on the worker. A job waits while no qualifying worker is connected. It is for a pool that takes container work from people its workers' owners do not know; a private pool has no need of it.
+- **A coordinator can insist on hardened workers.** Started with `--containers-hardened`, it gives `container`, `transcode`, `md`, `render`, `transcribe`, `qchem`, `ocr`, `traj` and `prep` jobs only to workers that run containers with a sandboxing `--container-runtime` (gVisor's `runsc` or a Kata runtime, which the worker found Docker has before it started) and with `--containers-read-only` plus a sized `/tmp`. Such a worker says so in its labels, `container-sandboxed` and `container-bounded-tmp`, and `sisyphusd nodes` says it in words beneath the table, as in `laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp`. These settings do not cap `/output` while a task runs; `--task-dir` can place all task files on a separate, quota-backed filesystem, but that bound is shared across tasks on the worker. A job waits while no qualifying worker is connected. It is for a pool that takes container work from people its workers' owners do not know; a private pool has no need of it.
 - **Tasks of a job that run on one machine share one copy of its input**, fetched once. Tasks of different jobs share nothing.
 
 - **Graphics cards.** `"gpus": 1` gives each task that many of the machine's cards, which needs Docker set up for them (the NVIDIA Container Toolkit). The job then goes only to machines with at least that many cards, as if submitted with `--min-gpus`, and a machine runs no more such tasks at once than it has cards, whatever its slots. This has not been tried on a machine with a card.
@@ -1109,7 +1110,7 @@ Each task simulates the same molecule from its own random start: a replica. Many
 | Parameter | Meaning |
 | --- | --- |
 | `input` | The CID of a stored PDB file. A molecule without water is put in a box of it, 1 nm past the molecule on every side, with ions to make it neutral; missing hydrogens are added. Left out, the villin headpiece in water that OpenMM comes with (8,867 atoms). |
-| `prmtop`, `inpcrd` | In place of `input`, the CIDs of a system prepared with Amber's tools: its topology and its coordinates, both or neither, and not with `input`. It is simulated as it is, with the force field its topology holds and nothing added: OpenMM reads both files itself. Coordinates with a box are simulated with periodic boundaries and PME, a 1 nm cutoff; without one, as a molecule in a vacuum or implicit solvent, with no cutoff. Bonds to hydrogen are held rigid either way. The last frame is written with the topology's atoms and residues. |
+| `prmtop`, `inpcrd` | In place of `input`, the CIDs of a system prepared with Amber's tools: its topology and its coordinates, both or neither, and not with `input`. It is simulated as it is, with the force field its topology holds and nothing added: OpenMM reads both files itself. A `prep` job's systems are such files (see [Amber system preparation](#amber-system-preparation)). Coordinates with a box are simulated with periodic boundaries and PME, a 1 nm cutoff; without one, as a molecule in a vacuum or implicit solvent, with no cutoff. Bonds to hydrogen are held rigid either way. The last frame is written with the topology's atoms and residues. |
 | `picoseconds` | How long each replica is simulated. Default 10. |
 | `temperature` | In kelvin. Default 300. |
 | `seed` | The first replica's random seed. Replica *n* uses `seed + n`. Default 1. |
@@ -1295,6 +1296,75 @@ The result:
 - **Licences.** Tesseract and its language data are Apache-2.0, and Leptonica is BSD-2-Clause. Poppler is GPL 2 or 3; the image runs Alpine's build of its utilities, unmodified, as separate programs in a container, which the GPL allows without touching the licence of this repository. What is read from a scan belongs to whoever owns the scan.
 - **Private jobs**: the coordinator reads the first eight bytes of the scan, with the job's key, to tell a PDF from a picture; a sealed scan and a job with its key should work, as with transcode, but this has not been tried.
 
+### Amber system preparation
+
+```sh
+pdb=$(bin/sisyphusd blob put protein.pdb)
+bin/sisyphusd job submit --workload prep --params "{\"input\":\"$pdb\"}"
+bin/sisyphusd job submit --workload prep --params "{\"inputs\":[\"$a\",\"$b\",\"$c\"],\"forcefield\":\"ff14SB\",\"water\":\"tip3p\",\"box\":12,\"box_shape\":\"box\",\"salt_mm\":150,\"tasks\":3}"
+```
+
+[tleap](https://ambermd.org/AmberTools.php), AmberTools' program for building systems, makes each PDB file into a system Amber's force fields describe: it adds the hydrogens the file lacks from its residue templates, puts the molecule in a box of water, replaces waters with sodium or chloride ions until the system is neutral, and with pairs of both for any salt asked for, and saves the Amber topology and coordinates (prmtop and inpcrd) and a PDB file of the whole system. Each file is one system, and several are shared out across the pool, a contiguous run of them to each task, files `n*i/k` to `n*(i+1)/k-1` of `n` for task `i` of `k`; a task is given only its own. The force field, the water, the box and the salt are chosen from a fixed menu, and the worker writes tleap's commands itself (`packages/runtime/prep.go`, `sources` and `solvate`); no tleap commands are taken from a job.
+
+To simulate a prepared system and analyse it, chain the three:
+
+1. `prep` with the PDB file. Each of the result's `systems` has a `prmtop` and an `inpcrd`.
+2. `md` with `{"prmtop": <that prmtop>, "inpcrd": <that inpcrd>}`. It runs the system as it is, in its box, with PME, the force field and water from the topology; each replica leaves a DCD `trajectory`.
+3. `traj` with `{"topology": <the same prmtop>, "trajectory": <a replica's trajectory>}`, or several replicas as `trajectories`.
+
+The real-image test does just that: it prepares alanine dipeptide in OPC water, simulates it for 0.1 ps with `md`, and finds the RMSD and radius of gyration of its five frames with `traj`.
+
+| Parameter | Meaning |
+| --- | --- |
+| `input` | The CID of one stored PDB file, the system to prepare. |
+| `inputs` | In place of `input`, the CIDs of up to 64, each a system of its own, prepared and listed in that order. |
+| `forcefield` | The proteins' force field: `ff19SB` (the default), Amber's newest, made for OPC water, or `ff14SB`, made for TIP3P. Nucleic acids are given OL21 for DNA and OL3 for RNA whichever it is. |
+| `water` | `opc`, `tip3p`, or `none` for the molecule alone in a vacuum, as implicit solvent wants it, with no box and no ions. Default: the one the force field is made for, `opc` for ff19SB and `tip3p` for ff14SB. |
+| `box` | How far the box's walls are from the molecule, at least, in Å, from 3 to 50. Default 10. |
+| `box_shape` | `octahedron` (the default), a truncated octahedron, which holds the same molecule in less water, or `box`, a rectangular box. |
+| `salt_mm` | Sodium chloride beyond the ions that make the system neutral, in mM, from 0 to 1000. Default 0, neutral only. The pairs are as many as there would be in the box's water at that concentration, `salt_mm/1000 × waters/55.5`, rounded; not with `water` `none`. |
+| `tasks` | How many runs of systems to share them out as, at most one for each system. Default: one for each free slot. A task is given at most 16 systems, so a job of many is shared out in at least enough tasks for that. |
+
+As tleap's commands, with `<water>` `OPCBOX` or `TIP3PBOX`:
+
+```
+source leaprc.protein.ff19SB          (or leaprc.protein.ff14SB)
+source leaprc.DNA.OL21
+source leaprc.RNA.OL3
+source leaprc.water.opc               (or leaprc.water.tip3p; none for no water)
+mol = loadpdb /input/system-000.pdb
+charge mol
+solvateoct mol <water> 10             (or solvatebox)
+addionsrand mol Cl- 0                 (Na+ for a negative molecule; none for a neutral one)
+addionsrand mol Na+ 5 Cl- 5           (the salt, if asked for)
+charge mol
+saveamberparm mol /output/system-000.prmtop /output/system-000.inpcrd
+savepdb mol /output/system-000.pdb
+```
+
+tleap is run twice for each system: first as far as the water, to learn the molecule's charge, which chooses the ion that neutralises it, and how many waters fill the box, which sets the salt; then to make it.
+
+The result:
+
+```json
+{"forcefield":"ff19SB","water":"opc","box_angstrom":10,"box_shape":"octahedron","salt_mm":150,"systems":[{"index":0,"prmtop":"<CID>","inpcrd":"<CID>","pdb":"<CID>","atoms":7728,"residues":1921,"waters":1903,"ions":{"Cl-":7,"Na+":5},"salt_pairs":5,"box":{"a":44.5757152,"b":44.5757152,"c":44.5757152,"alpha":109.471219,"beta":109.471219,"gamma":109.471219},"charge_before":2,"charge_after":0},{"index":1,"error":"tleap does not know the residues LIG: ...","log":"<CID>"}],"prepared":1,"failed":1,"archive":"<CID>","tasks":2}
+```
+
+Each system has its three files; its atoms, residues, waters and ions, of which `salt_pairs` pairs are salt; its box's edges in Å and angles in degrees; and its charge as the PDB file has it and after the ions, in elementary charges. A count of none is left out. `archive` is a zip file of every system's files, named by its index, `system-000.prmtop`, `system-000.inpcrd`, `system-000.pdb`, and of the log of each that failed, `system-001.log`. The desktop app saves each as `.prmtop`, `.inpcrd`, `.pdb` and `.txt`.
+
+- **Standard residues only.** tleap knows what its libraries hold: the standard amino acids, with histidine as HIE unless the file names HID or HIP, terminal residues, ACE and NME caps, DNA and RNA nucleotides, water and the common ions. A ligand, a cofactor, a modified residue or a metal centre needs parameters of its own, made with antechamber and GAFF or by hand, and that is out of `prep`'s scope. A system with a residue tleap does not know fails, plainly: `tleap does not know the residues LIG: prep makes systems of standard amino acids and nucleotides, water and common ions only, ...`, with the lines of tleap's log that say so as its `log`. The other systems of the job are prepared all the same; a job none of whose systems is prepared fails with the first one's reason. Atoms a residue's template lacks, such as hydrogens named otherwise, fail the system too, with tleap's log. With `water` `none`, the file's own waters and ions are not known either: take them out, or give a water.
+- **A PDB file is data.** It is loaded with `loadpdb`, which reads it as coordinates, never with `source`, which would run it as commands. The coordinator reads each file through when the job is split, and refuses one over 128 MiB, with a line over 1,024 characters or with anything but printable ASCII in it, with no `ATOM` or `HETATM` record, or with more than one `MODEL`: give each model of an NMR ensemble as a file of its own. The script checks the file again before tleap reads it.
+- **What a job cannot do.** tleap's commands can run programs (`system`) and read other files of commands (`source`), so a job is not given them. Each setting is one of the menu's words or a number the coordinator checks against its bounds and writes itself, and the worker checks them again, writes the commands itself, refuses any input but the job's PDB files by their fixed names, `system-000.pdb` and on, and runs only the image and script of its own making, whatever a payload says. tleap is started with `-s`, so that it reads no startup file, with AmberTools' own directories as its search path, in a working directory of the task's own under `/output`, which the script alone writes to.
+- **What Aggregate trusts.** It takes only `summary.json` from each task, and the files `system-NNN.prmtop`, `system-NNN.inpcrd`, `system-NNN.pdb` and `system-NNN.log` of the systems it says it prepared, by those names, made from indexes it has checked; any other file a task leaves is not looked at. It checks that every system was prepared, or failed, once, in order, with the same settings, as the coordinator would have given them; that each count is a whole number, at most ten million atoms, with no more residues than atoms and no more waters and ions than residues; that the charges are plain numbers, and the charge after neutralising within 0.01 of nought; that the box is a truncated octahedron's or a rectangular box's as asked, of edges up to 10,000 Å; that a system in no water was given nothing but hydrogens; that each file is there, from 1 byte to 2 GiB, the topology begins as an Amber topology, the PDB file as a PDB file, and the coordinates with as many atoms as the summary says; and that a failure is one of four reasons, with residues of at most four letters, digits or `+_*-`. The names in the zip file are the coordinator's.
+- **It runs on workers started with `--containers`**, with the image and the script fixed. A worker builds the image the first time it is needed: the same AmberTools 25.3 build as `traj`'s, installed with micromamba 2.0.5 on Debian 12 in a first stage that is the same as `traj`'s, so a worker that has built one has that stage for the other, of which only tleap's program `teLeap`, the 34 libraries it loads, its force fields, libraries and commands (`dat/leap`) and AmberTools' licence are copied onto `debian:12.12-slim`, with Debian's `libfaketime` 0.9.10-2.1. It is an image of its own beside `traj`'s rather than `traj`'s made larger, so that a worker that only analyses trajectories need not rebuild its image or carry tleap's force fields.
+- **Image size**: 243 MB on disk, 59 MB of content.
+- **Speed.** tleap runs on one thread. The test's two peptides, of 7,728 and 2,806 atoms with their water, were each prepared in about a second, the container's start included. A large protein in water takes longer, and has not been timed here.
+- **The same bytes, however it is shared out.** tleap picks the waters `addionsrand` makes into ions at random, seeded from the clock, and stamps each topology with the date. The script runs tleap with `libfaketime` holding the clock at 2000-01-01 00:00:00, so that the same file gives the same bytes every time: the test checks that two systems prepared in one task and in two give the same files and the same zip file, and each topology's `%VERSION` line says `DATE = 01/01/00  00:00:00`. Turning off the processor's AVX code in the C library's mathematics (`GLIBC_TUNABLES=glibc.cpu.hwcaps=-AVX,-AVX2,-FMA`) on the R620, a Xeon E5-2660 without FMA, changed no byte either.
+- **Results are not checked by a second worker.** Each worker builds the image from conda-forge as it is that day, so two workers may run different builds of the libraries tleap loads, and the C library picks its mathematics by the processor, FMA among it, which the R620 has not got to compare; whether that moves a coordinate's seventh decimal place between machines has not been measured, so `verify` and `audit_share` refuse prep jobs rather than risk taking honest workers for wrong ones.
+- **Limits.** At most 64 systems a job, and 16 a task; a PDB file of at most 128 MiB; a box padding from 3 to 50 Å, and salt up to 1 M. `md` takes one system a job, so a job of several systems is followed by an `md` job for each.
+- **Licences.** AmberTools as conda-forge packages it is GPL 3, LGPL 3, BSD-3-Clause and MIT, and its force field files are AmberTools'; the image runs tleap unmodified, as a separate program in a container, and keeps AmberTools' licence in `/opt/leap/share/licenses`. libfaketime is GPL 2. The test's peptide, `testdata/amber/kakeak.pdb`, was built for it with tleap's `sequence` command.
+- **Private jobs**: the coordinator reads each PDB file through with the job's key when it is split; a sealed file and a job with its key should work, as with transcode, but this has not been tried.
+
 ### Trajectory analysis
 
 ```sh
@@ -1307,7 +1377,7 @@ bin/sisyphusd job submit --workload traj --params "{\"topology\":\"$top\",\"traj
 
 [cpptraj](https://github.com/Amber-MD/cpptraj), AmberTools' trajectory program, analyses what a molecular dynamics run left behind. The analyses are chosen from a fixed menu, and the job gives only the menu's names and Amber masks: the cpptraj commands are written by the worker's own code (`packages/runtime/traj.go`, `actions`), never taken from the job. One trajectory is shared out across the pool by its frames: each task counts them with `cpptraj -tl` and takes the contiguous run that is its share, frames `n*i/k+1` to `n*(i+1)/k` of `n` for task `i` of `k`, read with `trajin <file> <first> <last>`. Several trajectories are shared out whole, a contiguous run of them to each task, and a task is given only its own. The coordinator puts each frame's results back together in order, and the result is the same bytes however the job was shared out: every frame is fitted onto the first frame of the first trajectory, which each task loads as its `reference`, not onto the first frame of its own run.
 
-It pairs with `md`: an `md` job's replicas each leave a DCD trajectory, which `traj` reads with the `md` job's topology. For an Amber system simulated from a prmtop and inpcrd, that is the prmtop; for a molecule given as a PDB file, `md` adds hydrogens and water, so the topology is the replica's `final` PDB, whose atoms are in the trajectory's order. That pairing was tried by hand with OpenMM's villin headpiece in water, 8,867 atoms, simulated as `md` does: cpptraj read the PDB OpenMM wrote and its DCD, took its box from the trajectory, and found the protein's hydrogen bonds and secondary structure with water left out. Several replicas can be given together as `trajectories`.
+It pairs with `md`, and `md` with `prep` (see [Amber system preparation](#amber-system-preparation)): an `md` job's replicas each leave a DCD trajectory, which `traj` reads with the `md` job's topology. For an Amber system simulated from a prmtop and inpcrd, that is the prmtop; for a molecule given as a PDB file, `md` adds hydrogens and water, so the topology is the replica's `final` PDB, whose atoms are in the trajectory's order. That pairing was tried by hand with OpenMM's villin headpiece in water, 8,867 atoms, simulated as `md` does: cpptraj read the PDB OpenMM wrote and its DCD, took its box from the trajectory, and found the protein's hydrogen bonds and secondary structure with water left out. Several replicas can be given together as `trajectories`.
 
 | Parameter | Meaning |
 | --- | --- |

@@ -1024,13 +1024,13 @@ func TestAWorkerSaysItsContainersAreHardenedOnlyWhereTheyAre(t *testing.T) {
 	// Every workload that runs in a container is known as one, and is held
 	// in as its worker's owner said.
 	owners := Confinement{Runtime: "runsc", ReadOnly: true, TmpMB: 64}
-	for _, name := range []string{"container", "transcode", "md", "render", "transcribe", "qchem", "ocr", "traj"} {
+	for _, name := range []string{"container", "transcode", "md", "render", "transcribe", "qchem", "ocr", "traj", "prep"} {
 		if got := ContainersConfined(owners).workloads[name].(contained).confinement(); got != owners {
 			t.Errorf("%s is held in as %+v", name, got)
 		}
 	}
 	r := WithContainers()
-	for name, want := range map[string]bool{"container": true, "transcode": true, "md": true, "render": true, "transcribe": true, "qchem": true, "ocr": true, "traj": true, "primes": false, "chat": false, "no such": false} {
+	for name, want := range map[string]bool{"container": true, "transcode": true, "md": true, "render": true, "transcribe": true, "qchem": true, "ocr": true, "traj": true, "prep": true, "primes": false, "chat": false, "no such": false} {
 		if r.InContainers(name) != want {
 			t.Errorf("%s runs in containers: %v", name, !want)
 		}

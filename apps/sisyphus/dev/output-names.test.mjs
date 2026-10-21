@@ -67,6 +67,18 @@ test('a forecast and its models’ scores are saved as CSV', () => {
   assert.equal(outputFileName(job, 'bafyscores', 1, new Uint8Array()), 'abcdef01-scores_table.csv')
 })
 
+test('a prepared Amber system’s files are saved by system and kind, its log as text and its archive as a zip', () => {
+  const job = { jobId: 'abcdef0123456789', result: json({ forcefield: 'ff19SB', water: 'opc', box_angstrom: 10, box_shape: 'octahedron', salt_mm: 150, systems: [
+    { index: 0, prmtop: 'bafytop0', inpcrd: 'bafycrd0', pdb: 'bafypdb0', atoms: 7728, residues: 1921, waters: 1903, ions: { 'Na+': 5, 'Cl-': 7 }, charge_before: 2, charge_after: 0 },
+    { index: 1, error: 'tleap does not know the residues LIG', log: 'bafylog1' },
+  ], prepared: 1, failed: 1, archive: 'bafyzip', tasks: 2 }) }
+  assert.equal(outputFileName(job, 'bafytop0', 0, new Uint8Array()), 'abcdef01-systems-0-prmtop.prmtop')
+  assert.equal(outputFileName(job, 'bafycrd0', 1, new Uint8Array()), 'abcdef01-systems-0-inpcrd.inpcrd')
+  assert.equal(outputFileName(job, 'bafypdb0', 2, new Uint8Array()), 'abcdef01-systems-0-pdb.pdb')
+  assert.equal(outputFileName(job, 'bafylog1', 3, new Uint8Array()), 'abcdef01-systems-1-log.txt')
+  assert.equal(outputFileName(job, 'bafyzip', 4, new Uint8Array()), 'abcdef01-archive.zip')
+})
+
 test('a trajectory analysis’s tables are saved as CSV', () => {
   const job = { jobId: 'abcdef0123456789', result: json({ frames: 60, trajectories: 1, trajectory_frames: [60], analyses: ['rmsd', 'hbond', 'dssp', 'rmsf'], series: 'bafyseries', rmsd_angstrom: { mean: 0.2, stdev: 0.1, min: 0, max: 0.4 }, hbonds: 'bafyhb', dssp: 'bafydssp', dssp_residues: 'bafyres', rmsf: 'bafyrmsf', structure: { alpha: 0.4 }, tasks: 4 }) }
   assert.equal(outputFileName(job, 'bafyseries', 0, new Uint8Array()), 'abcdef01-series.csv')

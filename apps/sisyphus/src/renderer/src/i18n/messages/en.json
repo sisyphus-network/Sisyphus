@@ -493,6 +493,7 @@
       "ocr": { "title": "Read text from scans", "description": "Reads the text in a scanned PDF or picture with Tesseract, in runs of pages across the pool, as plain text or a searchable PDF." },
       "forecast": { "title": "Forecast a series", "description": "Fits smoothing, autoregressive and simple models to a time series, backtests each on its recent past across the pool, and forecasts with the median of the best few kinds, with ranges." },
       "traj": { "title": "Analyse trajectories", "description": "Finds RMSD, radius of gyration, distances, hydrogen bonds, secondary structure or RMSF along molecular dynamics trajectories with cpptraj, in runs of frames across the pool." },
+      "prep": { "title": "Prepare Amber systems", "description": "Puts each protein or nucleic acid in a box of water with ions using AmberTools' tleap, in runs of PDB files across the pool, ready to simulate as an Amber topology and coordinates." },
       "md": { "title": "Simulate a molecule", "description": "Runs molecular dynamics as replicas across the pool." }
     }
   },
