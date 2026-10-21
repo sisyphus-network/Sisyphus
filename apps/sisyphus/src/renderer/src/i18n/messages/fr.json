@@ -481,6 +481,7 @@
       "transcode": { "title": "Réencoder une vidéo", "description": "Réencode une vidéo en H.264, par tronçons encodés par différents exécutants." },
       "render": { "title": "Rendre une scène 3D", "description": "Rend une scène Blender avec Cycles ou EEVEE, par images ou par bandes d’une image, sur tout le pool." },
       "transcribe": { "title": "Transcrire la parole", "description": "Transforme la parole d’un enregistrement en texte et sous-titres, par tronçons sur tout le pool." },
+      "qchem": { "title": "Calculer des molécules", "description": "Calcule avec xtb les énergies, géométries optimisées ou fréquences d’un fichier de conformères ou de molécules, par lots sur tout le pool." },
       "md": { "title": "Simuler une molécule", "description": "Exécute une dynamique moléculaire en répliques sur tout le pool." }
     }
   },

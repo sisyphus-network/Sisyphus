@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"slices"
@@ -19,6 +20,10 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 	store := storage.NewMemory()
 	stored, _ := store.Put(ctx, strings.NewReader("the boulder and the hill"))
 	registry := WithContainers().With(Graph{})
+	// Some workloads read a file when a job is split: qchem counts the
+	// structures in it, and refuses what is not a file of them.
+	water, _ := store.Put(ctx, strings.NewReader("3\nwater\nO 0 0 0.12\nH 0 0.76 -0.47\nH 0 -0.76 -0.47\n"))
+	files := map[string]string{"qchem": water.String()}
 
 	// Some file fields stand in place of another, which a form's fields
 	// cannot say, and their help does: md's Amber system, its topology and
@@ -47,7 +52,7 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			switch {
 			case alternatives[f.Name]:
 			case f.Kind == KindFile:
-				defaults[f.Name] = stored.String()
+				defaults[f.Name] = cmp.Or(files[name], stored.String())
 			case f.Default != nil:
 				defaults[f.Name] = f.Default
 			}
@@ -130,7 +135,7 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			}
 		}
 	}
-	if !slices.Equal(formed, []string{"md", "primes", "render", "transcode", "transcribe", "wordcount"}) {
+	if !slices.Equal(formed, []string{"md", "primes", "qchem", "render", "transcode", "transcribe", "wordcount"}) {
 		t.Errorf("the workloads with forms are %v", formed)
 	}
 	if Builtin().Form("no-such-workload") != nil || registry.Form("graph") != nil {

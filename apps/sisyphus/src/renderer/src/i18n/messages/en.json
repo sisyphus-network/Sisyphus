@@ -481,6 +481,7 @@
       "transcode": { "title": "Re-encode video", "description": "Re-encodes a video as H.264, in stretches that different workers encode." },
       "render": { "title": "Render a 3D scene", "description": "Renders a Blender scene with Cycles or EEVEE, by frames or by strips of one frame, across the pool." },
       "transcribe": { "title": "Transcribe speech", "description": "Turns the speech in a recording into text and subtitles, in stretches across the pool." },
+      "qchem": { "title": "Compute molecules", "description": "Finds the energies, optimised geometries or frequencies of a file of conformers or molecules with xtb, in runs across the pool." },
       "md": { "title": "Simulate a molecule", "description": "Runs molecular dynamics as replicas across the pool." }
     }
   },

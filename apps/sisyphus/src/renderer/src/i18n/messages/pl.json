@@ -481,6 +481,7 @@
       "transcode": { "title": "Przekoduj wideo", "description": "Przekodowuje wideo do H.264 w fragmentach kodowanych przez różnych wykonawców." },
       "render": { "title": "Renderuj scenę 3D", "description": "Renderuje scenę Blendera w Cycles lub EEVEE, klatkami albo pasami jednej klatki, w całej puli." },
       "transcribe": { "title": "Transkrybuj mowę", "description": "Zamienia mowę z nagrania na tekst i napisy, we fragmentach w całej puli." },
+      "qchem": { "title": "Oblicz cząsteczki", "description": "Oblicza za pomocą xtb energie, zoptymalizowane geometrie lub częstości z pliku konformerów lub cząsteczek, partiami w całej puli." },
       "md": { "title": "Symuluj cząsteczkę", "description": "Uruchamia dynamikę molekularną jako repliki w całej puli." }
     }
   },
