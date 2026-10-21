@@ -1,12 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Eye, MessageSquare } from 'lucide-react'
+import { Check, Copy, Eye, MessageSquare, X } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import Globe, { type GlobeMethods } from 'react-globe.gl'
 import { AdditiveBlending, Color, MeshBasicMaterial, NormalBlending, type LineSegments, type PerspectiveCamera } from 'three'
 import type { NodeSnapshot } from '../../../preload'
-import { type getMessages } from '@/i18n/messages'
+import { formatMessage, type getMessages } from '@/i18n/messages'
 import centroidsGeoJson from 'world-countries-centroids/dist/countries.geojson?raw'
 import countriesGeoJsonRaw from '../data/countries.geojson?raw'
 import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/liquid-glass-dock'
@@ -16,7 +16,8 @@ import { visiblePanelWidth, stepPanelWidth } from '@/lib/panel-width'
 import { locatePeers, peerLocationsKey, sharedPlaces, type Place } from '@/lib/globe-markers'
 import { webglAvailable } from '@/lib/webgl'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
-import { locationFromProtocol } from '@/lib/node-location'
+import { locationFromProtocol, type LocationShare } from '@/lib/node-location'
+import { cityEstimateFromProtocol, nodeDetails, peerDetails, poolWorkers, renderDetailsHtml, type CityEstimate, type GlobeDetails, type WorkerFacts } from '@/lib/globe-details'
 import { useWebgl } from '@/hooks/use-webgl'
 
 type Messages = ReturnType<typeof getMessages>
@@ -56,7 +57,11 @@ const countryCentroids = new Map<string, { lat: number; lng: number }>(
   ]),
 )
 
-const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean }) {
+// The ID the globe's point for this node goes by; a peer's is its peer ID.
+const ownPointId = 'this-node'
+type GlobePoint = { id: string; lat: number; lng: number; label: string; color: string }
+
+const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active, pointNames, pointsLabel, pointButtonLabel, pointCard, onPickPoint }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean; pointNames: ReadonlyMap<string, string>; pointsLabel: string; pointButtonLabel: string; pointCard: (id: string) => string; onPickPoint: (id: string, from?: HTMLElement) => void }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -181,10 +186,14 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const locationsKey = peerLocationsKey(peerLocations)
   const stablePeerLocations = useMemo(() => peerLocations, [locationsKey])
   const points = useMemo(() => {
-    const own = location ? [{ ...location, label: nodeLabel, color: theme.accent }] : []
-    const known = stablePeerLocations.map((peer) => ({ ...peer, label: peer.countryCode ? `${peer.peerId.slice(0, 12)} · ${peer.countryCode}` : peer.peerId.slice(0, 12), color: theme.accent }))
+    const own: GlobePoint[] = location ? [{ id: ownPointId, ...location, label: nodeLabel, color: theme.accent }] : []
+    const known: GlobePoint[] = stablePeerLocations.map((peer) => ({ id: peer.peerId, lat: peer.lat, lng: peer.lng, label: peer.peerId, color: theme.accent }))
     return [...own, ...known]
   }, [location, nodeLabel, stablePeerLocations, theme.accent])
+  // The card is read when the pointer reaches a point, so it says what is
+  // known then, not when the point was drawn.
+  const pointLabel = useCallback((point: object) => pointCard((point as GlobePoint).id), [pointCard])
+  const pickPoint = useCallback((point: object) => onPickPoint((point as GlobePoint).id), [onPickPoint])
   const rings = useMemo(() => location ? [{ ...location, maxRadius: 5, propagationSpeed: 2, repeatPeriod: 1200 }] : [], [location])
   const polygonCapColor = useCallback(() => 'rgba(0,0,0,0)', [])
   const polygonSideColor = useCallback(() => 'rgba(0,0,0,0)', [])
@@ -199,7 +208,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   }, [theme.accent])
   const rendererConfig = useMemo(() => ({ alpha: true, antialias: true, powerPreference: 'low-power' as const }), [])
   const ringMaxRadius = useCallback(() => 5, [])
-  return <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel}>
+  return <>
+  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel}>
     {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
       <Globe
       ref={globeRef}
@@ -226,7 +236,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       pointAltitude={0.012}
       pointRadius={0.32}
       pointsTransitionDuration={0}
-      pointLabel="label"
+      pointLabel={pointLabel}
+      onPointClick={pickPoint}
       ringsData={rings}
       ringLat="lat"
       ringLng="lng"
@@ -234,7 +245,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       ringMaxRadius={ringMaxRadius}
       ringPropagationSpeed="propagationSpeed"
       ringRepeatPeriod="repeatPeriod"
-      enablePointerInteraction={active && Boolean(location)}
+      enablePointerInteraction={active && points.length > 0}
       onGlobeReady={() => {
         fitCameraToViewport()
         applyHologramStyle()
@@ -243,7 +254,47 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       />
     </div>}
   </div>
+  {/* A point on a WebGL globe cannot take the keyboard's focus, so each is
+      also a button here, out of sight until it is focused. */}
+  {active && points.length > 0 && <nav className="globe-point-list" aria-label={pointsLabel}>
+    <ul>{points.map((point) => <li key={point.id}><button type="button" onClick={(event) => onPickPoint(point.id, event.currentTarget)}>{formatMessage(pointButtonLabel, { name: pointNames.get(point.id) ?? point.label })}</button></li>)}</ul>
+  </nav>}
+  </>
 })
+
+// GlobeCard is a point's card kept open: what its hover card says, with its
+// peer ID to copy, until it is closed with its button or Escape.
+function GlobeCard({ details, html, labels, onClose }: { details: GlobeDetails; html: string; labels: Messages['globeDetails']; onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const cardRef = useRef<HTMLElement>(null)
+  useEffect(() => { cardRef.current?.focus() }, [details.peerId])
+  useEffect(() => {
+    if (!copied) return
+    const timeout = window.setTimeout(() => setCopied(false), 1600)
+    return () => window.clearTimeout(timeout)
+  }, [copied])
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      // Escape in the chat, or in a dialog of its own, is not for this card.
+      const target = event.target as Element | null
+      const here = !target || target === document.body || cardRef.current?.contains(target) || target.closest?.('.workspace-network')
+      if (!here) return
+      event.preventDefault()
+      onClose()
+    }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [onClose])
+  const title = details.kind === 'node' ? labels.thisNode : details.worker?.name || (details.kind === 'worker' ? labels.worker : labels.peer)
+  return <section ref={cardRef} tabIndex={-1} role="dialog" aria-label={formatMessage(labels.pointButton, { name: title })} className="globe-card-pinned liquid-glass-menu">
+    <div className="globe-card-pinned__actions">
+      <button type="button" onClick={() => { void navigator.clipboard.writeText(details.peerId).then(() => setCopied(true), () => {}) }}>{copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}<span>{copied ? labels.copied : labels.copyPeerId}</span></button>
+      <button type="button" aria-label={labels.close} title={labels.close} onClick={onClose}><X size={14} aria-hidden /></button>
+    </div>
+    <div dangerouslySetInnerHTML={{ __html: html }} />
+  </section>
+}
 
 type WorkspaceLayout = { chat: number; network: number; historyOpen: boolean; historyWidth: number; topologyOpen: boolean }
 function readLayout(): WorkspaceLayout {
@@ -496,13 +547,41 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
       <div className="workspace-chat-content mx-auto flex min-h-0 w-full flex-1 flex-col"><div className="workspace-chat-surface flex min-h-0 flex-1 flex-col overflow-hidden"><AgentChat snapshot={snapshot} messages={messages} direction={direction} historyOpen={historyOpen} setHistoryOpen={setHistoryOpen} historyPanelHost={historyPanelHost} onOpenSettings={() => navigate('/settings')} activeChatId={activeChatId} onActiveChatChange={setActiveChatId} /></div></div>
     </section>
   const countryCode = snapshot.info?.countryCode?.toUpperCase()
-  const pin = useOwnPin(snapshot)
-  const shared = useSharedPlaces(snapshot)
+  const pin = useOwnPin(snapshot, visible)
+  const { workers, shared } = usePoolWorkers(snapshot, visible)
+  const cityEstimate = useCityEstimate(snapshot, visible)
+  const details = useMemo(() => {
+    const all = new Map<string, GlobeDetails>()
+    const info = snapshot.info
+    if (info) all.set(ownPointId, nodeDetails({ ...info, cityEstimate, pin: pin && { lat: pin.lat, lng: pin.lng, share: pin.share } }, workers.get(info.peerId)))
+    const peers = new Map(snapshot.peers.map((peer) => [peer.peerId, peer]))
+    for (const peerId of new Set([...peers.keys(), ...workers.keys()])) {
+      if (peerId === info?.peerId) continue
+      all.set(peerId, peerDetails(peerId, peers.get(peerId), workers.get(peerId)))
+    }
+    return all
+  }, [snapshot.info, snapshot.peers, workers, cityEstimate, pin])
+  const pointNames = useMemo(() => new Map([...details].map(([id, item]) => [id, id === ownPointId ? messages.thisNode : item.worker?.name || item.peerId])), [details, messages.thisNode])
+  const renderCard = useCallback((item: GlobeDetails, pinned: boolean) => renderDetailsHtml(item, messages.globeDetails, { direction, locale: document.documentElement.lang || 'en', pinned }), [messages.globeDetails, direction])
+  const pointCard = useCallback((id: string) => { const item = details.get(id); return item ? renderCard(item, false) : '' }, [details, renderCard])
+  const [pinnedPoint, setPinnedPoint] = useState<string>()
+  const pinnedFromRef = useRef<HTMLElement | null>(null)
+  const pickPoint = useCallback((id: string, from?: HTMLElement) => { pinnedFromRef.current = from ?? null; setPinnedPoint(id) }, [])
+  const closePinned = useCallback(() => {
+    setPinnedPoint(undefined)
+    // Back to the point's button, if the card was opened from one.
+    const from = pinnedFromRef.current
+    pinnedFromRef.current = null
+    if (from?.isConnected) from.focus()
+  }, [])
+  const pinnedDetails = pinnedPoint ? details.get(pinnedPoint) : undefined
+  const globeActive = visible && topologyOpen && (!compact || mobileView === 'network')
   const countrySource = snapshot.info?.countrySource
   const countryPosition = countryCode ? countryCentroids.get(countryCode) : undefined
   const countryLabel = countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry
   const networkPane = <section className="workspace-network workspace-glass liquid-glass-menu relative flex h-full min-h-0 items-center justify-center overflow-hidden rounded-[22px]">
-          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} shared={shared} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={visible && topologyOpen && (!compact || mobileView === 'network')} />}</div>
+          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} shared={shared} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={globeActive} pointNames={pointNames} pointsLabel={messages.globeDetails.points} pointButtonLabel={messages.globeDetails.pointButton} pointCard={pointCard} onPickPoint={pickPoint} />}</div>
+          {globeActive && pinnedDetails && <GlobeCard details={pinnedDetails} html={renderCard(pinnedDetails, true)} labels={messages.globeDetails} onClose={closePinned} />}
           <div className="absolute inset-x-5 top-5 z-[2] flex items-center justify-between gap-3 text-[10px]">
             <div className="rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-muted-foreground shadow-sm backdrop-blur"><span className="font-mono text-foreground">{connectedPeers.length}</span> {messages.connectedPeers.toLowerCase()}</div>
             <div className="max-w-[62%] rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-end text-muted-foreground shadow-sm backdrop-blur"><span className="me-1.5 inline-block size-1.5 rounded-full bg-[var(--app-accent)] align-middle" />{messages.thisNode}{countryFlag(countryCode) ? ` · ${countryFlag(countryCode)}` : ''}{countryPosition ? <span className="ms-1.5">{countryCode}</span> : null}{!countryCode && !pin && isDesktopApp() ? <Link to="/settings/node" className="ms-1.5 text-[var(--app-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--app-accent)]">· {messages.unplacedLink}</Link> : null}</div>
@@ -533,37 +612,65 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
 }
 
 // useOwnPin returns where the owner put this node, read again whenever the
-// node's state changes, or nothing if there is no pin or the node keeps none.
-function useOwnPin(snapshot: NodeSnapshot): { lat: number; lng: number } | undefined {
-  const [pin, setPin] = useState<{ lat: number; lng: number }>()
+// node's state changes or the workspace is shown again (a pin saved in
+// Settings changes nothing in the node's state), or nothing if there is no
+// pin or the node keeps none.
+function useOwnPin(snapshot: NodeSnapshot, visible: boolean): { lat: number; lng: number; share: LocationShare } | undefined {
+  const [pin, setPin] = useState<{ lat: number; lng: number; share: LocationShare }>()
   const connected = snapshot.status === 'connected'
   useEffect(() => {
     if (!connected) return
     let active = true
     void getNodeApi().call<{ location?: unknown }>('getNodeLocation').then((result) => {
       const location = result.location ? locationFromProtocol(result.location) : null
-      if (active) setPin(location ? { lat: location.latitude, lng: location.longitude } : undefined)
+      if (active) setPin((current) => {
+        if (!location) return undefined
+        // The same pin read again is kept as it was, so the globe is not redrawn.
+        if (current && current.lat === location.latitude && current.lng === location.longitude && current.share === location.share) return current
+        return { lat: location.latitude, lng: location.longitude, share: location.share }
+      })
     }).catch(() => { if (active) setPin(undefined) })
     return () => { active = false }
-  }, [connected, snapshot.revision, snapshot.lastUpdated])
+  }, [connected, visible, snapshot.revision, snapshot.lastUpdated])
   return pin
 }
 
-const noSharedPlaces: ReadonlyMap<string, Place> = new Map()
+type PoolWorkers = { workers: ReadonlyMap<string, WorkerFacts>; shared: ReadonlyMap<string, Place> }
+const noPoolWorkers: PoolWorkers = { workers: new Map(), shared: new Map() }
 
-// useSharedPlaces returns the places the members of this node's pool share,
-// by peer ID, read again whenever the node's state changes. A node that
-// coordinates no pool, or keeps none of this, has none.
-function useSharedPlaces(snapshot: NodeSnapshot): ReadonlyMap<string, Place> {
-  const [places, setPlaces] = useState<ReadonlyMap<string, Place>>(noSharedPlaces)
+// usePoolWorkers returns the workers of this node's pool by peer ID, with
+// what each says of its machine, and the places they share, read again
+// whenever the node's state changes. A node that coordinates no pool, or
+// keeps none of this, has none.
+function usePoolWorkers(snapshot: NodeSnapshot, visible: boolean): PoolWorkers {
+  const [pool, setPool] = useState<PoolWorkers>(noPoolWorkers)
   const connected = snapshot.status === 'connected'
   useEffect(() => {
     if (!connected) return
     let active = true
     void getNodeApi().call<{ workers?: unknown }>('listWorkers').then((result) => {
-      if (active) setPlaces(sharedPlaces(result.workers))
-    }).catch(() => { if (active) setPlaces(noSharedPlaces) })
+      if (!active) return
+      const workers = poolWorkers(result.workers)
+      setPool({ workers, shared: sharedPlaces(result.workers) })
+    }).catch(() => { if (active) setPool(noPoolWorkers) })
     return () => { active = false }
-  }, [connected, snapshot.revision, snapshot.lastUpdated])
-  return places
+  }, [connected, visible, snapshot.revision, snapshot.lastUpdated])
+  return pool
+}
+
+// useCityEstimate returns where the node's city table puts it, which only
+// GetNodeInfo itself says, or nothing.
+function useCityEstimate(snapshot: NodeSnapshot, visible: boolean): CityEstimate | undefined {
+  const [estimate, setEstimate] = useState<CityEstimate>()
+  const connected = snapshot.status === 'connected'
+  useEffect(() => {
+    if (!connected) return
+    let active = true
+    void getNodeApi().call<{ cityEstimate?: unknown }>('getNodeInfo').then((result) => {
+      const next = cityEstimateFromProtocol(result.cityEstimate)
+      if (active) setEstimate((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next)
+    }).catch(() => { if (active) setEstimate(undefined) })
+    return () => { active = false }
+  }, [connected, visible, snapshot.revision, snapshot.lastUpdated])
+  return estimate
 }
