@@ -25,6 +25,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
 // localNode is a node as its desktop client sees it.
@@ -1158,7 +1159,7 @@ func startOffice(t *testing.T, pool JobControl) nodepb.NodeServiceClient {
 		simulated.changed = changes.Notify
 	}
 	cfg := LocalConfig{
-		NodeID: "12D3KooWnode", Token: "the-token", Workloads: []string{"primes", "wordcount"},
+		NodeID: "12D3KooWnode", Token: "the-token", Workloads: runtime.Builtin(),
 		NodeInfoChanges: changes,
 		Listen:          func() []string { return nil }, Peers: func() []*nodepb.Peer { return nil },
 	}
@@ -1286,10 +1287,77 @@ func TestTheLocalAPIListsThePoolsWorkers(t *testing.T) {
 	}
 }
 
+func TestTheLocalAPIListsTheWorkloadsWithTheirFormsAndWhoOffersThem(t *testing.T) {
+	pool := &office{nodes: []*pb.NodeInfo{
+		{NodeId: "12D3KooWa", Capabilities: &pb.NodeCapabilities{Workloads: []string{"primes", "wordcount"}}},
+		{NodeId: "12D3KooWb", RunningTasks: 2, Capabilities: &pb.NodeCapabilities{Workloads: []string{"primes"}}},
+	}}
+	// What it says of the pool, anything on the machine may read, as it
+	// may the list of workers.
+	listed, err := startOffice(t, pool).ListWorkloads(context.Background(), &nodepb.ListWorkloadsRequest{})
+	if err != nil || len(listed.GetWorkloads()) != 2 {
+		t.Fatalf("ListWorkloads = %v, %v", listed, err)
+	}
+	primes, wordcount := listed.GetWorkloads()[0], listed.GetWorkloads()[1]
+	// Busy or not, a worker that offers a workload is counted.
+	if primes.GetName() != "primes" || primes.GetWorkersRunningIt() != 2 || wordcount.GetName() != "wordcount" || wordcount.GetWorkersRunningIt() != 1 ||
+		primes.GetDescription() != runtime.Builtin().Describe("primes") || primes.GetComposite() || wordcount.GetComposite() {
+		t.Errorf("the workloads are listed as %v", listed)
+	}
+	from, to := primes.GetFields()[0], primes.GetFields()[1]
+	if len(primes.GetFields()) != 2 || from.GetName() != "from" || from.GetKind() != nodepb.WorkloadFieldKind_WORKLOAD_FIELD_KIND_INTEGER || from.GetLabel() == "" || from.GetHelp() == "" ||
+		from.GetDefaultJson() != "0" || to.GetDefaultJson() != "1000000" || from.Minimum == nil || from.GetMinimum() != 0 || to.GetMaximum() != 1<<40 || to.GetRequired() || to.GetStep() != 0 {
+		t.Errorf("the form of primes is %v", primes.GetFields())
+	}
+	if input := wordcount.GetFields(); len(input) != 1 || input[0].GetKind() != nodepb.WorkloadFieldKind_WORKLOAD_FIELD_KIND_FILE || !input[0].GetRequired() ||
+		input[0].GetDefaultJson() != "" || input[0].Minimum != nil || input[0].Maximum != nil {
+		t.Errorf("the form of wordcount is %v", input)
+	}
+}
+
+// A coordinator that takes in workloads no worker runs, and the graph that
+// it runs itself, lists them all: a transcode's form with its choices and
+// step, and the graph as composite, with no form and no workers.
+func TestTheLocalAPIListsWhatNoWorkerOffersAndWhatTheCoordinatorRuns(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewLocalServer(LocalConfig{Jobs: &office{}, Workloads: runtime.WithContainers().With(runtime.Graph{})})
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	listed, err := nodepb.NewNodeServiceClient(conn).ListWorkloads(context.Background(), &nodepb.ListWorkloadsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]*nodepb.Workload{}
+	for _, w := range listed.GetWorkloads() {
+		byName[w.GetName()] = w
+	}
+	if graph := byName["graph"]; graph == nil || !graph.GetComposite() || len(graph.GetFields()) != 0 || graph.GetWorkersRunningIt() != 0 {
+		t.Errorf("the graph is listed as %v", graph)
+	}
+	transcode := byName["transcode"]
+	if transcode == nil || transcode.GetWorkersRunningIt() != 0 || len(transcode.GetFields()) != 5 {
+		t.Fatalf("transcode is listed as %v", transcode)
+	}
+	height, preset := transcode.GetFields()[1], transcode.GetFields()[3]
+	if height.GetName() != "height" || height.GetStep() != 2 || height.Maximum != nil ||
+		preset.GetKind() != nodepb.WorkloadFieldKind_WORKLOAD_FIELD_KIND_CHOICE || preset.GetDefaultJson() != `"medium"` || !slices.Contains(preset.GetChoices(), "veryslow") {
+		t.Errorf("the form of transcode is %v", transcode.GetFields())
+	}
+}
+
 func TestANodeWithNoPoolHasNoWorkersOrJobs(t *testing.T) {
 	client := startOffice(t, nil)
 	ctx := withToken("the-token")
 	_, workers := client.ListWorkers(ctx, &nodepb.ListWorkersRequest{})
+	_, workloads := client.ListWorkloads(ctx, &nodepb.ListWorkloadsRequest{})
 	_, submit := client.SubmitJob(ctx, &nodepb.SubmitJobRequest{Workload: "primes"})
 	_, get := client.GetJob(ctx, &nodepb.GetJobRequest{JobId: "any"})
 	_, list := client.ListJobs(ctx, &nodepb.ListJobsRequest{})
@@ -1298,7 +1366,7 @@ func TestANodeWithNoPoolHasNoWorkersOrJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, watch := stream.Recv()
-	for call, err := range map[string]error{"ListWorkers": workers, "SubmitJob": submit, "GetJob": get, "ListJobs": list, "WatchJobs": watch} {
+	for call, err := range map[string]error{"ListWorkers": workers, "ListWorkloads": workloads, "SubmitJob": submit, "GetJob": get, "ListJobs": list, "WatchJobs": watch} {
 		if status.Code(err) != codes.FailedPrecondition {
 			t.Errorf("%s on a node with no pool: %v, want FailedPrecondition", call, err)
 		}

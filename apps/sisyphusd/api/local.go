@@ -83,7 +83,7 @@ type LocalConfig struct {
 	// Jobs, if set, is the pool this node coordinates, for the calls about
 	// its workers and jobs. Workloads are the workloads the node knows.
 	Jobs      JobControl
-	Workloads []string
+	Workloads *runtime.Registry
 	// Assistant, if set, is the node's planner: its model, its
 	// conversations, and the asking of questions.
 	Assistant Assistant
@@ -346,7 +346,7 @@ func (s *localService) GetNodeInfo(ctx context.Context, _ *nodepb.GetNodeInfoReq
 // the node's API token.
 func (s *localService) nodeInfo(ctx context.Context) *nodepb.GetNodeInfoResponse {
 	info := &nodepb.GetNodeInfoResponse{
-		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, Workloads: s.cfg.Workloads,
+		PeerId: s.cfg.NodeID, DaemonVersion: s.cfg.Version, Workloads: s.workloads().Names(),
 	}
 	if s.cfg.Listen != nil {
 		info.ListenAddresses = s.cfg.Listen()

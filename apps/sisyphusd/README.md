@@ -1011,6 +1011,8 @@ This was checked against a database made by the Rust daemon itself, which is kep
 - **`primes`** counts the primes in `[from, to)`. Parameters and results are a few bytes and travel inline. It is a stand-in that exercises the pool.
 - **`wordcount`** counts word frequencies in a stored file. It exercises the storage path: the input is fetched by CID, each task reads only its byte range, task outputs are stored as blobs, and the result is a blob too. The result's CID is the same however the job is split, so two runs can be compared by CID alone.
 
+A workload may also describe its parameters as a form, so that a program can ask for them field by field instead of having JSON written by hand. Each field has its JSON key; its kind, which is a stored file's CID, an integer, a number, a line of text, one of a list of choices, or a toggle; a label and a sentence of help; and a default, bounds and a step for a number, and whether a job is refused without it. A form sent with its defaults unchanged is a job the workload accepts. `primes`, `wordcount` and `transcode` have forms. The local API's `ListWorkloads` lists every workload the node takes jobs of, with what it does, its form, and how many of the connected workers offer it, busy or not. A graph is marked `composite`, since the coordinator carries it out itself. Like `ListWorkers`, it needs no token, as it says what the pool can do and nothing of what anyone has done with it. A node that coordinates no pool answers it with `FAILED_PRECONDITION`. An agent's `list_workloads` reads it, and the desktop's Run page (#585) is to build its forms from it.
+
 ### Running containers
 
 ```sh

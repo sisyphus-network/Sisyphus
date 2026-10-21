@@ -94,6 +94,16 @@ func (Transcode) Describe() string {
 	return `Re-encodes a stored video as H.264 video with AAC sound, cut into stretches that are encoded on different workers and joined. Parameters: {"input": "<CID of the stored video>", "height": <optional height in pixels to scale to, an even number>, "crf": <optional quality from 1 (best) to 51, default 23>, "preset": "<optional, from ultrafast to veryslow, default medium>", "segments": <optional number of stretches>}. Result: {"output": "<CID of the encoded video, an MPEG transport stream>", "segments": <n>, "bytes": <its size>}.`
 }
 
+func (Transcode) Form() []Field {
+	return []Field{
+		{Name: "input", Kind: KindFile, Label: "Video", Help: "The stored video to re-encode.", Required: true},
+		{Name: "height", Kind: KindInteger, Label: "Height", Help: "The height in pixels to scale the picture to, keeping its shape, or 0 to keep its size.", Default: 0, Minimum: bound(0), Step: 2},
+		{Name: "crf", Kind: KindInteger, Label: "Quality", Help: "From 1, the best and largest, to 51, the worst and smallest.", Default: 23, Minimum: bound(1), Maximum: bound(51)},
+		{Name: "preset", Kind: KindChoice, Label: "Speed", Help: "How long to spend encoding: slower makes a smaller file of the same quality.", Default: "medium", Choices: slices.Clone(transcodePresets)},
+		{Name: "segments", Kind: KindInteger, Label: "Stretches", Help: "How many stretches to cut the video into, or 0 to leave it to the pool.", Default: 0, Minimum: bound(0), Maximum: bound(MaxTasks)},
+	}
+}
+
 func (Transcode) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
 	var p TranscodeParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -115,6 +125,8 @@ func (Transcode) Split(ctx context.Context, blobs Blobs, params []byte, parts in
 		return nil, fmt.Errorf("transcode parameters: preset is %q, and must be one of %s", p.Preset, strings.Join(transcodePresets, ", "))
 	case p.Height < 0 || p.Height%2 != 0:
 		return nil, fmt.Errorf("transcode parameters: height is %d, and must be an even number of pixels", p.Height)
+	case p.Segments < 0:
+		return nil, fmt.Errorf("transcode parameters: segments is %d, and must be 0 or more", p.Segments)
 	}
 	return Container{}.Split(ctx, blobs, mustJSON(ContainerParams{
 		Image: TranscodeImage, Command: []string{"sh", "-c", transcodeSegment},

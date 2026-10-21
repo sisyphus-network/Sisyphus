@@ -18,7 +18,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
-	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
 // node is a node that answers as it is set to, and fails at whatever call
@@ -64,6 +63,13 @@ func (n *node) GetNodeInfo(ctx context.Context, _ *nodepb.GetNodeInfoRequest, _ 
 
 func (n *node) ListWorkers(context.Context, *nodepb.ListWorkersRequest, ...grpc.CallOption) (*nodepb.ListWorkersResponse, error) {
 	return &nodepb.ListWorkersResponse{Workers: n.workers}, n.fail("ListWorkers")
+}
+
+func (n *node) ListWorkloads(context.Context, *nodepb.ListWorkloadsRequest, ...grpc.CallOption) (*nodepb.ListWorkloadsResponse, error) {
+	return &nodepb.ListWorkloadsResponse{Workloads: []*nodepb.Workload{
+		{Name: "primes", Description: "Counts the prime numbers in a range.", WorkersRunningIt: 2},
+		{Name: "graph", Description: "Runs jobs as steps.", Composite: true},
+	}}, n.fail("ListWorkloads")
 }
 
 func (n *node) SubmitJob(_ context.Context, req *nodepb.SubmitJobRequest, _ ...grpc.CallOption) (*nodepb.SubmitJobResponse, error) {
@@ -161,7 +167,7 @@ func (n *node) StoreFile(context.Context, ...grpc.CallOption) (grpc.ClientStream
 }
 
 func serving(n *node) *server {
-	return &server{Config{Node: n, Token: "the-token", Workloads: runtime.Builtin()}}
+	return &server{Config{Node: n, Token: "the-token"}}
 }
 
 func TestEveryToolSaysSoWhenTheNodeFailsIt(t *testing.T) {
@@ -180,10 +186,8 @@ func TestEveryToolSaysSoWhenTheNodeFailsIt(t *testing.T) {
 			t.Errorf("with %s failing: %v", failing, err)
 		}
 	}
-	for _, failing := range []string{"GetNodeInfo", "ListWorkers"} {
-		if _, err := serving(&node{failing: failing}).workloads(ctx); err == nil {
-			t.Errorf("workloads with %s failing: no error", failing)
-		}
+	if _, err := serving(&node{failing: "ListWorkloads"}).workloads(ctx); err == nil {
+		t.Error("workloads with ListWorkloads failing: no error")
 	}
 	// A job started and then lost sight of is named, so it can be found.
 	if _, err := serving(&node{failing: "GetJob"}).run(ctx, runJobArgs{Workload: "primes"}); err == nil || !strings.Contains(err.Error(), "job job-1 was started") {
@@ -224,6 +228,20 @@ func TestThePoolIsDescribedWithItsCardsAndTheTokenIsShown(t *testing.T) {
 	}
 	if n.token != "Bearer the-token" {
 		t.Errorf("the node was shown %q", n.token)
+	}
+}
+
+// The workloads are as the node lists them, with a graph said to be run by
+// the coordinator in place of a count of workers.
+func TestTheWorkloadsAreAsTheNodeListsThem(t *testing.T) {
+	got, err := serving(&node{}).workloads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	shown, _ := json.Marshal(got)
+	if want := `[{"description":"Counts the prime numbers in a range.","name":"primes","workers_running_it":2},` +
+		`{"description":"Runs jobs as steps.","name":"graph","run_by":"the coordinator, as a job for each step"}]`; string(shown) != want {
+		t.Errorf("the workloads are shown as %s", shown)
 	}
 }
 

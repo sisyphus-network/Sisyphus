@@ -54,6 +54,13 @@ func (Primes) Describe() string {
 	return `Counts the prime numbers in a range. Parameters: {"from": <integer>, "to": <integer>}, counting from "from" up to but not including "to". Result: {"count": <integer>}.`
 }
 
+func (Primes) Form() []Field {
+	return []Field{
+		{Name: "from", Kind: KindInteger, Label: "From", Help: "The first number to look at.", Default: 0, Minimum: bound(0), Maximum: bound(maxPrimesTo)},
+		{Name: "to", Kind: KindInteger, Label: "Up to", Help: "Where to stop: this number itself is not counted.", Default: 1_000_000, Minimum: bound(0), Maximum: bound(maxPrimesTo)},
+	}
+}
+
 func (Primes) Execute(ctx context.Context, _ Blobs, payload []byte) ([]byte, error) {
 	r, err := parsePrimesRange(payload)
 	if err != nil {

@@ -90,6 +90,12 @@ func (WordCount) Describe() string {
 	return `Counts how often each word occurs in a stored text file. Parameters: {"input": "<CID of the stored file>"}. Result: {"words": <total words>, "distinct": <distinct words>, "output": "<CID of the full table of counts>"}.`
 }
 
+func (WordCount) Form() []Field {
+	return []Field{
+		{Name: "input", Kind: KindFile, Label: "Text file", Help: "The stored text file to count the words of.", Required: true},
+	}
+}
+
 func (WordCount) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
 	var r wordCountRange
 	if err := json.Unmarshal(payload, &r); err != nil {

@@ -56,6 +56,7 @@ func TestATranscodeJobIsAContainerJobWithTheImageAndCommandFixed(t *testing.T) {
 		`{"input":"CID","preset":"x"}`:  `preset is "x", and must be one of ultrafast`,
 		`{"input":"CID","height":481}`:  "height is 481, and must be an even number",
 		`{"input":"CID","height":-480}`: "height is -480",
+		`{"input":"CID","segments":-1}`: "segments is -1, and must be 0 or more",
 	} {
 		params = strings.Replace(params, "CID", video.String(), 1)
 		if _, err := (Transcode{}).Split(ctx, store, []byte(params), 2); err == nil || !strings.Contains(err.Error(), want) {

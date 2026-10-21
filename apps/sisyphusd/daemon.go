@@ -312,7 +312,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	stopped := make(chan error, 2)
 
 	// local is what the desktop client on this machine is told and may do.
-	local := api.LocalConfig{NodeID: ident.ID(), Version: version, Workloads: workloads.Names(), NodeInfoChanges: api.NewNodeInfoChanges(), BrowserDeviceChanges: api.NewNodeInfoChanges()}
+	local := api.LocalConfig{NodeID: ident.ID(), Version: version, Workloads: workloads, NodeInfoChanges: api.NewNodeInfoChanges(), BrowserDeviceChanges: api.NewNodeInfoChanges()}
 
 	// coordinatorID is the ID of the node this one's worker answers to: the
 	// node itself, or for a worker-only node the coordinator it joined.

@@ -40,6 +40,7 @@ const (
 	NodeService_SetPeerComputePermissions_FullMethodName    = "/sisyphus.node.v1.NodeService/SetPeerComputePermissions"
 	NodeService_ListWorkers_FullMethodName                  = "/sisyphus.node.v1.NodeService/ListWorkers"
 	NodeService_WatchWorkers_FullMethodName                 = "/sisyphus.node.v1.NodeService/WatchWorkers"
+	NodeService_ListWorkloads_FullMethodName                = "/sisyphus.node.v1.NodeService/ListWorkloads"
 	NodeService_SubmitJob_FullMethodName                    = "/sisyphus.node.v1.NodeService/SubmitJob"
 	NodeService_GetJob_FullMethodName                       = "/sisyphus.node.v1.NodeService/GetJob"
 	NodeService_ListJobs_FullMethodName                     = "/sisyphus.node.v1.NodeService/ListJobs"
@@ -123,6 +124,11 @@ type NodeServiceClient interface {
 	// WatchWorkers sends the connected workers at once and when their published
 	// state changes.
 	WatchWorkers(ctx context.Context, in *ListWorkersRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListWorkersResponse], error)
+	// ListWorkloads lists the workloads this node can take jobs of, each with
+	// what it does, the form its parameters are asked for with, and how many
+	// of the connected workers offer it, busy or not. A workload none offers
+	// would wait for one.
+	ListWorkloads(ctx context.Context, in *ListWorkloadsRequest, opts ...grpc.CallOption) (*ListWorkloadsResponse, error)
 	// SubmitJob gives the pool a job and returns it as it stands at once.
 	SubmitJob(ctx context.Context, in *SubmitJobRequest, opts ...grpc.CallOption) (*SubmitJobResponse, error)
 	GetJob(ctx context.Context, in *GetJobRequest, opts ...grpc.CallOption) (*GetJobResponse, error)
@@ -476,6 +482,16 @@ func (c *nodeServiceClient) WatchWorkers(ctx context.Context, in *ListWorkersReq
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchWorkersClient = grpc.ServerStreamingClient[ListWorkersResponse]
+
+func (c *nodeServiceClient) ListWorkloads(ctx context.Context, in *ListWorkloadsRequest, opts ...grpc.CallOption) (*ListWorkloadsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListWorkloadsResponse)
+	err := c.cc.Invoke(ctx, NodeService_ListWorkloads_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 func (c *nodeServiceClient) SubmitJob(ctx context.Context, in *SubmitJobRequest, opts ...grpc.CallOption) (*SubmitJobResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -912,6 +928,11 @@ type NodeServiceServer interface {
 	// WatchWorkers sends the connected workers at once and when their published
 	// state changes.
 	WatchWorkers(*ListWorkersRequest, grpc.ServerStreamingServer[ListWorkersResponse]) error
+	// ListWorkloads lists the workloads this node can take jobs of, each with
+	// what it does, the form its parameters are asked for with, and how many
+	// of the connected workers offer it, busy or not. A workload none offers
+	// would wait for one.
+	ListWorkloads(context.Context, *ListWorkloadsRequest) (*ListWorkloadsResponse, error)
 	// SubmitJob gives the pool a job and returns it as it stands at once.
 	SubmitJob(context.Context, *SubmitJobRequest) (*SubmitJobResponse, error)
 	GetJob(context.Context, *GetJobRequest) (*GetJobResponse, error)
@@ -1082,6 +1103,9 @@ func (UnimplementedNodeServiceServer) ListWorkers(context.Context, *ListWorkersR
 }
 func (UnimplementedNodeServiceServer) WatchWorkers(*ListWorkersRequest, grpc.ServerStreamingServer[ListWorkersResponse]) error {
 	return status.Error(codes.Unimplemented, "method WatchWorkers not implemented")
+}
+func (UnimplementedNodeServiceServer) ListWorkloads(context.Context, *ListWorkloadsRequest) (*ListWorkloadsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListWorkloads not implemented")
 }
 func (UnimplementedNodeServiceServer) SubmitJob(context.Context, *SubmitJobRequest) (*SubmitJobResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitJob not implemented")
@@ -1552,6 +1576,24 @@ func _NodeService_WatchWorkers_Handler(srv interface{}, stream grpc.ServerStream
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchWorkersServer = grpc.ServerStreamingServer[ListWorkersResponse]
+
+func _NodeService_ListWorkloads_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListWorkloadsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).ListWorkloads(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_ListWorkloads_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).ListWorkloads(ctx, req.(*ListWorkloadsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 func _NodeService_SubmitJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SubmitJobRequest)
@@ -2168,6 +2210,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListWorkers",
 			Handler:    _NodeService_ListWorkers_Handler,
+		},
+		{
+			MethodName: "ListWorkloads",
+			Handler:    _NodeService_ListWorkloads_Handler,
 		},
 		{
 			MethodName: "SubmitJob",
