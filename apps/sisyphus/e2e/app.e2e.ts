@@ -1307,6 +1307,12 @@ test('collapsed sidebar navigation tooltips stay beside the sidebar and inside t
       await sidebar.waitFor()
       await sidebar.locator('.advanced-sidebar__toggle').click()
       await page.waitForFunction(() => document.querySelector('.advanced-sidebar')?.getAttribute('data-open') === 'false')
+      // The nav items move while the sidebar width/flex-basis transitions;
+      // hovering before they settle can move the trigger out from under the pointer.
+      await sidebar.evaluate(async (element) => {
+        await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)))
+        await new Promise(requestAnimationFrame)
+      })
 
       const item = sidebar.locator('a[href="#/node"]')
       const label = (await item.innerText()).trim()
