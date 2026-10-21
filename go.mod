@@ -5,8 +5,9 @@ go 1.27.1
 toolchain go1.27.2
 
 require (
-	connectrpc.com/vanguard v0.4.0
-	github.com/anthropics/anthropic-sdk-go v1.80.0
+	connectrpc.com/connect/v2 v2.0.0
+	connectrpc.com/vanguard v0.5.0
+	github.com/anthropics/anthropic-sdk-go v1.82.0
 	github.com/gofrs/flock v0.13.1
 	github.com/ipfs/boxo v0.43.0
 	github.com/ipfs/go-block-format v0.2.4
@@ -17,7 +18,7 @@ require (
 	github.com/ipld/go-ipld-prime v0.24.0
 	github.com/libp2p/go-libp2p v0.50.0
 	github.com/libp2p/go-libp2p-kad-dht v0.42.2
-	github.com/minio/minio-go/v7 v7.3.0
+	github.com/minio/minio-go/v7 v7.4.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multihash v0.2.3
@@ -28,7 +29,6 @@ require (
 )
 
 require (
-	connectrpc.com/connect v1.19.1 // indirect
 	filippo.io/bigmod v0.1.1-0.20260103110540-f8a47775ebe5 // indirect
 	filippo.io/keygen v1.0.0 // indirect
 	github.com/alexbrainman/goissue34681 v0.0.0-20191006012335-3fc7a47baff5 // indirect
@@ -167,7 +167,6 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.50.0 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	gopkg.in/ini.v1 v1.67.3 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect

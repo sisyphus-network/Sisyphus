@@ -26,8 +26,10 @@ import (
 	"sync"
 	"time"
 
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
+	"connectrpc.com/connect/v2/connectproto"
 	"connectrpc.com/vanguard/vanguardgrpc"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -349,11 +351,15 @@ func newWebAppHandlerWithBrowserAccess(cfg LocalConfig, origins []string, ui fs.
 	}
 	devices := manager.devices
 	service := &localService{cfg: normal(cfg)}
-	server := grpc.NewServer()
-	nodepb.RegisterNodeServiceServer(server, service)
-	calls, _ := vanguardgrpc.NewTranscoder(server) // fails only for a service with no description, and this one has it
+	server := connect.NewServer()
+	nodepb.RegisterNodeServiceServer(vanguardgrpc.NewServiceRegistrar(server), service)
+	rpcMux := http.NewServeMux()
+	jsonCodec := connectproto.NewJSONCodec()
+	jsonCodec.MarshalOptions.EmitUnpopulated = true
+	jsonCodec.UnmarshalOptions.DiscardUnknown = true
+	connecthttp.Mount(rpcMux, server, connecthttp.WithCodecs(connectproto.NewBinaryCodec(), jsonCodec))
 	apiMux := http.NewServeMux()
-	apiMux.Handle("/", calls)
+	apiMux.Handle("/", rpcMux)
 	apiMux.HandleFunc("PUT /files/{name}", func(w http.ResponseWriter, r *http.Request) {
 		if service.cfg.Store == nil {
 			refuseWeb(w, http.StatusPreconditionFailed, status.Convert(errNoStore).Message())
