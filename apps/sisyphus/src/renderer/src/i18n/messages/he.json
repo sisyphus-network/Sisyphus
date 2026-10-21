@@ -400,6 +400,7 @@
   "jobTrackerTasks": "{done} מתוך {total} משימות הושלמו",
   "jobTrackerRetried": "{count} נוסו שוב",
   "jobTrackerWorker": "{running} רצות · {done} הושלמו",
+  "agentThinking": "חושב…",
   "agentActionIncomplete": "חלק מהפעולות לא הושלמו",
   "agentActions": "פעילות הסוכן",
   "jobId": "משימה",

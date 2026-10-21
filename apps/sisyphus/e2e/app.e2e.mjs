@@ -2111,6 +2111,8 @@ test('reloading the Electron renderer cancels an in-flight planner stream', asyn
     await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Hold this response while I reload.')
     await page.getByRole('button', { name: 'Send message' }).click()
     await model.waitForRequests(1)
+    // While the model has yet to say anything, the reply says it is thinking.
+    await page.getByRole('status').filter({ hasText: 'Thinking…' }).waitFor()
 
     // A full-frame navigation exercises the actual Electron teardown path:
     // the renderer-owned stream must be cancelled through IPC and gRPC.

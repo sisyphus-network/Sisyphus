@@ -400,6 +400,7 @@
   "jobTrackerTasks": "اكتملت {done} من {total} مهام",
   "jobTrackerRetried": "أُعيدت {count}",
   "jobTrackerWorker": "{running} قيد التشغيل · {done} مكتملة",
+  "agentThinking": "يفكّر…",
   "agentActionIncomplete": "لم تكتمل بعض الإجراءات",
   "agentActions": "نشاط الوكيل",
   "jobId": "المهمة",

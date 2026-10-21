@@ -400,6 +400,7 @@
   "jobTrackerTasks": "Ukończono {done} z {total} zadań",
   "jobTrackerRetried": "Ponowiono: {count}",
   "jobTrackerWorker": "W toku: {running} · ukończone: {done}",
+  "agentThinking": "Myślę…",
   "agentActionIncomplete": "Niektóre działania nie zostały zakończone",
   "agentActions": "Aktywność agenta",
   "jobId": "Zadanie",

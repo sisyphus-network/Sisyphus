@@ -400,6 +400,7 @@
   "jobTrackerTasks": "{done} of {total} tasks done",
   "jobTrackerRetried": "{count} retried",
   "jobTrackerWorker": "{running} running · {done} done",
+  "agentThinking": "Thinking…",
   "agentActionIncomplete": "Some actions did not finish",
   "agentActions": "Agent activity",
   "jobId": "Job",
