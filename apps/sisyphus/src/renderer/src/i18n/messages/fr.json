@@ -245,7 +245,7 @@
     "shareCity": "Arrondi à la ville",
     "shareCountry": "Le pays seulement",
     "shareNothing": "Rien",
-    "pinned": "Votre repère place ce nœud sur votre propre globe. Le partager avec le pool, dans la mesure choisie, viendra dans une version ultérieure.",
+    "pinned": "Votre repère place ce nœud sur votre propre globe. Votre pool ne le voit que dans la mesure choisie ci-dessus.",
     "notPinned": "Pas encore de repère. Le nœud se situe aussi bien que ses autres sources le permettent.",
     "save": "Enregistrer le lieu",
     "remove": "Retirer le repère",

@@ -147,6 +147,9 @@ type LocalConfig struct {
 	// changed, or the owner looking at what is lent. The worker then asks
 	// its model server again, which it does not do on a timer.
 	OffersChanged func()
+	// LocationChanged, if set, is told when the owner changes or clears the
+	// node's location, so that its workers tell their pools at once.
+	LocationChanged func()
 	// PairingOrigin is the LAN URL peers should open, without a trailing slash.
 	PairingOrigin string
 }
@@ -543,12 +546,15 @@ func (s *localService) jobsAvailable() error {
 	return nil
 }
 
-// ListWorkers lists the nodes connected to this one as its workers.
-func (s *localService) ListWorkers(context.Context, *nodepb.ListWorkersRequest) (*nodepb.ListWorkersResponse, error) {
+// ListWorkers lists the nodes connected to this one as its workers. Where
+// their owners let the pool see they are is given only with the token, as
+// this node's own location is: it is for the pool's members, not for any
+// caller that can reach the API.
+func (s *localService) ListWorkers(ctx context.Context, _ *nodepb.ListWorkersRequest) (*nodepb.ListWorkersResponse, error) {
 	if err := s.jobsAvailable(); err != nil {
 		return nil, err
 	}
-	return s.workerList(), nil
+	return s.workerList(s.authorize(ctx) == nil), nil
 }
 
 // WatchWorkers streams worker state when the coordinator reports changes.
@@ -565,17 +571,24 @@ func (s *localService) WatchWorkers(_ *nodepb.ListWorkersRequest, stream grpc.Se
 		changes, unsubscribe = s.cfg.NodeInfoChanges.subscribe()
 		defer unsubscribe()
 	}
-	return watchWithChanges(stream.Context(), changes, s.workerList, func(now *nodepb.ListWorkersResponse, revision uint64) error {
+	list := func() *nodepb.ListWorkersResponse { return s.workerList(true) }
+	return watchWithChanges(stream.Context(), changes, list, func(now *nodepb.ListWorkersResponse, revision uint64) error {
 		update := proto.Clone(now).(*nodepb.ListWorkersResponse)
 		update.Revision = revision
 		return stream.Send(update)
 	})
 }
 
-func (s *localService) workerList() *nodepb.ListWorkersResponse {
+// workerList lists the pool's workers, with where they are shared to be if
+// places is set.
+func (s *localService) workerList(places bool) *nodepb.ListWorkersResponse {
 	res := new(nodepb.ListWorkersResponse)
 	for _, node := range s.cfg.Jobs.Nodes() {
 		c := node.GetCapabilities()
+		var place *nodepb.SharedLocation
+		if places {
+			place = localSharedLocation(node.GetSharedLocation())
+		}
 		res.Workers = append(res.Workers, &nodepb.Worker{
 			PeerId: node.GetNodeId(), Name: node.GetName(), Hostname: c.GetHostname(), Os: c.GetOs(), Arch: c.GetArch(),
 			CpuCores: c.GetCpuCores(), TaskSlots: c.GetTaskSlots(), RunningTasks: node.GetRunningTasks(), Workloads: c.GetWorkloads(),
@@ -584,6 +597,7 @@ func (s *localService) workerList() *nodepb.ListWorkersResponse {
 			Models:         runtime.Models(c.GetLabels()),
 			LoadedModels:   localLoaded(c.GetLabels()),
 			VerifiedAgreed: node.GetVerifiedAgreed(), VerifiedOutvoted: node.GetVerifiedOutvoted(), Probation: node.GetProbation(),
+			SharedLocation: place,
 		})
 	}
 	return res

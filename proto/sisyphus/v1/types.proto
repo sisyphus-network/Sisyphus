@@ -56,6 +56,18 @@ message NodeInfo {
   uint64 verified_agreed = 10;
   uint64 verified_outvoted = 11;
   uint32 probation = 12;
+  // Where the node's owner lets the pool see it is, already rounded by the
+  // node to the precision its owner chose. Absent if the owner shares only
+  // the country, or nothing, or has given no location.
+  SharedLocation shared_location = 13;
+}
+
+// SharedLocation is a place in degrees, the latitude from -90 to 90 and the
+// longitude from -180 to 180, north and east positive, as much of it as a
+// node's owner lets other members of a pool see.
+message SharedLocation {
+  double latitude = 1;
+  double longitude = 2;
 }
 
 enum ScheduleMode {

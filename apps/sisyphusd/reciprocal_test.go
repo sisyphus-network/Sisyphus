@@ -612,7 +612,10 @@ func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {
 	p := startPool(t, runtime.Builtin())
 	ident, _ := p.admit(access.Worker)
 	dataDir := t.TempDir()
-	guests := &guestWork{ident: ident, dataDir: dataDir, template: &worker.Worker{Name: "guest", Slots: 2, Workloads: p.workloads, Log: quiet}}
+	// The owner shares where the node is; at first, nothing of it.
+	var shared atomic.Bool
+	location := func() (float64, float64, bool) { return 52.4, 4.9, shared.Load() }
+	guests := &guestWork{ident: ident, dataDir: dataDir, template: &worker.Worker{Name: "guest", Slots: 2, Workloads: p.workloads, Log: quiet, Location: location}}
 
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -627,6 +630,14 @@ func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {
 		t.Errorf("%d workers known to be working for others, want one", working)
 	}
 	guests.offersChanged()
+	// So does word that the owner now shares where the node is, which the
+	// other node's pool then sees.
+	shared.Store(true)
+	guests.locationChanged()
+	waitFor(t, func() bool {
+		listed, err := p.client.ListNodes(p.ctx, &pb.ListNodesRequest{})
+		return err == nil && len(listed.GetNodes()) == 1 && listed.GetNodes()[0].GetSharedLocation().GetLatitude() == 52.4
+	})
 	// What its tasks fetch is kept apart, under the other node's name.
 	input := p.upload(sampleText())
 	p.wordcountOn(input, 2)

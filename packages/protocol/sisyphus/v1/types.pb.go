@@ -389,8 +389,12 @@ type NodeInfo struct {
 	VerifiedAgreed   uint64 `protobuf:"varint,10,opt,name=verified_agreed,json=verifiedAgreed,proto3" json:"verified_agreed,omitempty"`
 	VerifiedOutvoted uint64 `protobuf:"varint,11,opt,name=verified_outvoted,json=verifiedOutvoted,proto3" json:"verified_outvoted,omitempty"`
 	Probation        uint32 `protobuf:"varint,12,opt,name=probation,proto3" json:"probation,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Where the node's owner lets the pool see it is, already rounded by the
+	// node to the precision its owner chose. Absent if the owner shares only
+	// the country, or nothing, or has given no location.
+	SharedLocation *SharedLocation `protobuf:"bytes,13,opt,name=shared_location,json=sharedLocation,proto3" json:"shared_location,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *NodeInfo) Reset() {
@@ -507,6 +511,68 @@ func (x *NodeInfo) GetProbation() uint32 {
 	return 0
 }
 
+func (x *NodeInfo) GetSharedLocation() *SharedLocation {
+	if x != nil {
+		return x.SharedLocation
+	}
+	return nil
+}
+
+// SharedLocation is a place in degrees, the latitude from -90 to 90 and the
+// longitude from -180 to 180, north and east positive, as much of it as a
+// node's owner lets other members of a pool see.
+type SharedLocation struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Latitude      float64                `protobuf:"fixed64,1,opt,name=latitude,proto3" json:"latitude,omitempty"`
+	Longitude     float64                `protobuf:"fixed64,2,opt,name=longitude,proto3" json:"longitude,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SharedLocation) Reset() {
+	*x = SharedLocation{}
+	mi := &file_sisyphus_v1_types_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SharedLocation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SharedLocation) ProtoMessage() {}
+
+func (x *SharedLocation) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_types_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SharedLocation.ProtoReflect.Descriptor instead.
+func (*SharedLocation) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *SharedLocation) GetLatitude() float64 {
+	if x != nil {
+		return x.Latitude
+	}
+	return 0
+}
+
+func (x *SharedLocation) GetLongitude() float64 {
+	if x != nil {
+		return x.Longitude
+	}
+	return 0
+}
+
 type JobSpec struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of a workload known to the coordinator and its workers.
@@ -559,7 +625,7 @@ type JobSpec struct {
 
 func (x *JobSpec) Reset() {
 	*x = JobSpec{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[3]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -571,7 +637,7 @@ func (x *JobSpec) String() string {
 func (*JobSpec) ProtoMessage() {}
 
 func (x *JobSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[3]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -584,7 +650,7 @@ func (x *JobSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobSpec.ProtoReflect.Descriptor instead.
 func (*JobSpec) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{3}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *JobSpec) GetWorkload() string {
@@ -690,7 +756,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[4]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -702,7 +768,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[4]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -715,7 +781,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{4}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Task) GetTaskId() string {
@@ -819,7 +885,7 @@ type Job struct {
 
 func (x *Job) Reset() {
 	*x = Job{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +897,7 @@ func (x *Job) String() string {
 func (*Job) ProtoMessage() {}
 
 func (x *Job) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +910,7 @@ func (x *Job) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Job.ProtoReflect.Descriptor instead.
 func (*Job) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{5}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Job) GetJobId() string {
@@ -992,7 +1058,7 @@ type JobRecord struct {
 
 func (x *JobRecord) Reset() {
 	*x = JobRecord{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1004,7 +1070,7 @@ func (x *JobRecord) String() string {
 func (*JobRecord) ProtoMessage() {}
 
 func (x *JobRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1017,7 +1083,7 @@ func (x *JobRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobRecord.ProtoReflect.Descriptor instead.
 func (*JobRecord) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{6}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *JobRecord) GetJobId() string {
@@ -1099,7 +1165,7 @@ type CommitmentCheck struct {
 
 func (x *CommitmentCheck) Reset() {
 	*x = CommitmentCheck{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[7]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1111,7 +1177,7 @@ func (x *CommitmentCheck) String() string {
 func (*CommitmentCheck) ProtoMessage() {}
 
 func (x *CommitmentCheck) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[7]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1124,7 +1190,7 @@ func (x *CommitmentCheck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommitmentCheck.ProtoReflect.Descriptor instead.
 func (*CommitmentCheck) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{7}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CommitmentCheck) GetName() string {
@@ -1156,7 +1222,7 @@ type RecordNode struct {
 
 func (x *RecordNode) Reset() {
 	*x = RecordNode{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[8]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1168,7 +1234,7 @@ func (x *RecordNode) String() string {
 func (*RecordNode) ProtoMessage() {}
 
 func (x *RecordNode) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[8]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1181,7 +1247,7 @@ func (x *RecordNode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordNode.ProtoReflect.Descriptor instead.
 func (*RecordNode) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{8}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *RecordNode) GetCid() string {
@@ -1230,7 +1296,7 @@ type JobEvent struct {
 
 func (x *JobEvent) Reset() {
 	*x = JobEvent{}
-	mi := &file_sisyphus_v1_types_proto_msgTypes[9]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1242,7 +1308,7 @@ func (x *JobEvent) String() string {
 func (*JobEvent) ProtoMessage() {}
 
 func (x *JobEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_types_proto_msgTypes[9]
+	mi := &file_sisyphus_v1_types_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1255,7 +1321,7 @@ func (x *JobEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobEvent.ProtoReflect.Descriptor instead.
 func (*JobEvent) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{9}
+	return file_sisyphus_v1_types_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *JobEvent) GetSeq() uint64 {
@@ -1320,7 +1386,7 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	" \x03(\tR\x06labels\"<\n" +
 	"\x03Gpu\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\x8f\x04\n" +
+	"\fmemory_bytes\x18\x02 \x01(\x04R\vmemoryBytes\"\xd5\x04\n" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12#\n" +
@@ -1335,7 +1401,11 @@ const file_sisyphus_v1_types_proto_rawDesc = "" +
 	"\x0fverified_agreed\x18\n" +
 	" \x01(\x04R\x0everifiedAgreed\x12+\n" +
 	"\x11verified_outvoted\x18\v \x01(\x04R\x10verifiedOutvoted\x12\x1c\n" +
-	"\tprobation\x18\f \x01(\rR\tprobation\"\xee\x02\n" +
+	"\tprobation\x18\f \x01(\rR\tprobation\x12D\n" +
+	"\x0fshared_location\x18\r \x01(\v2\x1b.sisyphus.v1.SharedLocationR\x0esharedLocation\"J\n" +
+	"\x0eSharedLocation\x12\x1a\n" +
+	"\blatitude\x18\x01 \x01(\x01R\blatitude\x12\x1c\n" +
+	"\tlongitude\x18\x02 \x01(\x01R\tlongitude\"\xee\x02\n" +
 	"\aJobSpec\x12\x1a\n" +
 	"\bworkload\x18\x01 \x01(\tR\bworkload\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12-\n" +
@@ -1441,7 +1511,7 @@ func file_sisyphus_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_sisyphus_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_sisyphus_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_sisyphus_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_sisyphus_v1_types_proto_goTypes = []any{
 	(ScheduleMode)(0),             // 0: sisyphus.v1.ScheduleMode
 	(JobState)(0),                 // 1: sisyphus.v1.JobState
@@ -1449,36 +1519,38 @@ var file_sisyphus_v1_types_proto_goTypes = []any{
 	(*NodeCapabilities)(nil),      // 3: sisyphus.v1.NodeCapabilities
 	(*Gpu)(nil),                   // 4: sisyphus.v1.Gpu
 	(*NodeInfo)(nil),              // 5: sisyphus.v1.NodeInfo
-	(*JobSpec)(nil),               // 6: sisyphus.v1.JobSpec
-	(*Task)(nil),                  // 7: sisyphus.v1.Task
-	(*Job)(nil),                   // 8: sisyphus.v1.Job
-	(*JobRecord)(nil),             // 9: sisyphus.v1.JobRecord
-	(*CommitmentCheck)(nil),       // 10: sisyphus.v1.CommitmentCheck
-	(*RecordNode)(nil),            // 11: sisyphus.v1.RecordNode
-	(*JobEvent)(nil),              // 12: sisyphus.v1.JobEvent
-	(*timestamppb.Timestamp)(nil), // 13: google.protobuf.Timestamp
+	(*SharedLocation)(nil),        // 6: sisyphus.v1.SharedLocation
+	(*JobSpec)(nil),               // 7: sisyphus.v1.JobSpec
+	(*Task)(nil),                  // 8: sisyphus.v1.Task
+	(*Job)(nil),                   // 9: sisyphus.v1.Job
+	(*JobRecord)(nil),             // 10: sisyphus.v1.JobRecord
+	(*CommitmentCheck)(nil),       // 11: sisyphus.v1.CommitmentCheck
+	(*RecordNode)(nil),            // 12: sisyphus.v1.RecordNode
+	(*JobEvent)(nil),              // 13: sisyphus.v1.JobEvent
+	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
 }
 var file_sisyphus_v1_types_proto_depIdxs = []int32{
 	4,  // 0: sisyphus.v1.NodeCapabilities.gpus:type_name -> sisyphus.v1.Gpu
 	3,  // 1: sisyphus.v1.NodeInfo.capabilities:type_name -> sisyphus.v1.NodeCapabilities
-	13, // 2: sisyphus.v1.NodeInfo.connected_at:type_name -> google.protobuf.Timestamp
-	13, // 3: sisyphus.v1.NodeInfo.last_seen_at:type_name -> google.protobuf.Timestamp
-	0,  // 4: sisyphus.v1.JobSpec.mode:type_name -> sisyphus.v1.ScheduleMode
-	2,  // 5: sisyphus.v1.Task.state:type_name -> sisyphus.v1.TaskState
-	6,  // 6: sisyphus.v1.Job.spec:type_name -> sisyphus.v1.JobSpec
-	1,  // 7: sisyphus.v1.Job.state:type_name -> sisyphus.v1.JobState
-	7,  // 8: sisyphus.v1.Job.tasks:type_name -> sisyphus.v1.Task
-	13, // 9: sisyphus.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	13, // 10: sisyphus.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
-	11, // 11: sisyphus.v1.JobRecord.nodes:type_name -> sisyphus.v1.RecordNode
-	10, // 12: sisyphus.v1.JobRecord.commitments:type_name -> sisyphus.v1.CommitmentCheck
-	11, // 13: sisyphus.v1.JobRecord.attestation:type_name -> sisyphus.v1.RecordNode
-	13, // 14: sisyphus.v1.JobEvent.at:type_name -> google.protobuf.Timestamp
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	14, // 2: sisyphus.v1.NodeInfo.connected_at:type_name -> google.protobuf.Timestamp
+	14, // 3: sisyphus.v1.NodeInfo.last_seen_at:type_name -> google.protobuf.Timestamp
+	6,  // 4: sisyphus.v1.NodeInfo.shared_location:type_name -> sisyphus.v1.SharedLocation
+	0,  // 5: sisyphus.v1.JobSpec.mode:type_name -> sisyphus.v1.ScheduleMode
+	2,  // 6: sisyphus.v1.Task.state:type_name -> sisyphus.v1.TaskState
+	7,  // 7: sisyphus.v1.Job.spec:type_name -> sisyphus.v1.JobSpec
+	1,  // 8: sisyphus.v1.Job.state:type_name -> sisyphus.v1.JobState
+	8,  // 9: sisyphus.v1.Job.tasks:type_name -> sisyphus.v1.Task
+	14, // 10: sisyphus.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	14, // 11: sisyphus.v1.Job.finished_at:type_name -> google.protobuf.Timestamp
+	12, // 12: sisyphus.v1.JobRecord.nodes:type_name -> sisyphus.v1.RecordNode
+	11, // 13: sisyphus.v1.JobRecord.commitments:type_name -> sisyphus.v1.CommitmentCheck
+	12, // 14: sisyphus.v1.JobRecord.attestation:type_name -> sisyphus.v1.RecordNode
+	14, // 15: sisyphus.v1.JobEvent.at:type_name -> google.protobuf.Timestamp
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_types_proto_init() }
@@ -1492,7 +1564,7 @@ func file_sisyphus_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_types_proto_rawDesc), len(file_sisyphus_v1_types_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

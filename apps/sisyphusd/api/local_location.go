@@ -9,6 +9,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/geo"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
+	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 )
 
 // OwnerLocationStore keeps where the node's owner says the node is.
@@ -60,7 +61,7 @@ func (s *localService) SetNodeLocation(ctx context.Context, req *nodepb.SetNodeL
 		if err := s.cfg.OwnerLocation.ClearOwnerLocation(); err != nil {
 			return nil, asError(err)
 		}
-		s.nodeInfoChanged()
+		s.locationChanged()
 		return &nodepb.GetNodeLocationResponse{}, nil
 	}
 	if err := geo.CheckCoordinates(given.GetLatitude(), given.GetLongitude()); err != nil {
@@ -74,7 +75,7 @@ func (s *localService) SetNodeLocation(ctx context.Context, req *nodepb.SetNodeL
 	if err := s.cfg.OwnerLocation.SetOwnerLocation(location); err != nil {
 		return nil, asError(err)
 	}
-	s.nodeInfoChanged()
+	s.locationChanged()
 	return &nodepb.GetNodeLocationResponse{Location: nodeLocation(location)}, nil
 }
 
@@ -99,8 +100,22 @@ func nodeLocation(location nodedb.OwnerLocation) *nodepb.NodeLocation {
 	return &nodepb.NodeLocation{Latitude: location.Latitude, Longitude: location.Longitude, Share: share}
 }
 
-func (s *localService) nodeInfoChanged() {
+// locationChanged tells everyone watching the node's state, and its
+// workers, which pass on to their pools what the owner now shares.
+func (s *localService) locationChanged() {
 	if s.cfg.NodeInfoChanges != nil {
 		s.cfg.NodeInfoChanges.Notify()
 	}
+	if s.cfg.LocationChanged != nil {
+		s.cfg.LocationChanged()
+	}
+}
+
+// localSharedLocation is a pool member's shared location as the local API
+// gives it, or nil if it shares none.
+func localSharedLocation(shared *pb.SharedLocation) *nodepb.SharedLocation {
+	if shared == nil {
+		return nil
+	}
+	return &nodepb.SharedLocation{Latitude: shared.GetLatitude(), Longitude: shared.GetLongitude()}
 }

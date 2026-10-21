@@ -245,7 +245,7 @@
     "shareCity": "Rounded to the city",
     "shareCountry": "The country only",
     "shareNothing": "Nothing",
-    "pinned": "Your pin places this node on your own globe. Sharing it with the pool, as much as you chose, comes in a later version.",
+    "pinned": "Your pin places this node on your own globe. Your pool sees it only as far as you chose above.",
     "notPinned": "No pin yet. The node places itself as well as its other sources can.",
     "save": "Save location",
     "remove": "Remove pin",

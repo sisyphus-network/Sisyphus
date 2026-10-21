@@ -15,7 +15,9 @@ import (
 // locationCommand shows, sets and clears where the owner says the node is.
 // Like modelCommand it works on the node's database directly, so the node
 // need not be running; one that is gives the new location the next time
-// it is asked for its info.
+// it is asked for its info, and its pools see it from when it next connects
+// to them. The desktop app sets it through the running node, whose pools
+// see it at once.
 func locationCommand(args []string) error {
 	if len(args) == 0 {
 		return errLocationCommand
@@ -66,7 +68,7 @@ func locationCommand(args []string) error {
 		if err := db.SetOwnerLocation(location); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "this node is at %s, %s; nothing is sent to the pool yet\n", degrees(location.Latitude), degrees(location.Longitude))
+		fmt.Fprintf(stdout, "this node is at %s, %s; %s\n", degrees(location.Latitude), degrees(location.Longitude), poolSees(location))
 		return nil
 	case "clear":
 		if err := db.ClearOwnerLocation(); err != nil {
@@ -90,3 +92,28 @@ func locationCommand(args []string) error {
 var errLocationCommand = errors.New("expected location show, set or clear")
 
 func degrees(value float64) string { return strconv.FormatFloat(value, 'f', -1, 64) }
+
+// sharedLocation returns where the owner lets the pools this node works for
+// see it is, as a worker sends it: the saved location rounded to the share
+// the owner chose, or ok false if there is none or it shares no
+// coordinates. A location that cannot be read is not shared.
+func sharedLocation(saved interface {
+	OwnerLocation() (nodedb.OwnerLocation, bool, error)
+}) func() (latitude, longitude float64, ok bool) {
+	return func() (float64, float64, bool) {
+		location, set, err := saved.OwnerLocation()
+		if err != nil || !set {
+			return 0, 0, false
+		}
+		return geo.Shared(location.Latitude, location.Longitude, geo.Share(location.Share))
+	}
+}
+
+// poolSees says what the pools this node works for are told of location.
+func poolSees(location nodedb.OwnerLocation) string {
+	latitude, longitude, ok := geo.Shared(location.Latitude, location.Longitude, geo.Share(location.Share))
+	if !ok {
+		return "its pools are given no coordinates"
+	}
+	return fmt.Sprintf("its pools see %s, %s from when it next connects", degrees(latitude), degrees(longitude))
+}

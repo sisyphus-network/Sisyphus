@@ -52,6 +52,10 @@ message Hello {
   // places itself by what most of its workers say here, and only if that is
   // a global unicast address; it is for display, never for reachability.
   string dialled_address = 6;
+  // Where the node's owner lets the pool see it is, rounded by the node to
+  // the precision its owner chose. Absent if the owner shares only the
+  // country, or nothing, or has given no location.
+  SharedLocation shared_location = 7;
 }
 
 message Heartbeat {
@@ -63,9 +67,16 @@ message Heartbeat {
   // Set when the worker's labels are not what it last said they were: a
   // model fetched or removed since. Absent, they are as they were.
   Labels labels = 4;
+  // Set when what the worker's owner lets the pool see of where it is has
+  // changed since the worker last said. Absent, it is as it was.
+  LocationUpdate location = 5;
 }
 
 message Labels { repeated string labels = 1; }
+
+// LocationUpdate is what a worker's owner now lets the pool see of where it
+// is. An absent shared_location means that it is no longer shared.
+message LocationUpdate { SharedLocation shared_location = 1; }
 
 message TaskResult {
   string task_id = 1;

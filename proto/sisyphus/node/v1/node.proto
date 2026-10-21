@@ -347,6 +347,17 @@ message Worker {
   uint64 verified_agreed = 17;
   uint64 verified_outvoted = 18;
   uint32 probation = 19;
+  // Where the worker's owner lets the pool see it is, already rounded to
+  // the precision its owner chose. Absent if the owner shares only the
+  // country, or nothing, or has given no location.
+  SharedLocation shared_location = 21;
+}
+
+// SharedLocation is a place in degrees, north and east positive, as much of
+// it as a node's owner lets other members of a pool see.
+message SharedLocation {
+  double latitude = 1;
+  double longitude = 2;
 }
 
 message ListWorkloadsRequest {}
