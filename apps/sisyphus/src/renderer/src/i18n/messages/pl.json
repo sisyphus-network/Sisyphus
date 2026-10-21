@@ -163,6 +163,7 @@
   "unplacedLink": "Nie umieszczono: włącz wykrywanie lokalizacji",
   "unplacedHint": "Ten węzeł zna siebie tylko po adresie sieci domowej, którego żadna tabela nie umiejscowi. Zapytanie routera, serwera STUN lub usługi wyszukiwania może znaleźć jego adres publiczny.",
   "countryEstimateDisclaimer": "Szacunek na podstawie adresu sieciowego; może być niedokładny",
+  "globeZoom": {"group": "Powiększenie globu", "in": "Powiększ", "out": "Pomniejsz"},
   "peerMultiaddress": "Multiaddr węzła",
   "peerConnectionHint": "Nastąpi próba bezpośredniego połączenia libp2p. Samo połączenie nie zezwala węzłowi na uruchamianie obliczeń.",
   "connectPeer": "Połącz",

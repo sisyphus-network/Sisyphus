@@ -1,10 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, Copy, Eye, MessageSquare, X } from 'lucide-react'
+import { Check, Copy, Eye, MessageSquare, Minus, Plus, X } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import Globe, { type GlobeMethods } from 'react-globe.gl'
-import { AdditiveBlending, Color, MeshBasicMaterial, NormalBlending, type LineSegments, type PerspectiveCamera } from 'three'
+import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial, LineSegments, MeshBasicMaterial, NormalBlending, type PerspectiveCamera } from 'three'
 import type { NodeSnapshot } from '../../../preload'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 import centroidsGeoJson from 'world-countries-centroids/dist/countries.geojson?raw'
@@ -19,6 +19,7 @@ import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { locationFromProtocol, type LocationShare } from '@/lib/node-location'
 import { cityEstimateFromProtocol, nodeDetails, peerDetails, poolWorkers, renderDetailsHtml, type CityEstimate, type GlobeDetails, type WorkerFacts } from '@/lib/globe-details'
 import { useWebgl } from '@/hooks/use-webgl'
+import { autoRotateSpeed, decodeRegionLines, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
 
 type Messages = ReturnType<typeof getMessages>
 function connected(peer: NodeSnapshot['peers'][number]) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
@@ -49,6 +50,9 @@ function readHologramTheme(): HologramTheme {
     dark,
   }
 }
+// Country outlines: crisp, as WebGL lines are one pixel, but kept quiet
+// behind the points.
+const countryLineOpacity = { light: 0.5, dark: 0.6 }
 const countryBoundaries = (JSON.parse(countriesGeoJsonRaw) as { features: CountryBoundaryFeature[] }).features
 const countryCentroids = new Map<string, { lat: number; lng: number }>(
   (JSON.parse(centroidsGeoJson) as { features: CountryCentroidFeature[] }).features.map(({ geometry, properties }) => [
@@ -61,11 +65,68 @@ const countryCentroids = new Map<string, { lat: number; lng: number }>(
 const ownPointId = 'this-node'
 type GlobePoint = { id: string; lat: number; lng: number; label: string; color: string }
 
-const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active, pointNames, pointsLabel, pointButtonLabel, pointCard, onPickPoint }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean; pointNames: ReadonlyMap<string, string>; pointsLabel: string; pointButtonLabel: string; pointCard: (id: string) => string; onPickPoint: (id: string, from?: HTMLElement) => void }) {
+// Lines on the far side of the globe show through its glass. Country lines
+// there are drawn at backShare of their opacity, fading in across the limb,
+// and none once the globe is brought in close, where the far side would be
+// a mirror image behind the near one. Region lines are never drawn there.
+const countryBackShare = { value: 0.3 }
+const regionBackShare = { value: 0 }
+function drawFacing(material: LineBasicMaterial, backShare: { value: number }) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.backShare = backShare
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vFacing;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvec3 facingWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvFacing = dot(normalize(facingWorld), normalize(cameraPosition - facingWorld));')
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vFacing;\nuniform float backShare;')
+      .replace('#include <opaque_fragment>', 'diffuseColor.a *= mix(backShare, 1.0, smoothstep(-0.04, 0.2, vFacing));\nif (diffuseColor.a <= 0.001) discard;\n#include <opaque_fragment>')
+  }
+  // The same source for every material drawn this way, so they share one program.
+  material.customProgramCacheKey = () => 'sisyphus-facing'
+  material.needsUpdate = true
+}
+// countryLinesFacing draws the globe's country outlines that way, and says
+// whether there were any yet: the polygon layer makes them after the globe
+// is ready.
+function countryLinesFacing(scene: { traverse: (visit: (object: unknown) => void) => void }): boolean {
+  let found = false
+  scene.traverse((object) => {
+    const line = object as LineSegments
+    if (!line.isLineSegments || (line.parent as { __globeObjType?: string } | null)?.__globeObjType !== 'polygon') return
+    found = true
+    for (const material of Array.isArray(line.material) ? line.material : [line.material]) {
+      if (!(material instanceof LineBasicMaterial) || material.userData.facing === true) continue
+      drawFacing(material, countryBackShare)
+      material.userData.facing = true
+    }
+  })
+  return found
+}
+// Region lines are drawn this much fainter than country lines.
+const regionLineShare = 0.42
+function regionLineMaterial() {
+  const material = new LineBasicMaterial({ transparent: true, depthWrite: false })
+  drawFacing(material, regionBackShare)
+  return material
+}
+let regionLinesData: Promise<Array<Array<[number, number]>>> | undefined
+// The region lines are some 0.9 MB, so they are read only when first wanted.
+function loadRegionLines() {
+  regionLinesData ??= import('../data/admin1-lines.json?raw').then(({ default: raw }) => decodeRegionLines(JSON.parse(raw)))
+  return regionLinesData
+}
+
+const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active, pointNames, pointsLabel, pointButtonLabel, pointCard, onPickPoint, zoomLabels }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean; pointNames: ReadonlyMap<string, string>; pointsLabel: string; pointButtonLabel: string; pointCard: (id: string) => string; onPickPoint: (id: string, from?: HTMLElement) => void; zoomLabels: { group: string; in: string; out: string } }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [theme, setTheme] = useState<HologramTheme>(readHologramTheme)
+  const limitsRef = useRef<ZoomLimits | undefined>(undefined)
+  const countryFacingRef = useRef(false)
+  const [zoom, setZoom] = useState<ZoomState>()
+  const regionsRef = useRef<LineSegments | null>(null)
+  const regionMaterial = useMemo(regionLineMaterial, [])
+  const [regionsLoaded, setRegionsLoaded] = useState(false)
   const hologramMaterial = useMemo(() => new MeshBasicMaterial({
     color: '#ffffff',
     transparent: true,
@@ -105,12 +166,13 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
         // Polygon outlines also use LineSegments. Restore their own opacity
         // instead of applying the faint graticule style when resuming a route.
         material.opacity = isCountryBoundary
-          ? theme.dark ? 0.72 : 0.62
+          ? theme.dark ? countryLineOpacity.dark : countryLineOpacity.light
           : theme.dark ? 0.19 : 0.17
         material.transparent = true
         material.needsUpdate = true
       }
     })
+    if (scene) countryFacingRef.current = countryLinesFacing(scene)
   }, [hologramMaterial, theme])
   useEffect(() => {
     applyHologramStyle()
@@ -124,13 +186,79 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const limitingFov = Math.min(verticalFov, horizontalFov)
     const safeDistance = globe.getGlobeRadius() / Math.sin(limitingFov / 2) * 1.08
     const controls = globe.controls()
-    controls.minDistance = safeDistance
-    controls.maxDistance = globe.getGlobeRadius() * 9
+    // The square stage keeps the globe's fit the same at any size, so a
+    // resize leaves the zoom the user chose; the limits only keep it sensible.
+    const radius = globe.getGlobeRadius()
+    const limits = zoomLimits(radius, safeDistance)
+    limitsRef.current = limits
+    controls.minDistance = limits.min
+    controls.maxDistance = limits.max
+    controls.enableZoom = true
     controls.autoRotate = !reduceMotion && active
-    controls.autoRotateSpeed = 0.45
+    controls.autoRotateSpeed = autoRotateSpeed(camera.position.length(), radius, limits)
     controls.enableDamping = true
     controls.update()
+    const next = zoomState(camera.position.length(), limits)
+    setZoom((current) => current && current.canZoomIn === next.canZoomIn && current.canZoomOut === next.canZoomOut && current.regions === next.regions && current.percent === next.percent ? current : next)
   }, [active, reduceMotion])
+  // Whenever the camera moves in or out, by wheel, pinch or button.
+  const handleZoom = useCallback(() => {
+    const globe = globeRef.current
+    const limits = limitsRef.current
+    if (!globe || !limits) return
+    // Called for every move, the globe's own turning too; the outlines are
+    // looked for only until they are there.
+    if (!countryFacingRef.current) countryFacingRef.current = countryLinesFacing(globe.scene())
+    const distance = globe.camera().position.length()
+    globe.controls().autoRotateSpeed = autoRotateSpeed(distance, globe.getGlobeRadius(), limits)
+    const next = zoomState(distance, limits)
+    countryBackShare.value = next.regions ? 0 : 0.3
+    setZoom((current) => current && current.canZoomIn === next.canZoomIn && current.canZoomOut === next.canZoomOut && current.regions === next.regions && current.percent === next.percent ? current : next)
+  }, [])
+  const zoomBy = useCallback((direction: 'in' | 'out') => {
+    const globe = globeRef.current
+    const limits = limitsRef.current
+    if (!globe || !limits) return
+    const radius = globe.getGlobeRadius()
+    const view = globe.pointOfView()
+    const distance = zoomStep(radius * (1 + view.altitude), direction, radius, limits)
+    const duration = reduceMotion ? 0 : 320
+    globe.pointOfView({ lat: view.lat, lng: view.lng, altitude: distance / radius - 1 }, duration)
+    window.setTimeout(handleZoom, duration + 40)
+  }, [handleZoom, reduceMotion])
+  const wantRegions = Boolean(zoom?.regions)
+  useEffect(() => {
+    if (!wantRegions || regionsRef.current) return
+    let current = true
+    void loadRegionLines().then((lines) => {
+      const globe = globeRef.current
+      if (!current || !globe || regionsRef.current) return
+      const geometry = new BufferGeometry()
+      geometry.setAttribute('position', new Float32BufferAttribute(regionSegments(lines, (lat, lng) => globe.getCoords(lat, lng, 0.0065)), 3))
+      const regions = new LineSegments(geometry, regionMaterial)
+      regions.renderOrder = 1
+      regionsRef.current = regions
+      // Drawn as the globe's own custom layer, so it turns with the globe.
+      setRegionsLoaded(true)
+    }).catch(() => {})
+    return () => { current = false }
+  }, [wantRegions, regionMaterial])
+  useEffect(() => {
+    if (regionsRef.current) regionsRef.current.visible = wantRegions
+  }, [wantRegions, regionsLoaded])
+  const regionLayer = useMemo(() => regionsLoaded ? [{ id: 'regions' }] : [], [regionsLoaded])
+  const regionObject = useCallback(() => regionsRef.current ?? new LineSegments(), [])
+  useEffect(() => {
+    regionMaterial.color.set(theme.accent)
+    regionMaterial.opacity = (theme.dark ? countryLineOpacity.dark : countryLineOpacity.light) * regionLineShare
+    regionMaterial.needsUpdate = true
+  }, [regionMaterial, theme])
+  useEffect(() => () => {
+    const regions = regionsRef.current
+    regions?.removeFromParent()
+    regions?.geometry.dispose()
+    regionMaterial.dispose()
+  }, [regionMaterial])
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -199,7 +327,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const polygonSideColor = useCallback(() => 'rgba(0,0,0,0)', [])
   const polygonStrokeColor = useCallback(() => {
     const { r, g, b } = new Color(theme.accent)
-    const opacity = theme.dark ? 0.72 : 0.62
+    const opacity = theme.dark ? countryLineOpacity.dark : countryLineOpacity.light
     return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${opacity})`
   }, [theme.accent, theme.dark])
   const ringColor = useCallback(() => (t: number) => {
@@ -209,7 +337,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const rendererConfig = useMemo(() => ({ alpha: true, antialias: true, powerPreference: 'low-power' as const }), [])
   const ringMaxRadius = useCallback(() => 5, [])
   return <>
-  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel}>
+  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-zoom={zoom?.percent} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && wantRegions ? 'shown' : 'hidden'}>
     {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
       <Globe
       ref={globeRef}
@@ -246,6 +374,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       ringPropagationSpeed="propagationSpeed"
       ringRepeatPeriod="repeatPeriod"
       enablePointerInteraction={active && points.length > 0}
+      customLayerData={regionLayer}
+      customThreeObject={regionObject}
+      onZoom={handleZoom}
       onGlobeReady={() => {
         fitCameraToViewport()
         applyHologramStyle()
@@ -259,6 +390,12 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   {active && points.length > 0 && <nav className="globe-point-list" aria-label={pointsLabel}>
     <ul>{points.map((point) => <li key={point.id}><button type="button" onClick={(event) => onPickPoint(point.id, event.currentTarget)}>{formatMessage(pointButtonLabel, { name: pointNames.get(point.id) ?? point.label })}</button></li>)}</ul>
   </nav>}
+  {/* The wheel and a pinch zoom too; these are for the keyboard, and for a
+      touch screen or a mouse with no wheel. */}
+  {active && webglAvailable() && zoom && <div className="globe-zoom" role="group" aria-label={zoomLabels.group}>
+    <button type="button" aria-label={zoomLabels.in} title={zoomLabels.in} disabled={!zoom.canZoomIn} onClick={() => zoomBy('in')}><Plus size={15} strokeWidth={1.9} aria-hidden /></button>
+    <button type="button" aria-label={zoomLabels.out} title={zoomLabels.out} disabled={!zoom.canZoomOut} onClick={() => zoomBy('out')}><Minus size={15} strokeWidth={1.9} aria-hidden /></button>
+  </div>}
   </>
 })
 
@@ -576,11 +713,12 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   }, [])
   const pinnedDetails = pinnedPoint ? details.get(pinnedPoint) : undefined
   const globeActive = visible && topologyOpen && (!compact || mobileView === 'network')
+  const zoomLabels = useMemo(() => ({ group: messages.globeZoom.group, in: messages.globeZoom.in, out: messages.globeZoom.out }), [messages.globeZoom])
   const countrySource = snapshot.info?.countrySource
   const countryPosition = countryCode ? countryCentroids.get(countryCode) : undefined
   const countryLabel = countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry
   const networkPane = <section className="workspace-network workspace-glass liquid-glass-menu relative flex h-full min-h-0 items-center justify-center overflow-hidden rounded-[22px]">
-          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} shared={shared} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={globeActive} pointNames={pointNames} pointsLabel={messages.globeDetails.points} pointButtonLabel={messages.globeDetails.pointButton} pointCard={pointCard} onPickPoint={pickPoint} />}</div>
+          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} shared={shared} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={globeActive} pointNames={pointNames} pointsLabel={messages.globeDetails.points} pointButtonLabel={messages.globeDetails.pointButton} pointCard={pointCard} onPickPoint={pickPoint} zoomLabels={zoomLabels} />}</div>
           {globeActive && pinnedDetails && <GlobeCard details={pinnedDetails} html={renderCard(pinnedDetails, true)} labels={messages.globeDetails} onClose={closePinned} />}
           <div className="absolute inset-x-5 top-5 z-[2] flex items-center justify-between gap-3 text-[10px]">
             <div className="rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-muted-foreground shadow-sm backdrop-blur"><span className="font-mono text-foreground">{connectedPeers.length}</span> {messages.connectedPeers.toLowerCase()}</div>

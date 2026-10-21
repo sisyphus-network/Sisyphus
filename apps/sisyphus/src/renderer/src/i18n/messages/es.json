@@ -163,6 +163,7 @@
   "unplacedLink": "Sin ubicar: activa la detección de ubicación",
   "unplacedHint": "Este nodo solo se conoce por una dirección de red doméstica, que ninguna tabla puede ubicar. Preguntar al router, a un servidor STUN o a un servicio de consulta puede dar con su dirección pública.",
   "countryEstimateDisclaimer": "Estimación basada en la dirección de red; puede ser inexacta",
+  "globeZoom": {"group": "Zoom del globo", "in": "Acercar", "out": "Alejar"},
   "peerMultiaddress": "Multiaddr del nodo",
   "peerConnectionHint": "Se intentará una conexión libp2p directa. Conectarse no autoriza al nodo a ejecutar trabajos de cómputo.",
   "connectPeer": "Conectar",
