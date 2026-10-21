@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -36,6 +37,14 @@ type MDParams struct {
 	// A molecule without water is put in a box of it, with salt to make
 	// it neutral; hydrogens it lacks are added.
 	Input string `json:"input,omitempty"`
+	// Prmtop and Inpcrd are the CIDs of a stored Amber topology and the
+	// coordinates that go with it, in place of Input: a system prepared
+	// with Amber's tools, run as it is, with the force field its topology
+	// holds. Both are given or neither, and not with Input. A system with
+	// a box in its coordinates is simulated with periodic boundaries and
+	// PME; one without, in a vacuum or implicit solvent, with no cutoff.
+	Prmtop string `json:"prmtop,omitempty"`
+	Inpcrd string `json:"inpcrd,omitempty"`
 	// Picoseconds is how long each replica is simulated. Zero means 10.
 	Picoseconds float64 `json:"picoseconds,omitempty"`
 	// Temperature is in kelvin. Zero means 300.
@@ -106,7 +115,9 @@ func mdImage(dockerfile string) string {
 
 // mdScript is what each task runs: it prepares the molecule, settles it,
 // and simulates it with the Amber force field and TIP3P water, two
-// femtoseconds a step, recording as it goes.
+// femtoseconds a step, recording as it goes. An Amber system, given as
+// /input/prmtop and /input/inpcrd, is already prepared, and is simulated
+// as its topology says.
 const mdScript = `import json, os, time
 from openmm import app, unit, LangevinMiddleIntegrator, Platform
 env = os.environ
@@ -115,23 +126,35 @@ seed = int(env["SEED"]) + index
 temperature = float(env["TEMPERATURE"]) * unit.kelvin
 steps = max(1, round(float(env["PICOSECONDS"]) / 0.002))
 interval = max(1, steps // int(env["FRAMES"]))
-path = "/input/data" if os.path.exists("/input/data") else os.path.join(os.path.dirname(app.__file__), "data", "test.pdb")
-pdb = app.PDBFile(path)
-forcefield = app.ForceField("amber14-all.xml", "amber14/tip3p.xml")
-model = app.Modeller(pdb.topology, pdb.positions)
-model.addHydrogens(forcefield)
-if not any(r.name == "HOH" for r in model.topology.residues()):
-    model.addSolvent(forcefield, padding=1 * unit.nanometer, neutralize=True)
-system = forcefield.createSystem(model.topology, nonbondedMethod=app.PME, nonbondedCutoff=1 * unit.nanometer, constraints=app.HBonds)
+box = None
+if os.path.exists("/input/prmtop"):
+    prmtop = app.AmberPrmtopFile("/input/prmtop")
+    inpcrd = app.AmberInpcrdFile("/input/inpcrd")
+    topology, positions, box = prmtop.topology, inpcrd.positions, inpcrd.boxVectors
+    if box is not None:
+        topology.setPeriodicBoxVectors(box)
+    system = prmtop.createSystem(nonbondedMethod=app.NoCutoff if box is None else app.PME, nonbondedCutoff=1 * unit.nanometer, constraints=app.HBonds)
+else:
+    path = "/input/data" if os.path.exists("/input/data") else os.path.join(os.path.dirname(app.__file__), "data", "test.pdb")
+    pdb = app.PDBFile(path)
+    forcefield = app.ForceField("amber14-all.xml", "amber14/tip3p.xml")
+    model = app.Modeller(pdb.topology, pdb.positions)
+    model.addHydrogens(forcefield)
+    if not any(r.name == "HOH" for r in model.topology.residues()):
+        model.addSolvent(forcefield, padding=1 * unit.nanometer, neutralize=True)
+    topology, positions = model.topology, model.positions
+    system = forcefield.createSystem(topology, nonbondedMethod=app.PME, nonbondedCutoff=1 * unit.nanometer, constraints=app.HBonds)
 integrator = LangevinMiddleIntegrator(temperature, 1 / unit.picosecond, 0.002 * unit.picoseconds)
 integrator.setRandomNumberSeed(seed)
 names = [Platform.getPlatform(i).getName() for i in range(Platform.getNumPlatforms())]
 if env.get("NEED_CUDA") and "CUDA" not in names:
     raise SystemExit("replica %d: the job asked for a graphics card, and OpenMM found no CUDA platform: %s" % (index, "; ".join(Platform.getPluginLoadFailures()) or "no plugin for it"))
 platform = Platform.getPlatformByName("CUDA" if "CUDA" in names else "CPU")
-simulation = app.Simulation(model.topology, system, integrator, platform)
-simulation.context.setPositions(model.positions)
-print(f"replica {index}: {model.topology.getNumAtoms()} atoms, {steps} steps on {platform.getName()}", flush=True)
+simulation = app.Simulation(topology, system, integrator, platform)
+if box is not None:
+    simulation.context.setPeriodicBoxVectors(*box)
+simulation.context.setPositions(positions)
+print(f"replica {index}: {topology.getNumAtoms()} atoms, {steps} steps on {platform.getName()}", flush=True)
 simulation.minimizeEnergy()
 simulation.context.setVelocitiesToTemperature(temperature, seed)
 simulation.reporters.append(app.DCDReporter("/output/trajectory.dcd", interval))
@@ -141,9 +164,9 @@ simulation.step(steps)
 took = max(time.time() - started, 1e-9)
 state = simulation.context.getState(getEnergy=True, getPositions=True)
 with open("/output/final.pdb", "w") as out:
-    app.PDBFile.writeFile(model.topology, state.getPositions(), out)
+    app.PDBFile.writeFile(topology, state.getPositions(), out)
 energy = state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
-summary = {"seed": seed, "platform": platform.getName(), "atoms": model.topology.getNumAtoms(), "picoseconds": steps * 0.002,
+summary = {"seed": seed, "platform": platform.getName(), "atoms": topology.getNumAtoms(), "picoseconds": steps * 0.002,
            "ns_per_day": steps * 0.002e-3 / took * 86400, "potential_energy_kj_mol": energy}
 with open("/output/summary.json", "w") as out:
     json.dump(summary, out)
@@ -157,12 +180,14 @@ const mdLimit = 1e6
 func (MD) Name() string { return "md" }
 
 func (MD) Describe() string {
-	return `Simulates a molecule with OpenMM molecular dynamics, as replicas from different random starts run on different workers, and sums them up. Parameters: {"input": "<optional CID of a stored PDB file; without it, the villin headpiece in water>", "picoseconds": <how long each replica is simulated, default 10>, "temperature": <kelvin, default 300>, "seed": <optional first random seed>, "frames": <snapshots kept of each replica, default 50>, "replicas": <optional number of replicas>, "gpu": <true to run each replica on a graphics card, on workers that have one>}. Result: {"replicas": <n>, "atoms": <n>, "picoseconds_each": <ps>, "total_nanoseconds": <ns>, "mean_potential_energy_kj_mol": <e>, "potential_energy_stdev_kj_mol": <e>, "runs": [{"index", "seed", "platform", "ns_per_day", "potential_energy_kj_mol", "final": "<CID of the last frame, PDB>", "energies": "<CID, CSV>", "trajectory": "<CID, DCD>"}]}.`
+	return `Simulates a molecule with OpenMM molecular dynamics, as replicas from different random starts run on different workers, and sums them up. Parameters: {"input": "<optional CID of a stored PDB file; without it, the villin headpiece in water>", "prmtop": "<CID of a stored Amber topology, with inpcrd, in place of input>", "inpcrd": "<CID of the stored Amber coordinates that go with prmtop>", "picoseconds": <how long each replica is simulated, default 10>, "temperature": <kelvin, default 300>, "seed": <optional first random seed>, "frames": <snapshots kept of each replica, default 50>, "replicas": <optional number of replicas>, "gpu": <true to run each replica on a graphics card, on workers that have one>}. Result: {"replicas": <n>, "atoms": <n>, "picoseconds_each": <ps>, "total_nanoseconds": <ns>, "mean_potential_energy_kj_mol": <e>, "potential_energy_stdev_kj_mol": <e>, "runs": [{"index", "seed", "platform", "ns_per_day", "potential_energy_kj_mol", "final": "<CID of the last frame, PDB>", "energies": "<CID, CSV>", "trajectory": "<CID, DCD>"}]}.`
 }
 
 func (MD) Form() []Field {
 	return []Field{
 		{Name: "input", Kind: KindFile, Label: "Molecule", Help: "A stored PDB file of the molecule, or none for the villin headpiece in water."},
+		{Name: "prmtop", Kind: KindFile, Label: "Amber topology (prmtop)", Help: "A system prepared with Amber's tools, in place of a molecule: its prmtop file, given together with its inpcrd."},
+		{Name: "inpcrd", Kind: KindFile, Label: "Amber coordinates (inpcrd)", Help: "The inpcrd file of the coordinates that go with the Amber topology, given together with it."},
 		{Name: "picoseconds", Kind: KindNumber, Label: "Length", Help: "How long to simulate each replica, in picoseconds.", Default: 10, Minimum: bound(0.002), Maximum: bound(mdLimit)},
 		{Name: "temperature", Kind: KindNumber, Label: "Temperature", Help: "The temperature to hold the molecule at, in kelvin.", Default: 300, Minimum: bound(1), Maximum: bound(1000)},
 		{Name: "replicas", Kind: KindInteger, Label: "Replicas", Help: "How many simulations to run side by side, or 0 to leave it to the pool.", Default: 0, Minimum: bound(0), Maximum: bound(MaxTasks)},
@@ -181,6 +206,20 @@ func (MD) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][
 		if _, err := cid.Decode(p.Input); err != nil {
 			return nil, fmt.Errorf("md parameters: input is not the CID of a stored PDB file: %w", err)
 		}
+	}
+	var amber map[string]string
+	switch {
+	case p.Input != "" && (p.Prmtop != "" || p.Inpcrd != ""):
+		return nil, errors.New("md parameters: an Amber system's prmtop and inpcrd are given in place of input, not with it")
+	case (p.Prmtop == "") != (p.Inpcrd == ""):
+		return nil, errors.New("md parameters: an Amber system needs both its prmtop and its inpcrd")
+	case p.Prmtop != "":
+		for name, id := range map[string]string{"prmtop": p.Prmtop, "inpcrd": p.Inpcrd} {
+			if _, err := cid.Decode(id); err != nil {
+				return nil, fmt.Errorf("md parameters: %s is not the CID of a stored file: %w", name, err)
+			}
+		}
+		amber = map[string]string{"prmtop": p.Prmtop, "inpcrd": p.Inpcrd}
 	}
 	if p.Picoseconds == 0 {
 		p.Picoseconds = 10
@@ -208,7 +247,7 @@ func (MD) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][
 	}
 	c := ContainerParams{
 		Image: MDImage, Command: []string{"python", "-c", mdScript},
-		Input: p.Input, Tasks: p.Replicas,
+		Input: p.Input, Inputs: amber, Tasks: p.Replicas,
 		Env: map[string]string{
 			"PICOSECONDS": strconv.FormatFloat(p.Picoseconds, 'g', -1, 64),
 			"TEMPERATURE": strconv.FormatFloat(p.Temperature, 'g', -1, 64),

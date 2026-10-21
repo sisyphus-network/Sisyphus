@@ -20,6 +20,13 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 	stored, _ := store.Put(ctx, strings.NewReader("the boulder and the hill"))
 	registry := WithContainers().With(Graph{})
 
+	// Some file fields stand in place of another, which a form's fields
+	// cannot say, and their help does: md's Amber system, its topology and
+	// coordinates given together, is given in place of its molecule. They
+	// are left out of the defaults, and given together in place of the
+	// other below.
+	instead := map[string]map[string][]string{"md": {"input": {"prmtop", "inpcrd"}}}
+
 	var formed []string
 	for _, name := range registry.Names() {
 		form := registry.Form(name)
@@ -29,9 +36,16 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 		formed = append(formed, name)
 		w, _ := registry.Get(name)
 		defaults := map[string]any{}
+		alternatives := map[string]bool{}
+		for _, fields := range instead[name] {
+			for _, field := range fields {
+				alternatives[field] = true
+			}
+		}
 		for _, f := range form {
 			checkField(t, name, f)
 			switch {
+			case alternatives[f.Name]:
 			case f.Kind == KindFile:
 				defaults[f.Name] = stored.String()
 			case f.Default != nil:
@@ -82,6 +96,37 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			}
 			if f.Required {
 				refused(f.Name, nil, "left out, though the form says it is needed")
+			}
+		}
+		for field, together := range instead[name] {
+			found := 0
+			for _, f := range form {
+				if slices.Contains(together, f.Name) {
+					found++
+					if f.Kind != KindFile || f.Required {
+						t.Errorf("%s.%s, given in place of %s, is not an optional file", name, f.Name, field)
+					}
+				}
+			}
+			if found != len(together) {
+				t.Errorf("%s's form has %d of %v", name, found, together)
+			}
+			given := with(field, nil)
+			for _, other := range together {
+				given[other] = stored.String()
+			}
+			if err := split(given); err != nil {
+				t.Errorf("%s refuses %v in place of %s: %v", name, together, field, err)
+			}
+			for _, other := range together {
+				alone := with(field, nil)
+				alone[other] = stored.String()
+				if split(alone) == nil {
+					t.Errorf("%s takes %s without the rest of %v", name, other, together)
+				}
+				if split(with(other, stored.String())) == nil {
+					t.Errorf("%s takes %s with %s", name, other, field)
+				}
 			}
 		}
 	}
