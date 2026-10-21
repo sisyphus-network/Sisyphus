@@ -402,6 +402,18 @@
   "operations": "Operaciones",
   "run": "Ejecutar",
   "runPage": {
+    "mdResult": {
+      "summary": "{replicas} réplicas de {atoms} átomos, {picoseconds} ps cada una",
+      "meanEnergy": "Energía final media",
+      "spread": "Dispersión",
+      "unit": "kJ/mol",
+      "tableLabel": "Cada réplica",
+      "replica": "Réplica",
+      "seed": "Semilla",
+      "ranOn": "Dónde",
+      "speed": "Velocidad (ns/día)",
+      "energy": "Energía final (kJ/mol)"
+    },
     "description": "Elige qué calcular, completa unos pocos campos y el pool hace el resto.",
     "galleryLabel": "Lo que este pool puede ejecutar",
     "loading": "Cargando lo que este pool puede ejecutar",

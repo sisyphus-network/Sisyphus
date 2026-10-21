@@ -402,6 +402,18 @@
   "operations": "Operations",
   "run": "Run",
   "runPage": {
+    "mdResult": {
+      "summary": "{replicas} replicas of {atoms} atoms, {picoseconds} ps each",
+      "meanEnergy": "Mean final energy",
+      "spread": "Spread",
+      "unit": "kJ/mol",
+      "tableLabel": "Each replica",
+      "replica": "Replica",
+      "seed": "Seed",
+      "ranOn": "Ran on",
+      "speed": "Speed (ns/day)",
+      "energy": "Final energy (kJ/mol)"
+    },
     "description": "Choose what to compute, fill in a few fields, and the pool does the rest.",
     "galleryLabel": "What this pool can run",
     "loading": "Loading what this pool can run",
