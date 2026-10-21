@@ -67,7 +67,7 @@ export type PoolLimitsState = { managed: boolean; configurable: boolean; configu
 export type JoinedPool = { coordinatorId: string; coordinatorName: string; address: string; state: number | string; roles: (number | string)[]; workerCount?: number }
 
 export type NodeRpcMethod =
-  | 'getBootstrapPeers' | 'setBootstrapPeers' | 'listWorkers' | 'listPeers' | 'getNodeInfo'
+  | 'getBootstrapPeers' | 'setBootstrapPeers' | 'listWorkers' | 'listWorkloads' | 'listPeers' | 'getNodeInfo'
   | 'submitJob' | 'getJob' | 'listJobs' | 'cancelJob'
   | 'getModelConfig' | 'setModelConfig' | 'listModelProfiles' | 'saveModelProfile' | 'deleteModelProfile' | 'listProviders' | 'listModels' | 'removeModel'
   | 'getWebAccessConfig' | 'setWebAccessConfig' | 'listNetworkInterfaces' | 'getJoinedPool' | 'leavePool'
