@@ -115,6 +115,17 @@ export function normalizeWorkloads(response: unknown): Workload[] {
   return Array.isArray(list) ? list.map(normalizeWorkload).filter((workload) => workload.name !== '') : []
 }
 
+// countGpuWorkers reads the worker list sent by WatchWorkers, counting each
+// connected worker once when it reports at least one offered graphics card.
+export function countGpuWorkers(workers: unknown): number {
+  if (!Array.isArray(workers)) return 0
+  return workers.filter((worker) => {
+    if (!worker || typeof worker !== 'object') return false
+    const gpus = (worker as Raw).gpus
+    return Array.isArray(gpus) && gpus.length > 0
+  }).length
+}
+
 // canRun says whether a job of the workload has anyone to run it: a worker
 // that offers it, or the coordinator itself for a composite one.
 export function canRun(workload: Workload): boolean {

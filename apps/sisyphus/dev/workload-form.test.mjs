@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { canRun, fieldKind, firstSentence, initialValues, isValid, normalizeWorkloads, toParams, validate } from '../src/renderer/src/lib/workload-form.ts'
+import { canRun, countGpuWorkers, fieldKind, firstSentence, initialValues, isValid, normalizeWorkloads, toParams, validate } from '../src/renderer/src/lib/workload-form.ts'
 
 // primes as proto-loader gives it in Electron: enum names, every default
 // set, and the optional bounds named in their synthetic oneofs.
@@ -75,6 +75,17 @@ test('nothing usable reads as no workloads, and unnamed ones are dropped', () =>
   const [workload] = normalizeWorkloads({ workloads: [{ name: 'w', fields: [{ kind: 2 }, { name: 'ok', kind: 2, defaultJson: '{not json' }] }] })
   assert.deepEqual(workload.fields.map((field) => field.name), ['ok'])
   assert.equal(workload.fields[0].defaultValue, undefined)
+})
+
+test('GPU worker counts include each worker once and follow the latest worker snapshot', () => {
+  assert.equal(countGpuWorkers([
+    { peerId: 'cpu-only', gpus: [] },
+    { peerId: 'one-card', gpus: [{ name: 'RTX 4050' }] },
+    { peerId: 'two-cards', gpus: [{ name: 'RTX 4090' }, { name: 'RTX 4090' }] },
+    null,
+  ]), 2)
+  assert.equal(countGpuWorkers([{ peerId: 'cpu-only', gpus: [] }]), 0)
+  assert.equal(countGpuWorkers(undefined), 0)
 })
 
 test('a workload can run when a worker offers it, or when it is composite', () => {
