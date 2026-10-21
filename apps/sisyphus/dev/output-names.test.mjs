@@ -19,6 +19,24 @@ test('a molecule’s files are named by replica and kind', () => {
   assert.equal(nameInResult(result, 'c1t'), 'runs-1-trajectory.dcd')
 })
 
+test('a render’s frames are numbered in order, and its whole frame and archive named by kind', () => {
+  const frames = Array.from({ length: 12 }, (_, i) => `cframe${i}`)
+  const byFrames = json({ split: 'frames', frames: 12, images: frames, archive: 'czip', width: 64, height: 64, seconds: 3 })
+  assert.equal(nameInResult(byFrames, 'cframe0'), 'images-00.png')
+  assert.equal(nameInResult(byFrames, 'cframe11'), 'images-11.png')
+  assert.equal(nameInResult(byFrames, 'czip'), 'archive.zip')
+  assert.equal(nameInResult(json({ images: ['only'] }), 'only'), 'images-0.png')
+  assert.equal(nameInResult(json({ jobs: [{ index: 2, images: ['a', 'b'] }] }), 'b'), 'jobs-2-images-1.png')
+  // A list of a kind not known names nothing.
+  assert.equal(nameInResult(json({ things: ['cid'] }), 'cid'), undefined)
+  const byTiles = json({ split: 'tiles', frames: 1, image: 'cwhole', tiles: 2 })
+  assert.equal(outputFileName({ jobId: 'abcdef0123456789', result: byTiles }, 'cwhole', 0, new Uint8Array([0x89, 0x50, 0x4e, 0x47])), 'abcdef01-image.png')
+  // A frame rendered as OpenEXR is saved as one.
+  const exr = new Uint8Array([0x76, 0x2f, 0x31, 0x01, 2])
+  assert.equal(outputFileName({ jobId: 'abcdef0123456789', result: byFrames }, 'cframe3', 3, exr), 'abcdef01-images-03.exr')
+  assert.equal(outputFileName({ jobId: 'abcdef0123456789', result: byFrames }, 'czip', 12, new Uint8Array([0x50, 0x4b, 3, 4])), 'abcdef01-archive.zip')
+})
+
 test('a container’s files keep the names it gave them', () => {
   const result = json({ tasks: [{ index: 4, stdout: 'cout', files: { 'frame 0001.png': 'cpng', '../x': 'cbad' } }] })
   assert.equal(nameInResult(result, 'cpng'), 'tasks-4-frame_0001.png')
@@ -36,6 +54,7 @@ test('an output the result does not name is typed by its first bytes', () => {
   assert.equal(extensionOf(new Uint8Array([0, 0, 0, 0x18, ...new TextEncoder().encode('ftypisom')])), '.mp4')
   assert.equal(extensionOf(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1])), '.png')
   assert.equal(extensionOf(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), '.jpg')
+  assert.equal(extensionOf(new Uint8Array([0x76, 0x2f, 0x31, 0x01])), '.exr')
   assert.equal(extensionOf(new TextEncoder().encode('%PDF-1.7')), '.pdf')
   assert.equal(extensionOf(new Uint8Array([0x1f, 0x8b, 8])), '.gz')
   assert.equal(extensionOf(new Uint8Array([0x50, 0x4b, 3, 4])), '.zip')

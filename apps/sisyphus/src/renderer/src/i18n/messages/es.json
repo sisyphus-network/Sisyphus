@@ -476,6 +476,7 @@
       "primes": { "title": "Contar primos", "description": "Cuenta los números primos de un intervalo, repartidos por el pool." },
       "wordcount": { "title": "Contar palabras", "description": "Cuenta cuántas veces aparece cada palabra en un archivo de texto." },
       "transcode": { "title": "Recodificar vídeo", "description": "Recodifica un vídeo a H.264, en tramos que codifican distintos trabajadores." },
+      "render": { "title": "Renderizar una escena 3D", "description": "Renderiza una escena de Blender con Cycles o EEVEE, por fotogramas o por franjas de un fotograma, por todo el pool." },
       "md": { "title": "Simular una molécula", "description": "Ejecuta dinámica molecular como réplicas por todo el pool." }
     }
   },
