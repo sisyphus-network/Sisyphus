@@ -1215,7 +1215,7 @@ test('the Run page runs primes from its form, refuses a value out of bounds inli
     await wide(app, page)
     await open(page, 'Run')
     await page.getByRole('heading', { name: 'Run', level: 1 }).waitFor()
-    const card = page.getByRole('button', { name: /^Count primes/ })
+    const card = page.locator('button.run-card').filter({ hasText: /^Count primes/ })
     await card.getByText(/^Workers: [1-9]\d*$/).waitFor()
     await card.getByText('Counts the prime numbers in a range, split across the pool.').waitFor()
     await card.click()
