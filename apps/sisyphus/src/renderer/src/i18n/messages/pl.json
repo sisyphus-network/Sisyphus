@@ -483,6 +483,7 @@
       "transcribe": { "title": "Transkrybuj mowę", "description": "Zamienia mowę z nagrania na tekst i napisy, we fragmentach w całej puli." },
       "qchem": { "title": "Oblicz cząsteczki", "description": "Oblicza za pomocą xtb energie, zoptymalizowane geometrie lub częstości z pliku konformerów lub cząsteczek, partiami w całej puli." },
       "ocr": { "title": "Odczytaj tekst ze skanów", "description": "Odczytuje tekst w zeskanowanym PDF-ie lub obrazie za pomocą Tesseracta, partiami stron w całej puli, jako zwykły tekst lub przeszukiwalny PDF." },
+      "traj": { "title": "Analizuj trajektorie", "description": "Wyznacza RMSD, promień bezwładności, odległości, wiązania wodorowe, strukturę drugorzędową lub RMSF wzdłuż trajektorii dynamiki molekularnej za pomocą cpptraj, partiami klatek w całej puli." },
       "md": { "title": "Symuluj cząsteczkę", "description": "Uruchamia dynamikę molekularną jako repliki w całej puli." }
     }
   },

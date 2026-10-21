@@ -22,10 +22,14 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 	registry := WithContainers().With(Graph{})
 	// Some workloads read a file when a job is split: qchem counts the
 	// structures in it, and refuses what is not a file of them; ocr tells
-	// a PDF or a picture from its first bytes, and refuses anything else.
+	// a PDF or a picture from its first bytes, and refuses anything else;
+	// traj tells a topology and a trajectory from theirs, so each of its
+	// fields is given a file of its own.
 	water, _ := store.Put(ctx, strings.NewReader("3\nwater\nO 0 0 0.12\nH 0 0.76 -0.47\nH 0 -0.76 -0.47\n"))
 	scan, _ := store.Put(ctx, strings.NewReader("%PDF-1.7\n"))
-	files := map[string]string{"qchem": water.String(), "ocr": scan.String()}
+	topology, _ := store.Put(ctx, strings.NewReader("%VERSION  VERSION_STAMP = V0001.000\n"))
+	trajectory, _ := store.Put(ctx, strings.NewReader("T\x00\x00\x00CORD"))
+	files := map[string]string{"qchem": water.String(), "ocr": scan.String(), "traj.topology": topology.String(), "traj.trajectory": trajectory.String()}
 
 	// Some file fields stand in place of another, which a form's fields
 	// cannot say, and their help does: md's Amber system, its topology and
@@ -54,7 +58,7 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			switch {
 			case alternatives[f.Name]:
 			case f.Kind == KindFile:
-				defaults[f.Name] = cmp.Or(files[name], stored.String())
+				defaults[f.Name] = cmp.Or(files[name+"."+f.Name], files[name], stored.String())
 			case f.Default != nil:
 				defaults[f.Name] = f.Default
 			}
@@ -137,7 +141,7 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			}
 		}
 	}
-	if !slices.Equal(formed, []string{"md", "ocr", "primes", "qchem", "render", "transcode", "transcribe", "wordcount"}) {
+	if !slices.Equal(formed, []string{"md", "ocr", "primes", "qchem", "render", "traj", "transcode", "transcribe", "wordcount"}) {
 		t.Errorf("the workloads with forms are %v", formed)
 	}
 	if Builtin().Form("no-such-workload") != nil || registry.Form("graph") != nil {
