@@ -72,6 +72,11 @@ func TestATranscodeJobIsAContainerJobWithTheImageAndCommandFixed(t *testing.T) {
 }
 
 func TestTheTranscodingImageIsBuiltOnlyWhereItIsMissing(t *testing.T) {
+	// A temporary directory of its own, so that images other tests or other
+	// jobs on the machine are building at the same time are not taken for
+	// build directories this test left behind.
+	private := t.TempDir()
+	tempDirIs(t, private)
 	store := storage.NewMemory()
 	ctx := context.Background()
 	video, _ := store.Put(ctx, strings.NewReader("a video"))
@@ -151,7 +156,7 @@ func TestTheTranscodingImageIsBuiltOnlyWhereItIsMissing(t *testing.T) {
 			t.Errorf("%s: %v, want an error containing %q", name, err, tt.want)
 		}
 	}
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-such-directory"))
+	tempDirIs(t, filepath.Join(t.TempDir(), "no-such-directory"))
 	if _, err := (Transcode{Engine: lacks.engine}).Execute(ctx, store, payloads[0]); err == nil || !strings.Contains(err.Error(), "make a directory to build the transcoding image in") {
 		t.Errorf("with no temporary directory: %v", err)
 	}
@@ -280,5 +285,17 @@ func TestARealVideoIsTranscodedInStretches(t *testing.T) {
 	bad, _ := w.Split(ctx, store, []byte(`{"input":"`+nonsense.String()+`"}`), 1)
 	if _, err := w.Execute(ctx, store, bad[0]); err == nil || !strings.Contains(err.Error(), "exited with status") {
 		t.Errorf("transcoding what is not a video: %v", err)
+	}
+}
+
+// tempDirIs points os.TempDir at dir for the rest of the test, on every
+// platform: TMPDIR is what Unix reads, TMP then TEMP what Windows does.
+func tempDirIs(t *testing.T, dir string) {
+	t.Helper()
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(name, dir)
+	}
+	if os.TempDir() != dir {
+		t.Fatalf("the temporary directory is %s, not %s", os.TempDir(), dir)
 	}
 }
