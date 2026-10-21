@@ -203,7 +203,7 @@ jobs:
         run: >-
           flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race -tags=realimages -p 1
           -timeout 60m
-          -run '^(TestARealVideoIsTranscodedInStretches|TestRealReplicasAreSimulated|TestARealSceneIsRendered|TestRealSpeechIsTranscribedInStretches|TestARealConformerSetIsOptimised)$'
+          -run '^(TestARealVideoIsTranscodedInStretches|TestRealReplicasAreSimulated|TestARealSceneIsRendered|TestRealSpeechIsTranscribedInStretches|TestARealConformerSetIsOptimised|TestARealScanIsRead)$'
           ./packages/runtime
 
   # Known-answer workloads must agree across real CPU architectures and OSes,

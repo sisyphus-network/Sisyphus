@@ -409,8 +409,9 @@ func validRenderFrameName(name string) bool {
 	return true
 }
 
-// zipFrames writes a zip file of the frames with the given names and CIDs.
-// They are stored as they are, being compressed already.
+// zipFrames writes a zip file of the files with the given names and CIDs: a
+// render's frames, or the searchable PDFs of an ocr job's tasks. They are
+// stored as they are, being compressed already.
 func zipFrames(ctx context.Context, blobs Blobs, w io.Writer, names, cids []string) error {
 	archive := zip.NewWriter(w)
 	for i, name := range names {
@@ -424,11 +425,11 @@ func zipFrames(ctx context.Context, blobs Blobs, w io.Writer, names, cids []stri
 func zipFrame(ctx context.Context, blobs Blobs, archive *zip.Writer, name, id string) error {
 	c, err := cid.Decode(id)
 	if err != nil {
-		return fmt.Errorf("frame %s: %w", name, err)
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	blob, err := blobs.Open(ctx, c)
 	if err != nil {
-		return fmt.Errorf("frame %s: %w", name, err)
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	defer blob.Close()
 	entry, err := archive.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})

@@ -51,6 +51,16 @@ test('a quantum chemistry job’s table, geometries and frequencies are saved as
   assert.equal(outputFileName(job, 'bafyf0', 3, new Uint8Array()), 'abcdef01-results-0-frequencies.txt')
 })
 
+test('a scan’s text is saved as text, and its searchable PDFs as PDFs in order', () => {
+  const whole = { jobId: 'abcdef0123456789', result: json({ pages: 3, text: 'bafytext', pdf: 'bafypdf', characters: 55, language: 'eng', tasks: 1 }) }
+  assert.equal(outputFileName(whole, 'bafytext', 0, new Uint8Array()), 'abcdef01-text.txt')
+  assert.equal(outputFileName(whole, 'bafypdf', 1, new Uint8Array()), 'abcdef01-pdf.pdf')
+  const parts = { jobId: 'abcdef0123456789', result: json({ pages: 30, text: 'bafytext', pdf: '', pdfs: ['bafyp0', 'bafyp1', 'bafyp2'], archive: 'bafyzip', characters: 900, language: 'eng+heb', tasks: 3 }) }
+  assert.equal(outputFileName(parts, 'bafyp0', 1, new Uint8Array()), 'abcdef01-pdfs-0.pdf')
+  assert.equal(outputFileName(parts, 'bafyp2', 3, new Uint8Array()), 'abcdef01-pdfs-2.pdf')
+  assert.equal(outputFileName(parts, 'bafyzip', 4, new Uint8Array()), 'abcdef01-archive.zip')
+})
+
 test('a container’s files keep the names it gave them', () => {
   const result = json({ tasks: [{ index: 4, stdout: 'cout', files: { 'frame 0001.png': 'cpng', '../x': 'cbad' } }] })
   assert.equal(nameInResult(result, 'cpng'), 'tasks-4-frame_0001.png')
