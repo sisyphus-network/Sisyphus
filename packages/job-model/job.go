@@ -140,7 +140,13 @@ type Job struct {
 	// Needs is what else a worker must have, as labels. It follows from
 	// the workload and the parameters and is worked out by whoever holds
 	// the job, not saved with it.
-	Needs      []string
+	Needs []string
+	// Cards is how many graphics cards each of the job's tasks holds while
+	// it runs, as its workload says: a worker runs no more such tasks at
+	// once than its cards allow. Like Needs it follows from the workload
+	// and the parameters and is not saved. MinGPUs, which may be more, only
+	// says which workers may be given the tasks.
+	Cards      int
 	State      State
 	Tasks      []*Task
 	Result     []byte

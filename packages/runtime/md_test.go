@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -252,5 +253,95 @@ func TestRealReplicasAreSimulated(t *testing.T) {
 	bad, _ := w.Split(ctx, store, []byte(`{"input":"`+nonsense.String()+`","picoseconds":0.01}`), 1)
 	if _, err := w.Execute(ctx, store, bad[0]); err == nil || !strings.Contains(err.Error(), "exited with status") {
 		t.Errorf("simulating what is not a molecule: %v", err)
+	}
+
+	// A replica that asked for a graphics card and finds none fails, and
+	// says why, rather than run on the processor. This image has no CUDA
+	// platform, as a worker whose card is not passed through has none.
+	var task containerTask
+	json.Unmarshal(payloads[0], &task)
+	task.Env["NEED_CUDA"] = "1"
+	said = new(heard)
+	if _, err := w.Execute(WithReporter(ctx, said), store, mustJSON(task)); err == nil || !strings.Contains(err.Error(), "exited with status") {
+		t.Errorf("a replica that finds no graphics card: %v", err)
+	}
+	if log := strings.Join(said.lines, "\n"); !strings.Contains(log, "replica 0: the job asked for a graphics card, and OpenMM found no CUDA platform") || strings.Contains(log, "steps on CPU") {
+		t.Errorf("the log of a replica that finds no graphics card:\n%s", log)
+	}
+}
+
+func TestAnMDJobOnAGraphicsCardRunsInTheCUDAImageWithACard(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+
+	payloads, err := MD{}.Split(ctx, store, []byte(`{"gpu":true,"replicas":2}`), 8)
+	if err != nil || len(payloads) != 2 {
+		t.Fatalf("split: %d payloads, %v", len(payloads), err)
+	}
+	var task containerTask
+	json.Unmarshal(payloads[1], &task)
+	if task.Image != MDCUDAImage || MDCUDAImage == MDImage || !strings.HasPrefix(MDCUDAImage, "sisyphus-md:") || task.GPUs != 1 || task.Env["NEED_CUDA"] != "1" {
+		t.Errorf("a task on a graphics card: %+v", task)
+	}
+	// On the processor, as before: no card, and nothing that asks for one.
+	payloads, _ = MD{}.Split(ctx, store, []byte(`{"gpu":false}`), 1)
+	task = containerTask{}
+	json.Unmarshal(payloads[0], &task)
+	if _, asked := task.Env["NEED_CUDA"]; task.Image != MDImage || task.GPUs != 0 || asked {
+		t.Errorf("a task on the processor: %+v", task)
+	}
+
+	// The coordinator is told each task holds one card.
+	for params, want := range map[string]int{`{"gpu":true}`: 1, `{"gpu":false}`: 0, `{}`: 0, `not json`: 0} {
+		if got := WithContainers().GPUsNeeded("md", []byte(params)); got != want {
+			t.Errorf("md %s needs %d graphics cards, want %d", params, got, want)
+		}
+	}
+	if got := WithContainers().GPUsNeeded("primes", []byte(`{"gpu":true}`)); got != 0 {
+		t.Errorf("primes needs %d graphics cards", got)
+	}
+	if !slices.ContainsFunc(MD{}.Form(), func(f Field) bool { return f.Name == "gpu" && f.Kind == KindToggle && f.Default == false }) {
+		t.Errorf("the form has no graphics card toggle: %+v", MD{}.Form())
+	}
+
+	// The worker builds the CUDA image, once, and runs the task with a card.
+	var recipe string
+	lacks := &pretend{do: func(args []string, _, _ io.Writer) (int, error) {
+		switch args[0] {
+		case "image":
+			return 1, nil
+		case "build":
+			text, _ := os.ReadFile(filepath.Join(args[len(args)-1], "Dockerfile"))
+			recipe = string(text)
+			return 0, nil
+		}
+		os.WriteFile(filepath.Join(volume(args, "/output"), "summary.json"), []byte(`{"platform":"CUDA"}`), 0o644)
+		return 0, nil
+	}}
+	payloads, _ = MD{}.Split(ctx, store, []byte(`{"gpu":true}`), 1)
+	said := new(heard)
+	if _, err := (MD{Engine: lacks.engine}).Execute(WithReporter(ctx, said), store, payloads[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(lacks.asked) != 3 || strings.Join(lacks.asked[0], " ") != "image inspect "+MDCUDAImage || strings.Join(lacks.asked[1][:3], " ") != "build --tag "+MDCUDAImage {
+		t.Errorf("with the CUDA image missing, the engine was asked %v", lacks.asked)
+	}
+	if !strings.Contains(recipe, "FROM python:3.12-slim") || !strings.Contains(recipe, "openmm[cuda12]==8.2.0") || !strings.Contains(recipe, "OpenMM-CUDA-12==8.2.0") {
+		t.Errorf("the CUDA image's recipe: %q", recipe)
+	}
+	run := strings.Join(lacks.asked[2], " ")
+	if !strings.Contains(run, "--gpus 1") || !strings.Contains(run, "--env NEED_CUDA=1") || !strings.Contains(run, " "+MDCUDAImage+" python -c") {
+		t.Errorf("the task was run as %q", run)
+	}
+	if log := strings.Join(said.lines, "\n"); !strings.Contains(log, "building the image molecular dynamics on a graphics card runs in") {
+		t.Errorf("the task's log: %q", said.lines)
+	}
+}
+
+func TestAContainerJobNeedsTheGraphicsCardsItAsksFor(t *testing.T) {
+	for params, want := range map[string]int{`{"image":"a","gpus":2}`: 2, `{"image":"a"}`: 0, `{"image":"a","gpus":-1}`: 0, `not json`: 0} {
+		if got := WithContainers().GPUsNeeded("container", []byte(params)); got != want {
+			t.Errorf("container %s needs %d graphics cards, want %d", params, got, want)
+		}
 	}
 }

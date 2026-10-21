@@ -1046,7 +1046,7 @@ examples/render.sh                                                       # a pic
 - **A coordinator can insist on hardened workers.** Started with `--containers-hardened`, it gives `container`, `transcode`, `md` and `render` jobs only to workers that run containers with a sandboxing `--container-runtime` (gVisor's `runsc` or a Kata runtime, which the worker found Docker has before it started) and with `--containers-read-only` plus a sized `/tmp`. Such a worker says so in its labels, `container-sandboxed` and `container-bounded-tmp`, and `sisyphusd nodes` says it in words beneath the table, as in `laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp`. These settings do not cap `/output` while a task runs; `--task-dir` can place all task files on a separate, quota-backed filesystem, but that bound is shared across tasks on the worker. A job waits while no qualifying worker is connected. It is for a pool that takes container work from people its workers' owners do not know; a private pool has no need of it.
 - **Tasks of a job that run on one machine share one copy of its input**, fetched once. Tasks of different jobs share nothing.
 
-- **Graphics cards.** `"gpus": 1` gives each task that many of the machine's cards, which needs Docker set up for them (the NVIDIA Container Toolkit). Submit the job with `--min-gpus` as well, so that its tasks go only to machines that have them. This has not been tried on a machine with a card.
+- **Graphics cards.** `"gpus": 1` gives each task that many of the machine's cards, which needs Docker set up for them (the NVIDIA Container Toolkit). The job then goes only to machines with at least that many cards, as if submitted with `--min-gpus`, and a machine runs no more such tasks at once than it has cards, whatever its slots. This has not been tried on a machine with a card.
 
 What it does not do yet: images are pulled by Docker when first used, from wherever the image name says, so a worker needs to reach that registry and trust it. To be sure of what runs, name the image by digest (`alpine@sha256:...`), which Docker checks.
 
@@ -1091,12 +1091,17 @@ Each task simulates the same molecule from its own random start: a replica. Many
 | `temperature` | In kelvin. Default 300. |
 | `seed` | The first replica's random seed. Replica *n* uses `seed + n`. Default 1. |
 | `frames` | How many snapshots of each replica to keep. Default 50. |
-| `replicas` | How many. Default: one for each free slot. |
+| `replicas` | How many. Default: one for each free slot, or with `gpu`, one for each graphics card. |
+| `gpu` | `true` runs each replica on a graphics card. Default `false`, on the processor. |
 
 The result gives the replicas' mean potential energy and its spread, and for each replica its seed, where it ran, how fast (in ns a day), its energy at the end, and the CIDs of its last frame (PDB), its energies as it went (CSV) and its trajectory (DCD, which VMD, PyMOL and MDAnalysis read).
 
 - **It runs on workers started with `--containers`**, with the image and the script fixed. A worker builds the image the first time it is needed, from two lines (Python and OpenMM from PyPI), once.
-- **CPU only, for now.** The script uses CUDA where OpenMM finds it, but the image does not yet carry OpenMM's CUDA plugin, nor does the job ask for a graphics card. That is the next step.
+- **On a graphics card, with `"gpu": true`** (the **Use a graphics card** switch on the Run page). Each replica then runs on OpenMM's CUDA platform, many times faster than on a processor, in an image of its own: the same two lines with `openmm[cuda12]`, built once on each worker that needs it, and larger, as it carries CUDA's libraries. The job goes only to workers that report a graphics card, and waits while none is connected, as one submitted with `--min-gpus 1` does. A replica that finds no card it can use fails, and its log says why, rather than run on the processor at a fraction of the speed the job asked for.
+  - **What the worker needs.** An NVIDIA card, and Docker able to hand it to a container. On Windows: Docker Desktop with the WSL 2 backend, and a current NVIDIA driver for Windows, which passes the card through to WSL; nothing is installed inside WSL. On Linux: the NVIDIA driver and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), with Docker configured to use it. `docker run --rm --gpus all ubuntu nvidia-smi` showing the card means it is ready.
+  - **One task per card.** A worker runs no more tasks that need a card at once than it has cards, whatever its `--slots`; its other slots take work that needs none. A job that only asks for machines with cards, with `--min-gpus`, holds none of them: its tasks take every slot. A laptop with one card and twelve slots runs one replica on the card and up to eleven other tasks beside it. Several small replicas on one card might go faster together, but what limits sharing a card is its memory, so one at a time is the rule until measurements say otherwise.
+  - **No thread count to set.** CUDA spreads a replica's work over the card's cores by itself.
+  - Without `gpu`, a replica runs on the processor, as before, even on a worker with a card.
 - **Results are not checked by a second worker.** OpenMM's numbers depend on the machine and the number of threads, so two honest replicas with the same seed need not agree to the last digit, and `verify` and `audit_share` refuse md jobs. Checking them by what they mean (energies in range, a structure that held together) is for later.
 - **Private jobs**: as with transcode, a sealed PDB file and a job with its key should work; this has not been tried.
 

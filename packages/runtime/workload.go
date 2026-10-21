@@ -78,6 +78,23 @@ type Needy interface {
 	Needs(params []byte) []string
 }
 
+// Carded is a workload whose tasks may need graphics cards of the worker
+// that runs them, depending on the job.
+type Carded interface {
+	// GPUsNeeded returns how many graphics cards each task of a job with
+	// these parameters holds while it runs: none for one that needs none.
+	GPUsNeeded(params []byte) int
+}
+
+// GPUsNeeded returns how many graphics cards each task of a job of the
+// named workload with the given parameters needs.
+func (r *Registry) GPUsNeeded(name string, params []byte) int {
+	if c, ok := r.workloads[name].(Carded); ok {
+		return c.GPUsNeeded(params)
+	}
+	return 0
+}
+
 // Offering is a workload that gives the worker running it something a job
 // may need, which it can name.
 type Offering interface {
