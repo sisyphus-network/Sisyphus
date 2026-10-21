@@ -352,7 +352,7 @@ func windowsDevice(name string) bool {
 // taskFiles are the files a task is given in /input, by name, as the CIDs
 // of what they hold.
 func taskFiles(p ContainerParams) map[string]string {
-	files := make(map[string]string, min(len(p.Inputs), maxInputs)+1)
+	files := make(map[string]string, maxInputs+1) // at most maxInputs named inputs and data
 	for name, id := range p.Inputs {
 		files[name] = id
 	}
