@@ -134,33 +134,40 @@ func (t Transcode) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	return Container{Engine: engine, Confined: t.Confined}.Execute(ctx, blobs, payload)
 }
 
-// buildingImage lets one task at a time see to the image, so that tasks
+// buildingImage lets one task at a time see to an image, so that tasks
 // starting together on a new worker build it once between them.
 var buildingImage sync.Mutex
 
 // haveTranscodeImage builds the image transcoding runs in, unless this
 // machine has it already.
 func haveTranscodeImage(ctx context.Context, engine func(context.Context, []string, io.Writer, io.Writer) (int, error)) error {
+	return haveImage(ctx, engine, TranscodeImage, transcodeDockerfile, "transcoding")
+}
+
+// haveImage builds the image tagged tag from dockerfile, unless this
+// machine has it already. What says what the image is for, in the log
+// and in errors.
+func haveImage(ctx context.Context, engine func(context.Context, []string, io.Writer, io.Writer) (int, error), tag, dockerfile, what string) error {
 	buildingImage.Lock()
 	defer buildingImage.Unlock()
-	if status, err := engine(ctx, []string{"image", "inspect", TranscodeImage}, io.Discard, io.Discard); err == nil && status == 0 {
+	if status, err := engine(ctx, []string{"image", "inspect", tag}, io.Discard, io.Discard); err == nil && status == 0 {
 		return nil
 	}
 	dir, err := os.MkdirTemp("", "sisyphus-image-")
 	if err != nil {
-		return fmt.Errorf("make a directory to build the transcoding image in: %w", err)
+		return fmt.Errorf("make a directory to build the %s image in: %w", what, err)
 	}
 	defer os.RemoveAll(dir)
-	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(transcodeDockerfile), 0o644) // in a directory just made, this cannot fail
-	Report(ctx).Log("building the image transcoding runs in, which this machine does once")
+	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o644) // in a directory just made, this cannot fail
+	Report(ctx).Log("building the image " + what + " runs in, which this machine does once")
 	var said bytes.Buffer
-	status, err := engine(ctx, []string{"build", "--tag", TranscodeImage, dir}, io.Discard, &said)
+	status, err := engine(ctx, []string{"build", "--tag", tag, dir}, io.Discard, &said)
 	if err == nil && status != 0 {
 		lines := strings.Split(strings.TrimSpace(said.String()), "\n")
 		err = errors.New(lines[len(lines)-1])
 	}
 	if err != nil {
-		return fmt.Errorf("build the image transcoding runs in: %w", err)
+		return fmt.Errorf("build the image %s runs in: %w", what, err)
 	}
 	return nil
 }

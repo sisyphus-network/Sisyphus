@@ -1005,6 +1005,7 @@ This was checked against a database made by the Rust daemon itself, which is kep
 
 - **`container`** runs a container image, once for each task of the job. This is how real programs run on a pool: anything that can be put in an image. See [Running containers](#running-containers) below.
 - **`transcode`** re-encodes a video. It is the first workload that does a job people have: see [Transcoding video](#transcoding-video) below.
+- **`md`** simulates a molecule with OpenMM, as replicas spread over the pool: see [Molecular dynamics](#molecular-dynamics) below.
 - **`primes`** counts the primes in `[from, to)`. Parameters and results are a few bytes and travel inline. It is a stand-in that exercises the pool.
 - **`wordcount`** counts word frequencies in a stored file. It exercises the storage path: the input is fetched by CID, each task reads only its byte range, task outputs are stored as blobs, and the result is a blob too. The result's CID is the same however the job is split, so two runs can be compared by CID alone.
 
@@ -1029,7 +1030,7 @@ examples/render.sh                                                       # a pic
   - `--task-dir /mnt/sisyphus-tasks` puts both task workspaces and staged inputs under an existing directory. It does not set a byte limit itself. Put it on a dedicated filesystem or quota-backed mount if you need filesystem-enforced containment; the worker checks that the directory exists and is writable before starting. If the filesystem fills, staging or a task fails rather than the worker exiting. Several tasks share that filesystem, so its limit is per worker, not per task.
 - **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container. So does a task running past the worker's own `--containers-timeout`, which its owner sets whatever the job allows; the attempt then fails and is tried again like any other.
 - **A job is taken in by any coordinator**, and waits until a worker that runs containers is connected, and one that allows the network if the job asks for it.
-- **A coordinator can insist on hardened workers.** Started with `--containers-hardened`, it gives `container` and `transcode` jobs only to workers that run containers with a sandboxing `--container-runtime` (gVisor's `runsc` or a Kata runtime, which the worker found Docker has before it started) and with `--containers-read-only` plus a sized `/tmp`. Such a worker says so in its labels, `container-sandboxed` and `container-bounded-tmp`, and `sisyphusd nodes` says it in words beneath the table, as in `laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp`. These settings do not cap `/output` while a task runs; `--task-dir` can place all task files on a separate, quota-backed filesystem, but that bound is shared across tasks on the worker. A job waits while no qualifying worker is connected. It is for a pool that takes container work from people its workers' owners do not know; a private pool has no need of it.
+- **A coordinator can insist on hardened workers.** Started with `--containers-hardened`, it gives `container`, `transcode` and `md` jobs only to workers that run containers with a sandboxing `--container-runtime` (gVisor's `runsc` or a Kata runtime, which the worker found Docker has before it started) and with `--containers-read-only` plus a sized `/tmp`. Such a worker says so in its labels, `container-sandboxed` and `container-bounded-tmp`, and `sisyphusd nodes` says it in words beneath the table, as in `laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp`. These settings do not cap `/output` while a task runs; `--task-dir` can place all task files on a separate, quota-backed filesystem, but that bound is shared across tasks on the worker. A job waits while no qualifying worker is connected. It is for a pool that takes container work from people its workers' owners do not know; a private pool has no need of it.
 - **Tasks of a job that run on one machine share one copy of its input**, fetched once. Tasks of different jobs share nothing.
 
 - **Graphics cards.** `"gpus": 1` gives each task that many of the machine's cards, which needs Docker set up for them (the NVIDIA Container Toolkit). Submit the job with `--min-gpus` as well, so that its tasks go only to machines that have them. This has not been tried on a machine with a card.
@@ -1059,6 +1060,32 @@ The video is cut into as many stretches as the job has tasks. Each task encodes 
 - **When it helps.** ffmpeg already uses every core of one machine, so cutting a video up gains little there: on one 32-core machine, a one-minute 1080p clip at the `slow` preset took 43 s as one task and 31 s as eight, and a light encode was no faster cut up. The gain is across machines, where each encodes its stretch at the same time. Every worker fetches the whole video to encode its part, so a pool on a slow link is better served by fewer, longer stretches.
 - **Where stretches meet**, the sound can overlap by a few hundredths of a second, and players step over it. Every frame of the picture is there, once.
 - **Private jobs**: the workload reads and stores through the same sealed store the others do, so a sealed video and a job with its key should work; this has not been tried.
+
+### Molecular dynamics
+
+```sh
+bin/sisyphusd job submit --workload md --params '{"picoseconds":10,"replicas":8}'
+cid=$(bin/sisyphusd blob put protein.pdb)
+bin/sisyphusd job submit --workload md --params "{\"input\":\"$cid\",\"picoseconds\":50}"
+```
+
+Each task simulates the same molecule from its own random start: a replica. Many short replicas side by side sample more of what a molecule does than one long run in the same time, and they need nothing from each other, so they spread over a pool as they are. Each task runs [OpenMM](https://openmm.org) (MIT and LGPL) in a container, with the Amber14 force field and TIP3P water, 2 fs a step, at constant temperature.
+
+| Parameter | Meaning |
+| --- | --- |
+| `input` | The CID of a stored PDB file. A molecule without water is put in a box of it, 1 nm past the molecule on every side, with ions to make it neutral; missing hydrogens are added. Left out, the villin headpiece in water that OpenMM comes with (8,867 atoms). |
+| `picoseconds` | How long each replica is simulated. Default 10. |
+| `temperature` | In kelvin. Default 300. |
+| `seed` | The first replica's random seed. Replica *n* uses `seed + n`. Default 1. |
+| `frames` | How many snapshots of each replica to keep. Default 50. |
+| `replicas` | How many. Default: one for each free slot. |
+
+The result gives the replicas' mean potential energy and its spread, and for each replica its seed, where it ran, how fast (in ns a day), its energy at the end, and the CIDs of its last frame (PDB), its energies as it went (CSV) and its trajectory (DCD, which VMD, PyMOL and MDAnalysis read).
+
+- **It runs on workers started with `--containers`**, with the image and the script fixed. A worker builds the image the first time it is needed, from two lines (Python and OpenMM from PyPI), once.
+- **CPU only, for now.** The script uses CUDA where OpenMM finds it, but the image does not yet carry OpenMM's CUDA plugin, nor does the job ask for a graphics card. That is the next step.
+- **Results are not checked by a second worker.** OpenMM's numbers depend on the machine and the number of threads, so two honest replicas with the same seed need not agree to the last digit, and `verify` and `audit_share` refuse md jobs. Checking them by what they mean (energies in range, a structure that held together) is for later.
+- **Private jobs**: as with transcode, a sealed PDB file and a job with its key should work; this has not been tried.
 
 ## Layout
 

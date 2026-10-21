@@ -1,0 +1,256 @@
+package runtime
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
+	"strconv"
+
+	"github.com/ipfs/go-cid"
+)
+
+// MD runs molecular dynamics with OpenMM: one simulation of the same
+// molecule for each task, each a replica of its own, from its own random
+// start, and the replicas summed up at the end. Replicas are how a long
+// simulation is shared out: many short, independent runs sample more of
+// what a molecule does than one long one in the same time.
+//
+// Like Transcode, it is the container workload with the image and the
+// command fixed, so it runs only on workers that run containers. The image
+// is built on a worker the first time it is needed.
+type MD struct {
+	// Engine runs the container engine, as Container's does.
+	Engine func(ctx context.Context, args []string, stdout, stderr io.Writer) (status int, err error)
+	// Confined holds its containers in as Container's does.
+	Confined Confinement
+}
+
+// MDParams are an md job's parameters.
+type MDParams struct {
+	// Input is the CID of a stored PDB file of the molecule. Empty means
+	// the villin headpiece in water that OpenMM comes with, 8,867 atoms.
+	// A molecule without water is put in a box of it, with salt to make
+	// it neutral; hydrogens it lacks are added.
+	Input string `json:"input,omitempty"`
+	// Picoseconds is how long each replica is simulated. Zero means 10.
+	Picoseconds float64 `json:"picoseconds,omitempty"`
+	// Temperature is in kelvin. Zero means 300.
+	Temperature float64 `json:"temperature,omitempty"`
+	// Seed is the first replica's random seed; the others follow from it.
+	// Zero means 1.
+	Seed int `json:"seed,omitempty"`
+	// Frames is how many snapshots of each replica to keep. Zero means 50.
+	Frames int `json:"frames,omitempty"`
+	// Replicas is how many simulations to run. Zero leaves it to the pool.
+	Replicas int `json:"replicas,omitempty"`
+}
+
+// MDReplica is what one replica came to.
+type MDReplica struct {
+	Index int `json:"index"`
+	Seed  int `json:"seed"`
+	// Platform is where OpenMM ran it, CPU or CUDA.
+	Platform string `json:"platform"`
+	// NsPerDay is how fast it ran, in nanoseconds simulated a day.
+	NsPerDay float64 `json:"ns_per_day"`
+	// PotentialEnergy is the molecule's at the end, in kJ/mol.
+	PotentialEnergy float64 `json:"potential_energy_kj_mol"`
+	// Final, Energies and Trajectory are CIDs: the last frame as PDB, the
+	// energies and temperature as it went as CSV, and its frames as DCD.
+	Final      string `json:"final"`
+	Energies   string `json:"energies"`
+	Trajectory string `json:"trajectory"`
+}
+
+// MDResult is an md job's result.
+type MDResult struct {
+	Replicas       int         `json:"replicas"`
+	Atoms          int         `json:"atoms"`
+	Picoseconds    float64     `json:"picoseconds_each"`
+	Nanoseconds    float64     `json:"total_nanoseconds"`
+	MeanEnergy     float64     `json:"mean_potential_energy_kj_mol"`
+	EnergySpread   float64     `json:"potential_energy_stdev_kj_mol"`
+	ReplicaResults []MDReplica `json:"runs"`
+}
+
+// mdDockerfile is the whole of the image molecular dynamics runs in.
+const mdDockerfile = "FROM python:3.12-slim\nRUN pip install --no-cache-dir openmm==8.2.0\n"
+
+// MDImage names that image, by what it is made from, as TranscodeImage does.
+var MDImage = func() string {
+	sum := sha256.Sum256([]byte(mdDockerfile + mdScript))
+	return "sisyphus-md:" + hex.EncodeToString(sum[:6])
+}()
+
+// mdScript is what each task runs: it prepares the molecule, settles it,
+// and simulates it with the Amber force field and TIP3P water, two
+// femtoseconds a step, recording as it goes.
+const mdScript = `import json, os, time
+from openmm import app, unit, LangevinMiddleIntegrator, Platform
+env = os.environ
+index = int(env["SISYPHUS_TASK_INDEX"])
+seed = int(env["SEED"]) + index
+temperature = float(env["TEMPERATURE"]) * unit.kelvin
+steps = max(1, round(float(env["PICOSECONDS"]) / 0.002))
+interval = max(1, steps // int(env["FRAMES"]))
+path = "/input/data" if os.path.exists("/input/data") else os.path.join(os.path.dirname(app.__file__), "data", "test.pdb")
+pdb = app.PDBFile(path)
+forcefield = app.ForceField("amber14-all.xml", "amber14/tip3p.xml")
+model = app.Modeller(pdb.topology, pdb.positions)
+model.addHydrogens(forcefield)
+if not any(r.name == "HOH" for r in model.topology.residues()):
+    model.addSolvent(forcefield, padding=1 * unit.nanometer, neutralize=True)
+system = forcefield.createSystem(model.topology, nonbondedMethod=app.PME, nonbondedCutoff=1 * unit.nanometer, constraints=app.HBonds)
+integrator = LangevinMiddleIntegrator(temperature, 1 / unit.picosecond, 0.002 * unit.picoseconds)
+integrator.setRandomNumberSeed(seed)
+names = [Platform.getPlatform(i).getName() for i in range(Platform.getNumPlatforms())]
+platform = Platform.getPlatformByName("CUDA" if "CUDA" in names else "CPU")
+simulation = app.Simulation(model.topology, system, integrator, platform)
+simulation.context.setPositions(model.positions)
+print(f"replica {index}: {model.topology.getNumAtoms()} atoms, {steps} steps on {platform.getName()}", flush=True)
+simulation.minimizeEnergy()
+simulation.context.setVelocitiesToTemperature(temperature, seed)
+simulation.reporters.append(app.DCDReporter("/output/trajectory.dcd", interval))
+simulation.reporters.append(app.StateDataReporter("/output/energies.csv", interval, step=True, time=True, potentialEnergy=True, kineticEnergy=True, temperature=True))
+started = time.time()
+simulation.step(steps)
+took = max(time.time() - started, 1e-9)
+state = simulation.context.getState(getEnergy=True, getPositions=True)
+with open("/output/final.pdb", "w") as out:
+    app.PDBFile.writeFile(model.topology, state.getPositions(), out)
+energy = state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
+summary = {"seed": seed, "platform": platform.getName(), "atoms": model.topology.getNumAtoms(), "picoseconds": steps * 0.002,
+           "ns_per_day": steps * 0.002e-3 / took * 86400, "potential_energy_kj_mol": energy}
+with open("/output/summary.json", "w") as out:
+    json.dump(summary, out)
+print(f"replica {index}: done, {summary['ns_per_day']:.1f} ns/day, {energy:.1f} kJ/mol", flush=True)
+`
+
+// mdLimit is the longest a replica may be simulated, in picoseconds: a
+// microsecond, which is weeks on most machines.
+const mdLimit = 1e6
+
+func (MD) Name() string { return "md" }
+
+func (MD) Describe() string {
+	return `Simulates a molecule with OpenMM molecular dynamics, as replicas from different random starts run on different workers, and sums them up. Parameters: {"input": "<optional CID of a stored PDB file; without it, the villin headpiece in water>", "picoseconds": <how long each replica is simulated, default 10>, "temperature": <kelvin, default 300>, "seed": <optional first random seed>, "frames": <snapshots kept of each replica, default 50>, "replicas": <optional number of replicas>}. Result: {"replicas": <n>, "atoms": <n>, "picoseconds_each": <ps>, "total_nanoseconds": <ns>, "mean_potential_energy_kj_mol": <e>, "potential_energy_stdev_kj_mol": <e>, "runs": [{"index", "seed", "platform", "ns_per_day", "potential_energy_kj_mol", "final": "<CID of the last frame, PDB>", "energies": "<CID, CSV>", "trajectory": "<CID, DCD>"}]}.`
+}
+
+func (MD) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
+	var p MDParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("md parameters: %w", err)
+	}
+	if p.Input != "" {
+		if _, err := cid.Decode(p.Input); err != nil {
+			return nil, fmt.Errorf("md parameters: input is not the CID of a stored PDB file: %w", err)
+		}
+	}
+	if p.Picoseconds == 0 {
+		p.Picoseconds = 10
+	}
+	if p.Temperature == 0 {
+		p.Temperature = 300
+	}
+	if p.Seed == 0 {
+		p.Seed = 1
+	}
+	if p.Frames == 0 {
+		p.Frames = 50
+	}
+	switch {
+	case !(p.Picoseconds > 0 && p.Picoseconds <= mdLimit):
+		return nil, fmt.Errorf("md parameters: picoseconds is %g, and must be more than 0 and at most %g", p.Picoseconds, float64(mdLimit))
+	case !(p.Temperature > 0 && p.Temperature <= 1000):
+		return nil, fmt.Errorf("md parameters: temperature is %g, and must be more than 0 and at most 1000 kelvin", p.Temperature)
+	case p.Seed < 0 || p.Seed > math.MaxInt32/2:
+		return nil, fmt.Errorf("md parameters: seed is %d, and must be from 1 to %d", p.Seed, math.MaxInt32/2)
+	case p.Frames < 0 || p.Frames > 100000:
+		return nil, fmt.Errorf("md parameters: frames is %d, and must be from 1 to 100000", p.Frames)
+	case p.Replicas < 0:
+		return nil, fmt.Errorf("md parameters: replicas is %d, and must be at least 1, or 0 to leave it to the pool", p.Replicas)
+	}
+	return Container{}.Split(ctx, blobs, mustJSON(ContainerParams{
+		Image: MDImage, Command: []string{"python", "-c", mdScript},
+		Input: p.Input, Tasks: p.Replicas,
+		Env: map[string]string{
+			"PICOSECONDS": strconv.FormatFloat(p.Picoseconds, 'g', -1, 64),
+			"TEMPERATURE": strconv.FormatFloat(p.Temperature, 'g', -1, 64),
+			"SEED":        strconv.Itoa(p.Seed), "FRAMES": strconv.Itoa(p.Frames),
+		},
+	}), parts)
+}
+
+func (m MD) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
+	engine := m.Engine
+	if engine == nil {
+		engine = docker
+	}
+	if err := haveImage(ctx, engine, MDImage, mdDockerfile, "molecular dynamics"); err != nil {
+		return nil, err
+	}
+	return Container{Engine: engine, Confined: m.Confined}.Execute(ctx, blobs, payload)
+}
+
+// Varies says that replicas can differ between runs: OpenMM's results
+// depend on the machine it runs on and how many threads it uses.
+func (MD) Varies() bool { return true }
+
+func (MD) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error) {
+	var result MDResult
+	var energies []float64
+	for i, output := range outputs {
+		var out ContainerOutput
+		if err := json.Unmarshal(output, &out); err != nil {
+			return nil, fmt.Errorf("task %d output: %w", i, err)
+		}
+		c, err := cid.Decode(out.Files["summary.json"])
+		if err != nil {
+			return nil, fmt.Errorf("replica %d left no summary", i)
+		}
+		blob, err := blobs.Open(ctx, c)
+		if err != nil {
+			return nil, fmt.Errorf("replica %d's summary: %w", i, err)
+		}
+		var summary struct {
+			MDReplica
+			Atoms       int     `json:"atoms"`
+			Picoseconds float64 `json:"picoseconds"`
+		}
+		err = json.NewDecoder(io.LimitReader(blob, 1<<20)).Decode(&summary)
+		blob.Close()
+		if err != nil {
+			return nil, fmt.Errorf("replica %d's summary: %w", i, err)
+		}
+		replica := summary.MDReplica
+		replica.Index = out.Index
+		replica.Final, replica.Energies, replica.Trajectory = out.Files["final.pdb"], out.Files["energies.csv"], out.Files["trajectory.dcd"]
+		result.ReplicaResults = append(result.ReplicaResults, replica)
+		result.Atoms, result.Picoseconds = summary.Atoms, summary.Picoseconds
+		result.Nanoseconds += summary.Picoseconds / 1000
+		energies = append(energies, replica.PotentialEnergy)
+	}
+	result.Replicas = len(outputs)
+	result.MeanEnergy, result.EnergySpread = meanAndSpread(energies)
+	return mustJSON(result), nil
+}
+
+// meanAndSpread returns the mean of values and their standard deviation,
+// or zeros for none.
+func meanAndSpread(values []float64) (mean, spread float64) {
+	if len(values) == 0 {
+		return 0, 0
+	}
+	for _, v := range values {
+		mean += v
+	}
+	mean /= float64(len(values))
+	for _, v := range values {
+		spread += (v - mean) * (v - mean)
+	}
+	return mean, math.Sqrt(spread / float64(len(values)))
+}
