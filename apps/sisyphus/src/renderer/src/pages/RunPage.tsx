@@ -13,6 +13,7 @@ import { JobOutputs, JobResult, prettyBytes } from '@/components/job-result-view
 import { getNodeApi } from '@/lib/node-api'
 import { getJobHref } from '@/lib/job-navigation'
 import { stateName } from '@/lib/job-progress'
+import { formatNumber, parseMdResult } from '@/lib/md-result'
 import { canRun, firstSentence, initialValues, normalizeWorkloads, toParams, validate, type FieldError, type FormField, type FormValue, type FormValues, type Workload } from '@/lib/workload-form'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 
@@ -45,6 +46,35 @@ function workloadText(labels: Labels, workload: Pick<Workload, 'name' | 'descrip
 function errorText(labels: Labels, error: FieldError): string {
   const bound = error.bound === undefined ? '' : new Intl.NumberFormat(document.documentElement.lang || undefined, { maximumFractionDigits: 10 }).format(error.bound)
   return formatMessage(labels.errors[error.key], { bound })
+}
+
+// MdResultView shows a molecular dynamics result as people read one: what
+// was simulated, the mean final energy and its spread, and a row for each
+// replica. Anything that is not an md result shows nothing here.
+function MdResultView({ job, labels }: { job: Job; labels: Labels }) {
+  const summary = job.workload === 'md' ? parseMdResult(job.result) : null
+  if (!summary) return null
+  const text = labels.mdResult
+  return <section aria-label={text.tableLabel} className="space-y-3 rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]/40 p-4">
+    <p className="text-sm text-muted-foreground">{formatMessage(text.summary, { replicas: summary.replicas, atoms: formatNumber(summary.atoms, 0), picoseconds: Number.isFinite(summary.picoseconds) ? summary.picoseconds.toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—' })}</p>
+    <dl className="flex flex-wrap gap-x-8 gap-y-2">
+      <div><dt className="text-xs text-muted-foreground">{text.meanEnergy}</dt><dd dir="ltr" className="text-lg font-semibold tabular-nums">{formatNumber(summary.meanEnergy, 1)} <span className="text-xs font-normal text-muted-foreground">{text.unit}</span></dd></div>
+      <div><dt className="text-xs text-muted-foreground">{text.spread}</dt><dd dir="ltr" className="text-lg font-semibold tabular-nums">± {formatNumber(summary.spread, 1)} <span className="text-xs font-normal text-muted-foreground">{text.unit}</span></dd></div>
+    </dl>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[28rem] text-sm">
+        <caption className="sr-only">{text.tableLabel}</caption>
+        <thead><tr className="text-start text-xs text-muted-foreground">{[text.replica, text.seed, text.ranOn, text.speed, text.energy].map((heading) => <th key={heading} scope="col" className="px-2 py-1.5 text-start font-medium">{heading}</th>)}</tr></thead>
+        <tbody>{summary.runs.map((run) => <tr key={run.index} className="border-t border-[var(--app-line)]">
+          <th scope="row" className="px-2 py-1.5 text-start font-medium tabular-nums">{run.index + 1}</th>
+          <td className="px-2 py-1.5 tabular-nums">{formatNumber(run.seed, 0)}</td>
+          <td className="px-2 py-1.5">{run.platform || '—'}</td>
+          <td className="px-2 py-1.5 tabular-nums">{formatNumber(run.nsPerDay, 2)}</td>
+          <td dir="ltr" className="px-2 py-1.5 text-end tabular-nums">{formatNumber(run.energy, 1)}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </section>
 }
 
 function WorkerBadge({ workload, labels }: { workload: Workload; labels: Labels }) {
@@ -285,7 +315,7 @@ export function RunPage({ messages }: { messages: Messages }) {
         </div>
         <RunStatus job={job} labels={labels} />
         <JobTracker key={shownJobId} jobId={shownJobId} messages={messages} />
-        {job && <><JobResult key={`${shownJobId}-result`} job={job} messages={messages} open /><JobOutputs job={job} messages={messages} /></>}
+        {job && <><MdResultView job={job} labels={labels} /><JobResult key={`${shownJobId}-result`} job={job} messages={messages} open={!(job.workload === 'md' && parseMdResult(job.result))} /><JobOutputs job={job} messages={messages} /></>}
         <div className="flex flex-wrap gap-2 border-t border-[var(--app-line)] pt-4">
           {run && <Button type="button" className="gap-2" onClick={() => runAgain(run)}><Pencil aria-hidden="true" className="size-4" />{labels.changeAndRun}</Button>}
           <NavLink to={getJobHref(shownJobId)} className={buttonVariants({ variant: 'outline' })}>{labels.openInOperations}</NavLink>

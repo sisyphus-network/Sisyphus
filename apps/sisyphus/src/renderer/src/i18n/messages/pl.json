@@ -403,6 +403,18 @@
   "operations": "Operacje",
   "run": "Uruchom",
   "runPage": {
+    "mdResult": {
+      "summary": "{replicas} replik po {atoms} atomów, po {picoseconds} ps każda",
+      "meanEnergy": "Średnia energia końcowa",
+      "spread": "Rozrzut",
+      "unit": "kJ/mol",
+      "tableLabel": "Każda replika",
+      "replica": "Replika",
+      "seed": "Ziarno",
+      "ranOn": "Gdzie",
+      "speed": "Szybkość (ns/dzień)",
+      "energy": "Energia końcowa (kJ/mol)"
+    },
     "description": "Wybierz, co obliczyć, wypełnij kilka pól, a pula zajmie się resztą.",
     "galleryLabel": "Co ta pula może uruchomić",
     "loading": "Wczytywanie tego, co ta pula może uruchomić",

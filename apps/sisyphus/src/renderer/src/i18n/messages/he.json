@@ -403,6 +403,18 @@
   "operations": "תפעול",
   "run": "הרצה",
   "runPage": {
+    "mdResult": {
+      "summary": "{replicas} העתקים של {atoms} אטומים, {picoseconds} פיקו־שניות כל אחד",
+      "meanEnergy": "אנרגיה סופית ממוצעת",
+      "spread": "פיזור",
+      "unit": "kJ/mol",
+      "tableLabel": "כל העתק",
+      "replica": "העתק",
+      "seed": "זרע",
+      "ranOn": "רץ על",
+      "speed": "מהירות (ננו־שניות ליום)",
+      "energy": "אנרגיה סופית (kJ/mol)"
+    },
     "description": "בוחרים מה לחשב, ממלאים כמה שדות, והמאגר עושה את השאר.",
     "galleryLabel": "מה המאגר הזה יכול להריץ",
     "loading": "טוענים את מה שהמאגר הזה יכול להריץ",
