@@ -502,3 +502,25 @@ func TestARealSceneIsRendered(t *testing.T) {
 		t.Errorf("by tiles: %+v", tiles)
 	}
 }
+
+// Only Blender's own frame names go into the archive: a worker cannot name
+// its way out of it, or into a name Blender never writes.
+func TestOnlyBlenderFrameNamesAreTaken(t *testing.T) {
+	for name, want := range map[string]bool{
+		"frame_0000001.png":    true,
+		"frame_0000012.exr":    true,
+		"frame_0000001.jpg":    false, // a format render never writes
+		"frame_0000001":        false,
+		"frame_001.png":        false, // shorter than Blender's seven digits
+		"frame_00000a1.png":    false,
+		"frame_-000001.png":    false,
+		"../frame_0000001.png": false,
+		`..\frame_0000001.png`: false,
+		"x/frame_0000001.png":  false,
+		"image_0000001.png":    false,
+	} {
+		if got := validRenderFrameName(name); got != want {
+			t.Errorf("validRenderFrameName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
