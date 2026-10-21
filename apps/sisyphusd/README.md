@@ -1043,7 +1043,7 @@ examples/render.sh                                                       # a pic
   - `--task-dir /mnt/sisyphus-tasks` puts both task workspaces and staged inputs under an existing directory. It does not set a byte limit itself. Put it on a dedicated filesystem or quota-backed mount if you need filesystem-enforced containment; the worker checks that the directory exists and is writable before starting. If the filesystem fills, staging or a task fails rather than the worker exiting. Several tasks share that filesystem, so its limit is per worker, not per task.
 - **Stopping.** Cancelling the job, or a task running past the job's `--timeout`, kills the container. So does a task running past the worker's own `--containers-timeout`, which its owner sets whatever the job allows; the attempt then fails and is tried again like any other.
 - **A job is taken in by any coordinator**, and waits until a worker that runs containers is connected, and one that allows the network if the job asks for it.
-- **A coordinator can insist on hardened workers.** Started with `--containers-hardened`, it gives `container`, `transcode`, `md` and `render` jobs only to workers that run containers with a sandboxing `--container-runtime` (gVisor's `runsc` or a Kata runtime, which the worker found Docker has before it started) and with `--containers-read-only` plus a sized `/tmp`. Such a worker says so in its labels, `container-sandboxed` and `container-bounded-tmp`, and `sisyphusd nodes` says it in words beneath the table, as in `laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp`. These settings do not cap `/output` while a task runs; `--task-dir` can place all task files on a separate, quota-backed filesystem, but that bound is shared across tasks on the worker. A job waits while no qualifying worker is connected. It is for a pool that takes container work from people its workers' owners do not know; a private pool has no need of it.
+- **A coordinator can insist on hardened workers.** Started with `--containers-hardened`, it gives `container`, `transcode`, `md`, `render` and `transcribe` jobs only to workers that run containers with a sandboxing `--container-runtime` (gVisor's `runsc` or a Kata runtime, which the worker found Docker has before it started) and with `--containers-read-only` plus a sized `/tmp`. Such a worker says so in its labels, `container-sandboxed` and `container-bounded-tmp`, and `sisyphusd nodes` says it in words beneath the table, as in `laptop runs containers with the network allowed, sandboxed, with a read-only root and a sized /tmp`. These settings do not cap `/output` while a task runs; `--task-dir` can place all task files on a separate, quota-backed filesystem, but that bound is shared across tasks on the worker. A job waits while no qualifying worker is connected. It is for a pool that takes container work from people its workers' owners do not know; a private pool has no need of it.
 - **Tasks of a job that run on one machine share one copy of its input**, fetched once. Tasks of different jobs share nothing.
 
 - **Graphics cards.** `"gpus": 1` gives each task that many of the machine's cards, which needs Docker set up for them (the NVIDIA Container Toolkit). The job then goes only to machines with at least that many cards, as if submitted with `--min-gpus`, and a machine runs no more such tasks at once than it has cards, whatever its slots. This has not been tried on a machine with a card.
@@ -1147,6 +1147,35 @@ The result:
 - **Results are not checked by a second worker.** Cycles' noise depends on the processor's arithmetic and how the work is shared among threads, so two honest renders need not agree to the bit, and `verify` and `audit_share` refuse render jobs.
 - **Licences.** Blender is GPL 2 or later. The image runs Blender's own release, unmodified, as a separate program, which the GPL allows without touching the licence of this repository; what Blender renders belongs to whoever made the scene. Anyone given the image can get Blender's source from blender.org.
 - **Private jobs**: as with transcode, a sealed `.blend` file and a job with its key should work; this has not been tried.
+
+### Speech to text
+
+```sh
+cid=$(bin/sisyphusd blob put interview.m4a)
+bin/sisyphusd job submit --workload transcribe --params "{\"input\":\"$cid\"}"
+bin/sisyphusd job submit --workload transcribe --params "{\"input\":\"$cid\",\"language\":\"fr\",\"model\":\"small\",\"segments\":4}"
+```
+
+The recording, sound or video, is cut into as many stretches as the job has tasks. Each task transcribes one with [whisper.cpp](https://github.com/ggml-org/whisper.cpp) in a container, and what was said is put together in order: a plain transcript, a line for each thing said, and the same as SRT subtitles, timed from the start of the recording.
+
+| Parameter | Meaning |
+| --- | --- |
+| `input` | The CID of the stored recording. Anything ffmpeg reads that has sound: WAV, MP3, M4A, Ogg, FLAC, or a video. |
+| `language` | The spoken language as a code, such as `en`, `fr` or `de`. Default `auto`: whisper tells, for each stretch on its own. |
+| `model` | `base` (the default, about 150 MB) or `small` (about 490 MB), slower and more accurate. Both are multilingual. |
+| `segments` | How many stretches. Default: one for each free slot. |
+
+The result is `{"text": "<CID of the transcript>", "subtitles": "<CID of the SRT file>", "segments": <stretches>, "seconds": <length of the recording>, "words": <words heard>}`; the desktop app saves the two as `.txt` and `.srt`.
+
+- **It runs on workers started with `--containers`**, with the image and the script fixed. There is an image for each model. A worker builds the one a job needs the first time, which takes the network once and some minutes: whisper.cpp (release `v1.9.5`, at a pinned commit) is compiled from source for that worker's processor, at the lowest priority, and the model is fetched from the [whisper.cpp model repository](https://huggingface.co/ggerganov/whisper.cpp) at a pinned revision and checked against its SHA-256. The rest is the transcoding image (Alpine and its ffmpeg), so a worker that has both keeps ffmpeg once, plus jq.
+- **Image size**: as Docker reports it, the `base` image is 476 MB on disk (186 MB of content), the `small` one 1.13 GB (500 MB); the model is most of either.
+- **Where stretches meet.** Each cut is moved from where an even share would end to the middle of the nearest quiet moment (ffmpeg's `silencedetect`, below -35 dB for 0.3 s or more) within a quarter of a share or 5 seconds, whichever is less. The tasks on either side of a cut find the same place from the same recording, so nothing is heard twice or missed. Speech with no pause near a cut is cut where it is, and a word there may be split or lost; fewer, longer stretches make that rarer.
+- **Speed.** whisper uses up to 8 threads in each task. On the R620 (two Xeon E5-2660, no AVX2), busy with other work at the time, one task took 108 s for 67 s of speech with `base` and 363 s with `small`. The gain from cutting is across machines, each transcribing its stretch at the same time. Every worker fetches the whole recording.
+- **Accuracy** is whisper's: good for clear speech, weaker for names, crowds, music and accents its training saw little of. What it marks as not speech, such as `[BLANK_AUDIO]`, is left out. With `auto`, each stretch is identified on its own, so a short stretch may be taken for another language; name it when you know it. No translation, and no telling speakers apart.
+- **Results are not checked by a second worker.** whisper's sums come out a little differently on different processors and thread counts, so `verify` and `audit_share` refuse transcribe jobs.
+- **CPU only, for now.** A worker's graphics card is not used.
+- **Licences**: whisper.cpp and the models it converts from OpenAI's Whisper are MIT; ffmpeg as Alpine packages it is GPL.
+- **Private jobs**: as with transcode, a sealed recording and a job with its key should work; this has not been tried.
 
 ## Layout
 

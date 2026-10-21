@@ -85,7 +85,7 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			}
 		}
 	}
-	if !slices.Equal(formed, []string{"md", "primes", "render", "transcode", "wordcount"}) {
+	if !slices.Equal(formed, []string{"md", "primes", "render", "transcode", "transcribe", "wordcount"}) {
 		t.Errorf("the workloads with forms are %v", formed)
 	}
 	if Builtin().Form("no-such-workload") != nil || registry.Form("graph") != nil {

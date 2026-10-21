@@ -37,6 +37,12 @@ test('a render’s frames are numbered in order, and its whole frame and archive
   assert.equal(outputFileName({ jobId: 'abcdef0123456789', result: byFrames }, 'czip', 12, new Uint8Array([0x50, 0x4b, 3, 4])), 'abcdef01-archive.zip')
 })
 
+test('a transcript is saved as text and its subtitles as SRT', () => {
+  const job = { jobId: 'abcdef0123456789', result: json({ text: 'bafytext', subtitles: 'bafysrt', segments: 4, seconds: 61.5, words: 140 }) }
+  assert.equal(outputFileName(job, 'bafytext', 0, new Uint8Array()), 'abcdef01-text.txt')
+  assert.equal(outputFileName(job, 'bafysrt', 1, new Uint8Array()), 'abcdef01-subtitles.srt')
+})
+
 test('a container’s files keep the names it gave them', () => {
   const result = json({ tasks: [{ index: 4, stdout: 'cout', files: { 'frame 0001.png': 'cpng', '../x': 'cbad' } }] })
   assert.equal(nameInResult(result, 'cpng'), 'tasks-4-frame_0001.png')

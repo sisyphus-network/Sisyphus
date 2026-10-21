@@ -115,10 +115,11 @@ func (r *Registry) Needs(name string, params []byte) []string {
 // worker's owner says.
 type contained interface{ confinement() Confinement }
 
-func (c Container) confinement() Confinement { return c.Confined }
-func (t Transcode) confinement() Confinement { return t.Confined }
-func (m MD) confinement() Confinement        { return m.Confined }
-func (r Render) confinement() Confinement    { return r.Confined }
+func (c Container) confinement() Confinement  { return c.Confined }
+func (t Transcode) confinement() Confinement  { return t.Confined }
+func (m MD) confinement() Confinement         { return m.Confined }
+func (r Render) confinement() Confinement     { return r.Confined }
+func (t Transcribe) confinement() Confinement { return t.Confined }
 
 // InContainers reports whether the named workload runs its tasks in
 // containers: on a stranger's image, or on a stranger's input.
@@ -206,7 +207,7 @@ func WithContainers() *Registry {
 // ContainersConfined returns what WithContainers does, with the containers
 // held in as a worker's owner asked.
 func ContainersConfined(confined Confinement) *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}).With(WithModels("", Owner{})...)
+	return NewRegistry(Primes{}, WordCount{}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}, Transcribe{Confined: confined}).With(WithModels("", Owner{})...)
 }
 
 // WithModels returns the workloads that use the language models of the

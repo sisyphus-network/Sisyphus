@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import { NavLink, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Atom, Boxes, ChevronRight, CircleAlert, Clapperboard, Cpu, FileCheck2, FileUp, Gpu, History, LoaderCircle, Pencil, Play, RefreshCw, Shapes, Sigma, WholeWord, Workflow, X, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, Atom, Boxes, Captions, ChevronRight, CircleAlert, Clapperboard, Cpu, FileCheck2, FileUp, Gpu, History, LoaderCircle, Pencil, Play, RefreshCw, Shapes, Sigma, WholeWord, Workflow, X, type LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -30,7 +30,7 @@ const maxUploadBytes = 256 * 1024 * 1024
 // outlive the page, so that coming back to it finds them, but not the app.
 let sessionRuns: Run[] = []
 
-const workloadIcons: Record<string, LucideIcon> = { primes: Sigma, wordcount: WholeWord, transcode: Clapperboard, md: Atom, render: Shapes }
+const workloadIcons: Record<string, LucideIcon> = { primes: Sigma, wordcount: WholeWord, transcode: Clapperboard, md: Atom, render: Shapes, transcribe: Captions }
 
 function workloadIcon(workload: Workload): LucideIcon {
   return workloadIcons[workload.name] ?? (workload.composite ? Workflow : Cpu)
