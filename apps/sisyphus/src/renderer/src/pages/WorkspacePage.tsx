@@ -13,7 +13,7 @@ import { LiquidGlassDock, type LiquidDockItem } from '@/components/navigation/li
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { AgentChat } from '@/components/assistant/agent-chat'
 import { visiblePanelWidth, stepPanelWidth } from '@/lib/panel-width'
-import { locatePeers, peerLocationsKey } from '@/lib/globe-markers'
+import { locatePeers, peerLocationsKey, sharedPlaces, type Place } from '@/lib/globe-markers'
 import { webglAvailable } from '@/lib/webgl'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { locationFromProtocol } from '@/lib/node-location'
@@ -56,7 +56,7 @@ const countryCentroids = new Map<string, { lat: number; lng: number }>(
   ]),
 )
 
-const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, peers, nodeLabel, countryLabel, reduceMotion, active }: { countryCode?: string; pin?: { lat: number; lng: number }; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean }) {
+const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -177,12 +177,12 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, peers, nodeL
   // The owner's pin, if there is one, places this node better than its country can.
   const centroid = countryCode ? countryCentroids.get(countryCode.toUpperCase()) : undefined
   const location = useMemo(() => pin ? { lat: pin.lat, lng: pin.lng } : centroid, [pin?.lat, pin?.lng, centroid])
-  const peerLocations = locatePeers(peers, countryCentroids)
+  const peerLocations = locatePeers(peers, countryCentroids, shared)
   const locationsKey = peerLocationsKey(peerLocations)
   const stablePeerLocations = useMemo(() => peerLocations, [locationsKey])
   const points = useMemo(() => {
     const own = location ? [{ ...location, label: nodeLabel, color: theme.accent }] : []
-    const known = stablePeerLocations.map((peer) => ({ ...peer, label: `${peer.peerId.slice(0, 12)} · ${peer.countryCode}`, color: theme.accent }))
+    const known = stablePeerLocations.map((peer) => ({ ...peer, label: peer.countryCode ? `${peer.peerId.slice(0, 12)} · ${peer.countryCode}` : peer.peerId.slice(0, 12), color: theme.accent }))
     return [...own, ...known]
   }, [location, nodeLabel, stablePeerLocations, theme.accent])
   const rings = useMemo(() => location ? [{ ...location, maxRadius: 5, propagationSpeed: 2, repeatPeriod: 1200 }] : [], [location])
@@ -497,11 +497,12 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     </section>
   const countryCode = snapshot.info?.countryCode?.toUpperCase()
   const pin = useOwnPin(snapshot)
+  const shared = useSharedPlaces(snapshot)
   const countrySource = snapshot.info?.countrySource
   const countryPosition = countryCode ? countryCentroids.get(countryCode) : undefined
   const countryLabel = countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry
   const networkPane = <section className="workspace-network workspace-glass liquid-glass-menu relative flex h-full min-h-0 items-center justify-center overflow-hidden rounded-[22px]">
-          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={visible && topologyOpen && (!compact || mobileView === 'network')} />}</div>
+          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} shared={shared} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={visible && topologyOpen && (!compact || mobileView === 'network')} />}</div>
           <div className="absolute inset-x-5 top-5 z-[2] flex items-center justify-between gap-3 text-[10px]">
             <div className="rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-muted-foreground shadow-sm backdrop-blur"><span className="font-mono text-foreground">{connectedPeers.length}</span> {messages.connectedPeers.toLowerCase()}</div>
             <div className="max-w-[62%] rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-end text-muted-foreground shadow-sm backdrop-blur"><span className="me-1.5 inline-block size-1.5 rounded-full bg-[var(--app-accent)] align-middle" />{messages.thisNode}{countryFlag(countryCode) ? ` · ${countryFlag(countryCode)}` : ''}{countryPosition ? <span className="ms-1.5">{countryCode}</span> : null}{!countryCode && !pin && isDesktopApp() ? <Link to="/settings/node" className="ms-1.5 text-[var(--app-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--app-accent)]">· {messages.unplacedLink}</Link> : null}</div>
@@ -546,4 +547,23 @@ function useOwnPin(snapshot: NodeSnapshot): { lat: number; lng: number } | undef
     return () => { active = false }
   }, [connected, snapshot.revision, snapshot.lastUpdated])
   return pin
+}
+
+const noSharedPlaces: ReadonlyMap<string, Place> = new Map()
+
+// useSharedPlaces returns the places the members of this node's pool share,
+// by peer ID, read again whenever the node's state changes. A node that
+// coordinates no pool, or keeps none of this, has none.
+function useSharedPlaces(snapshot: NodeSnapshot): ReadonlyMap<string, Place> {
+  const [places, setPlaces] = useState<ReadonlyMap<string, Place>>(noSharedPlaces)
+  const connected = snapshot.status === 'connected'
+  useEffect(() => {
+    if (!connected) return
+    let active = true
+    void getNodeApi().call<{ workers?: unknown }>('listWorkers').then((result) => {
+      if (active) setPlaces(sharedPlaces(result.workers))
+    }).catch(() => { if (active) setPlaces(noSharedPlaces) })
+    return () => { active = false }
+  }, [connected, snapshot.revision, snapshot.lastUpdated])
+  return places
 }

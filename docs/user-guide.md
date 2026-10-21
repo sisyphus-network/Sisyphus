@@ -121,7 +121,7 @@ What the other members of your pool see, for each choice:
 | `country` | No coordinates. Only the country their own node can tell from your address, as before. |
 | `nothing` | No coordinates, the same as `country`. |
 
-The rounding is done on your machine, before anything is sent, so the pool never receives more than you chose. Change the pin or the share while the node runs and the pool sees the change at once; one made with `sisyphusd location set` while the node runs reaches the pool the next time it connects. Your own node always shows your pin as precisely as you gave it.
+The rounding is done on your machine, before anything is sent, so the pool never receives more than you chose. Change the pin or the share while the node runs and the pool sees the change at once; one made with `sisyphusd location set` while the node runs reaches the pool the next time it connects. Your own node always shows your pin as precisely as you gave it. On the globe of the node that coordinates your pool, each member that shares a place is drawn there; members that share none are drawn in the middle of the country their address is in, as before.
 
 ```sh
 bin/sisyphusd id
