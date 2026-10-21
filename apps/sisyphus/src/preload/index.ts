@@ -63,6 +63,9 @@ export type { PoolLimits }
 export type PoolHostingSettings = { enabled: boolean; address: string; port: number }
 export type HostAddress = { address: string; interface: string; lan: boolean }
 export type PoolHostingState = { managed: boolean; saved: PoolHostingSettings; running: PoolHostingSettings; restartNeeded: boolean; unavailable: boolean; addresses: HostAddress[]; platform: string }
+export type ContainerSettings = { enabled: boolean; network: boolean; readOnly: boolean; tmpMb: number }
+export type DockerStatus = { state: 'ready'; version: string } | { state: 'missing' } | { state: 'stopped'; detail: string }
+export type ContainerState = { managed: boolean; saved: ContainerSettings; running: ContainerSettings; restartNeeded: boolean; unavailable: boolean; docker: DockerStatus | null }
 export type PoolLimitsState = { managed: boolean; configurable: boolean; configured: boolean; restartNeeded: boolean; coordinator: boolean; saved: PoolLimits; running: PoolLimits }
 export type JoinedPool = { coordinatorId: string; coordinatorName: string; address: string; state: number | string; roles: (number | string)[]; workerCount?: number }
 
@@ -85,6 +88,9 @@ const api = {
   getPoolLimits: (): Promise<PoolLimitsState> => ipcRenderer.invoke('node:get-pool-limits'),
   getPoolHosting: (): Promise<PoolHostingState> => ipcRenderer.invoke('node:get-pool-hosting'),
   savePoolHosting: (settings: PoolHostingSettings): Promise<PoolHostingState> => ipcRenderer.invoke('node:save-pool-hosting', settings),
+  getContainers: (): Promise<ContainerState> => ipcRenderer.invoke('node:get-containers'),
+  saveContainers: (settings: ContainerSettings): Promise<ContainerState> => ipcRenderer.invoke('node:save-containers', settings),
+  openDockerInstall: (): Promise<void> => ipcRenderer.invoke('app:open-docker-install'),
   savePoolLimits: (limits: PoolLimits): Promise<PoolLimitsState> => ipcRenderer.invoke('node:save-pool-limits', limits),
   reconnect: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:reconnect'),
   restartNode: (timeoutMessage?: string): Promise<NodeSnapshot> => ipcRenderer.invoke('node:restart-node', timeoutMessage),

@@ -36,6 +36,11 @@ type Options = {
   locationDiscovery?: { locateGateway: boolean; locateCountry: boolean; stunServer: string }
   /** Where other machines reach this node's pool, if it hosts one for them. */
   hostingListen?: string
+  /**
+   * The flags that have the node run the pool's containers, worked out as it
+   * starts: whether Docker answers is known only then.
+   */
+  containers?: () => Promise<string[]>
   unused?: (endpoint: string) => Promise<boolean>
   launch?: (executable: string, args: string[]) => ChildProcess
   onError: (message: string) => void
@@ -95,6 +100,8 @@ export class DesktopDaemon {
       if (this.options.locationDiscovery?.locateGateway) args.push('--locate-gateway')
       if (this.options.locationDiscovery?.locateCountry) args.push('--locate-country')
       if (this.options.locationDiscovery?.stunServer) args.push('--stun-server', this.options.locationDiscovery.stunServer)
+      if (this.options.containers) args.push(...await this.options.containers())
+      if (this.stopping) return
       const child = (this.options.launch ?? ((executable, arguments_) => spawn(executable, arguments_, { stdio: 'ignore', windowsHide: true, shell: false })))(this.options.executable, args)
       this.launched = true
       this.child = child
@@ -115,7 +122,7 @@ export class DesktopDaemon {
    * Stops the node this app started and starts it again, with whatever of
    * its settings changed since. A node the app did not start is not ours.
    */
-  async restart(update: Pick<Partial<Options>, 'hostingListen' | 'locationDiscovery'> = {}): Promise<void> {
+  async restart(update: Pick<Partial<Options>, 'hostingListen' | 'locationDiscovery' | 'containers'> = {}): Promise<void> {
     if (!this.launched) throw new Error('This app did not start the node, so it cannot restart it. Restart it where it was started.')
     await this.stop()
     Object.assign(this.options, update)
