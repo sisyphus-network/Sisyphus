@@ -140,6 +140,17 @@ func (MD) Describe() string {
 	return `Simulates a molecule with OpenMM molecular dynamics, as replicas from different random starts run on different workers, and sums them up. Parameters: {"input": "<optional CID of a stored PDB file; without it, the villin headpiece in water>", "picoseconds": <how long each replica is simulated, default 10>, "temperature": <kelvin, default 300>, "seed": <optional first random seed>, "frames": <snapshots kept of each replica, default 50>, "replicas": <optional number of replicas>}. Result: {"replicas": <n>, "atoms": <n>, "picoseconds_each": <ps>, "total_nanoseconds": <ns>, "mean_potential_energy_kj_mol": <e>, "potential_energy_stdev_kj_mol": <e>, "runs": [{"index", "seed", "platform", "ns_per_day", "potential_energy_kj_mol", "final": "<CID of the last frame, PDB>", "energies": "<CID, CSV>", "trajectory": "<CID, DCD>"}]}.`
 }
 
+func (MD) Form() []Field {
+	return []Field{
+		{Name: "input", Kind: KindFile, Label: "Molecule", Help: "A stored PDB file of the molecule, or none for the villin headpiece in water."},
+		{Name: "picoseconds", Kind: KindNumber, Label: "Length", Help: "How long to simulate each replica, in picoseconds.", Default: 10, Minimum: bound(0.002), Maximum: bound(mdLimit)},
+		{Name: "temperature", Kind: KindNumber, Label: "Temperature", Help: "The temperature to hold the molecule at, in kelvin.", Default: 300, Minimum: bound(1), Maximum: bound(1000)},
+		{Name: "replicas", Kind: KindInteger, Label: "Replicas", Help: "How many simulations to run side by side, or 0 to leave it to the pool.", Default: 0, Minimum: bound(0), Maximum: bound(MaxTasks)},
+		{Name: "frames", Kind: KindInteger, Label: "Frames", Help: "How many snapshots of each replica to keep.", Default: 50, Minimum: bound(1), Maximum: bound(100000)},
+		{Name: "seed", Kind: KindInteger, Label: "Seed", Help: "The first replica's random seed; the others follow from it.", Default: 1, Minimum: bound(1), Maximum: bound(math.MaxInt32 / 2)},
+	}
+}
+
 func (MD) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
 	var p MDParams
 	if err := json.Unmarshal(params, &p); err != nil {
