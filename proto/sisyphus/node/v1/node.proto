@@ -22,6 +22,17 @@ service NodeService {
   // it. Nothing is sent to the pool yet.
   rpc GetNodeLocation(GetNodeLocationRequest) returns (GetNodeLocationResponse);
   rpc SetNodeLocation(SetNodeLocationRequest) returns (GetNodeLocationResponse);
+  // The free city table, DB-IP's "IP to City Lite" (CC BY 4.0), by which
+  // the node finds the city its public address is in. It is downloaded only
+  // when asked for, and kept in the node's data directory. GetCityTable says
+  // whether it is there, and anything on the machine may ask.
+  // DownloadCityTable fetches this month's, or last month's if this month's
+  // is not out yet, and waits for it; downloading it shows db-ip.com this
+  // machine's address. Looking an address up in it asks no one.
+  // RemoveCityTable deletes it. Both need the node's API token.
+  rpc GetCityTable(GetCityTableRequest) returns (CityTableState);
+  rpc DownloadCityTable(DownloadCityTableRequest) returns (CityTableState);
+  rpc RemoveCityTable(RemoveCityTableRequest) returns (CityTableState);
   // The limits a coordinator holds each member to. Changes are saved by the
   // node and take effect after it restarts, whether the desktop starts it
   // or not; a node that does not run the coordinator role holds no one to
@@ -193,6 +204,32 @@ message GetNodeInfoResponse {
   // to share with others. Set only for a caller that presents the node's API
   // token, and only once the owner has given a location.
   NodeLocation owner_location = 8;
+  // Where the city table puts the node's public address, if the table has
+  // been downloaded (DownloadCityTable), the node knows such an address and
+  // the owner has given no location, which wins.
+  CityEstimate city_estimate = 9;
+}
+
+// CityEstimate is where the city table puts an address. It is an estimate:
+// an address is placed where its network is, which is often tens of
+// kilometres from the machine, and now and then further.
+message CityEstimate {
+  // The city and the region it is in, either of which may be empty, and
+  // the two-letter code of the country.
+  string city = 1;
+  string region = 2;
+  string country_code = 3;
+  // In degrees, north and east positive: the city's, not the machine's,
+  // and often off by tens of kilometres.
+  double latitude = 4;
+  double longitude = 5;
+  // Which address it was found by, as in country_source: "interface",
+  // "pool", "gateway" or "stun".
+  string source = 6;
+  // The credit the table's licence asks for wherever it is used: "IP
+  // Geolocation by DB-IP", linking to https://db-ip.com.
+  string attribution = 7;
+  string attribution_url = 8;
 }
 
 message GetWebAccessConfigRequest {}
@@ -987,6 +1024,23 @@ message GetNodeLocationResponse {
 message SetNodeLocationRequest {
   // Absent to clear the saved location.
   NodeLocation location = 1;
+}
+
+message GetCityTableRequest {}
+message DownloadCityTableRequest {}
+message RemoveCityTableRequest {}
+
+message CityTableState {
+  bool installed = 1;
+  // The month DB-IP published it, as 2026-10.
+  string edition = 2;
+  // How much disk it takes, and when it was downloaded.
+  uint64 size_bytes = 3;
+  int64 downloaded_at_ms = 4;
+  // The credit the table's licence (CC BY 4.0) asks for: "IP Geolocation by
+  // DB-IP", linking to https://db-ip.com. Given whether or not it is there.
+  string attribution = 5;
+  string attribution_url = 6;
 }
 
 // PoolLimits are what a coordinator lets one member use. 0 means no limit

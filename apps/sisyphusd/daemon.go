@@ -45,6 +45,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/tunnel"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/worker"
 	"github.com/sisyphus-network/Sisyphus/packages/geo"
+	"github.com/sisyphus-network/Sisyphus/packages/geo/citytable"
 	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	"github.com/sisyphus-network/Sisyphus/packages/ipfscluster"
@@ -1074,6 +1075,10 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	where.stunAnswered.Store(locationDiscoveryRunning.StunServer == "")
 	local.Country = where.country
+	cityTable := citytable.Store{Dir: *dataDir, URL: cityTableURL}
+	where.cities = &citytable.Finder{Store: cityTable}
+	local.CityTable = cityTable
+	local.City = where.city
 
 	if *inferenceListen != "" {
 		lis, err := net.Listen("tcp", *inferenceListen)
@@ -1650,6 +1655,9 @@ type whereabouts struct {
 	gatewayAnswered, stunAnswered atomic.Bool
 	askingSTUN                    sync.Once
 	lookups                       countryLookups
+	// cities, if set, finds the city of the address that placed the node,
+	// in the city table the owner may have downloaded.
+	cities *citytable.Finder
 }
 
 // country says where the node is and how that was found. A STUN server,
@@ -1663,7 +1671,7 @@ type whereabouts struct {
 func (w *whereabouts) country() (string, string) {
 	external, _ := w.gateway.Load().(netip.Addr)
 	reflexive, _ := w.stunned.Load().(netip.Addr)
-	country, source := countryFrom(w.own(), w.seen(), external, reflexive, w.lookups.found())
+	country, source, _ := countryFrom(w.own(), w.seen(), external, reflexive, w.lookups.found())
 	if source != "" || !w.gatewayAnswered.Load() {
 		return country, source
 	}
@@ -1684,6 +1692,28 @@ func (w *whereabouts) country() (string, string) {
 		})
 	}
 	return country, source
+}
+
+// city says where the city table puts the node, by the address that
+// placed it in its country, and which source that address came from; no
+// source if there is no table, no such address, or the table places it
+// nowhere. It asks no one: the table is on the machine, and an address the
+// lookup service placed is not known.
+func (w *whereabouts) city() (citytable.Place, string) {
+	if w.cities == nil {
+		return citytable.Place{}, ""
+	}
+	external, _ := w.gateway.Load().(netip.Addr)
+	reflexive, _ := w.stunned.Load().(netip.Addr)
+	_, source, by := countryFrom(w.own(), w.seen(), external, reflexive, "")
+	if !by.IsValid() {
+		return citytable.Place{}, ""
+	}
+	place, found := w.cities.Find(by)
+	if !found {
+		return citytable.Place{}, ""
+	}
+	return place, source
 }
 
 // countryRetryFirst is how long the lookup service is left after it first
@@ -1748,38 +1778,39 @@ func (l *countryLookups) end(now time.Time, answer countryAnswer) {
 	l.wait = min(2*l.wait, countryRetryMost)
 }
 
-// countryFrom says which country a node is in, and how that was found: by
-// the first of its own addresses that has a place in the world; failing
-// that, behind a NAT, by its address as the pool sees it (see
-// coordinator/observed.go); failing that, by the address its gateway says
-// it shows the internet, if it was asked; failing that, by the address a
-// STUN server the user named saw it come from; and failing that, by what
-// an outside service said, if it was asked.
-func countryFrom(own []string, seen, gateway, stunned netip.Addr, lookedUp string) (code, source string) {
+// countryFrom says which country a node is in, how that was found, and
+// the address it was found by, if it was: by the first of its own
+// addresses that has a place in the world; failing that, behind a NAT, by
+// its address as the pool sees it (see coordinator/observed.go); failing
+// that, by the address its gateway says it shows the internet, if it was
+// asked; failing that, by the address a STUN server the user named saw it
+// come from; and failing that, by what an outside service said, if it was
+// asked, which gives no address.
+func countryFrom(own []string, seen, gateway, stunned netip.Addr, lookedUp string) (code, source string, by netip.Addr) {
 	local := interfacePrefixes()
-	if code := placedOwnOn(own, local, seen, gateway, stunned); code != "" {
-		return code, "interface"
+	if code, by := placedOwnOn(own, local, seen, gateway, stunned); code != "" {
+		return code, "interface", by
 	}
-	if code := countryAt(seen, local); code != "" {
-		return code, "pool"
-	}
-	if code := countryAt(gateway, local); code != "" {
-		return code, "gateway"
-	}
-	if code := countryAt(stunned, local); code != "" {
-		return code, "stun"
+	for _, found := range []struct {
+		source string
+		addr   netip.Addr
+	}{{"pool", seen}, {"gateway", gateway}, {"stun", stunned}} {
+		if code := countryAt(found.addr, local); code != "" {
+			return code, found.source, found.addr.Unmap()
+		}
 	}
 	if lookedUp != "" {
-		return lookedUp, "lookup"
+		return lookedUp, "lookup", netip.Addr{}
 	}
-	return "", ""
+	return "", "", netip.Addr{}
 }
 
 // placedOwnOn ignores an interface prefix as evidence of a LAN only when an
 // independent observer saw this node at a different address. Without that
 // NAT evidence, a public address on a directly connected interface is the
-// best location evidence available (for example, on a VPS).
-func placedOwnOn(multiaddrs []string, local []netip.Prefix, observed ...netip.Addr) string {
+// best location evidence available (for example, on a VPS). It returns
+// the country and the address that placed it.
+func placedOwnOn(multiaddrs []string, local []netip.Prefix, observed ...netip.Addr) (string, netip.Addr) {
 	for _, multiaddr := range multiaddrs {
 		parts := strings.Split(multiaddr, "/")
 		if len(parts) < 3 || (parts[1] != "ip4" && parts[1] != "ip6") {
@@ -1803,15 +1834,15 @@ func placedOwnOn(multiaddrs []string, local []netip.Prefix, observed ...netip.Ad
 				continue
 			}
 			if code := countryOf(addr); code != "" {
-				return code
+				return code, addr
 			}
 			continue
 		}
 		if code := countryAt(addr, local); code != "" {
-			return code
+			return code, addr
 		}
 	}
-	return ""
+	return "", netip.Addr{}
 }
 
 func inLocalPrefix(addr netip.Addr, local []netip.Prefix) bool {

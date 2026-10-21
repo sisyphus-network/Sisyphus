@@ -258,17 +258,19 @@ func TestWhereANodeIsComesFirstFromItsOwnAddresses(t *testing.T) {
 		seen, gateway, stunned netip.Addr
 		lookedUp               string
 		wantCode, wantFrom     string
+		wantBy                 netip.Addr
 	}{
-		{own, seen, gateway, stunned, "FR", "US", "interface"},
-		{private, seen, gateway, stunned, "FR", "NL", "pool"},
-		{private, none, gateway, stunned, "FR", "US", "gateway"},
-		{private, none, none, stunned, "FR", "NL", "stun"},
-		{private, none, netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("192.168.1.4"), "FR", "FR", "lookup"},
-		{private, none, none, none, "FR", "FR", "lookup"},
-		{private, netip.MustParseAddr("100.64.0.9"), none, none, "", "", ""},
+		{own, seen, gateway, stunned, "FR", "US", "interface", netip.MustParseAddr("8.8.8.8")},
+		{private, seen, gateway, stunned, "FR", "NL", "pool", seen},
+		{private, none, gateway, stunned, "FR", "US", "gateway", gateway},
+		{private, none, none, stunned, "FR", "NL", "stun", stunned},
+		{private, none, none, netip.MustParseAddr("::ffff:193.0.6.139"), "", "NL", "stun", seen},
+		{private, none, netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("192.168.1.4"), "FR", "FR", "lookup", none},
+		{private, none, none, none, "FR", "FR", "lookup", none},
+		{private, netip.MustParseAddr("100.64.0.9"), none, none, "", "", "", none},
 	} {
-		if code, from := countryFrom(tt.own, tt.seen, tt.gateway, tt.stunned, tt.lookedUp); code != tt.wantCode || from != tt.wantFrom {
-			t.Errorf("countryFrom(%v, %v, %v, %v, %q) = %q, %q; want %q, %q", tt.own, tt.seen, tt.gateway, tt.stunned, tt.lookedUp, code, from, tt.wantCode, tt.wantFrom)
+		if code, from, by := countryFrom(tt.own, tt.seen, tt.gateway, tt.stunned, tt.lookedUp); code != tt.wantCode || from != tt.wantFrom || by != tt.wantBy {
+			t.Errorf("countryFrom(%v, %v, %v, %v, %q) = %q, %q, %v; want %q, %q, %v", tt.own, tt.seen, tt.gateway, tt.stunned, tt.lookedUp, code, from, by, tt.wantCode, tt.wantFrom, tt.wantBy)
 		}
 	}
 }
@@ -291,7 +293,7 @@ func TestAHomeNetworkUsingPublicAddressSpaceIsNotPlacedByItsLanAddress(t *testin
 		t.Errorf("a public peer address after the local one was placed in %q", got)
 	}
 
-	code, source := countryFrom(localPeer, netip.MustParseAddr("12.0.0.49"), netip.Addr{}, netip.Addr{}, "IL")
+	code, source, _ := countryFrom(localPeer, netip.MustParseAddr("12.0.0.49"), netip.Addr{}, netip.Addr{}, "IL")
 	if code != "IL" || source != "lookup" {
 		t.Errorf("local-network addresses placed this node as %q from %q; want IL from lookup", code, source)
 	}
@@ -310,13 +312,13 @@ func TestPublicAddressOnOwnInterfaceIsUsedWithoutNATEvidence(t *testing.T) {
 		"/ip4/not-an-address/tcp/7700",
 		"/ip4/203.0.113.7/tcp/7700",
 	}
-	if code, source := countryFrom(own, netip.Addr{}, netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
+	if code, source, _ := countryFrom(own, netip.Addr{}, netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
 		t.Errorf("countryFrom without NAT evidence = %q from %q; want US from interface", code, source)
 	}
-	if code, source := countryFrom(own, netip.MustParseAddr("203.0.113.7"), netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
+	if code, source, _ := countryFrom(own, netip.MustParseAddr("203.0.113.7"), netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
 		t.Errorf("countryFrom when the pool sees this same public address = %q from %q; want US from interface", code, source)
 	}
-	if code, source := countryFrom(own, netip.MustParseAddr("198.51.100.8"), netip.Addr{}, netip.Addr{}, "CA"); code != "US" || source != "pool" {
+	if code, source, _ := countryFrom(own, netip.MustParseAddr("198.51.100.8"), netip.Addr{}, netip.Addr{}, "CA"); code != "US" || source != "pool" {
 		t.Errorf("countryFrom with a distinct observed address = %q from %q; want US from pool", code, source)
 	}
 
@@ -324,7 +326,7 @@ func TestPublicAddressOnOwnInterfaceIsUsedWithoutNATEvidence(t *testing.T) {
 		return []netip.Prefix{netip.MustParsePrefix("2001:db8::/64")}
 	}
 	own = []string{"/ip6/2001:db8::7/tcp/7700"}
-	if code, source := countryFrom(own, netip.MustParseAddr("198.51.100.8"), netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
+	if code, source, _ := countryFrom(own, netip.MustParseAddr("198.51.100.8"), netip.Addr{}, netip.Addr{}, ""); code != "US" || source != "interface" {
 		t.Errorf("IPv4 observation suppressed an own IPv6 address: got %q from %q; want US from interface", code, source)
 	}
 }

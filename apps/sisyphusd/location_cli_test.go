@@ -154,8 +154,8 @@ func TestTheLocationCommandRefusesWhatIsNoPlace(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"location"}, "expected location show, set or clear"},
-		{[]string{"location", "move", "--data-dir", dataDir}, "expected location show, set or clear"},
+		{[]string{"location"}, "expected location show, set, clear or city-table"},
+		{[]string{"location", "move", "--data-dir", dataDir}, "expected location show, set, clear or city-table"},
 		{[]string{"location", "show", "--no-such-flag"}, "flag provided but not defined"},
 		{[]string{"location", "show", "--data-dir", dataDir, "extra"}, `unexpected argument "extra"`},
 		{[]string{"location", "set", "--data-dir", dataDir, "--lat", "1"}, "give the location as --lat and --lon"},

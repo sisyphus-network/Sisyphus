@@ -20,6 +20,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/planner"
 	"github.com/sisyphus-network/Sisyphus/packages/ai"
+	"github.com/sisyphus-network/Sisyphus/packages/geo/citytable"
 	"github.com/sisyphus-network/Sisyphus/packages/nodedb"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -122,6 +123,12 @@ type LocalConfig struct {
 	// OwnerLocation, if set, keeps where the owner says the node is. A
 	// change takes effect at once.
 	OwnerLocation OwnerLocationStore
+	// CityTable, if set, keeps the city table the owner may download, and
+	// City, if set, says where it puts the node: the place, and which of
+	// the node's addresses it was found by, as in Country, or no source
+	// if the table does not place the node or is not there.
+	CityTable CityTableStore
+	City      func() (place citytable.Place, source string)
 	// PoolLimits stores the limits the node, as a coordinator, holds each
 	// member to. The saved limits take effect when the daemon restarts;
 	// running values are the limits it started with. RunsCoordinator says
@@ -365,6 +372,7 @@ func (s *localService) nodeInfo(ctx context.Context) *nodepb.GetNodeInfoResponse
 		// A location that cannot be read is left out, as an unknown country is.
 		info.OwnerLocation, _ = s.ownerLocation()
 	}
+	info.CityEstimate = s.cityEstimate()
 	return info
 }
 
