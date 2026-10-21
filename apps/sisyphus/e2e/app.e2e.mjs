@@ -580,6 +580,19 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
     const zoomOut = controls.getByRole('button', { name: 'Zoom out' })
     await zoomIn.waitFor()
     const zoom = async () => Number(await globe.getAttribute('data-zoom'))
+    // A step animates: wait until the zoom stops changing before reading
+    // the buttons, which disable themselves only when a step has ended at
+    // the limit.
+    const settled = async () => {
+      let last = Number.NaN
+      await until('the globe to settle', async () => {
+        const now = await zoom()
+        const still = now === last
+        last = now
+        await new Promise((wake) => setTimeout(wake, 150))
+        return still
+      })
+    }
     // The globe starts whole, with no region lines.
     await until('the globe to settle', async () => await zoom() > 0)
     assert.equal(await globe.getAttribute('data-regions'), 'hidden')
@@ -591,6 +604,7 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
       const before = await zoom()
       await zoomIn.click()
       await until('the globe to come in', async () => await zoom() > before)
+      await settled()
     }
     await until('the region lines to be drawn', async () => await globe.getAttribute('data-regions') === 'shown')
     assert.ok(await zoom() > start * 1.5, `zooming in went only from ${start}% to ${await zoom()}%`)
@@ -601,6 +615,7 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
     const close = await zoom()
     await page.mouse.wheel(0, 600)
     await until('the wheel to take the globe out', async () => await zoom() < close)
+    await settled()
     assert.equal(await zoomIn.isEnabled(), true)
 
     // Out as far as it goes, from the keyboard: the region lines go.
@@ -610,6 +625,7 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
       const before = await zoom()
       await page.keyboard.press('Enter')
       await until('the globe to go out', async () => await zoom() < before)
+      await settled()
     }
     assert.equal(await globe.getAttribute('data-regions'), 'hidden')
     assert.ok(await zoom() < start, 'the globe cannot be taken further out than it starts')
