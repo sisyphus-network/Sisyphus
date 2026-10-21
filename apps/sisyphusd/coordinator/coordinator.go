@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
@@ -316,6 +317,10 @@ type worker struct {
 	// dialled is the coordinator's address as the worker reached it, if
 	// that is a global address.
 	dialled netip.Addr
+	// location is where the worker's owner lets the pool see it is, or nil
+	// if the owner shares no coordinates. It is replaced, never changed, so
+	// that what Nodes returns may be read without the lock.
+	location *pb.SharedLocation
 	// removed is closed, once, to make the worker's connection end.
 	removed chan struct{}
 	remove  sync.Once
@@ -1162,6 +1167,8 @@ func (c *Coordinator) Nodes() []*pb.NodeInfo {
 			RelayAddresses: w.relayAddresses, RelayedConnections: w.relayedConnections, RelayedBytes: w.relayedBytes,
 
 			VerifiedAgreed: standing.Agreed, VerifiedOutvoted: standing.Outvoted, Probation: uint32(standing.Probation),
+
+			SharedLocation: w.location,
 		})
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeId < nodes[j].NodeId })
@@ -1213,6 +1220,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 		serveAddress:   hello.GetServeAddress(),
 		relayAddresses: hello.GetRelayAddresses(),
 		dialled:        global(hello.GetDialledAddress()),
+		location:       sharedLocation(hello.GetSharedLocation()),
 		holds:          make(map[string]struct{}),
 		capabilities:   capabilities,
 		connectedAt:    now,
@@ -1278,6 +1286,11 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 					workerStateChanged = workerStateChanged || !slices.Equal(w.capabilities.GetLabels(), labels)
 					w.capabilities.Labels = labels
 					c.scheduleLocked()
+				}
+				if moved := kind.Heartbeat.GetLocation(); moved != nil {
+					location := sharedLocation(moved.GetSharedLocation())
+					workerStateChanged = workerStateChanged || !proto.Equal(w.location, location)
+					w.location = location
 				}
 				c.mu.Unlock()
 				if workerStateChanged && c.workersChanged != nil {

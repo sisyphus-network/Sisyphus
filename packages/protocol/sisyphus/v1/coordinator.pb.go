@@ -222,6 +222,10 @@ type Hello struct {
 	// places itself by what most of its workers say here, and only if that is
 	// a global unicast address; it is for display, never for reachability.
 	DialledAddress string `protobuf:"bytes,6,opt,name=dialled_address,json=dialledAddress,proto3" json:"dialled_address,omitempty"`
+	// Where the node's owner lets the pool see it is, rounded by the node to
+	// the precision its owner chose. Absent if the owner shares only the
+	// country, or nothing, or has given no location.
+	SharedLocation *SharedLocation `protobuf:"bytes,7,opt,name=shared_location,json=sharedLocation,proto3" json:"shared_location,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -291,6 +295,13 @@ func (x *Hello) GetDialledAddress() string {
 	return ""
 }
 
+func (x *Hello) GetSharedLocation() *SharedLocation {
+	if x != nil {
+		return x.SharedLocation
+	}
+	return nil
+}
+
 type Heartbeat struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	RunningTasks uint32                 `protobuf:"varint,1,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
@@ -300,7 +311,10 @@ type Heartbeat struct {
 	RelayedBytes       uint64 `protobuf:"varint,3,opt,name=relayed_bytes,json=relayedBytes,proto3" json:"relayed_bytes,omitempty"`
 	// Set when the worker's labels are not what it last said they were: a
 	// model fetched or removed since. Absent, they are as they were.
-	Labels        *Labels `protobuf:"bytes,4,opt,name=labels,proto3" json:"labels,omitempty"`
+	Labels *Labels `protobuf:"bytes,4,opt,name=labels,proto3" json:"labels,omitempty"`
+	// Set when what the worker's owner lets the pool see of where it is has
+	// changed since the worker last said. Absent, it is as it was.
+	Location      *LocationUpdate `protobuf:"bytes,5,opt,name=location,proto3" json:"location,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -363,6 +377,13 @@ func (x *Heartbeat) GetLabels() *Labels {
 	return nil
 }
 
+func (x *Heartbeat) GetLocation() *LocationUpdate {
+	if x != nil {
+		return x.Location
+	}
+	return nil
+}
+
 type Labels struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Labels        []string               `protobuf:"bytes,1,rep,name=labels,proto3" json:"labels,omitempty"`
@@ -407,6 +428,52 @@ func (x *Labels) GetLabels() []string {
 	return nil
 }
 
+// LocationUpdate is what a worker's owner now lets the pool see of where it
+// is. An absent shared_location means that it is no longer shared.
+type LocationUpdate struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SharedLocation *SharedLocation        `protobuf:"bytes,1,opt,name=shared_location,json=sharedLocation,proto3" json:"shared_location,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *LocationUpdate) Reset() {
+	*x = LocationUpdate{}
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LocationUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LocationUpdate) ProtoMessage() {}
+
+func (x *LocationUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LocationUpdate.ProtoReflect.Descriptor instead.
+func (*LocationUpdate) Descriptor() ([]byte, []int) {
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *LocationUpdate) GetSharedLocation() *SharedLocation {
+	if x != nil {
+		return x.SharedLocation
+	}
+	return nil
+}
+
 type TaskResult struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -430,7 +497,7 @@ type TaskResult struct {
 
 func (x *TaskResult) Reset() {
 	*x = TaskResult{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -442,7 +509,7 @@ func (x *TaskResult) String() string {
 func (*TaskResult) ProtoMessage() {}
 
 func (x *TaskResult) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[5]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -455,7 +522,7 @@ func (x *TaskResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskResult.ProtoReflect.Descriptor instead.
 func (*TaskResult) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{5}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *TaskResult) GetTaskId() string {
@@ -555,7 +622,7 @@ type ModelUse struct {
 
 func (x *ModelUse) Reset() {
 	*x = ModelUse{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -567,7 +634,7 @@ func (x *ModelUse) String() string {
 func (*ModelUse) ProtoMessage() {}
 
 func (x *ModelUse) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[6]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -580,7 +647,7 @@ func (x *ModelUse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelUse.ProtoReflect.Descriptor instead.
 func (*ModelUse) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{6}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ModelUse) GetServer() string {
@@ -642,7 +709,7 @@ type CoordinatorMessage struct {
 
 func (x *CoordinatorMessage) Reset() {
 	*x = CoordinatorMessage{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -654,7 +721,7 @@ func (x *CoordinatorMessage) String() string {
 func (*CoordinatorMessage) ProtoMessage() {}
 
 func (x *CoordinatorMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[7]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -667,7 +734,7 @@ func (x *CoordinatorMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CoordinatorMessage.ProtoReflect.Descriptor instead.
 func (*CoordinatorMessage) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{7}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CoordinatorMessage) GetKind() isCoordinatorMessage_Kind {
@@ -783,7 +850,7 @@ type RolesChanged struct {
 
 func (x *RolesChanged) Reset() {
 	*x = RolesChanged{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[8]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -795,7 +862,7 @@ func (x *RolesChanged) String() string {
 func (*RolesChanged) ProtoMessage() {}
 
 func (x *RolesChanged) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[8]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -808,7 +875,7 @@ func (x *RolesChanged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RolesChanged.ProtoReflect.Descriptor instead.
 func (*RolesChanged) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{8}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *RolesChanged) GetRoles() []Role {
@@ -831,7 +898,7 @@ type WorkerCount struct {
 
 func (x *WorkerCount) Reset() {
 	*x = WorkerCount{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[9]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -843,7 +910,7 @@ func (x *WorkerCount) String() string {
 func (*WorkerCount) ProtoMessage() {}
 
 func (x *WorkerCount) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[9]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -856,7 +923,7 @@ func (x *WorkerCount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerCount.ProtoReflect.Descriptor instead.
 func (*WorkerCount) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{9}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *WorkerCount) GetCount() uint32 {
@@ -878,7 +945,7 @@ type TaskCancel struct {
 
 func (x *TaskCancel) Reset() {
 	*x = TaskCancel{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[10]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -890,7 +957,7 @@ func (x *TaskCancel) String() string {
 func (*TaskCancel) ProtoMessage() {}
 
 func (x *TaskCancel) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[10]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -903,7 +970,7 @@ func (x *TaskCancel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskCancel.ProtoReflect.Descriptor instead.
 func (*TaskCancel) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{10}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TaskCancel) GetTaskId() string {
@@ -942,7 +1009,7 @@ type Welcome struct {
 
 func (x *Welcome) Reset() {
 	*x = Welcome{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[11]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -954,7 +1021,7 @@ func (x *Welcome) String() string {
 func (*Welcome) ProtoMessage() {}
 
 func (x *Welcome) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[11]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -967,7 +1034,7 @@ func (x *Welcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Welcome.ProtoReflect.Descriptor instead.
 func (*Welcome) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{11}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Welcome) GetCoordinatorId() string {
@@ -1016,7 +1083,7 @@ type SwarmUpdate struct {
 
 func (x *SwarmUpdate) Reset() {
 	*x = SwarmUpdate{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[12]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1028,7 +1095,7 @@ func (x *SwarmUpdate) String() string {
 func (*SwarmUpdate) ProtoMessage() {}
 
 func (x *SwarmUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[12]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1041,7 +1108,7 @@ func (x *SwarmUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SwarmUpdate.ProtoReflect.Descriptor instead.
 func (*SwarmUpdate) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{12}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *SwarmUpdate) GetSwarmFingerprint() string {
@@ -1077,7 +1144,7 @@ type TaskAssignment struct {
 
 func (x *TaskAssignment) Reset() {
 	*x = TaskAssignment{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[13]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1089,7 +1156,7 @@ func (x *TaskAssignment) String() string {
 func (*TaskAssignment) ProtoMessage() {}
 
 func (x *TaskAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[13]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1102,7 +1169,7 @@ func (x *TaskAssignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskAssignment.ProtoReflect.Descriptor instead.
 func (*TaskAssignment) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{13}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *TaskAssignment) GetTaskId() string {
@@ -1172,7 +1239,7 @@ type SealingKey struct {
 
 func (x *SealingKey) Reset() {
 	*x = SealingKey{}
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[14]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1184,7 +1251,7 @@ func (x *SealingKey) String() string {
 func (*SealingKey) ProtoMessage() {}
 
 func (x *SealingKey) ProtoReflect() protoreflect.Message {
-	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[14]
+	mi := &file_sisyphus_v1_coordinator_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1197,7 +1264,7 @@ func (x *SealingKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealingKey.ProtoReflect.Descriptor instead.
 func (*SealingKey) Descriptor() ([]byte, []int) {
-	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{14}
+	return file_sisyphus_v1_coordinator_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SealingKey) GetId() []byte {
@@ -1232,20 +1299,24 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x1a\n" +
 	"\bprogress\x18\x03 \x01(\x01R\bprogress\x12\x10\n" +
-	"\x03log\x18\x04 \x03(\tR\x03log\"\xdb\x01\n" +
+	"\x03log\x18\x04 \x03(\tR\x03log\"\xa1\x02\n" +
 	"\x05Hello\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12#\n" +
 	"\rserve_address\x18\x04 \x01(\tR\fserveAddress\x12'\n" +
 	"\x0frelay_addresses\x18\x05 \x03(\tR\x0erelayAddresses\x12'\n" +
-	"\x0fdialled_address\x18\x06 \x01(\tR\x0edialledAddressJ\x04\b\x01\x10\x02\"\xb3\x01\n" +
+	"\x0fdialled_address\x18\x06 \x01(\tR\x0edialledAddress\x12D\n" +
+	"\x0fshared_location\x18\a \x01(\v2\x1b.sisyphus.v1.SharedLocationR\x0esharedLocationJ\x04\b\x01\x10\x02\"\xec\x01\n" +
 	"\tHeartbeat\x12#\n" +
 	"\rrunning_tasks\x18\x01 \x01(\rR\frunningTasks\x12/\n" +
 	"\x13relayed_connections\x18\x02 \x01(\x04R\x12relayedConnections\x12#\n" +
 	"\rrelayed_bytes\x18\x03 \x01(\x04R\frelayedBytes\x12+\n" +
-	"\x06labels\x18\x04 \x01(\v2\x13.sisyphus.v1.LabelsR\x06labels\" \n" +
+	"\x06labels\x18\x04 \x01(\v2\x13.sisyphus.v1.LabelsR\x06labels\x127\n" +
+	"\blocation\x18\x05 \x01(\v2\x1b.sisyphus.v1.LocationUpdateR\blocation\" \n" +
 	"\x06Labels\x12\x16\n" +
-	"\x06labels\x18\x01 \x03(\tR\x06labels\"\xeb\x01\n" +
+	"\x06labels\x18\x01 \x03(\tR\x06labels\"V\n" +
+	"\x0eLocationUpdate\x12D\n" +
+	"\x0fshared_location\x18\x01 \x01(\v2\x1b.sisyphus.v1.SharedLocationR\x0esharedLocation\"\xeb\x01\n" +
 	"\n" +
 	"TaskResult\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
@@ -1318,50 +1389,55 @@ func file_sisyphus_v1_coordinator_proto_rawDescGZIP() []byte {
 	return file_sisyphus_v1_coordinator_proto_rawDescData
 }
 
-var file_sisyphus_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_sisyphus_v1_coordinator_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_sisyphus_v1_coordinator_proto_goTypes = []any{
 	(*WorkerMessage)(nil),      // 0: sisyphus.v1.WorkerMessage
 	(*TaskUpdate)(nil),         // 1: sisyphus.v1.TaskUpdate
 	(*Hello)(nil),              // 2: sisyphus.v1.Hello
 	(*Heartbeat)(nil),          // 3: sisyphus.v1.Heartbeat
 	(*Labels)(nil),             // 4: sisyphus.v1.Labels
-	(*TaskResult)(nil),         // 5: sisyphus.v1.TaskResult
-	(*ModelUse)(nil),           // 6: sisyphus.v1.ModelUse
-	(*CoordinatorMessage)(nil), // 7: sisyphus.v1.CoordinatorMessage
-	(*RolesChanged)(nil),       // 8: sisyphus.v1.RolesChanged
-	(*WorkerCount)(nil),        // 9: sisyphus.v1.WorkerCount
-	(*TaskCancel)(nil),         // 10: sisyphus.v1.TaskCancel
-	(*Welcome)(nil),            // 11: sisyphus.v1.Welcome
-	(*SwarmUpdate)(nil),        // 12: sisyphus.v1.SwarmUpdate
-	(*TaskAssignment)(nil),     // 13: sisyphus.v1.TaskAssignment
-	(*SealingKey)(nil),         // 14: sisyphus.v1.SealingKey
-	(*NodeCapabilities)(nil),   // 15: sisyphus.v1.NodeCapabilities
-	(Role)(0),                  // 16: sisyphus.v1.Role
+	(*LocationUpdate)(nil),     // 5: sisyphus.v1.LocationUpdate
+	(*TaskResult)(nil),         // 6: sisyphus.v1.TaskResult
+	(*ModelUse)(nil),           // 7: sisyphus.v1.ModelUse
+	(*CoordinatorMessage)(nil), // 8: sisyphus.v1.CoordinatorMessage
+	(*RolesChanged)(nil),       // 9: sisyphus.v1.RolesChanged
+	(*WorkerCount)(nil),        // 10: sisyphus.v1.WorkerCount
+	(*TaskCancel)(nil),         // 11: sisyphus.v1.TaskCancel
+	(*Welcome)(nil),            // 12: sisyphus.v1.Welcome
+	(*SwarmUpdate)(nil),        // 13: sisyphus.v1.SwarmUpdate
+	(*TaskAssignment)(nil),     // 14: sisyphus.v1.TaskAssignment
+	(*SealingKey)(nil),         // 15: sisyphus.v1.SealingKey
+	(*NodeCapabilities)(nil),   // 16: sisyphus.v1.NodeCapabilities
+	(*SharedLocation)(nil),     // 17: sisyphus.v1.SharedLocation
+	(Role)(0),                  // 18: sisyphus.v1.Role
 }
 var file_sisyphus_v1_coordinator_proto_depIdxs = []int32{
 	2,  // 0: sisyphus.v1.WorkerMessage.hello:type_name -> sisyphus.v1.Hello
 	3,  // 1: sisyphus.v1.WorkerMessage.heartbeat:type_name -> sisyphus.v1.Heartbeat
-	5,  // 2: sisyphus.v1.WorkerMessage.task_result:type_name -> sisyphus.v1.TaskResult
+	6,  // 2: sisyphus.v1.WorkerMessage.task_result:type_name -> sisyphus.v1.TaskResult
 	1,  // 3: sisyphus.v1.WorkerMessage.task_update:type_name -> sisyphus.v1.TaskUpdate
-	15, // 4: sisyphus.v1.Hello.capabilities:type_name -> sisyphus.v1.NodeCapabilities
-	4,  // 5: sisyphus.v1.Heartbeat.labels:type_name -> sisyphus.v1.Labels
-	6,  // 6: sisyphus.v1.TaskResult.used:type_name -> sisyphus.v1.ModelUse
-	11, // 7: sisyphus.v1.CoordinatorMessage.welcome:type_name -> sisyphus.v1.Welcome
-	13, // 8: sisyphus.v1.CoordinatorMessage.assignment:type_name -> sisyphus.v1.TaskAssignment
-	12, // 9: sisyphus.v1.CoordinatorMessage.swarm_update:type_name -> sisyphus.v1.SwarmUpdate
-	10, // 10: sisyphus.v1.CoordinatorMessage.cancel:type_name -> sisyphus.v1.TaskCancel
-	8,  // 11: sisyphus.v1.CoordinatorMessage.roles_changed:type_name -> sisyphus.v1.RolesChanged
-	9,  // 12: sisyphus.v1.CoordinatorMessage.worker_count:type_name -> sisyphus.v1.WorkerCount
-	16, // 13: sisyphus.v1.RolesChanged.roles:type_name -> sisyphus.v1.Role
-	16, // 14: sisyphus.v1.Welcome.roles:type_name -> sisyphus.v1.Role
-	14, // 15: sisyphus.v1.TaskAssignment.keys:type_name -> sisyphus.v1.SealingKey
-	0,  // 16: sisyphus.v1.CoordinatorService.Connect:input_type -> sisyphus.v1.WorkerMessage
-	7,  // 17: sisyphus.v1.CoordinatorService.Connect:output_type -> sisyphus.v1.CoordinatorMessage
-	17, // [17:18] is the sub-list for method output_type
-	16, // [16:17] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	16, // 4: sisyphus.v1.Hello.capabilities:type_name -> sisyphus.v1.NodeCapabilities
+	17, // 5: sisyphus.v1.Hello.shared_location:type_name -> sisyphus.v1.SharedLocation
+	4,  // 6: sisyphus.v1.Heartbeat.labels:type_name -> sisyphus.v1.Labels
+	5,  // 7: sisyphus.v1.Heartbeat.location:type_name -> sisyphus.v1.LocationUpdate
+	17, // 8: sisyphus.v1.LocationUpdate.shared_location:type_name -> sisyphus.v1.SharedLocation
+	7,  // 9: sisyphus.v1.TaskResult.used:type_name -> sisyphus.v1.ModelUse
+	12, // 10: sisyphus.v1.CoordinatorMessage.welcome:type_name -> sisyphus.v1.Welcome
+	14, // 11: sisyphus.v1.CoordinatorMessage.assignment:type_name -> sisyphus.v1.TaskAssignment
+	13, // 12: sisyphus.v1.CoordinatorMessage.swarm_update:type_name -> sisyphus.v1.SwarmUpdate
+	11, // 13: sisyphus.v1.CoordinatorMessage.cancel:type_name -> sisyphus.v1.TaskCancel
+	9,  // 14: sisyphus.v1.CoordinatorMessage.roles_changed:type_name -> sisyphus.v1.RolesChanged
+	10, // 15: sisyphus.v1.CoordinatorMessage.worker_count:type_name -> sisyphus.v1.WorkerCount
+	18, // 16: sisyphus.v1.RolesChanged.roles:type_name -> sisyphus.v1.Role
+	18, // 17: sisyphus.v1.Welcome.roles:type_name -> sisyphus.v1.Role
+	15, // 18: sisyphus.v1.TaskAssignment.keys:type_name -> sisyphus.v1.SealingKey
+	0,  // 19: sisyphus.v1.CoordinatorService.Connect:input_type -> sisyphus.v1.WorkerMessage
+	8,  // 20: sisyphus.v1.CoordinatorService.Connect:output_type -> sisyphus.v1.CoordinatorMessage
+	20, // [20:21] is the sub-list for method output_type
+	19, // [19:20] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_v1_coordinator_proto_init() }
@@ -1377,11 +1453,11 @@ func file_sisyphus_v1_coordinator_proto_init() {
 		(*WorkerMessage_TaskResult)(nil),
 		(*WorkerMessage_TaskUpdate)(nil),
 	}
-	file_sisyphus_v1_coordinator_proto_msgTypes[5].OneofWrappers = []any{
+	file_sisyphus_v1_coordinator_proto_msgTypes[6].OneofWrappers = []any{
 		(*TaskResult_Output)(nil),
 		(*TaskResult_Error)(nil),
 	}
-	file_sisyphus_v1_coordinator_proto_msgTypes[7].OneofWrappers = []any{
+	file_sisyphus_v1_coordinator_proto_msgTypes[8].OneofWrappers = []any{
 		(*CoordinatorMessage_Welcome)(nil),
 		(*CoordinatorMessage_Assignment)(nil),
 		(*CoordinatorMessage_SwarmUpdate)(nil),
@@ -1395,7 +1471,7 @@ func file_sisyphus_v1_coordinator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sisyphus_v1_coordinator_proto_rawDesc), len(file_sisyphus_v1_coordinator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -606,6 +606,16 @@ func (g *guestWork) offersChanged() {
 	}
 }
 
+// locationChanged passes word that what the owner shares of where this
+// node is may have changed to each worker it runs for another node.
+func (g *guestWork) locationChanged() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for w := range g.working {
+		w.LocationChanged()
+	}
+}
+
 // work runs as a worker of the node with the given ID, at addr, until ctx
 // ends or that node turns this one away. What its tasks fetch is kept under
 // that node's name, apart from this node's own data and every other's.
@@ -618,6 +628,7 @@ func (g *guestWork) work(ctx context.Context, id, addr string) error {
 	creds := credentials.NewTLS(g.ident.ClientTLS(id))
 	w := &worker.Worker{
 		Name: g.template.Name, Slots: g.template.Slots, Workloads: g.template.Workloads, Limit: g.template.Limit, Pool: id, Log: log, Hardware: g.template.Hardware,
+		Location:    g.template.Location,
 		Coordinator: addr, Credentials: creds,
 	}
 	g.mu.Lock()

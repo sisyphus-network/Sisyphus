@@ -894,8 +894,11 @@ func runDaemon(ctx context.Context, args []string) error {
 			// What the machine has, as far as its owner offers it.
 			Hardware:          hardware.Detect(ctx).Offer(*maxMemory<<20, *maxGPUs),
 			HeartbeatInterval: workerHeartbeat,
+			// As much of where the node is as its owner shares.
+			Location: sharedLocation(db),
 		}
 		local.OffersChanged = w.OffersChanged
+		local.LocationChanged = w.LocationChanged
 		if *reciprocate {
 			// The node works for each node it has said it will take tasks
 			// from, whenever that node will have it. All of that shares the
@@ -906,6 +909,10 @@ func runDaemon(ctx context.Context, args []string) error {
 			local.OffersChanged = func() {
 				w.OffersChanged()
 				guests.offersChanged()
+			}
+			local.LocationChanged = func() {
+				w.LocationChanged()
+				guests.locationChanged()
 			}
 			watcher := newReciprocity(&reciprocity{
 				// The node it already works for, being its coordinator, is

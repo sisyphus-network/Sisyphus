@@ -23,7 +23,7 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 | Worker | A node admitted with `pool invite` | The payload, inputs and key of every task it is handed. Any blob in the pool by CID, and the swarm key. It cannot read jobs or list pins. |
 | Client | A node admitted with `pool invite --role client`; a worker that redeems one holds both roles, and may do what either may | Submitting jobs, and reading and cancelling the jobs it submitted; pinning, and listing and releasing its own pins; collecting stored data nothing pins; where copies are held, of everything pinned; the swarm key, and so any blob by CID. Another client's job is, to it, a job that is not there (`api/server.go`, `own`). |
 | Storage follower | A worker started with `--replica-dir`, or a worker's IPFS Cluster peer | A copy of what the coordinator pinned, which it can read unless sealed. It cannot change what is kept. |
-| Local user | Anything running on a node's machine | Without the token: what the node is, and its files' names, members, peers and workers. With `api.token`: everything the local API does. With the data directory: the node. |
+| Local user | Anything running on a node's machine | Without the token: what the node is, and its files' names, members, peers and workers, but not where the workers are shared to be. With `api.token`: everything the local API does. With the data directory: the node. |
 | Desktop app | `apps/sisyphus`, a client of the local API | The token. Its window is sandboxed from its main process (`apps/sisyphus/src/main/index.ts`); the bridge between them has not been reviewed. |
 | AI agent | A program driving `sisyphusd mcp` | What the flags leave it; see [below](#an-agent-on-the-mcp-server). |
 | Model service | Ollama, an OpenAI-style service or Anthropic, set with `model set` | Every planner conversation in full: the questions, the names and CIDs of attached files, each job's parameters and its result. |
@@ -112,6 +112,10 @@ A `chat`, `prompts` or `embed` job carries its prompts in its parameters, or in 
 ### On the wire
 
 TLS and libp2p hide content from outsiders. They do not hide that nodes are talking, to whom, how much or when. The pinning service (`--pinning-listen`) and the gateway (`--gateway-listen`) are plain HTTP, and neither is held to a loopback address, since both are for other machines to use. Reached from another machine, the pinning service's key, or the node's API token where the gateway is not `--gateway-open`, crosses the network unencrypted. The node says so in its log when it starts either at such an address (`daemon.go`, `warnOfKeyInTheClear`); it does not refuse, and TLS is left to a proxy in front.
+
+### Where a node is
+
+The owner may say where the node is, and how much of it the pool may see (`apps/sisyphusd/README.md`, owner's location). The worker rounds the pin to that share before it is sent (`packages/geo/share.go`, `Shared`), so the other members of the pool see the rounded place the owner chose, and nothing more: the pin as given for `exact`, to 0.01° for `about-1km`, to 0.1° for `city`, and no coordinates for `country` or `nothing`. The coordinator keeps it with the worker and gives it to the pool's clients in `ListNodes`; a node's local API gives it in `ListWorkers` only with the token. It is the worker's own word: the coordinator checks that it is a place on the Earth and not that it is true, and a member can say it is anywhere.
 
 ## Result integrity
 

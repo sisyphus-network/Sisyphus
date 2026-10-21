@@ -411,6 +411,9 @@ func listNodes(ctx context.Context, args []string) error {
 		if standing := standingOf(node); standing != "" {
 			standings = append(standings, standing)
 		}
+		if place := placeOf(node); place != "" {
+			standings = append(standings, place)
+		}
 		// What a node that relays has carried between other members.
 		relayed := "-"
 		if len(node.GetRelayAddresses()) > 0 {
@@ -485,6 +488,16 @@ func standingOf(node *pb.NodeInfo) string {
 		said += fmt.Sprintf("; on probation, %d more to agree", owed)
 	}
 	return said
+}
+
+// placeOf says where a node's owner lets the pool see it is, as rounded as
+// the owner chose, or nothing if the owner shares no coordinates.
+func placeOf(node *pb.NodeInfo) string {
+	place := node.GetSharedLocation()
+	if place == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s: shared place %s, %s", cmp.Or(node.GetName(), node.GetNodeId()), degrees(place.GetLatitude()), degrees(place.GetLongitude()))
 }
 
 // reportOutcome prints a finished job's result, or returns its failure.

@@ -109,7 +109,19 @@ bin/sisyphusd ask --chat <id> "And below a million?"      # carry the conversati
 
 A node on a home network knows itself only by an address like `192.168.1.20`, which no table can place, so its country shows as **Not available** and the globe has no marker for it. Node overview and the globe then link to **Settings → This node → Location discovery**, where the node can be allowed to ask your router, a STUN server you name, or a lookup service for its public address ([#573](https://github.com/sisyphus-network/Sisyphus/issues/573)).
 
-You can also say yourself where the node is, as precisely as you like. In the app, **Settings → This node → Where this node is** takes coordinates as a map copies them: right-click a place in OpenStreetMap or Google Maps, copy its coordinates and paste them, as `37.2710, -79.9414` or `37.2710° N, 79.9414° W`. **What other members see** chooses how much of the place other members of a pool may see later: the exact place, rounded to about 1 km, rounded to the city, the country only (the default), or nothing. **Save location** keeps it on the node, and your own globe puts this node at the pin rather than in the middle of its country. **Remove pin** forgets it. Without the app, `sisyphusd location set --lat <latitude> --lon <longitude> [--share <share>]` does the same, `location show` prints it and `location clear` forgets it, and so do the local API's `GetNodeLocation` and `SetNodeLocation`. For now nothing of it is sent to the pool, whatever you choose; sharing it as far as you allow comes in a later version.
+You can also say yourself where the node is, as precisely as you like. In the app, **Settings → This node → Where this node is** takes coordinates as a map copies them: right-click a place in OpenStreetMap or Google Maps, copy its coordinates and paste them, as `37.2710, -79.9414` or `37.2710° N, 79.9414° W`. **What other members see** chooses how much of the place other members of a pool may see: the exact place, rounded to about 1 km, rounded to the city, the country only (the default), or nothing. **Save location** keeps it on the node, and your own globe puts this node at the pin rather than in the middle of its country. **Remove pin** forgets it. Without the app, `sisyphusd location set --lat <latitude> --lon <longitude> [--share <share>]` does the same, `location show` prints it and `location clear` forgets it, and so do the local API's `GetNodeLocation` and `SetNodeLocation`.
+
+What the other members of your pool see, for each choice:
+
+| Share | What they see |
+| --- | --- |
+| `exact` | Your pin as you gave it. |
+| `about-1km` | Your pin rounded to 0.01° of latitude and longitude, about a kilometre. |
+| `city` | Your pin rounded to 0.1°, about ten kilometres: roughly which town. |
+| `country` | No coordinates. Only the country their own node can tell from your address, as before. |
+| `nothing` | No coordinates, the same as `country`. |
+
+The rounding is done on your machine, before anything is sent, so the pool never receives more than you chose. Change the pin or the share while the node runs and the pool sees the change at once; one made with `sisyphusd location set` while the node runs reaches the pool the next time it connects. Your own node always shows your pin as precisely as you gave it.
 
 ```sh
 bin/sisyphusd id

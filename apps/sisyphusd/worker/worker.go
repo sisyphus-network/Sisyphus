@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
 	"github.com/sisyphus-network/Sisyphus/packages/geo"
@@ -75,6 +76,11 @@ type Worker struct {
 	// times it has joined two of them and how many bytes passed.
 	RelayAddresses []string
 	Relayed        func() (connections, bytes uint64)
+	// Location, if set, returns where the node's owner lets the pool see
+	// it is, already rounded to the precision the owner chose, or ok false
+	// when the owner shares no coordinates. The worker sends what it
+	// returns, unchanged, on connecting and after LocationChanged.
+	Location func() (latitude, longitude float64, ok bool)
 	// OnSwarm, if set, is called with the fingerprint of the key of the
 	// pool's private IPFS network whenever the coordinator states it: on
 	// joining, and when the key changes. It must not block for long.
@@ -98,6 +104,10 @@ type Worker struct {
 	// see OffersChanged.
 	changedOnce sync.Once
 	changed     chan struct{}
+	// moved carries word that what the owner shares of where the node is
+	// may have changed; see LocationChanged.
+	movedOnce sync.Once
+	moved     chan struct{}
 	// HeartbeatInterval is how often the coordinator hears from this node
 	// while it is idle, which is how it tells a quiet worker from a lost
 	// one. Zero means five seconds.
@@ -179,11 +189,15 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	hello := w.capabilities()
 	offered := hello.GetLabels()
 	w.storeOffered(offered)
+	// Only the heartbeat below reads or changes shared once the Hello is
+	// sent.
+	shared := w.sharedLocation()
 	send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
 		Name:         w.Name,
 		Capabilities: hello,
 		ServeAddress: w.ServeAddress, RelayAddresses: w.RelayAddresses,
 		DialledAddress: dialled(stream.Context()),
+		SharedLocation: shared,
 	}}})
 
 	var running atomic.Int32
@@ -254,6 +268,13 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 				send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: heartbeat}})
 			case <-w.changes():
 				refresh()
+			case <-w.movedChanges():
+				if now := w.sharedLocation(); !proto.Equal(now, shared) {
+					shared = now
+					send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: &pb.Heartbeat{
+						RunningTasks: uint32(running.Load()), Location: &pb.LocationUpdate{SharedLocation: now},
+					}}})
+				}
 			case <-ctx.Done():
 				return
 			}
@@ -594,6 +615,34 @@ func (w *Worker) OffersChanged() {
 func (w *Worker) changes() chan struct{} {
 	w.changedOnce.Do(func() { w.changed = make(chan struct{}, 1) })
 	return w.changed
+}
+
+// LocationChanged tells the worker that what its owner shares of where it
+// is may have changed. It asks Location again and, if that differs from
+// what it last sent, tells its coordinator at once. It never waits.
+func (w *Worker) LocationChanged() {
+	select {
+	case w.movedChanges() <- struct{}{}:
+	default:
+	}
+}
+
+func (w *Worker) movedChanges() chan struct{} {
+	w.movedOnce.Do(func() { w.moved = make(chan struct{}, 1) })
+	return w.moved
+}
+
+// sharedLocation is what the worker tells its coordinator of where it is:
+// nil when it has no Location or its owner shares no coordinates.
+func (w *Worker) sharedLocation() *pb.SharedLocation {
+	if w.Location == nil {
+		return nil
+	}
+	latitude, longitude, ok := w.Location()
+	if !ok {
+		return nil
+	}
+	return &pb.SharedLocation{Latitude: latitude, Longitude: longitude}
 }
 
 // storeOffered keeps a private snapshot. The session replaces its offered
