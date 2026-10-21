@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { locatePeers, peerLocationsKey } from '../src/renderer/src/lib/globe-markers.ts'
+import { locatePeers, peerLocationsKey, sharedPlaces } from '../src/renderer/src/lib/globe-markers.ts'
 
 const centroids = new Map([
   ['US', { lat: 37.0902, lng: -95.7129 }],
@@ -36,4 +36,31 @@ test('peers without a known country do not create globe markers', () => {
 
   assert.deepEqual(locations, [])
   assert.equal(peerLocationsKey(locations), '[]')
+})
+
+test('a member that shares a place is placed there, not in the middle of its country', () => {
+  const shared = sharedPlaces([
+    { peerId: 'peer-a', sharedLocation: { latitude: 37.3, longitude: -79.9 } },
+    { peerId: 'peer-b' },
+    { peerId: 'peer-c', sharedLocation: { latitude: 48.9, longitude: 2.4 } },
+  ])
+  const locations = locatePeers([{ peerId: 'peer-a', countryCode: 'US' }, { peerId: 'peer-b', countryCode: 'IL' }], centroids, shared)
+  assert.deepEqual(locations, [
+    { peerId: 'peer-a', countryCode: 'US', lat: 37.3, lng: -79.9, shared: true },
+    { peerId: 'peer-b', countryCode: 'IL', lat: 31.0461, lng: 34.8516 },
+    // Known only as a worker, by the place its owner shares.
+    { peerId: 'peer-c', countryCode: undefined, lat: 48.9, lng: 2.4, shared: true },
+  ])
+  // Moving the shared place moves the marker.
+  const moved = locatePeers([{ peerId: 'peer-a', countryCode: 'US' }], centroids, sharedPlaces([{ peerId: 'peer-a', sharedLocation: { latitude: 37.4, longitude: -79.9 } }]))
+  assert.notEqual(peerLocationsKey(moved), peerLocationsKey(locatePeers([{ peerId: 'peer-a', countryCode: 'US' }], centroids, shared)))
+})
+
+test('shared places are read from either client, and nonsense is left out', () => {
+  // Proto3 leaves out zeros: a place on the equator at Greenwich is still a place.
+  assert.deepEqual([...sharedPlaces([{ peerId: 'p', sharedLocation: {} }])], [['p', { lat: 0, lng: 0 }]])
+  assert.deepEqual([...sharedPlaces([{ peerId: 'p', sharedLocation: { latitude: '51.5', longitude: '-0.1' } }])], [['p', { lat: 51.5, lng: -0.1 }]])
+  for (const workers of [undefined, null, {}, [null], [{ sharedLocation: { latitude: 1, longitude: 1 } }], [{ peerId: 'p', sharedLocation: { latitude: 91, longitude: 0 } }], [{ peerId: 'p', sharedLocation: { latitude: 'x', longitude: 0 } }]]) {
+    assert.equal(sharedPlaces(workers).size, 0, JSON.stringify(workers))
+  }
 })
