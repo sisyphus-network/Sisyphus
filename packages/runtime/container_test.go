@@ -564,6 +564,20 @@ func TestARealContainerRuns(t *testing.T) {
 		t.Errorf("task directories left behind: %v", left)
 	}
 
+	// Named inputs are beside the input, and can no more be written to.
+	second, _ := store.Put(ctx, strings.NewReader("hill\n"))
+	named, err := c.Split(ctx, store, []byte(`{"image":"alpine:3.20","input":"`+input.String()+`","inputs":{"where.txt":"`+second.String()+`"},"command":["sh","-c","ls /input; cat /input/data /input/where.txt; echo no > /input/where.txt 2>/dev/null || echo read-only"]}`), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, err = c.Execute(ctx, store, named[0]); err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(raw, &out)
+	if got := readBlob(t, store, out.Stdout); got != "data\nwhere.txt\nstone\nhill\nread-only\n" {
+		t.Errorf("a task with a named input printed %q", got)
+	}
+
 	// Held in further at its owner's asking: run by the runtime named, with
 	// nowhere to write but /output and /tmp.
 	held := Container{Confined: Confinement{Runtime: "runc", ReadOnly: true}}
@@ -751,8 +765,144 @@ func TestTasksOfAJobOnOneMachineShareOneCopyOfItsInput(t *testing.T) {
 
 	// With nowhere to put it, the input is not had.
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-such-directory"))
-	if _, _, err := inputs.take(ctx, store, "", "job", input.String()); err == nil || len(inputs.held) != 0 {
+	if _, _, err := inputs.take(ctx, store, "", "job", map[string]string{"data": input.String()}); err == nil || len(inputs.held) != 0 {
 		t.Errorf("with no temporary directory: %v, holding %v", err, inputs.held)
+	}
+}
+
+// A job may give its tasks more files than its input, each by a name of its
+// own, and they are found beside the input in /input.
+func TestAContainerTaskIsGivenItsNamedInputs(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+	data, _ := store.Put(ctx, strings.NewReader("the input"))
+	topology, _ := store.Put(ctx, strings.NewReader("a topology"))
+	coordinates, _ := store.Put(ctx, strings.NewReader("coordinates"))
+	params := `{"image":"alpine:3.20","input":"` + data.String() + `","inputs":{"system.prmtop":"` + topology.String() + `","coords_1-a":"` + coordinates.String() + `"}}`
+
+	// Splitting reads each of them, so the coordinator keeps them all.
+	touched := Record(store)
+	payloads, err := (Container{}).Split(ctx, touched, []byte(params), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := touched.Read()
+	sort.Strings(read)
+	want := []string{data.String(), topology.String(), coordinates.String()}
+	sort.Strings(want)
+	if !slices.Equal(read, want) {
+		t.Errorf("splitting read %v, want %v", read, want)
+	}
+
+	var given map[string]string
+	var dir string
+	engine := &pretend{do: func(args []string, _, _ io.Writer) (int, error) {
+		dir = volume(args, "/input")
+		given = map[string]string{}
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			text, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+			given[e.Name()] = string(text)
+		}
+		return 0, nil
+	}}
+	c := Container{Engine: engine.engine}
+	if _, err := c.Execute(ctx, store, payloads[1]); err != nil {
+		t.Fatal(err)
+	}
+	if len(given) != 3 || given["data"] != "the input" || given["system.prmtop"] != "a topology" || given["coords_1-a"] != "coordinates" {
+		t.Errorf("the task was given %v", given)
+	}
+	// They are one read-only mount, as the input alone is.
+	if args := strings.Join(engine.asked[0], " "); strings.Count(args, "--volume") != 2 || !strings.Contains(args, dir+":/input:ro") {
+		t.Errorf("the engine was asked %q", args)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) || len(inputs.held) != 0 {
+		t.Errorf("the inputs were left behind: %v, holding %v", err, inputs.held)
+	}
+
+	// Named inputs need no unnamed one.
+	only, err := (Container{}).Split(ctx, store, []byte(`{"image":"alpine:3.20","inputs":{"one":"`+topology.String()+`"}}`), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Execute(ctx, store, only[0]); err != nil || len(given) != 1 || given["one"] != "a topology" {
+		t.Errorf("a task given only a named input: %v, %v", given, err)
+	}
+
+	// One the worker cannot fetch fails the task, and nothing of what it
+	// had fetched is left behind.
+	elsewhere := storage.NewMemory()
+	elsewhere.Put(ctx, strings.NewReader("the input"))
+	own := t.TempDir()
+	c.Confined.TaskDir = own
+	if _, err := c.Execute(ctx, elsewhere, payloads[0]); err == nil || !strings.Contains(err.Error(), "container input") || len(inputs.held) != 0 {
+		t.Errorf("a named input the worker cannot fetch: %v, holding %v", err, inputs.held)
+	}
+	if left, _ := os.ReadDir(own); len(left) != 0 {
+		t.Errorf("left behind after a failed fetch: %v", left)
+	}
+	if len(engine.asked) != 2 {
+		t.Errorf("the engine was asked to run %d tasks", len(engine.asked))
+	}
+}
+
+// The names of a job's inputs are its submitter's, and each is joined to a
+// directory of the worker's: none may lead out of it, or over the input,
+// whether the coordinator splits the job or a worker is handed a payload
+// made by hand.
+func TestAnInputNameThatCouldLeadOutOfInputIsRefused(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+	stored, _ := store.Put(ctx, strings.NewReader("anything"))
+	id := stored.String()
+	many := map[string]string{}
+	for i := range maxInputs + 1 {
+		many["in"+strconv.Itoa(i)] = id
+	}
+	bad := map[string]map[string]string{
+		"empty":               {"": id},
+		"the input's own":     {"data": id},
+		"this directory":      {".": id},
+		"the one above":       {"..": id},
+		"up and out":          {"../escaped": id},
+		"further up":          {"../../../../tmp/escaped": id},
+		"a slash":             {"a/b": id},
+		"absolute":            {"/etc/passwd": id},
+		"a backslash":         {`..\escaped`: id},
+		"upper case":          {"Topology": id},
+		"a space":             {"a b": id},
+		"a control character": {"a\nb": id},
+		"a null":              {"a\u0000b": id},
+		"not ASCII":           {"caf\u00e9": id},
+		"too long":            {strings.Repeat("a", 65): id},
+		"not a CID":           {"fine": "not-a-cid"},
+		"too many":            many,
+	}
+	engine := &pretend{do: func([]string, io.Writer, io.Writer) (int, error) { return 0, nil }}
+	c := Container{Engine: engine.engine, Confined: Confinement{TaskDir: t.TempDir()}}
+	for why, named := range bad {
+		params := mustJSON(map[string]any{"image": "alpine:3.20", "inputs": named})
+		if _, err := c.Split(ctx, store, params, 1); err == nil || !strings.Contains(err.Error(), "container parameters") {
+			t.Errorf("%s: split %v", why, err)
+		}
+		forged := mustJSON(map[string]any{"image": "alpine:3.20", "inputs": named, "job": "forged", "index": 0, "count": 1})
+		if _, err := c.Execute(ctx, store, forged); err == nil || !strings.Contains(err.Error(), "container payload") {
+			t.Errorf("%s: a worker handed it ran it: %v", why, err)
+		}
+	}
+	if len(engine.asked) != 0 {
+		t.Errorf("the engine was asked %v", engine.asked)
+	}
+	// Nothing was written anywhere but where the worker keeps its tasks'.
+	if _, err := os.Stat(filepath.Join(c.Confined.TaskDir, "..", "escaped")); !os.IsNotExist(err) {
+		t.Errorf("an input was written out of the task directory: %v", err)
+	}
+	// The longest name, and every character a name may have, are taken.
+	for _, name := range []string{strings.Repeat("z", 64), "abc-xyz_0.9", "..a", "-"} {
+		if err := checkInputs(map[string]string{name: id}); err != nil {
+			t.Errorf("%q: %v", name, err)
+		}
 	}
 }
 

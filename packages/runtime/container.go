@@ -153,6 +153,12 @@ type ContainerParams struct {
 	// Input, if set, is the CID of a stored file every task is given, at
 	// /input/data.
 	Input string `json:"input,omitempty"`
+	// Inputs, if set, are more stored files every task is given, by name:
+	// each at /input/<name>, beside Input's /input/data. A name is made
+	// only of lower-case letters, digits, dots, dashes and underscores,
+	// and is neither "data", ".", nor "..": it is a file's name in /input
+	// and nothing else.
+	Inputs map[string]string `json:"inputs,omitempty"`
 	// Env is extra environment for the command.
 	Env map[string]string `json:"env,omitempty"`
 	// MemoryMB and CPUs, if not zero, are the most each task may use.
@@ -230,7 +236,7 @@ func (Container) Varies() bool { return true }
 func (Container) Name() string { return "container" }
 
 func (Container) Describe() string {
-	return `Runs a container image, once for each task, with no network unless asked. Parameters: {"image": "<image>", "command": ["<program>", "<argument>", ...], "tasks": <how many copies, at most 10000>, "input": "<optional CID of a stored file, given to each task at /input/data>", "network": <true to allow network access, which only workers whose owner allows it give>, "gpus": <how many graphics cards each task needs, if any>}. Each task has SISYPHUS_TASK_INDEX (from 0) and SISYPHUS_TASK_COUNT in its environment. Result: {"tasks": [{"index": <n>, "stdout": "<CID of what it printed>", "files": {"<name>": "<CID of a file it wrote to /output>"}}]}.`
+	return `Runs a container image, once for each task, with no network unless asked. Parameters: {"image": "<image>", "command": ["<program>", "<argument>", ...], "tasks": <how many copies, at most 10000>, "input": "<optional CID of a stored file, given to each task at /input/data>", "inputs": {"<name>": "<CID of a stored file, given to each task at /input/<name>>"}, "network": <true to allow network access, which only workers whose owner allows it give>, "gpus": <how many graphics cards each task needs, if any>}. Each task has SISYPHUS_TASK_INDEX (from 0) and SISYPHUS_TASK_COUNT in its environment. Result: {"tasks": [{"index": <n>, "stdout": "<CID of what it printed>", "files": {"<name>": "<CID of a file it wrote to /output>"}}]}.`
 }
 
 func (Container) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
@@ -246,8 +252,11 @@ func (Container) Split(ctx context.Context, blobs Blobs, params []byte, parts in
 	if p.Tasks > MaxTasks {
 		return nil, fmt.Errorf("container parameters: tasks is %d; a job can have at most %d", p.Tasks, MaxTasks)
 	}
-	if p.Input != "" {
-		input, err := cid.Decode(p.Input)
+	if err := checkInputs(p.Inputs); err != nil {
+		return nil, fmt.Errorf("container parameters: %w", err)
+	}
+	for _, id := range taskFiles(p) {
+		input, err := cid.Decode(id)
 		if err != nil {
 			return nil, fmt.Errorf("container parameters: input is not a CID: %w", err)
 		}
@@ -289,6 +298,52 @@ func checkImage(image string) error {
 	return nil
 }
 
+// maxInputs is how many named inputs a job may give its tasks.
+const maxInputs = 16
+
+// checkInputs refuses named inputs whose names could be anything but a
+// file's name in /input, or are not CIDs. The names come from whoever
+// submitted the job, and each is joined to a directory of the worker's to
+// write the input to: a slash, or a name that is only dots, would have it
+// written somewhere else. "data" is Input's.
+func checkInputs(named map[string]string) error {
+	if len(named) > maxInputs {
+		return fmt.Errorf("%d inputs are named; a job can name at most %d", len(named), maxInputs)
+	}
+	for name, id := range named {
+		if !inputName(name) {
+			return fmt.Errorf("%q cannot name an input: a name is 1 to 64 lower-case letters, digits, dots, dashes and underscores, and not data, . or ..", name)
+		}
+		if _, err := cid.Decode(id); err != nil {
+			return fmt.Errorf("input %s is not a CID: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// inputName reports whether name may name an input.
+func inputName(name string) bool {
+	if name == "" || len(name) > 64 || name == "data" || name == "." || name == ".." {
+		return false
+	}
+	return !strings.ContainsFunc(name, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_')
+	})
+}
+
+// taskFiles are the files a task is given in /input, by name, as the CIDs
+// of what they hold.
+func taskFiles(p ContainerParams) map[string]string {
+	files := make(map[string]string, len(p.Inputs)+1)
+	for name, id := range p.Inputs {
+		files[name] = id
+	}
+	if p.Input != "" {
+		files["data"] = p.Input
+	}
+	return files
+}
+
 // maxStdout is how much of what a task prints is kept.
 const maxStdout = 16 << 20
 
@@ -300,6 +355,11 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	// The worker checks for itself: what it is handed came over the
 	// network, and the image is put among the engine's own arguments.
 	if err := checkImage(task.Image); err != nil {
+		return nil, fmt.Errorf("container payload: %w", err)
+	}
+	// It checks the names of its inputs too, each of which is joined to a
+	// directory of its own.
+	if err := checkInputs(task.Inputs); err != nil {
 		return nil, fmt.Errorf("container payload: %w", err)
 	}
 	// A coordinator gives a job that asks for the network only to workers
@@ -321,8 +381,8 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	if err := c.prepareTaskDirs(input, output); err != nil {
 		return nil, err
 	}
-	if task.Input != "" {
-		shared, release, err := inputs.take(ctx, blobs, c.Confined.TaskDir, task.Job, task.Input)
+	if files := taskFiles(task.ContainerParams); len(files) > 0 {
+		shared, release, err := inputs.take(ctx, blobs, c.Confined.TaskDir, task.Job, files)
 		if err != nil {
 			return nil, err
 		}
@@ -562,10 +622,15 @@ type sharedInput struct {
 	dir      string
 }
 
-// take returns a directory holding the input with the given CID as the
-// file "data", and what to call when the task is done with it.
-func (s *sharedInputs) take(ctx context.Context, blobs Blobs, base, job, id string) (dir string, release func(), err error) {
-	key := job + "/" + id
+// take returns a directory holding the files given, each under its name
+// with what the CID it is given holds, and what to call when the task is
+// done with it. The names are checked before: none has a slash in it or
+// is only dots.
+func (s *sharedInputs) take(ctx context.Context, blobs Blobs, base, job string, files map[string]string) (dir string, release func(), err error) {
+	key := job
+	for _, name := range sortedKeys(files) {
+		key += "/" + name + "=" + files[name]
+	}
 	s.mu.Lock()
 	in := s.held[key]
 	if in == nil {
@@ -590,8 +655,11 @@ func (s *sharedInputs) take(ctx context.Context, blobs Blobs, base, job, id stri
 	if in.dir == "" {
 		made, err := os.MkdirTemp(base, "sisyphus-input-")
 		if err == nil {
-			if err = fetchTo(ctx, blobs, id, filepath.Join(made, "data")); err != nil {
-				os.RemoveAll(made)
+			for _, name := range sortedKeys(files) {
+				if err = fetchTo(ctx, blobs, files[name], filepath.Join(made, name)); err != nil {
+					os.RemoveAll(made)
+					break
+				}
 			}
 		}
 		if err != nil {

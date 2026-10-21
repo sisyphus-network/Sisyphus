@@ -47,8 +47,29 @@ func TestAnMDJobIsAContainerJobWithTheImageAndScriptFixed(t *testing.T) {
 		t.Errorf("settings as asked: %s %v", task.Input, task.Env)
 	}
 
+	// An Amber system is given as its two files, by name, and no PDB file.
+	topology, _ := store.Put(ctx, strings.NewReader("%VERSION ..."))
+	coordinates, _ := store.Put(ctx, strings.NewReader("ACE\n    22"))
+	amber := `"prmtop":"` + topology.String() + `","inpcrd":"` + coordinates.String() + `"`
+	payloads, err = MD{}.Split(ctx, store, []byte(`{`+amber+`,"replicas":2}`), 8)
+	if err != nil || len(payloads) != 2 {
+		t.Fatalf("split an Amber system: %d payloads, %v", len(payloads), err)
+	}
+	task = containerTask{}
+	json.Unmarshal(payloads[1], &task)
+	if task.Input != "" || len(task.Inputs) != 2 || task.Inputs["prmtop"] != topology.String() || task.Inputs["inpcrd"] != coordinates.String() || task.Image != MDImage {
+		t.Errorf("an Amber system's task: %+v", task)
+	}
+
 	for params, want := range map[string]string{
-		`not json`:                "md parameters",
+		`not json`: "md parameters",
+		`{"input":"` + molecule.String() + `",` + amber + `}`:                           "in place of input, not with it",
+		`{"input":"` + molecule.String() + `","prmtop":"` + topology.String() + `"}`:    "in place of input, not with it",
+		`{"inpcrd":"` + coordinates.String() + `","input":"` + molecule.String() + `"}`: "in place of input, not with it",
+		`{"prmtop":"` + topology.String() + `"}`:                                        "needs both its prmtop and its inpcrd",
+		`{"inpcrd":"` + coordinates.String() + `"}`:                                     "needs both its prmtop and its inpcrd",
+		`{"prmtop":"somewhere","inpcrd":"` + coordinates.String() + `"}`:                "prmtop is not the CID of a stored file",
+		`{"prmtop":"` + topology.String() + `","inpcrd":"elsewhere"}`:                   "inpcrd is not the CID of a stored file",
 		`{"input":"somewhere"}`:   "input is not the CID of a stored PDB file",
 		`{"picoseconds":-1}`:      "picoseconds is -1, and must be more than 0 and at most 1e+06",
 		`{"picoseconds":1000001}`: "picoseconds is 1.000001e+06",
@@ -267,6 +288,80 @@ func TestRealReplicasAreSimulated(t *testing.T) {
 	}
 	if log := strings.Join(said.lines, "\n"); !strings.Contains(log, "replica 0: the job asked for a graphics card, and OpenMM found no CUDA platform") || strings.Contains(log, "steps on CPU") {
 		t.Errorf("the log of a replica that finds no graphics card:\n%s", log)
+	}
+}
+
+// Two short replicas of an Amber system, alanine dipeptide in a vacuum,
+// simulated as its topology says. The files are OpenMM's own test system,
+// copied from OpenMM 8.2.0's wrappers/python/tests/systems under its MIT
+// License, which is beside them in testdata/openmm.
+func TestRealReplicasOfAnAmberSystemAreSimulated(t *testing.T) {
+	requireDocker(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	if err := haveImage(ctx, docker, MDImage, mdDockerfile, "molecular dynamics"); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.NewMemory()
+	stored := map[string]string{}
+	for _, name := range []string{"prmtop", "inpcrd"} {
+		file, err := os.Open(filepath.Join("testdata", "openmm", "alanine-dipeptide-implicit."+name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := store.Put(ctx, file)
+		file.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored[name] = c.String()
+	}
+	w := MD{Confined: Confinement{ReadOnly: true}}
+	payloads, err := w.Split(ctx, store, mustJSON(map[string]any{"prmtop": stored["prmtop"], "inpcrd": stored["inpcrd"], "picoseconds": 0.1, "frames": 5, "replicas": 2, "seed": 3}), 8)
+	if err != nil || len(payloads) != 2 {
+		t.Fatalf("split: %d payloads, %v", len(payloads), err)
+	}
+	outputs := make([][]byte, len(payloads))
+	said := new(heard)
+	for i, payload := range payloads {
+		if outputs[i], err = w.Execute(WithReporter(ctx, said), store, payload); err != nil {
+			t.Fatalf("replica %d: %v\n%s", i, err, strings.Join(said.lines, "\n"))
+		}
+	}
+	// 22 atoms, as the topology has them: nothing was added to them.
+	if log := strings.Join(said.lines, "\n"); !strings.Contains(log, "replica 1: 22 atoms, 50 steps on CPU") || !strings.Contains(log, "replica 0: done") {
+		t.Errorf("the replicas' log:\n%s", log)
+	}
+	raw, err := w.Aggregate(ctx, store, outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result MDResult
+	json.Unmarshal(raw, &result)
+	if result.Replicas != 2 || result.Atoms != 22 || math.Abs(result.Picoseconds-0.1) > 1e-9 || math.Abs(result.Nanoseconds-0.0002) > 1e-12 {
+		t.Errorf("the summary: %+v", result)
+	}
+	for _, r := range result.ReplicaResults {
+		if r.Seed != 3+r.Index || r.Platform != "CPU" || r.NsPerDay <= 0 || math.IsNaN(r.PotentialEnergy) {
+			t.Errorf("replica %d: %+v", r.Index, r)
+		}
+		// The last frame has the topology's residues and its 22 atoms.
+		final := readBlob(t, store, r.Final)
+		atoms := 0
+		for _, line := range strings.Split(final, "\n") {
+			if strings.HasPrefix(line, "ATOM") || strings.HasPrefix(line, "HETATM") {
+				atoms++
+			}
+		}
+		if atoms != 22 || !strings.Contains(final, "ALA") || !strings.Contains(final, "ACE") || !strings.Contains(final, "NME") {
+			t.Errorf("replica %d's last frame has %d atoms: %.200q", r.Index, atoms, final)
+		}
+		if lines := strings.Split(strings.TrimSpace(readBlob(t, store, r.Energies)), "\n"); len(lines) != 6 || !strings.Contains(lines[0], "Potential Energy") {
+			t.Errorf("replica %d's energies: %q", r.Index, lines)
+		}
+		if trajectory := readBlob(t, store, r.Trajectory); len(trajectory) < 5*22*12 {
+			t.Errorf("replica %d's trajectory is %d bytes, too few for five frames", r.Index, len(trajectory))
+		}
 	}
 }
 
