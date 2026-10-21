@@ -15,7 +15,8 @@ import { AgentChat } from '@/components/assistant/agent-chat'
 import { visiblePanelWidth, stepPanelWidth } from '@/lib/panel-width'
 import { locatePeers, peerLocationsKey } from '@/lib/globe-markers'
 import { webglAvailable } from '@/lib/webgl'
-import { isDesktopApp } from '@/lib/node-api'
+import { getNodeApi, isDesktopApp } from '@/lib/node-api'
+import { locationFromProtocol } from '@/lib/node-location'
 import { useWebgl } from '@/hooks/use-webgl'
 
 type Messages = ReturnType<typeof getMessages>
@@ -55,7 +56,7 @@ const countryCentroids = new Map<string, { lat: number; lng: number }>(
   ]),
 )
 
-const NetworkGlobe = memo(function NetworkGlobe({ countryCode, peers, nodeLabel, countryLabel, reduceMotion, active }: { countryCode?: string; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean }) {
+const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, peers, nodeLabel, countryLabel, reduceMotion, active }: { countryCode?: string; pin?: { lat: number; lng: number }; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -173,7 +174,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, peers, nodeLabel,
     return () => window.cancelAnimationFrame(frame)
   }, [active, applyHologramStyle, fitCameraToViewport])
 
-  const location = countryCode ? countryCentroids.get(countryCode.toUpperCase()) : undefined
+  // The owner's pin, if there is one, places this node better than its country can.
+  const centroid = countryCode ? countryCentroids.get(countryCode.toUpperCase()) : undefined
+  const location = useMemo(() => pin ? { lat: pin.lat, lng: pin.lng } : centroid, [pin?.lat, pin?.lng, centroid])
   const peerLocations = locatePeers(peers, countryCentroids)
   const locationsKey = peerLocationsKey(peerLocations)
   const stablePeerLocations = useMemo(() => peerLocations, [locationsKey])
@@ -493,14 +496,15 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
       <div className="workspace-chat-content mx-auto flex min-h-0 w-full flex-1 flex-col"><div className="workspace-chat-surface flex min-h-0 flex-1 flex-col overflow-hidden"><AgentChat snapshot={snapshot} messages={messages} direction={direction} historyOpen={historyOpen} setHistoryOpen={setHistoryOpen} historyPanelHost={historyPanelHost} onOpenSettings={() => navigate('/settings')} activeChatId={activeChatId} onActiveChatChange={setActiveChatId} /></div></div>
     </section>
   const countryCode = snapshot.info?.countryCode?.toUpperCase()
+  const pin = useOwnPin(snapshot)
   const countrySource = snapshot.info?.countrySource
   const countryPosition = countryCode ? countryCentroids.get(countryCode) : undefined
   const countryLabel = countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry
   const networkPane = <section className="workspace-network workspace-glass liquid-glass-menu relative flex h-full min-h-0 items-center justify-center overflow-hidden rounded-[22px]">
-          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={visible && topologyOpen && (!compact || mobileView === 'network')} />}</div>
+          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={visible && topologyOpen && (!compact || mobileView === 'network')} />}</div>
           <div className="absolute inset-x-5 top-5 z-[2] flex items-center justify-between gap-3 text-[10px]">
             <div className="rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-muted-foreground shadow-sm backdrop-blur"><span className="font-mono text-foreground">{connectedPeers.length}</span> {messages.connectedPeers.toLowerCase()}</div>
-            <div className="max-w-[62%] rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-end text-muted-foreground shadow-sm backdrop-blur"><span className="me-1.5 inline-block size-1.5 rounded-full bg-[var(--app-accent)] align-middle" />{messages.thisNode}{countryFlag(countryCode) ? ` · ${countryFlag(countryCode)}` : ''}{countryPosition ? <span className="ms-1.5">{countryCode}</span> : null}{!countryCode && isDesktopApp() ? <Link to="/settings/node" className="ms-1.5 text-[var(--app-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--app-accent)]">· {messages.unplacedLink}</Link> : null}</div>
+            <div className="max-w-[62%] rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-end text-muted-foreground shadow-sm backdrop-blur"><span className="me-1.5 inline-block size-1.5 rounded-full bg-[var(--app-accent)] align-middle" />{messages.thisNode}{countryFlag(countryCode) ? ` · ${countryFlag(countryCode)}` : ''}{countryPosition ? <span className="ms-1.5">{countryCode}</span> : null}{!countryCode && !pin && isDesktopApp() ? <Link to="/settings/node" className="ms-1.5 text-[var(--app-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--app-accent)]">· {messages.unplacedLink}</Link> : null}</div>
           </div>
     </section>
   return <div className={`workspace-shell ${compact ? 'workspace-shell--compact' : ''}`}>
@@ -525,4 +529,21 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     </div>
     }
   </div>
+}
+
+// useOwnPin returns where the owner put this node, read again whenever the
+// node's state changes, or nothing if there is no pin or the node keeps none.
+function useOwnPin(snapshot: NodeSnapshot): { lat: number; lng: number } | undefined {
+  const [pin, setPin] = useState<{ lat: number; lng: number }>()
+  const connected = snapshot.status === 'connected'
+  useEffect(() => {
+    if (!connected) return
+    let active = true
+    void getNodeApi().call<{ location?: unknown }>('getNodeLocation').then((result) => {
+      const location = result.location ? locationFromProtocol(result.location) : null
+      if (active) setPin(location ? { lat: location.latitude, lng: location.longitude } : undefined)
+    }).catch(() => { if (active) setPin(undefined) })
+    return () => { active = false }
+  }, [connected, snapshot.revision, snapshot.lastUpdated])
+  return pin
 }
