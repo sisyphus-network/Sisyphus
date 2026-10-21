@@ -53,3 +53,41 @@ func TestPickWorkerSpreadsModelTasksBeforePreferringGPU(t *testing.T) {
 		t.Fatalf("picked %q, want the worker reporting the model loaded", got.id)
 	}
 }
+
+// A worker gives tasks that hold graphics cards no more than it has cards
+// free, whatever its slots, and counts its cards as such tasks hold them.
+func TestTasksOnGraphicsCardsAreHeldToTheCards(t *testing.T) {
+	onOne, onTwo, onNone := &jobmodel.Job{MinGPUs: 1}, &jobmodel.Job{MinGPUs: 2}, &jobmodel.Job{}
+	w := &worker{
+		id:           "rig",
+		capabilities: &pb.NodeCapabilities{TaskSlots: 6, Workloads: []string{"md"}, Gpus: make([]*pb.Gpu, 3)},
+		running:      map[string]assignment{"a": {job: onOne}, "b": {job: onNone}},
+	}
+	for gpus, want := range map[int]int{0: 4, 1: 2, 2: 1, 3: 0} {
+		if got := w.freeFor(gpus); got != want {
+			t.Errorf("with one card held, room for %d tasks of %d cards, want %d", got, gpus, want)
+		}
+	}
+	w.running["c"] = assignment{job: onTwo}
+	if got, cpu := w.freeFor(1), w.freeFor(0); got != 0 || cpu != 3 {
+		t.Errorf("with every card held, room for %d tasks on cards and %d on the processor, want 0 and 3", got, cpu)
+	}
+
+	idle := &worker{id: "idle", capabilities: &pb.NodeCapabilities{TaskSlots: 6, Workloads: []string{"md"}, Gpus: make([]*pb.Gpu, 3)}}
+	c := &Coordinator{workers: map[string]*worker{"rig": w, "idle": idle}}
+	for gpus, want := range map[int]int{0: 12, 1: 6, 2: 2} {
+		if got := c.slotsLocked("md", 0, gpus, nil); got != want {
+			t.Errorf("%d tasks of %d cards can run at once, want %d", got, gpus, want)
+		}
+	}
+	if got, _ := c.pickWorkerLocked(&jobmodel.Job{Workload: "md", MinGPUs: 1}, &jobmodel.Task{}); got != idle {
+		t.Errorf("a task on a card went to %v, want the worker with cards free", got)
+	}
+	idle.running = map[string]assignment{"d": {job: onTwo}, "e": {job: onOne}}
+	if got, _ := c.pickWorkerLocked(&jobmodel.Job{Workload: "md", MinGPUs: 1}, &jobmodel.Task{}); got != nil {
+		t.Errorf("a task on a card went to %s, with every card held", got.id)
+	}
+	if got, _ := c.pickWorkerLocked(&jobmodel.Job{Workload: "md"}, &jobmodel.Task{}); got == nil {
+		t.Error("a task on the processor waits, with slots free")
+	}
+}

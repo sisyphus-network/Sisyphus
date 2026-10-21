@@ -108,7 +108,7 @@ To submit one of the built-in workloads:
 | `primes` | `{"from":0,"to":2000000}` | `{"count":148933}` |
 | `wordcount` | `{"input":"<CID of a stored file>"}` | Counts, and the CID of the full table in `output_blobs`. |
 | `transcode` | `{"input":"<CID of a stored video>","height":720}` | `{"output":"<CID of the encoded video>","segments":8,"bytes":5181092}`, the CID also in `output_blobs`. Needs a worker started with `--containers`. |
-| `md` | `{"picoseconds":10,"replicas":8}`, or with `"input":"<CID of a stored PDB file>"` | `{"replicas":8,"atoms":8867,"total_nanoseconds":0.08,"mean_potential_energy_kj_mol":-115390.2,"runs":[…]}`, each run with the CIDs of its last frame, energies and trajectory. Needs a worker started with `--containers`. |
+| `md` | `{"picoseconds":10,"replicas":8}`, or with `"input":"<CID of a stored PDB file>"`, and `"gpu":true` to run on graphics cards | `{"replicas":8,"atoms":8867,"total_nanoseconds":0.08,"mean_potential_energy_kj_mol":-115390.2,"runs":[…]}`, each run with the CIDs of its last frame, energies and trajectory. Needs a worker started with `--containers`, and with `gpu` one that has an NVIDIA card Docker can use. |
 | `render` | `{"input":"<CID of a stored .blend file>","split":"frames"}`, or `"split":"tiles"` for one frame in strips | `{"split":"frames","frames":240,"images":[…],"archive":"<CID of a zip>","width":1920,"height":1080,"engine":"CYCLES","seconds":5130.2}`; by tiles, `"image"` is the CID of the whole frame. Needs a worker started with `--containers`. |
 | `container` | `{"image":"alpine:3.20","command":["echo","hi"]}` | For each task, the CID of what it printed and of each file it wrote. Needs a worker started with `--containers`; without one the job waits. |
 

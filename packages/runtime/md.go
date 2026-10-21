@@ -47,6 +47,11 @@ type MDParams struct {
 	Frames int `json:"frames,omitempty"`
 	// Replicas is how many simulations to run. Zero leaves it to the pool.
 	Replicas int `json:"replicas,omitempty"`
+	// GPU runs each replica on a graphics card, with OpenMM's CUDA
+	// platform, in an image that has it. Only workers with a card are
+	// given such a job, and a replica that finds no card fails rather
+	// than run on the processor.
+	GPU bool `json:"gpu,omitempty"`
 }
 
 // MDReplica is what one replica came to.
@@ -80,11 +85,24 @@ type MDResult struct {
 // mdDockerfile is the whole of the image molecular dynamics runs in.
 const mdDockerfile = "FROM python:3.12-slim\nRUN pip install --no-cache-dir openmm==8.2.0\n"
 
-// MDImage names that image, by what it is made from, as TranscodeImage does.
-var MDImage = func() string {
-	sum := sha256.Sum256([]byte(mdDockerfile + mdScript))
+// mdCUDADockerfile is the image molecular dynamics runs in on a graphics
+// card: the same, with OpenMM's CUDA platform. The platform is a package of
+// its own, which the extra pulls in; it is pinned too, since the extra
+// leaves its version open and a platform of another version than OpenMM's
+// does not load.
+const mdCUDADockerfile = "FROM python:3.12-slim\nRUN pip install --no-cache-dir openmm[cuda12]==8.2.0 OpenMM-CUDA-12==8.2.0\n"
+
+// MDImage and MDCUDAImage name those images, by what they are made from,
+// as TranscodeImage does.
+var (
+	MDImage     = mdImage(mdDockerfile)
+	MDCUDAImage = mdImage(mdCUDADockerfile)
+)
+
+func mdImage(dockerfile string) string {
+	sum := sha256.Sum256([]byte(dockerfile + mdScript))
 	return "sisyphus-md:" + hex.EncodeToString(sum[:6])
-}()
+}
 
 // mdScript is what each task runs: it prepares the molecule, settles it,
 // and simulates it with the Amber force field and TIP3P water, two
@@ -108,6 +126,8 @@ system = forcefield.createSystem(model.topology, nonbondedMethod=app.PME, nonbon
 integrator = LangevinMiddleIntegrator(temperature, 1 / unit.picosecond, 0.002 * unit.picoseconds)
 integrator.setRandomNumberSeed(seed)
 names = [Platform.getPlatform(i).getName() for i in range(Platform.getNumPlatforms())]
+if env.get("NEED_CUDA") and "CUDA" not in names:
+    raise SystemExit("replica %d: the job asked for a graphics card, and OpenMM found no CUDA platform: %s" % (index, "; ".join(Platform.getPluginLoadFailures()) or "no plugin for it"))
 platform = Platform.getPlatformByName("CUDA" if "CUDA" in names else "CPU")
 simulation = app.Simulation(model.topology, system, integrator, platform)
 simulation.context.setPositions(model.positions)
@@ -137,7 +157,7 @@ const mdLimit = 1e6
 func (MD) Name() string { return "md" }
 
 func (MD) Describe() string {
-	return `Simulates a molecule with OpenMM molecular dynamics, as replicas from different random starts run on different workers, and sums them up. Parameters: {"input": "<optional CID of a stored PDB file; without it, the villin headpiece in water>", "picoseconds": <how long each replica is simulated, default 10>, "temperature": <kelvin, default 300>, "seed": <optional first random seed>, "frames": <snapshots kept of each replica, default 50>, "replicas": <optional number of replicas>}. Result: {"replicas": <n>, "atoms": <n>, "picoseconds_each": <ps>, "total_nanoseconds": <ns>, "mean_potential_energy_kj_mol": <e>, "potential_energy_stdev_kj_mol": <e>, "runs": [{"index", "seed", "platform", "ns_per_day", "potential_energy_kj_mol", "final": "<CID of the last frame, PDB>", "energies": "<CID, CSV>", "trajectory": "<CID, DCD>"}]}.`
+	return `Simulates a molecule with OpenMM molecular dynamics, as replicas from different random starts run on different workers, and sums them up. Parameters: {"input": "<optional CID of a stored PDB file; without it, the villin headpiece in water>", "picoseconds": <how long each replica is simulated, default 10>, "temperature": <kelvin, default 300>, "seed": <optional first random seed>, "frames": <snapshots kept of each replica, default 50>, "replicas": <optional number of replicas>, "gpu": <true to run each replica on a graphics card, on workers that have one>}. Result: {"replicas": <n>, "atoms": <n>, "picoseconds_each": <ps>, "total_nanoseconds": <ns>, "mean_potential_energy_kj_mol": <e>, "potential_energy_stdev_kj_mol": <e>, "runs": [{"index", "seed", "platform", "ns_per_day", "potential_energy_kj_mol", "final": "<CID of the last frame, PDB>", "energies": "<CID, CSV>", "trajectory": "<CID, DCD>"}]}.`
 }
 
 func (MD) Form() []Field {
@@ -148,6 +168,7 @@ func (MD) Form() []Field {
 		{Name: "replicas", Kind: KindInteger, Label: "Replicas", Help: "How many simulations to run side by side, or 0 to leave it to the pool.", Default: 0, Minimum: bound(0), Maximum: bound(MaxTasks)},
 		{Name: "frames", Kind: KindInteger, Label: "Frames", Help: "How many snapshots of each replica to keep.", Default: 50, Minimum: bound(1), Maximum: bound(100000)},
 		{Name: "seed", Kind: KindInteger, Label: "Seed", Help: "The first replica's random seed; the others follow from it.", Default: 1, Minimum: bound(1), Maximum: bound(math.MaxInt32 / 2)},
+		{Name: "gpu", Kind: KindToggle, Label: "Use a graphics card", Help: "Run each replica on a worker's graphics card, one at a time on each card, many times faster than on its processor.", Default: false},
 	}
 }
 
@@ -185,7 +206,7 @@ func (MD) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][
 	case p.Replicas < 0:
 		return nil, fmt.Errorf("md parameters: replicas is %d, and must be at least 1, or 0 to leave it to the pool", p.Replicas)
 	}
-	return Container{}.Split(ctx, blobs, mustJSON(ContainerParams{
+	c := ContainerParams{
 		Image: MDImage, Command: []string{"python", "-c", mdScript},
 		Input: p.Input, Tasks: p.Replicas,
 		Env: map[string]string{
@@ -193,7 +214,21 @@ func (MD) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][
 			"TEMPERATURE": strconv.FormatFloat(p.Temperature, 'g', -1, 64),
 			"SEED":        strconv.Itoa(p.Seed), "FRAMES": strconv.Itoa(p.Frames),
 		},
-	}), parts)
+	}
+	if p.GPU {
+		c.Image, c.GPUs, c.Env["NEED_CUDA"] = MDCUDAImage, 1, "1"
+	}
+	return Container{}.Split(ctx, blobs, mustJSON(c), parts)
+}
+
+// GPUsNeeded is one graphics card for each replica of a job that asks to
+// run on one.
+func (MD) GPUsNeeded(params []byte) int {
+	var p MDParams
+	if json.Unmarshal(params, &p) != nil || !p.GPU {
+		return 0
+	}
+	return 1
 }
 
 func (m MD) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
@@ -201,7 +236,15 @@ func (m MD) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, e
 	if engine == nil {
 		engine = docker
 	}
-	if err := haveImage(ctx, engine, MDImage, mdDockerfile, "molecular dynamics"); err != nil {
+	// The task says which image it runs in. One that cannot be read is
+	// Container's to refuse, after the image is had.
+	var task containerTask
+	json.Unmarshal(payload, &task)
+	tag, dockerfile, what := MDImage, mdDockerfile, "molecular dynamics"
+	if task.GPUs > 0 {
+		tag, dockerfile, what = MDCUDAImage, mdCUDADockerfile, "molecular dynamics on a graphics card"
+	}
+	if err := haveImage(ctx, engine, tag, dockerfile, what); err != nil {
 		return nil, err
 	}
 	return Container{Engine: engine, Confined: m.Confined}.Execute(ctx, blobs, payload)

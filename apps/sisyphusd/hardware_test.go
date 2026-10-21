@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -119,5 +120,91 @@ func TestANodeSaysWhatItHasAndTheOwnerCanOfferLess(t *testing.T) {
 	viaAPI, err := client.SubmitJob(ctx, &nodepb.SubmitJobRequest{Workload: "primes", Params: []byte(`{"from":0,"to":100}`), MinMemoryBytes: 8 << 30, MinGpus: 2})
 	if err != nil || viaAPI.GetJob().GetMinMemoryBytes() != 8<<30 || viaAPI.GetJob().GetMinGpus() != 2 {
 		t.Errorf("SubmitJob = %v, %v", viaAPI, err)
+	}
+}
+
+// carded is a gated workload whose tasks each hold as many graphics cards
+// as its parameters say.
+type carded struct{ gated }
+
+func (carded) Name() string { return "carded" }
+
+func (carded) GPUsNeeded(params []byte) int {
+	var p struct {
+		GPUs int `json:"gpus"`
+	}
+	json.Unmarshal(params, &p)
+	return p.GPUs
+}
+
+func TestAGraphicsCardRunsOneTaskAtATimeAndTheOtherSlotsTakeTheRest(t *testing.T) {
+	cards := carded{gated{started: make(chan struct{}, 16), release: make(chan struct{})}}
+	cpu := gated{started: make(chan struct{}, 16), release: make(chan struct{})}
+	p := startPool(t, runtime.NewRegistry(cards, cpu))
+	p.startMachine("laptop", 4, hardware.Info{MemoryBytes: 16 << 30, GPUs: []hardware.GPU{{Name: "RTX 4050", MemoryBytes: 6 << 30}}})
+	p.startMachine("r620", 4, hardware.Info{MemoryBytes: 64 << 30})
+	p.waitForWorkers(2)
+	quiet := func(started chan struct{}, what string) {
+		t.Helper()
+		select {
+		case <-started:
+			t.Fatalf("%s started", what)
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+
+	// The job asks for no card itself; its workload says each task holds
+	// one, so it goes only to the laptop, and to its one card one at a
+	// time, though the laptop has slots for four.
+	onCard := p.submit(&pb.JobSpec{Workload: "carded", Params: []byte(`{"gpus":1}`), MaxTasks: 3})
+	<-cards.started
+	quiet(cards.started, "a second task on the laptop's one graphics card")
+	if job := p.job(onCard.GetJobId()); job.GetSpec().GetMinGpus() != 1 {
+		t.Errorf("the job asks for %d graphics cards, want the 1 its workload needs", job.GetSpec().GetMinGpus())
+	}
+	// Tasks that need no card fill the laptop's other slots and the r620's.
+	offCard := p.submit(&pb.JobSpec{Workload: "gated", MaxTasks: 7})
+	for range 7 {
+		<-cpu.started
+	}
+	quiet(cards.started, "a second task on the laptop's one graphics card, beside the processor's tasks")
+
+	// As each task on the card ends, the next takes it.
+	cards.release <- struct{}{}
+	<-cards.started
+	close(cards.release)
+	<-cards.started
+	close(cpu.release)
+	gpuJob, cpuJob := p.wait(onCard.GetJobId()), p.wait(offCard.GetJobId())
+	if gpuJob.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || cpuJob.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("the jobs: %v (%s), %v (%s)", gpuJob.GetState(), gpuJob.GetError(), cpuJob.GetState(), cpuJob.GetError())
+	}
+	for _, task := range gpuJob.GetTasks() {
+		if task.GetNodeName() != "laptop" {
+			t.Errorf("a task that needs a graphics card ran on %s", task.GetNodeName())
+		}
+	}
+	on := map[string]int{}
+	for _, task := range cpuJob.GetTasks() {
+		on[task.GetNodeName()]++
+	}
+	if on["laptop"] != 3 || on["r620"] != 4 {
+		t.Errorf("the processor's tasks ran as %v, want three on the laptop beside its card's task and four on the r620", on)
+	}
+
+	// A job left to the pool is split into as many tasks as there are
+	// cards to run it, not slots. One that needs more cards than anyone
+	// has waits, as a job that asks for them does.
+	if job := p.wait(p.submit(&pb.JobSpec{Workload: "carded", Params: []byte(`{"gpus":1}`)}).GetJobId()); len(job.GetTasks()) != 1 || job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Errorf("a job on the card left to the pool: %d tasks, %v", len(job.GetTasks()), job.GetState())
+	}
+	waiting := p.submit(&pb.JobSpec{Workload: "carded", Params: []byte(`{"gpus":2}`), MinGpus: 1})
+	time.Sleep(100 * time.Millisecond)
+	if job := p.job(waiting.GetJobId()); job.GetState() != pb.JobState_JOB_STATE_PENDING || job.GetSpec().GetMinGpus() != 2 {
+		t.Errorf("a job that needs two graphics cards: %v, asking for %d", job.GetState(), job.GetSpec().GetMinGpus())
+	}
+	p.startMachine("rig", 4, hardware.Info{MemoryBytes: 64 << 30, GPUs: make([]hardware.GPU, 2)})
+	if job := p.wait(waiting.GetJobId()); job.GetTasks()[0].GetNodeName() != "rig" {
+		t.Errorf("the job that needs two graphics cards ran on %s", job.GetTasks()[0].GetNodeName())
 	}
 }

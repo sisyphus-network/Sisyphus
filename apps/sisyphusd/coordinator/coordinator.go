@@ -982,6 +982,9 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 		return nil, status.Errorf(codes.InvalidArgument, "%s gives results that can differ from one run to the next, and verify and audit_share check a task by comparing what two runs returned, so honest workers would be taken for wrong ones: they are for work that gives the same result every time", workload.Name())
 	}
 	needs := c.needs(workload.Name(), spec.GetParams(), len(spec.GetKey()) > 0)
+	// A job needs as many graphics cards as it asks for, or as its
+	// workload says each of its tasks takes, whichever is more.
+	minGPUs := max(int(spec.GetMinGpus()), c.workloads.GPUsNeeded(workload.Name(), spec.GetParams()))
 
 	parts := 1
 	if mode == jobmodel.Distributed {
@@ -990,7 +993,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 			// A task of a verified job takes a slot on each worker it is
 			// handed to.
 			c.mu.Lock()
-			parts = max(c.slotsLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs)/max(verify, 1), 1)
+			parts = max(c.slotsLocked(workload.Name(), spec.GetMinMemoryBytes(), minGPUs, needs)/max(verify, 1), 1)
 			c.mu.Unlock()
 		}
 	}
@@ -1021,7 +1024,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	// A job cannot be verified by fewer workers than it asks to agree. The
 	// steps of a job whose tasks are jobs are held to that as each begins.
 	composite, steps := workload.(runtime.Composite)
-	if able := c.ableLocked(workload.Name(), spec.GetMinMemoryBytes(), int(spec.GetMinGpus()), needs); verify >= 2 && !steps && able < verify {
+	if able := c.ableLocked(workload.Name(), spec.GetMinMemoryBytes(), minGPUs, needs); verify >= 2 && !steps && able < verify {
 		return nil, status.Errorf(codes.FailedPrecondition, "verify asks for %d different workers to run each task, and %d connected now could take this job%s", verify, able, c.apart())
 	}
 	if submitter != "" {
@@ -1059,7 +1062,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	if submitter != "" && c.maxTaskTimeout > 0 && (job.TaskTimeout == 0 || job.TaskTimeout > c.maxTaskTimeout) {
 		job.TaskTimeout = c.maxTaskTimeout
 	}
-	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), int(spec.GetMinGpus())
+	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), minGPUs
 	job.Needs = needs
 	job.Parent, job.Step = parent, step
 	job.NoteRead(touched.Read()...)
@@ -2211,7 +2214,7 @@ func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) (
 		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) || c.besideLocked(task, w.id) {
 			continue
 		}
-		r := rank{free: int(w.capabilities.GetTaskSlots()) - len(w.running), id: w.id}
+		r := rank{free: w.freeFor(job.MinGPUs), id: w.id}
 		if model != "" {
 			r.onModel, r.onCard = w.onModel(model), onCard(w.capabilities.GetLabels(), model)
 		}
@@ -2230,6 +2233,23 @@ func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) (
 		return again, false
 	}
 	return best, best == nil && again != nil
+}
+
+// freeFor is how many more tasks that each hold so many graphics cards a
+// worker can be given now: as many as it has free slots, and, for tasks that
+// hold cards, no more than it has cards that no running task holds. A card
+// runs one task at a time, whatever the worker's slots, and its other slots
+// are left for tasks that need none.
+func (w *worker) freeFor(gpus int) int {
+	free := int(w.capabilities.GetTaskSlots()) - len(w.running)
+	if gpus <= 0 {
+		return free
+	}
+	cards := len(w.capabilities.GetGpus())
+	for _, a := range w.running {
+		cards -= a.job.MinGPUs
+	}
+	return min(free, cards/gpus)
 }
 
 // rank is what decides between workers that could be given a task.
@@ -2280,12 +2300,17 @@ func onCard(labels []string, model string) int {
 }
 
 // slotsLocked counts task slots across connected workers that support the
-// workload.
+// workload: for tasks that hold graphics cards, as many as each worker's
+// cards can run at once.
 func (c *Coordinator) slotsLocked(workload string, minMemory uint64, minGPUs int, needs []string) int {
 	total := 0
 	for _, w := range c.workers {
 		if suits(w.capabilities, workload, minMemory, minGPUs, needs) {
-			total += int(w.capabilities.GetTaskSlots())
+			slots := int(w.capabilities.GetTaskSlots())
+			if minGPUs > 0 {
+				slots = min(slots, len(w.capabilities.GetGpus())/minGPUs)
+			}
+			total += slots
 		}
 	}
 	return total

@@ -200,6 +200,15 @@ func (Container) Needs(params []byte) []string {
 	return []string{NetworkLabel}
 }
 
+// GPUsNeeded is the graphics cards each task asks for.
+func (Container) GPUsNeeded(params []byte) int {
+	var p ContainerParams
+	if json.Unmarshal(params, &p) != nil {
+		return 0
+	}
+	return max(p.GPUs, 0)
+}
+
 // Offers is the network, where the worker's owner allows it.
 func (c Container) Offers(context.Context) []string {
 	var offers []string
