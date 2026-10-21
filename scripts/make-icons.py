@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Draw the application icons from assets/logo.png.
+"""Draw the application icons from assets/app-icon.png.
 
-The logo is a glowing figure on nothing, which disappears on a light
-taskbar, so each icon sets it on a dark rounded plate the colour of the
-app's window. Run this again whenever the logo changes, and commit what it
-writes. It needs Pillow: pip install pillow.
+The app icon is a glowing network globe on transparency, which disappears on
+a light taskbar, so each icon sets it on a dark rounded plate the colour of
+the app's window. Run this again whenever the artwork changes, and commit
+what it writes. It needs Pillow: pip install pillow.
 
   apps/sisyphus/build/icon.icns     macOS: the app, the Dock, the disk image
   apps/sisyphus/build/icon.ico      Windows: the app, the installer, shortcuts
@@ -17,16 +17,22 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
+SOURCE = ROOT / "assets/app-icon.png"
 PLATE = (16, 20, 26, 255)  # the window's background, #10141a
 BIG = 1024
 
 
 def plate(inset: float, radius: float, padding: float) -> Image.Image:
-    """The logo on a rounded square. inset is the gap between the square
+    """The artwork on a rounded square. inset is the gap between the square
     and the edge of the picture, radius its corners and padding the gap
-    between the square's edge and the logo, each as a share of the picture."""
-    logo = Image.open(ROOT / "assets/logo.png").convert("RGBA")
-    logo = logo.crop(logo.getbbox())
+    between the square's edge and the artwork, each as a share of the picture."""
+    artwork = Image.open(SOURCE).convert("RGBA")
+    # Ignore faint edge pixels in artwork exported against transparency; a
+    # single alpha value across the canvas would otherwise defeat cropping.
+    bounds = artwork.getchannel("A").point(lambda value: 255 if value > 8 else 0).getbbox()
+    if bounds is None:
+        raise ValueError(f"{SOURCE} has no visible artwork")
+    artwork = artwork.crop(bounds)
     # Draw at four times the size and shrink, for smooth corners.
     size = BIG * 4
     mask = Image.new("L", (size, size), 0)
@@ -35,9 +41,9 @@ def plate(inset: float, radius: float, padding: float) -> Image.Image:
     icon = Image.new("RGBA", (BIG, BIG), (0, 0, 0, 0))
     icon.paste(Image.new("RGBA", (BIG, BIG), PLATE), mask=mask.resize((BIG, BIG), Image.LANCZOS))
     room = BIG * (1 - 2 * inset - 2 * padding)
-    scale = room / max(logo.size)
-    logo = logo.resize((round(logo.width * scale), round(logo.height * scale)), Image.LANCZOS)
-    icon.alpha_composite(logo, ((BIG - logo.width) // 2, (BIG - logo.height) // 2))
+    scale = room / max(artwork.size)
+    artwork = artwork.resize((round(artwork.width * scale), round(artwork.height * scale)), Image.LANCZOS)
+    icon.alpha_composite(artwork, ((BIG - artwork.width) // 2, (BIG - artwork.height) // 2))
     return icon
 
 
@@ -94,13 +100,12 @@ def tray_icons(full: Image.Image, folder: Path) -> None:
                 mark(draw, state, unit, (242, 244, 248, 255))
             colour.resize((n, n), Image.LANCZOS).save(folder / f"{state}{suffix}.png", optimize=True)
 
-            shape = Image.new("L", (big, big), 0)
+            # Keep the orb's network lines visible in macOS's monochrome
+            # template while dropping its dark fill and blue glow. Bright
+            # details become the template alpha that the menu bar tints.
+            gray = colour.convert("RGB").convert("L")
+            shape = gray.point(lambda value: 255 if value >= 72 else 0)
             draw = ImageDraw.Draw(shape)
-            r = 7 * unit
-            draw.ellipse((8 * unit - r, 8 * unit - r, 8 * unit + r, 8 * unit + r), fill=255)
-            line = round(unit)
-            draw.ellipse((5 * unit, 1.8 * unit, 11 * unit, 14.2 * unit), outline=0, width=line)
-            draw.line((1 * unit, 8 * unit, 15 * unit, 8 * unit), fill=0, width=line)
             if state != "connected":
                 r = 5 * unit
                 draw.ellipse((11.5 * unit - r, 11.5 * unit - r, 11.5 * unit + r, 11.5 * unit + r), fill=0)

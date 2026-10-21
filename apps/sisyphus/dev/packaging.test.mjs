@@ -21,7 +21,8 @@ test('packaging puts only the application, native daemon, window icon and tray i
   assert.deepEqual(config.mac.target, ['zip', 'dmg'])
 })
 
-test('every package carries an icon drawn from the logo', () => {
+test('every package carries an icon generated from the app icon artwork', () => {
+  assert.ok(existsSync(resolve(import.meta.dirname, '../../../assets/app-icon.png')))
   for (const path of [config.win.icon, config.mac.icon, config.nsis.installerIcon, config.nsis.uninstallerIcon, config.dmg.icon, `${config.linux.icon}/512x512.png`, config.extraResources[1].from]) {
     assert.ok(existsSync(resolve(import.meta.dirname, '..', path)), `Missing icon ${path}`)
   }
