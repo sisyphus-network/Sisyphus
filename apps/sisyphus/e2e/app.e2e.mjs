@@ -130,6 +130,46 @@ test('location discovery controls configure an independently managed daemon and 
   }
 })
 
+test('the owner pins the node where it is, chooses how much to share, and the pin is kept', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'This node')
+    await page.getByRole('heading', { name: 'Where this node is' }).waitFor()
+    await page.getByText('No pin yet. The node places itself as well as its other sources can.', { exact: true }).waitFor()
+    const coordinates = page.getByRole('textbox', { name: 'Coordinates' })
+    const share = page.getByRole('combobox', { name: 'What other members see' })
+    const save = page.getByRole('button', { name: 'Save location' })
+    assert.equal(await share.inputValue(), 'country')
+    assert.equal(await save.isEnabled(), false)
+    await coordinates.fill('Roanoke')
+    await page.getByRole('alert').filter({ hasText: 'Enter a latitude from -90 to 90' }).waitFor()
+    assert.equal(await save.isEnabled(), false)
+    // As a map copies it, with the hemispheres written out.
+    await coordinates.fill('37.2710° N, 79.9414° W')
+    await share.selectOption('city')
+    await save.click()
+    await page.getByText('Location saved', { exact: true }).waitFor()
+    await page.getByText(/^Your pin places this node on your own globe\./).waitFor()
+    assert.equal(await coordinates.inputValue(), '37.271, -79.9414')
+
+    // The daemon keeps it: a new window reads it back.
+    await page.reload()
+    await openSettingsCategory(page, 'This node')
+    await until('the saved pin to be read back', async () => await coordinates.inputValue() === '37.271, -79.9414')
+    assert.equal(await share.inputValue(), 'city')
+    assert.equal(await save.isEnabled(), false)
+
+    await page.getByRole('button', { name: 'Remove pin' }).click()
+    await page.getByText('Pin removed', { exact: true }).waitFor()
+    assert.equal(await coordinates.inputValue(), '')
+    assert.equal(await share.inputValue(), 'country')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('hosting a pool is the app’s own node’s setting, so a node run by hand keeps its own address', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
