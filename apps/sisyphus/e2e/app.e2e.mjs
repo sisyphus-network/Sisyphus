@@ -1327,6 +1327,43 @@ test('the Run page runs primes from its form, refuses a value out of bounds inli
   }
 })
 
+test('the Run page refreshes workload availability when workers join and leave', async () => {
+  const coordinator = await testNode()
+  let worker
+  const profile = testProfile()
+  const { app, page } = await launch(coordinator, profile)
+  try {
+    await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
+    await wide(app, page)
+    await open(page, 'Run')
+    const card = page.locator('button.run-card').filter({ hasText: /^Count primes/ })
+    const badge = card.getByText(/^Workers: \d+$/)
+    await badge.waitFor()
+    const initial = Number((await badge.innerText()).match(/\d+/)?.[0])
+    assert.ok(initial > 0, 'the coordinator should start with a worker offering primes')
+
+    worker = await testNode({ role: 'worker', coordinator, name: 'event-driven rig' })
+    const workerId = worker.id()
+    await until('the worker joining the coordinator', async () => page.evaluate(async (id) => {
+      const current = await window.sisyphus.call('listWorkers')
+      return current.workers?.some((item) => item.peerId === id)
+    }, workerId), 15)
+    await card.getByText(`Workers: ${initial + 1}`, { exact: true }).waitFor({ timeout: 8_000 })
+
+    await worker.stop()
+    await until('the worker leaving the coordinator', async () => page.evaluate(async (id) => {
+      const current = await window.sisyphus.call('listWorkers')
+      return !current.workers?.some((item) => item.peerId === id)
+    }, workerId), 15)
+    await card.getByText(`Workers: ${initial}`, { exact: true }).waitFor({ timeout: 8_000 })
+  } finally {
+    await app.close()
+    profile.remove()
+    await worker?.remove()
+    await coordinator.remove()
+  }
+})
+
 test('the Run page gives a workload’s file field a drop zone', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
