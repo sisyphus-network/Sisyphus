@@ -603,8 +603,10 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
       assert.ok(presses < 20, 'zooming in never reached its limit')
       const before = await zoom()
       await zoomIn.click()
-      await until('the globe to come in', async () => await zoom() > before)
+      // Near the limit a last step can be smaller than the 1% the zoom is
+      // shown in, so wait for the step to end rather than for a change.
       await settled()
+      assert.ok(await zoom() >= before, 'zooming in took the globe out')
     }
     await until('the region lines to be drawn', async () => await globe.getAttribute('data-regions') === 'shown')
     assert.ok(await zoom() > start * 1.5, `zooming in went only from ${start}% to ${await zoom()}%`)
@@ -624,8 +626,8 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
       assert.ok(presses < 30, 'zooming out never reached its limit')
       const before = await zoom()
       await page.keyboard.press('Enter')
-      await until('the globe to go out', async () => await zoom() < before)
       await settled()
+      assert.ok(await zoom() <= before, 'zooming out brought the globe in')
     }
     assert.equal(await globe.getAttribute('data-regions'), 'hidden')
     assert.ok(await zoom() < start, 'the globe cannot be taken further out than it starts')
