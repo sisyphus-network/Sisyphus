@@ -1,16 +1,20 @@
 import { LoaderCircle } from 'lucide-react'
 
-export function LiquidSwitch({ checked, loading = false, onChange, label, disabled = false }: {
+export function LiquidSwitch({ checked, loading = false, onChange, label, disabled = false, id, describedBy }: {
   checked: boolean
   loading?: boolean
   onChange: (checked: boolean) => void
   label: string
   disabled?: boolean
+  id?: string
+  describedBy?: string
 }) {
   return <button
     type="button"
     role="switch"
+    id={id}
     aria-label={label}
+    aria-describedby={describedBy}
     aria-checked={checked}
     aria-busy={loading}
     data-checked={checked ? 'true' : 'false'}

@@ -929,7 +929,7 @@ test('each advanced page has the one shared header beside the sidebar, with no b
       await page.evaluate((dir) => localStorage.setItem('sisyphus-locale', dir === 'rtl' ? 'he' : 'en'), dir)
       await page.reload()
       await page.waitForFunction((dir) => document.documentElement.dir === dir, dir)
-      for (const route of ['/node', '/operations', '/settings', '/settings/general']) {
+      for (const route of ['/node', '/run', '/operations', '/settings', '/settings/general']) {
         await page.evaluate((route) => { window.location.hash = route }, route)
         await page.waitForFunction((route) => location.hash === `#${route}` && document.querySelector('.route-transition') && document.querySelector('.app-global-header') && document.querySelector('.advanced-sidebar'), route)
         // Let the route's fade settle before measuring.
@@ -973,6 +973,8 @@ test('advanced navigation switches between the sidebar and mobile dock as the wi
     await page.waitForFunction(() => window.innerWidth <= 900)
     await mobileNavigation.waitFor()
     await page.getByRole('complementary').waitFor({ state: 'detached' })
+    await mobileNavigation.getByRole('button', { name: 'Run', exact: true }).click()
+    await page.getByRole('heading', { name: 'Run', level: 1 }).waitFor()
     await mobileNavigation.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
 
@@ -1103,6 +1105,82 @@ test('a job submitted in the window runs on the pool and shows its result', asyn
     await page.getByRole('button', { name: 'Log' }).click()
     await page.getByText(/submitted/i).first().waitFor()
     await page.getByText(/task-succeeded|succeeded/i).first().waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+// The Run page lists what the pool can run, each with a form, and runs one
+// with a click: primes with its bounds checked as they are typed, tracked
+// task by task to its result (#585).
+test('the Run page runs primes from its form, refuses a value out of bounds inline, and shows the tracker and the result', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    await open(page, 'Run')
+    await page.getByRole('heading', { name: 'Run', level: 1 }).waitFor()
+    const card = page.getByRole('button', { name: /^Count primes/ })
+    await card.getByText(/^Workers: [1-9]\d*$/).waitFor()
+    await card.getByText('Counts the prime numbers in a range, split across the pool.').waitFor()
+    await card.click()
+    await page.getByRole('heading', { name: 'Count primes', level: 1 }).waitFor()
+
+    const from = page.getByRole('spinbutton', { name: 'From' })
+    const to = page.getByRole('spinbutton', { name: 'Up to' })
+    assert.equal(await from.inputValue(), '0')
+    assert.equal(await to.inputValue(), '1000000')
+    // Each field's help, from the daemon, describes it.
+    const help = await from.getAttribute('aria-describedby')
+    assert.equal(await page.locator(`[id="${help}"]`).innerText(), 'The first number to look at.')
+
+    const run = page.getByRole('button', { name: 'Run', exact: true })
+    await to.fill('-5')
+    const refused = page.getByRole('alert').filter({ hasText: 'Must be at least 0.' })
+    await refused.waitFor()
+    assert.ok((await to.getAttribute('aria-describedby')).includes(await refused.getAttribute('id')), 'the error does not describe its field')
+    assert.equal(await to.getAttribute('aria-invalid'), 'true')
+    assert.equal(await run.isDisabled(), true)
+    await to.fill('100000')
+    await refused.waitFor({ state: 'detached' })
+    await from.fill('0')
+    assert.equal(await run.isEnabled(), true)
+    await run.click()
+
+    const tracker = page.getByRole('group', { name: 'Job progress' })
+    await tracker.getByText('Computed on the pool').waitFor({ timeout: 30000 })
+    await tracker.getByText(/^(\d+) of \1 tasks done$/).waitFor()
+    const result = page.getByRole('group').filter({ hasText: 'Job result' })
+    await result.getByText('9592').waitFor()
+
+    // It is among the recent jobs, and runs again with its values kept.
+    await page.getByRole('region', { name: 'Recent jobs' }).getByRole('button', { name: 'Count primes' }).waitFor()
+    await page.getByRole('button', { name: 'Change and run again' }).click()
+    await page.getByRole('heading', { name: 'Count primes', level: 1 }).waitFor()
+    assert.equal(await to.inputValue(), '100000')
+    await page.getByRole('button', { name: 'All workloads' }).click()
+    await card.waitFor()
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('the Run page gives a workload’s file field a drop zone', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await wide(app, page)
+    await open(page, 'Run')
+    await page.getByRole('button', { name: /^Re-encode video/ }).click()
+    await page.getByRole('heading', { name: 'Re-encode video', level: 1 }).waitFor()
+    const zone = page.getByRole('button', { name: 'Video Drop a file here, or choose one' })
+    await zone.waitFor()
+    const help = await zone.getAttribute('aria-describedby')
+    assert.equal(await page.locator(`[id="${help}"]`).innerText(), 'The stored video to re-encode.')
+    // With no video yet, the job cannot start.
+    assert.equal(await page.getByRole('button', { name: 'Run', exact: true }).isDisabled(), true)
   } finally {
     await app.close()
     profile.remove()

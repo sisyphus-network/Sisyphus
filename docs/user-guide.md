@@ -128,6 +128,20 @@ bin/sisyphusd id
 bin/sisyphusd nodes
 ```
 
+## Running a job from a form
+
+**Run** lists what your pool can compute, one card for each workload that describes its parameters as a form: **Count primes**, **Count words**, **Re-encode video**, and **Simulate a molecule** once that workload has its form. Each card says what the workload does and how many workers can run it. A workload no worker runs yet says **No worker runs this yet**: you can still open it and fill it in, but it cannot start until such a worker joins. Workloads without a form are listed below the cards; they take JSON, so submit them from **Operations → Jobs**.
+
+Open a card to see its form. Every field starts at a value the workload accepts, so most jobs are a file and a click:
+
+- **A file** is dropped on its drop zone, or chosen with it, and is stored in the pool for the job to read. A file you stored before can be picked from the list under it.
+- **Numbers** are checked as you type, against the bounds and steps the workload gives, and a value it would refuse is said so under its field.
+- **Choices** and **toggles** are a list and a switch.
+
+**Run** starts the job, spread across the pool's workers, and the page follows it: its tasks done, what each worker is doing, and then its result, with any files it wrote to save. **Change and run again** brings the form back with the same values. The jobs you start this way are listed under **Recent jobs** until the app is closed; every job is also in **Operations → Jobs**.
+
+The names of the fields and the sentence under each come from the node, and are in English for now.
+
 ## Running a job yourself
 
 ![Operations, Jobs: the form a job is submitted with](images/operations-jobs.png)

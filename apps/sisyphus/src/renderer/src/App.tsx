@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { BrowserRouter, HashRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Boxes, Cpu, House, MonitorCog, Settings2, Wifi, WifiOff } from 'lucide-react'
+import { ArrowLeft, Boxes, Cpu, House, MonitorCog, Play, Settings2, Wifi, WifiOff } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { NodeSnapshot } from '../../preload'
 import { buttonVariants } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { NodeDetailsPage } from '@/pages/NodeDetailsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { WorkspacePage } from '@/pages/WorkspacePage'
 import { OperationsPage } from '@/pages/OperationsPage'
+import { RunPage } from '@/pages/RunPage'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { isAuthenticationError, pairBrowser } from '@sisyphus/client'
 import { getBrowserDeviceName } from '@/lib/browser-device-name'
@@ -202,6 +203,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
   const navItems: LiquidDockItem[] = [
     { id: 'workspace', label: messages.workspace, href: '/', icon: <House size={21} strokeWidth={1.8} />, active: location.pathname === '/' },
     { id: 'node', label: messages.nodeOverview, href: '/node', icon: <MonitorCog size={21} strokeWidth={1.8} />, active: location.pathname === '/node' },
+    { id: 'run', label: messages.run, href: '/run', icon: <Play size={21} strokeWidth={1.8} />, active: location.pathname === '/run' },
     { id: 'operations', label: messages.operations, href: '/operations', icon: <Boxes size={21} strokeWidth={1.8} />, active: location.pathname === '/operations' },
     { id: 'settings', label: messages.settings, href: '/settings', icon: <Settings2 size={21} strokeWidth={1.8} />, active: location.pathname.startsWith('/settings') },
   ]
@@ -249,6 +251,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
         >
             {snapshot.status !== 'connected' ? <NodeConnectionState snapshot={snapshot} messages={messages} onConnected={setSnapshot} /> : <Routes location={location}>
               <Route path="/node" element={<NodeDetailsPage snapshot={snapshot} messages={messages} />} />
+              <Route path="/run" element={<RunPage messages={messages} />} />
               <Route path="/operations" element={<OperationsPage messages={messages} />} />
               <Route path="/settings" element={<SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} />} />
               <Route path="/settings/access" element={isDesktopApp() ? <SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} category="access" /> : <Navigate to="/settings" replace />} />
@@ -273,7 +276,7 @@ function Breadcrumb({ messages, direction }: { messages: ReturnType<typeof getMe
   const location = useLocation()
   const settingsCategory = location.pathname.startsWith('/settings/') ? location.pathname.split('/')[2] : undefined
   const categoryLabels: Record<string, string> = { general: messages.general, node: messages.localNodeSettings, access: messages.webAccess.title, language: messages.general, models: messages.modelSettings.title, appearance: messages.general }
-  const label = settingsCategory ? categoryLabels[settingsCategory] ?? messages.settings : location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/operations' ? messages.operations : location.pathname === '/settings' ? messages.settings : location.pathname === '/pairing' ? messages.browserAccess.title : messages.workspace
+  const label = settingsCategory ? categoryLabels[settingsCategory] ?? messages.settings : location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/run' ? messages.run : location.pathname === '/operations' ? messages.operations : location.pathname === '/settings' ? messages.settings : location.pathname === '/pairing' ? messages.browserAccess.title : messages.workspace
   const backHref = settingsCategory ? '/settings' : '/'
   const backLabel = settingsCategory ? messages.settings : messages.workspace
   const slideDistance = direction === 'rtl' ? -10 : 10
