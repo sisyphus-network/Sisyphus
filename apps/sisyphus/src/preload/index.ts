@@ -75,6 +75,7 @@ export type NodeRpcMethod =
   | 'getModelConfig' | 'setModelConfig' | 'listModelProfiles' | 'saveModelProfile' | 'deleteModelProfile' | 'listProviders' | 'listModels' | 'removeModel'
   | 'getWebAccessConfig' | 'setWebAccessConfig' | 'listNetworkInterfaces' | 'getJoinedPool' | 'leavePool'
   | 'getModelLending' | 'setModelLending' | 'inspectOllama' | 'getNodeLocation' | 'setNodeLocation'
+  | 'getCityTable' | 'downloadCityTable' | 'removeCityTable'
   | 'listChats' | 'getChat' | 'deleteChat'
   | 'listFiles' | 'removeFile'
   | 'createInvitation' | 'listMembers' | 'removeMember' | 'joinPool'
@@ -91,6 +92,7 @@ const api = {
   getContainers: (): Promise<ContainerState> => ipcRenderer.invoke('node:get-containers'),
   saveContainers: (settings: ContainerSettings): Promise<ContainerState> => ipcRenderer.invoke('node:save-containers', settings),
   openDockerInstall: (): Promise<void> => ipcRenderer.invoke('app:open-docker-install'),
+  openDbIp: (): Promise<void> => ipcRenderer.invoke('app:open-db-ip'),
   savePoolLimits: (limits: PoolLimits): Promise<PoolLimitsState> => ipcRenderer.invoke('node:save-pool-limits', limits),
   reconnect: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:reconnect'),
   restartNode: (timeoutMessage?: string): Promise<NodeSnapshot> => ipcRenderer.invoke('node:restart-node', timeoutMessage),

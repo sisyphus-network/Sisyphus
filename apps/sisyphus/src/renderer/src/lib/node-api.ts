@@ -1,5 +1,6 @@
 import type { ContainerState, LocationDiscoverySettings, LocationDiscoveryState, NodeSnapshot, PoolHostingState, PoolLimits, PoolLimitsState, SisyphusBridge } from '../../../preload'
 import { normalizePoolLimits } from '../../../shared/pool-limits.ts'
+import { cityTableAttributionUrl } from './city-table.ts'
 import { startBrowserNodeStateSession } from './browser-node-state-session.ts'
 import { createBrowserPairing, createSisyphusClient, isAuthenticationError, listPairedBrowsers, revokePairedBrowser, type NodeServiceClient, type SisyphusClient } from '@sisyphus/client'
 
@@ -140,6 +141,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
     },
     saveContainers: async (): Promise<ContainerState> => { throw new Error('Running containers is set in the desktop app.') },
     openDockerInstall: async () => {},
+    openDbIp: async () => { window.open(cityTableAttributionUrl, '_blank', 'noopener,noreferrer') },
     restartNode: async (): Promise<NodeSnapshot> => { throw new Error('Only the desktop app restarts a node it started.') },
     // A browser has no tray to label.
     setAppLocale: async () => {},

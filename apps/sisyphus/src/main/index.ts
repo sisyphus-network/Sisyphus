@@ -30,6 +30,7 @@ import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import * as protobuf from 'protobufjs'
 import nodeProtoSource from '../../../../proto/sisyphus/node/v1/node.proto?raw'
+import { cityTableAttributionUrl } from '../renderer/src/lib/city-table'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const nodeProtoJson = protobuf.parse(nodeProtoSource).root.toJSON()
@@ -302,7 +303,7 @@ function handleNode(channel: string, handler: (event: IpcMainInvokeEvent, ...arg
 }
 const unaryRpcMethods = new Set([
   'getNodeInfo', 'listPeers', 'getBootstrapPeers', 'setBootstrapPeers', 'listWorkers', 'listWorkloads', 'submitJob', 'getJob', 'listJobs', 'cancelJob',
-  'getModelConfig', 'setModelConfig', 'listModelProfiles', 'saveModelProfile', 'deleteModelProfile', 'listProviders', 'listModels', 'removeModel', 'getWebAccessConfig', 'setWebAccessConfig', 'listNetworkInterfaces', 'getModelLending', 'setModelLending', 'inspectOllama', 'getLocationDiscoverySettings', 'setLocationDiscoverySettings', 'getNodeLocation', 'setNodeLocation', 'getPoolLimits', 'setPoolLimits', 'listChats', 'getChat', 'deleteChat',
+  'getModelConfig', 'setModelConfig', 'listModelProfiles', 'saveModelProfile', 'deleteModelProfile', 'listProviders', 'listModels', 'removeModel', 'getWebAccessConfig', 'setWebAccessConfig', 'listNetworkInterfaces', 'getModelLending', 'setModelLending', 'inspectOllama', 'getLocationDiscoverySettings', 'setLocationDiscoverySettings', 'getNodeLocation', 'setNodeLocation', 'getCityTable', 'downloadCityTable', 'removeCityTable', 'getPoolLimits', 'setPoolLimits', 'listChats', 'getChat', 'deleteChat',
   'listFiles', 'removeFile', 'createInvitation', 'listMembers', 'removeMember', 'joinPool', 'getJoinedPool', 'leavePool',
 ])
 const streamingRpcMethods = new Set(['watchJobs', 'watchJobEvents', 'watchPairedBrowsers', 'watchWorkers', 'watchJoinedPool', 'ask', 'pullModel'])
@@ -533,6 +534,8 @@ app.whenReady().then(() => {
   })
   // The address is fixed here: the window cannot have the app open others.
   handleNode('app:open-docker-install', () => shell.openExternal(dockerInstallUrl))
+  // The city table's licence asks that DB-IP be credited with a link to it.
+  handleNode('app:open-db-ip', () => shell.openExternal(cityTableAttributionUrl))
   handleNode('node:get-pool-limits', async () => {
     try {
       return poolLimitsState(await callUnary('getPoolLimits', {}) as Record<string, unknown>)

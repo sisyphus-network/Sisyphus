@@ -129,6 +129,8 @@ The globe zooms. Use the mouse wheel or a trackpad, pinch on a touch screen, or 
 
 Without a pin, a node can still be placed near its city rather than in the middle of its country. `sisyphusd location city-table download` fetches DB-IP's free city table, some 90 MB, and keeps it on the node; `location city-table status` says which month's it is and `location city-table remove` deletes it. It is downloaded only when you ask, and downloading it shows db-ip.com your machine's address; after that, finding the city asks no one. The city is an estimate, often tens of kilometres off, since an address is placed where the provider's network is. Your own pin always wins over it, and it is not sent to the pool. IP Geolocation by [DB-IP](https://db-ip.com).
 
+In the app, **Settings → This node → City table** does the same. It says whether the table is there and, if it is, which month's edition, how large it is and when it was downloaded. **Download** fetches it, which can take a few minutes; **Update** downloads it again, so that DB-IP's latest edition takes the place of the one kept; **Remove** deletes it. Once the table can place the node, the card says where, as in "This node looks to be near Louisville, Kentucky, US". It places a node only by its public address, so a node on a home network that has not found its public address is not placed until **Location discovery** finds it. With a pin set, the card says the pin is used instead. The card carries the credit the table's licence asks for, which opens [db-ip.com](https://db-ip.com).
+
 ```sh
 bin/sisyphusd id
 bin/sisyphusd nodes

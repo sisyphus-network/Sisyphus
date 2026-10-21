@@ -256,6 +256,27 @@
     "saveFailed": "Could not save the location",
     "unavailable": "This node's daemon is too old to keep a location. Update it to set one."
   },
+  "cityTableSettings": {
+    "title": "City table",
+    "description": "A free table of Internet addresses and the cities they are in, about 90 MB. With it, this node finds the city it is in from its public address. It is downloaded only when you ask.",
+    "privacy": "Downloading it shows db-ip.com this machine's address. After that, finding the city asks no one: the table is on this computer.",
+    "accuracy": "The city is an estimate, often tens of kilometres off, since an address is placed where its provider's network is. Your own pin wins over it, and it is not sent to your pool.",
+    "creditLabel": "The table's licence asks for this credit:",
+    "notDownloaded": "Not downloaded.",
+    "downloaded": "Downloaded: the {edition} edition, {size}, on {date}.",
+    "downloading": "Downloading and reading the table. It can take a few minutes.",
+    "download": "Download",
+    "update": "Update",
+    "remove": "Remove",
+    "downloadedToast": "City table downloaded",
+    "removedToast": "City table removed",
+    "downloadFailed": "Could not download the city table",
+    "removeFailed": "Could not remove the city table",
+    "estimate": "This node looks to be near {place}.",
+    "noEstimate": "The table does not place this node yet. It needs the node's public address, which the node has not found; Location discovery can help.",
+    "pinWins": "Your pin places this node, so the table's estimate is not used.",
+    "unavailable": "This node's daemon is too old to keep a city table. Update it to download one."
+  },
   "locationDiscoverySettings": {
     "title": "Location discovery",
     "description": "Optional sources can help estimate this node’s network location when its own public addresses are unknown.",
