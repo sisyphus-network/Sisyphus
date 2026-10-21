@@ -53,6 +53,11 @@ service NodeService {
   // WatchWorkers sends the connected workers at once and when their published
   // state changes.
   rpc WatchWorkers(ListWorkersRequest) returns (stream ListWorkersResponse);
+  // ListWorkloads lists the workloads this node can take jobs of, each with
+  // what it does, the form its parameters are asked for with, and how many
+  // of the connected workers offer it, busy or not. A workload none offers
+  // would wait for one.
+  rpc ListWorkloads(ListWorkloadsRequest) returns (ListWorkloadsResponse);
   // SubmitJob gives the pool a job and returns it as it stands at once.
   rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
   rpc GetJob(GetJobRequest) returns (GetJobResponse);
@@ -342,6 +347,62 @@ message Worker {
   uint64 verified_agreed = 17;
   uint64 verified_outvoted = 18;
   uint32 probation = 19;
+}
+
+message ListWorkloadsRequest {}
+
+message ListWorkloadsResponse {
+  repeated Workload workloads = 1;
+}
+
+message Workload {
+  string name = 1;
+  // What it does and the JSON parameters it takes, in a few sentences.
+  string description = 2;
+  // Its parameters as fields of a form. A workload that gives none takes
+  // its parameters as JSON written by hand.
+  repeated WorkloadField fields = 3;
+  uint32 workers_running_it = 4;
+  // A composite workload's tasks are jobs, which the coordinator carries
+  // out itself, so no worker runs it and workers_running_it is zero.
+  bool composite = 5;
+}
+
+// WorkloadField is one parameter of a workload, as a form asks for it.
+message WorkloadField {
+  // The parameter's key in the job's JSON parameters.
+  string name = 1;
+  WorkloadFieldKind kind = 2;
+  // A few words to name the field with, and a sentence on what it does.
+  string label = 3;
+  string help = 4;
+  // The value the field starts with, as JSON, or empty for none. A form
+  // sent with every default unchanged is a job the workload accepts.
+  string default_json = 5;
+  // Bounds and a step for a number: a value must be from minimum to
+  // maximum, where they are set, and a multiple of step, where it is not
+  // zero.
+  optional double minimum = 6;
+  optional double maximum = 7;
+  double step = 8;
+  // The values a choice may take.
+  repeated string choices = 9;
+  // Whether a job is refused without it.
+  bool required = 10;
+}
+
+enum WorkloadFieldKind {
+  WORKLOAD_FIELD_KIND_UNSPECIFIED = 0;
+  // A stored file, given as its CID: what StoreFile returns.
+  WORKLOAD_FIELD_KIND_FILE = 1;
+  WORKLOAD_FIELD_KIND_INTEGER = 2;
+  WORKLOAD_FIELD_KIND_NUMBER = 3;
+  // A line of text.
+  WORKLOAD_FIELD_KIND_TEXT = 4;
+  // One of the field's choices.
+  WORKLOAD_FIELD_KIND_CHOICE = 5;
+  // True or false.
+  WORKLOAD_FIELD_KIND_TOGGLE = 6;
 }
 
 message WorkerGpu {

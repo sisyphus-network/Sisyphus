@@ -28,7 +28,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
-	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
 // Config is what a server is made from.
@@ -36,8 +35,6 @@ type Config struct {
 	// Node is the node's local API, and Token what it wants shown.
 	Node  nodepb.NodeServiceClient
 	Token string
-	// Workloads is where the description of each workload is looked up.
-	Workloads *runtime.Registry
 	// Version is the daemon's, which the server gives as its own.
 	Version string
 
@@ -181,29 +178,18 @@ func (s *server) listWorkloads(ctx context.Context, _ *mcp.CallToolRequest, _ no
 	return shown(s.workloads(s.as(ctx)))
 }
 
-// workloads lists what the node can coordinate, and for each which of the
-// workers now connected run it: a workload none runs would wait for one.
+// workloads lists what the node can coordinate, and for each how many of
+// the workers now connected run it: a workload none runs would wait for
+// one. The node counts them, as it does for its desktop.
 func (s *server) workloads(ctx context.Context) (any, error) {
-	node, err := s.Node.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
-	if err != nil {
-		return nil, err
-	}
-	listed, err := s.Node.ListWorkers(ctx, &nodepb.ListWorkersRequest{})
+	listed, err := s.Node.ListWorkloads(ctx, &nodepb.ListWorkloadsRequest{})
 	if err != nil {
 		return nil, err
 	}
 	out := []map[string]any{}
-	for _, name := range node.GetWorkloads() {
-		runBy := 0
-		for _, w := range listed.GetWorkers() {
-			for _, runs := range w.GetWorkloads() {
-				if runs == name {
-					runBy++
-				}
-			}
-		}
-		workload := map[string]any{"name": name, "description": s.Workloads.Describe(name), "workers_running_it": runBy}
-		if s.Workloads.Composite(name) {
+	for _, w := range listed.GetWorkloads() {
+		workload := map[string]any{"name": w.GetName(), "description": w.GetDescription(), "workers_running_it": int(w.GetWorkersRunningIt())}
+		if w.GetComposite() {
 			// No worker runs it and none need: its steps are jobs.
 			delete(workload, "workers_running_it")
 			workload["run_by"] = "the coordinator, as a job for each step"

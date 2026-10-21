@@ -32,9 +32,6 @@ func (n *node) RemoveModel(context.Context, *nodepb.RemoveModelRequest, ...grpc.
 func agentOf(t *testing.T, n *node, cfg Config) (*mcp.ClientSession, func() []string) {
 	t.Helper()
 	cfg.Node, cfg.Token = n, "the-token"
-	if cfg.Workloads == nil {
-		cfg.Workloads = serving(n).Workloads
-	}
 	ours, theirs := mcp.NewInMemoryTransports()
 	ctx, hangUp := context.WithCancel(context.Background())
 	go New(cfg).Run(ctx, theirs)

@@ -16,7 +16,6 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/mcpserver"
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
-	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/skills"
 )
 
@@ -64,9 +63,7 @@ func serveAgent(ctx context.Context, args []string) error {
 	defer main.close()
 	server := mcpserver.New(mcpserver.Config{
 		Node: nodepb.NewNodeServiceClient(conn), Token: token, Main: main.reach,
-		FilesUnder: under, ReadOnly: *readOnly, Admin: *administer, Images: listed,
-		// Every workload there is, so that whichever the node has can be described.
-		Workloads: runtime.WithContainers().With(runtime.Graph{}), Version: version,
+		FilesUnder: under, ReadOnly: *readOnly, Admin: *administer, Images: listed, Version: version,
 	})
 	return server.Run(ctx, agentTransport)
 }
