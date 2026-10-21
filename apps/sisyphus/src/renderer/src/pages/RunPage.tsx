@@ -191,6 +191,7 @@ export function RunPage({ messages }: { messages: Messages }) {
   const [runs, setRuns] = useState<Run[]>(sessionRuns)
   const [jobs, setJobs] = useState<Record<string, Job>>({})
   const headingRef = useRef<HTMLHeadingElement>(null)
+  const workloadLoadSequence = useRef(0)
   // The job shown, which a link may open though it was not started here.
   const shownRef = useRef(shownJobId)
   shownRef.current = shownJobId
@@ -198,12 +199,15 @@ export function RunPage({ messages }: { messages: Messages }) {
   // load asks the node what it can run; a quiet load, in the background,
   // keeps what is shown until it has something new.
   const load = useCallback(async (quiet = false) => {
+    const sequence = ++workloadLoadSequence.current
     if (!quiet) setLoading(true)
     try {
-      setWorkloads(normalizeWorkloads(await getNodeApi().call('listWorkloads')))
+      const next = normalizeWorkloads(await getNodeApi().call('listWorkloads'))
+      if (sequence !== workloadLoadSequence.current) return
+      setWorkloads(next)
       setLoadError('')
-    } catch (error) { if (!quiet) setLoadError(error instanceof Error ? error.message : String(error)) }
-    finally { if (!quiet) setLoading(false) }
+    } catch (error) { if (!quiet && sequence === workloadLoadSequence.current) setLoadError(error instanceof Error ? error.message : String(error)) }
+    finally { if (sequence === workloadLoadSequence.current) setLoading(false) }
   }, [])
   const loadFiles = useCallback(async () => {
     try {
@@ -211,11 +215,34 @@ export function RunPage({ messages }: { messages: Messages }) {
       setFiles((result.files ?? []).map((file) => ({ cid: file.cid ?? '', name: file.name || file.cid || '', sizeBytes: file.sizeBytes ?? 0, private: file.private ?? false })))
     } catch { /* The stored files are only a shortcut; a drop still works. */ }
   }, [])
-  // Workers come and go, and with them what the pool can run.
+  // The worker stream sends its baseline and live worker changes; while it
+  // is healthy there is no need to poll for workload availability.
   useEffect(() => {
     void load()
-    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(true) }, 15000)
-    return () => window.clearInterval(timer)
+    let active = true
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    const connect = () => {
+      if (!active) return
+      cancel = getNodeApi().stream<{ workers?: unknown[] }>('watchWorkers', {}, () => {
+        attempt = 0
+        void load(true)
+      }, () => {
+        cancel = undefined
+        if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+      }, () => {
+        cancel = undefined
+        if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+      })
+    }
+    connect()
+    return () => {
+      active = false
+      workloadLoadSequence.current++
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
   }, [load])
   useEffect(() => { if (selected) void loadFiles() }, [selected, loadFiles])
   useEffect(() => getNodeApi().stream<{ jobs?: Job[] }>('watchJobs', {}, (result) => {
