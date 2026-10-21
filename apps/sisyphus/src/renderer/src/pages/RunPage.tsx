@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import { NavLink, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Atom, Boxes, ChevronRight, CircleAlert, Clapperboard, Cpu, FileCheck2, FileUp, History, LoaderCircle, Pencil, Play, RefreshCw, Shapes, Sigma, WholeWord, Workflow, X, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, Atom, Boxes, ChevronRight, CircleAlert, Clapperboard, Cpu, FileCheck2, FileUp, Gpu, History, LoaderCircle, Pencil, Play, RefreshCw, Shapes, Sigma, WholeWord, Workflow, X, type LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -14,7 +14,7 @@ import { getNodeApi } from '@/lib/node-api'
 import { getJobHref } from '@/lib/job-navigation'
 import { stateName } from '@/lib/job-progress'
 import { formatNumber, parseMdResult } from '@/lib/md-result'
-import { canRun, firstSentence, initialValues, normalizeWorkloads, toParams, validate, type FieldError, type FormField, type FormValue, type FormValues, type Workload } from '@/lib/workload-form'
+import { canRun, countGpuWorkers, firstSentence, initialValues, normalizeWorkloads, toParams, validate, type FieldError, type FormField, type FormValue, type FormValues, type Workload } from '@/lib/workload-form'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 
 type Messages = ReturnType<typeof getMessages>
@@ -181,6 +181,8 @@ export function RunPage({ messages }: { messages: Messages }) {
   const selected = searchParams.get('workload') ?? ''
   const shownJobId = searchParams.get('job') ?? ''
   const [workloads, setWorkloads] = useState<Workload[] | null>(null)
+  const [gpuWorkers, setGpuWorkers] = useState<number | null>(null)
+  const [gpuWorkersState, setGpuWorkersState] = useState<'loading' | 'ready' | 'unavailable'>('loading')
   const [loadError, setLoadError] = useState('')
   const [loading, setLoading] = useState(false)
   const [files, setFiles] = useState<StoredFile[]>([])
@@ -225,15 +227,24 @@ export function RunPage({ messages }: { messages: Messages }) {
     let attempt = 0
     const connect = () => {
       if (!active) return
-      cancel = getNodeApi().stream<{ workers?: unknown[] }>('watchWorkers', {}, () => {
+      setGpuWorkersState('loading')
+      cancel = getNodeApi().stream<{ workers?: unknown[] }>('watchWorkers', {}, (result) => {
         attempt = 0
+        setGpuWorkers(countGpuWorkers(result.workers))
+        setGpuWorkersState('ready')
         void load(true)
       }, () => {
         cancel = undefined
-        if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        if (active) {
+          setGpuWorkersState('unavailable')
+          retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        }
       }, () => {
         cancel = undefined
-        if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        if (active) {
+          setGpuWorkersState('unavailable')
+          retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        }
       })
     }
     connect()
@@ -382,7 +393,13 @@ export function RunPage({ messages }: { messages: Messages }) {
   }
 
   return <div className="run-page space-y-6 pb-7">
-    <PageHeading title={messages.run} description={labels.description} actions={<Button variant="outline" className="gap-2" disabled={loading} onClick={() => void load()}><RefreshCw aria-hidden="true" className={`size-4 ${loading ? 'animate-spin motion-reduce:animate-none' : ''}`} />{messages.refresh}</Button>} />
+    <PageHeading title={messages.run} description={labels.description} actions={<div className="flex flex-wrap items-center gap-2">
+      <Badge variant="outline" role="status" aria-live="polite" aria-atomic="true" className="gap-1.5 px-3 py-1.5">
+        {gpuWorkersState === 'loading' ? <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Gpu aria-hidden="true" className="size-4" />}
+        {gpuWorkersState === 'ready' ? formatMessage(labels.gpuWorkers, { count: new Intl.NumberFormat(document.documentElement.lang || undefined).format(gpuWorkers ?? 0) }) : gpuWorkersState === 'loading' ? labels.gpuWorkersLoading : labels.gpuWorkersUnavailable}
+      </Badge>
+      <Button variant="outline" className="gap-2" disabled={loading} onClick={() => void load()}><RefreshCw aria-hidden="true" className={`size-4 ${loading ? 'animate-spin motion-reduce:animate-none' : ''}`} />{messages.refresh}</Button>
+    </div>} />
     {workloads === null ? (loadError ? <EmptyState icon={CircleAlert} title={labels.loadFailed} description={loadError} action={<Button variant="outline" onClick={() => void load()}>{messages.refresh}</Button>} /> : <EmptyState icon={LoaderCircle} loading title={labels.loading} />)
       : workloads.length === 0 ? <EmptyState icon={Boxes} title={labels.noWorkloads} description={labels.noWorkloadsDescription} />
       : <>

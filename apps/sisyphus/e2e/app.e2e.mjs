@@ -1466,9 +1466,19 @@ test('the Run page refreshes workload availability when workers join and leave',
     await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
     await wide(app, page)
     await open(page, 'Run')
+    const gpuBadge = page.getByRole('status').filter({ hasText: /^GPU workers: \d+$/ })
     const card = page.locator('button.run-card').filter({ hasText: /^Count primes/ })
     const badge = card.getByText(/^Workers: \d+$/)
     await badge.waitFor()
+    await gpuBadge.waitFor()
+    const expectGpuWorkerCount = async () => {
+      const count = await page.evaluate(async () => {
+        const current = await window.sisyphus.call('listWorkers')
+        return current.workers?.filter((item) => Array.isArray(item.gpus) && item.gpus.length > 0).length ?? 0
+      })
+      await gpuBadge.getByText(`GPU workers: ${count}`, { exact: true }).waitFor({ timeout: 8_000 })
+    }
+    await expectGpuWorkerCount()
     const initial = Number((await badge.innerText()).match(/\d+/)?.[0])
     assert.ok(initial > 0, 'the coordinator should start with a worker offering primes')
 
@@ -1479,6 +1489,7 @@ test('the Run page refreshes workload availability when workers join and leave',
       return current.workers?.some((item) => item.peerId === id)
     }, workerId), 15)
     await card.getByText(`Workers: ${initial + 1}`, { exact: true }).waitFor({ timeout: 8_000 })
+    await expectGpuWorkerCount()
 
     await worker.stop()
     await until('the worker leaving the coordinator', async () => page.evaluate(async (id) => {
@@ -1486,6 +1497,7 @@ test('the Run page refreshes workload availability when workers join and leave',
       return !current.workers?.some((item) => item.peerId === id)
     }, workerId), 15)
     await card.getByText(`Workers: ${initial}`, { exact: true }).waitFor({ timeout: 8_000 })
+    await expectGpuWorkerCount()
   } finally {
     await app.close()
     profile.remove()

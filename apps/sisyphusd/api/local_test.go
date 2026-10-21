@@ -470,11 +470,17 @@ func TestWatchWorkersPublishesChanges(t *testing.T) {
 	if err != nil || initial.GetRevision() != 1 || len(initial.GetWorkers()) != 0 {
 		t.Fatalf("initial workers = %v, %v", initial, err)
 	}
-	pool.nodes = []*pb.NodeInfo{{NodeId: "12D3KooWworker", Name: "Worker", Capabilities: &pb.NodeCapabilities{TaskSlots: 4}}}
+	pool.nodes = []*pb.NodeInfo{{NodeId: "12D3KooWworker", Name: "Worker", Capabilities: &pb.NodeCapabilities{
+		TaskSlots: 4, Gpus: []*pb.Gpu{{Name: "RTX 4050", MemoryBytes: 6 << 30}},
+	}}}
 	changes.Notify()
 	updated, err := stream.Recv()
 	if err != nil || updated.GetRevision() != 2 || len(updated.GetWorkers()) != 1 || updated.GetWorkers()[0].GetName() != "Worker" {
 		t.Fatalf("updated workers = %v, %v", updated, err)
+	}
+	gpus := updated.GetWorkers()[0].GetGpus()
+	if len(gpus) != 1 || gpus[0].GetName() != "RTX 4050" || gpus[0].GetMemoryBytes() != 6<<30 {
+		t.Fatalf("updated worker GPUs = %v, want the reported RTX 4050", gpus)
 	}
 }
 
