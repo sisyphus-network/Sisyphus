@@ -5,3 +5,9 @@ The city table a node downloads on request is DB-IP's "IP to City Lite",
 licensed under the Creative Commons Attribution 4.0 International licence
 (https://creativecommons.org/licenses/by/4.0/). It is not distributed with
 Sisyphus. IP Geolocation by DB-IP, https://db-ip.com.
+
+The desktop app's globe draws country outlines from Natural Earth's 1:110m
+"Admin 0 – Countries" and state and province lines from Natural Earth's
+1:10m "Admin 1 – States, Provinces" boundary lines, simplified
+(apps/sisyphus/dev/build-region-lines.mjs). Natural Earth is in the public
+domain, https://www.naturalearthdata.com.

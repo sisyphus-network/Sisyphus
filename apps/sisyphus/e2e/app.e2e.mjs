@@ -507,6 +507,61 @@ test('a point on the globe opens a card with everything known about it, kept ope
   }
 })
 
+test('the globe zooms with its buttons and the wheel, and shows region lines once brought in', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, even drawn in software, so there is no globe to zoom')
+    }
+    await wide(app, page)
+    const globe = page.getByRole('img', { name: /This node/ })
+    await globe.waitFor()
+    const controls = page.getByRole('group', { name: 'Globe zoom' })
+    const zoomIn = controls.getByRole('button', { name: 'Zoom in' })
+    const zoomOut = controls.getByRole('button', { name: 'Zoom out' })
+    await zoomIn.waitFor()
+    const zoom = async () => Number(await globe.getAttribute('data-zoom'))
+    // The globe starts whole, with no region lines.
+    await until('the globe to settle', async () => await zoom() > 0)
+    assert.equal(await globe.getAttribute('data-regions'), 'hidden')
+    const start = await zoom()
+
+    // In, step by step, as far as it goes: the region lines appear on the way.
+    for (let presses = 0; await zoomIn.isEnabled(); presses++) {
+      assert.ok(presses < 20, 'zooming in never reached its limit')
+      const before = await zoom()
+      await zoomIn.click()
+      await until('the globe to come in', async () => await zoom() > before)
+    }
+    await until('the region lines to be drawn', async () => await globe.getAttribute('data-regions') === 'shown')
+    assert.ok(await zoom() > start * 1.5, `zooming in went only from ${start}% to ${await zoom()}%`)
+
+    // The wheel zooms too, here back out.
+    const box = await page.locator('.network-globe-stage canvas').boundingBox()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    const close = await zoom()
+    await page.mouse.wheel(0, 600)
+    await until('the wheel to take the globe out', async () => await zoom() < close)
+    assert.equal(await zoomIn.isEnabled(), true)
+
+    // Out as far as it goes, from the keyboard: the region lines go.
+    await zoomOut.focus()
+    for (let presses = 0; await zoomOut.isEnabled(); presses++) {
+      assert.ok(presses < 30, 'zooming out never reached its limit')
+      const before = await zoom()
+      await page.keyboard.press('Enter')
+      await until('the globe to go out', async () => await zoom() < before)
+    }
+    assert.equal(await globe.getAttribute('data-regions'), 'hidden')
+    assert.ok(await zoom() < start, 'the globe cannot be taken further out than it starts')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('workspace panels retain their open state and widths after relaunch', async (t) => {
   const profile = testProfile()
   let app
