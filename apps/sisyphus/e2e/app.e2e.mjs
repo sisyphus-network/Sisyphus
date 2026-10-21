@@ -441,6 +441,72 @@ test('a window with WebGL offers the topology, wide and narrow', async (t) => {
   }
 })
 
+// A point on the WebGL globe cannot be hovered or clicked reliably from a
+// test, nor focused from the keyboard, so each point is also a button,
+// out of sight until focused. Opening its card from there is what a
+// keyboard user does, and shows the card a click on the point pins.
+test('a point on the globe opens a card with everything known about it, kept open to copy from', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  let pinned = false
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the window no WebGL, even drawn in software, so there is no globe to test')
+    }
+    await wide(app, page)
+    // A node on loopback has no country; a pin places it on the globe.
+    await openSettingsCategory(page, 'This node')
+    await page.getByRole('textbox', { name: 'Coordinates' }).fill('37.271, -79.9414')
+    await page.getByRole('combobox', { name: 'What other members see' }).selectOption('city')
+    await page.getByRole('button', { name: 'Save location' }).click()
+    await page.getByText('Location saved', { exact: true }).waitFor()
+    pinned = true
+
+    await page.getByRole('complementary').getByRole('link', { name: 'Workspace', exact: true }).click()
+    await page.getByRole('img', { name: /This node/ }).waitFor()
+    const points = page.getByRole('navigation', { name: 'Points on the globe' })
+    const point = points.getByRole('button', { name: 'Details for This node' })
+    await point.focus()
+    await page.keyboard.press('Enter')
+
+    const card = page.getByRole('dialog', { name: 'Details for This node' })
+    await card.waitFor()
+    const peerId = node.id()
+    // The whole peer ID, not the first twelve characters of it.
+    await card.getByText(peerId, { exact: true }).waitFor()
+    for (const label of ['Peer ID', 'Daemon version', 'Listen addresses', 'Pin']) await card.getByText(label, { exact: true }).waitFor()
+    await card.getByText(/^37\.271, -79\.9414$/).waitFor()
+    await card.getByText(/shared at city precision/).waitFor()
+    assert.equal(await card.getByText('Click to keep this open').count(), 0, 'the kept card asks to be clicked to keep it')
+
+    await card.getByRole('button', { name: 'Copy peer ID' }).click()
+    await card.getByRole('button', { name: 'Copied' }).waitFor()
+    assert.equal(await app.evaluate(({ clipboard }) => clipboard.readText()), peerId)
+
+    // Escape closes it, and the keyboard is back where it was.
+    await page.keyboard.press('Escape')
+    await card.waitFor({ state: 'detached' })
+    assert.equal(await point.evaluate((element) => element === document.activeElement), true, 'focus did not return to the point')
+
+    // Its close button closes it too.
+    await page.keyboard.press('Enter')
+    await card.waitFor()
+    await card.getByRole('button', { name: 'Close details' }).click()
+    await card.waitFor({ state: 'detached' })
+
+    await openSettingsCategory(page, 'This node')
+    await page.getByRole('button', { name: 'Remove pin' }).click()
+    await page.getByText('Pin removed', { exact: true }).waitFor()
+    pinned = false
+  } finally {
+    // Leave the shared node as the other tests expect it: with no pin.
+    if (pinned) await page.evaluate(() => window.sisyphus?.call?.('setNodeLocation', {})).catch(() => {})
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('workspace panels retain their open state and widths after relaunch', async (t) => {
   const profile = testProfile()
   let app
