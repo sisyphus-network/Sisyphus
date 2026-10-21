@@ -61,6 +61,15 @@ test('a scan’s text is saved as text, and its searchable PDFs as PDFs in order
   assert.equal(outputFileName(parts, 'bafyzip', 4, new Uint8Array()), 'abcdef01-archive.zip')
 })
 
+test('a trajectory analysis’s tables are saved as CSV', () => {
+  const job = { jobId: 'abcdef0123456789', result: json({ frames: 60, trajectories: 1, trajectory_frames: [60], analyses: ['rmsd', 'hbond', 'dssp', 'rmsf'], series: 'bafyseries', rmsd_angstrom: { mean: 0.2, stdev: 0.1, min: 0, max: 0.4 }, hbonds: 'bafyhb', dssp: 'bafydssp', dssp_residues: 'bafyres', rmsf: 'bafyrmsf', structure: { alpha: 0.4 }, tasks: 4 }) }
+  assert.equal(outputFileName(job, 'bafyseries', 0, new Uint8Array()), 'abcdef01-series.csv')
+  assert.equal(outputFileName(job, 'bafyhb', 1, new Uint8Array()), 'abcdef01-hbonds.csv')
+  assert.equal(outputFileName(job, 'bafydssp', 2, new Uint8Array()), 'abcdef01-dssp.csv')
+  assert.equal(outputFileName(job, 'bafyres', 3, new Uint8Array()), 'abcdef01-dssp_residues.csv')
+  assert.equal(outputFileName(job, 'bafyrmsf', 4, new Uint8Array()), 'abcdef01-rmsf.csv')
+})
+
 test('a container’s files keep the names it gave them', () => {
   const result = json({ tasks: [{ index: 4, stdout: 'cout', files: { 'frame 0001.png': 'cpng', '../x': 'cbad' } }] })
   assert.equal(nameInResult(result, 'cpng'), 'tasks-4-frame_0001.png')
