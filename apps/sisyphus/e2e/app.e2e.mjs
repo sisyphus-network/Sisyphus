@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, test } from 'node:test'
+import { existsSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { hasWebgl, launch, launchOwnNode, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide } from './harness.mjs'
 
 let node
@@ -165,6 +167,61 @@ test('the owner pins the node where it is, chooses how much to share, and the pi
     assert.equal(await coordinates.inputValue(), '')
     assert.equal(await share.inputValue(), 'country')
   } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+// A city table as the node keeps it, with no rows: what the card shows of
+// one, without downloading DB-IP's (the daemon has no address to download
+// it from instead). Its form: "SCITY1\n", the edition with a length byte,
+// and four little-endian uint32 counts.
+function emptyCityTable(edition) {
+  return Buffer.concat([Buffer.from('SCITY1\n'), Buffer.from([edition.length]), Buffer.from(edition), Buffer.alloc(16)])
+}
+
+function cityTableCard(page) {
+  return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'City table', exact: true }) })
+}
+
+test('the owner sees the city table that is kept, with its credit, and removes it', async () => {
+  const profile = testProfile()
+  const table = join(node.dataDir, 'dbip-city-lite.bin')
+  const { app, page } = await launch(node, profile)
+  try {
+    // The credit opens db-ip.com in the browser, and nothing else.
+    await app.evaluate(({ shell }) => { globalThis.opened = []; shell.openExternal = async (url) => { globalThis.opened.push(url) } })
+    await openSettingsCategory(page, 'This node')
+    const card = cityTableCard(page)
+    await card.getByRole('status').filter({ hasText: 'Not downloaded.' }).waitFor()
+    await card.getByText(/^Downloading it shows db-ip\.com this machine's address\./).waitFor()
+    await card.getByText(/^The city is an estimate, often tens of kilometres off/).waitFor()
+    assert.equal(await card.getByRole('button', { name: 'Download' }).isEnabled(), true)
+    assert.equal(await card.getByRole('button', { name: 'Remove' }).count(), 0)
+    const credit = card.getByRole('link', { name: 'IP Geolocation by DB-IP' })
+    assert.equal(await credit.getAttribute('href'), 'https://db-ip.com')
+    await credit.click()
+    await until('db-ip.com to be opened', async () => (await app.evaluate(() => globalThis.opened)).length === 1)
+    assert.deepEqual(await app.evaluate(() => globalThis.opened), ['https://db-ip.com'])
+
+    // A table the node keeps is described as it is on disk.
+    writeFileSync(table, emptyCityTable('2026-09'))
+    const downloaded = new Date(2026, 8, 15, 12)
+    utimesSync(table, downloaded, downloaded)
+    await page.reload()
+    await openSettingsCategory(page, 'This node')
+    await card.getByRole('status').filter({ hasText: 'Downloaded: the September 2026 edition, 31 byte, on Sep 15, 2026.' }).waitFor()
+    // The node knows no public address of its own, so the table places it nowhere.
+    await card.getByText(/^The table does not place this node yet\./).waitFor()
+    assert.equal(await card.getByRole('button', { name: 'Update' }).isEnabled(), true)
+
+    await card.getByRole('button', { name: 'Remove' }).click()
+    await page.getByText('City table removed', { exact: true }).waitFor()
+    await card.getByRole('status').filter({ hasText: 'Not downloaded.' }).waitFor()
+    assert.equal(existsSync(table), false)
+    await card.getByRole('button', { name: 'Download' }).waitFor()
+  } finally {
+    rmSync(table, { force: true })
     await app.close()
     profile.remove()
   }

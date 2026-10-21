@@ -254,6 +254,27 @@
     "saveFailed": "No se pudo guardar la ubicación",
     "unavailable": "El daemon de este nodo es demasiado antiguo para guardar una ubicación. Actualízalo para fijarla."
   },
+  "cityTableSettings": {
+    "title": "Tabla de ciudades",
+    "description": "Una tabla gratuita de direcciones de Internet y las ciudades en que están, de unos 90 MB. Con ella, este nodo averigua su ciudad a partir de su dirección pública. Solo se descarga cuando lo pides.",
+    "privacy": "Al descargarla, db-ip.com ve la dirección de este equipo. Después, averiguar la ciudad no pregunta a nadie: la tabla está en este ordenador.",
+    "accuracy": "La ciudad es una estimación, a menudo desviada decenas de kilómetros, porque una dirección se sitúa donde está la red de su proveedor. Tu chincheta tiene prioridad, y no se envía a tu pool.",
+    "creditLabel": "La licencia de la tabla pide este reconocimiento:",
+    "notDownloaded": "No descargada.",
+    "downloaded": "Descargada: edición de {edition}, {size}, el {date}.",
+    "downloading": "Descargando y leyendo la tabla. Puede tardar unos minutos.",
+    "download": "Descargar",
+    "update": "Actualizar",
+    "remove": "Quitar",
+    "downloadedToast": "Tabla de ciudades descargada",
+    "removedToast": "Tabla de ciudades quitada",
+    "downloadFailed": "No se pudo descargar la tabla de ciudades",
+    "removeFailed": "No se pudo quitar la tabla de ciudades",
+    "estimate": "Este nodo parece estar cerca de {place}.",
+    "noEstimate": "La tabla aún no sitúa este nodo. Necesita su dirección pública, que el nodo no ha encontrado; el descubrimiento de ubicación puede ayudar.",
+    "pinWins": "Tu chincheta sitúa este nodo, así que no se usa la estimación de la tabla.",
+    "unavailable": "El daemon de este nodo es demasiado antiguo para guardar una tabla de ciudades. Actualízalo para descargarla."
+  },
   "locationDiscoverySettings": {
     "title": "Detección de ubicación de red",
     "description": "Las fuentes opcionales ayudan a estimar la ubicación de red de este nodo cuando se desconocen sus direcciones públicas.",

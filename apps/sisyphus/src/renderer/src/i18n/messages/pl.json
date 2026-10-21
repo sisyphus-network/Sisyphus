@@ -254,6 +254,27 @@
     "saveFailed": "Nie udało się zapisać położenia",
     "unavailable": "Demon tego węzła jest zbyt stary, by przechowywać położenie. Zaktualizuj go, aby je ustawić."
   },
+  "cityTableSettings": {
+    "title": "Tabela miast",
+    "description": "Bezpłatna tabela adresów internetowych i miast, w których się znajdują, około 90 MB. Dzięki niej ten węzeł ustala swoje miasto na podstawie publicznego adresu. Jest pobierana tylko na Twoje życzenie.",
+    "privacy": "Pobieranie pokazuje db-ip.com adres tego komputera. Potem ustalanie miasta nikogo nie pyta: tabela jest na tym komputerze.",
+    "accuracy": "Miasto to szacunek, często chybiony o dziesiątki kilometrów, bo adres jest umieszczany tam, gdzie jest sieć jego dostawcy. Twoja pinezka ma pierwszeństwo, a szacunek nie jest wysyłany do Twojej puli.",
+    "creditLabel": "Licencja tabeli wymaga takiego uznania autorstwa:",
+    "notDownloaded": "Nie pobrano.",
+    "downloaded": "Pobrano: wydanie {edition}, {size}, dnia {date}.",
+    "downloading": "Pobieranie i wczytywanie tabeli. Może to potrwać kilka minut.",
+    "download": "Pobierz",
+    "update": "Zaktualizuj",
+    "remove": "Usuń",
+    "downloadedToast": "Pobrano tabelę miast",
+    "removedToast": "Usunięto tabelę miast",
+    "downloadFailed": "Nie udało się pobrać tabeli miast",
+    "removeFailed": "Nie udało się usunąć tabeli miast",
+    "estimate": "Ten węzeł wydaje się być w pobliżu: {place}.",
+    "noEstimate": "Tabela jeszcze nie umiejscawia tego węzła. Potrzebuje jego publicznego adresu, którego węzeł jeszcze nie znalazł; pomóc może wykrywanie położenia.",
+    "pinWins": "Twoja pinezka umiejscawia ten węzeł, więc szacunek z tabeli nie jest używany.",
+    "unavailable": "Demon tego węzła jest zbyt stary, by przechowywać tabelę miast. Zaktualizuj go, aby ją pobrać."
+  },
   "locationDiscoverySettings": {
     "title": "Ustalanie lokalizacji sieciowej",
     "description": "Opcjonalne źródła mogą pomóc oszacować położenie węzła w sieci, gdy jego publiczne adresy są nieznane.",

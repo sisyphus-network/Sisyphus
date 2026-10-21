@@ -254,6 +254,27 @@
     "saveFailed": "Impossible d’enregistrer le lieu",
     "unavailable": "Le démon de ce nœud est trop ancien pour garder un lieu. Mettez-le à jour pour en définir un."
   },
+  "cityTableSettings": {
+    "title": "Table des villes",
+    "description": "Une table gratuite d’adresses Internet et des villes où elles se trouvent, d’environ 90 Mo. Grâce à elle, ce nœud trouve sa ville à partir de son adresse publique. Elle n’est téléchargée que si vous le demandez.",
+    "privacy": "Le téléchargement montre à db-ip.com l’adresse de cette machine. Ensuite, trouver la ville ne demande rien à personne : la table est sur cet ordinateur.",
+    "accuracy": "La ville est une estimation, souvent à des dizaines de kilomètres près, car une adresse est placée là où se trouve le réseau de son fournisseur. Votre repère l’emporte sur elle, et elle n’est pas envoyée à votre pool.",
+    "creditLabel": "La licence de la table demande cette mention :",
+    "notDownloaded": "Non téléchargée.",
+    "downloaded": "Téléchargée : édition de {edition}, {size}, le {date}.",
+    "downloading": "Téléchargement et lecture de la table. Cela peut prendre quelques minutes.",
+    "download": "Télécharger",
+    "update": "Mettre à jour",
+    "remove": "Supprimer",
+    "downloadedToast": "Table des villes téléchargée",
+    "removedToast": "Table des villes supprimée",
+    "downloadFailed": "Impossible de télécharger la table des villes",
+    "removeFailed": "Impossible de supprimer la table des villes",
+    "estimate": "Ce nœud semble se trouver près de {place}.",
+    "noEstimate": "La table ne place pas encore ce nœud. Il lui faut son adresse publique, que le nœud n’a pas trouvée ; la découverte de l’emplacement peut aider.",
+    "pinWins": "Votre repère place ce nœud, donc l’estimation de la table n’est pas utilisée.",
+    "unavailable": "Le démon de ce nœud est trop ancien pour garder une table des villes. Mettez-le à jour pour en télécharger une."
+  },
   "locationDiscoverySettings": {
     "title": "Localisation réseau",
     "description": "Des sources facultatives peuvent estimer la localisation réseau de ce nœud lorsque ses adresses publiques sont inconnues.",
