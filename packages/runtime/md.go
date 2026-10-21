@@ -332,6 +332,24 @@ func (MD) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte,
 	return mustJSON(result), nil
 }
 
+// ResultBlobs are each replica's files the result refers to: its last frame,
+// its energies and its trajectory, which the tasks stored. Without them
+// named here they would be let go with the job's other intermediate blobs,
+// and a result that names them would point at nothing.
+func (MD) ResultBlobs(raw []byte) []string {
+	var result MDResult
+	json.Unmarshal(raw, &result)
+	var files []string
+	for _, r := range result.ReplicaResults {
+		for _, c := range []string{r.Final, r.Energies, r.Trajectory} {
+			if c != "" {
+				files = append(files, c)
+			}
+		}
+	}
+	return files
+}
+
 // meanAndSpread returns the mean of values and their standard deviation,
 // or zeros for none.
 func meanAndSpread(values []float64) (mean, spread float64) {

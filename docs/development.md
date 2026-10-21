@@ -110,7 +110,7 @@ Edit the `.proto` files, run `make proto`, and commit the generated code with th
 A workload implements `Split`, `Execute` and `Aggregate` in `packages/runtime`. `Split` and `Aggregate` run on the coordinator, `Execute` on a worker. Small values travel inline; anything large goes through the `Blobs` handle and is referred to by CID.
 
 - Make results deterministic, so that two runs of a job can be compared by CID.
-- Store a job's result in `Aggregate`. Blobs stored by tasks are treated as intermediate and released when the job ends unless `Aggregate` stores them again.
+- Store a job's result in `Aggregate`. Blobs stored by tasks are treated as intermediate and released when the job ends unless `Aggregate` stores them again, or the workload names them in `ResultBlobs` (`runtime.ResultBlobs`), as `md`, `render` and `ocr` do for the files their results point at.
 
 ## Storage and IPFS
 
