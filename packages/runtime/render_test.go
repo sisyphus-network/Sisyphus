@@ -279,11 +279,13 @@ func TestRenderedFramesAreListedInOrderAndArchived(t *testing.T) {
 		blobs   Blobs
 		want    string
 	}{
-		"an output that is not one":        {[][]byte{outputs[0], []byte("not json")}, store, "task 1 output"},
-		"a task with no summary":           {[][]byte{mustJSON(ContainerOutput{})}, store, "task 0 left no summary"},
-		"a summary that is not there":      {[][]byte{mustJSON(ContainerOutput{Files: map[string]string{"summary.json": missing}})}, store, "task 0's summary"},
-		"a summary that is garbled":        {[][]byte{mustJSON(ContainerOutput{Files: map[string]string{"summary.json": garbled.String()}})}, store, "task 0's summary: invalid character"},
-		"an archive that cannot be stored": {outputs, &awkward{Blobs: store, failPut: 1}, "store the frames as one zip file: the store is full"},
+		"an output that is not one":               {[][]byte{outputs[0], []byte("not json")}, store, "task 1 output"},
+		"a task with no summary":                  {[][]byte{mustJSON(ContainerOutput{})}, store, "task 0 left no summary"},
+		"a summary that is not there":             {[][]byte{mustJSON(ContainerOutput{Files: map[string]string{"summary.json": missing}})}, store, "task 0's summary"},
+		"a summary that is garbled":               {[][]byte{mustJSON(ContainerOutput{Files: map[string]string{"summary.json": garbled.String()}})}, store, "task 0's summary: invalid character"},
+		"a frame name that traverses directories": {[][]byte{renderTask(t, store, 0, `{"split":"frames"}`, map[string][]byte{"frame_../../outside.png": frame(9)})}, store, "task 0 left a frame with an unsafe name"},
+		"a frame name with Windows separators":    {[][]byte{renderTask(t, store, 0, `{"split":"frames"}`, map[string][]byte{`frame_..\..\outside.png`: frame(9)})}, store, "task 0 left a frame with an unsafe name"},
+		"an archive that cannot be stored":        {outputs, &awkward{Blobs: store, failPut: 1}, "store the frames as one zip file: the store is full"},
 	} {
 		if _, err := (Render{}).Aggregate(ctx, tt.blobs, tt.outputs); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: %v, want an error containing %q", name, err, tt.want)

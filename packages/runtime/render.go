@@ -14,6 +14,7 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -352,12 +353,15 @@ func (Render) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]b
 // them as one zip file too.
 func gatherFrames(ctx context.Context, blobs Blobs, tasks []ContainerOutput, result RenderResult) ([]byte, error) {
 	var names []string
-	for _, task := range tasks {
+	for i, task := range tasks {
 		// Frames are named by their number, padded to seven digits, the
 		// most Blender's have: in order by name is in order by number.
 		var own []string
 		for name := range task.Files {
 			if strings.HasPrefix(name, "frame_") {
+				if !validRenderFrameName(name) {
+					return nil, fmt.Errorf("task %d left a frame with an unsafe name %q", i, name)
+				}
 				own = append(own, name)
 			}
 		}
@@ -380,6 +384,29 @@ func gatherFrames(ctx context.Context, blobs Blobs, tasks []ContainerOutput, res
 	}
 	result.Archive = archive.String()
 	return mustJSON(result), nil
+}
+
+// validRenderFrameName accepts only Blender's frame-number output names.
+// Task outputs come from workers, so a prefix check alone is not enough to
+// make a name safe to put into the user's ZIP archive.
+func validRenderFrameName(name string) bool {
+	if path.Base(name) != name || strings.Contains(name, `\`) || !strings.HasPrefix(name, "frame_") {
+		return false
+	}
+	ext := path.Ext(name)
+	if ext != ".png" && ext != ".exr" {
+		return false
+	}
+	frame := strings.TrimSuffix(strings.TrimPrefix(name, "frame_"), ext)
+	if len(frame) < 7 {
+		return false
+	}
+	for _, digit := range frame {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // zipFrames writes a zip file of the frames with the given names and CIDs.
