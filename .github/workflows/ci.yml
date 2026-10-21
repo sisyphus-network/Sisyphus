@@ -29,6 +29,7 @@ jobs:
     outputs:
       changed: ${{ steps.scope.outputs.changed }}
       platforms: ${{ steps.scope.outputs.platforms }}
+      realimages: ${{ steps.scope.outputs.realimages }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -61,6 +62,13 @@ jobs:
             echo platforms=true >> "$GITHUB_OUTPUT"
           else
             echo platforms=false >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$EVENT" != pull_request ] || [ "$ALL" = true ] ||
+            git diff --name-only "$BASE" HEAD | grep -qE '^(packages/runtime/|go\.(mod|sum)$|Makefile$|\.github/workflows/)'; then
+            echo realimages=true >> "$GITHUB_OUTPUT"
+          else
+            echo realimages=false >> "$GITHUB_OUTPUT"
           fi
 
   test:
@@ -154,7 +162,9 @@ jobs:
         # other localhost-heavy workflows on the shared host. The daemon's
         # package runs whole pools under the race detector and outgrew go
         # test's default of 10 minutes per package; the job's own limit still
-        # bounds the step.
+        # bounds the step. The full coverage pass below includes the
+        # real-image tests; this job also runs that tagged subset under the
+        # race detector with a longer timeout.
         run: flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race -p 1 -timeout 25m ./...
       - name: Check every statement is tested
         run: |
@@ -169,6 +179,32 @@ jobs:
             fi
           '
       - run: go build ./apps/sisyphusd
+
+  realimages:
+    needs: [scope, test]
+    if: needs.scope.outputs.realimages == 'true'
+    # Real image builds can take substantially longer than unit tests on a
+    # cold runner. Keep them isolated so they do not consume the ordinary
+    # suite's per-package timeout.
+    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-26.04' || 'sisyphus-ci' }}
+    timeout-minutes: 90
+    env:
+      SISYPHUS_CI_LOCAL_NETWORK_LOCK: /tmp/sisyphus-ci-local-network.lock
+      SISYPHUS_REQUIRE_DOCKER: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: ${{ runner.environment == 'github-hosted' }}
+      - name: Pull the base image used by real workloads
+        run: docker pull alpine:3.20
+      - name: Run the real-image workload tests
+        run: >-
+          flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race -tags=realimages -p 1
+          -timeout 60m
+          -run '^(TestARealVideoIsTranscodedInStretches|TestRealReplicasAreSimulated|TestARealSceneIsRendered|TestRealSpeechIsTranscribedInStretches)$'
+          ./packages/runtime
 
   # Known-answer workloads must agree across real CPU architectures and OSes,
   # not only compile for them. These tests avoid the daemon's service fixtures.

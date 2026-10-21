@@ -293,6 +293,7 @@ func transcribeIn(t *testing.T, image, dir string, command ...string) {
 // two, transcribed by whisper in real containers, and put together: the
 // words are there, in order, and the cut fell in the pause.
 func TestRealSpeechIsTranscribedInStretches(t *testing.T) {
+	requireRealImages(t)
 	requireDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()

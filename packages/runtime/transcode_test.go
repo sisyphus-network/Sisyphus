@@ -208,6 +208,7 @@ func ffmpegIn(t *testing.T, dir string, command ...string) string {
 // A real video, cut in three, encoded by ffmpeg in real containers, and
 // joined: every frame is there, at the size asked for.
 func TestARealVideoIsTranscodedInStretches(t *testing.T) {
+	requireRealImages(t)
 	requireDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
