@@ -37,7 +37,8 @@ type TranscribeParams struct {
 	// Language is the spoken language, as a code such as en or fr. Empty
 	// or auto has whisper tell, for each stretch.
 	Language string `json:"language,omitempty"`
-	// Model is the whisper model to use, base or small. Empty means base.
+	// Model is the whisper model to use, one of transcribeModelNames.
+	// Empty means transcribeDefault.
 	Model string `json:"model,omitempty"`
 	// Segments is how many stretches to cut the recording into. Zero
 	// leaves it to the pool.
@@ -85,22 +86,46 @@ const whisperRelease, whisperCommit = "v1.9.5", "d1be6fde11ac6e0407606b4e42fe72d
 const whisperModels = "5359861c739e955e79d9a303bcbc70fb988958b1"
 
 // transcribeModels are the models a job may choose, by name, with the
-// SHA-256 of each one's file. The multilingual ones, so that a language
-// can be chosen or told.
+// SHA-256 of each one's file as the model repository publishes it. The
+// names ending in .en understand only English; the q5_0 ones are
+// quantised, a third the size of the model they are made from.
 var transcribeModels = map[string]string{
-	"base":  "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
-	"small": "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+	"tiny":                "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+	"tiny.en":             "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f",
+	"base":                "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+	"base.en":             "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+	"small":               "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+	"small.en":            "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d",
+	"medium":              "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
+	"medium.en":           "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356",
+	"large-v1":            "7d99f41a10525d0206bddadd86760181fa920438b6b33237e3118ff6c83bb53d",
+	"large-v2":            "9a423fe4d40c82774b6af34115b8b935f34152246eb19e80e376071d3f999487",
+	"large-v3":            "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2",
+	"large-v3-q5_0":       "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
+	"large-v3-turbo":      "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+	"large-v3-turbo-q5_0": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
 }
 
-// transcribeModelNames are those models, smallest first.
-var transcribeModelNames = []string{"base", "small"}
+// transcribeModelNames are those models, smallest first, each before its
+// English-only form.
+var transcribeModelNames = []string{"tiny", "tiny.en", "base", "base.en", "small", "small.en", "large-v3-turbo-q5_0", "large-v3-q5_0", "medium", "medium.en", "large-v3-turbo", "large-v1", "large-v2", "large-v3"}
+
+// transcribeDefault is the model a job that names none gets: the large
+// model's turbo form, quantised, which was quicker than small on a
+// processor and as accurate as the largest.
+const transcribeDefault = "large-v3-turbo-q5_0"
+
+// englishOnly says whether a model understands only English.
+func englishOnly(model string) bool { return strings.HasSuffix(model, ".en") }
 
 // transcribeDockerfile is the whole of the image transcribing with model
 // runs in. whisper.cpp is built from source, for the processor of the
 // worker that builds it, at the lowest priority so that the worker's other
 // tasks go on meanwhile; the model is fetched and checked against its
 // digest; and the rest is the transcoding image, so that a worker that has
-// both keeps ffmpeg once.
+// both keeps ffmpeg once. Only the model's lines differ from one model to
+// another, and they come last in each stage, so the images of every model
+// share the compiled whisper.cpp and ffmpeg, and differ by the model alone.
 func transcribeDockerfile(model string) string {
 	return `FROM alpine:3.20 AS build
 RUN apk add --no-cache build-base cmake git
@@ -176,14 +201,14 @@ var transcribeLanguage = regexp.MustCompile(`^[a-z]{2,3}$`)
 func (Transcribe) Name() string { return "transcribe" }
 
 func (Transcribe) Describe() string {
-	return `Turns the speech in a stored recording, sound or video, into text with whisper.cpp, cut into stretches that are transcribed on different workers and put together. Parameters: {"input": "<CID of the stored recording>", "language": "<optional spoken language as a code such as en, or auto to have whisper tell, the default>", "model": "<optional, base (the default) or small, slower and more accurate>", "segments": <optional number of stretches>}. Result: {"text": "<CID of the transcript, plain text>", "subtitles": "<CID of the transcript as SRT subtitles>", "segments": <n>, "seconds": <how long the recording is>, "words": <words heard>}.`
+	return `Turns the speech in a stored recording, sound or video, into text with whisper.cpp, cut into stretches that are transcribed on different workers and put together. Parameters: {"input": "<CID of the stored recording>", "language": "<optional spoken language as a code such as en, or auto to have whisper tell, the default>", "model": "<optional, one of tiny, base, small, medium, large-v1, large-v2, large-v3, large-v3-turbo, large-v3-q5_0 and large-v3-turbo-q5_0 (the default), larger being slower and more accurate; tiny, base, small and medium also as English-only tiny.en and so on>", "segments": <optional number of stretches>}. Result: {"text": "<CID of the transcript, plain text>", "subtitles": "<CID of the transcript as SRT subtitles>", "segments": <n>, "seconds": <how long the recording is>, "words": <words heard>}.`
 }
 
 func (Transcribe) Form() []Field {
 	return []Field{
 		{Name: "input", Kind: KindFile, Label: "Recording", Help: "The stored sound or video to transcribe.", Required: true},
 		{Name: "language", Kind: KindText, Label: "Language", Help: "The spoken language as a code such as en or fr, or auto to have it told.", Default: "auto"},
-		{Name: "model", Kind: KindChoice, Label: "Model", Help: "Base is quicker; small is slower and more accurate.", Default: "base", Choices: append([]string(nil), transcribeModelNames...)},
+		{Name: "model", Kind: KindChoice, Label: "Model", Help: "Larger models are slower and more accurate; those ending in .en understand only English.", Default: transcribeDefault, Choices: append([]string(nil), transcribeModelNames...)},
 		{Name: "segments", Kind: KindInteger, Label: "Stretches", Help: "How many stretches to cut the recording into, or 0 to leave it to the pool.", Default: 0, Minimum: bound(0), Maximum: bound(MaxTasks)},
 	}
 }
@@ -200,13 +225,18 @@ func (Transcribe) Split(ctx context.Context, blobs Blobs, params []byte, parts i
 		p.Language = "auto"
 	}
 	if p.Model == "" {
-		p.Model = "base"
+		p.Model = transcribeDefault
+	}
+	if englishOnly(p.Model) && p.Language == "auto" {
+		p.Language = "en"
 	}
 	switch {
 	case p.Language != "auto" && !transcribeLanguage.MatchString(p.Language):
 		return nil, fmt.Errorf("transcribe parameters: language is %q, and must be a code such as en, or auto", p.Language)
 	case TranscribeImages[p.Model] == "":
 		return nil, fmt.Errorf("transcribe parameters: model is %q, and must be one of %s", p.Model, strings.Join(transcribeModelNames, ", "))
+	case englishOnly(p.Model) && p.Language != "en":
+		return nil, fmt.Errorf("transcribe parameters: the model %s understands only English, and language is %q; choose en or auto, or a model without .en", p.Model, p.Language)
 	case p.Segments < 0:
 		return nil, fmt.Errorf("transcribe parameters: segments is %d, and must be 0 or more", p.Segments)
 	}

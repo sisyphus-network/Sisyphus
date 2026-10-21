@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,14 +29,15 @@ func TestATranscribeJobIsAContainerJobWithTheImageAndCommandFixed(t *testing.T) 
 	}
 	var task containerTask
 	json.Unmarshal(payloads[2], &task)
-	if task.Image != TranscribeImages["base"] || !strings.HasPrefix(task.Image, "sisyphus-transcribe-base:") || task.Input != recording.String() || task.Index != 2 || task.Count != 3 || task.Network {
+	if task.Image != TranscribeImages["large-v3-turbo-q5_0"] || !strings.HasPrefix(task.Image, "sisyphus-transcribe-large-v3-turbo-q5_0:") || task.Input != recording.String() || task.Index != 2 || task.Count != 3 || task.Network {
 		t.Errorf("the last task: %+v", task)
 	}
 	if len(task.Command) != 3 || task.Command[0] != "sh" || !strings.Contains(task.Command[2], "whisper-cli") || !strings.Contains(task.Command[2], "silencedetect") {
 		t.Errorf("its command: %q", task.Command)
 	}
-	// Unless said otherwise: the base model, and whisper tells the language.
-	if task.Env["LANGUAGE"] != "auto" || task.Env["MODEL"] != "base" {
+	// Unless said otherwise: the quantised turbo model, and whisper tells
+	// the language.
+	if task.Env["LANGUAGE"] != "auto" || task.Env["MODEL"] != "large-v3-turbo-q5_0" {
 		t.Errorf("its settings: %v", task.Env)
 	}
 
@@ -47,8 +49,25 @@ func TestATranscribeJobIsAContainerJobWithTheImageAndCommandFixed(t *testing.T) 
 	if task.Image != TranscribeImages["small"] || !strings.HasPrefix(task.Image, "sisyphus-transcribe-small:") || task.Env["LANGUAGE"] != "fr" || task.Env["MODEL"] != "small" {
 		t.Errorf("settings as asked: %s %v", task.Image, task.Env)
 	}
-	if TranscribeImages["base"] == TranscribeImages["small"] {
-		t.Error("the two models share an image name")
+	// An English-only model hears English, unless told otherwise.
+	payloads, err = Transcribe{}.Split(ctx, store, []byte(`{"input":"`+recording.String()+`","model":"tiny.en"}`), 1)
+	json.Unmarshal(payloads[0], &task)
+	if err != nil || task.Image != TranscribeImages["tiny.en"] || task.Env["LANGUAGE"] != "en" || task.Env["MODEL"] != "tiny.en" {
+		t.Errorf("an English-only model: %s %v, %v", task.Image, task.Env, err)
+	}
+
+	// Every model has an image of its own, under a name Docker takes.
+	reference := regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*:[0-9a-f]{12}$`)
+	seen := map[string]bool{}
+	for _, model := range transcribeModelNames {
+		image := TranscribeImages[model]
+		if !reference.MatchString(image) || !strings.HasPrefix(image, "sisyphus-transcribe-"+model+":") || seen[image] || transcribeModels[model] == "" {
+			t.Errorf("%s: the image %q", model, image)
+		}
+		seen[image] = true
+	}
+	if len(seen) != len(transcribeModels) || len(TranscribeImages) != len(transcribeModels) || len(transcribeModelNames) != 14 {
+		t.Errorf("%d models, %d images, %d names", len(transcribeModels), len(TranscribeImages), len(transcribeModelNames))
 	}
 
 	for params, want := range map[string]string{
@@ -58,7 +77,7 @@ func TestATranscribeJobIsAContainerJobWithTheImageAndCommandFixed(t *testing.T) 
 		`{"input":"CID","language":"en;"}`:     `language is "en;", and must be a code such as en, or auto`,
 		`{"input":"CID","language":"EN"}`:      `language is "EN"`,
 		`{"input":"CID","language":"english"}`: `language is "english"`,
-		`{"input":"CID","model":"large"}`:      `model is "large", and must be one of base, small`,
+		`{"input":"CID","model":"large"}`:      `model is "large", and must be one of tiny, tiny.en, base, base.en, small, small.en, large-v3-turbo-q5_0, large-v3-q5_0, medium, medium.en, large-v3-turbo, large-v1, large-v2, large-v3`,
 		`{"input":"CID","segments":-1}`:        "segments is -1, and must be 0 or more",
 	} {
 		params = strings.Replace(params, "CID", recording.String(), 1)
@@ -88,7 +107,8 @@ func TestEachTranscribingImageIsBuiltOnlyWhereItIsMissing(t *testing.T) {
 		os.WriteFile(filepath.Join(volume(args, "/output"), "segments.json"), []byte(`{"segments":[]}`), 0o644)
 		return 0, nil
 	}
-	for _, model := range []string{"base", "small"} {
+	var shared string
+	for _, model := range transcribeModelNames {
 		payloads, _ := Transcribe{}.Split(ctx, store, []byte(`{"input":"`+recording.String()+`","model":"`+model+`"}`), 1)
 		image := TranscribeImages[model]
 
@@ -137,6 +157,20 @@ func TestEachTranscribingImageIsBuiltOnlyWhereItIsMissing(t *testing.T) {
 				t.Errorf("%s: the recipe lacks %q:\n%s", model, want, recipe)
 			}
 		}
+		// Only the model's own lines differ, so every model's image
+		// shares the compiled whisper.cpp and ffmpeg.
+		var rest []string
+		for _, line := range strings.Split(recipe, "\n") {
+			if !strings.Contains(line, "ggml-"+model+".bin") {
+				rest = append(rest, line)
+			}
+		}
+		if shared == "" {
+			shared = strings.Join(rest, "\n")
+		}
+		if strings.Join(rest, "\n") != shared || strings.Count(recipe, model+".bin") != 2 {
+			t.Errorf("%s: the recipe differs from the others in more than its model:\n%s", model, recipe)
+		}
 		if sum := sha256.Sum256([]byte(recipe)); !strings.HasSuffix(image, ":"+hex.EncodeToString(sum[:6])) {
 			t.Errorf("%s: the image %s is not named by its recipe", model, image)
 		}
@@ -153,7 +187,7 @@ func TestEachTranscribingImageIsBuiltOnlyWhereItIsMissing(t *testing.T) {
 		io.WriteString(stderr, "fetching\nsha256sum: WARNING: 1 computed checksum did NOT match\n")
 		return 1, nil
 	}}
-	if _, err := (Transcribe{Engine: broken.engine}).Execute(ctx, store, payloads[0]); err == nil || !strings.Contains(err.Error(), "build the image transcription with the base model runs in: sha256sum: WARNING") {
+	if _, err := (Transcribe{Engine: broken.engine}).Execute(ctx, store, payloads[0]); err == nil || !strings.Contains(err.Error(), "build the image transcription with the large-v3-turbo-q5_0 model runs in: sha256sum: WARNING") {
 		t.Errorf("a build that fails: %v", err)
 	}
 
@@ -291,8 +325,10 @@ func TestRealSpeechIsTranscribedInStretches(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The base model, which is quick; the default is the same pipeline
+	// with a larger model.
 	w := Transcribe{Confined: Confinement{ReadOnly: true}}
-	payloads, err := w.Split(ctx, store, []byte(`{"input":"`+speech.String()+`","language":"en"}`), 2)
+	payloads, err := w.Split(ctx, store, []byte(`{"input":"`+speech.String()+`","language":"en","model":"base"}`), 2)
 	if err != nil {
 		t.Fatal(err)
 	}

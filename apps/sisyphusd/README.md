@@ -1162,15 +1162,30 @@ The recording, sound or video, is cut into as many stretches as the job has task
 | --- | --- |
 | `input` | The CID of the stored recording. Anything ffmpeg reads that has sound: WAV, MP3, M4A, Ogg, FLAC, or a video. |
 | `language` | The spoken language as a code, such as `en`, `fr` or `de`. Default `auto`: whisper tells, for each stretch on its own. |
-| `model` | `base` (the default, about 150 MB) or `small` (about 490 MB), slower and more accurate. Both are multilingual. |
+| `model` | One of the models below. Default `large-v3-turbo-q5_0`. |
 | `segments` | How many stretches. Default: one for each free slot. |
 
 The result is `{"text": "<CID of the transcript>", "subtitles": "<CID of the SRT file>", "segments": <stretches>, "seconds": <length of the recording>, "words": <words heard>}`; the desktop app saves the two as `.txt` and `.srt`.
 
-- **It runs on workers started with `--containers`**, with the image and the script fixed. There is an image for each model. A worker builds the one a job needs the first time, which takes the network once and some minutes: whisper.cpp (release `v1.9.5`, at a pinned commit) is compiled from source for that worker's processor, at the lowest priority, and the model is fetched from the [whisper.cpp model repository](https://huggingface.co/ggerganov/whisper.cpp) at a pinned revision and checked against its SHA-256. The rest is the transcoding image (Alpine and its ffmpeg), so a worker that has both keeps ffmpeg once, plus jq.
-- **Image size**: as Docker reports it, the `base` image is 476 MB on disk (186 MB of content), the `small` one 1.13 GB (500 MB); the model is most of either.
+The models are whisper.cpp's own conversions of OpenAI's Whisper, each pinned by its SHA-256 at one revision of the model repository. Those ending in `.en` understand only English: with them `auto` means `en`, and any other language is refused. The `q5_0` ones are quantised, about a third of the size of the model they are made from, and close to it in accuracy.
+
+| Model | File | Speed on the R620 | When to pick it |
+| --- | --- | --- | --- |
+| `tiny`, `tiny.en` | 78 MB | 0.5× base | A quick draft, or a weak machine. Mishears often. |
+| `base`, `base.en` | 148 MB | 1× (24 s for 13 s of speech) | Clear speech in a common language, where speed matters more than every word. |
+| `small`, `small.en` | 488 MB | 4.5× | Superseded by `large-v3-turbo-q5_0`, which was quicker and more accurate here. |
+| `large-v3-turbo-q5_0` | 574 MB | 3.5× | **The default.** It heard the test clip word for word, as the large models do, in less time than `small`. |
+| `large-v3-q5_0` | 1.08 GB | 5.2× | The most accurate model, at a third of the size and with little of the accuracy lost. For hard audio, names and less common languages. |
+| `medium`, `medium.en` | 1.53 GB | unmeasured, slower than `small` | Older; `large-v3-turbo` is usually better for the time. |
+| `large-v3-turbo` | 1.62 GB | unmeasured, a little slower than its `q5_0` | The turbo model unquantised. |
+| `large-v1`, `large-v2`, `large-v3` | 3.1 GB | unmeasured, slower than `large-v3-q5_0` | The full large models. `large-v2` is sometimes steadier than v3 on long or noisy recordings; v1 is there for comparison. |
+
+The speeds come from one task transcribing the same 13 seconds of espeak-ng speech with each model, 8 threads each, while the R620 (two Xeon E5-2660, which have AVX but no AVX2) was busy with CI. They are a guide to how the models compare, not a benchmark. `large-v3-turbo-q5_0` is the default because on that clip `base` got about one word in four wrong, while the turbo model got none wrong in 3.5 times as long, and splitting spreads that time across the pool. The cost is fetching 574 MB on each worker once instead of 148 MB. Name `base` for speed.
+
+- **It runs on workers started with `--containers`**, with the image and the script fixed. There is an image for each model, built only when a job asks for that model, so a worker never fetches a model it is not asked to run. A worker builds the one a job needs the first time, which takes the network once and some minutes: whisper.cpp (release `v1.9.5`, at a pinned commit) is compiled from source for that worker's processor, at the lowest priority, and the model is fetched from the [whisper.cpp model repository](https://huggingface.co/ggerganov/whisper.cpp) at a pinned revision and checked against its SHA-256. The rest is the transcoding image (Alpine and its ffmpeg), so a worker that has both keeps ffmpeg once, plus jq. Only the model's lines differ between the images, so every model's image shares the compiled whisper.cpp and ffmpeg layers, and a second model costs its own file and nothing more.
+- **Image size**: the layers every model shares are about 38 MB of content; the rest is the model. As Docker reports them here (on disk, then content): `tiny` 343 MB (123 MB), `base` 476 MB (186 MB), `small` 1.13 GB (500 MB), `large-v3-turbo-q5_0` 1.3 GB (587 MB), `large-v3-q5_0` 2.31 GB (1.09 GB).
 - **Where stretches meet.** Each cut is moved from where an even share would end to the middle of the nearest quiet moment (ffmpeg's `silencedetect`, below -35 dB for 0.3 s or more) within a quarter of a share or 5 seconds, whichever is less. The tasks on either side of a cut find the same place from the same recording, so nothing is heard twice or missed. Speech with no pause near a cut is cut where it is, and a word there may be split or lost; fewer, longer stretches make that rarer.
-- **Speed.** whisper uses up to 8 threads in each task. On the R620 (two Xeon E5-2660, no AVX2), busy with other work at the time, one task took 108 s for 67 s of speech with `base` and 363 s with `small`. The gain from cutting is across machines, each transcribing its stretch at the same time. Every worker fetches the whole recording.
+- **Speed.** whisper uses up to 8 threads in each task. On the R620 (two Xeon E5-2660, no AVX2), busy with other work at the time, one task took 108 s for 67 s of speech with `base` and 363 s with `small`; the table above compares the models. The gain from cutting is across machines, each transcribing its stretch at the same time. Every worker fetches the whole recording.
 - **Accuracy** is whisper's: good for clear speech, weaker for names, crowds, music and accents its training saw little of. What it marks as not speech, such as `[BLANK_AUDIO]`, is left out. With `auto`, each stretch is identified on its own, so a short stretch may be taken for another language; name it when you know it. No translation, and no telling speakers apart.
 - **Results are not checked by a second worker.** whisper's sums come out a little differently on different processors and thread counts, so `verify` and `audit_share` refuse transcribe jobs.
 - **CPU only, for now.** A worker's graphics card is not used.
