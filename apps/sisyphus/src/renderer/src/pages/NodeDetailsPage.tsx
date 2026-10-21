@@ -14,6 +14,7 @@ import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { displayDaemonVersion } from '@/lib/daemon-version'
 import { ResponsiveActionDialog } from '@/components/ui/responsive-action-dialog'
 import { PoolHostingOverview } from '@/components/pool-hosting-overview'
+import { offeredWorkloads } from '@/lib/worker-workloads'
 
 type Messages = ReturnType<typeof getMessages>
 function shortId(id: string) { return id.length > 22 ? `${id.slice(0, 12)}…${id.slice(-8)}` : id }
@@ -211,7 +212,7 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{worker.name || worker.hostname || worker.peerId.slice(0, 14)}</div>
               <div className="mt-1 text-xs leading-5 text-muted-foreground">{worker.os} · {worker.arch} · {worker.cpuCores} {labels.cores} · {worker.cpuModel || labels.cpuUnknown}</div>
-              <div className="mt-2 flex flex-wrap gap-1.5">{worker.gpus?.map((gpu, index) => <Badge key={`${worker.peerId}:gpu:${index}`} variant="secondary">{gpu.name}{Number(gpu.memoryBytes) > 0 ? ` · ${formatBytes(gpu.memoryBytes)}` : ''}</Badge>)}{worker.models?.map((model) => <Badge key={model} variant="outline">{model}</Badge>)}{worker.workloads?.map((workload) => <Badge key={workload} variant="outline" className="text-muted-foreground">{workload}</Badge>)}</div>
+              <div className="mt-2 flex flex-wrap gap-1.5">{worker.gpus?.map((gpu, index) => <Badge key={`${worker.peerId}:gpu:${index}`} variant="secondary">{gpu.name}{Number(gpu.memoryBytes) > 0 ? ` · ${formatBytes(gpu.memoryBytes)}` : ''}</Badge>)}{worker.models?.map((model) => <Badge key={model} variant="outline">{model}</Badge>)}{offeredWorkloads(worker).map((workload) => <Badge key={workload} variant="outline" className="text-muted-foreground">{workload}</Badge>)}</div>
             </div>
             <div className="text-end text-xs leading-5 text-muted-foreground">{formatBytes(worker.memoryBytes)}<div>{worker.runningTasks}/{worker.taskSlots} {messages.operationText.tasks}</div></div>
           </article>)}
