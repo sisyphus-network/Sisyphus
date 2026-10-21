@@ -312,7 +312,7 @@ func checkInputs(named map[string]string) error {
 	}
 	for name, id := range named {
 		if !inputName(name) {
-			return fmt.Errorf("%q cannot name an input: a name is 1 to 64 lower-case letters, digits, dots, dashes and underscores, and not data, . or ..", name)
+			return fmt.Errorf("%q cannot name an input: a name is 1 to 64 lower-case letters, digits, dots, dashes and underscores, not ending in a dot, and not data, . or .., nor a name Windows keeps for a device such as nul or com1", name)
 		}
 		if _, err := cid.Decode(id); err != nil {
 			return fmt.Errorf("input %s is not a CID: %w", name, err)
@@ -321,9 +321,16 @@ func checkInputs(named map[string]string) error {
 	return nil
 }
 
-// inputName reports whether name may name an input.
+// inputName reports whether name may name an input. Beyond the characters
+// allowed, it may not end in a dot, which Windows drops, nor be one of the
+// names Windows keeps for devices, with or without an extension (nul,
+// nul.txt), which a Windows worker would open as the device instead of
+// writing the input to a file.
 func inputName(name string) bool {
-	if name == "" || len(name) > 64 || name == "data" || name == "." || name == ".." {
+	if name == "" || len(name) > 64 || name == "data" || name == "." || name == ".." || strings.HasSuffix(name, ".") {
+		return false
+	}
+	if base, _, _ := strings.Cut(name, "."); windowsDevice(base) {
 		return false
 	}
 	return !strings.ContainsFunc(name, func(r rune) bool {
@@ -331,10 +338,21 @@ func inputName(name string) bool {
 	})
 }
 
+// windowsDevice reports whether name, in lower case and without its
+// extension, is one Windows reserves for a device: con, prn, aux, nul,
+// com0 to com9 and lpt0 to lpt9.
+func windowsDevice(name string) bool {
+	switch name {
+	case "con", "prn", "aux", "nul":
+		return true
+	}
+	return len(name) == 4 && (strings.HasPrefix(name, "com") || strings.HasPrefix(name, "lpt")) && name[3] >= '0' && name[3] <= '9'
+}
+
 // taskFiles are the files a task is given in /input, by name, as the CIDs
 // of what they hold.
 func taskFiles(p ContainerParams) map[string]string {
-	files := make(map[string]string, len(p.Inputs)+1)
+	files := make(map[string]string, min(len(p.Inputs), maxInputs)+1)
 	for name, id := range p.Inputs {
 		files[name] = id
 	}

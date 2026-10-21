@@ -877,7 +877,20 @@ func TestAnInputNameThatCouldLeadOutOfInputIsRefused(t *testing.T) {
 		"not ASCII":           {"caf\u00e9": id},
 		"too long":            {strings.Repeat("a", 65): id},
 		"not a CID":           {"fine": "not-a-cid"},
-		"too many":            many,
+		// Names Windows keeps for devices, with or without an extension, and
+		// names it would drop the last dot of: a Windows worker would open
+		// the device, or another file, instead of writing the input.
+		"the null device":       {"nul": id},
+		"the console":           {"con": id},
+		"a serial port":         {"com1": id},
+		"a parallel port":       {"lpt9": id},
+		"the printer":           {"prn": id},
+		"the auxiliary device":  {"aux": id},
+		"a device with a type":  {"nul.txt": id},
+		"a port with two types": {"com1.tar.gz": id},
+		"a final dot":           {"name.": id},
+		"two final dots":        {"a..": id},
+		"too many":              many,
 	}
 	engine := &pretend{do: func([]string, io.Writer, io.Writer) (int, error) { return 0, nil }}
 	c := Container{Engine: engine.engine, Confined: Confinement{TaskDir: t.TempDir()}}
@@ -899,7 +912,7 @@ func TestAnInputNameThatCouldLeadOutOfInputIsRefused(t *testing.T) {
 		t.Errorf("an input was written out of the task directory: %v", err)
 	}
 	// The longest name, and every character a name may have, are taken.
-	for _, name := range []string{strings.Repeat("z", 64), "abc-xyz_0.9", "..a", "-"} {
+	for _, name := range []string{strings.Repeat("z", 64), "abc-xyz_0.9", "..a", "-", "console", "com", "com10", "lpt", "auxiliary", "nul-file", "null.txt", "x.nul"} {
 		if err := checkInputs(map[string]string{name: id}); err != nil {
 			t.Errorf("%q: %v", name, err)
 		}
