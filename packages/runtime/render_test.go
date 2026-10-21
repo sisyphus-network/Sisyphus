@@ -294,7 +294,7 @@ func TestRenderedFramesAreListedInOrderAndArchived(t *testing.T) {
 	summary, _ := store.Put(ctx, strings.NewReader(`{"split":"frames"}`))
 	for name, frame := range map[string]string{"a frame that is not stored": missing, "a frame that is no CID": "nothing"} {
 		lost := mustJSON(ContainerOutput{Files: map[string]string{"summary.json": summary.String(), "frame_0000001.png": frame}})
-		if _, err := (Render{}).Aggregate(ctx, store, [][]byte{lost}); err == nil || !strings.Contains(err.Error(), "store the frames as one zip file: frame frame_0000001.png") {
+		if _, err := (Render{}).Aggregate(ctx, store, [][]byte{lost}); err == nil || !strings.Contains(err.Error(), "store the frames as one zip file: frame_0000001.png") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}

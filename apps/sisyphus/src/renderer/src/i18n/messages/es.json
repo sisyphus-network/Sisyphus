@@ -482,6 +482,7 @@
       "render": { "title": "Renderizar una escena 3D", "description": "Renderiza una escena de Blender con Cycles o EEVEE, por fotogramas o por franjas de un fotograma, por todo el pool." },
       "transcribe": { "title": "Transcribir voz", "description": "Convierte la voz de una grabación en texto y subtítulos, en tramos por todo el pool." },
       "qchem": { "title": "Calcular moléculas", "description": "Calcula con xtb las energías, geometrías optimizadas o frecuencias de un archivo de confórmeros o moléculas, por lotes en todo el pool." },
+      "ocr": { "title": "Leer texto de escaneos", "description": "Lee el texto de un PDF escaneado o una imagen con Tesseract, por tramos de páginas por todo el pool, como texto plano o un PDF con búsqueda." },
       "md": { "title": "Simular una molécula", "description": "Ejecuta dinámica molecular como réplicas por todo el pool." }
     }
   },
