@@ -24,6 +24,8 @@ const (
 	NodeService_WatchPairedBrowsers_FullMethodName          = "/sisyphus.node.v1.NodeService/WatchPairedBrowsers"
 	NodeService_GetLocationDiscoverySettings_FullMethodName = "/sisyphus.node.v1.NodeService/GetLocationDiscoverySettings"
 	NodeService_SetLocationDiscoverySettings_FullMethodName = "/sisyphus.node.v1.NodeService/SetLocationDiscoverySettings"
+	NodeService_GetNodeLocation_FullMethodName              = "/sisyphus.node.v1.NodeService/GetNodeLocation"
+	NodeService_SetNodeLocation_FullMethodName              = "/sisyphus.node.v1.NodeService/SetNodeLocation"
 	NodeService_GetPoolLimits_FullMethodName                = "/sisyphus.node.v1.NodeService/GetPoolLimits"
 	NodeService_SetPoolLimits_FullMethodName                = "/sisyphus.node.v1.NodeService/SetPoolLimits"
 	NodeService_GetWebAccessConfig_FullMethodName           = "/sisyphus.node.v1.NodeService/GetWebAccessConfig"
@@ -88,6 +90,12 @@ type NodeServiceClient interface {
 	// effect after it restarts, whether the desktop starts it or not.
 	GetLocationDiscoverySettings(ctx context.Context, in *GetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error)
 	SetLocationDiscoverySettings(ctx context.Context, in *SetLocationDiscoverySettingsRequest, opts ...grpc.CallOption) (*LocationDiscoverySettingsState, error)
+	// Where the owner says this node is, and how much of it other members of
+	// a pool may see. Both need the node's API token. A change is saved by the
+	// node and takes effect at once; a SetNodeLocation with no location clears
+	// it. Nothing is sent to the pool yet.
+	GetNodeLocation(ctx context.Context, in *GetNodeLocationRequest, opts ...grpc.CallOption) (*GetNodeLocationResponse, error)
+	SetNodeLocation(ctx context.Context, in *SetNodeLocationRequest, opts ...grpc.CallOption) (*GetNodeLocationResponse, error)
 	// The limits a coordinator holds each member to. Changes are saved by the
 	// node and take effect after it restarts, whether the desktop starts it
 	// or not; a node that does not run the coordinator role holds no one to
@@ -285,6 +293,26 @@ func (c *nodeServiceClient) SetLocationDiscoverySettings(ctx context.Context, in
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LocationDiscoverySettingsState)
 	err := c.cc.Invoke(ctx, NodeService_SetLocationDiscoverySettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) GetNodeLocation(ctx context.Context, in *GetNodeLocationRequest, opts ...grpc.CallOption) (*GetNodeLocationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetNodeLocationResponse)
+	err := c.cc.Invoke(ctx, NodeService_GetNodeLocation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeServiceClient) SetNodeLocation(ctx context.Context, in *SetNodeLocationRequest, opts ...grpc.CallOption) (*GetNodeLocationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetNodeLocationResponse)
+	err := c.cc.Invoke(ctx, NodeService_SetNodeLocation_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -851,6 +879,12 @@ type NodeServiceServer interface {
 	// effect after it restarts, whether the desktop starts it or not.
 	GetLocationDiscoverySettings(context.Context, *GetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error)
 	SetLocationDiscoverySettings(context.Context, *SetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error)
+	// Where the owner says this node is, and how much of it other members of
+	// a pool may see. Both need the node's API token. A change is saved by the
+	// node and takes effect at once; a SetNodeLocation with no location clears
+	// it. Nothing is sent to the pool yet.
+	GetNodeLocation(context.Context, *GetNodeLocationRequest) (*GetNodeLocationResponse, error)
+	SetNodeLocation(context.Context, *SetNodeLocationRequest) (*GetNodeLocationResponse, error)
 	// The limits a coordinator holds each member to. Changes are saved by the
 	// node and take effect after it restarts, whether the desktop starts it
 	// or not; a node that does not run the coordinator role holds no one to
@@ -1000,6 +1034,12 @@ func (UnimplementedNodeServiceServer) GetLocationDiscoverySettings(context.Conte
 }
 func (UnimplementedNodeServiceServer) SetLocationDiscoverySettings(context.Context, *SetLocationDiscoverySettingsRequest) (*LocationDiscoverySettingsState, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetLocationDiscoverySettings not implemented")
+}
+func (UnimplementedNodeServiceServer) GetNodeLocation(context.Context, *GetNodeLocationRequest) (*GetNodeLocationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetNodeLocation not implemented")
+}
+func (UnimplementedNodeServiceServer) SetNodeLocation(context.Context, *SetNodeLocationRequest) (*GetNodeLocationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetNodeLocation not implemented")
 }
 func (UnimplementedNodeServiceServer) GetPoolLimits(context.Context, *GetPoolLimitsRequest) (*PoolLimitsState, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPoolLimits not implemented")
@@ -1235,6 +1275,42 @@ func _NodeService_SetLocationDiscoverySettings_Handler(srv interface{}, ctx cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeServiceServer).SetLocationDiscoverySettings(ctx, req.(*SetLocationDiscoverySettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_GetNodeLocation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetNodeLocationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetNodeLocation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetNodeLocation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetNodeLocation(ctx, req.(*GetNodeLocationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _NodeService_SetNodeLocation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetNodeLocationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).SetNodeLocation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_SetNodeLocation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).SetNodeLocation(ctx, req.(*SetNodeLocationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2036,6 +2112,14 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetLocationDiscoverySettings",
 			Handler:    _NodeService_SetLocationDiscoverySettings_Handler,
+		},
+		{
+			MethodName: "GetNodeLocation",
+			Handler:    _NodeService_GetNodeLocation_Handler,
+		},
+		{
+			MethodName: "SetNodeLocation",
+			Handler:    _NodeService_SetNodeLocation_Handler,
 		},
 		{
 			MethodName: "GetPoolLimits",

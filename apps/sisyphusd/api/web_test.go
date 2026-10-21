@@ -413,7 +413,7 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	cfg := LocalConfig{
 		NodeID: "12D3KooWnode", Token: "owner-token", Listen: func() []string { return nil },
 		BrowserAccess: db, LocationDiscovery: db, GatewayDiscoverySupported: true,
-		BrowserDeviceChanges: changes, PoolLimits: db, RunsCoordinator: true,
+		BrowserDeviceChanges: changes, PoolLimits: db, RunsCoordinator: true, OwnerLocation: db,
 	}
 	ui := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("UI")}}
 	server := httptest.NewServer(NewWebAppHandler(cfg, nil, ui))
@@ -505,6 +505,23 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	settings, configured, err := db.LocationDiscovery()
 	if err != nil || !configured || settings != (nodedb.LocationDiscovery{LocateCountry: true, StunServer: "stun.example.org:3478"}) {
 		t.Fatalf("paired browser discovery settings = %#v, configured %v, error %v", settings, configured, err)
+	}
+	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/SetNodeLocation", `{"location":{"latitude":51.5,"longitude":-0.12,"share":"LOCATION_SHARE_CITY"}}`, cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"share":"LOCATION_SHARE_CITY"`) {
+		t.Fatalf("paired browser could not set the node's location: %d %s", res.StatusCode, body)
+	}
+	for _, route := range []string{"GetNodeLocation", "GetNodeInfo"} {
+		res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/"+route, `{}`, cookie, false)
+		body, _ = io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"latitude":51.5`) {
+			t.Fatalf("paired browser could not read the node's location with %s: %d %s", route, res.StatusCode, body)
+		}
+	}
+	if location, set, err := db.OwnerLocation(); err != nil || !set || location != (nodedb.OwnerLocation{Latitude: 51.5, Longitude: -0.12, Share: "city"}) {
+		t.Fatalf("paired browser location = %#v, set %v, error %v", location, set, err)
 	}
 	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/GetPoolLimits", `{}`, cookie, false)
 	body, _ = io.ReadAll(res.Body)

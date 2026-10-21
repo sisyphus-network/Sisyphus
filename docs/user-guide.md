@@ -109,6 +109,8 @@ bin/sisyphusd ask --chat <id> "And below a million?"      # carry the conversati
 
 A node on a home network knows itself only by an address like `192.168.1.20`, which no table can place, so its country shows as **Not available** and the globe has no marker for it. Node overview and the globe then link to **Settings → This node → Location discovery**, where the node can be allowed to ask your router, a STUN server you name, or a lookup service for its public address ([#573](https://github.com/sisyphus-network/Sisyphus/issues/573)).
 
+You can also say yourself where the node is, as precisely as you like, with `sisyphusd location set --lat <latitude> --lon <longitude>` or the local API's `SetNodeLocation` (`location show` prints it and `location clear` forgets it). `--share` says how much of it other members of a pool may see later: `exact`, `about-1km`, `city`, `country` (the default) or `nothing`. For now nothing of it is sent to the pool, whatever you choose, and the app has no place to set it yet; a way to place the pin on the globe or by typing coordinates comes in a later version.
+
 ```sh
 bin/sisyphusd id
 bin/sisyphusd nodes
