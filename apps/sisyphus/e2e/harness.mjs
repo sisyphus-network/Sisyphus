@@ -107,6 +107,36 @@ export async function launch(node, profile, { webgl = true } = {}) {
   return { app, page }
 }
 
+/**
+ * The built app starting a node of its own, as it does for its owner, but on
+ * ports nothing else has and with a home of its own, so the node's data is
+ * the test's. docker stands in for Docker's answer: "ready:<version>",
+ * "missing" or "stopped". close() quits the app, which stops its node.
+ */
+export async function launchOwnNode({ docker = 'ready:27.3.1' } = {}) {
+  const home = mkdtempSync(join(tmpdir(), 'sisyphus-e2e-home-'))
+  const [api, web] = [await freePort(), await freePort()]
+  const env = { ...process.env, HOME: home, XDG_DATA_HOME: join(home, 'data'), SISYPHUS_AUTO_START_DAEMON: '1', SISYPHUS_API_ADDRESS: `127.0.0.1:${api}`, SISYPHUS_WEB_API_ADDRESS: `127.0.0.1:${web}`, SISYPHUS_DAEMON_PATH: daemon, SISYPHUS_DOCKER_CHECK: docker }
+  delete env.SISYPHUS_API_TOKEN_FILE
+  const app = await electron.launch({
+    cwd: desktop,
+    args: ['out/main/index.js', `--user-data-dir=${join(home, 'profile')}`, '--no-sandbox', '--disable-gpu', '--disable-software-rasterizer'],
+    env,
+  })
+  const page = await app.firstWindow()
+  page.setDefaultTimeout(20000)
+  await page.waitForLoadState('domcontentloaded')
+  return {
+    app, page, dataDir: join(home, 'data', 'sisyphus'),
+    async close() {
+      await app.close().catch(() => {})
+      // The node is gone once the port it answered on is free again.
+      await until('the app’s own node to stop', async () => !await listening(api), 35).catch(() => {})
+      rmSync(home, { recursive: true, force: true })
+    },
+  }
+}
+
 /** Opens one of the pages the sidebar lists, showing the sidebar first if it is put away. */
 export async function open(page, name) {
   const link = page.getByRole('complementary').getByRole('link', { name, exact: true })

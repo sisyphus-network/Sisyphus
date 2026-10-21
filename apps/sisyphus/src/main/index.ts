@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, shell, type IpcMainInvokeEvent } from 'electron'
 import { readFileSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isIP } from 'node:net'
@@ -10,6 +10,7 @@ import { DesktopDaemon } from './daemon-process'
 import { restartManagedNode } from './restart-managed-node'
 import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, normalizeLocationDiscoverySettings, supportsGatewayDiscovery } from './location-discovery-settings'
 import { hostAddresses, hostingListen, loadPoolHostingSettings, poolHostingState, savePoolHostingSettings } from './pool-hosting-settings'
+import { checkDocker, containerLaunch, containerState, dockerCheckFromEnvironment, dockerInstallUrl, loadContainerSettings, saveContainerSettings, validateContainerSettings, type ContainerSettings } from './container-settings'
 import { normalizePoolLimits, validatePoolLimits } from '../shared/pool-limits.ts'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
@@ -34,12 +35,20 @@ const here = fileURLToPath(new URL('.', import.meta.url))
 const nodeProtoJson = protobuf.parse(nodeProtoSource).root.toJSON()
 const endpoint = process.env.SISYPHUS_API_ADDRESS ?? '127.0.0.1:50051'
 const webApiAddress = process.env.SISYPHUS_WEB_API_ADDRESS ?? '127.0.0.1:50052'
-const autoStartManagedDaemon = process.env.SISYPHUS_AUTO_START_DAEMON !== '0' && !process.env.SISYPHUS_API_ADDRESS && !process.env.SISYPHUS_API_TOKEN_FILE
+// SISYPHUS_AUTO_START_DAEMON=1 has the app start its own node at
+// SISYPHUS_API_ADDRESS, as a second copy of the app or a test does.
+const autoStartManagedDaemon = process.env.SISYPHUS_AUTO_START_DAEMON === '1'
+  ? !process.env.SISYPHUS_API_TOKEN_FILE
+  : process.env.SISYPHUS_AUTO_START_DAEMON !== '0' && !process.env.SISYPHUS_API_ADDRESS && !process.env.SISYPHUS_API_TOKEN_FILE
 const locationDiscoveryPath = join(app.getPath('userData'), 'location-discovery.json')
 const initialLocationDiscoverySettings = loadLocationDiscoverySettings(locationDiscoveryPath)
 // Unlike the settings above, hosting belongs to the node this app starts, so
 // the app keeps it: a node run by hand is reached at whatever --listen says.
 const poolHostingPath = join(app.getPath('userData'), 'pool-hosting.json')
+// Running the pool's containers is also the app's own node's setting: a node
+// run by hand runs them if its owner gave it --containers.
+const containerSettingsPath = join(app.getPath('userData'), 'containers.json')
+const dockerCheck = dockerCheckFromEnvironment(process.env.SISYPHUS_DOCKER_CHECK) ?? (() => checkDocker())
 // The tray keeps the app's own node working while its window is closed.
 const trayPreferencesPath = join(app.getPath('userData'), 'tray.json')
 let trayPreferences = loadTrayPreferences(trayPreferencesPath)
@@ -54,6 +63,9 @@ let traySetup: Promise<void> = Promise.resolve()
 // this only after the new process is confirmed reachable.
 let runningPoolHostingSettings = loadPoolHostingSettings(poolHostingPath)
 let runningHosting = autoStartManagedDaemon ? hostingListen(runningPoolHostingSettings, hostAddresses()) : null
+// Set each time the app starts its node, which reads the saved settings then.
+let runningContainers: ContainerSettings = { ...loadContainerSettings(containerSettingsPath), enabled: false }
+let containersUnavailable = false
 // The daemon lets anything on this machine read from its local API, but only
 // a holder of its token change it. The token is in the daemon's data
 // directory, readable by the user who runs the daemon.
@@ -70,6 +82,12 @@ const desktopDaemon = new DesktopDaemon({
   enabled: autoStartManagedDaemon,
   locationDiscovery: effectiveLocationDiscoverySettings(initialLocationDiscoverySettings, supportsGatewayDiscovery(process.platform)),
   hostingListen: runningHosting && 'listen' in runningHosting ? runningHosting.listen : undefined,
+  containers: async () => {
+    const launch = await containerLaunch(loadContainerSettings(containerSettingsPath), dockerCheck)
+    runningContainers = launch.running
+    containersUnavailable = launch.unavailable
+    return launch.flags
+  },
   onError: (message) => { daemonStartupError = message },
 })
 
@@ -496,6 +514,25 @@ app.whenReady().then(() => {
     savedPoolHostingSettings = savePoolHostingSettings(poolHostingPath, value)
     return currentPoolHosting()
   })
+  // Docker is asked again each time, since the owner may have started it
+  // since; a node the app did not start is not asked about at all.
+  const currentContainers = async (saved = loadContainerSettings(containerSettingsPath)) => {
+    const managed = desktopDaemon.managesDaemon
+    return containerState({ managed, saved, running: runningContainers, unavailable: containersUnavailable, docker: managed ? await dockerCheck() : null })
+  }
+  handleNode('node:get-containers', () => currentContainers())
+  handleNode('node:save-containers', async (_event, value: unknown) => {
+    if (!desktopDaemon.managesDaemon) throw new Error('This app did not start the node, so it does not choose whether that node runs containers.')
+    const settings = validateContainerSettings(value)
+    if (settings.enabled && !loadContainerSettings(containerSettingsPath).enabled) {
+      const docker = await dockerCheck()
+      if (docker.state === 'missing') throw new Error('Docker is not installed on this computer. Install Docker, start it and try again.')
+      if (docker.state !== 'ready') throw new Error(`Docker is not answering: ${docker.detail} Start Docker and try again.`)
+    }
+    return currentContainers(saveContainerSettings(containerSettingsPath, settings))
+  })
+  // The address is fixed here: the window cannot have the app open others.
+  handleNode('app:open-docker-install', () => shell.openExternal(dockerInstallUrl))
   handleNode('node:get-pool-limits', async () => {
     try {
       return poolLimitsState(await callUnary('getPoolLimits', {}) as Record<string, unknown>)
@@ -515,7 +552,8 @@ app.whenReady().then(() => {
     return snapshot
   })
   // Restarting applies the settings that wait for a start: hosting is read
-  // again here, and the node reads its own saved settings as it starts.
+  // again here, containers as the node starts, and the node reads its own
+  // saved settings as it starts.
   handleNode('node:restart-node', async (_event, timeoutMessage: unknown) => {
     const settings = loadPoolHostingSettings(poolHostingPath)
     const hosting = hostingListen(settings, hostAddresses())

@@ -80,6 +80,37 @@ test('a hosting node listens where the owner chose and is discoverable', async (
   await daemon.stop()
 })
 
+test('the container flags are worked out as each start happens, so a restart picks up what was saved since', async () => {
+  let flags = []
+  let asked = 0
+  const { daemon, launches } = fixture({ containers: async () => { asked++; return flags } })
+  await daemon.ensureStarted()
+  assert.equal(asked, 1)
+  assert.equal(launches[0].args.includes('--containers'), false)
+  flags = ['--containers', '--containers-read-only', '--containers-tmp-mb', '1024']
+  await daemon.restart()
+  assert.equal(asked, 2)
+  assert.deepEqual(launches[1].args.slice(-4), flags)
+  await daemon.stop()
+
+  // A node stopped while Docker is being asked is not started after all.
+  let release
+  const slow = fixture({ containers: () => new Promise((done) => { release = () => done(['--containers']) }) })
+  const starting = slow.daemon.ensureStarted()
+  await new Promise((wake) => setImmediate(wake))
+  const stopping = slow.daemon.stop()
+  release()
+  await Promise.all([starting, stopping])
+  assert.equal(slow.launches.length, 0)
+
+  // A port someone else holds is never ours, and Docker is not asked about it.
+  let unusedAsked = 0
+  const taken = fixture({ unused: async () => false, containers: async () => { unusedAsked++; return [] } })
+  await taken.daemon.ensureStarted()
+  assert.equal(unusedAsked, 0)
+  assert.equal(taken.launches.length, 0)
+})
+
 test('a restart stops the owned node gracefully and starts it again with changed settings', async () => {
   const { daemon, launches, signals } = fixture({ unused: async (address) => address !== '127.0.0.1:7700' })
   await daemon.ensureStarted()

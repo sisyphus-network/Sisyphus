@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, test } from 'node:test'
-import { hasWebgl, launch, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide } from './harness.mjs'
+import { hasWebgl, launch, launchOwnNode, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide } from './harness.mjs'
 
 let node
 before(async () => { node = await testNode() })
@@ -176,7 +176,7 @@ test('hosting a pool is the app’s own node’s setting, so a node run by hand 
   try {
     await openSettingsCategory(page, 'This node')
     await page.getByRole('heading', { name: 'Let other machines join this pool' }).waitFor()
-    await page.getByText('This app is connected to a node it did not start.', { exact: false }).waitFor()
+    await page.getByText(/^This app is connected to a node it did not start\. That node takes workers/).waitFor()
     assert.equal(await page.getByRole('switch', { name: 'Let other machines join this pool' }).isDisabled(), true)
     assert.equal(await page.getByRole('combobox', { name: 'Address' }).isDisabled(), true)
     assert.equal(await page.getByRole('button', { name: 'Save hosting settings' }).count(), 0)
@@ -185,6 +185,100 @@ test('hosting a pool is the app’s own node’s setting, so a node run by hand 
     await open(page, 'Node overview')
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
     assert.equal(await page.getByRole('heading', { name: 'Other machines join this pool here' }).count(), 0)
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+function containersCard(page) {
+  return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Run containers for the pool' }) })
+}
+
+test('the owner turns on containers for the app’s own node once Docker answers, and is told to restart it', async () => {
+  const own = await launchOwnNode({ docker: 'ready:27.3.1' })
+  const { page } = own
+  try {
+    await openSettingsCategory(page, 'This node')
+    await connectionState(page, 'Connected').waitFor({ timeout: 30000 })
+    const card = containersCard(page)
+    await card.getByText('Docker 27.3.1 is answering.', { exact: true }).waitFor()
+    const containers = card.getByRole('switch', { name: 'Run containers for the pool' })
+    const network = card.getByRole('switch', { name: 'Allow tasks to use the network' })
+    const readOnly = card.getByRole('switch', { name: 'Read-only root' })
+    const tmp = card.getByRole('textbox', { name: 'Size of /tmp (MB)' })
+    const save = card.getByRole('button', { name: 'Save container settings' })
+    // Off, and confined, until the owner says otherwise.
+    assert.equal(await containers.getAttribute('aria-checked'), 'false')
+    assert.equal(await readOnly.getAttribute('aria-checked'), 'true')
+    assert.equal(await network.getAttribute('aria-checked'), 'false')
+    assert.equal(await network.isDisabled(), true)
+    assert.equal(await tmp.inputValue(), '1024')
+    assert.equal(await save.isEnabled(), false)
+    await card.getByText('Changes take effect the next time the node starts.', { exact: true }).waitFor()
+
+    await containers.click()
+    await card.getByText(/^Anyone who may submit jobs to this pool can run a container image/).waitFor()
+    assert.equal(await network.isDisabled(), false)
+    await tmp.fill('0')
+    await card.getByRole('alert').filter({ hasText: 'Enter a whole number of megabytes from 1 to 65536.' }).waitFor()
+    assert.equal(await save.isEnabled(), false)
+    await tmp.fill('512')
+    await network.click()
+    await save.click()
+    await page.getByText('Container settings saved', { exact: true }).waitFor()
+    await card.getByText('Saved. Restart the node to apply these changes.', { exact: true }).waitFor()
+    await card.getByRole('button', { name: 'Restart node' }).waitFor()
+    assert.equal(await save.isEnabled(), false)
+
+    // The app keeps it: a new window reads it back, still waiting on a restart.
+    await page.reload()
+    await openSettingsCategory(page, 'This node')
+    await card.getByText('Saved. Restart the node to apply these changes.', { exact: true }).waitFor()
+    assert.equal(await containers.getAttribute('aria-checked'), 'true')
+    assert.equal(await network.getAttribute('aria-checked'), 'true')
+    assert.equal(await tmp.inputValue(), '512')
+
+    // Turned off again, it matches what the node runs with: nothing to restart for.
+    await containers.click()
+    await save.click()
+    await card.getByText('Changes take effect the next time the node starts.', { exact: true }).waitFor()
+    assert.equal(await card.getByRole('button', { name: 'Restart node' }).count(), 0)
+  } finally {
+    await own.close()
+  }
+})
+
+test('containers cannot be turned on while Docker is missing, and the app says where to get it', async () => {
+  const own = await launchOwnNode({ docker: 'missing' })
+  const { page } = own
+  try {
+    await openSettingsCategory(page, 'This node')
+    await connectionState(page, 'Connected').waitFor({ timeout: 30000 })
+    const card = containersCard(page)
+    await card.getByRole('alert').filter({ hasText: 'Docker is not installed on this computer.' }).waitFor()
+    assert.equal(await card.getByRole('switch', { name: 'Run containers for the pool' }).isDisabled(), true)
+    await card.getByRole('button', { name: 'Get Docker' }).waitFor()
+    await card.getByRole('button', { name: 'Check again' }).click()
+    await card.getByRole('alert').filter({ hasText: 'Docker is not installed on this computer.' }).waitFor()
+    assert.equal(await card.getByRole('switch', { name: 'Run containers for the pool' }).isDisabled(), true)
+  } finally {
+    await own.close()
+  }
+})
+
+test('running containers is the app’s own node’s setting, so a node run by hand keeps its own --containers', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'This node')
+    const card = containersCard(page)
+    await card.getByText(/started it with --containers/).waitFor()
+    assert.equal(await card.getByRole('switch', { name: 'Run containers for the pool' }).isDisabled(), true)
+    assert.equal(await card.getByRole('switch', { name: 'Allow tasks to use the network' }).isDisabled(), true)
+    assert.equal(await card.getByRole('button', { name: 'Save container settings' }).count(), 0)
+    // A node not the app's own is not the app's to ask Docker about.
+    assert.equal(await card.getByText(/^Docker .* is answering\.$/).count(), 0)
   } finally {
     await app.close()
     profile.remove()
