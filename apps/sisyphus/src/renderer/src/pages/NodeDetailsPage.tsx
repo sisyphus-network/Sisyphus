@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { toast } from 'sonner'
+import { Link } from 'react-router-dom'
 import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { displayDaemonVersion } from '@/lib/daemon-version'
 import { ResponsiveActionDialog } from '@/components/ui/responsive-action-dialog'
@@ -220,7 +221,7 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
         {snapshot.info ? <CardContent className="grid grid-cols-2 gap-x-8 max-[600px]:grid-cols-1">
           <Detail label={messages.peerId} value={snapshot.info.peerId} code wide />
           <Detail label={messages.daemonVersion} value={snapshot.info.daemonVersion} />
-          <Detail label={snapshot.info.countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry} value={snapshot.info.countryCode || messages.geoUnavailable} />
+          <Detail label={snapshot.info.countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry} value={snapshot.info.countryCode || messages.geoUnavailable}>{!snapshot.info.countryCode && isDesktopApp() ? <div className="text-xs text-foreground/85">{messages.geoUnavailable}<p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{messages.unplacedHint} <Link to="/settings/node" className="text-[var(--app-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--app-accent)]">{messages.unplacedLink}</Link></p></div> : undefined}</Detail>
           <Detail label={messages.listenAddresses} wide>{snapshot.info.listenAddresses.length ? <div className="flex flex-col gap-1.5">{snapshot.info.listenAddresses.slice(0, 3).map((address) => <code key={address} dir="ltr" className="break-all text-xs">{address}</code>)}{snapshot.info.listenAddresses.length > 3 && <span className="text-xs text-muted-foreground">{formatMessage(messages.moreAddresses, { count: snapshot.info.listenAddresses.length - 3 })}</span>}</div> : <EmptyState icon={Signal} title={messages.noAddresses} />}</Detail>
         </CardContent> : <EmptyState icon={HardDrive} title={labels.noNodeDetails} description={labels.nodeDetailsPending} />}
       </NodeSection>

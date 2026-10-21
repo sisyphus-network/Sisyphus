@@ -160,6 +160,8 @@
   "geoInitialDaemonFetch": "שליפה ראשונית מהדיימון",
   "geoRealtime": "זמן אמת",
   "geoUnavailable": "לא זמין",
+  "unplacedLink": "לא מוקם: הפעלת גילוי מיקום",
+  "unplacedHint": "הצומת מכיר את עצמו רק בכתובת של רשת ביתית, שאף טבלה אינה יכולה למקם. שאילת הנתב, שרת STUN או שירות איתור יכולה למצוא את הכתובת הציבורית שלו.",
   "countryEstimateDisclaimer": "הערכה לפי נתוני כתובת רשת; ייתכן חוסר דיוק",
   "peerMultiaddress": "כתובת Multiaddr של עמית",
   "peerConnectionHint": "החיבור מנסה להתחבר ישירות באמצעות libp2p. חיבור לא מאשר לעמית להריץ חישובים.",

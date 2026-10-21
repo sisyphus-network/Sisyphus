@@ -107,6 +107,8 @@ bin/sisyphusd ask --chat <id> "And below a million?"      # carry the conversati
 
 **Node overview** is the machine's own view of the network: its identity, how many nodes it is connected to, and every worker of its pool with its processor, memory, free task slots and the kinds of work it runs. Further down are the node's addresses and the nodes it has found, each of which you can trust for compute or not. Trusting one admits it to your pool as a worker.
 
+A node on a home network knows itself only by an address like `192.168.1.20`, which no table can place, so its country shows as **Not available** and the globe has no marker for it. Node overview and the globe then link to **Settings → This node → Location discovery**, where the node can be allowed to ask your router, a STUN server you name, or a lookup service for its public address ([#573](https://github.com/sisyphus-network/Sisyphus/issues/573)).
+
 ```sh
 bin/sisyphusd id
 bin/sisyphusd nodes
