@@ -84,6 +84,7 @@ What has no automated test: the desktop app has no coverage measure, and nothing
 | `apps/sisyphusd/blobclient` | Uploading and downloading blobs, checked against their CIDs. |
 | `apps/sisyphusd/replication` | Copies of a pool's stored data on its storage followers. The coordinator's side says which followers hold each pinned blob, by rendezvous hashing, signs what it tells each to hold, fetches a blob back, and takes back what a list it signed names when it has lost its store; the follower's side holds what it is told and keeps the last signed list. Tested without a network, and in `apps/sisyphusd` with real nodes. |
 | `apps/sisyphusd/pinning` | The IPFS Pinning Service API, both ways: the service a coordinator offers with `--pinning-listen`, and the client behind `blob pin-remote`. The service is tested against a store and a Kubo that can be made to fail; the real `ipfs pin remote` commands are run against a node in `apps/sisyphusd/pinning_test.go`. |
+| `apps/sisyphusd/api` | The node APIs. Its browser-facing local API registers the generated gRPC service through Vanguard's Connect v2 registrar and serves Connect and gRPC-Web; its web tests cover the JSON wire format, streaming calls and browser authorization. |
 | `apps/sisyphusd` | The `sisyphusd` command: flags, startup, the command-line client. |
 | `apps/sisyphus` | The desktop app: Electron and React. `npm ci`, then `npm run typecheck` and `npm run build`. |
 
