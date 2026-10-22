@@ -83,7 +83,7 @@ func dockerProbe() string {
 	defer cancel()
 	began := time.Now()
 	out, err := exec.CommandContext(ctx, "docker", "-D", "run", "--rm", "--network", "none", containerTestImage, "true").CombinedOutput()
-	return fmt.Sprintf("took %s (error %v): %s", time.Since(began).Round(time.Millisecond), err, redactDockerDebug(lastBytes(out, dockerProbeKeeps)))
+	return fmt.Sprintf("took %s (error %v): %s", time.Since(began).Round(time.Millisecond), err, dockerDebugTail(out))
 }
 
 // lastBytes is the last n bytes of b, marked as cut where they are.
@@ -105,6 +105,12 @@ var (
 // redactDockerDebug replaces any such value with <redacted>.
 func redactDockerDebug(b []byte) string {
 	return secretInDockerDebug.ReplaceAllString(headerInDockerDebug.ReplaceAllString(string(b), "${1}<redacted>"), "${1}<redacted>")
+}
+
+// dockerDebugTail redacts before cutting: otherwise the cut could remove the
+// start of a sensitive header and leave the credential in the retained tail.
+func dockerDebugTail(b []byte) string {
+	return string(lastBytes([]byte(redactDockerDebug(b)), dockerProbeKeeps))
 }
 
 // dockerTimestamp writes a time as docker events' --since and --until take
@@ -198,6 +204,15 @@ DEBU[0000] {"identitytoken":"xyz", "password": "hunter2", "auth": "ok"} X-Regist
 DEBU[0000] {"identitytoken":<redacted>, "password": <redacted>, "auth": "ok"} X-Registry-Auth=<redacted>`
 	if got := redactDockerDebug([]byte(log)); got != want {
 		t.Errorf("redacted:\n%s\nwant:\n%s", got, want)
+	}
+
+	// Put the start of the authorization header just before the retained tail.
+	// Truncating first would strip "Authorization" and leak the remaining
+	// bearer credential because the redactor could no longer recognize it.
+	authorization := []byte("Authorization: Bearer sensitive-tail-token")
+	longLog := append(bytes.Repeat([]byte("x"), dockerProbeKeeps-7), authorization...)
+	if got := dockerDebugTail(longLog); strings.Contains(got, "sensitive-tail-token") {
+		t.Errorf("truncated debug log leaked a bearer credential: %q", got)
 	}
 }
 
