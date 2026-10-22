@@ -3,7 +3,7 @@ PROTO_FILES := $(wildcard proto/sisyphus/v1/*.proto) $(wildcard proto/sisyphus/n
 STATICCHECK := 2026.2.2
 COVERED := ./apps/...,./packages/ai/...,./packages/geo/...,./packages/hardware/...,./packages/identity/...,./packages/ipfscluster/...,./packages/job-model/...,./packages/jobrecord/...,./packages/kubo/...,./packages/names/...,./packages/natpmp/...,./packages/nodedb/...,./packages/runtime/...,./packages/s3/...,./packages/sealed/...,./packages/storage/...,./packages/stun/...
 
-.PHONY: build test cover demo proto tools fmt lint
+.PHONY: build test cover cover-main cover-realimages cover-check demo proto tools fmt lint
 
 build:
 	go build -o bin/sisyphusd ./apps/sisyphusd
@@ -17,12 +17,26 @@ test:
 # Cluster or Docker are required, as in CI, so that one missing program
 # fails with its name rather than as a list of blocks no test ran. Set any
 # of these to nothing to skip those tests, knowing coverage will then fail.
-cover: export SISYPHUS_REQUIRE_KUBO ?= 1
-cover: export SISYPHUS_REQUIRE_CLUSTER ?= 1
-cover: export SISYPHUS_REQUIRE_DOCKER ?= 1
-cover:
-	go test -tags=realimages -count=1 -timeout 40m -coverpkg=$(COVERED) -coverprofile=coverage.out ./...
-	./scripts/check-coverage.sh coverage.out
+#
+# It runs in two passes, which CI runs as two jobs side by side: the
+# ordinary suite, and the runtime package with its real-image workload tests
+# (the realimages tag) under the race detector. A statement counts as covered
+# if either pass ran it.
+cover: cover-main cover-realimages cover-check
+
+cover-main cover-realimages: export SISYPHUS_REQUIRE_KUBO ?= 1
+cover-main cover-realimages: export SISYPHUS_REQUIRE_CLUSTER ?= 1
+cover-main cover-realimages: export SISYPHUS_REQUIRE_DOCKER ?= 1
+cover-main:
+	go test -count=1 -timeout 40m -coverpkg=$(COVERED) -coverprofile=coverage.out ./...
+cover-realimages:
+	go test -race -tags=realimages -count=1 -timeout 60m -coverpkg=$(COVERED) -coverprofile=realimages.out ./packages/runtime
+
+# check-coverage.sh counts a block as covered if any of its appearances ran,
+# so the two profiles join by concatenation, the second without its mode line.
+cover-check:
+	{ cat coverage.out; tail -n +2 realimages.out; } > union.out
+	./scripts/check-coverage.sh union.out
 
 # Runs a three-node pool and a job on this machine, in one terminal.
 demo:
