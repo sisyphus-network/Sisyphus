@@ -101,7 +101,7 @@ func lastBytes(b []byte, n int) []byte {
 // carries (Bearer abc.def), or one word.
 var (
 	headerInDockerDebug = regexp.MustCompile(`(?i)((?:authorization|x-registry-auth)["']?\s*[:=]\s*)[^\n]*`)
-	secretInDockerDebug = regexp.MustCompile(`(?i)((?:token|password|secret)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|(?:bearer|basic|token)\s+\S+|\S+)`)
+	secretInDockerDebug = regexp.MustCompile(`(?i)((?:token|password|secret)["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer|basic|token)\s+\S+|\S+)`)
 )
 
 // redactDockerDebug replaces any such value with <redacted>.
@@ -211,12 +211,14 @@ DEBU[0000] {"identitytoken":<redacted>, "password": <redacted>, "auth": "ok"} X-
 	// A token, password or secret's whole value goes, whether it is an
 	// authentication scheme and its credential or several words in quotes.
 	for log, want := range map[string]string{
-		`token: Bearer abc.def end`:        `token: <redacted> end`,
-		`password: 'two words' end`:        `password: <redacted> end`,
-		`"secret": "three more words" end`: `"secret": <redacted> end`,
-		`TOKEN=Basic dXNlcjpwYXNz end`:     `TOKEN=<redacted> end`,
-		`token=t0k end`:                    `token=<redacted> end`,
-		`refresh_token: token abc.def end`: `refresh_token: <redacted> end`,
+		`token: Bearer abc.def end`:            `token: <redacted> end`,
+		`password: 'two words' end`:            `password: <redacted> end`,
+		`password: "first \" secret-tail" end`: `password: <redacted> end`,
+		`password: 'first \' secret-tail' end`: `password: <redacted> end`,
+		`"secret": "three more words" end`:     `"secret": <redacted> end`,
+		`TOKEN=Basic dXNlcjpwYXNz end`:         `TOKEN=<redacted> end`,
+		`token=t0k end`:                        `token=<redacted> end`,
+		`refresh_token: token abc.def end`:     `refresh_token: <redacted> end`,
 	} {
 		if got := redactDockerDebug([]byte(log)); got != want {
 			t.Errorf("%q redacted to %q, not %q", log, got, want)
