@@ -17,6 +17,7 @@ var fieldKinds = map[runtime.Kind]nodepb.WorkloadFieldKind{
 	runtime.KindText:    nodepb.WorkloadFieldKind_WORKLOAD_FIELD_KIND_TEXT,
 	runtime.KindChoice:  nodepb.WorkloadFieldKind_WORKLOAD_FIELD_KIND_CHOICE,
 	runtime.KindToggle:  nodepb.WorkloadFieldKind_WORKLOAD_FIELD_KIND_TOGGLE,
+	runtime.KindFiles:   nodepb.WorkloadFieldKind_WORKLOAD_FIELD_KIND_FILES,
 }
 
 // ListWorkloads lists the workloads the node can take jobs of: what each

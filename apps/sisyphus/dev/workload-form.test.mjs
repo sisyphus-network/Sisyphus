@@ -152,3 +152,19 @@ test('parameters leave out empty optional fields, and keep toggles and choices',
   ] }])
   assert.deepEqual(toParams(workload.fields, { input: ' bafy ', height: '', label: '  ', gpu: false, preset: 'slow', rate: '2.5' }), { input: 'bafy', gpu: false, preset: 'slow', rate: 2.5 })
 })
+
+test('a field of several files holds a list of CIDs and sends it as one', () => {
+  assert.equal(fieldKind(7), 'files')
+  assert.equal(fieldKind('WORKLOAD_FIELD_KIND_FILES'), 'files')
+  const fields = [{ name: 'inputs', kind: 'files', label: 'Molecules', help: '', defaultValue: undefined, step: 0, choices: [], required: true }]
+  const values = initialValues(fields)
+  assert.deepEqual(values, { inputs: [] })
+  assert.deepEqual(validate(fields, values), { inputs: { key: 'required' } })
+  assert.deepEqual(validate(fields, { inputs: [' ', ''] }), { inputs: { key: 'required' } })
+  assert.equal(isValid(fields, { inputs: ['bafyone'] }), true)
+  assert.deepEqual(toParams(fields, { inputs: [' bafyone', '', 'bafytwo '] }), { inputs: ['bafyone', 'bafytwo'] })
+  // A default list is kept, and anything in it but CIDs dropped.
+  assert.deepEqual(initialValues([{ ...fields[0], defaultValue: ['bafyone', 3] }]), { inputs: ['bafyone'] })
+  // An optional one left empty is left out, so the workload uses its own.
+  assert.deepEqual(toParams([{ ...fields[0], required: false }], { inputs: [] }), {})
+})

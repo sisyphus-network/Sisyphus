@@ -130,6 +130,61 @@ function FileField({ field, id, labelId, describedBy, invalid, value, info, file
   </div>
 }
 
+// FilesField takes several files for one field: each is stored as it is
+// dropped or chosen, or picked from those already stored, and the field
+// holds their CIDs in the order they were added.
+function FilesField({ field, id, labelId, describedBy, invalid, value, files, labels, messages, onChange, onTouched }: {
+  field: FormField; id: string; labelId: string; describedBy: string; invalid: boolean; value: string[]; files: StoredFile[]; labels: Labels; messages: Messages
+  onChange: (cids: string[]) => void; onTouched: () => void
+}) {
+  const input = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
+  const [storing, setStoring] = useState('')
+  const [names, setNames] = useState<Record<string, FileInfo>>({})
+  const usable = files.filter((file) => !file.private)
+  async function store(list?: FileList | null) {
+    if (!list || list.length === 0) return
+    onTouched()
+    const added: string[] = []
+    for (const file of Array.from(list)) {
+      if (file.size > maxUploadBytes) { toast.error(messages.operationText.fileTooLarge, { description: `${file.name}: ${messages.operationText.fileSizeLimit}` }); continue }
+      setStoring(file.name)
+      try {
+        const result = await getNodeApi().storeFile({ name: file.name, data: new Uint8Array(await file.arrayBuffer()), private: false }) as unknown as StoredFile
+        if (!result.cid) throw new Error(messages.fileUploadMissingCid)
+        added.push(result.cid)
+        setNames((current) => ({ ...current, [result.cid]: { name: file.name, size: file.size } }))
+      } catch (error) { toast.error(messages.operationText.storeFailed, { description: error instanceof Error ? error.message : String(error) }) }
+    }
+    setStoring('')
+    if (added.length > 0) onChange([...value, ...added.filter((cid) => !value.includes(cid))])
+  }
+  const nameOf = (cid: string) => names[cid] ?? (() => { const file = usable.find((item) => item.cid === cid); return file ? { name: file.name || cid, size: Number(file.sizeBytes) } : { name: cid, size: 0 } })()
+  const drop = (event: DragEvent) => { event.preventDefault(); setDragging(false); void store(event.dataTransfer.files) }
+  const dragOver = (event: DragEvent) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setDragging(true) }
+  const choosable = usable.filter((file) => !value.includes(file.cid))
+  return <div className="space-y-2" onDragOver={dragOver} onDragLeave={() => setDragging(false)} onDrop={drop}>
+    <input ref={input} type="file" multiple className="sr-only" tabIndex={-1} aria-hidden="true" onChange={(event) => { void store(event.target.files); event.currentTarget.value = '' }} />
+    {value.length > 0 && <ul aria-label={formatMessage(labels.filesChosen, { count: value.length })} className="space-y-1.5">
+      {value.map((cid) => { const shown = nameOf(cid); return <li key={cid} className="run-file">
+        <span className="settings-row__icon text-[var(--app-accent)]"><FileCheck2 aria-hidden="true" className="size-4" /></span>
+        <div className="min-w-0 flex-1"><div dir="auto" className="truncate text-sm font-medium">{shown.name}</div><div className="truncate text-xs text-muted-foreground">{shown.size ? `${prettyBytes(shown.size)} · ` : ''}<code dir="ltr">{cid}</code></div></div>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label={`${labels.removeFile}: ${shown.name}`} title={labels.removeFile} onClick={() => { onTouched(); onChange(value.filter((item) => item !== cid)) }}><X className="size-4" /></Button>
+      </li> })}
+    </ul>}
+    {storing ? <div role="status" className="run-dropzone is-busy"><LoaderCircle aria-hidden="true" className="size-5 animate-spin motion-reduce:animate-none" /><span className="text-sm">{formatMessage(labels.storing, { name: storing })}</span></div>
+      : <button id={id} type="button" aria-labelledby={`${labelId} ${id}-zone`} aria-describedby={describedBy} aria-invalid={invalid || undefined} className={`run-dropzone ${dragging ? 'is-dragging' : ''}`} onClick={() => input.current?.click()}>
+        <span className="settings-card__icon"><FileUp aria-hidden="true" className="size-5" /></span>
+        <span id={`${id}-zone`} className="text-sm font-medium">{value.length > 0 ? labels.addFiles : labels.dropFiles}</span>
+        <span className="text-xs text-muted-foreground">{labels.dropFileHint}</span>
+      </button>}
+    {choosable.length > 0 && <select aria-label={`${field.label || field.name}: ${labels.pickStored}`} value="" onChange={(event) => { const cid = event.target.value; if (!cid) return; onTouched(); onChange([...value, cid]) }} className="run-select">
+      <option value="">{labels.pickStoredPlaceholder}</option>
+      {choosable.map((file) => <option key={file.cid} value={file.cid}>{file.name || file.cid} · {prettyBytes(file.sizeBytes)}</option>)}
+    </select>}
+  </div>
+}
+
 function Field({ field, workload, value, error, info, files, labels, messages, onChange, onFile, onTouched }: {
   field: FormField; workload: string; value: FormValue | undefined; error?: FieldError; info?: FileInfo; files: StoredFile[]; labels: Labels; messages: Messages
   onChange: (value: FormValue) => void; onFile: (cid: string, info: FileInfo | undefined) => void; onTouched: () => void
@@ -144,6 +199,8 @@ function Field({ field, workload, value, error, info, files, labels, messages, o
     switch (field.kind) {
       case 'file':
         return <FileField field={field} id={id} labelId={`${id}-label`} describedBy={describedBy} invalid={Boolean(error)} value={text} info={info} files={files} labels={labels} messages={messages} onStored={(cid, stored) => onFile(cid, stored)} onClear={() => onFile('', undefined)} onTouched={onTouched} />
+      case 'files':
+        return <FilesField field={field} id={id} labelId={`${id}-label`} describedBy={describedBy} invalid={Boolean(error)} value={Array.isArray(value) ? value : []} files={files} labels={labels} messages={messages} onChange={onChange} onTouched={onTouched} />
       case 'integer':
       case 'number':
         return <Input id={id} type="number" inputMode={field.kind === 'integer' ? 'numeric' : 'decimal'} value={text} min={field.minimum} max={field.maximum} step={field.step || (field.kind === 'integer' ? 1 : 'any')} required={field.required} aria-describedby={describedBy || undefined} aria-invalid={Boolean(error) || undefined} onChange={(event) => { onTouched(); onChange(event.target.value) }} className="h-9 max-w-xs tabular-nums" />
@@ -162,7 +219,7 @@ function Field({ field, workload, value, error, info, files, labels, messages, o
     <div className="flex flex-wrap items-baseline gap-x-2"><label id={`${id}-label`} htmlFor={id} className="text-sm font-medium"><bdi>{label}</bdi></label>{field.required && <span className="text-xs text-muted-foreground">{labels.required}</span>}</div>
     {field.help && <p id={helpId} className="mt-0.5 text-xs leading-relaxed text-muted-foreground"><bdi>{field.help}</bdi></p>}
   </>
-  return <div className={`run-field ${field.kind === 'file' ? 'run-field--wide' : ''}`}>
+  return <div className={`run-field ${field.kind === 'file' || field.kind === 'files' ? 'run-field--wide' : ''}`}>
     {field.kind === 'toggle' ? <div className="flex items-start justify-between gap-4"><div className="min-w-0">{heading}</div>{control}</div> : <>{heading}<div className="run-field__control">{control}</div></>}
     {error && <p id={errorId} role="alert" className="mt-1.5 flex items-center gap-1.5 text-xs text-destructive"><CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />{errorText(labels, error)}</p>}
   </div>

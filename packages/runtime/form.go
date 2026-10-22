@@ -16,6 +16,8 @@ const (
 	KindChoice Kind = "choice"
 	// KindToggle is true or false.
 	KindToggle Kind = "toggle"
+	// KindFiles is several stored files, given as a list of their CIDs.
+	KindFiles Kind = "files"
 )
 
 // Field is one parameter of a workload, as a form asks for it.
