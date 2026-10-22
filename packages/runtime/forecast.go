@@ -43,7 +43,8 @@ type ForecastParams struct {
 	// in a year, or 0 for none. Seasonal models are tried only with one.
 	Season int `json:"season,omitempty"`
 	// Folds is how many windows of Horizon steps at the end of the series
-	// each candidate is backtested on; 4 if not given.
+	// each candidate is backtested on. If not given, as many as leave a
+	// horizon's worth of points before them, up to autoFolds.
 	Folds int `json:"folds,omitempty"`
 	// Models is which kinds of model to try: "all", the default, or one
 	// kind, or several separated by commas.
@@ -73,6 +74,10 @@ const (
 	// combineKinds is how many kinds of model the forecast combines: the
 	// best candidate of each of the best-scoring kinds.
 	combineKinds = 4
+	// autoFolds is the most backtest windows a job that does not say how
+	// many is given. On the M4 competition's series, choosing on 8 windows
+	// forecast better than on 2 or 4, and as well as on 12.
+	autoFolds = 8
 )
 
 // forecastModel is one candidate: a kind of model and its settings.
@@ -231,7 +236,7 @@ type ForecastResult struct {
 func (Forecast) Name() string { return "forecast" }
 
 func (Forecast) Describe() string {
-	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, default 4>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
+	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
 }
 
 func (Forecast) Form() []Field {
@@ -239,7 +244,7 @@ func (Forecast) Form() []Field {
 		{Name: "input", Kind: KindFile, Label: "Series", Help: "A CSV file with a value on each line, in its last column, oldest first; a header line is skipped.", Required: true},
 		{Name: "horizon", Kind: KindInteger, Label: "Steps ahead", Help: "How many steps of the series to forecast.", Default: 12, Minimum: bound(1), Maximum: bound(maxForecastHorizon)},
 		{Name: "season", Kind: KindInteger, Label: "Season length", Help: "How many steps the series' cycle takes, such as 12 for months or 7 for days of the week, or 0 if it has none.", Default: 0, Minimum: bound(0), Maximum: bound(maxForecastSeason)},
-		{Name: "folds", Kind: KindInteger, Label: "Backtest windows", Help: "How many windows at the end of the series each model is tested on before one is chosen.", Default: 4, Minimum: bound(1), Maximum: bound(maxForecastFolds)},
+		{Name: "folds", Kind: KindInteger, Label: "Backtest windows", Help: "How many windows at the end of the series each model is tested on before one is chosen. Leave it empty to use as many as the series has room for, up to 8.", Minimum: bound(1), Maximum: bound(maxForecastFolds)},
 		{Name: "models", Kind: KindChoice, Label: "Models", Help: "Which kind of model to try, or all of them.", Default: "all", Choices: append([]string{"all"}, forecastKinds...)},
 	}
 }
@@ -247,14 +252,13 @@ func (Forecast) Form() []Field {
 // settings checks the parameters and fills in their defaults.
 func (p *ForecastParams) settings() error {
 	p.Horizon = cmp.Or(p.Horizon, 12)
-	p.Folds = cmp.Or(p.Folds, 4)
 	switch {
 	case p.Horizon < 1 || p.Horizon > maxForecastHorizon:
 		return fmt.Errorf("horizon %d is not between 1 and %d", p.Horizon, maxForecastHorizon)
 	case p.Season == 1 || p.Season < 0 || p.Season > maxForecastSeason:
 		return fmt.Errorf("season %d is neither 0, for none, nor between 2 and %d", p.Season, maxForecastSeason)
-	case p.Folds < 1 || p.Folds > maxForecastFolds:
-		return fmt.Errorf("folds %d is not between 1 and %d", p.Folds, maxForecastFolds)
+	case p.Folds < 0 || p.Folds > maxForecastFolds:
+		return fmt.Errorf("folds %d is neither 0, for as many as fit, nor between 1 and %d", p.Folds, maxForecastFolds)
 	case p.Tasks < 0 || p.Tasks > MaxTasks:
 		return fmt.Errorf("tasks %d is not between 0 and %d", p.Tasks, MaxTasks)
 	}
@@ -347,6 +351,9 @@ func (Forecast) Split(ctx context.Context, blobs Blobs, params []byte, parts int
 	values, _, err := readSeries(ctx, blobs, p.Input)
 	if err != nil {
 		return nil, err
+	}
+	if p.Folds == 0 {
+		p.Folds = min(autoFolds, max(1, (len(values)-p.Horizon)/p.Horizon))
 	}
 	shortest := len(values) - p.Folds*p.Horizon
 	if shortest < 1 {

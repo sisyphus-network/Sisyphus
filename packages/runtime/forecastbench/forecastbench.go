@@ -228,9 +228,8 @@ type Forecaster func(ctx context.Context, y []float64, horizon, season int) ([]f
 
 // Workload forecasts with the forecast workload, run in this process as
 // one task: what a pool would forecast, since a pool's answer does not
-// depend on how the job is split. It backtests on as many windows of the
-// horizon, up to four, as leave the models at least a horizon's worth of
-// points to be fitted to.
+// depend on how the job is split. It leaves the number of backtest windows
+// to the workload, as a job that does not say does.
 func Workload(ctx context.Context, y []float64, horizon, season int) ([]float64, error) {
 	return forecastIn(ctx, storage.NewMemory(), y, horizon, season)
 }
@@ -245,7 +244,7 @@ func forecastIn(ctx context.Context, blobs runtime.Blobs, y []float64, horizon, 
 	if err != nil {
 		return nil, err
 	}
-	params := runtime.ForecastParams{Input: input.String(), Horizon: horizon, Folds: min(4, max(1, (len(y)-horizon)/horizon))}
+	params := runtime.ForecastParams{Input: input.String(), Horizon: horizon}
 	if season > 1 {
 		params.Season = season
 	}

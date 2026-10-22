@@ -215,8 +215,8 @@ func TestTheWorkloadForecastsAsTheForecastJobDoes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The same series as a job, with the backtest Workload chose: 4
-	// windows, the most it takes.
+	// The same series as a job, with the backtest the workload chooses
+	// for a job that does not say: 8 windows, the most it takes.
 	blobs := storage.NewMemory()
 	var data strings.Builder
 	for _, v := range y {
@@ -224,7 +224,7 @@ func TestTheWorkloadForecastsAsTheForecastJobDoes(t *testing.T) {
 	}
 	input, _ := blobs.Put(ctx, strings.NewReader(data.String()))
 	w := runtime.Forecast{}
-	payloads, err := w.Split(ctx, blobs, []byte(`{"input":"`+input.String()+`","horizon":4,"season":4,"folds":4}`), 3)
+	payloads, err := w.Split(ctx, blobs, []byte(`{"input":"`+input.String()+`","horizon":4,"season":4,"folds":8}`), 3)
 	if err != nil {
 		t.Fatal(err)
 	}

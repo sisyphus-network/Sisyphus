@@ -84,7 +84,7 @@ func TestASeasonalSeriesIsForecast(t *testing.T) {
 	}
 	store := storage.NewMemory()
 	input, _ := store.Put(ctx, strings.NewReader(seasonalSeries(120)))
-	result := runForecast(t, store, ForecastParams{Input: input.String(), Season: 12}, 4)
+	result := runForecast(t, store, ForecastParams{Input: input.String(), Season: 12, Folds: 4}, 4)
 
 	if result.Points != 120 || result.Last != "2016-119" || result.Horizon != 12 || result.Folds != 4 || result.Tasks != 4 {
 		t.Errorf("result says %d points ending %q, %d steps, %d windows, %d tasks", result.Points, result.Last, result.Horizon, result.Folds, result.Tasks)
@@ -130,7 +130,7 @@ func TestASeasonalSeriesIsForecast(t *testing.T) {
 
 	// With one kind of model there is nothing to combine: the forecast is
 	// the best candidate's, which here is the series itself.
-	result = runForecast(t, store, ForecastParams{Input: input.String(), Season: 12, Models: "ar"}, 2)
+	result = runForecast(t, store, ForecastParams{Input: input.String(), Season: 12, Folds: 4, Models: "ar"}, 2)
 	if result.Chosen != result.Best {
 		t.Errorf("one kind forecast with %+v, not the best, %+v", result.Chosen, result.Best)
 	}
@@ -291,6 +291,7 @@ func TestForecastSplitChecksItsParameters(t *testing.T) {
 		{`{"input":"` + in + `","season":-2}`, "season"},
 		{`{"input":"` + in + `","season":1001}`, "season"},
 		{`{"input":"` + in + `","folds":51}`, "folds"},
+		{`{"input":"` + in + `","folds":-1}`, "folds"},
 		{`{"input":"` + in + `","tasks":-1}`, "tasks"},
 		{`{"input":"` + in + `","tasks":10001}`, "tasks"},
 		{`{"input":"` + in + `","models":"naive,tea leaves"}`, "tea leaves"},
@@ -541,6 +542,24 @@ func TestTheForecastIsTheMedianOfTheBestKinds(t *testing.T) {
 	} {
 		if _, _, ok := combine(c, 1); ok {
 			t.Errorf("combined %+v", c)
+		}
+	}
+}
+
+// A job that does not say how many windows to backtest on gets as many as
+// leave a horizon's worth of points before them, up to eight.
+func TestABacktestHasAsManyWindowsAsFit(t *testing.T) {
+	store := storage.NewMemory()
+	for _, c := range []struct{ points, horizon, want int }{{120, 12, 8}, {40, 12, 2}, {20, 12, 1}} {
+		input, _ := store.Put(ctx, strings.NewReader(seasonalSeries(c.points)))
+		payloads, err := Forecast{}.Split(ctx, store, mustJSON(ForecastParams{Input: input.String(), Horizon: c.horizon}), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var task forecastTask
+		json.Unmarshal(payloads[0], &task)
+		if task.Folds != c.want {
+			t.Errorf("%d points, %d steps ahead: %d windows, not %d", c.points, c.horizon, task.Folds, c.want)
 		}
 	}
 }

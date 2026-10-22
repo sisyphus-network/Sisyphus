@@ -32,13 +32,13 @@ All 100,000 series, with the workload as it is now:
 
 | Frequency | Series | sMAPE | MASE | OWA | Naive2 sMAPE | Naive2 MASE |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Yearly | 23,000 | 14.003 | 3.087 | 0.817 | 16.342 | 3.974 |
-| Quarterly | 24,000 | 10.632 | 1.209 | 0.924 | 11.012 | 1.371 |
-| Monthly | 48,000 | 13.461 | 0.954 | 0.915 | 14.427 | 1.063 |
-| Weekly | 359 | 8.724 | 2.448 | 0.917 | 9.161 | 2.777 |
-| Daily | 4,227 | 3.096 | 3.327 | 1.016 | 3.045 | 3.278 |
-| Hourly | 414 | 13.353 | 1.017 | 0.575 | 18.383 | 2.395 |
-| **Overall** | **100,000** | **12.451** | **1.612** | **0.880** | **13.564** | **1.912** |
+| Yearly | 23,000 | 13.955 | 3.077 | 0.814 | 16.342 | 3.974 |
+| Quarterly | 24,000 | 10.404 | 1.186 | 0.905 | 11.012 | 1.371 |
+| Monthly | 48,000 | 13.408 | 0.948 | 0.911 | 14.427 | 1.063 |
+| Weekly | 359 | 8.724 | 2.432 | 0.914 | 9.161 | 2.777 |
+| Daily | 4,227 | 3.075 | 3.313 | 1.010 | 3.045 | 3.278 |
+| Hourly | 414 | 13.169 | 1.009 | 0.569 | 18.383 | 2.395 |
+| **Overall** | **100,000** | **12.358** | **1.601** | **0.874** | **13.564** | **1.912** |
 
 For comparison, from the competition's results: the winner, Smyl's hybrid of exponential smoothing and a recurrent network, scored an OWA of 0.821 (sMAPE 11.374, MASE 1.536), and the best single method, Theta, 0.897 (sMAPE 12.309, MASE 1.696). The workload now scores better than Theta, and better than every single method in the competition, though not yet than its best combinations.
 
@@ -52,19 +52,23 @@ Each change was measured on all 100,000 series before it was kept:
 | Rank the candidates by mean absolute error instead, which a few large misses do not dominate | 0.973 |
 | Forecast with the median of the best candidate of each of the four best kinds, only where its backtest error is less than the best candidate's | 0.961 |
 | The same median, always | 0.886 |
-| **Add the theta method**: simple exponential smoothing with a drift of half the series' slope, the cycle taken out first as Naive2 does | **0.880** |
+| Add the theta method: simple exponential smoothing with a drift of half the series' slope, the cycle taken out first as Naive2 does | 0.880 |
+| **Backtest on as many windows as fit, up to eight, unless the job says otherwise**, rather than four | **0.874** |
 
 The median of a few different kinds of model forecasts better than the backtest's winner even on series where the backtest prefers the winner: picking by a short backtest overfits it, and the median does not. It takes the best candidate of each kind, rather than the best few candidates, since the best few are often the same model with nearly the same settings. Four kinds is the number measured best here (before theta, three scored 0.902, five 0.890, six 0.921; with it, three 0.898 and five 0.884), and it was chosen on these same series, so the competition's figures, made without seeing them, are the fairer comparison by a little.
+
+The number of windows matters because the backtest is how the best of each kind is chosen, and a choice made on a few windows is partly luck. Up to 2 windows scored 0.885, 4 scored 0.880, 8 scored 0.874, 12 scored 0.874 and 16 scored 0.877: past eight, the windows reach so far back that the series has changed since.
 
 Some changes were measured and not kept:
 
 | Tried | Overall OWA |
 | --- | ---: |
 | Damped-trend exponential smoothing as another kind | 0.894 |
+| Damped trends as settings of Holt's smoothing instead, so they compete with it for one place | 0.882 |
 | Naive's forecast always in the median, as an anchor | 0.885 |
 | Naive, drift, simple and Holt's smoothing each also tried with the cycle taken out first | 0.880, no change |
 
-A damped trend is often among the best few kinds and so pushes out one that combines better; the others change too little to be worth their cost.
+A damped trend is a good model, and on its own it scores well, but here it has to earn one of the four places in the median. As a kind of its own it often does, pushing out a kind, often theta or the autoregression, whose errors differ more from the others' and so do more to cancel them; the median of four similar trend-following forecasts is no better than one of them. As settings of Holt's smoothing it cannot push anything out, but it gives the backtest twenty-four Holt candidates to choose among instead of six, and with more to choose from the one that looks best on a few windows is more often the luckiest rather than the best. Both are the same lesson: what helps a combination is models that are wrong in different ways, and fewer, sounder choices. The others changed too little to be worth their cost.
 
 ### What to try next
 
