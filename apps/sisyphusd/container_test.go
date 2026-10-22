@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,61 @@ func dockerEventsSince(start time.Time) (string, error) {
 	return summarizeDockerEvents(out), err
 }
 
+// dockerNetworkEventsSince lists the network events Docker recorded from
+// start until now, every network's and not only the test's: a container
+// on Docker's bridge network takes a lock that can hold up every other
+// container's start, the test's included, while it is set up (#314).
+func dockerNetworkEventsSince(start time.Time) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dockerEventsWithin)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "events",
+		"--since", dockerTimestamp(start), "--until", dockerTimestamp(time.Now()),
+		"--filter", "type=network", "--format", "{{json .}}").CombinedOutput()
+	return summarizeDockerEvents(out), err
+}
+
+// dockerProbeWithin bounds the failure diagnostic's probe container, and
+// dockerProbeKeeps how much of what docker -D says of it is kept: the end,
+// where a stalled request is.
+const (
+	dockerProbeWithin = 15 * time.Second
+	dockerProbeKeeps  = 4 << 10
+)
+
+// dockerProbe starts a container as the worker would start a task's, with
+// no network, through the Docker client's debug log, and says how long it
+// took and the end of that log. Run while the test's job is stalled, it
+// shows whether a new container can be created at all, and if not, which
+// request the client is waiting on.
+func dockerProbe() string {
+	ctx, cancel := context.WithTimeout(context.Background(), dockerProbeWithin)
+	defer cancel()
+	began := time.Now()
+	out, err := exec.CommandContext(ctx, "docker", "-D", "run", "--rm", "--network", "none", containerTestImage, "true").CombinedOutput()
+	return fmt.Sprintf("took %s (error %v): %s", time.Since(began).Round(time.Millisecond), err, redactDockerDebug(lastBytes(out, dockerProbeKeeps)))
+}
+
+// lastBytes is the last n bytes of b, marked as cut where they are.
+func lastBytes(b []byte, n int) []byte {
+	if len(b) <= n {
+		return b
+	}
+	return append([]byte("…"), b[len(b)-n:]...)
+}
+
+// What of Docker's debug log could carry a credential: an authorization
+// or registry-auth header, whose value may be several words and is cut to
+// the end of its line, or a token, password or secret given as a value.
+var (
+	headerInDockerDebug = regexp.MustCompile(`(?i)((?:authorization|x-registry-auth)["']?\s*[:=]\s*)[^\n]*`)
+	secretInDockerDebug = regexp.MustCompile(`(?i)((?:token|password|secret)["']?\s*[:=]\s*)("[^"]*"|\S+)`)
+)
+
+// redactDockerDebug replaces any such value with <redacted>.
+func redactDockerDebug(b []byte) string {
+	return secretInDockerDebug.ReplaceAllString(headerInDockerDebug.ReplaceAllString(string(b), "${1}<redacted>"), "${1}<redacted>")
+}
+
 // dockerTimestamp writes a time as docker events' --since and --until take
 // it: Unix seconds with a fraction.
 func dockerTimestamp(at time.Time) string {
@@ -89,6 +145,10 @@ func summarizeDockerEvents(out []byte) string {
 		if code, ok := event.Actor.Attributes["exitCode"]; ok {
 			summary += " exitCode=" + code
 		}
+		// A network event names the container it connects or disconnects.
+		if container := event.Actor.Attributes["container"]; container != "" {
+			summary += " container=" + container[:min(12, len(container))]
+		}
 		lines = append(lines, summary)
 	}
 	if len(lines) == 0 {
@@ -103,6 +163,7 @@ func TestSummarizeDockerEvents(t *testing.T) {
 
 {"status":"die","id":"0123456789abcdef0123","from":"alpine:3.20","Type":"container","Action":"die","Actor":{"ID":"0123456789abcdef0123","Attributes":{"execDuration":"0","exitCode":"137","image":"alpine:3.20","name":"sisyphus-a"}},"scope":"local","time":1792570001,"timeNano":1792570001789000000}
 {"status":"destroy","id":"0123456789abcdef0123","from":"alpine:3.20","Type":"container","Action":"destroy","Actor":{"ID":"short","Attributes":{"image":"alpine:3.20","name":"sisyphus-a"}},"scope":"local","time":1792570002,"timeNano":1792570002000000000}
+{"Type":"network","Action":"connect","Actor":{"ID":"fedcba9876543210fedc","Attributes":{"container":"0123456789abcdef0123","name":"bridge","type":"bridge"}},"scope":"local","time":1792570003,"timeNano":1792570003000000000}
 Error response from daemon: context deadline exceeded
 {"Type":"container"}
 `)
@@ -110,6 +171,7 @@ Error response from daemon: context deadline exceeded
 		"08:06:40.456 start sisyphus-a 0123456789ab; " +
 		"08:06:41.789 die sisyphus-a 0123456789ab exitCode=137; " +
 		"08:06:42.000 destroy sisyphus-a short; " +
+		"08:06:43.000 connect bridge fedcba987654 container=0123456789ab; " +
 		"unparsed: Error response from daemon: context deadline exceeded; " +
 		`unparsed: {"Type":"container"}`
 	if got := summarizeDockerEvents(out); got != want {
@@ -120,6 +182,36 @@ Error response from daemon: context deadline exceeded
 	}
 	if got := dockerTimestamp(time.Unix(1792570000, 5)); got != "1792570000.000000005" {
 		t.Errorf("timestamp %q", got)
+	}
+}
+
+func TestDockerDebugIsCutAndRedacted(t *testing.T) {
+	if got := string(lastBytes([]byte("abcdef"), 3)); got != "…def" {
+		t.Errorf("cut to %q", got)
+	}
+	if got := string(lastBytes([]byte("abc"), 3)); got != "abc" {
+		t.Errorf("kept %q", got)
+	}
+	log := `DEBU[0000] POST /v1.47/containers/create Authorization: Bearer abc.def
+DEBU[0000] {"identitytoken":"xyz", "password": "hunter2", "auth": "ok"} X-Registry-Auth=eyJh token=t0k secret: s3cret`
+	want := `DEBU[0000] POST /v1.47/containers/create Authorization: <redacted>
+DEBU[0000] {"identitytoken":<redacted>, "password": <redacted>, "auth": "ok"} X-Registry-Auth=<redacted>`
+	if got := redactDockerDebug([]byte(log)); got != want {
+		t.Errorf("redacted:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestTheDockerProbesAreBounded(t *testing.T) {
+	requireDocker(t)
+	began := time.Now()
+	if summary, err := dockerNetworkEventsSince(time.Now().Add(-time.Second)); err != nil || summary == "" {
+		t.Errorf("docker network events: %q, %v", summary, err)
+	}
+	if probe := dockerProbe(); !strings.HasPrefix(probe, "took ") {
+		t.Errorf("probe: %q", probe)
+	}
+	if took := time.Since(began); took > dockerEventsWithin+dockerProbeWithin {
+		t.Errorf("the probes took %s", took)
 	}
 }
 
@@ -163,9 +255,11 @@ func waitForContainerJob(t *testing.T, within time.Duration, addr, id string, su
 			image, imageErr := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", containerTestImage).CombinedOutput()
 			cancel()
 			events, eventsErr := dockerEventsSince(submitted)
+			networks, networksErr := dockerNetworkEventsSince(submitted)
+			probe := dockerProbe()
 			_, cancelErr := cliWithin(t, 5*time.Second, "job", "cancel", "--addr", addr, id)
 			logs, logsErr := cliWithin(t, 5*time.Second, "job", "logs", "--addr", addr, id)
-			t.Fatalf("job did not finish within %s; last job get %q (error %v); matching Docker containers %q (error %v); alpine:3.20 image %q (error %v); alpine:3.20 Docker events since submission %q (error %v); cancel error %v; job logs %q (error %v)", within, last, lastErr, containers, dockerErr, image, imageErr, events, eventsErr, cancelErr, logs, logsErr)
+			t.Fatalf("job did not finish within %s; last job get %q (error %v); matching Docker containers %q (error %v); alpine:3.20 image %q (error %v); alpine:3.20 Docker events since submission %q (error %v); network events since submission %q (error %v); a probe container %s; cancel error %v; job logs %q (error %v)", within, last, lastErr, containers, dockerErr, image, imageErr, events, eventsErr, networks, networksErr, probe, cancelErr, logs, logsErr)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
