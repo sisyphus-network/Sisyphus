@@ -5,7 +5,7 @@ go 1.27.1
 toolchain go1.27.2
 
 require (
-	connectrpc.com/connect/v2 v2.0.0
+	connectrpc.com/connect/v2 v2.0.1
 	connectrpc.com/vanguard v0.5.0
 	github.com/anthropics/anthropic-sdk-go v1.82.0
 	github.com/gofrs/flock v0.13.1
