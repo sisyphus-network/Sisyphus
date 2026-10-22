@@ -219,10 +219,10 @@ func TestEachForecastModelForecastsWhatItShould(t *testing.T) {
 		{forecastModel{Kind: "theta", Alpha: 1}, []float64{1, 2, 3, 4}, []float64{4.5, 5}},
 		// Too short to test for its cycle of 4: forecast as it is.
 		{forecastModel{Kind: "theta", Alpha: 1, Season: 4}, []float64{1, 2, 3, 4, 5}, []float64{5.5, 6}},
-		// A level times a cycle: the cycle is taken out, leaving the
-		// level, and put back.
 		// Long enough to test, but with no cycle of 2: as it is.
 		{forecastModel{Kind: "theta", Alpha: 1, Season: 2}, []float64{1, 2, 3, 4, 5, 6, 7, 8}, []float64{8.5, 9}},
+		// A level times a cycle: the cycle is taken out, leaving the
+		// level, and put back.
 		{forecastModel{Kind: "theta", Alpha: 0.5, Season: 2}, slices.Repeat([]float64{1, 3}, 12), []float64{1, 3, 1}},
 		{forecastModel{Kind: "theta", Alpha: 0.5, Season: 3}, slices.Repeat([]float64{2, 4, 6}, 6), []float64{2, 4, 6}},
 	}
