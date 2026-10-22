@@ -98,7 +98,7 @@ npm run test:e2e
 
 `npm run test:e2e` starts the built app with [Playwright](https://playwright.dev) and drives it as a person would, against a node of its own: the repository's `bin/sisyphusd` on ports nothing else has, with a temporary data directory, and a temporary profile for the app. Your node, your data and your app are not touched. On Linux with no display it runs under `xvfb-run`, which is how CI runs it.
 
-What they check today (`e2e/app.e2e.mjs`):
+What they check today (`e2e/app.e2e.ts`):
 
 - the window shows the node it is connected to, its ID and its worker;
 - a window with no WebGL is offered no topology (no pane, no handle, no dock entry when narrow), its chat fills the room and answers; a window with WebGL has the topology wide and narrow;
@@ -111,4 +111,6 @@ What they check today (`e2e/app.e2e.mjs`):
 - containers for the app's own node: turned on only once (stand-in) Docker answers, saved, read back and shown as waiting for a restart; with Docker missing the switch stays off and the page says where to get it; a node run by hand is left to its own `--containers`;
 - a question with a file attached is planned by a stand-in model, computed on the pool and answered; the model is told of the file as private and is never sent its content; a second turn carries on, and the conversation is in the history.
 
-`e2e/harness.mjs` has what a new test needs: `testNode()`, `testProfile()`, `launch()`, `launchOwnNode()` for the app starting a node of its own, `open()` for the sidebar's pages, and `standInModel()` for a planner that says what the test tells it to. Elements are found by role and name, as a screen reader finds them, so a test that cannot find a control is often a control that has no name. When a test fails, what the shared node logged while it ran is printed after it, and a node that never comes up says how it ended and what it said last.
+`e2e/harness.ts` has what a new test needs: `testNode()`, `testProfile()`, `launch()`, `launchOwnNode()` for the app starting a node of its own, `open()` for the sidebar's pages, and `standInModel()` for a planner that says what the test tells it to. Elements are found by role and name, as a screen reader finds them, so a test that cannot find a control is often a control that has no name. When a test fails, what the shared node logged while it ran is printed after it, and a node that never comes up says how it ended and what it said last.
+
+The tests are TypeScript that Node runs with its types stripped, so `npm run typecheck` checks them too, through `tsconfig.test.json`. It allows only syntax Node can strip (`erasableSyntaxOnly`), and type-only imports must say so (`import type`), since Node removes only those.

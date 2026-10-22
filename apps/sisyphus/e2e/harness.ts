@@ -2,31 +2,31 @@
 // repository's daemon on ports nothing else has and with data of its own,
 // and the real desktop app, built, started against that node with a profile
 // of its own. Nothing of the user's node, data or app is touched.
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import { mkdtempSync, existsSync, rmSync } from 'node:fs'
 import { createServer as createHttpServer } from 'node:http'
-import { createServer, createConnection } from 'node:net'
+import { createServer, createConnection, type AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { _electron as electron } from 'playwright-core'
+import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const desktop = resolve(here, '..')
 const daemon = process.env.SISYPHUS_DAEMON_PATH ?? resolve(desktop, '../../bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')
 
-export function freePort() {
+export function freePort(): Promise<number> {
   return new Promise((done, failed) => {
     const server = createServer()
     server.once('error', failed)
     server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address()
+      const { port } = server.address() as AddressInfo
       server.close(() => done(port))
     })
   })
 }
 
-function listening(port) {
+function listening(port: number): Promise<boolean> {
   return new Promise((done) => {
     const socket = createConnection({ host: '127.0.0.1', port })
     socket.once('connect', () => { socket.destroy(); done(true) })
@@ -34,7 +34,7 @@ function listening(port) {
   })
 }
 
-export async function until(what, met, seconds = 30) {
+export async function until(what: string, met: () => boolean | Promise<boolean>, seconds = 30): Promise<void> {
   for (let left = seconds * 10; left > 0; left--) {
     if (await met()) return
     await new Promise((wake) => setTimeout(wake, 100))
@@ -42,16 +42,47 @@ export async function until(what, met, seconds = 30) {
   throw new Error(`never happened: ${what}`)
 }
 
+/** What a test node runs as. */
+export type Role = 'coordinator' | 'worker'
+
+/** What an invitation lets its holder join a pool as. */
+export type InvitationRole = 'worker' | 'client'
+
+export interface TestNodeOptions {
+  /** The node a worker joins; a worker needs one. */
+  coordinator?: TestNode
+  role?: Role
+  invitationRole?: InvitationRole
+  name?: string
+}
+
+export interface TestNode {
+  dataDir: string
+  api: string
+  pool: string
+  tokenFile: string
+  child: ChildProcess | null
+  output: string
+  start(): Promise<void>
+  stop(): Promise<void>
+  id(): string
+  remove(): Promise<void>
+}
+
 /** A node of the tests' own. start() can be called again after stop(), and the node comes back as it was. */
-export async function testNode({ coordinator, role = 'coordinator', invitationRole = 'worker', name = 'rig' } = {}) {
+export async function testNode({ coordinator, role = 'coordinator', invitationRole = 'worker', name = 'rig' }: TestNodeOptions = {}): Promise<TestNode> {
   if (!existsSync(daemon)) throw new Error(`no daemon at ${daemon}: run "make build" in the repository first, or set SISYPHUS_DAEMON_PATH`)
   const dataDir = mkdtempSync(join(tmpdir(), 'sisyphus-e2e-node-'))
+  const worksFor = (): TestNode => {
+    if (!coordinator) throw new Error('a worker test node needs a coordinator to join')
+    return coordinator
+  }
   const [pool, api] = [await freePort(), await freePort()]
-  const node = {
+  const node: TestNode = {
     dataDir, api: `127.0.0.1:${api}`, pool: `127.0.0.1:${pool}`, tokenFile: join(dataDir, 'api.token'), child: null, output: '',
     async start() {
       const poolArgs = role === 'worker'
-        ? ['--role', 'worker', '--coordinator', coordinator.pool, '--join', poolInvitation(coordinator, invitationRole), '--name', name, '--slots', '1']
+        ? ['--role', 'worker', '--coordinator', worksFor().pool, '--join', poolInvitation(worksFor(), invitationRole), '--name', name, '--slots', '1']
         : ['--listen', node.pool, '--name', name, '--slots', '2']
       const child = spawn(daemon, ['run', '--data-dir', dataDir, ...poolArgs, '--api-listen', node.api, '--discovery', 'off'], { stdio: ['ignore', 'pipe', 'pipe'] })
       node.child = child
@@ -62,7 +93,7 @@ export async function testNode({ coordinator, role = 'coordinator', invitationRo
       await until('the node answering on its local API', async () => {
         if (child.exitCode !== null || child.signalCode) throw new Error('the node stopped before answering on its local API')
         return existsSync(node.tokenFile) && await listening(api)
-      }).catch((error) => {
+      }).catch((error: Error) => {
         const exited = child.exitCode !== null ? `exited with ${child.exitCode}` : child.signalCode ? `killed by ${child.signalCode}` : 'still running'
         throw new Error(`${error.message} (${role} ${name} on ${node.api}, ${exited})\n${node.output.slice(-4000)}`)
       })
@@ -70,7 +101,7 @@ export async function testNode({ coordinator, role = 'coordinator', invitationRo
     async stop() {
       const child = node.child
       if (!child || child.exitCode !== null) return
-      const gone = new Promise((done) => child.once('exit', done))
+      const gone = new Promise<void>((done) => child.once('exit', () => done()))
       child.kill()
       await gone
     },
@@ -82,7 +113,12 @@ export async function testNode({ coordinator, role = 'coordinator', invitationRo
 }
 
 /** A profile of the tests' own, which a second launch finds as the first left it. */
-export function testProfile() {
+export interface TestProfile {
+  dir: string
+  remove(): void
+}
+
+export function testProfile(): TestProfile {
   const dir = mkdtempSync(join(tmpdir(), 'sisyphus-e2e-profile-'))
   return { dir, remove() { rmSync(dir, { recursive: true, force: true }) } }
 }
@@ -92,7 +128,12 @@ export function testProfile() {
  * its own, as a test runner is, is given WebGL drawn in software, unless the
  * test is of a window that has none.
  */
-export async function launch(node, profile, { webgl = true } = {}) {
+export interface Launched {
+  app: ElectronApplication
+  page: Page
+}
+
+export async function launch(node: TestNode, profile: TestProfile, { webgl = true }: { webgl?: boolean } = {}): Promise<Launched> {
   const graphics = webgl
     ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
     : ['--disable-gpu', '--disable-software-rasterizer']
@@ -113,10 +154,16 @@ export async function launch(node, profile, { webgl = true } = {}) {
  * the test's. docker stands in for Docker's answer: "ready:<version>",
  * "missing" or "stopped". close() quits the app, which stops its node.
  */
-export async function launchOwnNode({ docker = 'ready:27.3.1' } = {}) {
+export interface LaunchedOwnNode extends Launched {
+  dataDir: string
+  close(): Promise<void>
+}
+
+export async function launchOwnNode({ docker = 'ready:27.3.1' }: { docker?: string } = {}): Promise<LaunchedOwnNode> {
   const home = mkdtempSync(join(tmpdir(), 'sisyphus-e2e-home-'))
   const [api, web] = [await freePort(), await freePort()]
-  const env = { ...process.env, HOME: home, XDG_DATA_HOME: join(home, 'data'), SISYPHUS_AUTO_START_DAEMON: '1', SISYPHUS_API_ADDRESS: `127.0.0.1:${api}`, SISYPHUS_WEB_API_ADDRESS: `127.0.0.1:${web}`, SISYPHUS_DAEMON_PATH: daemon, SISYPHUS_DOCKER_CHECK: docker }
+  // Spreading the environment copies only what is set, so every value is a string.
+  const env: Record<string, string> = { ...process.env as Record<string, string>, HOME: home, XDG_DATA_HOME: join(home, 'data'), SISYPHUS_AUTO_START_DAEMON: '1', SISYPHUS_API_ADDRESS: `127.0.0.1:${api}`, SISYPHUS_WEB_API_ADDRESS: `127.0.0.1:${web}`, SISYPHUS_DAEMON_PATH: daemon, SISYPHUS_DOCKER_CHECK: docker }
   delete env.SISYPHUS_API_TOKEN_FILE
   const app = await electron.launch({
     cwd: desktop,
@@ -138,7 +185,7 @@ export async function launchOwnNode({ docker = 'ready:27.3.1' } = {}) {
 }
 
 /** Opens one of the pages the sidebar lists, showing the sidebar first if it is put away. */
-export async function open(page, name) {
+export async function open(page: Page, name: string): Promise<void> {
   const link = page.getByRole('complementary').getByRole('link', { name, exact: true })
   if (!await link.isVisible().catch(() => false)) await page.getByRole('button', { name: 'Open advanced settings' }).click()
   await link.click()
@@ -149,12 +196,44 @@ export async function open(page, name) {
  * was told to, in order, and keeps what it was asked. A reply is the text to
  * say, or { tool, arguments } to call one of the planner's tools.
  */
-export async function standInModel(...replies) {
-  const model = { asked: [], pulled: [], removed: [], authorizations: [], tagRequests: 0, tagResponses: 0, tagSettled: 0, tagDelayMs: 0, failTags: false, url: '', aborted: 0, pending: [] }
-  model.tags = [
-    { name: 'test-model', size: 4900000000 },
-    { name: 'second-model', size: 1200000000 },
-  ]
+/** What a stand-in model says: text, a call of one of the planner's tools, or text held back until releasePending(). */
+export type Reply = string | { tool: string, arguments: Record<string, unknown> } | { defer: true, content?: string }
+
+/** What a planner sent the model: Ollama's chat request, of which the tests read only some. */
+export type Asked = Record<string, any>
+
+export interface StandInModel {
+  asked: Asked[]
+  pulled: string[]
+  removed: string[]
+  authorizations: string[]
+  tags: { name: string, size: number }[]
+  tagRequests: number
+  tagResponses: number
+  tagSettled: number
+  tagDelayMs: number
+  failTags: boolean
+  url: string
+  aborted: number
+  pending: (() => void)[]
+  waitForRequests(count: number): Promise<void>
+  waitForAbort(): Promise<void>
+  releasePending(): void
+  close(): Promise<void>
+}
+
+export async function standInModel(...replies: Reply[]): Promise<StandInModel> {
+  const model: StandInModel = {
+    asked: [], pulled: [], removed: [], authorizations: [], tagRequests: 0, tagResponses: 0, tagSettled: 0, tagDelayMs: 0, failTags: false, url: '', aborted: 0, pending: [],
+    tags: [
+      { name: 'test-model', size: 4900000000 },
+      { name: 'second-model', size: 1200000000 },
+    ],
+    waitForRequests: async () => {},
+    waitForAbort: async () => {},
+    releasePending: () => {},
+    close: async () => {},
+  }
   model.waitForRequests = async (count) => {
     const deadline = Date.now() + 15000
     while (model.asked.length < count && Date.now() < deadline) {
@@ -226,7 +305,7 @@ export async function standInModel(...replies) {
       model.asked.push(requestBody)
       const reply = replies[model.asked.length - 1]
       if (reply === undefined) { response.statusCode = 500; return response.end('the model has run out of things to say') }
-      if (reply?.defer === true) {
+      if (typeof reply === 'object' && 'defer' in reply) {
         let completed = false
         model.pending.push(() => {
           if (completed || response.destroyed) return
@@ -243,16 +322,23 @@ export async function standInModel(...replies) {
       response.end(JSON.stringify({ message, done: true }))
     })
   })
-  await new Promise((done) => server.listen(0, '127.0.0.1', done))
-  model.url = `http://127.0.0.1:${server.address().port}`
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  model.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   model.releasePending = () => model.pending.splice(0).forEach((release) => release())
-  model.close = () => new Promise((done) => server.close(done))
+  model.close = () => new Promise<void>((done) => server.close(() => done()))
   return model
 }
 
 /** A small OpenAI-compatible service that records the key and requests it receives. */
-export async function standInOpenAI(reply) {
-  const service = { asked: [], authorizations: [], url: '' }
+export interface StandInOpenAI {
+  asked: Asked[]
+  authorizations: string[]
+  url: string
+  close(): Promise<void>
+}
+
+export async function standInOpenAI(reply: string): Promise<StandInOpenAI> {
+  const service: StandInOpenAI = { asked: [], authorizations: [], url: '', close: async () => {} }
   const server = createHttpServer((request, response) => {
     let body = ''
     request.on('data', (piece) => { body += piece })
@@ -271,29 +357,29 @@ export async function standInOpenAI(reply) {
       response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: reply } }] })}\n\ndata: [DONE]\n\n`)
     })
   })
-  await new Promise((done) => server.listen(0, '127.0.0.1', done))
-  service.url = `http://127.0.0.1:${server.address().port}/v1`
-  service.close = () => new Promise((done) => server.close(done))
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  service.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
+  service.close = () => new Promise<void>((done) => server.close(() => done()))
   return service
 }
 
 /** Has a node's planner plan with a model, as its owner would from the command line. */
-export function planWith(node, model) {
+export function planWith(node: TestNode, model: { url: string }): void {
   execFileSync(daemon, ['model', 'set', '--data-dir', node.dataDir, '--url', model.url, '--model', 'test-model'], { stdio: 'ignore' })
 }
 
 /** A one-use invitation issued by a separate test node, for exercising the UI join flow. */
-export function poolInvitation(node, role = 'worker') {
+export function poolInvitation(node: TestNode, role: InvitationRole = 'worker'): string {
   return execFileSync(daemon, ['pool', 'invite', '--data-dir', node.dataDir, '--addr', node.pool, '--role', role], { encoding: 'utf8' }).trim()
 }
 
 /** Lists the members recorded by a test coordinator after a joining node accepts an invitation. */
-export function poolMembers(node) {
+export function poolMembers(node: TestNode): string {
   return execFileSync(daemon, ['pool', 'members', '--data-dir', node.dataDir, '--addr', node.pool], { encoding: 'utf8' })
 }
 
 /** Whether the window can draw with WebGL, asked the way the app asks. */
-export function hasWebgl(page) {
+export function hasWebgl(page: Page): Promise<boolean> {
   return page.evaluate(() => {
     const canvas = document.createElement('canvas')
     return Boolean(canvas.getContext('webgl2') ?? canvas.getContext('webgl'))
@@ -301,14 +387,14 @@ export function hasWebgl(page) {
 }
 
 /** Makes the window the size it opens at, and returns how wide its page then is. */
-export async function wide(app, page) {
+export async function wide(app: ElectronApplication, page: Page): Promise<number> {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 800))
   await page.waitForFunction(() => window.innerWidth > 900, null, { timeout: 5000 }).catch(() => {})
   return page.evaluate(() => window.innerWidth)
 }
 
 /** Makes the window as narrow as it goes, which is narrow enough for its one-view layout. */
-export async function narrow(app) {
+export async function narrow(app: ElectronApplication): Promise<void> {
   await app.evaluate(({ BrowserWindow }) => {
     const [window] = BrowserWindow.getAllWindows()
     const [width] = window.getMinimumSize()

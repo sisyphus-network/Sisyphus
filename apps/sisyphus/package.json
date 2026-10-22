@@ -16,10 +16,10 @@
     "package:dist": "npm run build && electron-builder --config electron-builder.config.cjs --publish never",
     "test:package": "node dev/verify-package.mjs",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "test": "node --experimental-strip-types --test dev/*.test.mjs",
     "test:daemon": "node --experimental-strip-types dev/daemon-lifecycle-smoke.mjs",
-    "test:e2e": "node e2e/run.mjs"
+    "test:e2e": "node --experimental-strip-types e2e/run.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

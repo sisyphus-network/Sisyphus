@@ -2,9 +2,19 @@ import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, test } from 'node:test'
 import { existsSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { hasWebgl, launch, launchOwnNode, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide } from './harness.mjs'
+import type { Page } from 'playwright-core'
+import { hasWebgl, launch, launchOwnNode, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide, type TestNode } from './harness.ts'
 
-let node
+// Started before the first test, as every test's node.
+let node!: TestNode
+
+// What a test has the app's main process keep for it to read back.
+declare global {
+  var opened: string[]
+}
+
+// The part of listWorkers the tests read.
+type Workers = { workers?: { peerId: string, gpus?: unknown[] }[] }
 before(async () => { node = await testNode() })
 after(async () => { await node?.remove() })
 
@@ -17,7 +27,7 @@ afterEach((t) => {
   if (!t.passed) console.error(`node output during "${t.name}":\n${node.output.slice(said).slice(-8000)}`)
 })
 
-async function openSettingsCategory(page, category) {
+async function openSettingsCategory(page: Page, category: string) {
   await open(page, 'Settings')
   await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: new RegExp(`^${category}`, 'i') }).click()
 }
@@ -25,22 +35,22 @@ async function openSettingsCategory(page, category) {
 // Whether the window says its node is connected: a badge in the header of a
 // narrow window, and in a wide one the daemon status in the sidebar, whose
 // dot alone does not say it.
-function connectionState(page, label) {
+function connectionState(page: Page, label: string) {
   return page.getByRole('banner').getByText(label, { exact: true })
     .or(page.getByRole('complementary').getByRole('status', { name: `Daemon: ${label}` }))
 }
 
-async function selectProvider(page, name) {
+async function selectProvider(page: Page, name: string) {
   await page.getByRole('button', { name: 'Provider', exact: true }).click()
   await page.getByRole('dialog', { name: 'Provider' }).getByRole('button', { name: new RegExp(`^${name}`, 'i') }).click()
 }
 
-async function selectLoadedModel(page, name) {
+async function selectLoadedModel(page: Page, name: string) {
   await page.getByRole('button', { name: 'Model', exact: true }).click()
   await page.getByRole('dialog', { name: 'Model' }).getByRole('button', { name, exact: true }).click()
 }
 
-async function openProviderModelStep(page, { provider, profile, url, apiKey }) {
+async function openProviderModelStep(page: Page, { provider, profile, url, apiKey }: { provider: string, profile: string, url: string, apiKey?: string }) {
   await selectProvider(page, provider)
   await page.getByRole('textbox', { name: 'Profile name' }).fill(profile)
   await page.getByRole('button', { name: 'Continue', exact: true }).click()
@@ -50,7 +60,7 @@ async function openProviderModelStep(page, { provider, profile, url, apiKey }) {
   await page.getByRole('button', { name: 'Continue', exact: true }).click()
 }
 
-async function waitForConnectedDaemon(page, options) {
+async function waitForConnectedDaemon(page: Page, options?: { timeout?: number }) {
   await page.getByRole('status', { name: 'Daemon: Connected' }).waitFor(options)
 }
 
@@ -90,12 +100,12 @@ test('closing the window quits the app when its node is not the app’s own, and
     await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
     // The tray keeps only a node the app started working with the window
     // closed; this one was started by hand, so the app closes with its window.
-    const closed = new Promise((resolve) => app.once('close', resolve))
+    const closed = new Promise<void>((resolve) => app.once('close', () => resolve()))
     await page.close()
     await Promise.race([closed, new Promise((_, reject) => setTimeout(() => reject(new Error('the app kept running with its window closed')), 15_000))])
     // The node someone else started is theirs, and keeps running.
-    assert.equal(node.child.exitCode, null)
-    assert.equal(node.child.signalCode, null)
+    assert.equal(node.child?.exitCode, null)
+    assert.equal(node.child?.signalCode, null)
   } finally {
     await app.close().catch(() => { /* already closed */ })
     profile.remove()
@@ -176,11 +186,11 @@ test('the owner pins the node where it is, chooses how much to share, and the pi
 // one, without downloading DB-IP's (the daemon has no address to download
 // it from instead). Its form: "SCITY1\n", the edition with a length byte,
 // and four little-endian uint32 counts.
-function emptyCityTable(edition) {
+function emptyCityTable(edition: string) {
   return Buffer.concat([Buffer.from('SCITY1\n'), Buffer.from([edition.length]), Buffer.from(edition), Buffer.alloc(16)])
 }
 
-function cityTableCard(page) {
+function cityTableCard(page: Page) {
   return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'City table', exact: true }) })
 }
 
@@ -190,7 +200,7 @@ test('the owner sees the city table that is kept, with its credit, and removes i
   const { app, page } = await launch(node, profile)
   try {
     // The credit opens db-ip.com in the browser, and nothing else.
-    await app.evaluate(({ shell }) => { globalThis.opened = []; shell.openExternal = async (url) => { globalThis.opened.push(url) } })
+    await app.evaluate(({ shell }) => { globalThis.opened = []; shell.openExternal = async (url: string) => { globalThis.opened.push(url) } })
     await openSettingsCategory(page, 'This node')
     const card = cityTableCard(page)
     await card.getByRole('status').filter({ hasText: 'Not downloaded.' }).waitFor()
@@ -248,7 +258,7 @@ test('hosting a pool is the app’s own node’s setting, so a node run by hand 
   }
 })
 
-function containersCard(page) {
+function containersCard(page: Page) {
   return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Run containers for the pool' }) })
 }
 
@@ -342,7 +352,7 @@ test('running containers is the app’s own node’s setting, so a node run by h
   }
 })
 
-function poolLimitsCard(page) {
+function poolLimitsCard(page: Page) {
   return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Pool limits' }) })
 }
 
@@ -454,7 +464,7 @@ test('a window with no WebGL offers no topology, and its workspace and chat stil
     assert.equal(await page.getByRole('img', { name: /This node/ }).count(), 0)
     // The chat has the room the topology would have had, to the window's edge.
     const [chat, width] = [await page.locator('.workspace-chat-desktop-pane').boundingBox(), await page.evaluate(() => window.innerWidth)]
-    assert.ok(chat.x + chat.width > width - 24, `the chat ends at ${chat.x + chat.width} of ${width}`)
+    assert.ok(chat!.x + chat!.width > width - 24, `the chat ends at ${chat!.x + chat!.width} of ${width}`)
     // And it answers.
     await page.getByRole('textbox', { name: 'Message your Sisyphus planner…' }).fill('Are you there?')
     await page.getByRole('button', { name: 'Send message' }).click()
@@ -613,7 +623,7 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
 
     // The wheel zooms too, here back out.
     const box = await page.locator('.network-globe-stage canvas').boundingBox()
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
     const close = await zoom()
     await page.mouse.wheel(0, 600)
     await until('the wheel to take the globe out', async () => await zoom() < close)
@@ -849,8 +859,8 @@ test('a double-click on a workspace panel handle closes and reopens the panel, a
     await wide(app, page)
     await page.evaluate(() => localStorage.setItem('sisyphus-workspace-layout', JSON.stringify({ chat: 58, network: 42, historyOpen: true, historyWidth: 320, topologyOpen: true })))
     await page.reload()
-    const opened = (slot) => page.evaluate((slot) => document.querySelector(slot)?.getAttribute('data-open'), slot)
-    const toggles = async (name, slot) => {
+    const opened = (slot: string) => page.evaluate((slot) => document.querySelector(slot)?.getAttribute('data-open'), slot)
+    const toggles = async (name: string, slot: string) => {
       const handle = page.getByRole('separator', { name })
       const waitForPanelTransition = async () => page.locator(slot).evaluate(async (element) => {
         await Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)))
@@ -907,14 +917,14 @@ test('a workspace panel dragged narrower stops at its minimum width and closes o
     await wide(app, page)
     const webgl = await hasWebgl(page)
     if (!webgl) assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
-    const state = (slot, handle) => page.evaluate(({ slot, handle }) => ({
+    const state = (slot: string, handle: string) => page.evaluate(({ slot, handle }) => ({
       open: document.querySelector(slot)?.getAttribute('data-open'),
       width: Number(document.querySelector(handle)?.getAttribute('aria-valuenow')),
     }), { slot, handle })
     // narrows drags a panel's handle, in one gesture, to raw widths that
     // first clamp at the minimum, then sit just inside the threshold, then
     // go past it. sign is which way of the pointer makes the panel narrower.
-    const narrows = async ({ name, slot, handle, sign }) => {
+    const narrows = async ({ name, slot, handle, sign }: { name: string, slot: string, handle: string, sign: number }) => {
       // By class: in Hebrew the handle's name is translated.
       const separator = page.locator(handle)
       await separator.waitFor()
@@ -926,7 +936,7 @@ test('a workspace panel dragged narrower stops at its minimum width and closes o
       assert.ok(box, `${name}: the handle has no box`)
       const x = box.x + box.width / 2
       const y = box.y + box.height / 2
-      const to = (width) => page.mouse.move(x + sign * (start - width), y, { steps: 8 })
+      const to = (width: number) => page.mouse.move(x + sign * (start - width), y, { steps: 8 })
       await page.mouse.move(x, y)
       await page.mouse.down()
       try {
@@ -976,7 +986,7 @@ test('the topology canvas stays mounted and stable through repeated advanced-rou
     await topology.waitFor()
     const canvas = page.locator('.workspace-network canvas')
     await canvas.waitFor()
-    const identity = await canvas.evaluate((element) => ({ tag: element.tagName, width: element.width, height: element.height }))
+    const identity = await canvas.evaluate((element: HTMLCanvasElement) => ({ tag: element.tagName, width: element.width, height: element.height }))
     const initialBounds = await canvas.boundingBox()
     assert.ok(initialBounds && initialBounds.width > 0 && initialBounds.height > 0)
 
@@ -991,7 +1001,7 @@ test('the topology canvas stays mounted and stable through repeated advanced-rou
       }
       await page.waitForTimeout(260)
       assert.equal(await canvas.count(), 1, `the globe canvas was removed after navigating to ${route}`)
-      const current = await canvas.evaluate((element) => ({ tag: element.tagName, width: element.width, height: element.height }))
+      const current = await canvas.evaluate((element: HTMLCanvasElement) => ({ tag: element.tagName, width: element.width, height: element.height }))
       assert.equal(current.tag, identity.tag)
       assert.equal(current.width, identity.width)
       assert.equal(current.height, identity.height)
@@ -1018,17 +1028,17 @@ test('the topology canvas stays fitted through live window resizes', async (t) =
     const canvas = stage.locator('canvas')
     await canvas.waitFor()
     const initialBox = await stage.boundingBox()
-    const initial = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+    const initial = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
     assert.ok(initialBox && initialBox.width > 0 && initialBox.height > 0)
     assert.ok(initial.width > 0 && initial.height > 0)
 
     let observedBufferResize = false
     for (const [nextWidth, nextHeight] of [[1040, 720], [1280, 900], [980, 760], [1180, 800]]) {
-      const previous = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+      const previous = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
       await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h), [nextWidth, nextHeight])
       await page.waitForFunction(([w, h]) => Math.abs(window.innerWidth - w) < 5 && Math.abs(window.innerHeight - h) < 5, [nextWidth, nextHeight])
       await page.waitForFunction(([width, height]) => {
-        const canvasEl = document.querySelector('.network-globe-stage canvas')
+        const canvasEl = document.querySelector<HTMLCanvasElement>('.network-globe-stage canvas')
         return canvasEl && (canvasEl.width !== width || canvasEl.height !== height)
       }, [previous.width, previous.height])
       await page.waitForFunction(() => {
@@ -1039,13 +1049,13 @@ test('the topology canvas stays fitted through live window resizes', async (t) =
         return rect.width > 0 && rect.height > 0 && canvasEl.width > 0 && canvasEl.height > 0
       })
       const box = await stage.boundingBox()
-      const dimensions = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+      const dimensions = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
       if (dimensions.width !== initial.width || dimensions.height !== initial.height) observedBufferResize = true
       assert.ok(box && box.width > 0 && box.height > 0, `globe stage collapsed at ${nextWidth}x${nextHeight}`)
       assert.ok(dimensions.width > 0 && dimensions.height > 0, `WebGL drawing buffer collapsed at ${nextWidth}x${nextHeight}`)
       assert.ok(Math.abs(box.width - box.height) <= 2, `globe viewport is not square at ${nextWidth}x${nextHeight}`)
     }
-    const final = await canvas.evaluate((element) => ({ width: element.width, height: element.height }))
+    const final = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
     assert.ok(final.width > 0 && final.height > 0)
     assert.ok(observedBufferResize, 'the WebGL drawing buffer never responded to any intermediate window size')
   } finally {
@@ -1138,8 +1148,8 @@ test('the composer grows with what is typed, up to a cap, then scrolls, in both 
       await page.waitForTimeout(400)
       return composer.evaluate((field) => ({ height: field.getBoundingClientRect().height, needs: field.scrollHeight, scrolls: getComputedStyle(field).overflowY }))
     }
-    const lines = (n) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n')
-    for (const [layout, size] of [['desktop', wide], ['compact', narrow]]) {
+    const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n')
+    for (const [layout, size] of [['desktop', wide], ['compact', narrow]] as const) {
       await size(app, page)
       await composer.waitFor()
       await page.waitForFunction(() => !document.querySelector('textarea')?.disabled)
@@ -1225,7 +1235,7 @@ test('each advanced page has the one shared header beside the sidebar, with no b
         // Let the route's fade settle before measuring.
         await page.waitForTimeout(300)
         const at = await page.evaluate(() => {
-          const box = (selector) => { const rect = document.querySelector(selector)?.getBoundingClientRect(); return rect && { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right } }
+          const box = (selector: string) => { const rect = document.querySelector(selector)!.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right } }
           return {
             headers: document.querySelectorAll('.app-global-header').length,
             header: box('.app-global-header'),
@@ -1305,7 +1315,7 @@ test('collapsed sidebar navigation tooltips stay beside the sidebar and inside t
       await tooltip.waitFor()
       const placement = await page.evaluate((tooltip) => {
         const popup = tooltip.getBoundingClientRect()
-        const sidebar = document.querySelector('.advanced-sidebar').getBoundingClientRect()
+        const sidebar = document.querySelector('.advanced-sidebar')!.getBoundingClientRect()
         const viewport = { width: window.innerWidth, height: window.innerHeight }
         const center = document.elementFromPoint(popup.left + popup.width / 2, popup.top + popup.height / 2)
         return {
@@ -1344,7 +1354,7 @@ test('pages with nothing to show use the shared empty and unavailable states, ce
     await wide(app, page)
     // centred finds the shared state that says text, and reports how far its
     // icon is from the middle of the box it is centred in.
-    const centred = (text, within, timeout) => page.waitForFunction(({ text, within }) => {
+    const centred = (text: string, within?: string, timeout?: number) => page.waitForFunction(({ text, within }) => {
       const state = [...document.querySelectorAll('[role="status"]')].find((element) => element.textContent?.includes(text))
       const icon = state?.querySelector(':scope > span[aria-hidden="true"]')
       const box = within ? document.querySelector(within) : state?.parentElement
@@ -1429,7 +1439,7 @@ test('the Run page runs primes from its form, refuses a value out of bounds inli
     await to.fill('-5')
     const refused = page.getByRole('alert').filter({ hasText: 'Must be at least 0.' })
     await refused.waitFor()
-    assert.ok((await to.getAttribute('aria-describedby')).includes(await refused.getAttribute('id')), 'the error does not describe its field')
+    assert.ok((await to.getAttribute('aria-describedby'))?.includes((await refused.getAttribute('id'))!), 'the error does not describe its field')
     assert.equal(await to.getAttribute('aria-invalid'), 'true')
     assert.equal(await run.isDisabled(), true)
     await to.fill('100000')
@@ -1473,7 +1483,7 @@ test('the Run page refreshes workload availability when workers join and leave',
     await gpuBadge.waitFor()
     const expectGpuWorkerCount = async () => {
       const count = await page.evaluate(async () => {
-        const current = await window.sisyphus.call('listWorkers')
+        const current = await window.sisyphus.call<Workers>('listWorkers')
         return current.workers?.filter((item) => Array.isArray(item.gpus) && item.gpus.length > 0).length ?? 0
       })
       await gpuBadge.getByText(`GPU workers: ${count}`, { exact: true }).waitFor({ timeout: 8_000 })
@@ -1485,15 +1495,15 @@ test('the Run page refreshes workload availability when workers join and leave',
     worker = await testNode({ role: 'worker', coordinator, name: 'event-driven rig' })
     const workerId = worker.id()
     await until('the worker joining the coordinator', async () => page.evaluate(async (id) => {
-      const current = await window.sisyphus.call('listWorkers')
-      return current.workers?.some((item) => item.peerId === id)
+      const current = await window.sisyphus.call<Workers>('listWorkers')
+      return current.workers?.some((item) => item.peerId === id) ?? false
     }, workerId), 15)
     await card.getByText(`Workers: ${initial + 1}`, { exact: true }).waitFor({ timeout: 8_000 })
     await expectGpuWorkerCount()
 
     await worker.stop()
     await until('the worker leaving the coordinator', async () => page.evaluate(async (id) => {
-      const current = await window.sisyphus.call('listWorkers')
+      const current = await window.sisyphus.call<Workers>('listWorkers')
       return !current.workers?.some((item) => item.peerId === id)
     }, workerId), 15)
     await card.getByText(`Workers: ${initial}`, { exact: true }).waitFor({ timeout: 8_000 })
@@ -1598,7 +1608,7 @@ test('node overview streams the joined pool without exposing worker counts to wo
     await poolSection.getByText('Connected', { exact: true }).waitFor().catch(async () => {
       const apiState = await page.evaluate(() => window.sisyphus.call('getJoinedPool').catch((error) => String(error)))
       const streamEvents = await page.evaluate(() => new Promise((resolve) => {
-        const events = []
+        const events: unknown[] = []
         const stop = window.sisyphus.stream('watchJoinedPool', {}, (event) => events.push(event))
         setTimeout(() => { stop(); resolve(events) }, 1000)
       }))
@@ -1618,7 +1628,7 @@ test('node overview streams the joined pool without exposing worker counts to wo
       throw new Error(`client role did not reach the renderer: ${JSON.stringify({ clientJoin, current })}\n${await page.locator('body').innerText()}`)
     })
     await page.getByText('Workers in pool', { exact: true }).waitFor()
-    const joinedState = await page.evaluate(() => window.sisyphus.call('getJoinedPool'))
+    const joinedState = await page.evaluate(() => window.sisyphus.call<{ workerCount: number }>('getJoinedPool'))
     await page.getByText(String(joinedState.workerCount), { exact: true }).last().waitFor()
     secondWorker = await testNode({ role: 'worker', coordinator, name: 'second worker' })
     await page.getByText(String(joinedState.workerCount + 1), { exact: true }).last().waitFor({ timeout: 15000 })
@@ -1656,7 +1666,7 @@ test('node overview leaves the joined pool once asked to confirm, and the node s
     await confirm.waitFor({ state: 'detached' })
     assert.ok(poolMembers(coordinator).includes(worker.id()), 'cancelling took the worker out of the pool')
     // Confirmed, the node leaves, and stops of its own accord.
-    const exited = new Promise((done) => worker.child.once('exit', (code) => done(code)))
+    const exited = new Promise((done) => worker.child!.once('exit', (code) => done(code)))
     await poolSection.getByRole('button', { name: 'Leave pool' }).click()
     await confirm.getByRole('button', { name: 'Leave pool' }).click()
     await page.getByText('Left the pool. This node is stopping.').waitFor().catch(async () => {
@@ -1709,7 +1719,7 @@ test('Settings pickers open in full view, above every card and inside the window
   try {
     // Opens a picker and checks its choices can all be seen and reached:
     // inside the window, clear of its own trigger, and not under a card.
-    const opensInView = async (category, name, height, within, stayOnCategory = false) => {
+    const opensInView = async (category: string, name: string, height: number, within?: string, stayOnCategory = false) => {
       if (!stayOnCategory && !await page.getByRole('heading', { name: category, level: 1 }).isVisible().catch(() => false)) {
         await openSettingsCategory(page, category)
       }
@@ -1893,7 +1903,7 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
     // System follows the operating system's setting, and keeps following it
     // when that changes while the app is open, with no explicit theme set.
     const html = page.locator('html')
-    for (const colorScheme of ['dark', 'light']) {
+    for (const colorScheme of ['dark', 'light'] as const) {
       await page.emulateMedia({ colorScheme })
       await page.waitForFunction((dark) => document.documentElement.classList.contains('dark') === dark, colorScheme === 'dark')
       assert.equal(await html.getAttribute('data-theme'), null, `System mode should not pin a theme while the system is ${colorScheme}`)
@@ -1924,7 +1934,7 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
     const menuBounds = await accentMenu.boundingBox()
     const viewportHeight = await page.evaluate(() => window.innerHeight)
     assert.ok(menuBounds && menuBounds.y >= 0 && menuBounds.y + menuBounds.height <= viewportHeight, `the accent popover is clipped: ${JSON.stringify({ menuBounds, viewportHeight })}`)
-    assert.equal(await accentMenu.evaluate((element) => getComputedStyle(element.parentElement).position), 'fixed')
+    assert.equal(await accentMenu.evaluate((element) => getComputedStyle(element.parentElement!).position), 'fixed')
     assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="dialog"]')?.getAttribute('aria-label'), { x: menuBounds.x + menuBounds.width / 2, y: menuBounds.y + menuBounds.height / 2 }), 'Accent', 'the popover is underneath another Settings layer')
     await accentMenu.getByRole('button', { name: 'Blue' }).click()
     await page.waitForFunction(() => document.documentElement.dataset.themeStyle === 'blue')
@@ -1967,7 +1977,7 @@ test('model settings load and save a local provider used by the planner', async 
     await page.getByRole('button', { name: 'Add provider' }).first().click()
     const wizard = page.getByRole('dialog', { name: 'Add provider' })
     const wizardBounds = await wizard.boundingBox()
-    assert.ok(wizardBounds?.width > 900, `the desktop provider wizard is only ${wizardBounds?.width ?? 0}px wide`)
+    assert.ok((wizardBounds?.width ?? 0) > 900, `the desktop provider wizard is only ${wizardBounds?.width ?? 0}px wide`)
     await page.mouse.click(16, Math.round((wizardBounds?.y ?? 0) + (wizardBounds?.height ?? 0) / 2))
     await wizard.waitFor()
     await page.keyboard.press('Escape')
@@ -2353,13 +2363,13 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     await page.getByText('HTTPS', { exact: true }).waitFor()
 
     const layout = await page.evaluate(() => {
-      const sidebarRect = document.querySelector('.app-shell-body--advanced > aside').getBoundingClientRect()
-      const headerRect = document.querySelector('.app-global-header').getBoundingClientRect()
-      const mainElement = document.querySelector('.app-shell--settings .app-main')
+      const sidebarRect = document.querySelector('.app-shell-body--advanced > aside')!.getBoundingClientRect()
+      const headerRect = document.querySelector('.app-global-header')!.getBoundingClientRect()
+      const mainElement = document.querySelector('.app-shell--settings .app-main')!
       const mainRect = mainElement.getBoundingClientRect()
       const mainStyle = getComputedStyle(mainElement)
-      const settingsRect = document.querySelector('.settings-page').getBoundingClientRect()
-      const scroller = document.querySelector('.settings-page__scroll')
+      const settingsRect = document.querySelector('.settings-page')!.getBoundingClientRect()
+      const scroller = document.querySelector('.settings-page__scroll')!
       return {
         sidebarRight: sidebarRect.right,
         headerLeft: headerRect.left,
@@ -2372,8 +2382,8 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
         settingsRight: settingsRect.right,
         documentHeight: document.documentElement.scrollHeight,
         viewportHeight: window.innerHeight,
-        mainScrollHeight: document.querySelector('.app-shell--settings .app-main').scrollHeight,
-        mainClientHeight: document.querySelector('.app-shell--settings .app-main').clientHeight,
+        mainScrollHeight: mainElement.scrollHeight,
+        mainClientHeight: mainElement.clientHeight,
         settingsScrollHeight: scroller.scrollHeight,
         settingsClientHeight: scroller.clientHeight,
       }

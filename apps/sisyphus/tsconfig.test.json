@@ -1,0 +1,11 @@
+{
+  // The tests and dev scripts, which Node runs with their types stripped, so
+  // nothing but this checks them. Each directory joins once it is TypeScript.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "lib": ["ES2024", "DOM"]
+  },
+  "include": ["e2e", "src/preload/index.d.ts"]
+}
