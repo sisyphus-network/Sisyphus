@@ -1,6 +1,8 @@
 /bin/
 /sisyphusd
 /coverage.out
+/realimages.out
+/union.out
 /sisyphus-pool/
 /sisyphus-desktop-pool/
 *.key

@@ -29,7 +29,6 @@ jobs:
     outputs:
       changed: ${{ steps.scope.outputs.changed }}
       platforms: ${{ steps.scope.outputs.platforms }}
-      realimages: ${{ steps.scope.outputs.realimages }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -64,13 +63,6 @@ jobs:
             echo platforms=false >> "$GITHUB_OUTPUT"
           fi
 
-          if [ "$EVENT" != pull_request ] || [ "$ALL" = true ] ||
-            git diff --name-only "$BASE" HEAD | grep -qE '^(packages/runtime/|go\.(mod|sum)$|Makefile$|\.github/workflows/)'; then
-            echo realimages=true >> "$GITHUB_OUTPUT"
-          else
-            echo realimages=false >> "$GITHUB_OUTPUT"
-          fi
-
   test:
     needs: scope
     if: needs.scope.outputs.changed == 'true'
@@ -81,8 +73,9 @@ jobs:
     # pull requests stay on GitHub's runners, so only this repository's own
     # code runs on the project's machine.
     runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-26.04' || 'sisyphus-ci' }}
-    # The race suite (25 m budget) and make cover (40 m, real-image tests
-    # included) run one after the other, plus setup.
+    # The race suite (25 m budget) and the ordinary coverage pass (40 m) run
+    # one after the other, plus setup. The real-image tests are in their own
+    # job, beside this one.
     timeout-minutes: 75
     env:
       # Harmless on a machine of the job's own, and still what keeps the
@@ -164,30 +157,36 @@ jobs:
         # other localhost-heavy workflows on the shared host. The daemon's
         # package runs whole pools under the race detector and outgrew go
         # test's default of 10 minutes per package; the job's own limit still
-        # bounds the step. The full coverage pass below includes the
-        # real-image tests; this job also runs that tagged subset under the
-        # race detector with a longer timeout.
+        # bounds the step. The real-image workload tests skip here without
+        # their build tag; the realimages job runs them.
         run: flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race -p 1 -timeout 25m ./...
-      - name: Check every statement is tested
+      - name: Measure what the ordinary suite covers
+        # The coverage job checks this with the real-image job's profile.
         run: |
           flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" bash -euo pipefail -c '
             # Coverage runs the same integration tests as above. Keep their
             # package processes sequential so test-only ports cannot overlap.
             export GOFLAGS="-p=1"
             if command -v make >/dev/null 2>&1; then
-              make cover
+              make cover-main
             else
-              nix develop --command make cover
+              nix develop --command make cover-main
             fi
           '
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-main
+          path: coverage.out
+          retention-days: 1
       - run: go build ./apps/sisyphusd
 
   realimages:
-    needs: [scope, test]
-    if: needs.scope.outputs.realimages == 'true'
-    # Real image builds can take substantially longer than unit tests on a
-    # cold runner. Keep them isolated so they do not consume the ordinary
-    # suite's per-package timeout.
+    needs: scope
+    if: needs.scope.outputs.changed == 'true'
+    # The runtime package with its real-image workload tests, under the race
+    # detector. Real images take far longer to build and run than the rest,
+    # so they run beside the test job rather than inside its budget, once
+    # for every pull request, and their coverage joins the test job's.
     runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-26.04' || 'sisyphus-ci' }}
     timeout-minutes: 90
     env:
@@ -201,12 +200,35 @@ jobs:
           cache: ${{ runner.environment == 'github-hosted' }}
       - name: Pull the base image used by real workloads
         run: docker pull alpine:3.20
-      - name: Run the real-image workload tests
-        run: >-
-          flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" go test -race -tags=realimages -p 1
-          -timeout 60m
-          -run '^(TestARealVideoIsTranscodedInStretches|TestRealReplicasAreSimulated|TestARealSceneIsRendered|TestRealSpeechIsTranscribedInStretches|TestARealConformerSetIsOptimised|TestARealScanIsRead|TestARealTrajectoryIsAnalysed)$'
-          ./packages/runtime
+      - name: Run the real-image workload tests, measuring what they cover
+        run: |
+          flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" bash -euo pipefail -c '
+            if command -v make >/dev/null 2>&1; then
+              make cover-realimages
+            else
+              nix develop --command make cover-realimages
+            fi
+          '
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-realimages
+          path: realimages.out
+          retention-days: 1
+
+  # Every statement of hand-written code must be run by the ordinary suite or
+  # the real-image tests: a block counts as covered if either ran it.
+  coverage:
+    needs: [test, realimages]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+      - name: Check every statement is tested
+        run: make cover-check
 
   # Known-answer workloads must agree across real CPU architectures and OSes,
   # not only compile for them. These tests avoid the daemon's service fixtures.
