@@ -590,11 +590,35 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
     const zoomOut = controls.getByRole('button', { name: 'Zoom out' })
     await zoomIn.waitFor()
     const zoom = async () => Number(await globe.getAttribute('data-zoom'))
+    const zoomStep = async () => Number(await globe.getAttribute('data-zoom-step'))
     // A button step animates, and the buttons take their last state only
     // once it has ended, which the globe says (#644). Waiting for the zoom to
     // stop changing is not enough: near the limit a step moves it by less
     // than the 1% it is shown in, so it looks still before the step is over.
-    const stepped = () => until('the zoom step to end', async () => await globe.getAttribute('data-zooming') === 'false')
+    const stepped = async (previous: number) => {
+      // Waiting only for `false` can return before React has rendered the
+      // start of the step, so the next click races the animation. The step
+      // counter persists even if reduced motion makes the transition brief.
+      await until('the zoom step to start', async () => await zoomStep() > previous)
+      await until('the zoom step to end', async () => await globe.getAttribute('data-zooming') === 'false')
+    }
+    const step = async (button: typeof zoomIn, activate: () => Promise<unknown>) => {
+      const previous = await zoomStep()
+      if (!await button.isEnabled()) return false
+      try {
+        await activate()
+      } catch (error) {
+        // The camera can reach its limit between the enabled check and the
+        // action. Treat that as the end of the loop, but surface other errors.
+        if (!await button.isEnabled() && await globe.getAttribute('data-zooming') === 'false' && await zoomStep() === previous) return false
+        throw error
+      }
+      await until('a zoom step to start or the limit to be reached', async () =>
+        await zoomStep() > previous || (!await button.isEnabled() && await globe.getAttribute('data-zooming') === 'false'))
+      if (await zoomStep() === previous) return false
+      await stepped(previous)
+      return true
+    }
     // The wheel is not a step: wait until the zoom stops changing.
     const settled = async () => {
       let last = Number.NaN
@@ -612,13 +636,12 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
     const start = await zoom()
 
     // In, step by step, as far as it goes: the region lines appear on the way.
-    for (let presses = 0; await zoomIn.isEnabled(); presses++) {
-      assert.ok(presses < 20, 'zooming in never reached its limit')
+    for (let presses = 0; presses < 20; presses++) {
       const before = await zoom()
-      await zoomIn.click()
-      await stepped()
+      if (!await step(zoomIn, () => zoomIn.click({ timeout: 1000 }))) break
       assert.ok(await zoom() >= before, 'zooming in took the globe out')
     }
+    assert.equal(await zoomIn.isEnabled(), false, 'zooming in did not reach its limit')
     await until('the region lines to be drawn', async () => await globe.getAttribute('data-regions') === 'shown')
     assert.ok(await zoom() > start * 1.5, `zooming in went only from ${start}% to ${await zoom()}%`)
 
@@ -633,13 +656,12 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
 
     // Out as far as it goes, from the keyboard: the region lines go.
     await zoomOut.focus()
-    for (let presses = 0; await zoomOut.isEnabled(); presses++) {
-      assert.ok(presses < 30, 'zooming out never reached its limit')
+    for (let presses = 0; presses < 30; presses++) {
       const before = await zoom()
-      await page.keyboard.press('Enter')
-      await stepped()
+      if (!await step(zoomOut, () => page.keyboard.press('Enter'))) break
       assert.ok(await zoom() <= before, 'zooming out brought the globe in')
     }
+    assert.equal(await zoomOut.isEnabled(), false, 'zooming out did not reach its limit')
     assert.equal(await globe.getAttribute('data-regions'), 'hidden')
     assert.ok(await zoom() < start, 'the globe cannot be taken further out than it starts')
   } finally {

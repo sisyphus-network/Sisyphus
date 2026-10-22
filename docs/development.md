@@ -46,6 +46,8 @@ A pull request that changes only documentation skips the tests. One that touches
 | Forecast accuracy | The `forecast` workload scored on the M4 competition's 100,000 series against its Naive2 benchmark, as the competition scored its entries ([`forecast-benchmark.md`](forecast-benchmark.md)). Needs the M4 data, which is not in the repository, so CI does not run it | `SISYPHUS_M4=<dir> go test -run 'TestM4$' -v ./packages/runtime/forecastbench` |
 | Agents | A live trial of the MCP server from Claude Code, by hand, recorded on [#88](https://github.com/sisyphus-network/Sisyphus/issues/88) | by hand |
 
+For an animated UI step, wait for evidence that the step started before waiting for its idle state. An initially false `data-zooming` value is not proof that a click's state update has rendered. The globe's monotonic `data-zoom-step` counter makes that transition observable even when reduced motion makes the animation brief.
+
 A node a test starts does not look for other nodes unless the test is about that, and then only on a discovery network of the run's own (`--discovery-network`). The rehearsal's nodes do the same. So no test meets the real nodes on the machine it runs on or on its network, and two runs at once never meet each other ([#533](https://github.com/sisyphus-network/Sisyphus/issues/533)).
 
 What has no automated test: the desktop app has no coverage measure, and nothing drives the app on Windows or macOS beyond building its package and starting its daemon.
