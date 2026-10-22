@@ -723,6 +723,10 @@ func (c *Coordinator) Recover() (unfinished int, err error) {
 	for _, job := range jobs {
 		job.Needs = c.needs(job.Workload, job.Params, len(job.Key) > 0)
 		job.Cards = c.workloads.GPUsNeeded(job.Workload, job.Params)
+		// A workload no longer here has its results compared byte for
+		// byte, as one that does not compare them itself does.
+		workload, _ := c.workloads.Get(job.Workload)
+		job.CompareBy(comparer(workload))
 		c.keys[job.ID] = keys[job.ID]
 		// What happened to it before comes back with it. A job whose events
 		// cannot be read is still a job.
@@ -979,7 +983,9 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	case audit > 0 && !composite && !c.runsItself(workload.Name()):
 		return nil, status.Errorf(codes.FailedPrecondition, "audit_share has this node run tasks of the job again itself, and it cannot run %s: it is not a worker for that workload", workload.Name())
 	}
-	if varying, ok := workload.(runtime.Varying); ok && varying.Varies() && (verify >= 2 || audit > 0) {
+	// A workload whose results vary is checked only if it compares them
+	// itself, within what it takes for honest results to differ by.
+	if !runtime.Checkable(workload) && (verify >= 2 || audit > 0) {
 		return nil, status.Errorf(codes.InvalidArgument, "%s gives results that can differ from one run to the next, and verify and audit_share check a task by comparing what two runs returned, so honest workers would be taken for wrong ones: they are for work that gives the same result every time", workload.Name())
 	}
 	needs := c.needs(workload.Name(), spec.GetParams(), len(spec.GetKey()) > 0)
@@ -1069,6 +1075,7 @@ func (c *Coordinator) submit(ctx context.Context, spec *pb.JobSpec, parent, step
 	}
 	job.MinMemory, job.MinGPUs = spec.GetMinMemoryBytes(), minGPUs
 	job.Needs, job.Cards = needs, cards
+	job.CompareBy(comparer(workload))
 	job.Parent, job.Step = parent, step
 	job.NoteRead(touched.Read()...)
 	// A job is accepted only once it is on record: its submitter is about

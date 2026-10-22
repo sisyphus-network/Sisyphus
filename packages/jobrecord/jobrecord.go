@@ -39,6 +39,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -413,8 +414,10 @@ func (b *builder) receipt(index int, task *jobmodel.Task, spot bool) datamodel.N
 			m.AssembleEntry("verify").AssignInt(int64(task.Verify))
 		}
 		// What each worker returned for a task that was verified, by a
-		// digest that is the same for results that are the same, and
-		// whether it is one of those the task was settled by. The digest
+		// digest that is the same for results whose bytes are the same,
+		// and whether it is one of those the task was settled by: for a
+		// workload that compares its results within a tolerance, results
+		// with different digests may have settled it together. The digest
 		// of a private job's result is left out like its output, which it
 		// is a hash of: someone who guessed the output could tell from it
 		// that they were right.
@@ -426,7 +429,7 @@ func (b *builder) receipt(index int, task *jobmodel.Task, spot bool) datamodel.N
 					m.AssembleEntry("node").AssignString(r.NodeID)
 					m.AssembleEntry("name").AssignString(r.NodeName)
 					b.message(m, "digest", r.Digest(), digestCommitment(index, n))
-					m.AssembleEntry("agreed").AssignBool(len(agreed) > 0 && r.Digest() == agreed[0].Digest())
+					m.AssembleEntry("agreed").AssignBool(slices.ContainsFunc(agreed, func(a jobmodel.Result) bool { return a.Attempt == r.Attempt }))
 				})
 			}
 		})
