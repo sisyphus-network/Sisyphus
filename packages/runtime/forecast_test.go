@@ -418,6 +418,8 @@ func TestForecastAggregateChecksWhatTheTasksReturned(t *testing.T) {
 	}{
 		{[][]byte{[]byte("{")}, "task 0 output"},
 		{[][]byte{part(10, good), part(11, good)}, "task 1 output"},
+		{[][]byte{mustJSON(forecastPart{Points: 10, Horizon: 1, Last: "9", Candidates: []forecastOutcome{good}})}, "0 backtest windows"},
+		{[][]byte{mustJSON(forecastPart{Points: 10, Horizon: 1, Folds: 51, Last: "9", Candidates: []forecastOutcome{good}})}, "51 backtest windows"},
 		{[][]byte{part(10, short)}, "not finite numbers for 1 steps and 1 windows"},
 		{nil, "there were none"},
 		{[][]byte{part(10, failed)}, "ar order=1: too regular"},
@@ -561,5 +563,39 @@ func TestABacktestHasAsManyWindowsAsFit(t *testing.T) {
 		if task.Folds != c.want {
 			t.Errorf("%d points, %d steps ahead: %d windows, not %d", c.points, c.horizon, task.Folds, c.want)
 		}
+	}
+}
+
+// A forecast's ranges are as wide as the spread of its backtest errors
+// times Student's t for as many degrees of freedom as there were windows,
+// and never narrower further ahead than nearer.
+func TestTheRangesWidenWithFewerWindowsAndFurtherAhead(t *testing.T) {
+	store := storage.NewMemory()
+	outcome := forecastOutcome{Model: forecastModel{Kind: "naive"}, MAE: 1, RMSE: 2, StepRMSE: []float64{3, 1, 1}, Forecast: []float64{10, 10, 10}}
+	ranges := func(folds int) []ForecastPoint {
+		raw, err := Forecast{}.Aggregate(ctx, store, [][]byte{mustJSON(forecastPart{Points: 30, Horizon: 3, Folds: folds, Last: "29", Candidates: []forecastOutcome{outcome}})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result ForecastResult
+		json.Unmarshal(raw, &result)
+		return result.Forecast
+	}
+	one, eight := ranges(1), ranges(8)
+	// Step 1's spread is its own error, 3; step 2's is no less; step 3's
+	// is the overall error grown as the square root of the steps ahead,
+	// 2·sqrt(3/2), which is less than 3.
+	for j, p := range eight {
+		if half := p.Hi95 - p.Value; math.Abs(half-2.3060*3) > 1e-3 || math.Abs((p.Hi80-p.Value)-1.3968*3) > 1e-3 {
+			t.Errorf("step %d with 8 windows: %+v", j+1, p)
+		}
+	}
+	if half := one[0].Hi95 - one[0].Value; math.Abs(half-12.7062*3) > 1e-3 {
+		t.Errorf("with one window the 95%% range reaches %v either side, not %v", half, 12.7062*3)
+	}
+	// A larger overall error widens the later steps.
+	outcome.RMSE = 4
+	if p := ranges(8)[2]; math.Abs((p.Hi95-p.Value)-2.3060*4*math.Sqrt(1.5)) > 1e-3 {
+		t.Errorf("step 3 with an overall error of 4: %+v", p)
 	}
 }

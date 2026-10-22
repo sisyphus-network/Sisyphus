@@ -223,19 +223,29 @@ func Naive2(insample []float64, horizon, season int) []float64 {
 }
 
 // Forecaster forecasts horizon steps of a series whose cycle is season
-// steps long, 1 for none.
-type Forecaster func(ctx context.Context, y []float64, horizon, season int) ([]float64, error)
+// steps long, 1 for none, with the ranges it expects each value to fall in
+// 80 and 95 times in a hundred.
+type Forecaster func(ctx context.Context, y []float64, horizon, season int) ([]runtime.ForecastPoint, error)
+
+// Points makes a forecast with no ranges, each value its own range.
+func Points(values []float64) []runtime.ForecastPoint {
+	points := make([]runtime.ForecastPoint, len(values))
+	for i, v := range values {
+		points[i] = runtime.ForecastPoint{Step: i + 1, Value: v, Lo80: v, Hi80: v, Lo95: v, Hi95: v}
+	}
+	return points
+}
 
 // Workload forecasts with the forecast workload, run in this process as
 // one task: what a pool would forecast, since a pool's answer does not
 // depend on how the job is split. It leaves the number of backtest windows
 // to the workload, as a job that does not say does.
-func Workload(ctx context.Context, y []float64, horizon, season int) ([]float64, error) {
+func Workload(ctx context.Context, y []float64, horizon, season int) ([]runtime.ForecastPoint, error) {
 	return forecastIn(ctx, storage.NewMemory(), y, horizon, season)
 }
 
 // forecastIn is Workload with the store the series and tables are kept in.
-func forecastIn(ctx context.Context, blobs runtime.Blobs, y []float64, horizon, season int) ([]float64, error) {
+func forecastIn(ctx context.Context, blobs runtime.Blobs, y []float64, horizon, season int) ([]runtime.ForecastPoint, error) {
 	var data bytes.Buffer
 	for _, v := range y {
 		data.WriteString(strconv.FormatFloat(v, 'g', -1, 64) + "\n")
@@ -265,11 +275,48 @@ func forecastIn(ctx context.Context, blobs runtime.Blobs, y []float64, horizon, 
 	// The result is the workload's own JSON, so it decodes.
 	var result runtime.ForecastResult
 	_ = json.Unmarshal(raw, &result)
-	f := make([]float64, len(result.Forecast))
-	for i, p := range result.Forecast {
-		f[i] = p.Value
+	return result.Forecast, nil
+}
+
+// MSIS is M4's mean scaled interval score of a 95% range: its width, plus
+// forty times how far each value fell outside it, averaged over the steps
+// and scaled as MASE is. A range is better the narrower it is and the
+// fewer values it misses.
+func MSIS(insample, actual []float64, forecast []runtime.ForecastPoint, season int) float64 {
+	const a = 0.05
+	var scale float64
+	for t := season; t < len(insample); t++ {
+		scale += math.Abs(insample[t] - insample[t-season])
 	}
-	return f, nil
+	scale /= float64(len(insample) - season)
+	var sum float64
+	for i, y := range actual {
+		lo, hi := forecast[i].Lo95, forecast[i].Hi95
+		sum += hi - lo
+		if y < lo {
+			sum += 2 / a * (lo - y)
+		}
+		if y > hi {
+			sum += 2 / a * (y - hi)
+		}
+	}
+	return sum / float64(len(actual)) / scale
+}
+
+// coverage is the share of the values that fell in their 80% and in their
+// 95% ranges.
+func coverage(actual []float64, forecast []runtime.ForecastPoint) (in80, in95 float64) {
+	for i, y := range actual {
+		p := forecast[i]
+		if p.Lo80 <= y && y <= p.Hi80 {
+			in80++
+		}
+		if p.Lo95 <= y && y <= p.Hi95 {
+			in95++
+		}
+	}
+	n := float64(len(actual))
+	return in80 / n, in95 / n
 }
 
 // Score is how a forecaster did on a set of series, beside Naive2.
@@ -279,6 +326,13 @@ type Score struct {
 	MASE        float64
 	Naive2SMAPE float64
 	Naive2MASE  float64
+	// Coverage80 and Coverage95 are the shares of the values that fell in
+	// the forecaster's 80% and 95% ranges, which should be near 0.8 and
+	// 0.95, averaged over the series; MSIS is the mean scaled interval
+	// score of its 95% ranges.
+	Coverage80 float64
+	Coverage95 float64
+	MSIS       float64
 	// Fallbacks is how many series the forecaster could not forecast,
 	// for which Naive2's forecast was scored in its place.
 	Fallbacks int
@@ -301,6 +355,9 @@ func (s Score) Add(o Score) Score {
 		MASE:        mean(s.MASE, o.MASE),
 		Naive2SMAPE: mean(s.Naive2SMAPE, o.Naive2SMAPE),
 		Naive2MASE:  mean(s.Naive2MASE, o.Naive2MASE),
+		Coverage80:  mean(s.Coverage80, o.Coverage80),
+		Coverage95:  mean(s.Coverage95, o.Coverage95),
+		MSIS:        mean(s.MSIS, o.MSIS),
 		Fallbacks:   s.Fallbacks + o.Fallbacks,
 	}
 }
@@ -313,7 +370,7 @@ func Run(ctx context.Context, series []Series, freq Frequency, workers int, fore
 	if len(series) == 0 {
 		return Score{}, fmt.Errorf("no %s series to score", freq.Name)
 	}
-	type scored struct{ smape, mase, n2smape, n2mase float64 }
+	type scored struct{ smape, mase, n2smape, n2mase, in80, in95, msis float64 }
 	scores := make([]scored, len(series))
 	fellBack := make([]bool, len(series))
 	next := make(chan int)
@@ -327,13 +384,21 @@ func Run(ctx context.Context, series []Series, freq Frequency, workers int, fore
 				naive2 := Naive2(s.Train, freq.Horizon, freq.Season)
 				f, err := forecast(ctx, s.Train, freq.Horizon, freq.Season)
 				if err != nil || len(f) != freq.Horizon {
-					f, fellBack[i] = naive2, true
+					f, fellBack[i] = Points(naive2), true
 				}
+				values := make([]float64, len(f))
+				for j, p := range f {
+					values[j] = p.Value
+				}
+				in80, in95 := coverage(s.Test, f)
 				scores[i] = scored{
-					smape:   SMAPE(s.Test, f),
-					mase:    MASE(s.Train, s.Test, f, freq.Season),
+					smape:   SMAPE(s.Test, values),
+					mase:    MASE(s.Train, s.Test, values, freq.Season),
 					n2smape: SMAPE(s.Test, naive2),
 					n2mase:  MASE(s.Train, s.Test, naive2, freq.Season),
+					in80:    in80,
+					in95:    in95,
+					msis:    MSIS(s.Train, s.Test, f, freq.Season),
 				}
 			}
 		}()
@@ -355,6 +420,9 @@ func Run(ctx context.Context, series []Series, freq Frequency, workers int, fore
 		total.MASE += s.mase
 		total.Naive2SMAPE += s.n2smape
 		total.Naive2MASE += s.n2mase
+		total.Coverage80 += s.in80
+		total.Coverage95 += s.in95
+		total.MSIS += s.msis
 		if fellBack[i] {
 			total.Fallbacks++
 		}
@@ -364,5 +432,8 @@ func Run(ctx context.Context, series []Series, freq Frequency, workers int, fore
 	total.MASE /= n
 	total.Naive2SMAPE /= n
 	total.Naive2MASE /= n
+	total.Coverage80 /= n
+	total.Coverage95 /= n
+	total.MSIS /= n
 	return total, nil
 }

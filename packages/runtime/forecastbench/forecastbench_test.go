@@ -44,9 +44,9 @@ func TestM4(t *testing.T) {
 	}
 	ctx := context.Background()
 	table := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintln(table, "frequency\tseries\tsMAPE\tMASE\tOWA\tNaive2 sMAPE\tNaive2 MASE\tfell back\ttime\t")
+	fmt.Fprintln(table, "frequency\tseries\tsMAPE\tMASE\tOWA\tNaive2 sMAPE\tNaive2 MASE\tin 80%\tin 95%\tMSIS\tfell back\ttime\t")
 	row := func(name string, s Score, took time.Duration) {
-		fmt.Fprintf(table, "%s\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%s\t\n", name, s.Series, s.SMAPE, s.MASE, s.OWA(), s.Naive2SMAPE, s.Naive2MASE, s.Fallbacks, took.Round(time.Second))
+		fmt.Fprintf(table, "%s\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%s\t\n", name, s.Series, s.SMAPE, s.MASE, s.OWA(), s.Naive2SMAPE, s.Naive2MASE, s.Coverage80, s.Coverage95, s.MSIS, s.Fallbacks, took.Round(time.Second))
 	}
 	var overall Score
 	began := time.Now()
@@ -108,12 +108,28 @@ func TestTheErrorsAreScoredAsM4ScoredThem(t *testing.T) {
 	if got := MASE([]float64{1, 2, 6, 9}, []float64{10}, []float64{13}, 2); !near(got, 0.5) {
 		t.Errorf("seasonal MASE is %v, not 0.5", got)
 	}
+	// A range of width 2 that holds the first value, and one of width 4
+	// that misses the second by 1: (2 + 4 + 40·1) / 2 steps, scaled by 4.
+	forecast := []runtime.ForecastPoint{{Value: 21, Lo80: 20.5, Hi80: 21.5, Lo95: 20, Hi95: 22}, {Value: 27, Lo80: 26, Hi80: 28, Lo95: 25, Hi95: 29}}
+	if got := MSIS([]float64{1, 3, 7, 13}, []float64{20, 30}, forecast, 1); !near(got, 46.0/2/4) {
+		t.Errorf("MSIS is %v, not %v", got, 46.0/2/4)
+	}
+	if in80, in95 := coverage([]float64{20, 30}, forecast); in80 != 0 || in95 != 0.5 {
+		t.Errorf("%v fell in the 80%% ranges and %v in the 95%%", in80, in95)
+	}
+	if in80, _ := coverage([]float64{21, 27}, forecast); in80 != 1 {
+		t.Errorf("values on their forecasts are not in their ranges")
+	}
+	if got := MSIS([]float64{1, 3}, []float64{0}, forecast[1:], 1); !near(got, (4+40*25)/2.0) {
+		t.Errorf("a value below its range scored %v", got)
+	}
 	s := Score{Series: 2, SMAPE: 10, MASE: 2, Naive2SMAPE: 20, Naive2MASE: 2, Fallbacks: 1}
 	if got := s.OWA(); !near(got, 0.75) {
 		t.Errorf("OWA is %v, not 0.75", got)
 	}
-	pooled := s.Add(Score{Series: 6, SMAPE: 2, MASE: 1, Naive2SMAPE: 4, Naive2MASE: 1, Fallbacks: 2})
-	if want := (Score{Series: 8, SMAPE: 4, MASE: 1.25, Naive2SMAPE: 8, Naive2MASE: 1.25, Fallbacks: 3}); pooled != want {
+	s.Coverage80, s.Coverage95, s.MSIS = 0.5, 1, 10
+	pooled := s.Add(Score{Series: 6, SMAPE: 2, MASE: 1, Naive2SMAPE: 4, Naive2MASE: 1, Coverage80: 0.75, Coverage95: 0.9, MSIS: 2, Fallbacks: 2})
+	if want := (Score{Series: 8, SMAPE: 4, MASE: 1.25, Naive2SMAPE: 8, Naive2MASE: 1.25, Coverage80: 0.6875, Coverage95: 0.925, MSIS: 4, Fallbacks: 3}); pooled != want {
 		t.Errorf("pooled %+v and %+v into %+v, not %+v", s, Score{}, pooled, want)
 	}
 }
@@ -244,11 +260,7 @@ func TestTheWorkloadForecastsAsTheForecastJobDoes(t *testing.T) {
 	if err := json.Unmarshal(raw, &result); err != nil {
 		t.Fatal(err)
 	}
-	var want []float64
-	for _, p := range result.Forecast {
-		want = append(want, p.Value)
-	}
-	if !slices.Equal(got, want) {
+	if want := result.Forecast; !slices.Equal(got, want) {
 		t.Errorf("Workload forecast %v, the job %v", got, want)
 	}
 
@@ -300,7 +312,9 @@ func TestRunScoresEachSeriesAndFallsBackToNaive2(t *testing.T) {
 		series = append(series, Series{ID: fmt.Sprint("Q", i), Train: y[:44], Test: y[44:]})
 	}
 	// Naive2 forecasting for itself scores exactly as Naive2.
-	naive2 := func(_ context.Context, y []float64, h, m int) ([]float64, error) { return Naive2(y, h, m), nil }
+	naive2 := func(_ context.Context, y []float64, h, m int) ([]runtime.ForecastPoint, error) {
+		return Points(Naive2(y, h, m)), nil
+	}
 	s, err := Run(ctx, series, freq, 3, naive2)
 	if err != nil {
 		t.Fatal(err)
@@ -320,11 +334,11 @@ func TestRunScoresEachSeriesAndFallsBackToNaive2(t *testing.T) {
 	// A forecaster that fails, or forecasts the wrong number of steps,
 	// is scored as Naive2.
 	calls := 0
-	odd := func(_ context.Context, y []float64, h, m int) ([]float64, error) {
+	odd := func(_ context.Context, y []float64, h, m int) ([]runtime.ForecastPoint, error) {
 		if calls++; calls%2 == 0 {
 			return nil, errFailed
 		}
-		return make([]float64, h-1), nil
+		return make([]runtime.ForecastPoint, h-1), nil
 	}
 	s, err = Run(ctx, series, freq, 1, odd)
 	if err != nil || s.Fallbacks != 9 || s.SMAPE != s.Naive2SMAPE {
