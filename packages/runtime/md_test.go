@@ -191,6 +191,19 @@ func TestTheReplicasAreSummedUp(t *testing.T) {
 	if got := readBlob(t, store, second.Trajectory); !strings.HasPrefix(got, "trajectory.dcd of ") || !strings.HasPrefix(readBlob(t, store, second.Final), "final.pdb") || !strings.HasPrefix(readBlob(t, store, second.Energies), "energies.csv") {
 		t.Errorf("the second replica's files: %+v", second)
 	}
+	var kept []string
+	for _, r := range result.ReplicaResults {
+		kept = append(kept, r.Final, r.Energies, r.Trajectory)
+	}
+	if got := (MD{}).ResultBlobs(raw); !slices.Equal(got, kept) {
+		t.Errorf("the files kept with the result: %v, want %v", got, kept)
+	}
+	if got := (MD{}).ResultBlobs([]byte("not json")); len(got) != 0 {
+		t.Errorf("the files kept with a result that is not one: %v", got)
+	}
+	if got := (MD{}).ResultBlobs(mustJSON(MDResult{ReplicaResults: []MDReplica{{Final: "a"}}})); !slices.Equal(got, []string{"a"}) {
+		t.Errorf("a replica that left only its last frame: %v", got)
+	}
 	if mean, spread := meanAndSpread(nil); mean != 0 || spread != 0 {
 		t.Errorf("nothing to sum: %v, %v", mean, spread)
 	}
