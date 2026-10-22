@@ -885,3 +885,26 @@ func TestIssueChallengesSkipsFollowerWhoseStreamClosedWhileWaitingForItsLock(t *
 		t.Fatal("challenge scheduler did not skip the now-closed follower stream")
 	}
 }
+
+func TestIssueChallengesSchedulesAnotherAttemptWhenThereIsNothingToProve(t *testing.T) {
+	m := New(Config{
+		Store:   storage.NewMemory(),
+		StoreID: "test",
+		Log:     slog.New(slog.DiscardHandler),
+	})
+	now := time.Now()
+	m.followers["follower"] = &follower{
+		leaseEnabled: true,
+		streamOpen:   true,
+		challengeAt:  now.Add(-time.Second),
+		held:         make(map[string]struct{}),
+		shown:        make(map[string]time.Time),
+		failed:       make(map[string]struct{}),
+	}
+
+	m.issueChallenges(context.Background(), now)
+
+	if got, want := m.followers["follower"].challengeAt, now.Add(m.challengeInterval); !got.Equal(want) {
+		t.Fatalf("next challenge deadline = %v, want %v when there is nothing to prove", got, want)
+	}
+}
