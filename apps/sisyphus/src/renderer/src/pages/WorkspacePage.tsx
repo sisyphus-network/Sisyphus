@@ -124,6 +124,11 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const limitsRef = useRef<ZoomLimits | undefined>(undefined)
   const countryFacingRef = useRef(false)
   const [zoom, setZoom] = useState<ZoomState>()
+  // Button steps still under way. The buttons take their last state only when
+  // a step ends, so the globe says while any is under way, for whoever has to
+  // wait for that state, such as the end-to-end tests.
+  const stepsRef = useRef(0)
+  const [stepping, setStepping] = useState(false)
   const regionsRef = useRef<LineSegments | null>(null)
   const regionMaterial = useMemo(regionLineMaterial, [])
   const [regionsLoaded, setRegionsLoaded] = useState(false)
@@ -224,7 +229,13 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const distance = zoomStep(radius * (1 + view.altitude), direction, radius, limits)
     const duration = reduceMotion ? 0 : 320
     globe.pointOfView({ lat: view.lat, lng: view.lng, altitude: distance / radius - 1 }, duration)
-    window.setTimeout(handleZoom, duration + 40)
+    stepsRef.current++
+    setStepping(true)
+    window.setTimeout(() => {
+      handleZoom()
+      stepsRef.current--
+      if (stepsRef.current === 0) setStepping(false)
+    }, duration + 40)
   }, [handleZoom, reduceMotion])
   const wantRegions = Boolean(zoom?.regions)
   useEffect(() => {
@@ -337,7 +348,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const rendererConfig = useMemo(() => ({ alpha: true, antialias: true, powerPreference: 'low-power' as const }), [])
   const ringMaxRadius = useCallback(() => 5, [])
   return <>
-  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-zoom={zoom?.percent} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && wantRegions ? 'shown' : 'hidden'}>
+  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-zoom={zoom?.percent} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && wantRegions ? 'shown' : 'hidden'}>
     {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
       <Globe
       ref={globeRef}
