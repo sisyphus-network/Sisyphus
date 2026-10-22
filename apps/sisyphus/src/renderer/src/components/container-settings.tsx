@@ -1,11 +1,15 @@
+import { countSettingChanges } from '@/lib/settings-save'
+import { SettingsSaveAction } from '@/components/ui/settings-save-dock'
+import { SettingsSectionSkeleton } from '@/components/ui/settings-section-skeleton'
+import { SettingsIcon } from '@/components/ui/settings-icon'
 import { useEffect, useState } from 'react'
-import { CircleAlert, CircleCheck, Container, ExternalLink, HardDrive, LoaderCircle, Lock, RefreshCw, Save, TriangleAlert, Wifi } from 'lucide-react'
+import { CircleAlert, CircleCheck, Container, ExternalLink, LoaderCircle, MemoryStick, Lock, RefreshCw, Save, TriangleAlert, Wifi } from 'lucide-react'
 import type { ContainerSettings, ContainerState } from '../../../preload'
 import { getNodeApi } from '@/lib/node-api'
 import { LiquidSwitch } from '@/components/ui/liquid-switch'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { NodeSettingsSection } from '@/components/node-settings-section'
+import { FloatingLabelInput } from '@/components/ui/floating-label-input'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 import { toast } from 'sonner'
 import { RestartNodeButton } from '@/components/restart-node-button'
@@ -51,8 +55,9 @@ export function ContainerSettingsCard({ messages }: { messages: Messages }) {
 
   const tmpMb = /^\d+$/.test(tmpText) ? Number(tmpText) : NaN
   const tmpValid = !form.readOnly || (Number.isInteger(tmpMb) && tmpMb >= 1 && tmpMb <= maxTmpMb)
-  const next: ContainerSettings = { ...form, tmpMb: Number.isInteger(tmpMb) && tmpMb >= 1 && tmpMb <= maxTmpMb ? tmpMb : state?.saved.tmpMb ?? 1024 }
-  const dirty = Boolean(state && (form.enabled !== state.saved.enabled || form.network !== state.saved.network || form.readOnly !== state.saved.readOnly || (form.readOnly && tmpMb !== state.saved.tmpMb)))
+  const next: ContainerSettings = { ...form, tmpMb: !form.readOnly ? state?.saved.tmpMb ?? 1024 : Number.isInteger(tmpMb) && tmpMb >= 1 && tmpMb <= maxTmpMb ? tmpMb : state?.saved.tmpMb ?? 1024 }
+  const changeCount = state ? countSettingChanges({ ...form, tmpMb: form.readOnly ? tmpMb : state.saved.tmpMb }, state.saved) : 0
+  const dirty = changeCount > 0
   const editable = Boolean(state?.managed) && !saving
   const docker = state?.docker ?? null
   const dockerReady = docker?.state === 'ready'
@@ -76,20 +81,14 @@ export function ContainerSettingsCard({ messages }: { messages: Messages }) {
   const option = (id: string, Icon: typeof Wifi, title: string, description: string, checked: boolean, onChange: (value: boolean) => void) =>
     <div className="settings-row settings-row--divider flex-wrap">
       <div className="flex min-w-0 flex-1 items-start gap-3">
-        <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)] text-[var(--app-muted)]"><Icon className="size-[18px]" /></span>
+        <SettingsIcon icon={Icon} />
         <div className="min-w-0"><div id={id} className="text-sm font-medium">{title}</div><p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">{description}</p></div>
       </div>
       <LiquidSwitch checked={checked} disabled={!editable || !form.enabled} label={title} onChange={onChange} />
     </div>
 
-  return <Card className="settings-card min-w-0">
-    <CardContent className="p-4 sm:p-5">
-      <div className="flex items-start gap-3">
-        <div className="settings-row__icon"><Container className="size-4" /></div>
-        <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold">{labels.title}</h3><p className="mt-1 text-sm leading-relaxed text-muted-foreground">{labels.description}</p></div>
-        <LiquidSwitch checked={form.enabled} disabled={loading || !canSwitch} label={labels.title} onChange={(enabled) => setForm((current) => ({ ...current, enabled }))} />
-      </div>
-      {loading ? <div role="status" className="flex items-center gap-2 py-7 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{messages.connecting}</div> : <>
+  return <NodeSettingsSection title={labels.title} description={labels.description} icon={Container} action={<LiquidSwitch checked={form.enabled} disabled={loading || !canSwitch} label={labels.title} onChange={(enabled) => setForm((current) => ({ ...current, enabled }))} />}>
+            {loading ? <SettingsSectionSkeleton label={messages.connecting} rows={3} /> : <>
         {state && !state.managed && <div role="note" className="mt-4 flex items-start gap-2.5 rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]/45 p-3 text-sm leading-relaxed text-muted-foreground"><CircleAlert className="mt-0.5 size-4 shrink-0" />{labels.notManaged}</div>}
         {state?.unavailable && <div role="alert" className="mt-4 flex items-start gap-2.5 rounded-xl border border-destructive/40 p-3 text-sm leading-relaxed text-destructive"><TriangleAlert className="mt-0.5 size-4 shrink-0" />{labels.unavailable}</div>}
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{labels.dockerNote}</p>
@@ -107,17 +106,15 @@ export function ContainerSettingsCard({ messages }: { messages: Messages }) {
         {option('containers-read-only', Lock, labels.readOnlyTitle, labels.readOnlyDescription, form.readOnly, (readOnly) => setForm((current) => ({ ...current, readOnly })))}
         <div className="settings-row settings-row--divider flex-wrap">
           <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)] text-[var(--app-muted)]"><HardDrive className="size-[18px]" /></span>
+            <SettingsIcon icon={MemoryStick} />
             <div className="min-w-0"><label htmlFor="containers-tmp-mb" className="text-sm font-medium">{labels.tmpTitle}</label><p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">{labels.tmpDescription}</p></div>
           </div>
-          <Input id="containers-tmp-mb" dir="ltr" inputMode="numeric" autoComplete="off" value={tmpText} disabled={!editable || !form.enabled || !form.readOnly} onChange={(event) => setTmpText(event.target.value.trim())} aria-invalid={!tmpValid} className="w-28 text-left font-mono text-sm" />
+          <FloatingLabelInput label={labels.tmpTitle} icon={<SettingsIcon icon={MemoryStick} compact />} containerClassName="w-full sm:w-56" id="containers-tmp-mb" dir="ltr" inputMode="numeric" autoComplete="off" value={tmpText} disabled={!editable || !form.enabled || !form.readOnly} onChange={(event) => setTmpText(event.target.value.trim())} errorMessage={!tmpValid ? formatMessage(labels.tmpInvalid, { max: maxTmpMb }) : undefined} className="font-mono" />
         </div>
-        {!tmpValid && <p role="alert" className="text-xs text-destructive">{formatMessage(labels.tmpInvalid, { max: maxTmpMb })}</p>}
         {state?.managed && <div className="mt-3 flex flex-col-reverse justify-between gap-3 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:items-center">
           <p role="status" className="text-xs leading-relaxed text-muted-foreground">{state.restartNeeded ? labels.restartRequired : labels.restartHint}</p>
-          <div className="flex flex-wrap gap-2">{state.restartNeeded && <RestartNodeButton messages={messages} onRestarted={() => setLoads((n) => n + 1)} />}<Button type="button" disabled={!dirty || saving || !tmpValid} onClick={() => void save()} className="gap-2"><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</Button></div>
+          <div className="flex flex-wrap gap-2">{state.restartNeeded && <RestartNodeButton messages={messages} onRestarted={() => setLoads((n) => n + 1)} />}<SettingsSaveAction onRevert={() => { if (state) { setForm(state.saved); setTmpText(String(state.saved.tmpMb)) } }} dirty={dirty} changeCount={changeCount} disabled={!dirty || saving || !tmpValid} onSave={save}><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</SettingsSaveAction></div>
         </div>}
       </>}
-    </CardContent>
-  </Card>
+  </NodeSettingsSection>
 }

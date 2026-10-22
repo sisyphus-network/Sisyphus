@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react'
 import { NavLink, useSearchParams } from 'react-router-dom'
 import { Activity, ArrowLeft, Atom, Boxes, Captions, ChevronRight, CircleAlert, Clapperboard, Cpu, FileCheck2, FileUp, FlaskConical, Gpu, History, LoaderCircle, Pencil, Play, RefreshCw, ScanText, Shapes, Sigma, TrendingUp, WholeWord, Workflow, X, type LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { AnimatedStepper } from '@/components/ui/animated-stepper'
 import { LiquidSwitch } from '@/components/ui/liquid-switch'
 import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { JobTracker } from '@/components/assistant/job-tracker'
@@ -16,6 +17,7 @@ import { stateName } from '@/lib/job-progress'
 import { formatNumber, parseMdResult } from '@/lib/md-result'
 import { canRun, countGpuWorkers, firstSentence, initialValues, normalizeWorkloads, toParams, validate, type FieldError, type FormField, type FormValue, type FormValues, type Workload } from '@/lib/workload-form'
 import { formatMessage, type getMessages } from '@/i18n/messages'
+import { MAX_CLIENT_FILE_UPLOAD_BYTES, fileUploadLimitLabel } from '../../../shared/file-upload-limit.ts'
 
 type Messages = ReturnType<typeof getMessages>
 type Labels = Messages['runPage']
@@ -24,7 +26,7 @@ type StoredFile = { cid: string; name: string; sizeBytes: string | number; priva
 type FileInfo = { name: string; size: number }
 type Run = { jobId: string; workload: string; values: FormValues; files: Record<string, FileInfo>; startedAt: number }
 
-const maxUploadBytes = 256 * 1024 * 1024
+const maxUploadBytes = MAX_CLIENT_FILE_UPLOAD_BYTES
 
 // The jobs started from this page while the app is open, newest first. They
 // outlive the page, so that coming back to it finds them, but not the app.
@@ -94,7 +96,7 @@ function FileField({ field, id, labelId, describedBy, invalid, value, info, file
   async function store(file?: File) {
     if (!file) return
     onTouched()
-    if (file.size > maxUploadBytes) { toast.error(messages.operationText.fileTooLarge, { description: messages.operationText.fileSizeLimit }); return }
+    if (file.size > maxUploadBytes) { toast.error(messages.operationText.fileTooLarge, { description: formatMessage(messages.operationText.fileSizeLimit, { size: fileUploadLimitLabel() }) }); return }
     setStoring(file.name)
     try {
       const result = await getNodeApi().storeFile({ name: file.name, data: new Uint8Array(await file.arrayBuffer()), private: false }) as unknown as StoredFile
@@ -119,7 +121,7 @@ function FileField({ field, id, labelId, describedBy, invalid, value, info, file
       : <button id={id} type="button" aria-labelledby={`${labelId} ${id}-zone`} aria-describedby={describedBy} aria-invalid={invalid || undefined} className={`run-dropzone ${dragging ? 'is-dragging' : ''}`} onClick={() => input.current?.click()}>
         <span className="settings-card__icon"><FileUp aria-hidden="true" className="size-5" /></span>
         <span id={`${id}-zone`} className="text-sm font-medium">{labels.dropFile}</span>
-        <span className="text-xs text-muted-foreground">{labels.dropFileHint}</span>
+        <span className="text-xs text-muted-foreground">{formatMessage(labels.dropFileHint, { size: fileUploadLimitLabel() })}</span>
       </button>}
     {usable.length > 0 && <select aria-label={`${field.label || field.name}: ${labels.pickStored}`} value={usable.some((file) => file.cid === value) ? value : ''} onChange={(event) => { const file = usable.find((item) => item.cid === event.target.value); onTouched(); if (file) onStored(file.cid, { name: file.name || file.cid, size: Number(file.sizeBytes) }); else onClear() }} className="run-select">
       <option value="">{labels.pickStoredPlaceholder}</option>
@@ -174,7 +176,7 @@ function RunStatus({ job, labels }: { job?: Job; labels: Labels }) {
   return null
 }
 
-export function RunPage({ messages }: { messages: Messages }) {
+export function RunPage({ messages, embedded = false, onAdvanced }: { messages: Messages; embedded?: boolean; onAdvanced?: () => void }) {
   const labels = messages.runPage
   const ops = messages.operationText
   const [searchParams, setSearchParams] = useSearchParams()
@@ -188,6 +190,8 @@ export function RunPage({ messages }: { messages: Messages }) {
   const [files, setFiles] = useState<StoredFile[]>([])
   const [drafts, setDrafts] = useState<Record<string, FormValues>>({})
   const [fileInfo, setFileInfo] = useState<Record<string, Record<string, FileInfo>>>({})
+  const [review, setReview] = useState(false)
+  const [stepDirection, setStepDirection] = useState<1 | -1>(1)
   const [touched, setTouched] = useState<Record<string, true>>({})
   const [submitting, setSubmitting] = useState(false)
   const [runs, setRuns] = useState<Run[]>(sessionRuns)
@@ -286,12 +290,13 @@ export function RunPage({ messages }: { messages: Messages }) {
       return { ...current, [workload.name]: forWorkload }
     })
   }
-  const showGallery = () => { setTouched({}); setSearchParams({}) }
-  const showForm = (name: string) => { setTouched({}); setSearchParams({ workload: name }) }
+  const showGallery = () => { setStepDirection(-1); setReview(false); setTouched({}); setSearchParams({}) }
+  const showForm = (name: string) => { setStepDirection(1); setReview(false); setTouched({}); setSearchParams({ workload: name }) }
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!workload || !valid || !runnable || submitting) return
+    if (embedded && !review) { setStepDirection(1); setReview(true); return }
     setSubmitting(true)
     try {
       const params = toParams(workload.fields, values)
@@ -317,7 +322,7 @@ export function RunPage({ messages }: { messages: Messages }) {
   const other = (workloads ?? []).filter((item) => item.fields.length === 0)
   const stateLabels: Record<string, string> = { pending: ops.pending, running: ops.running, succeeded: ops.succeeded, failed: ops.failed, cancelled: ops.cancelled }
 
-  const recent = runs.length > 0 && <section aria-labelledby="run-recent-heading" className="space-y-3">
+  const recent = !embedded && runs.length > 0 && <section aria-labelledby="run-recent-heading" className="space-y-3">
     <div><h2 id="run-recent-heading" className="flex items-center gap-2 text-sm font-semibold"><History aria-hidden="true" className="size-4 text-muted-foreground" />{labels.recentJobs}</h2><p className="mt-1 text-xs text-muted-foreground">{labels.recentJobsDescription}</p></div>
     <Card className="settings-card"><CardContent className="divide-y divide-[var(--app-line)] !py-1">
       {runs.slice(0, 5).map((item) => {
@@ -344,7 +349,7 @@ export function RunPage({ messages }: { messages: Messages }) {
     const known = workloads?.find((item) => item.name === name)
     const Icon = known ? workloadIcon(known) : workloadIcons[name] ?? Cpu
     const text = workloadText(labels, known ?? { name, description: '' })
-    return <div className="run-page space-y-6 pb-7">
+    return <div className={embedded ? "run-page space-y-4" : "run-page space-y-6 pb-7"}>
       <div className="pt-5"><Button type="button" variant="ghost" className="gap-2" onClick={showGallery}><ArrowLeft aria-hidden="true" className="size-4 rtl:rotate-180" />{labels.back}</Button></div>
       <Card className="settings-card"><CardContent className="space-y-4 !p-5 sm:!p-6">
         <div className="flex items-start gap-4">
@@ -363,13 +368,21 @@ export function RunPage({ messages }: { messages: Messages }) {
     </div>
   }
 
+  const stepContent = (content: ReactNode) => embedded ? <AnimatedStepper
+    steps={[{ id: 'workload', label: messages.workload, icon: Boxes }, { id: 'parameters', label: messages.parametersJson, icon: Pencil }, { id: 'review', label: labels.run, icon: Play }]}
+    currentIndex={selected && workload ? review ? 2 : 1 : 0}
+    direction={document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'}
+    navigationDirection={stepDirection}
+    className="min-h-[28rem]"
+  ><div className="h-full overflow-y-auto py-5">{content}</div></AnimatedStepper> : content
+
   if (selected && workload) {
     const Icon = workloadIcon(workload)
     const text = workloadText(labels, workload)
     const visibleErrors = Object.fromEntries(Object.entries(errors).filter(([name]) => touched[name]))
     const hint = !runnable ? labels.noWorkerHint : !valid && Object.keys(visibleErrors).length === 0 ? labels.completeForm : ''
-    return <div className="run-page space-y-6 pb-7">
-      <div className="pt-5"><Button type="button" variant="ghost" className="gap-2" onClick={showGallery}><ArrowLeft aria-hidden="true" className="size-4 rtl:rotate-180" />{labels.back}</Button></div>
+    return stepContent(<div className={embedded ? "run-page space-y-4" : "run-page space-y-6 pb-7"}>
+      <div className="pt-5"><Button type="button" variant="ghost" className="gap-2" onClick={() => { if (embedded && review) { setStepDirection(-1); setReview(false) } else showGallery() }}><ArrowLeft aria-hidden="true" className="size-4 rtl:rotate-180" />{labels.back}</Button></div>
       <Card className="settings-card">
         <div className="settings-card__header flex-wrap border-b border-[var(--app-line)]">
           <span className="settings-card__icon"><Icon aria-hidden="true" className="size-5" /></span>
@@ -378,28 +391,28 @@ export function RunPage({ messages }: { messages: Messages }) {
         </div>
         <CardContent className="!pt-5">
           <form noValidate onSubmit={(event) => void submit(event)} aria-label={text.title}>
-            <div className="run-fields">
+            {review && embedded ? <pre dir="ltr" className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-[var(--app-wash)] p-4 text-xs leading-6">{JSON.stringify(toParams(workload.fields, values), null, 2)}</pre> : <div className="run-fields">
               {workload.fields.map((field) => <Field key={field.name} field={field} workload={workload.name} value={values[field.name]} error={touched[field.name] ? errors[field.name] : undefined} info={fileInfo[workload.name]?.[field.name]} files={files} labels={labels} messages={messages} onChange={(value) => setValue(field.name, value)} onFile={(cid, info) => setFile(field.name, cid, info)} onTouched={() => setTouched((current) => current[field.name] ? current : { ...current, [field.name]: true })} />)}
-            </div>
+            </div>}
             <div className="mt-6 flex flex-col-reverse gap-3 border-t border-[var(--app-line)] pt-5 sm:flex-row sm:items-center sm:justify-between">
               <p id="run-submit-hint" className="text-xs leading-relaxed text-muted-foreground">{hint}</p>
-              <Button type="submit" size="lg" className="h-10 gap-2 px-5" disabled={!valid || !runnable || submitting} aria-describedby={hint ? 'run-submit-hint' : undefined}>{submitting ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : <Play aria-hidden="true" className="size-4" />}{submitting ? labels.starting : labels.run}</Button>
+              <Button type="submit" size="lg" className="h-10 gap-2 px-5" disabled={!valid || !runnable || submitting} aria-describedby={hint ? 'run-submit-hint' : undefined}>{submitting ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : <Play aria-hidden="true" className="size-4" />}{submitting ? labels.starting : embedded && !review ? messages.modelSettings.continue : labels.run}</Button>
             </div>
           </form>
         </CardContent>
       </Card>
       {recent}
-    </div>
+    </div>)
   }
 
-  return <div className="run-page space-y-6 pb-7">
-    <PageHeading title={messages.run} description={labels.description} actions={<div className="flex flex-wrap items-center gap-2">
+  return stepContent(<div className={embedded ? "run-page space-y-4" : "run-page space-y-6 pb-7"}>
+    {!embedded && <PageHeading title={messages.run} description={labels.description} actions={<div className="flex flex-wrap items-center gap-2">
       <Badge variant="outline" role="status" aria-live="polite" aria-atomic="true" className="gap-1.5 px-3 py-1.5">
         {gpuWorkersState === 'loading' ? <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Gpu aria-hidden="true" className="size-4" />}
         {gpuWorkersState === 'ready' ? formatMessage(labels.gpuWorkers, { count: new Intl.NumberFormat(document.documentElement.lang || undefined).format(gpuWorkers ?? 0) }) : gpuWorkersState === 'loading' ? labels.gpuWorkersLoading : labels.gpuWorkersUnavailable}
       </Badge>
       <Button variant="outline" className="gap-2" disabled={loading} onClick={() => void load()}><RefreshCw aria-hidden="true" className={`size-4 ${loading ? 'animate-spin motion-reduce:animate-none' : ''}`} />{messages.refresh}</Button>
-    </div>} />
+    </div>} />}
     {workloads === null ? (loadError ? <EmptyState icon={CircleAlert} title={labels.loadFailed} description={loadError} action={<Button variant="outline" onClick={() => void load()}>{messages.refresh}</Button>} /> : <EmptyState icon={LoaderCircle} loading title={labels.loading} />)
       : workloads.length === 0 ? <EmptyState icon={Boxes} title={labels.noWorkloads} description={labels.noWorkloadsDescription} />
       : <>
@@ -423,7 +436,7 @@ export function RunPage({ messages }: { messages: Messages }) {
         {other.length > 0 && <section aria-labelledby="run-other-heading" className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div><h2 id="run-other-heading" className="text-sm font-semibold">{labels.otherWorkloads}</h2><p className="mt-1 text-xs text-muted-foreground">{labels.otherWorkloadsDescription}</p></div>
-            <NavLink to="/operations" className={`${buttonVariants({ variant: 'outline', size: 'sm' })} gap-1.5`}><Boxes aria-hidden="true" className="size-3.5" />{labels.openOperations}</NavLink>
+            {embedded ? <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={onAdvanced}><Boxes aria-hidden="true" className="size-3.5" />{messages.submitJob} · JSON</Button> : <NavLink to="/operations#operations-jobs" className={`${buttonVariants({ variant: 'outline', size: 'sm' })} gap-1.5`}><Boxes aria-hidden="true" className="size-3.5" />{labels.openOperations}</NavLink>}
           </div>
           <Card className="settings-card"><CardContent className="divide-y divide-[var(--app-line)] !py-1">
             {other.map((item) => { const Icon = workloadIcon(item); const text = workloadText(labels, item); return <div key={item.name} className="flex flex-wrap items-center gap-3 py-3">
@@ -435,5 +448,5 @@ export function RunPage({ messages }: { messages: Messages }) {
         </section>}
       </>}
     {recent}
-  </div>
+  </div>)
 }

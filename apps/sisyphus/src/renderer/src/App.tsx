@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { SettingsSaveProvider, SettingsSaveDock } from '@/components/ui/settings-save-dock'
 import { BrowserRouter, HashRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Boxes, Cpu, House, MonitorCog, Play, Settings2, Wifi, WifiOff } from 'lucide-react'
+import { ArrowLeft, Boxes, Cpu, House, MonitorCog, Search, Settings2, Wifi, WifiOff, X } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { NodeSnapshot } from '../../preload'
 import { buttonVariants } from '@/components/ui/button'
@@ -12,7 +12,6 @@ import { NodeDetailsPage } from '@/pages/NodeDetailsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { WorkspacePage } from '@/pages/WorkspacePage'
 import { OperationsPage } from '@/pages/OperationsPage'
-import { RunPage } from '@/pages/RunPage'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { isAuthenticationError, pairBrowser } from '@sisyphus/client'
 import { getBrowserDeviceName } from '@/lib/browser-device-name'
@@ -25,6 +24,7 @@ import { initializeThemeMode } from '@/components/theme-mode-switch'
 import { initializeThemeStyle } from '@/components/theme-style-picker'
 import { ToasterResponsive } from '@/components/toaster-responsive'
 import { NodeConnectionState } from '@/components/node-connection-state'
+import { HeaderTeleportProvider, HeaderTeleportSlot, useHeaderSearch } from '@/components/ui/header-teleport'
 
 const initialSnapshot: NodeSnapshot = {
   status: 'connecting', endpoint: '127.0.0.1:50051', info: null, peers: [], revision: '0', lastUpdated: null, stateTransport: null, error: null, authRequired: false,
@@ -94,10 +94,17 @@ function App() {
   const StatusIcon = snapshot.status === 'connected' ? Wifi : WifiOff
 
   const Router = isDesktopApp() ? HashRouter : BrowserRouter
-  return <Router>
+  return <Router><HeaderTeleportProvider><HeaderSearchRouteReset /><SettingsSaveProvider messages={messages}>
     <ToasterResponsive />
     <AppRoutes snapshot={snapshot} setSnapshot={setSnapshot} locale={locale} setLocale={setLocale} messages={messages} direction={direction} connectedPeers={connectedPeers} statusLabel={statusLabel} StatusIcon={StatusIcon} />
-  </Router>
+  </SettingsSaveProvider></HeaderTeleportProvider></Router>
+}
+
+function HeaderSearchRouteReset() {
+  const { pathname } = useLocation()
+  const { setOpen } = useHeaderSearch()
+  useEffect(() => { setOpen(false) }, [pathname, setOpen])
+  return null
 }
 
 function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, direction, connectedPeers, statusLabel, StatusIcon }: { snapshot: NodeSnapshot; setSnapshot: (snapshot: NodeSnapshot) => void; locale: AppLocale; setLocale: (locale: AppLocale) => void; messages: ReturnType<typeof getMessages>; direction: 'ltr' | 'rtl'; connectedPeers: number; statusLabel: string; StatusIcon: typeof Wifi }) {
@@ -105,7 +112,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
   const navigate = useNavigate()
   const reduceMotion = useReducedMotion()
   const scrollPathRef = useRef(location.pathname)
-  scrollPathRef.current = location.pathname
+  useLayoutEffect(() => { scrollPathRef.current = location.pathname }, [location.pathname])
   const scrollPositionsRef = useRef<Record<string, number>>(readScrollPositions())
   const scrollWriteTimerRef = useRef<number | undefined>(undefined)
   const advanced = location.pathname !== '/'
@@ -118,19 +125,21 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
       if (mainScroller) mainScroller.scrollTop = top
       else window.scrollTo(0, top)
     }
-    const savedTop = scrollPositionsRef.current[location.pathname] ?? 0
+    const routePath = location.pathname
+    const savedTop = scrollPositionsRef.current[routePath] ?? 0
     let restored = false
     let latestTop = savedTop
     let lastUserScrollIntent = 0
     let saveTimer = 0
+    let restoreFrame = 0
 
     const savePosition = () => {
       if (!restored) return
-      scrollPositionsRef.current[location.pathname] = latestTop
+      scrollPositionsRef.current[routePath] = latestTop
       try {
         // Merge with the persisted map so a stale AppRoutes ref cannot erase
         // a position another route saved while it was active.
-        const positions = { ...scrollPositionsRef.current, ...readScrollPositions(), [location.pathname]: latestTop }
+        const positions = { ...scrollPositionsRef.current, ...readScrollPositions(), [routePath]: latestTop }
         scrollPositionsRef.current = positions
         window.localStorage.setItem(scrollPositionsStorageKey, JSON.stringify(positions))
       } catch { /* Storage can be unavailable in restricted browser contexts. */ }
@@ -142,7 +151,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
       // mistake that programmatic reset for the user's new position on this page.
       if (nextTop === 0 && latestTop > 0 && performance.now() - lastUserScrollIntent > 280) return
       latestTop = nextTop
-      scrollPositionsRef.current[location.pathname] = latestTop
+      scrollPositionsRef.current[routePath] = latestTop
       if (saveTimer) window.clearTimeout(saveTimer)
       saveTimer = window.setTimeout(savePosition, 120)
     }
@@ -177,6 +186,18 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     // route's scroll offset and then visibly jumps to its own saved position.
     setTop(savedTop)
     latestTop = getTop()
+    // Some pages focus an element after mount. That native focus scroll can
+    // override the pre-paint restore, so reapply once layout/focus settles.
+    if (savedTop > 0) restoreFrame = requestAnimationFrame(() => {
+      restoreFrame = requestAnimationFrame(() => {
+        if (lastUserScrollIntent) return
+        setTop(savedTop)
+        latestTop = getTop()
+      })
+    })
+    // A same-shell route transition can unmount this effect after a new route
+    // has already started. Save the position captured for this pathname, not
+    // the new route's initial scrollTop (usually zero).
     restored = true
     scrollTarget.addEventListener('scroll', onScroll, { passive: true })
     scrollTarget.addEventListener('wheel', markUserScrollIntent, { passive: true })
@@ -188,8 +209,9 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     window.addEventListener('pagehide', onPageHide)
 
     return () => {
+      if (restoreFrame) cancelAnimationFrame(restoreFrame)
       if (saveTimer) window.clearTimeout(saveTimer)
-      savePosition()
+      if (scrollPathRef.current === routePath) savePosition()
       scrollTarget.removeEventListener('scroll', onScroll)
       scrollTarget.removeEventListener('wheel', markUserScrollIntent)
       scrollTarget.removeEventListener('touchstart', markUserScrollIntent)
@@ -203,10 +225,13 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
   const navItems: LiquidDockItem[] = [
     { id: 'workspace', label: messages.workspace, href: '/', icon: <House size={21} strokeWidth={1.8} />, active: location.pathname === '/' },
     { id: 'node', label: messages.nodeOverview, href: '/node', icon: <MonitorCog size={21} strokeWidth={1.8} />, active: location.pathname === '/node' },
-    { id: 'run', label: messages.run, href: '/run', icon: <Play size={21} strokeWidth={1.8} />, active: location.pathname === '/run' },
     { id: 'operations', label: messages.operations, href: '/operations', icon: <Boxes size={21} strokeWidth={1.8} />, active: location.pathname === '/operations' },
     { id: 'settings', label: messages.settings, href: '/settings', icon: <Settings2 size={21} strokeWidth={1.8} />, active: location.pathname.startsWith('/settings') },
   ]
+  const legacyRunParams = new URLSearchParams(location.search)
+  legacyRunParams.delete('tab')
+  const legacyRunSearch = legacyRunParams.toString()
+  const legacyRunHref = `/operations${legacyRunSearch ? `?${legacyRunSearch}` : ''}#operations-run`
   if (!isDesktopApp() && snapshot.authRequired) {
     return <Routes>
       <Route path="/auth" element={<NodeConnectionState snapshot={snapshot} messages={messages} onConnected={setSnapshot} direction={direction} fullScreen />} />
@@ -219,7 +244,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
       {advanced && !compact && <AdvancedSidebar snapshot={snapshot} connectedPeers={connectedPeers} statusLabel={statusLabel} messages={messages} />}
 
       <div className={`app-content-column flex min-h-0 min-w-0 flex-1 flex-col ${advanced ? 'app-content-column--advanced' : ''}`}>
-      {advanced && <header className="app-global-header flex h-[68px] w-full shrink-0 items-center justify-between border-b border-[var(--app-line)] px-8 max-[1000px]:px-5 max-[900px]:h-[58px] max-[900px]:px-4"><Breadcrumb messages={messages} direction={direction} />{compact && <NodeStatusBadge status={snapshot.status} label={statusLabel} icon={StatusIcon} />}</header>}
+      {advanced && <header className="app-global-header flex h-[68px] w-full shrink-0 items-center justify-between gap-3 border-b border-[var(--app-line)] px-8 max-[1000px]:px-5 max-[900px]:h-[58px] max-[900px]:px-4"><div className="flex shrink-0 items-center"><HeaderBackButton messages={messages} />{(location.pathname === '/settings/node' || location.pathname === '/settings/models') && <HeaderSearchButton messages={messages} mode={location.pathname === '/settings/models' ? 'models' : 'node'} />}</div><HeaderTeleportSlot fallback={<Breadcrumb messages={messages} direction={direction} />} />{compact && <NodeStatusBadge status={snapshot.status} label={statusLabel} icon={StatusIcon} />}</header>}
       <main onScroll={advanced ? (event) => {
         const pathname = location.pathname
         const top = event.currentTarget.scrollTop
@@ -251,7 +276,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
         >
             {snapshot.status !== 'connected' ? <NodeConnectionState snapshot={snapshot} messages={messages} onConnected={setSnapshot} /> : <Routes location={location}>
               <Route path="/node" element={<NodeDetailsPage snapshot={snapshot} messages={messages} />} />
-              <Route path="/run" element={<RunPage messages={messages} />} />
+              <Route path="/run" element={<Navigate to={legacyRunHref} replace />} />
               <Route path="/operations" element={<OperationsPage messages={messages} />} />
               <Route path="/settings" element={<SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} />} />
               <Route path="/settings/access" element={isDesktopApp() ? <SettingsPage locale={locale} setLocale={setLocale} messages={messages} direction={direction} category="access" /> : <Navigate to="/settings" replace />} />
@@ -264,7 +289,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
       </main>
       </div>
       </div>
-      {advanced && compact && createPortal(<nav className="app-mobile-dock" aria-label={messages.preferences}><LiquidGlassDock items={navItems} label={messages.preferences} onNavigate={(_id, href) => { if (location.pathname !== href) { scrollPathRef.current = href; navigate(href) } }} /></nav>, document.body)}
+      {advanced && <SettingsSaveDock compact={compact} messages={messages} navigation={<LiquidGlassDock items={navItems} label={messages.preferences} onNavigate={(_id, href) => { if (location.pathname !== href) { scrollPathRef.current = href; navigate(href) } }} />} />}
     </div>
 }
 
@@ -272,32 +297,43 @@ function NavItem({ to, icon: Icon, label, end = false }: { to: string; icon: typ
   return <NavLink to={to} end={end} className={({ isActive }) => `flex h-10 items-center gap-3 rounded-lg px-3 text-sm no-underline transition-colors ${isActive ? 'bg-[var(--app-card)] font-medium text-foreground shadow-sm ring-1 ring-foreground/5' : 'text-muted-foreground hover:bg-[var(--app-wash)] hover:text-foreground'}`}><Icon className="size-4" /><span>{label}</span></NavLink>
 }
 
+function HeaderBackButton({ messages }: { messages: ReturnType<typeof getMessages> }) {
+  const location = useLocation()
+  const inSettingsCategory = location.pathname.startsWith('/settings/')
+  const href = inSettingsCategory ? '/settings' : '/'
+  const label = inSettingsCategory ? messages.settings : messages.workspace
+  return <NavLink to={href} aria-label={label} title={label} className={`${buttonVariants({ variant: 'ghost', size: 'icon' })} size-10 shrink-0 rounded-full`}><ArrowLeft aria-hidden="true" className="size-4 rtl:rotate-180" /></NavLink>
+}
+
+function HeaderSearchButton({ messages, mode }: { messages: ReturnType<typeof getMessages>; mode: 'node' | 'models' }) {
+  const { open, setOpen } = useHeaderSearch()
+  const label = mode === 'models' ? messages.modelSettings.searchProfiles : messages.nodeSettingsSearchExamples.label
+  return <button id={`${mode === 'models' ? 'model' : 'node'}-settings-search-trigger`} type="button" aria-label={label} title={label} aria-expanded={open} aria-controls={`${mode === 'models' ? 'model' : 'node'}-settings-header-search`} tabIndex={open ? -1 : 0} onClick={() => setOpen(true)} style={{ width: open ? 0 : 40, minWidth: open ? 0 : 40, marginInlineStart: open ? 0 : -4, padding: open ? 0 : undefined, opacity: open ? 0 : 1, pointerEvents: open ? 'none' : 'auto' }} className={`${buttonVariants({ variant: 'ghost', size: 'icon' })} h-10 shrink-0 overflow-hidden rounded-full transition-[width,min-width,margin,padding,opacity] duration-200`}>
+    <Search aria-hidden="true" className="size-4 shrink-0" />
+  </button>
+}
+
 function Breadcrumb({ messages, direction }: { messages: ReturnType<typeof getMessages>; direction: 'ltr' | 'rtl' }) {
   const location = useLocation()
   const settingsCategory = location.pathname.startsWith('/settings/') ? location.pathname.split('/')[2] : undefined
   const categoryLabels: Record<string, string> = { general: messages.general, node: messages.localNodeSettings, access: messages.webAccess.title, language: messages.general, models: messages.modelSettings.title, appearance: messages.general }
   const label = settingsCategory ? categoryLabels[settingsCategory] ?? messages.settings : location.pathname === '/node' ? messages.nodeOverview : location.pathname === '/run' ? messages.run : location.pathname === '/operations' ? messages.operations : location.pathname === '/settings' ? messages.settings : location.pathname === '/pairing' ? messages.browserAccess.title : messages.workspace
-  const backHref = settingsCategory ? '/settings' : '/'
-  const backLabel = settingsCategory ? messages.settings : messages.workspace
   const slideDistance = direction === 'rtl' ? -10 : 10
-  return <div dir={direction} className="flex h-full min-w-0 flex-1 items-center gap-3 sm:gap-4">
-    <NavLink to={backHref} aria-label={backLabel} title={backLabel} className={`${buttonVariants({ variant: 'ghost', size: 'icon' })} size-10 shrink-0 rounded-full`}>
-      <ArrowLeft aria-hidden="true" className="size-4 rtl:rotate-180" />
-    </NavLink>
-    <BreadcrumbNav aria-label={messages.breadcrumbNavigation} className="min-w-0 flex-1">
-      <BreadcrumbList className="flex-nowrap gap-2 sm:gap-3">
+  return <div dir={direction} className="flex h-full min-w-0 flex-1 items-center justify-center">
+    <BreadcrumbNav aria-label={messages.breadcrumbNavigation} className="min-w-0 max-w-full">
+      <BreadcrumbList className="flex-nowrap justify-center whitespace-nowrap gap-2 sm:gap-3">
         <BreadcrumbItem className="hidden shrink-0 sm:inline-flex">
           <BreadcrumbLink render={<NavLink to="/" />}>{messages.workspace}</BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator className="hidden shrink-0 sm:block" />
         {settingsCategory ? <>
-          <BreadcrumbItem className="min-w-0"><BreadcrumbLink render={<NavLink to="/settings" />}>{messages.settings}</BreadcrumbLink></BreadcrumbItem>
+          <BreadcrumbItem className="shrink-0"><BreadcrumbLink render={<NavLink to="/settings" />}>{messages.settings}</BreadcrumbLink></BreadcrumbItem>
           <BreadcrumbSeparator className="shrink-0" />
         </> : null}
-        <BreadcrumbItem className="min-w-0">
+        <BreadcrumbItem className="min-w-0 overflow-hidden">
           <AnimatePresence initial={false} mode="popLayout">
-            <motion.span key={location.pathname} initial={{ opacity: 0, x: slideDistance }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -slideDistance }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}>
-              <BreadcrumbPage title={label} className="truncate font-semibold">{label}</BreadcrumbPage>
+            <motion.span className="block min-w-0 max-w-full" key={location.pathname} initial={{ opacity: 0, x: slideDistance }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -slideDistance }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}>
+              <BreadcrumbPage title={label} className="block truncate font-semibold">{label}</BreadcrumbPage>
             </motion.span>
           </AnimatePresence>
         </BreadcrumbItem>

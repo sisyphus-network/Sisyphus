@@ -1,6 +1,7 @@
-import { Download } from 'lucide-react'
+import { Download, FileCode2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { getNodeApi } from '@/lib/node-api'
 import { formatJobResult } from '@/lib/job-result'
 import { nameInResult, outputFileName, resultFileName } from '@/lib/output-names'
@@ -26,12 +27,16 @@ export function JobResult({ job, messages, open = false }: { job: FinishedJob; m
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
-  return <details open={open} className="mt-3 rounded-lg border border-[var(--app-line)] p-3">
-    <summary className="cursor-pointer text-xs font-medium">{labels.jobResult} · {prettyBytes(result.byteLength)}</summary>
-    {text === null ? <p className="mt-2 text-xs text-muted-foreground">{labels.binaryResult}</p> : <pre dir="auto" className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">{text.slice(0, 65536)}</pre>}
-    {text && text.length > 65536 && <p className="mt-2 text-xs text-muted-foreground">{labels.resultTruncated}</p>}
-    <Button type="button" variant="outline" size="sm" className="mt-2" onClick={download}><Download className="me-1 size-3" />{labels.download}</Button>
-  </details>
+  return <Collapsible defaultOpen={open} className="overflow-hidden rounded-2xl border border-[var(--app-line)] bg-[var(--app-card)]">
+    <CollapsibleTrigger title={labels.jobResult} icon={FileCode2} rightSlot={<span dir="ltr" className="rounded-full bg-[var(--app-wash)] px-2.5 py-1 text-xs tabular-nums text-muted-foreground">{prettyBytes(result.byteLength)}</span>} className="rounded-none px-3 py-3 sm:px-4" />
+    <CollapsibleContent animateSpacing={false}>
+      <div className="space-y-3 border-t border-[var(--app-line)] p-3 sm:p-4">
+        {text === null ? <p className="rounded-xl bg-[var(--app-wash)] p-4 text-sm text-muted-foreground">{labels.binaryResult}</p> : <pre dir="auto" tabIndex={0} className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-[var(--app-wash)] p-4 font-mono text-xs leading-6 text-[var(--app-ink)] focus-visible:outline-2 focus-visible:outline-[var(--app-accent)]">{text.slice(0, 65536)}</pre>}
+        {text && text.length > 65536 && <p className="text-xs leading-relaxed text-muted-foreground">{labels.resultTruncated}</p>}
+        <div className="flex justify-end"><Button type="button" variant="outline" size="sm" className="gap-2 rounded-full" onClick={download}><Download className="size-3.5" />{labels.download}</Button></div>
+      </div>
+    </CollapsibleContent>
+  </Collapsible>
 }
 
 async function downloadOutput(cid: string, job: FinishedJob, index: number, messages: Messages) {

@@ -12,6 +12,7 @@ import { effectiveLocationDiscoverySettings, loadLocationDiscoverySettings, norm
 import { hostAddresses, hostingListen, loadPoolHostingSettings, poolHostingState, savePoolHostingSettings } from './pool-hosting-settings'
 import { checkDocker, containerLaunch, containerState, dockerCheckFromEnvironment, dockerInstallUrl, loadContainerSettings, saveContainerSettings, validateContainerSettings, type ContainerSettings } from './container-settings'
 import { normalizePoolLimits, validatePoolLimits } from '../shared/pool-limits.ts'
+import { MAX_CLIENT_FILE_UPLOAD_BYTES, fileUploadLimitLabel } from '../shared/file-upload-limit.ts'
 import { isTrustedRendererUrl } from './renderer-policy'
 import { collectDownload } from './file-download'
 import { firstUploadMessage } from './file-upload'
@@ -656,7 +657,7 @@ app.whenReady().then(() => {
     if (file.chatAttachment && !file.private) return reject(new Error('Chat attachments must be private.'))
     const metadata = { name: file.name, private: file.private, chatAttachment: file.chatAttachment === true }
     const data = file.data
-    if (data.byteLength > 256 * 1024 * 1024) return reject(new Error('The file exceeds this desktop client’s 256 MiB upload limit.'))
+    if (data.byteLength > MAX_CLIENT_FILE_UPLOAD_BYTES) return reject(new Error(`The file exceeds this desktop client’s ${fileUploadLimitLabel()} upload limit.`))
     let settled = false
     const owner = event.sender.id
     const transferId = `upload:${crypto.randomUUID()}`

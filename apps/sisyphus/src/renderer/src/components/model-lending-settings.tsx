@@ -1,9 +1,16 @@
+import { countSettingChanges } from '@/lib/settings-save'
+import { SettingsSaveAction } from '@/components/ui/settings-save-dock'
+import { SettingsIcon } from '@/components/ui/settings-icon'
+import { SettingsSectionSkeleton } from '@/components/ui/settings-section-skeleton'
 import { useEffect, useMemo, useState } from 'react'
-import { Check, CircleAlert, Cpu, Globe2, LoaderCircle, MemoryStick, RefreshCw, ServerCog, SlidersHorizontal } from 'lucide-react'
+import { Check, CircleAlert, Cpu, Globe2, Gpu, Layers3, LoaderCircle, RefreshCw, ServerCog, Share2, Timer } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { CardDescription, CardTitle } from '@/components/ui/card'
+import { NodeSettingsSection } from '@/components/node-settings-section'
+import { FloatingLabelInput } from '@/components/ui/floating-label-input'
+import { LiquidSwitch } from '@/components/ui/liquid-switch'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { getNodeApi } from '@/lib/node-api'
 import { toast } from 'sonner'
 import { RestartNodeButton } from '@/components/restart-node-button'
@@ -52,7 +59,9 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
   }, [loads])
 
   const selected = useMemo(() => new Set(form.only), [form.only])
-  const dirty = Boolean(state?.saved && JSON.stringify(withDefaults(state.saved)) !== JSON.stringify(form))
+  const canonical = (value: Lending) => ({ ...value, only: JSON.stringify([...new Set(value.only)].sort()) })
+  const changeCount = state ? countSettingChanges(canonical(form), canonical(withDefaults(state.saved))) : 0
+  const dirty = changeCount > 0
   const remoteEndpoint = useMemo(() => {
     try {
       const endpoint = new URL(form.ollamaUrl.trim())
@@ -104,30 +113,24 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
   }
 
   if (loading) return embedded
-    ? <div role="status" className="flex items-center gap-3 py-8 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{messages.connecting}</div>
-    : <Card><CardContent className="flex items-center gap-3 py-8 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{messages.connecting}</CardContent></Card>
+    ? <SettingsSectionSkeleton label={messages.connecting} rows={3} />
+    : <NodeSettingsSection title={labels.lendingTitle} description={labels.lendingDescription} icon={Share2}><SettingsSectionSkeleton label={messages.connecting} rows={3} /></NodeSettingsSection>
   if (!supported) return null
 
-  const header = embedded
-    ? <div className="flex items-start gap-3">
+  const header = <div className="flex items-start gap-3">
       <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><Cpu className="size-4 text-muted-foreground" /></div>
       <div className="min-w-0 flex-1"><CardTitle className="text-sm">{labels.lendingTitle}</CardTitle><CardDescription className="mt-1 text-xs">{labels.lendingDescription} {labels.lendingLiveNote}</CardDescription></div>
       {state?.restartNeeded && <Badge variant="outline" className="shrink-0">{labels.restartNeeded}</Badge>}
     </div>
-    : <CardHeader className="flex flex-row items-start gap-3 border-b border-[var(--app-line)] py-4">
-      <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[var(--app-wash)]"><Cpu className="size-4 text-muted-foreground" /></div>
-      <div className="min-w-0 flex-1"><CardTitle className="text-sm">{labels.lendingTitle}</CardTitle><CardDescription className="mt-1 text-xs">{labels.lendingDescription} {labels.lendingLiveNote}</CardDescription></div>
-      {state?.restartNeeded && <Badge variant="outline" className="shrink-0">{labels.restartNeeded}</Badge>}
-    </CardHeader>
   const controls = <div className="space-y-5">
       {state?.setByFlags && <div role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-800 dark:text-amber-200">{labels.setByFlags}</div>}
-      <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]/45 p-3 text-sm">
-        <input type="checkbox" checked={form.enabled} onChange={(event) => change('enabled', event.target.checked)} className="size-4 accent-[var(--app-accent)]" />
+      <div className="flex items-center gap-3 rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]/45 p-3 text-sm">
+        <SettingsIcon icon={Share2} /><LiquidSwitch checked={form.enabled} disabled={saving} onChange={(enabled) => change('enabled', enabled)} label={labels.lendingEnabled} />
         <span className="min-w-0 flex-1">{labels.lendingEnabled}</span>
-        <Badge variant={form.enabled ? 'secondary' : 'outline'}>{form.enabled ? messages.connected : messages.offline}</Badge>
-      </label>
-      <div className="grid min-w-0 gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-        <label className="min-w-0 space-y-1.5 text-xs"><span>{labels.ollamaUrl}</span><Input dir="ltr" disabled={inspecting} value={form.ollamaUrl} onChange={(event) => change('ollamaUrl', event.target.value)} placeholder="http://127.0.0.1:11434" /></label>
+        <Badge variant={form.enabled ? 'secondary' : 'outline'}>{form.enabled ? messages.accessUi.on : messages.accessUi.off}</Badge>
+      </div>
+      <div className="node-lending-fields grid min-w-0 gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <FloatingLabelInput label={labels.ollamaUrl} icon={<SettingsIcon icon={Globe2} compact />} dir="ltr" disabled={inspecting || saving} value={form.ollamaUrl} onChange={(event) => change('ollamaUrl', event.target.value)} placeholder="http://127.0.0.1:11434" containerClassName="min-w-0" />
         <Button type="button" variant="outline" disabled={inspecting || !form.ollamaUrl.trim()} onClick={() => void inspect()} className="gap-2">{inspecting ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}{inspecting ? labels.inspecting : labels.inspect}</Button>
       </div>
       {remoteEndpoint && <div role="note" className={`flex items-start gap-2.5 rounded-xl border p-3 text-xs leading-relaxed ${remoteEndpoint === 'http' ? 'border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-200' : 'border-[var(--app-line)] bg-[var(--app-wash)]/45 text-muted-foreground'}`}>
@@ -139,14 +142,15 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
         {available.length > 0 ? <><p className="mt-3 text-xs text-muted-foreground">{labels.allModelsHint}</p><div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{available.map((name) => <label key={name} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg border border-[var(--app-line)] bg-background/70 px-3 py-2 text-xs"><input type="checkbox" checked={form.only.length === 0 || selected.has(name)} onChange={(event) => toggleModel(name, event.target.checked)} className="size-3.5 accent-[var(--app-accent)]" /><span className="truncate">{name}</span></label>)}</div></> : <p className="mt-2 text-xs text-muted-foreground">{labels.inspectEmpty}</p>}
         {loaded.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2 text-xs"><span className="font-medium">{labels.loadedModels}</span>{loaded.map((item) => <Badge key={item.name} variant="secondary">{item.name}{item.onCardPercent ? ` · ${item.onCardPercent}% GPU` : ''}</Badge>)}</div>}
       </div>}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <label className="space-y-1.5 text-xs"><span className="flex items-center gap-1.5"><MemoryStick className="size-3.5" />{labels.gpuLayers}</span><Input type="number" min={-1} value={form.gpuLayers} onChange={(event) => change('gpuLayers', Number(event.target.value))} /></label>
-        <label className="space-y-1.5 text-xs"><span className="flex items-center gap-1.5"><Cpu className="size-3.5" />{labels.threads}</span><Input type="number" min={0} value={form.threads} onChange={(event) => change('threads', Number(event.target.value))} /></label>
-        <label className="space-y-1.5 text-xs"><span className="flex items-center gap-1.5"><SlidersHorizontal className="size-3.5" />{labels.context}</span><Input type="number" min={0} value={form.context} onChange={(event) => change('context', Number(event.target.value))} /></label>
-        <label className="space-y-1.5 text-xs"><span className="flex items-center gap-1.5"><ServerCog className="size-3.5" />{labels.keepAlive}</span><Input dir="ltr" value={form.keepAlive} onChange={(event) => change('keepAlive', event.target.value)} placeholder="10m" /></label>
+      <div className="node-lending-fields grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <FloatingLabelInput label={labels.gpuLayers} icon={<SettingsIcon icon={Gpu} compact />} type="number" min={-1} dir="ltr" disabled={saving} value={form.gpuLayers} onChange={(event) => change('gpuLayers', Number(event.target.value))} />
+        <FloatingLabelInput label={labels.threads} icon={<SettingsIcon icon={Cpu} compact />} type="number" min={0} dir="ltr" disabled={saving} value={form.threads} onChange={(event) => change('threads', Number(event.target.value))} />
+        <FloatingLabelInput label={labels.context} icon={<SettingsIcon icon={Layers3} compact />} type="number" min={0} dir="ltr" disabled={saving} value={form.context} onChange={(event) => change('context', Number(event.target.value))} />
+        <FloatingLabelInput label={labels.keepAlive} icon={<SettingsIcon icon={Timer} compact />} dir="ltr" placeholder="10m" disabled={saving} value={form.keepAlive} onChange={(event) => change('keepAlive', event.target.value)} />
       </div>
-      <details className="rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]/35 p-3">
-        <summary className="cursor-pointer text-xs font-semibold">{labels.ollamaOptions}</summary>
+      <Collapsible className="rounded-2xl border border-[var(--app-line)] bg-[var(--app-wash)]/35 p-1">
+        <CollapsibleTrigger title={labels.ollamaOptions} icon={ServerCog} />
+        <CollapsibleContent><div className="px-1 pb-2">
         <dl className="mt-3 grid gap-x-4 gap-y-2 text-xs sm:grid-cols-2">
           <dt className="text-muted-foreground">{labels.ollamaLoadedLimit}</dt><dd className="font-mono">OLLAMA_MAX_LOADED_MODELS</dd>
           <dt className="text-muted-foreground">{labels.ollamaParallel}</dt><dd className="font-mono">OLLAMA_NUM_PARALLEL</dd>
@@ -157,14 +161,15 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
         </dl>
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{labels.ollamaRestartNote}</p>
         <ul className="mt-2 space-y-1 text-xs leading-relaxed text-muted-foreground"><li>{labels.ollamaWindows}</li><li>{labels.ollamaMac}</li><li>{labels.ollamaLinux}</li></ul>
-      </details>
+        </div></CollapsibleContent>
+      </Collapsible>
       <div className="flex flex-col-reverse items-stretch justify-between gap-3 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:items-center">
         <p className="text-xs text-muted-foreground">{state?.restartNeeded ? labels.restartNeeded : state?.running?.enabled ? labels.lendingRunning : labels.lendingStopped}</p>
-        <div className="flex flex-wrap gap-2">{state?.restartNeeded && <RestartNodeButton messages={messages} onRestarted={() => setLoads((n) => n + 1)} />}<Button type="button" disabled={!dirty || saving} onClick={() => void save()} className="gap-2">{saving && <LoaderCircle className="size-4 animate-spin" />}{labels.saveLending}</Button></div>
+        <div className="flex flex-wrap gap-2">{state?.restartNeeded && <RestartNodeButton messages={messages} onRestarted={() => setLoads((n) => n + 1)} />}<SettingsSaveAction onRevert={() => { if (state) setForm(withDefaults(state.saved)) }} dirty={dirty} changeCount={changeCount} disabled={!dirty || saving} onSave={save}>{saving && <LoaderCircle className="size-4 animate-spin" />}{labels.saveLending}</SettingsSaveAction></div>
       </div>
   </div>
 
   return embedded
     ? <section className="space-y-5">{header}{controls}</section>
-    : <Card>{header}<CardContent className="space-y-5 pt-4">{controls}</CardContent></Card>
+    : <NodeSettingsSection title={labels.lendingTitle} description={`${labels.lendingDescription} ${labels.lendingLiveNote}`} icon={Share2} action={state?.restartNeeded ? <Badge variant="outline">{labels.restartNeeded}</Badge> : undefined}>{controls}</NodeSettingsSection>
 }
