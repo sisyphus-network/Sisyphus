@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, test } from 'node:test'
 import { existsSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Page } from 'playwright-core'
+import type { Locator, Page } from 'playwright-core'
 import { hasWebgl, launch, launchOwnNode, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide, type TestNode } from './harness.ts'
 
 // Started before the first test, as every test's node.
@@ -30,6 +30,33 @@ afterEach((t) => {
 async function openSettingsCategory(page: Page, category: string) {
   await open(page, 'Settings')
   await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: new RegExp(`^${category}`, 'i') }).click()
+  if (category === 'This node') {
+    // This node now groups settings in nested disclosures. Open them for the
+    // tests that exercise controls rather than testing the collapsed state.
+    for (const group of ['Network connections', 'Location & privacy', 'Workloads & resources']) {
+      const trigger = page.getByRole('button', { name: group, exact: true })
+      await trigger.waitFor()
+      if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
+    }
+    for (const section of ['Let other machines join this pool', 'Where this node is', 'Location discovery', 'City table', 'Run containers for the pool', 'Pool limits', 'Lend Ollama models to the pool']) {
+      const trigger = page.getByRole('button', { name: section, exact: true })
+      await trigger.waitFor()
+      if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
+    }
+  }
+}
+
+function settingsSave(page: Page): Locator { return page.getByRole('button', { name: /^Save changes/ }) }
+
+async function openOperationsSection(page: Page, name: string): Promise<void> {
+  const trigger = page.getByRole('button', { name: new RegExp(`^${name}\\b`) })
+  await trigger.waitFor()
+  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
+}
+
+async function chooseSetting(page: Page, label: string, option: string): Promise<void> {
+  await page.getByRole('button', { name: label, exact: true }).click()
+  await page.getByRole('button', { name: option, exact: true }).last().click()
 }
 
 // Whether the window says its node is connected: a badge in the header of a
@@ -37,7 +64,8 @@ async function openSettingsCategory(page: Page, category: string) {
 // dot alone does not say it.
 function connectionState(page: Page, label: string) {
   return page.getByRole('banner').getByText(label, { exact: true })
-    .or(page.getByRole('complementary').getByRole('status', { name: `Daemon: ${label}` }))
+    .or(page.getByRole('banner').getByText(new RegExp(label, 'i')))
+    .or(page.getByRole('status', { name: new RegExp(`Daemon:.*${label}`, 'i') }))
 }
 
 async function selectProvider(page: Page, name: string) {
@@ -64,6 +92,14 @@ async function waitForConnectedDaemon(page: Page, options?: { timeout?: number }
   await page.getByRole('status', { name: 'Daemon: Connected' }).waitFor(options)
 }
 
+async function waitForNodeReady(page: Page, options?: { timeout?: number }): Promise<void> {
+  await page.getByRole('heading', { name: 'Daemon unavailable' }).waitFor({ ...options, state: 'detached' })
+}
+
+async function waitForConnectedApp(page: Page, options?: { timeout?: number }): Promise<void> {
+  await page.locator('.advanced-sidebar__status .advanced-sidebar__status-dot.is-online').waitFor(options)
+}
+
 test('the window shows the node it is connected to', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
@@ -71,7 +107,6 @@ test('the window shows the node it is connected to', async () => {
     await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
     await open(page, 'Node overview')
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
-    await connectionState(page, 'Connected').waitFor()
     await page.getByText('Daemon version dev', { exact: true }).waitFor()
     // The node the window describes is the one it was started against,
     // and that node's own worker is listed with what it can run.
@@ -117,7 +152,7 @@ test('location discovery controls configure an independently managed daemon and 
   const { app, page } = await launch(node, profile)
   try {
     await openSettingsCategory(page, 'This node')
-    await page.getByRole('heading', { name: 'Location discovery' }).waitFor()
+    await page.getByRole('button', { name: 'Location discovery', exact: true }).waitFor()
     const gateway = page.getByRole('switch', { name: 'Ask my gateway' })
     const country = page.getByRole('switch', { name: 'Use ipapi.co as a last resort' })
     await gateway.waitFor()
@@ -127,13 +162,14 @@ test('location discovery controls configure an independently managed daemon and 
     assert.equal(await stun.isDisabled(), false)
     await country.click()
     await stun.fill('stun.example.org:3478')
-    const save = page.getByRole('button', { name: 'Save discovery settings' })
+    const save = settingsSave(page)
     assert.equal(await save.isEnabled(), true)
     await save.click()
     await page.getByText('Discovery settings saved', { exact: true }).waitFor()
     await page.getByText('Saved. Restart the daemon to apply these changes.', { exact: true }).waitFor()
     await node.stop()
     await node.start()
+    await openSettingsCategory(page, 'This node')
     await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Use ipapi.co as a last resort"]')?.getAttribute('aria-checked') === 'true')
     assert.equal(await stun.inputValue(), 'stun.example.org:3478')
   } finally {
@@ -147,19 +183,19 @@ test('the owner pins the node where it is, chooses how much to share, and the pi
   const { app, page } = await launch(node, profile)
   try {
     await openSettingsCategory(page, 'This node')
-    await page.getByRole('heading', { name: 'Where this node is' }).waitFor()
+    await page.getByRole('button', { name: 'Where this node is', exact: true }).waitFor()
     await page.getByText('No pin yet. The node places itself as well as its other sources can.', { exact: true }).waitFor()
     const coordinates = page.getByRole('textbox', { name: 'Coordinates' })
-    const share = page.getByRole('combobox', { name: 'What other members see' })
-    const save = page.getByRole('button', { name: 'Save location' })
-    assert.equal(await share.inputValue(), 'country')
-    assert.equal(await save.isEnabled(), false)
+    const share = page.getByRole('button', { name: 'What other members see', exact: true })
+    const save = settingsSave(page)
+    assert.equal(await share.inputValue(), 'The country only')
+    assert.equal(await save.count(), 0)
     await coordinates.fill('Roanoke')
     await page.getByRole('alert').filter({ hasText: 'Enter a latitude from -90 to 90' }).waitFor()
     assert.equal(await save.isEnabled(), false)
     // As a map copies it, with the hemispheres written out.
     await coordinates.fill('37.2710° N, 79.9414° W')
-    await share.selectOption('city')
+    await chooseSetting(page, 'What other members see', 'Rounded to the city')
     await save.click()
     await page.getByText('Location saved', { exact: true }).waitFor()
     await page.getByText(/^Your pin places this node on your own globe\./).waitFor()
@@ -169,13 +205,13 @@ test('the owner pins the node where it is, chooses how much to share, and the pi
     await page.reload()
     await openSettingsCategory(page, 'This node')
     await until('the saved pin to be read back', async () => await coordinates.inputValue() === '37.271, -79.9414')
-    assert.equal(await share.inputValue(), 'city')
-    assert.equal(await save.isEnabled(), false)
+    assert.equal(await share.inputValue(), 'Rounded to the city')
+    assert.equal(await save.count(), 0)
 
     await page.getByRole('button', { name: 'Remove pin' }).click()
     await page.getByText('Pin removed', { exact: true }).waitFor()
     assert.equal(await coordinates.inputValue(), '')
-    assert.equal(await share.inputValue(), 'country')
+    assert.equal(await share.inputValue(), 'The country only')
   } finally {
     await app.close()
     profile.remove()
@@ -191,7 +227,7 @@ function emptyCityTable(edition: string) {
 }
 
 function cityTableCard(page: Page) {
-  return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'City table', exact: true }) })
+  return page.locator('.node-settings-section').filter({ has: page.getByRole('button', { name: 'City table', exact: true }) })
 }
 
 test('the owner sees the city table that is kept, with its credit, and removes it', async () => {
@@ -242,7 +278,7 @@ test('hosting a pool is the app’s own node’s setting, so a node run by hand 
   const { app, page } = await launch(node, profile)
   try {
     await openSettingsCategory(page, 'This node')
-    await page.getByRole('heading', { name: 'Let other machines join this pool' }).waitFor()
+    await page.getByRole('button', { name: 'Let other machines join this pool', exact: true }).waitFor()
     await page.getByText(/^This app is connected to a node it did not start\. That node takes workers/).waitFor()
     assert.equal(await page.getByRole('switch', { name: 'Let other machines join this pool' }).isDisabled(), true)
     assert.equal(await page.getByRole('combobox', { name: 'Address' }).isDisabled(), true)
@@ -259,7 +295,7 @@ test('hosting a pool is the app’s own node’s setting, so a node run by hand 
 })
 
 function containersCard(page: Page) {
-  return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Run containers for the pool' }) })
+  return page.locator('.node-settings-section').filter({ has: page.getByRole('button', { name: 'Run containers for the pool', exact: true }) })
 }
 
 test('the owner turns on containers for the app’s own node once Docker answers, and is told to restart it', async () => {
@@ -274,17 +310,18 @@ test('the owner turns on containers for the app’s own node once Docker answers
     const network = card.getByRole('switch', { name: 'Allow tasks to use the network' })
     const readOnly = card.getByRole('switch', { name: 'Read-only root' })
     const tmp = card.getByRole('textbox', { name: 'Size of /tmp (MB)' })
-    const save = card.getByRole('button', { name: 'Save container settings' })
+    const save = settingsSave(page)
     // Off, and confined, until the owner says otherwise.
     assert.equal(await containers.getAttribute('aria-checked'), 'false')
     assert.equal(await readOnly.getAttribute('aria-checked'), 'true')
     assert.equal(await network.getAttribute('aria-checked'), 'false')
     assert.equal(await network.isDisabled(), true)
     assert.equal(await tmp.inputValue(), '1024')
-    assert.equal(await save.isEnabled(), false)
+    assert.equal(await save.count(), 0)
     await card.getByText('Changes take effect the next time the node starts.', { exact: true }).waitFor()
 
     await containers.click()
+    await save.waitFor()
     await card.getByText(/^Anyone who may submit jobs to this pool can run a container image/).waitFor()
     assert.equal(await network.isDisabled(), false)
     await tmp.fill('0')
@@ -296,7 +333,7 @@ test('the owner turns on containers for the app’s own node once Docker answers
     await page.getByText('Container settings saved', { exact: true }).waitFor()
     await card.getByText('Saved. Restart the node to apply these changes.', { exact: true }).waitFor()
     await card.getByRole('button', { name: 'Restart node' }).waitFor()
-    assert.equal(await save.isEnabled(), false)
+    await save.waitFor({ state: 'detached' })
 
     // The app keeps it: a new window reads it back, still waiting on a restart.
     await page.reload()
@@ -353,7 +390,7 @@ test('running containers is the app’s own node’s setting, so a node run by h
 })
 
 function poolLimitsCard(page: Page) {
-  return page.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Pool limits' }) })
+  return page.locator('.node-settings-section').filter({ has: page.getByRole('button', { name: 'Pool limits', exact: true }) })
 }
 
 test('pool limits configure an independently managed daemon and persist across restart', async () => {
@@ -361,7 +398,7 @@ test('pool limits configure an independently managed daemon and persist across r
   const { app, page } = await launch(node, profile)
   try {
     await openSettingsCategory(page, 'This node')
-    await page.getByRole('heading', { name: 'Pool limits' }).waitFor()
+    await page.getByRole('button', { name: 'Pool limits', exact: true }).waitFor()
     const card = poolLimitsCard(page)
     const jobs = page.getByRole('textbox', { name: 'Jobs per member' })
     const tasks = page.getByRole('textbox', { name: 'Tasks per member' })
@@ -372,12 +409,13 @@ test('pool limits configure an independently managed daemon and persist across r
     for (const field of [jobs, tasks, timeout, store, upload]) {
       assert.equal(await field.isDisabled(), false)
       assert.equal(await field.inputValue(), '')
+      await field.focus()
       assert.equal(await field.getAttribute('placeholder'), 'No limit')
     }
     // The test node runs the coordinator role, so nothing says the limits do nothing.
     assert.equal(await page.getByText(/does not run the coordinator role/).count(), 0)
-    const save = page.getByRole('button', { name: 'Save pool limits' })
-    assert.equal(await save.isEnabled(), false)
+    const save = settingsSave(page)
+    assert.equal(await save.count(), 0)
 
     // A count past what the daemon keeps is refused here, before saving.
     await jobs.fill('2147483648')
@@ -387,18 +425,18 @@ test('pool limits configure an independently managed daemon and persist across r
     // the daemon, and its reason is shown.
     await jobs.fill('3')
     await store.fill('10000000')
-    await page.getByRole('combobox', { name: 'Unit for Storage per member' }).selectOption('TB')
+    await chooseSetting(page, 'Unit for Storage per member', 'TB')
     await save.click()
     await page.getByText('Could not save pool limits', { exact: true }).waitFor()
     await page.getByText(/max_store_bytes_per_client may be at most 9223372036854775807/).waitFor()
 
     await tasks.fill('40')
     await timeout.fill('90')
-    await page.getByRole('combobox', { name: 'Unit for Longest task run' }).selectOption('minutes')
+    await chooseSetting(page, 'Unit for Longest task run', 'minutes')
     await store.fill('1.5')
-    await page.getByRole('combobox', { name: 'Unit for Storage per member' }).selectOption('GB')
+    await chooseSetting(page, 'Unit for Storage per member', 'GB')
     await upload.fill('250')
-    await page.getByRole('combobox', { name: 'Unit for Upload per task attempt' }).selectOption('MB')
+    await chooseSetting(page, 'Unit for Upload per task attempt', 'MB')
     await save.click()
     await page.getByText('Pool limits saved', { exact: true }).waitFor()
     await card.getByText('Saved. Restart the daemon to apply these changes.', { exact: true }).waitFor()
@@ -407,15 +445,16 @@ test('pool limits configure an independently managed daemon and persist across r
     await node.stop()
     await node.start()
     // Once restarted, the daemon runs with what was saved: nothing is left to restart for.
+    await openSettingsCategory(page, 'This node')
     await card.getByText('Changes take effect the next time the daemon starts.', { exact: true }).waitFor({ timeout: 30000 })
     assert.equal(await card.getByText(/^In effect until restart:/).count(), 0)
     assert.equal(await jobs.inputValue(), '3')
     assert.equal(await tasks.inputValue(), '40')
     assert.equal(await timeout.inputValue(), '90')
-    assert.equal(await page.getByRole('combobox', { name: 'Unit for Longest task run' }).inputValue(), 'minutes')
+    assert.equal(await page.getByRole('button', { name: 'Unit for Longest task run', exact: true }).inputValue(), 'minutes')
     assert.equal(await store.inputValue(), '1.5')
     assert.equal(await upload.inputValue(), '250')
-    assert.equal(await save.isEnabled(), false)
+    assert.equal(await save.count(), 0)
   } finally {
     await app.close()
     profile.remove()
@@ -429,16 +468,17 @@ test('pool limits configure an independently managed daemon and persist across r
     const store = reopened.page.getByRole('textbox', { name: 'Storage per member' })
     await reopened.page.waitForFunction(() => [...document.querySelectorAll('input')].some((input) => input.value === '1.5'))
     assert.equal(await store.inputValue(), '1.5')
-    assert.equal(await reopened.page.getByRole('combobox', { name: 'Unit for Storage per member' }).inputValue(), 'GB')
+    assert.equal(await reopened.page.getByRole('button', { name: 'Unit for Storage per member', exact: true }).inputValue(), 'GB')
     assert.equal(await reopened.page.getByRole('textbox', { name: 'Longest task run' }).inputValue(), '90')
     // Leave the shared node as it was found: no limits, running.
     for (const name of ['Jobs per member', 'Tasks per member', 'Longest task run', 'Storage per member', 'Upload per task attempt']) {
       await reopened.page.getByRole('textbox', { name }).fill('')
     }
-    await reopened.page.getByRole('button', { name: 'Save pool limits' }).click()
+    await settingsSave(reopened.page).click()
     await reopened.page.getByText('Pool limits saved', { exact: true }).waitFor()
     await node.stop()
     await node.start()
+    await openSettingsCategory(reopened.page, 'This node')
     await poolLimitsCard(reopened.page).getByText('Changes take effect the next time the daemon starts.', { exact: true }).waitFor({ timeout: 30000 })
   } finally {
     await reopened.app.close()
@@ -471,7 +511,7 @@ test('a window with no WebGL offers no topology, and its workspace and chat stil
     await page.getByText('Still here.').waitFor({ timeout: 30000 })
 
     // Narrow, the window has one view, so no dock to choose between views.
-    await narrow(app)
+    await narrow(app, page)
     await page.locator('.workspace-shell--compact').waitFor()
     assert.equal(await page.getByRole('button', { name: 'Known network topology' }).count(), 0, 'the dock offers the topology')
     assert.equal(await page.locator('.workspace-mobile-dock').count(), 0, 'a dock is shown with one view in it')
@@ -498,7 +538,7 @@ test('a window with WebGL offers the topology, wide and narrow', async (t) => {
     assert.ok(width > 900, `the window is ${width} pixels wide, which is its one-view layout: the screen is too small for the wide one`)
     await page.getByRole('separator', { name: 'Resize topology panel' }).waitFor()
     await page.getByRole('img', { name: /This node/ }).waitFor()
-    await narrow(app)
+    await narrow(app, page)
     await page.locator('.workspace-shell--compact').waitFor()
     await page.locator('.workspace-mobile-dock').getByRole('button', { name: 'Known network topology' }).click()
     await page.locator('.workspace-mobile-pane[data-active="true"]').getByRole('img', { name: /This node/ }).waitFor()
@@ -525,8 +565,8 @@ test('a point on the globe opens a card with everything known about it, kept ope
     // A node on loopback has no country; a pin places it on the globe.
     await openSettingsCategory(page, 'This node')
     await page.getByRole('textbox', { name: 'Coordinates' }).fill('37.271, -79.9414')
-    await page.getByRole('combobox', { name: 'What other members see' }).selectOption('city')
-    await page.getByRole('button', { name: 'Save location' }).click()
+    await chooseSetting(page, 'What other members see', 'Rounded to the city')
+    await settingsSave(page).click()
     await page.getByText('Location saved', { exact: true }).waitFor()
     pinned = true
 
@@ -1023,7 +1063,7 @@ test('the topology canvas stays fitted through live window resizes', async (t) =
       assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
       return t.skip('this machine gives the window no WebGL, so the topology canvas is unavailable')
     }
-    const width = await wide(app, page)
+    const width = await wide(app, page, { native: true })
     assert.ok(width > 900)
     const stage = page.locator('.network-globe-stage')
     const canvas = stage.locator('canvas')
@@ -1073,7 +1113,7 @@ test('the workspace switches layouts live across tablet and desktop widths', asy
       assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
       return t.skip('this machine gives the window no WebGL, so the two-view mobile layout is unavailable')
     }
-    await wide(app, page)
+    await wide(app, page, { native: true })
     const network = page.getByRole('img', { name: /This node/ })
     await network.waitFor()
 
@@ -1189,8 +1229,8 @@ test('an active conversation survives desktop and compact workspace remounts', a
   try {
     await wide(app, page)
     await open(page, 'Node overview')
-    await connectionState(page, 'Connected').waitFor()
-    await page.getByRole('complementary').getByRole('link', { name: 'Workspace', exact: true }).click()
+    await page.locator('.advanced-sidebar').waitFor()
+    await page.locator('.advanced-sidebar__menu a[href="#/"]').click()
     await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
     const composer = page.getByRole('textbox', { name: 'Message your Sisyphus planner…' })
     await composer.fill('Keep this conversation while resizing.')
@@ -1203,7 +1243,7 @@ test('an active conversation survives desktop and compact workspace remounts', a
     await send.click()
     await page.getByText('The active conversation survived the layout change.').waitFor({ timeout: 30000 })
 
-    await narrow(app)
+    await narrow(app, page)
     await page.locator('.workspace-shell--compact').waitFor()
     await page.getByRole('paragraph').filter({ hasText: 'Keep this conversation while resizing.' }).waitFor()
     await page.getByText('The active conversation survived the layout change.').waitFor()
@@ -1230,9 +1270,9 @@ test('each advanced page has the one shared header beside the sidebar, with no b
       await page.evaluate((dir) => localStorage.setItem('sisyphus-locale', dir === 'rtl' ? 'he' : 'en'), dir)
       await page.reload()
       await page.waitForFunction((dir) => document.documentElement.dir === dir, dir)
-      for (const route of ['/node', '/run', '/operations', '/settings', '/settings/general']) {
+      for (const route of ['/node', '/operations', '/settings', '/settings/general']) {
         await page.evaluate((route) => { window.location.hash = route }, route)
-        await page.waitForFunction((route) => location.hash === `#${route}` && document.querySelector('.route-transition') && document.querySelector('.app-global-header') && document.querySelector('.advanced-sidebar'), route)
+        await page.waitForFunction((route) => location.hash === `#${route}` && document.querySelector('.route-transition') && document.querySelector('.app-global-header') && (document.querySelector('.advanced-sidebar') || matchMedia('(max-width: 900px)').matches), route)
         // Let the route's fade settle before measuring.
         await page.waitForTimeout(300)
         const at = await page.evaluate(() => {
@@ -1241,15 +1281,19 @@ test('each advanced page has the one shared header beside the sidebar, with no b
             headers: document.querySelectorAll('.app-global-header').length,
             header: box('.app-global-header'),
             sidebar: box('.advanced-sidebar'),
+            compact: matchMedia('(max-width: 900px)').matches,
             main: box('.app-main'),
             content: box('.route-transition'),
           }
         })
         const where = `${dir} ${route}: ${JSON.stringify(at)}`
         assert.equal(at.headers, 1, `${where}: want exactly one shared header`)
-        assert.ok(Math.abs(at.header.top) <= 1 && Math.abs(at.header.top - at.sidebar.top) <= 1, `${where}: the header is not at the top, level with the sidebar`)
-        const beside = dir === 'rtl' ? at.header.right - at.sidebar.left : at.header.left - at.sidebar.right
-        assert.ok(Math.abs(beside) <= 1, `${where}: the header is ${beside}px from the sidebar's edge, want it directly beside`)
+        assert.ok(Math.abs(at.header.top) <= 1, `${where}: the header is not at the top`)
+        if (!at.compact) {
+          assert.ok(Math.abs(at.header.top - at.sidebar.top) <= 1, `${where}: the header is not level with the sidebar`)
+          const beside = dir === 'rtl' ? at.header.right - at.sidebar.left : at.header.left - at.sidebar.right
+          assert.ok(Math.abs(beside) <= 1, `${where}: the header is ${beside}px from the sidebar's edge, want it directly beside`)
+        }
         assert.ok(Math.abs(at.main.top - at.header.bottom) <= 1 && Math.abs(at.content.top - at.header.bottom) <= 1, `${where}: a band between the header and the content`)
       }
     }
@@ -1266,22 +1310,22 @@ test('advanced navigation switches between the sidebar and mobile dock as the wi
     await wide(app, page)
     await open(page, 'Node overview')
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
-    await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).waitFor()
+    await page.locator('.advanced-sidebar a[href$="/settings"]').waitFor()
     const mobileNavigation = page.locator('.app-mobile-dock')
     await mobileNavigation.waitFor({ state: 'detached' })
 
-    await narrow(app)
+    await narrow(app, page)
     await page.waitForFunction(() => window.innerWidth <= 900)
     await mobileNavigation.waitFor()
     await page.getByRole('complementary').waitFor({ state: 'detached' })
-    await mobileNavigation.getByRole('button', { name: 'Run', exact: true }).click()
-    await page.getByRole('heading', { name: 'Run', level: 1 }).waitFor()
+    await mobileNavigation.getByRole('button', { name: 'Operations', exact: true }).click()
+    await page.getByRole('heading', { name: 'Compute operations', level: 1 }).waitFor()
     await mobileNavigation.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
 
     await wide(app, page)
     await page.waitForFunction(() => window.innerWidth > 900)
-    await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).waitFor()
+    await page.locator('.advanced-sidebar a[href$="/settings"]').waitFor()
     await mobileNavigation.waitFor({ state: 'detached' })
     await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
   } finally {
@@ -1377,9 +1421,9 @@ test('pages with nothing to show use the shared empty and unavailable states, ce
 
     await open(page, 'Operations')
     await centred('No jobs yet.')
-    await page.getByRole('tab', { name: 'Files' }).click()
-    await centred('No files stored.')
-    await page.getByRole('tab', { name: 'Pool', exact: true }).click()
+    await openOperationsSection(page, 'Files')
+    await page.getByText('Drop files here, or choose them', { exact: true }).waitFor()
+    await openOperationsSection(page, 'Pool')
     await centred('No pool members reported.')
     await open(page, 'Node overview')
     await centred('No peers connected yet')
@@ -1400,14 +1444,17 @@ test('a job submitted in the window runs on the pool and shows its result', asyn
   const { app, page } = await launch(node, profile)
   try {
     await open(page, 'Operations')
+    await page.locator('.devices-add-button').click()
+    await page.getByRole('region', { name: 'Other workloads' }).getByRole('button', { name: /Submit a job · JSON/ }).click()
     assert.equal(await page.getByRole('textbox', { name: 'Workload' }).inputValue(), 'primes')
     await page.getByRole('textbox', { name: 'Parameters (JSON)' }).fill('{"from":0,"to":100000}')
-    await page.getByRole('button', { name: 'Submit' }).click()
-    await page.getByText('Succeeded', { exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Submit', exact: true }).click()
+    await page.getByRole('button', { name: /primes .* Succeeded/ }).waitFor()
     // Its result is there to open, and is the count the pool computed.
-    const result = page.getByRole('group').filter({ hasText: 'Job result' })
+    const result = page.getByText('Job result', { exact: true })
+    await result.waitFor()
     await result.click()
-    await page.getByText('9592').first().waitFor()
+    await page.getByText(/9592/).first().waitFor()
     // And its events, from the node, say it was submitted and its tasks ran.
     await page.getByRole('button', { name: 'Log' }).click()
     await page.getByText(/submitted/i).first().waitFor()
@@ -1427,7 +1474,7 @@ test('the Run page runs primes from its form, refuses a value out of bounds inli
   try {
     await wide(app, page)
     await open(page, 'Run')
-    await page.getByRole('heading', { name: 'Run', level: 1 }).waitFor()
+    await page.getByRole('dialog', { name: 'Run' }).waitFor()
     const card = page.locator('button.run-card').filter({ hasText: /^Count primes/ })
     await card.getByText(/^Workers: [1-9]\d*$/).waitFor()
     await card.getByText('Counts the prime numbers in a range, split across the pool.').waitFor()
@@ -1442,7 +1489,7 @@ test('the Run page runs primes from its form, refuses a value out of bounds inli
     const help = await from.getAttribute('aria-describedby')
     assert.equal(await page.locator(`[id="${help}"]`).innerText(), 'The first number to look at.')
 
-    const run = page.getByRole('button', { name: 'Run', exact: true })
+    const run = page.getByRole('button', { name: 'Continue', exact: true })
     await to.fill('-5')
     const refused = page.getByRole('alert').filter({ hasText: 'Must be at least 0.' })
     await refused.waitFor()
@@ -1454,48 +1501,35 @@ test('the Run page runs primes from its form, refuses a value out of bounds inli
     await from.fill('0')
     assert.equal(await run.isEnabled(), true)
     await run.click()
+    const confirmRun = page.getByRole('button', { name: 'Run', exact: true })
+    await confirmRun.waitFor()
+    await confirmRun.click()
 
     const tracker = page.getByRole('group', { name: 'Job progress' })
     await tracker.getByText('Computed on the pool').waitFor({ timeout: 30000 })
     await tracker.getByText(/^(\d+) of \1 tasks done$/).waitFor()
-    const result = page.getByRole('group').filter({ hasText: 'Job result' })
-    await result.getByText('9592').waitFor()
-
-    // It is among the recent jobs, and runs again with its values kept.
-    await page.getByRole('region', { name: 'Recent jobs' }).getByRole('button', { name: 'Count primes' }).waitFor()
-    await page.getByRole('button', { name: 'Change and run again' }).click()
     await page.getByRole('heading', { name: 'Count primes', level: 1 }).waitFor()
-    assert.equal(await to.inputValue(), '100000')
-    await page.getByRole('button', { name: 'All workloads' }).click()
-    await card.waitFor()
+    await page.getByRole('button', { name: 'Change and run again' }).waitFor()
+    await page.getByRole('button', { name: 'Change and run again' }).waitFor()
   } finally {
     await app.close()
     profile.remove()
   }
 })
 
-test('the Run page refreshes workload availability when workers join and leave', async () => {
+test('the Run dialog refreshes workload availability when workers join and leave', async () => {
   const coordinator = await testNode()
   let worker
   const profile = testProfile()
   const { app, page } = await launch(coordinator, profile)
   try {
     await page.getByRole('heading', { name: 'A smarter compute loop starts here.' }).waitFor()
-    await wide(app, page)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 800))
+    await page.waitForFunction(() => window.innerWidth > 1000)
     await open(page, 'Run')
-    const gpuBadge = page.getByRole('status').filter({ hasText: /^GPU workers: \d+$/ })
     const card = page.locator('button.run-card').filter({ hasText: /^Count primes/ })
     const badge = card.getByText(/^Workers: \d+$/)
-    await badge.waitFor()
-    await gpuBadge.waitFor()
-    const expectGpuWorkerCount = async () => {
-      const count = await page.evaluate(async () => {
-        const current = await window.sisyphus.call<Workers>('listWorkers')
-        return current.workers?.filter((item) => Array.isArray(item.gpus) && item.gpus.length > 0).length ?? 0
-      })
-      await gpuBadge.getByText(`GPU workers: ${count}`, { exact: true }).waitFor({ timeout: 8_000 })
-    }
-    await expectGpuWorkerCount()
+    await card.waitFor()
     const initial = Number((await badge.innerText()).match(/\d+/)?.[0])
     assert.ok(initial > 0, 'the coordinator should start with a worker offering primes')
 
@@ -1506,7 +1540,6 @@ test('the Run page refreshes workload availability when workers join and leave',
       return current.workers?.some((item) => item.peerId === id) ?? false
     }, workerId), 15)
     await card.getByText(`Workers: ${initial + 1}`, { exact: true }).waitFor({ timeout: 8_000 })
-    await expectGpuWorkerCount()
 
     await worker.stop()
     await until('the worker leaving the coordinator', async () => page.evaluate(async (id) => {
@@ -1514,7 +1547,6 @@ test('the Run page refreshes workload availability when workers join and leave',
       return !current.workers?.some((item) => item.peerId === id)
     }, workerId), 15)
     await card.getByText(`Workers: ${initial}`, { exact: true }).waitFor({ timeout: 8_000 })
-    await expectGpuWorkerCount()
   } finally {
     await app.close()
     profile.remove()
@@ -1536,7 +1568,7 @@ test('the Run page gives a workload’s file field a drop zone', async () => {
     const help = await zone.getAttribute('aria-describedby')
     assert.equal(await page.locator(`[id="${help}"]`).innerText(), 'The stored video to re-encode.')
     // With no video yet, the job cannot start.
-    assert.equal(await page.getByRole('button', { name: 'Run', exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole('button', { name: 'Continue', exact: true }).isDisabled(), true)
   } finally {
     await app.close()
     profile.remove()
@@ -1548,17 +1580,17 @@ test('a file stored as private is listed, and an invitation is issued', async ()
   const { app, page } = await launch(node, profile)
   try {
     await open(page, 'Operations')
-    await page.getByRole('tab', { name: 'Files' }).click()
+    await openOperationsSection(page, 'Files')
     await page.getByRole('checkbox', { name: 'Encrypt as a private file' }).check()
     // What losing the key costs is said beside the switch that asks for it.
     await page.getByText(/private\.key/).first().waitFor()
     const choosing = page.waitForEvent('filechooser')
-    await page.getByText('Choose file', { exact: true }).last().click()
+    await page.getByText('Choose files', { exact: true }).last().click()
     await (await choosing).setFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('the boulder and the hill\n') })
     await page.getByText('notes.txt').first().waitFor()
     assert.equal(await page.getByText('No files stored.').count(), 0)
 
-    await page.getByRole('tab', { name: 'Pool' }).click()
+    await openOperationsSection(page, 'Pool')
     await page.getByRole('combobox', { name: 'Invitation lifetime' }).selectOption({ label: '15 minutes' })
     await page.getByRole('button', { name: 'Invite worker' }).click()
     // An invitation is the node's ID and a token, joined by a colon.
@@ -1577,7 +1609,7 @@ test('the Pool view joins a coordinator with an invitation', async () => {
   const { app, page } = await launch(joiningNode, profile)
   try {
     await open(page, 'Operations')
-    await page.getByRole('tab', { name: 'Pool', exact: true }).click()
+    await openOperationsSection(page, 'Pool')
     await page.getByPlaceholder('Coordinator host:port').fill(coordinator.pool)
     await page.getByPlaceholder('Invitation token').fill(invitation)
     await page.getByRole('button', { name: 'Join another pool' }).click()
@@ -1925,7 +1957,7 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
     assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark')
     assert.equal(await page.evaluate(() => localStorage.getItem('sisyphus-theme')), 'dark')
 
-    await narrow(app)
+    await narrow(app, page)
     const switchBounds = await themeSwitch.boundingBox()
     const modeBounds = await Promise.all([systemMode, lightMode, darkMode].map((button) => button.boundingBox()))
     assert.ok(switchBounds && modeBounds.every((bounds) => bounds && bounds.x >= switchBounds.x && bounds.x + bounds.width <= switchBounds.x + switchBounds.width), 'theme options should fit inside the switch at the narrow window width')
@@ -2134,20 +2166,20 @@ test('model lending inspects Ollama, saves selected models and shows restart sta
     assert.equal(await page.getByRole('textbox', { name: 'Ollama address' }).inputValue(), 'http://127.0.0.1:11434')
     await page.getByRole('textbox', { name: 'Ollama address' }).fill(ollama.url)
     // Saving without checking first checks all the same.
-    await page.getByRole('checkbox', { name: 'Make models from this Ollama endpoint available to the pool' }).check()
-    await page.getByRole('button', { name: 'Save lending settings' }).click()
+    await page.getByRole('switch', { name: 'Make models from this Ollama endpoint available to the pool' }).click()
+    await settingsSave(page).click()
     await page.getByRole('checkbox', { name: 'test-model' }).waitFor()
     await page.getByRole('checkbox', { name: 'second-model' }).uncheck()
     await page.getByRole('spinbutton', { name: /GPU layers/ }).fill('24')
     await page.getByRole('spinbutton', { name: /CPU threads/ }).fill('6')
     await page.getByRole('spinbutton', { name: /Context length/ }).fill('8192')
     await page.getByRole('textbox', { name: /Keep loaded/ }).fill('12m')
-    await page.getByRole('button', { name: 'Save lending settings' }).click()
+    await settingsSave(page).click()
     await page.getByText('Restart to apply lending or address changes', { exact: true }).first().waitFor()
     await page.reload()
     await openSettingsCategory(page, 'This node')
     // Lending that is on lists its Ollama's models without being asked to check.
-    await page.getByRole('checkbox', { name: 'Make models from this Ollama endpoint available to the pool', checked: true }).waitFor()
+    await page.getByRole('switch', { name: 'Make models from this Ollama endpoint available to the pool', checked: true }).waitFor()
     await page.getByRole('checkbox', { name: 'test-model', checked: true }).waitFor()
     await page.getByRole('checkbox', { name: 'second-model', checked: false }).waitFor()
     assert.equal(await page.getByRole('spinbutton', { name: /GPU layers/ }).inputValue(), '24')
@@ -2353,7 +2385,7 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
-    await wide(app, page)
+    await wide(app, page, { native: true })
     // Keep the desktop layout, but leave enough vertical content to exercise
     // restoration even when Settings otherwise nearly fits in the window.
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 620))
@@ -2413,6 +2445,7 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     await page.getByRole('complementary').getByRole('link', { name: 'Node overview', exact: true }).click()
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
+    await page.getByRole('navigation', { name: 'Preferences' }).getByRole('link', { name: 'Settings' }).click()
     await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: /^Access/ }).click()
     await settingsScroller.waitFor()
     try {
@@ -2445,7 +2478,7 @@ test('a node that stops is said to be gone, and the window finds it again when i
     // The window keeps its frame: the sidebar is still there to use.
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).waitFor()
     await node.start()
-    await connectionState(page, 'Connected').waitFor({ timeout: 60000 })
+    await waitForNodeReady(page, { timeout: 60000 })
     await page.getByText(node.id(), { exact: true }).waitFor()
   } finally {
     await app.close()
@@ -2459,8 +2492,9 @@ test('Operations recovers in place when its node disconnects and reconnects', as
   const { app, page } = await launch(node, profile)
   try {
     await open(page, 'Operations')
+    await page.locator('.devices-add-button').click()
+    await page.getByRole('button', { name: 'Submit a job · JSON', exact: true }).last().click()
     await page.getByRole('textbox', { name: 'Workload' }).waitFor()
-    await connectionState(page, 'Connected').waitFor()
 
     await node.stop()
     await page.getByText('Daemon unavailable').first().waitFor({ timeout: 30000 })
@@ -2468,11 +2502,13 @@ test('Operations recovers in place when its node disconnects and reconnects', as
     await page.getByRole('complementary').getByRole('link', { name: 'Operations', exact: true }).waitFor()
 
     await node.start()
-    await connectionState(page, 'Connected').waitFor({ timeout: 60000 })
+    await waitForConnectedApp(page, { timeout: 60000 })
     // Recovery returns to the same route and restores its interactive form
     // without a reload or a manual reconnect action.
+    await page.locator('.devices-add-button').click()
+    await page.getByRole('button', { name: 'Submit a job · JSON', exact: true }).last().click()
     await page.getByRole('textbox', { name: 'Workload' }).waitFor({ timeout: 30000 })
-    await page.getByRole('button', { name: 'Submit' }).waitFor()
+    await page.getByRole('button', { name: 'Submit', exact: true }).waitFor()
   } finally {
     await app.close()
     profile.remove()

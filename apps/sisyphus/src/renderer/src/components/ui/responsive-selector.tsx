@@ -25,6 +25,7 @@ type SelectorApi = {
 };
 
 type ResponsiveSelectorProps = {
+  nativeButton?: boolean;
   label: string;
   direction: "rtl" | "ltr" | "auto";
   trigger: (api: SelectorApi) => ReactNode;
@@ -33,7 +34,7 @@ type ResponsiveSelectorProps = {
   className?: string;
 };
 
-export function ResponsiveSelector({ label, direction, trigger, triggerOverlay, children, className }: ResponsiveSelectorProps) {
+export function ResponsiveSelector({ label, direction, trigger, triggerOverlay, children, className, nativeButton = false }: ResponsiveSelectorProps) {
   const { rootRef, contentRef, open, setOpen, placement, floatingStyle } = useFloatingSelector();
   const compact = useSyncExternalStore(subscribeToCompactViewport, getCompactViewport, () => false);
   const api = { open, setOpen };
@@ -57,7 +58,7 @@ export function ResponsiveSelector({ label, direction, trigger, triggerOverlay, 
         </>
       ) : (
         <PopoverPrimitive.Root open={open} onOpenChange={setOpen} modal={false}>
-          <PopoverPrimitive.Trigger nativeButton={false} render={trigger(api) as ReactElement} />
+          <PopoverPrimitive.Trigger nativeButton={nativeButton} render={trigger(api) as ReactElement} />
           <PopoverPrimitive.Portal>
             <PopoverPrimitive.Positioner
               positionMethod="fixed"

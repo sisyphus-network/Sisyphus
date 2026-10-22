@@ -22,6 +22,7 @@ type FloatingLabelInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "size
   success?: boolean;
   validate?: (value: string) => string | undefined;
   containerClassName?: string;
+  labelClassName?: string;
   uiDirection?: "ltr" | "rtl";
   iconDirection?: "ltr" | "rtl";
 };
@@ -38,6 +39,7 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
     success = false,
     validate,
     containerClassName,
+    labelClassName,
     uiDirection,
     iconDirection,
     className,
@@ -150,12 +152,14 @@ export const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInpu
       />
       <label
         htmlFor={inputId}
+        title={label}
         className={cn(
           "pointer-events-none absolute z-10 origin-start select-none bg-[var(--app-card)] px-1.5 text-[var(--app-muted)] transition-all duration-200",
           icon ? "start-16" : "start-3",
           isFloating ? "top-0 -translate-y-1/2 scale-90" : "top-1/2 -translate-y-1/2 scale-100",
           focused && "text-[var(--app-accent)]",
           hasError && "text-red-500",
+          labelClassName,
         )}
       >{label}</label>
       <span aria-live="polite" className={cn("pointer-events-none absolute top-1/2 z-10 grid size-6 -translate-y-1/2 place-items-center text-[var(--app-muted)]", iconDirection === "ltr" ? "right-3.5" : iconDirection === "rtl" ? "left-3.5" : "end-3.5", hasError && "text-red-500")}>

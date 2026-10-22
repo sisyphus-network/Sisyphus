@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import { ArrowRight, ArrowUpRight, Cable, Check, Copy, EthernetPort, Fingerprint, Globe, Globe2, Link2, LoaderCircle, Monitor, Plus, QrCode, Settings2, ShieldAlert, ShieldCheck, Smartphone, X } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { type getMessages } from '@/i18n/messages'
@@ -47,6 +47,7 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
   const [publicUrl, setPublicUrl] = useState('')
   const [customBrowserAddress, setCustomBrowserAddress] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const reducedMotion = useReducedMotion()
   const access = messages.browserAccess
   const accessUi = messages.accessUi
   const labels = messages.webAccess
@@ -226,8 +227,8 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
 
   return <div className="browser-access-page w-full min-w-0">
     {showHeading ? <PageHeading title={labels.title} description={labels.exposureDescription} /> : null}
-    <div className="mt-3 w-full min-w-0">
-      {initialLoading ? <AccessPageSkeleton /> : <div className="devices-layout w-full min-w-0 gap-6">
+    <motion.div layout="size" transition={{ layout: { duration: reducedMotion ? 0 : 0.32, ease: [0.22, 1, 0.36, 1] } }} className="mt-3 w-full min-w-0">
+      {initialLoading ? <AccessPageSkeleton expanded={initialAccessLoaded && accessSettingsOpen} /> : <motion.div initial={{ opacity: reducedMotion ? 1 : 0, y: reducedMotion ? 0 : 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reducedMotion ? 0 : 0.28 }} className="devices-layout w-full min-w-0 gap-6">
       <Card className="access-settings-card min-w-0 p-2">
         <Collapsible open={accessSettingsOpen} onOpenChange={setAccessSettingsOpen}>
           <CollapsibleTrigger
@@ -362,8 +363,8 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
         }
       </section>
       </div>
-      </div>}
-    </div>
+      </motion.div>}
+    </motion.div>
     <ResponsiveActionDialog open={pairingOpen} onOpenChange={(open) => { setPairingOpen(open); if (!open) pairingBaselineReady.current = false }} direction={document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'} title={labels.pairingTitle} description={access.scanCode} icon={<QrCode className="size-6" />}>
       {busy ? <div role="status" className="flex min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><LoaderCircle className="size-5 animate-spin text-[var(--app-accent)]" />{access.createCode}</div> : invitation && secondsLeft > 0 ? <div data-pairing-content className="flex flex-col items-center gap-4">
         <div className="rounded-2xl border border-[var(--app-line)] bg-white p-3"><QRCodeSVG value={invitation.pairUrl} size={160} level="M" /></div>
@@ -399,24 +400,25 @@ function parseBrowserDeviceName(name: string) {
   return match ? { browser: match[1], platform: match[2] } : { browser: '', platform: name }
 }
 
-function AccessPageSkeleton() {
+function AccessPageSkeleton({ expanded }: { expanded: boolean }) {
   return <div aria-busy="true" className="grid gap-6">
-    <Card className="min-w-0 p-5 sm:p-6">
-      <div className="flex items-center gap-3 border-b border-[var(--app-line)] pb-5">
+    <Card className="min-w-0 p-2">
+      <div className="flex min-h-16 items-center gap-3 px-4 py-3">
         <Skeleton className="size-10 shrink-0 rounded-xl" />
-        <div className="grid flex-1 gap-2"><Skeleton className="h-4 w-40" /><Skeleton className="h-3 w-28" /></div>
-        <Skeleton className="h-7 w-12 rounded-full" />
+        <Skeleton className="h-4 w-40 max-w-[45%]" />
+        <Skeleton className="ms-auto h-7 w-12 shrink-0 rounded-full" />
+        <Skeleton className="size-4 shrink-0" />
       </div>
-      <div className="mt-5 grid gap-5">
+      {expanded && <div className="grid gap-4 px-4 pb-4 pt-2">
         <Skeleton className="h-[72px] rounded-2xl" />
-        <div className="grid gap-5 xl:grid-cols-2"><div className="grid gap-3"><Skeleton className="h-4 w-36" /><Skeleton className="h-14 rounded-xl" /><Skeleton className="h-3 w-4/5" /></div><div className="grid content-start gap-3 border-t border-[var(--app-line)] pt-4 xl:border-t-0 xl:pt-0"><Skeleton className="h-14 rounded-xl" /><Skeleton className="h-3 w-3/4" /></div></div>
-        <Skeleton className="h-12 rounded-xl" />
+        <div className="grid gap-3 xl:grid-cols-3"><Skeleton className="h-14 rounded-xl" /><Skeleton className="h-14 rounded-xl" /><Skeleton className="h-14 rounded-xl" /></div>
+        <Skeleton className="h-20 rounded-xl" />
         <div className="flex justify-end border-t border-[var(--app-line)] pt-4"><Skeleton className="h-11 w-40 rounded-xl" /></div>
-      </div>
+      </div>}
     </Card>
     <section className="grid gap-4" aria-hidden="true">
       <div className="flex items-center justify-between"><div className="grid gap-2"><Skeleton className="h-3 w-24" /><Skeleton className="h-6 w-44" /></div><Skeleton className="h-10 w-32 rounded-xl" /></div>
-      <Card className="grid gap-4 p-4 sm:p-5"><Skeleton className="h-10 w-full rounded-lg" /><Skeleton className="h-14 w-full rounded-xl" /><Skeleton className="h-14 w-full rounded-xl" /></Card>
+      <Card className="grid min-h-44 place-items-center p-4 sm:p-5"><div className="grid justify-items-center gap-3"><Skeleton className="size-11 rounded-2xl" /><Skeleton className="h-3 w-48 max-w-full" /><Skeleton className="h-3 w-32 max-w-full" /></div></Card>
     </section>
   </div>
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Check, CheckCircle2, ChevronRight, CircleAlert, Cpu, Download, Globe, Globe2, GlobeX, KeyRound, Languages, Link2, LoaderCircle, Network, Palette, Pencil, Plus, QrCode, Radar, RefreshCw, Search, ServerCog, Settings2, SunMoon, Trash2, UserRound, Wifi } from 'lucide-react'
 import { Link, useLocation, useParams } from 'react-router-dom'
@@ -10,21 +10,20 @@ import type { AppLocale } from '@/i18n/locales'
 import { type getMessages } from '@/i18n/messages'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { SettingsIcon } from '@/components/ui/settings-icon'
 import { FloatingLabelInput } from '@/components/ui/floating-label-input'
 import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { toast } from 'sonner'
 import { PageHeading } from '@/components/ui/page-layout'
 import { missingProviderKey } from '@/lib/provider-key'
+import { matchesSettingsSearch } from '@/lib/settings-search'
+import { useStickyState } from '@/hooks/use-sticky-state'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Drawer } from 'vaul'
-import { ModelLendingSettings } from '@/components/model-lending-settings'
-import { LocationDiscoverySettingsCard } from '@/components/location-discovery-settings'
-import { NodeLocationSettingsCard } from '@/components/node-location-settings'
-import { CityTableSettingsCard } from '@/components/city-table-settings'
-import { PoolHostingSettingsCard } from '@/components/pool-hosting-settings'
-import { ContainerSettingsCard } from '@/components/container-settings'
-import { PoolLimitsSettingsCard } from '@/components/pool-limits-settings'
+import { NodeSettingsPanel } from '@/components/node-settings-panel'
+import { NodeSettingsSearchInput } from '@/components/node-settings-search-input'
 import { AccessPage } from '@/pages/AccessPage'
 import { ResponsiveSelector } from '@/components/ui/responsive-selector'
 import { AnimatedStepper, type AnimatedStepperStep } from '@/components/ui/animated-stepper'
@@ -56,7 +55,7 @@ function providerServiceIcon(providerId: string): string | undefined {
   }
 }
 
-export function SettingsPage({ locale, setLocale, messages, direction, category: categoryOverride }: { locale: AppLocale; setLocale: (locale: AppLocale) => void; messages: Messages; direction: 'ltr' | 'rtl'; category?: string }) {
+export const SettingsPage = memo(function SettingsPage({ locale, setLocale, messages, direction, category: categoryOverride }: { locale: AppLocale; setLocale: (locale: AppLocale) => void; messages: Messages; direction: 'ltr' | 'rtl'; category?: string }) {
   const reduceMotion = useReducedMotion()
   const labels = messages.modelSettings
   const location = useLocation()
@@ -65,10 +64,12 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
   const normalizedCategory = category === 'language' || category === 'appearance' ? 'general' : category
   const activeCategory = normalizedCategory && ['general', 'node', 'access', 'models'].includes(normalizedCategory) ? normalizedCategory as SettingsCategory : undefined
   const scrollRef = useRef<HTMLDivElement>(null)
-  const providerToolbarRef = useRef<HTMLDivElement>(null)
-  const [providerToolbarStuck, setProviderToolbarStuck] = useState(false)
+  const { sentinelRef: providerToolbarSentinelRef, stuck: providerToolbarStuck } = useStickyState()
   const [providers, setProviders] = useState<{ id: string; name: string; about: string; defaultUrl: string; needsKey: string | number; fetchesModels: boolean }[]>([])
   const [profiles, setProfiles] = useState<ModelProfile[]>([])
+  const [profileSearch, setProfileSearch] = useState('')
+  const [profileSearchUsed, setProfileSearchUsed] = useState(false)
+  const [profilesLoaded, setProfilesLoaded] = useState(false)
   const [profileConnectivity, setProfileConnectivity] = useState<Record<string, { status: ProfileConnectivityStatus; modelCount?: number }>>({})
   const profileConnectivitySequence = useRef(0)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -96,7 +97,12 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
   const pullCancel = useRef<(() => void) | null>(null)
   const currentProvider = providers.find((item) => item.id === provider)
   const currentProviderIcon = providerServiceIcon(provider)
-  const displayedProfiles = import.meta.env.DEV ? [...profiles, ...devPreviewProfiles] : profiles
+  const displayedProfiles = useMemo(() => import.meta.env.DEV ? [...profiles, ...devPreviewProfiles] : profiles, [profiles])
+  const deferredProfileSearch = useDeferredValue(profileSearch)
+  const filteredProfiles = useMemo(() => displayedProfiles.filter((profile) => matchesSettingsSearch(deferredProfileSearch, [
+    profile.name, profile.previewProviderName ?? providers.find((item) => item.id === profile.provider)?.name ?? profile.provider,
+    profile.provider, profile.model, profile.baseUrl,
+  ])), [deferredProfileSearch, displayedProfiles, providers])
   const editProvider = providers.find((item) => item.id === provider)
   const selectedProviderName = editProvider?.name ?? ''
   const visibleModels = models.filter((item) => `${item.label} ${item.name}`.toLocaleLowerCase(locale).includes(modelSearch.trim().toLocaleLowerCase(locale)))
@@ -124,29 +130,7 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
   }
 
   useEffect(() => {
-    const toolbar = providerToolbarRef.current
-    if (!toolbar || activeCategory !== 'models') {
-      setProviderToolbarStuck(false)
-      return
-    }
-    const appScroller = document.querySelector<HTMLElement>('.app-shell--advanced .app-main')
-    const updateStickyState = () => {
-      if (!appScroller) return setProviderToolbarStuck(false)
-      const scroller = appScroller
-      const toolbarTop = toolbar.getBoundingClientRect().top
-      const scrollerTop = scroller.getBoundingClientRect().top
-      setProviderToolbarStuck(toolbarTop <= scrollerTop + 1 && scroller.scrollTop > 0)
-    }
-    updateStickyState()
-    appScroller?.addEventListener('scroll', updateStickyState, { passive: true })
-    window.addEventListener('resize', updateStickyState, { passive: true })
-    return () => {
-      appScroller?.removeEventListener('scroll', updateStickyState)
-      window.removeEventListener('resize', updateStickyState)
-    }
-  }, [activeCategory])
-
-  useEffect(() => {
+    if (activeCategory !== 'models') return
     let active = true
     Promise.all([
       getNodeApi().call<{ providers?: typeof providers }>('listProviders'),
@@ -164,16 +148,13 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
       setSavedService({ provider: config.provider ?? '', baseUrl: config.baseUrl ?? '' })
       setProfiles(profileResult.profiles ?? [])
     }).catch(() => { /* The local daemon may not be running yet. */ })
+      .finally(() => { if (active) setProfilesLoaded(true) })
     return () => { active = false }
-  }, [])
+  }, [activeCategory])
 
   useEffect(() => {
     const sequence = ++profileConnectivitySequence.current
-    if (activeCategory !== 'models' || !profiles.length) {
-      setProfileConnectivity({})
-      return
-    }
-    setProfileConnectivity(Object.fromEntries(profiles.map((profile) => [profile.id, { status: 'checking' as const }])))
+    if (activeCategory !== 'models' || !profiles.length) return
     void Promise.all(profiles.map(async (profile) => {
       try {
         const result = await getNodeApi().call<{ models?: string[] }>('listModels', {
@@ -377,7 +358,7 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
     setPulling(false)
     setPullStatus(labels.cancelled)
   }
-  const profileForm = <div className="flex min-h-0 flex-1 flex-col">
+  const profileForm = profileOpen ? <div className="flex min-h-0 flex-1 flex-col">
     <AnimatedStepper steps={profileSteps} currentIndex={Math.min(profileStep, finalProfileStep)} direction={direction} navigationDirection={profileNavigationDirection} className="min-h-0 flex-1 px-5 sm:px-8 lg:px-10">
       <div className="h-full overflow-y-auto py-5">
         {currentStep === 'profile' && <div className="mx-auto grid min-h-full w-full max-w-6xl content-center gap-5 px-2 md:grid-cols-[minmax(0,1.05fr)_minmax(19rem,0.95fr)] md:items-stretch md:gap-7 lg:gap-10">
@@ -403,7 +384,7 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
             <ResponsiveSelector
               label={labels.provider}
               direction={direction}
-              trigger={({ open, setOpen }) => <FloatingLabelInput label={labels.provider} value={selectedProviderName || labels.choose} readOnly role="button" disabled={providers.length === 0} onClick={() => setOpen((current) => !current)} aria-haspopup="dialog" aria-expanded={open} icon={<ServerCog className="size-[18px]" />} className="cursor-pointer" />}
+              trigger={({ open, setOpen }) => <FloatingLabelInput label={labels.provider} value={selectedProviderName || labels.choose} readOnly role="button" disabled={providers.length === 0} onClick={() => setOpen((current) => !current)} aria-haspopup="dialog" aria-expanded={open} icon={<span className="grid size-8 shrink-0 place-items-center rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]">{providerServiceIcon(provider) ? <img src={providerServiceIcon(provider)} alt="" className="size-5 dark:invert" /> : <ServerCog aria-hidden="true" className="size-4 text-[var(--app-accent)]" />}</span>} className="cursor-pointer" />}
             >
               {({ setOpen }) => <div className="grid gap-1">{providers.map((item) => { const icon = providerServiceIcon(item.id); const about = labels.providerDescriptions[item.id as keyof typeof labels.providerDescriptions] ?? item.about; return <button type="button" key={item.id} aria-pressed={provider === item.id} onClick={() => { setProvider(item.id); setApiKey(''); setHasApiKey(false); setBaseUrl(item.defaultUrl); setModel(''); setModelSearch(''); setModels([]); setOpen(false) }} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-start transition-colors hover:bg-[var(--app-wash)] ${provider === item.id ? 'bg-[var(--app-wash)] font-semibold' : ''}`}><span className={`grid size-10 shrink-0 place-items-center rounded-xl ${provider === item.id ? 'bg-[var(--app-accent)]/[0.07] text-[var(--app-accent)]' : 'text-[var(--app-muted)]'}`}>{icon ? <img aria-hidden="true" src={icon} className="size-6 dark:invert" /> : <Network aria-hidden="true" className="size-6" />}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm">{item.name}</span>{about && <span className="mt-1 block line-clamp-2 text-xs font-normal leading-relaxed text-muted-foreground">{about}</span>}</span>{provider === item.id ? <Check className="size-4 shrink-0 text-[var(--app-accent)]" /> : null}</button> })}</div>}
             </ResponsiveSelector>
@@ -454,12 +435,12 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
             <ResponsiveSelector
               label={labels.model}
               direction={direction}
-              trigger={({ open, setOpen }) => <FloatingLabelInput label={labels.model} icon={<Cpu className="size-[18px]" />} value={selectedModel?.label || selectedModel?.name || model || labels.choose} readOnly role="button" disabled={loadingModels || models.length === 0} loading={loadingModels} success={modelLoadState === 'connected' && Boolean(model)} onClick={() => setOpen((current) => !current)} aria-haspopup="dialog" aria-expanded={open} className="cursor-pointer" />}
+              trigger={({ open, setOpen }) => <FloatingLabelInput label={labels.model} icon={<SettingsIcon icon={Cpu} compact />} value={selectedModel?.label || selectedModel?.name || model || labels.choose} readOnly role="button" disabled={loadingModels || models.length === 0} loading={loadingModels} success={modelLoadState === 'connected' && Boolean(model)} onClick={() => setOpen((current) => !current)} aria-haspopup="dialog" aria-expanded={open} className="cursor-pointer" />}
             >
               {({ setOpen }) => <div className="grid gap-2">
                 {models.length > 5 && <div className="relative"><Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input aria-label={labels.searchModels} placeholder={labels.searchModels} dir="auto" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} className="ps-9" /></div>}
                 <div className="grid max-h-64 gap-1 overflow-y-auto">
-                  {visibleModels.map((item) => <button type="button" key={item.name} aria-pressed={model === item.name} onClick={() => { setModel(item.name); setModelSearch(''); setOpen(false) }} className={`flex w-full items-center justify-between gap-4 rounded-xl px-3 py-3 text-start text-sm transition-colors hover:bg-[var(--app-wash)] ${model === item.name ? 'bg-[var(--app-wash)] font-semibold' : ''}`}><span className="min-w-0 truncate">{item.label || item.name}</span>{model === item.name ? <Check className="size-4 shrink-0 text-[var(--app-accent)]" /> : null}</button>)}
+                  {visibleModels.map((item) => <button type="button" key={item.name} aria-pressed={model === item.name} onClick={() => { setModel(item.name); setModelSearch(''); setOpen(false) }} className={`flex w-full items-center justify-between gap-4 rounded-xl px-3 py-3 text-start text-sm transition-colors hover:bg-[var(--app-wash)] ${model === item.name ? 'bg-[var(--app-wash)] font-semibold' : ''}`}><SettingsIcon icon={Cpu} compact /><bdi className="min-w-0 flex-1 truncate">{item.label || item.name}</bdi>{model === item.name ? <Check className="size-4 shrink-0 text-[var(--app-accent)]" /> : null}</button>)}
                   {!models.length && <p className="px-3 py-5 text-center text-sm text-muted-foreground">{loadingModels ? labels.loadingModels : labels.modelManagementEmpty}</p>}
                   {models.length > 0 && !visibleModels.length && <p className="px-3 py-5 text-center text-sm text-muted-foreground">{labels.noModelMatches}</p>}
                 </div>
@@ -493,7 +474,7 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
           <Button type="button" disabled={!profileName.trim() || !provider || !model || keyMissing} onClick={() => void saveProfile(true)}>{labels.saveAndActivate}</Button>
         </>}
     </div>
-  </div>
+  </div> : null
 
   const categoryMeta: Record<SettingsCategory, { title: string; description: string; icon: typeof Globe2 }> = {
     general: { title: messages.general, description: messages.generalSettingsHint, icon: Settings2 },
@@ -510,7 +491,7 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
       {!activeCategory ? <nav aria-label={messages.settings} className="settings-category-grid">
         {categories.map((item) => { const Icon = categoryMeta[item].icon; return <Link key={item} to={`/settings/${item}`} className="settings-category-card"><span className="settings-category-card__icon"><Icon className="size-5" /></span><span className="settings-category-card__copy"><span className="settings-category-card__title">{categoryMeta[item].title}</span><span className="settings-category-card__description">{categoryMeta[item].description}</span></span><ChevronRight className="settings-category-card__arrow" /></Link> })}
       </nav> : <div className="settings-category-content">
-      {activeCategory === 'node' && <div className="grid min-w-0 gap-4"><Card className="settings-card"><CardHeader className="settings-card__header"><div className="settings-card__icon"><Globe2 className="size-5" /></div><div><div className="settings-card__eyebrow">{messages.node}</div><CardTitle>{messages.localNodeSettings}</CardTitle></div></CardHeader><CardContent><div className="settings-row"><div className="settings-row__icon"><ServerCog className="size-4" /></div><div className="min-w-0 flex-1"><div className="text-sm font-medium">{messages.localDaemon}</div><div className="mt-1 text-sm text-muted-foreground">{messages.localDaemonSettingsHint}</div></div><span className="settings-status">{messages.managedByDaemon}</span></div></CardContent></Card><PoolHostingSettingsCard messages={messages} /><ContainerSettingsCard messages={messages} /><NodeLocationSettingsCard messages={messages} /><CityTableSettingsCard messages={messages} locale={locale} /><LocationDiscoverySettingsCard messages={messages} /><PoolLimitsSettingsCard messages={messages} /><ModelLendingSettings messages={messages} /></div>}
+      {activeCategory === 'node' && <NodeSettingsPanel messages={messages} locale={locale} />}
       {activeCategory === 'access' && isDesktopApp() && <AccessPage messages={messages} showHeading={false} />}
       {activeCategory === 'general' && <Card className="access-settings-card min-w-0 p-5 sm:p-6"><CardContent className="space-y-0 p-0">
         <div className="settings-row flex-wrap py-3"><div className="flex min-w-0 flex-1 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)] text-[var(--app-muted)]"><Languages className="size-[18px]" /></span><div className="min-w-0"><div className="text-sm font-medium">{messages.languageSettings}</div><p className="mt-1 text-sm text-muted-foreground">{messages.languageSettingsHint}</p></div></div><div className="w-full ps-[52px] sm:w-auto sm:ps-0 sm:[&>*]:min-w-64"><LanguagePicker value={locale} label={messages.language} onChange={setLocale} /></div></div>
@@ -518,17 +499,27 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
         <div className="settings-row settings-row--divider flex-wrap"><div className="flex min-w-0 flex-1 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)] text-[var(--app-muted)]"><Palette className="size-[18px]" /></span><div className="min-w-0"><div className="text-sm font-medium">{messages.accent}</div><p className="mt-1 text-sm text-muted-foreground">{messages.accentSettingsHint}</p></div></div><div className="w-full ps-[52px] sm:w-auto sm:ps-0 sm:[&>*]:min-w-64"><ThemeStylePicker direction={direction} labels={{ label: messages.accent, neutral: messages.accentNeutral, blue: messages.accentBlue, pink: messages.accentPink }} /></div></div>
       </CardContent></Card>}
       {activeCategory === 'models' && <div className="settings-card--wide min-w-0 space-y-4">
-        <div ref={providerToolbarRef} className={`settings-provider-toolbar${providerToolbarStuck ? ' is-stuck' : ''}`}><Button type="button" variant="ghost" onClick={() => beginProfileEdit()} className={`devices-add-button${providerToolbarStuck ? ' is-stuck' : ''}`}><span className="devices-add-button__icon"><Plus className="size-4" /></span>{labels.addProfile}</Button><Badge aria-label={`${displayedProfiles.length} ${labels.title}`} className={`settings-provider-count${providerToolbarStuck ? ' is-stuck' : ''}`}><Cpu aria-hidden="true" className="size-5 shrink-0 text-[var(--app-muted)]" /><span className="font-semibold tabular-nums leading-none">{new Intl.NumberFormat(locale).format(displayedProfiles.length)}</span></Badge></div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {displayedProfiles.map((profile) => { const isPreview = profile.id.startsWith('dev-preview-'); const connectivityStatus = profileConnectivity[profile.id]?.status ?? profile.previewStatus ?? 'checking'; const icon = providerServiceIcon(profile.provider); return <Card key={profile.id} className={`relative min-w-0 overflow-hidden rounded-[1.5rem] transition-colors ${profile.active ? 'border-[var(--app-accent)]/15 bg-[var(--app-accent)]/[0.025]' : 'border-[var(--app-line)]/35 bg-[var(--app-wash)]/35 hover:border-[var(--app-line)]/55'}`}>
+        <NodeSettingsSearchInput mode="models" value={profileSearch} onChange={(value) => { setProfileSearch(value); if (value) setProfileSearchUsed(true) }} onClear={() => setProfileSearch('')} messages={messages} />
+        <span ref={providerToolbarSentinelRef} aria-hidden="true" className="pointer-events-none block h-px -mb-px" />
+        <div className={`settings-provider-toolbar !mt-0${providerToolbarStuck ? ' is-stuck' : ''}`}>
+          <Button type="button" variant="ghost" disabled={!profilesLoaded} onClick={() => beginProfileEdit()} className={`devices-add-button${providerToolbarStuck ? ' is-stuck' : ''}`}><span className="devices-add-button__icon"><Plus className="size-4" /></span>{labels.addProfile}</Button>
+          {profilesLoaded ? <Badge aria-label={`${filteredProfiles.length} ${labels.title}`} className={`settings-provider-count${providerToolbarStuck ? ' is-stuck' : ''}`}><Cpu aria-hidden="true" className="size-5 shrink-0 text-[var(--app-muted)]" /><span className="font-semibold tabular-nums leading-none">{new Intl.NumberFormat(locale).format(filteredProfiles.length)}</span></Badge> : <Skeleton aria-label={messages.connecting} className="h-9 w-16 rounded-full" />}
+        </div>
+        <div className="relative min-w-0">
+        <AnimatePresence initial={false} mode="popLayout">
+        {!profilesLoaded ? <motion.div key="loading" role="status" aria-label={messages.connecting} aria-busy="true" exit={{ opacity: 0 }} transition={{ duration: reduceMotion ? 0 : 0.16 }} className="grid w-full gap-4 sm:grid-cols-2 xl:grid-cols-3">{[0, 1, 2].map((index) => <Card key={index} aria-hidden="true" className={`min-w-0 rounded-[1.5rem] border-[var(--app-line)]/35 bg-[var(--app-wash)]/35 p-5 sm:p-6 ${index === 1 ? 'hidden sm:block' : index === 2 ? 'hidden xl:block' : ''}`}><div className="flex min-h-[17rem] flex-col"><Skeleton className="ms-auto size-9 rounded-full" /><div className="mt-auto grid gap-2"><Skeleton className="h-6 w-40 max-w-[75%]" /><Skeleton className="h-3 w-20" /></div><div className="mt-5 grid gap-2 border-t border-[var(--app-line)] pt-4"><Skeleton className="h-4 w-32 max-w-[65%]" /><Skeleton className="h-4 w-48 max-w-[80%]" /></div></div></Card>)}</motion.div> : <div key="profiles" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <AnimatePresence initial={false} mode="popLayout">{filteredProfiles.map((profile) => { const isPreview = profile.id.startsWith('dev-preview-'); const connectivityStatus = profileConnectivity[profile.id]?.status ?? profile.previewStatus ?? 'checking'; const icon = providerServiceIcon(profile.provider); return <motion.div key={profile.id} layout={profileSearchUsed ? 'position' : false} initial={{ opacity: 0, y: reduceMotion ? 0 : 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -8 }} transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }} className="min-w-0"><Card className={`relative min-w-0 overflow-hidden rounded-[1.5rem] transition-colors ${profile.active ? 'border-[var(--app-accent)]/15 bg-[var(--app-accent)]/[0.025]' : 'border-[var(--app-line)]/35 bg-[var(--app-wash)]/35 hover:border-[var(--app-line)]/55'}`}>
             <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 grid place-items-center"><span className={`grid size-40 place-items-center opacity-[0.075] sm:size-44 ${icon ? 'bg-[var(--app-accent)]' : 'text-[var(--app-accent)]'}`} style={icon ? { maskImage: `url("${icon}")`, WebkitMaskImage: `url("${icon}")`, maskRepeat: 'no-repeat', WebkitMaskRepeat: 'no-repeat', maskPosition: 'center', WebkitMaskPosition: 'center', maskSize: 'contain', WebkitMaskSize: 'contain' } : undefined}>{!icon && <Network className="size-32" strokeWidth={1.15} />}</span></div>
             <CardContent className="relative z-[1] flex min-h-[17rem] flex-col justify-between gap-5 p-5 sm:p-6">
             <div aria-hidden="true" className={`pointer-events-none absolute -end-12 -top-16 size-48 rounded-full blur-3xl ${profile.active ? 'bg-[var(--app-accent)]/10' : 'bg-[var(--app-line)]/25'}`} />
             <div className="relative flex items-start justify-end gap-4">{!isPreview && <Button type="button" variant="ghost" size="icon-sm" className="size-9 rounded-full border border-[var(--app-line)] bg-[var(--app-card)]/80" onClick={() => beginProfileEdit(profile)} aria-label={`${labels.editProfile} ${profile.name}`} title={labels.editProfile}><Pencil className="size-4" /></Button>}</div>
             <div className="relative mt-auto min-w-0"><h3 className="truncate text-xl font-semibold tracking-tight">{profile.name}</h3><p className="mt-1 truncate text-xs font-medium text-muted-foreground">{profile.previewProviderName ?? providers.find((item) => item.id === profile.provider)?.name ?? profile.provider}</p></div>
             <div className="relative mt-1 flex min-w-0 flex-wrap items-center gap-3 pt-4"><div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px" style={{ background: 'linear-gradient(90deg, color-mix(in srgb, var(--app-line) 45%, transparent) 0%, color-mix(in srgb, var(--app-line) 45%, transparent) calc(50% - 5.5rem), transparent calc(50% - 5.5rem), transparent calc(50% + 5.5rem), color-mix(in srgb, var(--app-line) 45%, transparent) calc(50% + 5.5rem), color-mix(in srgb, var(--app-line) 45%, transparent) 100%)' }} /><div className="min-w-0 flex-1"><p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium"><Cpu aria-hidden="true" className="size-3.5 shrink-0 text-[var(--app-muted)]" /><span className="truncate">{profile.model || labels.noModel}</span></p><div dir={direction} className="mt-2 flex min-w-0 items-center gap-1.5"><Globe aria-hidden="true" className="size-3.5 shrink-0 text-[var(--app-muted)]" /><p dir="ltr" className={`min-w-0 flex-1 truncate text-xs text-muted-foreground ${direction === 'rtl' ? 'text-right' : 'text-left'}`}>{profile.baseUrl}</p><span role="status" aria-live="polite" className={`settings-provider-status inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${connectivityStatus === 'connected' ? 'border-emerald-500/25 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300' : connectivityStatus === 'error' ? 'border-destructive/25 bg-destructive/[0.06] text-destructive' : 'border-[var(--app-line)] bg-[var(--app-wash)] text-muted-foreground'}`}>{connectivityStatus === 'connected' ? <Wifi className="size-3.5" /> : connectivityStatus === 'error' ? <GlobeX className="size-3.5" /> : <Radar className="size-3.5 animate-pulse" />}{connectivityStatus === 'connected' ? labels.reachable : connectivityStatus === 'error' ? labels.unreachable : labels.checking}</span></div></div>{!isPreview && <div className="flex shrink-0 items-center gap-1.5">{!profile.active && <Button type="button" size="sm" disabled={!profile.model} onClick={() => void activateProfile(profile)}>{labels.setActive}</Button>}{!profile.active && <Button type="button" variant="ghost" size="icon" aria-label={`${messages.remove} ${profile.name}`} title={messages.remove} onClick={() => void deleteProfile(profile)}><Trash2 className="size-4" /></Button>}</div>}</div>
-          </CardContent></Card> })}
-          {profiles.length === 0 && !import.meta.env.DEV && <button type="button" onClick={() => beginProfileEdit()} className="grid min-h-64 place-items-center rounded-[1.5rem] border border-dashed border-[var(--app-line)] p-6 text-center text-sm text-muted-foreground transition-colors hover:border-[var(--app-accent)]"><span><span className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl border border-[var(--app-line)] bg-[var(--app-wash)]"><Plus className="size-5" /></span>{labels.addProfile}</span></button>}
+          </CardContent></Card></motion.div> })}</AnimatePresence>
+          {displayedProfiles.length === 0 && !profileSearch && !import.meta.env.DEV && <button type="button" onClick={() => beginProfileEdit()} className="grid min-h-64 place-items-center rounded-[1.5rem] border border-dashed border-[var(--app-line)] p-6 text-center text-sm text-muted-foreground transition-colors hover:border-[var(--app-accent)]"><span><span className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl border border-[var(--app-line)] bg-[var(--app-wash)]"><Plus className="size-5" /></span>{labels.addProfile}</span></button>}
+          {filteredProfiles.length === 0 && displayedProfiles.length > 0 && <motion.div initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} className="col-span-full grid min-h-48 place-items-center rounded-[1.5rem] border border-dashed border-[var(--app-line)] p-6 text-center text-sm text-muted-foreground"><div><Search className="mx-auto mb-3 size-6 text-[var(--app-muted)]" />{labels.noMatchingProfiles}</div></motion.div>}
+        </div>}
+        </AnimatePresence>
         </div>
       </div>}
       </div>}
@@ -540,4 +531,4 @@ export function SettingsPage({ locale, setLocale, messages, direction, category:
       <div className="mt-5 grid gap-2 sm:grid-cols-2"><Button type="button" variant="outline" disabled={removingModel} onClick={() => setRemoveModelTarget('')}>{messages.cancel}</Button><Button type="button" variant="destructive" disabled={removingModel || !removeModelTarget} onClick={() => void removeOllamaModel()}>{removingModel ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}{labels.removeModel}</Button></div>
     </ResponsiveActionDialog>
   </div>
-}
+})

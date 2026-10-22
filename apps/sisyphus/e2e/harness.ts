@@ -186,8 +186,30 @@ export async function launchOwnNode({ docker = 'ready:27.3.1' }: { docker?: stri
 
 /** Opens one of the pages the sidebar lists, showing the sidebar first if it is put away. */
 export async function open(page: Page, name: string): Promise<void> {
-  const link = page.getByRole('complementary').getByRole('link', { name, exact: true })
-  if (!await link.isVisible().catch(() => false)) await page.getByRole('button', { name: 'Open advanced settings' }).click()
+  if (name === 'Run') {
+    await open(page, 'Operations')
+    await page.locator('.devices-add-button').click()
+    return
+  }
+  if (name === 'Pool') {
+    await open(page, 'Operations')
+    const pool = page.getByRole('button', { name: /^Pool\b/ })
+    if (await pool.getAttribute('aria-expanded') !== 'true') await pool.click()
+    return
+  }
+  const paths: Record<string, string> = { 'Node overview': '/node', Operations: '/operations', Settings: '/settings', Workspace: '/' }
+  const href = paths[name]
+  if (!href) throw new Error(`unknown advanced page: ${name}`)
+  if (await page.locator('.advanced-sidebar').count() === 0) {
+    await page.evaluate((path) => { window.location.hash = `#${path}` }, href)
+    await page.waitForFunction((path) => location.hash === `#${path}` || location.pathname === path, href)
+    return
+  }
+  const link = page.locator(`.advanced-sidebar a[href$="${href}"]`)
+  if (!await link.isVisible().catch(() => false)) {
+    const toggle = page.locator('.advanced-sidebar__toggle, .advanced-sidebar__brand--collapsed-trigger').first()
+    if (await toggle.isVisible().catch(() => false)) await toggle.click()
+  }
   await link.click()
 }
 
@@ -387,17 +409,22 @@ export function hasWebgl(page: Page): Promise<boolean> {
 }
 
 /** Makes the window the size it opens at, and returns how wide its page then is. */
-export async function wide(app: ElectronApplication, page: Page): Promise<number> {
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 800))
-  await page.waitForFunction(() => window.innerWidth > 900, null, { timeout: 5000 }).catch(() => {})
+export async function wide(app: ElectronApplication, page: Page, { native = false }: { native?: boolean } = {}): Promise<number> {
+  if (native) {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 800))
+    await page.waitForFunction(() => window.innerWidth > 900, null, { timeout: 10000 })
+  } else {
+    // Emulate the responsive viewport directly. The native window is still
+    // resized by dedicated live-resize tests; most page tests only need the
+    // desktop breakpoint and should not depend on the host window manager.
+    await page.setViewportSize({ width: 1180, height: 800 })
+    await page.waitForFunction(() => window.innerWidth === 1180)
+  }
   return page.evaluate(() => window.innerWidth)
 }
 
 /** Makes the window as narrow as it goes, which is narrow enough for its one-view layout. */
-export async function narrow(app: ElectronApplication): Promise<void> {
-  await app.evaluate(({ BrowserWindow }) => {
-    const [window] = BrowserWindow.getAllWindows()
-    const [width] = window.getMinimumSize()
-    window.setSize(width, 800)
-  })
+export async function narrow(app: ElectronApplication, page: Page): Promise<void> {
+  await page.setViewportSize({ width: 820, height: 760 })
+  await page.waitForFunction(() => window.innerWidth <= 900)
 }

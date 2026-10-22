@@ -1,10 +1,14 @@
+import { SettingsSaveAction } from '@/components/ui/settings-save-dock'
+import { SettingsSectionSkeleton } from '@/components/ui/settings-section-skeleton'
+import { SettingsIcon } from '@/components/ui/settings-icon'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Boxes, CircleAlert, Gauge, HardDrive, ListChecks, LoaderCircle, Save, Timer, Upload } from 'lucide-react'
 import type { PoolLimits, PoolLimitsState } from '../../../preload'
 import { getNodeApi } from '@/lib/node-api'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { NodeSettingsSection } from '@/components/node-settings-section'
+import { FloatingLabelInput } from '@/components/ui/floating-label-input'
+import { SettingsSelector } from '@/components/ui/settings-selector'
 import { byteUnits, bytesForForm, countForForm, daemonErrorMessage, durationForForm, durationUnits, maxPoolLimitCount, noPoolLimits, parseAmount, samePoolLimits, type ByteUnit, type DurationUnit, type ParsedAmount } from '../../../shared/pool-limits.ts'
 import { formatMessage } from '@/i18n/messages'
 import { toast } from 'sonner'
@@ -105,7 +109,13 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
 
   const parsed = parseForm(form)
   const valid = parsed.limits !== undefined
-  const dirty = Boolean(state && (!parsed.limits || !samePoolLimits(parsed.limits, state.saved)))
+  const savedFields = state ? parseForm(formFromLimits(state.saved)).fields : undefined
+  const changeCount = savedFields ? (Object.keys(parsed.fields) as Field[]).filter(key => {
+    const draft = parsed.fields[key]
+    const saved = savedFields[key]
+    return !draft.ok || !saved.ok || draft.value !== saved.value
+  }).length : 0
+  const dirty = changeCount > 0
   const restartNeeded = state?.restartNeeded === true
   const editable = !loading && state?.configurable === true
 
@@ -133,39 +143,30 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
   const row = (field: Field, Icon: typeof Boxes, title: string, description: string, unit?: { value: string; options: readonly string[]; onChange: (value: string) => void }) => {
     const inputId = `${idPrefix}-${field}`
     const error = fieldError(field)
-    const errorId = `${inputId}-error`
     const value = form[field]
     const runningDiffers = state && describeLimit(labels, field, state.saved) !== describeLimit(labels, field, state.running)
     return <div key={field} className="settings-row settings-row--divider flex-wrap">
       <div className="flex min-w-0 flex-1 items-start gap-3">
-        <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)] text-[var(--app-muted)]"><Icon className="size-[18px]" /></span>
+        <SettingsIcon icon={Icon} />
         <div className="min-w-0">
           <label htmlFor={inputId} className="text-sm font-medium">{title}</label>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">{description}</p>
           {runningDiffers && <p className="mt-1 text-xs text-muted-foreground">{formatMessage(labels.inEffect, { value: describeLimit(labels, field, state.running) })}</p>}
-          {error && <p id={errorId} role="alert" className="mt-1 text-xs text-destructive">{error}</p>}
         </div>
       </div>
-      <div className="flex w-full max-w-sm items-center gap-2 sm:w-auto">
-        <Input id={inputId} inputMode={unit ? 'decimal' : 'numeric'} autoComplete="off" spellCheck={false} maxLength={32} value={value} disabled={!editable}
+      <div className="node-limit-controls grid w-full min-w-0 grid-cols-1 items-start gap-4 sm:max-w-md sm:grid-cols-[minmax(0,1fr)_12rem]">
+        <FloatingLabelInput label={title} icon={<SettingsIcon icon={Icon} compact />} containerClassName="min-w-0 flex-1" id={inputId} dir="ltr" inputMode={unit ? 'decimal' : 'numeric'} autoComplete="off" spellCheck={false} maxLength={32} value={value} disabled={!editable}
           onChange={(event) => setForm((current) => ({ ...current, [field]: event.target.value }))}
-          placeholder={labels.noLimit} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined}
-          className="w-full min-w-0 text-start tabular-nums sm:w-36" />
-        {unit && <select value={unit.value} disabled={!editable} onChange={(event) => unit.onChange(event.target.value)} aria-label={formatMessage(labels.unitFor, { field: title })}
-          className="h-9 shrink-0 rounded-lg border border-[var(--app-line)] bg-background px-3 text-sm">
-          {unit.options.map((option) => <option key={option} value={option}>{labels.units[option as keyof Labels['units']]}</option>)}
-        </select>}
+          placeholder={labels.noLimit} errorMessage={error}
+          className="tabular-nums" />
+        {unit && <SettingsSelector value={unit.value} disabled={!editable} onChange={unit.onChange} label={messages.settingsUnit} ariaLabel={formatMessage(labels.unitFor, { field: title })} options={unit.options.map((value) => ({ value, label: labels.units[value as keyof Labels['units']], icon: Icon }))} className="w-full min-w-0" />}
       </div>
     </div>
   }
 
-  return <Card className="settings-card min-w-0">
-    <CardContent className="p-4 sm:p-5">
-      <div className="flex items-start gap-3">
-        <div className="settings-row__icon"><Gauge className="size-4" /></div>
-        <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold">{labels.title}</h3><p className="mt-1 text-sm leading-relaxed text-muted-foreground">{labels.description}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{labels.unitsNote}</p></div>
-      </div>
-      {loading ? <div role="status" className="flex items-center gap-2 py-7 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{messages.connecting}</div> : <>
+  return <NodeSettingsSection title={labels.title} description={labels.description} icon={Gauge}>
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">{labels.unitsNote}</p>
+      {loading ? <SettingsSectionSkeleton label={messages.connecting} rows={5} /> : <>
         {state && !state.configurable && <div role="note" className="mt-4 flex items-start gap-2.5 rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]/45 p-3 text-sm leading-relaxed text-muted-foreground"><CircleAlert className="mt-0.5 size-4 shrink-0" />{labels.operatorManaged}</div>}
         {state?.configurable && !state.coordinator && <div role="note" className="mt-4 flex items-start gap-2.5 rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]/45 p-3 text-sm leading-relaxed text-muted-foreground"><CircleAlert className="mt-0.5 size-4 shrink-0" />{labels.notCoordinator}</div>}
         {row('jobs', Boxes, labels.jobsTitle, labels.jobsDescription)}
@@ -175,9 +176,8 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
         {row('upload', Upload, labels.uploadTitle, labels.uploadDescription, { value: form.uploadUnit, options: Object.keys(byteUnits), onChange: (value) => setForm((current) => ({ ...current, uploadUnit: value as ByteUnit })) })}
         {state?.configurable && <div className="mt-3 flex flex-col-reverse justify-between gap-3 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:items-center">
           <p role="status" className="text-xs leading-relaxed text-muted-foreground">{restartNeeded ? (state.managed ? labels.restartRequired : labels.restartDaemonRequired) : (state.managed ? labels.restartHint : labels.restartDaemonHint)}</p>
-          <div className="flex flex-wrap gap-2">{restartNeeded && state.managed && <RestartNodeButton messages={messages} />}<Button type="button" disabled={!dirty || saving || !valid} onClick={() => void save()} className="gap-2"><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</Button></div>
+          <div className="flex flex-wrap gap-2">{restartNeeded && state.managed && <RestartNodeButton messages={messages} />}<SettingsSaveAction onRevert={() => { if (state) setForm(formFromLimits(state.saved)) }} dirty={dirty} changeCount={changeCount} disabled={!dirty || saving || !valid} onSave={save}><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</SettingsSaveAction></div>
         </div>}
       </>}
-    </CardContent>
-  </Card>
+  </NodeSettingsSection>
 }

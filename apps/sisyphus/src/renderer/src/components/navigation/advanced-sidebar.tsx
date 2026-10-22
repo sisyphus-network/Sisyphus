@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
-import { Boxes, ChevronLeft, Ellipsis, House, MonitorCog, Network, PanelLeftOpen, Play, Server, Settings2 } from 'lucide-react'
+import { Boxes, ChevronLeft, Ellipsis, House, MonitorCog, Network, PanelLeftOpen, Server, Settings2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NodeSnapshot } from '../../../../preload'
 import type { getMessages } from '@/i18n/messages'
@@ -32,7 +32,7 @@ export function AdvancedSidebar({ snapshot, connectedPeers, statusLabel, message
   const isExpanded = isOpen
   const groups: Array<{ label: string; items: NavigationItem[] }> = [
     { label: messages.workspace, items: [{ to: '/', label: messages.workspace, icon: House, end: true }] },
-    { label: messages.node, items: [{ to: '/node', label: messages.nodeOverview, icon: MonitorCog }, { to: '/run', label: messages.run, icon: Play }, { to: '/operations', label: messages.operations, icon: Boxes }] },
+    { label: messages.node, items: [{ to: '/node', label: messages.nodeOverview, icon: MonitorCog }, { to: '/operations', label: messages.operations, icon: Boxes }] },
     { label: messages.preferences, items: [{ to: '/settings', label: messages.settings, icon: Settings2 }] },
   ]
   const toggleOpen = () => {

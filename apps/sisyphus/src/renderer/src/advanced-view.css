@@ -1,6 +1,9 @@
 .app-shell--advanced { min-height: 100dvh; }
 .app-shell--advanced .app-main { position: relative; flex: 1 1 auto; min-height: 0; scrollbar-gutter: stable; }
 .app-mobile-dock { display: none; }
+.settings-save-desktop { position: fixed; z-index: 40; inset-inline: 0; bottom: 24px; display: flex; justify-content: center; pointer-events: none; }
+.settings-save-surface { pointer-events: auto; width: min(320px, 100%); padding: 6px; border: 1px solid var(--app-line); border-radius: 999px; background: color-mix(in srgb, var(--app-card) 82%, transparent); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: 0 8px 28px color-mix(in srgb, var(--app-ink) 12%, transparent); }
+@media (prefers-reduced-transparency: reduce) { .settings-save-surface { background: var(--app-card); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 @media (min-width: 901px) {
   .app-shell--advanced { display: flex; flex-direction: row; width: 100%; height: 100dvh; min-height: 0; overflow: hidden; padding: 0; }
   .app-shell-body--advanced { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; padding: 0; }
@@ -27,7 +30,7 @@
   .app-global-header { position: relative; z-index: 4; flex: 0 0 58px; background: color-mix(in srgb, var(--app-bg) 88%, transparent); backdrop-filter: blur(14px); }
   .app-shell--advanced .app-main { display: flex; flex: 1 1 auto; flex-direction: column; height: 100%; min-height: 0; overflow: auto; padding-bottom: 96px; }
   .app-shell--advanced .route-transition { flex: 1 0 auto; min-height: 100%; }
-  .app-mobile-dock { position: fixed; z-index: 10; inset-inline: 0; bottom: max(8px, env(safe-area-inset-bottom)); display: flex; justify-content: center; box-sizing: border-box; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); pointer-events: none; }
+  .app-mobile-dock { position: fixed; z-index: 40; inset-inline: 0; bottom: max(8px, env(safe-area-inset-bottom)); display: flex; justify-content: center; box-sizing: border-box; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); pointer-events: none; }
   .app-mobile-dock .liquid-dock-wrap { width: min(280px, 100%); margin: 0; pointer-events: auto; }
   .app-mobile-dock .liquid-dock { width: 100%; }
   .app-mobile-dock .liquid-dock__option { flex: 1 1 0; min-width: 0; width: auto; padding-inline: 0; }
@@ -69,6 +72,64 @@
 .settings-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; }
 .settings-row--divider { margin-top: 8px; border-top: 1px solid var(--app-line); padding-top: 20px; }
 .settings-row__icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 1px solid var(--app-line); border-radius: 12px; color: var(--app-muted); }
+
+/* Use the settings pane's width, including a desktop with a narrow pane. */
+.node-settings-panel { container: node-settings / inline-size; }
+.node-settings-panel > .node-search-field { position: sticky; top: 0; z-index: 40; border-radius: 1.25rem; background: transparent; transition: background-color 160ms ease, box-shadow 160ms ease; }
+.node-settings-panel > .node-search-field.is-stuck { background: color-mix(in srgb, var(--app-bg) 82%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); box-shadow: 0 4px 12px color-mix(in srgb, var(--app-ink) 5%, transparent); }
+.node-settings-panel .node-search-field .group\/floating-input { margin-block-start: 0; }
+.node-settings-panel .node-search-field input:focus { border: 0; box-shadow: none; }
+.node-settings-panel .node-settings-group-heading { position: sticky; top: 0; z-index: 20; width: 100%; max-width: none; margin-inline: 0; border: 1px solid transparent; background: transparent; transition: width 200ms ease, margin-inline 200ms ease, border-radius 200ms ease, background-color 200ms ease, border-color 200ms ease, box-shadow 200ms ease; }
+.header-teleport-content[data-header-docked="true"] .node-search-field { width: min(100%, 32rem); margin-inline: auto; margin-block: 0; padding-top: 0; }
+.header-teleport-content[data-header-docked="true"] .node-search-field input { height: 44px; font-size: 14px; background: transparent; }
+.header-teleport-content[data-header-docked="true"] .node-search-field .group\/floating-input { margin: 0; }
+.header-teleport-content[data-header-docked="true"] .node-search-field label { max-inline-size: calc(100% - 4rem); padding-inline: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transform-origin: left center; }
+.header-teleport-content[data-header-docked="true"] .node-search-field [dir="rtl"] label { transform-origin: right center; }
+.header-teleport-content[data-header-docked="true"] .node-search-field > [aria-hidden="true"] { top: 0; height: 44px; }
+.header-teleport-content[data-header-docked="true"] .node-search-field > .z-20 { top: 6px; }
+.node-settings-panel .node-settings-group-heading.is-stuck { border-color: color-mix(in srgb, var(--app-line) 65%, transparent); background: color-mix(in srgb, var(--app-card) 82%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); box-shadow: 0 4px 12px color-mix(in srgb, var(--app-ink) 4%, transparent); }
+.node-settings-panel .node-settings-group-heading.is-stuck { width: calc(100% + 8px); max-width: none; margin-inline: -4px; border-radius: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .node-settings-panel .node-settings-group-heading { transition: none; }
+}
+@supports not (backdrop-filter: blur(16px)) {
+  .node-settings-panel > .node-search-field.is-stuck,
+  .node-settings-panel .node-settings-group-heading.is-stuck { background: var(--app-card); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .node-settings-panel > .node-search-field.is-stuck,
+  .node-settings-panel .node-settings-group-heading.is-stuck { background: var(--app-card); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+.node-settings-panel :is(p, label, dt, dd, [data-slot="badge"]) { overflow-wrap: anywhere; }
+.node-settings-panel [data-slot="collapsible-trigger"] { min-width: 0; }
+.node-settings-panel [data-slot="collapsible-trigger"] .truncate { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.node-settings-panel .group\/floating-input { min-width: 0; max-width: 100%; }
+.node-settings-panel .group\/floating-input label { max-inline-size: calc(100% - 5rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.25; }
+.node-settings-panel :is(input, button, pre, dl) { max-width: 100%; }
+.node-settings-panel dd { min-width: 0; }
+.node-search-field .group\/floating-input > .relative > span:last-child { display: none; }
+
+@container node-settings (max-width: 36rem) {
+  .node-settings-panel .node-limit-controls { grid-template-columns: minmax(0, 1fr); }
+  .node-settings-panel .settings-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+  .node-settings-panel .settings-row > * { min-width: 0; max-width: 100%; }
+  .node-settings-panel .settings-row > .group\/floating-input,
+  .node-settings-panel .settings-row > [class*="max-w-sm"] { width: 100%; max-width: none; }
+  .node-settings-panel .settings-row > button { justify-self: end; }
+  .node-settings-panel .settings-row > .flex { width: 100%; }
+  .node-settings-panel .flex.flex-wrap.gap-2 > button { height: auto; min-height: 36px; white-space: normal; overflow-wrap: anywhere; }
+  .node-settings-panel [data-slot="badge"] { max-width: 100%; white-space: normal; }
+}
+
+@container node-settings (max-width: 22rem) {
+  .node-settings-panel .settings-row .flex.items-start.gap-3 { gap: 8px; }
+  .node-settings-panel [data-slot="collapsible-trigger"] { gap: 8px; padding-inline: 8px; }
+  .node-settings-panel .settings-row > .flex.flex-wrap > .group\/floating-input { flex-basis: 100%; width: 100%; }
+  .node-settings-panel .settings-row > .flex.flex-wrap > .shrink-0 { width: 100%; }
+  .node-settings-panel .group\/floating-input { margin-block-start: 8px; }
+  .node-settings-panel .group\/floating-input label { font-size: 12px; }
+  .node-settings-panel .node-lending-fields { grid-template-columns: minmax(0, 1fr); }
+}
 .settings-status { flex: 0 0 auto; border: 1px solid color-mix(in srgb, #10b981 24%, var(--app-line)); border-radius: 999px; background: color-mix(in srgb, #10b981 7%, var(--app-card)); padding: 6px 10px; color: color-mix(in srgb, #059669 75%, var(--app-ink)); font-size: 11px; white-space: normal; }
 .settings-card--wide { grid-column: 1 / -1; }
 .settings-provider-toolbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 0; padding-block: 8px 14px; background: transparent; }

@@ -1,9 +1,11 @@
+import { SettingsSectionSkeleton } from '@/components/ui/settings-section-skeleton'
+import { SettingsIcon } from '@/components/ui/settings-icon'
 import { useEffect, useState } from 'react'
-import { Download, LoaderCircle, MapPinned, RefreshCw, Trash2 } from 'lucide-react'
+import { Download, LoaderCircle, MapPinned, ShieldCheck, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getNodeApi } from '@/lib/node-api'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { NodeSettingsSection } from '@/components/node-settings-section'
 import { cityEstimateFromNodeInfo, cityTableAttribution, cityTableAttributionUrl, cityTableFromProtocol, cityTableStatus, ownerPinned, placeName, type CityEstimate, type CityTableState } from '@/lib/city-table'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 
@@ -63,23 +65,18 @@ export function CityTableSettingsCard({ messages, locale }: { messages: Messages
   const status = table ? cityTableStatus(table, locale) : null
   const credit = table?.attribution ?? cityTableAttribution
 
-  return <Card className="settings-card min-w-0">
-    <CardContent className="p-4 sm:p-5">
-      <div className="flex items-start gap-3">
-        <div className="settings-row__icon"><MapPinned className="size-4" /></div>
-        <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold">{labels.title}</h3><p className="mt-1 text-sm leading-relaxed text-muted-foreground">{labels.description}</p></div>
-      </div>
-      {loading ? <div role="status" className="flex items-center gap-2 py-7 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{messages.connecting}</div>
+  return <NodeSettingsSection title={labels.title} description={labels.description} icon={MapPinned}>
+            {loading ? <SettingsSectionSkeleton label={messages.connecting} rows={2} controls={false} />
         : unavailable ? <p role="note" className="mt-4 text-sm text-muted-foreground">{labels.unavailable}</p>
         : <>
-          <div className="settings-row settings-row--divider"><div className="min-w-0 flex-1 space-y-2">
+          <div className="settings-row settings-row--divider items-start"><SettingsIcon icon={ShieldCheck} /><div className="min-w-0 flex-1 space-y-2">
             <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">{labels.privacy}</p>
             <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">{labels.accuracy}</p>
             <p className="text-xs leading-relaxed text-muted-foreground">{labels.creditLabel} <a href={cityTableAttributionUrl} dir="ltr" onClick={(event) => { event.preventDefault(); void getNodeApi().openDbIp() }} className="text-[var(--app-accent)] underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--app-accent)]">{credit}</a></p>
           </div></div>
           {status && (estimate
-            ? <div className="settings-row settings-row--divider"><p className="min-w-0 flex-1 text-sm font-medium">{formatMessage(labels.estimate, { place: placeName(estimate) })}</p></div>
-            : <div className="settings-row settings-row--divider"><p className="min-w-0 flex-1 text-sm leading-relaxed text-muted-foreground">{pinned ? labels.pinWins : labels.noEstimate}</p></div>)}
+            ? <div className="settings-row settings-row--divider"><SettingsIcon icon={MapPinned} /><p className="min-w-0 flex-1 text-sm font-medium">{formatMessage(labels.estimate, { place: placeName(estimate) })}</p></div>
+            : <div className="settings-row settings-row--divider"><SettingsIcon icon={MapPinned} /><p className="min-w-0 flex-1 text-sm leading-relaxed text-muted-foreground">{pinned ? labels.pinWins : labels.noEstimate}</p></div>)}
           <div className="mt-3 flex flex-col-reverse justify-between gap-3 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:items-center">
             <p role="status" className="text-xs leading-relaxed text-muted-foreground">{busy === 'download' ? labels.downloading : status ? formatMessage(labels.downloaded, status) : labels.notDownloaded}</p>
             <div className="flex flex-wrap gap-2">
@@ -88,6 +85,5 @@ export function CityTableSettingsCard({ messages, locale }: { messages: Messages
             </div>
           </div>
         </>}
-    </CardContent>
-  </Card>
+  </NodeSettingsSection>
 }

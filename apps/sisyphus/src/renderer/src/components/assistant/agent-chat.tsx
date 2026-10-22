@@ -21,6 +21,8 @@ import ShinyText from '@/components/ui/shiny-text'
 import { getNodeApi } from '@/lib/node-api'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { type getMessages } from '@/i18n/messages'
+import { formatMessage } from '@/i18n/messages'
+import { MAX_CLIENT_FILE_UPLOAD_BYTES, fileUploadLimitLabel } from '../../../../shared/file-upload-limit.ts'
 
 type Messages = ReturnType<typeof getMessages>
 type ChatSummary = { chatId: string; title: string; createdAtMs: string | number }
@@ -188,14 +190,14 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   }
 
   function addAttachments(files: File[]) {
-    const next = files.filter((file) => file.size <= 256 * 1024 * 1024).map((file) => {
+    const next = files.filter((file) => file.size <= MAX_CLIENT_FILE_UPLOAD_BYTES).map((file) => {
       if (file.size > 0 && !file.type) { /* Keep extension-only files; the daemon stores opaque bytes. */ }
       const previewUrl = URL.createObjectURL(file)
       previewUrls.current.add(previewUrl)
       return { id: newId(), file, previewUrl }
     })
-    const tooLarge = files.some((file) => file.size > 256 * 1024 * 1024)
-    if (tooLarge) toast.error(messages.attachmentTooLarge)
+    const tooLarge = files.some((file) => file.size > MAX_CLIENT_FILE_UPLOAD_BYTES)
+    if (tooLarge) toast.error(formatMessage(messages.attachmentTooLarge, { size: fileUploadLimitLabel() }))
     setAttachments((current) => [...current, ...next])
   }
 
