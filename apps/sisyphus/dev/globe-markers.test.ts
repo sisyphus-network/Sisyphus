@@ -8,14 +8,18 @@ const centroids = new Map([
 ])
 
 test('unrelated peer snapshot changes keep the globe marker key stable', () => {
-  const first = locatePeers([
+  // Snapshots carry more than the globe reads; what else changes must not
+  // move a marker.
+  const before = [
     { peerId: 'peer-b', countryCode: 'us', connectionState: 1, knownAddresses: [] },
     { peerId: 'peer-a', countryCode: 'IL', connectionState: 2, knownAddresses: ['/ip4/192.0.2.1'] },
-  ], centroids)
-  const next = locatePeers([
+  ]
+  const after = [
     { peerId: 'peer-a', countryCode: 'IL', connectionState: 0, knownAddresses: [] },
     { peerId: 'peer-b', countryCode: 'US', connectionState: 2, knownAddresses: ['/ip4/198.51.100.1'] },
-  ], centroids)
+  ]
+  const first = locatePeers(before, centroids)
+  const next = locatePeers(after, centroids)
 
   assert.deepEqual(next, first)
   assert.equal(peerLocationsKey(next), peerLocationsKey(first))

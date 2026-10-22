@@ -57,7 +57,7 @@ test('region lines are decoded from hundredths of a degree, each point from the 
 })
 
 test('region lines become one set of segments, each pair of neighbouring points once', () => {
-  const lines = [[[0, 0], [0, 1], [1, 1]], [[5, 5], [6, 6]]]
+  const lines: [number, number][][] = [[[0, 0], [0, 1], [1, 1]], [[5, 5], [6, 6]]]
   const positions = regionSegments(lines, (lat, lng) => ({ x: lng, y: lat, z: 0 }))
   assert.deepEqual([...positions], [0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 5, 5, 0, 6, 6, 0])
 })

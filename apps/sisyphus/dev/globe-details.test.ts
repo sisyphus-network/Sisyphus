@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import type { RenderOptions } from '../src/renderer/src/lib/globe-details.ts'
 import { cityEstimateFromProtocol, connectionOf, escapeHtml, hostOf, nodeDetails, peerDetails, poolWorkers, precisionOf, renderDetailsHtml } from '../src/renderer/src/lib/globe-details.ts'
 
 const locales = ['en', 'he', 'ar', 'ru', 'pl', 'es', 'fr']
 const dictionaries = Object.fromEntries(locales.map((locale) => [locale, JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8'))]))
 const labels = dictionaries.en.globeDetails
-const ltr = { direction: 'ltr', locale: 'en' }
+const ltr: RenderOptions = { direction: 'ltr', locale: 'en' }
 
 // What a ListWorkers reply looks like from the Electron client: 64-bit
 // numbers as strings.
@@ -19,7 +20,7 @@ const rig = {
 test('a worker is read with everything its machine says, from either client', () => {
   const workers = poolWorkers([rig, { peerId: 'bare' }, null, { name: 'no id' }])
   assert.deepEqual([...workers.keys()], ['12D3KooWRig', 'bare'])
-  const worker = workers.get('12D3KooWRig')
+  const worker = workers.get('12D3KooWRig')!
   assert.equal(worker.memoryBytes, 64 * 1024 ** 3)
   assert.deepEqual(worker.gpus, [{ name: 'RTX 4050', memoryBytes: 6 * 1024 ** 3 }])
   assert.deepEqual(worker.place, { lat: 37.3, lng: -79.9 })
@@ -89,7 +90,7 @@ test('how precisely a place was shared is read from its numbers', () => {
   assert.equal(precisionOf({ lat: 0, lng: 0 }), 'city')
   assert.equal(precisionOf({ lat: 37.27, lng: -79.94 }), 'about-1km')
   assert.equal(precisionOf({ lat: 37.271, lng: -79.9414 }), undefined)
-  const exact = renderDetailsHtml(peerDetails('w', undefined, { ...poolWorkers([rig]).get('12D3KooWRig'), place: { lat: 37.271, lng: -79.9414 } }), labels, ltr)
+  const exact = renderDetailsHtml(peerDetails('w', undefined, { ...poolWorkers([rig]).get('12D3KooWRig')!, place: { lat: 37.271, lng: -79.9414 } }), labels, ltr)
   assert.ok(exact.includes('37.271, -79.9414'))
   assert.ok(!exact.includes('precision'), 'a place given precisely is said to be rounded')
   const near = renderDetailsHtml(peerDetails('w', undefined, poolWorkers([{ peerId: 'w', sharedLocation: { latitude: 37.27, longitude: -79.94 } }]).get('w')), labels, ltr)
@@ -150,7 +151,7 @@ test('a right-to-left card keeps IDs, addresses and coordinates left to right', 
   assert.ok(html.includes(he.trusted))
   assert.ok(!html.includes('Trusted for compute'))
   // A direction is one of two words, whatever is passed.
-  assert.ok(renderDetailsHtml(peerDetails('p'), labels, { direction: '"><script>', locale: 'en' }).startsWith('<div class="globe-card" dir="ltr">'))
+  assert.ok(renderDetailsHtml(peerDetails('p'), labels, { direction: '"><script>', locale: 'en' } as unknown as RenderOptions).startsWith('<div class="globe-card" dir="ltr">'))
 })
 
 test('hosts are read from multiaddrs and plain addresses alike', () => {
