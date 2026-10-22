@@ -32,13 +32,13 @@ All 100,000 series, with the workload as it is now:
 
 | Frequency | Series | sMAPE | MASE | OWA | Naive2 sMAPE | Naive2 MASE |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Yearly | 23,000 | 13.950 | 3.087 | 0.815 | 16.342 | 3.974 |
-| Quarterly | 24,000 | 10.648 | 1.213 | 0.926 | 11.012 | 1.371 |
-| Monthly | 48,000 | 13.680 | 0.973 | 0.932 | 14.427 | 1.063 |
-| Weekly | 359 | 8.622 | 2.357 | 0.895 | 9.161 | 2.777 |
-| Daily | 4,227 | 3.058 | 3.280 | 1.002 | 3.045 | 3.278 |
-| Hourly | 414 | 15.183 | 1.073 | 0.637 | 18.383 | 2.395 |
-| **Overall** | **100,000** | **12.553** | **1.620** | **0.886** | **13.564** | **1.912** |
+| Yearly | 23,000 | 14.003 | 3.087 | 0.817 | 16.342 | 3.974 |
+| Quarterly | 24,000 | 10.632 | 1.209 | 0.924 | 11.012 | 1.371 |
+| Monthly | 48,000 | 13.461 | 0.954 | 0.915 | 14.427 | 1.063 |
+| Weekly | 359 | 8.724 | 2.448 | 0.917 | 9.161 | 2.777 |
+| Daily | 4,227 | 3.096 | 3.327 | 1.016 | 3.045 | 3.278 |
+| Hourly | 414 | 13.353 | 1.017 | 0.575 | 18.383 | 2.395 |
+| **Overall** | **100,000** | **12.451** | **1.612** | **0.880** | **13.564** | **1.912** |
 
 For comparison, from the competition's results: the winner, Smyl's hybrid of exponential smoothing and a recurrent network, scored an OWA of 0.821 (sMAPE 11.374, MASE 1.536), and the best single method, Theta, 0.897 (sMAPE 12.309, MASE 1.696). The workload now scores better than Theta, and better than every single method in the competition, though not yet than its best combinations.
 
@@ -51,12 +51,22 @@ Each change was measured on all 100,000 series before it was kept:
 | Forecast with the candidate of least root mean square error in the backtest ([#634](https://github.com/sisyphus-network/Sisyphus/pull/634)) | 0.983 |
 | Rank the candidates by mean absolute error instead, which a few large misses do not dominate | 0.973 |
 | Forecast with the median of the best candidate of each of the four best kinds, only where its backtest error is less than the best candidate's | 0.961 |
-| **The same median, always** | **0.886** |
+| The same median, always | 0.886 |
+| **Add the theta method**: simple exponential smoothing with a drift of half the series' slope, the cycle taken out first as Naive2 does | **0.880** |
 
-The median of a few different kinds of model forecasts better than the backtest's winner even on series where the backtest prefers the winner: picking by a short backtest overfits it, and the median does not. It takes the best candidate of each kind, rather than the best few candidates, since the best few are often the same model with nearly the same settings. Four kinds is the number measured best here (three scored 0.902, five 0.890, six 0.921), and it was chosen on these same series, so the competition's figures, made without seeing them, are the fairer comparison by a little.
+The median of a few different kinds of model forecasts better than the backtest's winner even on series where the backtest prefers the winner: picking by a short backtest overfits it, and the median does not. It takes the best candidate of each kind, rather than the best few candidates, since the best few are often the same model with nearly the same settings. Four kinds is the number measured best here (before theta, three scored 0.902, five 0.890, six 0.921; with it, three 0.898 and five 0.884), and it was chosen on these same series, so the competition's figures, made without seeing them, are the fairer comparison by a little.
+
+Some changes were measured and not kept:
+
+| Tried | Overall OWA |
+| --- | ---: |
+| Damped-trend exponential smoothing as another kind | 0.894 |
+| Naive's forecast always in the median, as an anchor | 0.885 |
+| Naive, drift, simple and Holt's smoothing each also tried with the cycle taken out first | 0.880, no change |
+
+A damped trend is often among the best few kinds and so pushes out one that combines better; the others change too little to be worth their cost.
 
 ### What to try next
 
-- **Taking the cycle out first**, as Naive2 and Theta do, rather than leaving it to Holt-Winters and the seasonal naive model. Daily series, the one frequency where the workload is not better than Naive2, are the likeliest to gain from a model that changes little.
-- **More models**: Theta and damped trends among them.
+- **Daily series**, the one frequency where the workload is not better than Naive2. They are long and close to a random walk, which is hard to beat; a model chosen from the last few months rather than years of history may do better.
 - **Foundation models** such as Chronos-Bolt and TimesFM, as container candidates in the same backtest, once their floating-point output can be verified within a tolerance ([#627](https://github.com/sisyphus-network/Sisyphus/issues/627), [#629](https://github.com/sisyphus-network/Sisyphus/pull/629)).

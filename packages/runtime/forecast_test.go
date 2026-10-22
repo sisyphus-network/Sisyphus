@@ -192,7 +192,7 @@ func TestAForecastGivesTheKnownAnswer(t *testing.T) {
 		}
 		digest.Write(output)
 	}
-	const want = "f9ec3f0ddc1acbf3672696b9af399d4e523524a1d5d5a5d1f48eb5136ddb8d36"
+	const want = "ff3882b5c2092e2eb24ef9968e957d4dac906925a59e2b4a967b0045b897c029"
 	if got := hex.EncodeToString(digest.Sum(nil)); got != want {
 		t.Errorf("the tasks' outputs hash to %s, want %s", got, want)
 	}
@@ -214,6 +214,17 @@ func TestEachForecastModelForecastsWhatItShould(t *testing.T) {
 		{forecastModel{Kind: "holt", Alpha: 1, Beta: 1}, []float64{1, 2, 3, 4}, []float64{5, 6}},
 		{forecastModel{Kind: "holtwinters", Alpha: 0.5, Beta: 0.5, Gamma: 0.5, Season: 2}, []float64{1, 3, 1, 3, 1, 3, 1, 3}, []float64{1, 3, 1}},
 		{forecastModel{Kind: "ar", Order: 1}, []float64{1, 2, 4, 8, 16, 32}, []float64{64, 128}},
+		// The last value, with half the series' slope added from half a
+		// step ahead.
+		{forecastModel{Kind: "theta", Alpha: 1}, []float64{1, 2, 3, 4}, []float64{4.5, 5}},
+		// Too short to test for its cycle of 4: forecast as it is.
+		{forecastModel{Kind: "theta", Alpha: 1, Season: 4}, []float64{1, 2, 3, 4, 5}, []float64{5.5, 6}},
+		// A level times a cycle: the cycle is taken out, leaving the
+		// level, and put back.
+		// Long enough to test, but with no cycle of 2: as it is.
+		{forecastModel{Kind: "theta", Alpha: 1, Season: 2}, []float64{1, 2, 3, 4, 5, 6, 7, 8}, []float64{8.5, 9}},
+		{forecastModel{Kind: "theta", Alpha: 0.5, Season: 2}, slices.Repeat([]float64{1, 3}, 12), []float64{1, 3, 1}},
+		{forecastModel{Kind: "theta", Alpha: 0.5, Season: 3}, slices.Repeat([]float64{2, 4, 6}, 6), []float64{2, 4, 6}},
 	}
 	for _, tt := range cases {
 		got, err := fitForecast(tt.model, tt.y, len(tt.want))
@@ -247,6 +258,7 @@ func TestACandidateThatCannotBeFittedSaysWhy(t *testing.T) {
 		{forecastModel{Kind: "snaive", Season: 1}, flat, "settings it can take"},
 		{forecastModel{Kind: "holtwinters", Alpha: 0.5, Beta: 0.5, Gamma: 0.5, Season: 2000}, flat, "settings it can take"},
 		{forecastModel{Kind: "ar", Order: -1}, flat, "settings it can take"},
+		{forecastModel{Kind: "theta", Alpha: 0.5, Season: 1}, flat, "settings it can take"},
 		{forecastModel{Kind: "holtwinters", Alpha: 0.5, Beta: 0.5, Gamma: 0.5, Season: 4}, flat, "needs at least 12 points"},
 	} {
 		out := backtest(tt.model, tt.y, 2, 2)

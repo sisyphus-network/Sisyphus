@@ -55,7 +55,7 @@ type ForecastParams struct {
 
 // forecastKinds are the kinds of model, in the order their candidates are
 // tried.
-var forecastKinds = []string{"naive", "mean", "drift", "snaive", "ses", "holt", "holtwinters", "ar"}
+var forecastKinds = []string{"naive", "mean", "drift", "snaive", "ses", "holt", "holtwinters", "ar", "theta"}
 
 const (
 	maxForecastBytes   = 16 << 20
@@ -109,7 +109,7 @@ func (m forecastModel) fewest() int {
 		return m.Season
 	case "holtwinters":
 		return 2 * m.Season
-	case "drift", "holt":
+	case "drift", "holt", "theta":
 		return 2
 	case "ar":
 		return 3*m.Order + 2
@@ -130,6 +130,8 @@ func (m forecastModel) invalid() string {
 		ok = season
 	case "ses":
 		ok = rate(m.Alpha)
+	case "theta":
+		ok = rate(m.Alpha) && (m.Season == 0 || season)
 	case "holt":
 		ok = rate(m.Alpha) && rate(m.Beta)
 	case "holtwinters":
@@ -229,7 +231,7 @@ type ForecastResult struct {
 func (Forecast) Name() string { return "forecast" }
 
 func (Forecast) Describe() string {
-	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal) and autoregressive models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, default 4>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
+	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, default 4>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
 }
 
 func (Forecast) Form() []Field {
@@ -318,6 +320,10 @@ func forecastCandidates(kinds []string, season, shortest int) []forecastModel {
 			}
 			for _, p := range orders {
 				models = append(models, forecastModel{Kind: kind, Order: p})
+			}
+		case "theta":
+			for _, a := range []float64{0.1, 0.2, 0.3, 0.5, 0.7, 0.9} {
+				models = append(models, forecastModel{Kind: kind, Alpha: a, Season: season})
 			}
 		default:
 			models = append(models, forecastModel{Kind: kind})
@@ -510,6 +516,43 @@ func fitForecast(m forecastModel, y []float64, h int) ([]float64, error) {
 		}
 		for k := range f {
 			f[k] = level + float64(float64(k+1)*trend) + seasonal[(n+k)%s]
+		}
+	case "theta":
+		// The cycle is taken out first if the series has one, by M4's
+		// test and classical decomposition, and put back in the forecast.
+		x, index := y, []float64{1}
+		if m.Season > 1 && cyclic(y, m.Season) {
+			index = seasonIndices(y, m.Season)
+			x = make([]float64, n)
+			for t, v := range y {
+				x[t] = v / index[t%m.Season]
+			}
+		}
+		// Simple exponential smoothing with a drift of half the slope of
+		// the least-squares line through the series: the theta method as
+		// Hyndman and Billah wrote it.
+		var tMean, xMean float64
+		for t, v := range x {
+			tMean += float64(t)
+			xMean += v
+		}
+		tMean /= float64(n)
+		xMean /= float64(n)
+		var sxy, sxx float64
+		for t, v := range x {
+			dt := float64(t) - tMean
+			sxy += float64(dt * (v - xMean))
+			sxx += float64(dt * dt)
+		}
+		slope := sxy / sxx
+		level, decay := x[0], 1-m.Alpha
+		for _, v := range x[1:] {
+			level += float64(m.Alpha * (v - level))
+			decay = float64(decay * (1 - m.Alpha))
+		}
+		for k := range f {
+			drift := float64(slope / 2 * (float64(k) + (1-decay)/m.Alpha))
+			f[k] = float64((level + drift) * index[(n+k)%len(index)])
 		}
 	case "ar":
 		coef, err := fitAR(y, m.Order)
@@ -818,4 +861,72 @@ func combine(sorted []forecastOutcome, folds int) (forecastOutcome, string, bool
 	out.MAE = absSum / count
 	out.RMSE = math.Sqrt(sqSum / count)
 	return out, "median of " + strings.Join(names, "; "), true
+}
+
+// cyclic is the M4 competition's test of whether a series has a cycle of
+// the given length: whether its autocorrelation at that lag is beyond
+// what 90% of series without one would show. A series of fewer than
+// three cycles is taken to have none.
+func cyclic(y []float64, season int) bool {
+	n := len(y)
+	if n < 3*season {
+		return false
+	}
+	var mean float64
+	for _, v := range y {
+		mean += v
+	}
+	mean /= float64(n)
+	var c0 float64
+	for _, v := range y {
+		c0 += float64((v - mean) * (v - mean))
+	}
+	acf := func(k int) float64 {
+		var s float64
+		for t := k; t < n; t++ {
+			s += float64((y[t] - mean) * (y[t-k] - mean))
+		}
+		return s / c0
+	}
+	sum := 1.0
+	for k := 1; k < season; k++ {
+		a := acf(k)
+		sum += float64(2 * float64(a*a))
+	}
+	return math.Abs(acf(season)) > float64(1.645/math.Sqrt(float64(n))*math.Sqrt(sum))
+}
+
+// seasonIndices are a series' multiplicative seasonal indices, one for
+// each place in its cycle, averaging one: each value's ratio to the
+// centred moving average around it, averaged over its place in the cycle.
+func seasonIndices(y []float64, season int) []float64 {
+	half := season / 2
+	sums := make([]float64, season)
+	counts := make([]float64, season)
+	for t := half; t < len(y)-half; t++ {
+		var trend float64
+		if season%2 == 0 {
+			trend = (y[t-half] + y[t+half]) / 2
+			for j := t - half + 1; j < t+half; j++ {
+				trend += y[j]
+			}
+		} else {
+			for j := t - half; j <= t+half; j++ {
+				trend += y[j]
+			}
+		}
+		trend /= float64(season)
+		sums[t%season] += y[t] / trend
+		counts[t%season]++
+	}
+	var mean float64
+	for i := range sums {
+		sums[i] /= counts[i]
+		mean += sums[i]
+	}
+	mean /= float64(season)
+	for i := range sums {
+		sums[i] /= mean
+	}
+	return sums
 }
