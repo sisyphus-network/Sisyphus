@@ -589,7 +589,10 @@ func TestARealConformerSetIsOptimised(t *testing.T) {
 			t.Errorf("structure %d from SDF and from XYZ:\n%s\n%s", i, rawSDF, rawXYZ)
 		}
 	}
-	if clash := fromXYZ.Results[3]; clash.Converged || clash.Error == "" || clash.Geometry != "" || fromXYZ.Converged != 3 || fromXYZ.Structures != 4 || *fromXYZ.Lowest != 0 {
+	// Whether xtb got far enough to leave a last geometry depends on where
+	// it gave up, and a result may name one when it did not converge, so
+	// the test asks only that it failed and says why.
+	if clash := fromXYZ.Results[3]; clash.Converged || clash.Error == "" || fromXYZ.Converged != 3 || fromXYZ.Structures != 4 || *fromXYZ.Lowest != 0 {
 		t.Errorf("two atoms in one place: %s", rawXYZ)
 	}
 
