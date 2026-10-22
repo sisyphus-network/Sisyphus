@@ -590,9 +590,12 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
     const zoomOut = controls.getByRole('button', { name: 'Zoom out' })
     await zoomIn.waitFor()
     const zoom = async () => Number(await globe.getAttribute('data-zoom'))
-    // A step animates: wait until the zoom stops changing before reading
-    // the buttons, which disable themselves only when a step has ended at
-    // the limit.
+    // A button step animates, and the buttons take their last state only
+    // once it has ended, which the globe says (#644). Waiting for the zoom to
+    // stop changing is not enough: near the limit a step moves it by less
+    // than the 1% it is shown in, so it looks still before the step is over.
+    const stepped = () => until('the zoom step to end', async () => await globe.getAttribute('data-zooming') === 'false')
+    // The wheel is not a step: wait until the zoom stops changing.
     const settled = async () => {
       let last = Number.NaN
       await until('the globe to settle', async () => {
@@ -613,9 +616,7 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
       assert.ok(presses < 20, 'zooming in never reached its limit')
       const before = await zoom()
       await zoomIn.click()
-      // Near the limit a last step can be smaller than the 1% the zoom is
-      // shown in, so wait for the step to end rather than for a change.
-      await settled()
+      await stepped()
       assert.ok(await zoom() >= before, 'zooming in took the globe out')
     }
     await until('the region lines to be drawn', async () => await globe.getAttribute('data-regions') === 'shown')
@@ -636,7 +637,7 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
       assert.ok(presses < 30, 'zooming out never reached its limit')
       const before = await zoom()
       await page.keyboard.press('Enter')
-      await settled()
+      await stepped()
       assert.ok(await zoom() <= before, 'zooming out brought the globe in')
     }
     assert.equal(await globe.getAttribute('data-regions'), 'hidden')
