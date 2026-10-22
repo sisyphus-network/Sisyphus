@@ -22,7 +22,7 @@ module.exports = {
     { from: 'build/tray', to: 'tray' },
   ],
   artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
-  // The icons in build/ are drawn from assets/logo.png by scripts/make-icons.py.
+  // The icons in build/ are drawn from assets/app-icon.png by scripts/make-icons.py.
   linux: { target: ['tar.gz', 'AppImage'], category: 'Science', icon: 'build/icons', synopsis: 'A node of the Sisyphus network' },
   win: { target: ['zip', 'nsis'], icon: 'build/icon.ico' },
   // An installer a person steps through, so that Windows shows where it goes
