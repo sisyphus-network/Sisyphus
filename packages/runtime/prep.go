@@ -64,9 +64,8 @@ type PrepParams struct {
 	// for DNA and OL3's for RNA whichever it is.
 	Forcefield string `json:"forcefield,omitempty"`
 	// Water is the water model the system is put in, one of prepWaters, or
-	// none for the molecule alone, in a vacuum, as implicit solvent wants
-	// it. Empty means the one the force field is made for: opc for ff19SB,
-	// tip3p for ff14SB.
+	// none for the molecule alone, in a vacuum. Empty means the one the
+	// force field is made for: opc for ff19SB, tip3p for ff14SB.
 	Water string `json:"water,omitempty"`
 	// Box is how far the box's walls are from the molecule, at least, in
 	// ångströms. Zero means 10. BoxShape is octahedron, a truncated

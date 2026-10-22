@@ -1319,7 +1319,7 @@ The real-image test does just that: it prepares alanine dipeptide in OPC water, 
 | `input` | The CID of one stored PDB file, the system to prepare. |
 | `inputs` | In place of `input`, the CIDs of up to 64, each a system of its own, prepared and listed in that order. |
 | `forcefield` | The proteins' force field: `ff19SB` (the default), Amber's newest, made for OPC water, or `ff14SB`, made for TIP3P. Nucleic acids are given OL21 for DNA and OL3 for RNA whichever it is. |
-| `water` | `opc`, `tip3p`, or `none` for the molecule alone in a vacuum, as implicit solvent wants it, with no box and no ions. Default: the one the force field is made for, `opc` for ff19SB and `tip3p` for ff14SB. |
+| `water` | `opc`, `tip3p`, or `none` for the molecule alone in a vacuum, with no box and no ions. Default: the one the force field is made for, `opc` for ff19SB and `tip3p` for ff14SB. |
 | `box` | How far the box's walls are from the molecule, at least, in Å, from 3 to 50. Default 10. |
 | `box_shape` | `octahedron` (the default), a truncated octahedron, which holds the same molecule in less water, or `box`, a rectangular box. |
 | `salt_mm` | Sodium chloride beyond the ions that make the system neutral, in mM, from 0 to 1000. Default 0, neutral only. The pairs are as many as there would be in the box's water at that concentration, `salt_mm/1000 × waters/55.5`, rounded; not with `water` `none`. |
