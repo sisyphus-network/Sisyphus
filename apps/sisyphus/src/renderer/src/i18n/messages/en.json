@@ -483,7 +483,7 @@
       "transcribe": { "title": "Transcribe speech", "description": "Turns the speech in a recording into text and subtitles, in stretches across the pool." },
       "qchem": { "title": "Compute molecules", "description": "Finds the energies, optimised geometries or frequencies of a file of conformers or molecules with xtb, in runs across the pool." },
       "ocr": { "title": "Read text from scans", "description": "Reads the text in a scanned PDF or picture with Tesseract, in runs of pages across the pool, as plain text or a searchable PDF." },
-      "forecast": { "title": "Forecast a series", "description": "Fits smoothing, autoregressive and simple models to a time series, backtests each on its recent past across the pool, and forecasts with the best, with ranges." },
+      "forecast": { "title": "Forecast a series", "description": "Fits smoothing, autoregressive and simple models to a time series, backtests each on its recent past across the pool, and forecasts with the median of the best few kinds, with ranges." },
       "traj": { "title": "Analyse trajectories", "description": "Finds RMSD, radius of gyration, distances, hydrogen bonds, secondary structure or RMSF along molecular dynamics trajectories with cpptraj, in runs of frames across the pool." },
       "md": { "title": "Simulate a molecule", "description": "Runs molecular dynamics as replicas across the pool." }
     }

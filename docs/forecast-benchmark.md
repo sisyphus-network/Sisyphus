@@ -1,6 +1,6 @@
 # How well the forecast workload forecasts
 
-The `forecast` workload picks a model for a series by backtesting a range of candidates on the series' own past and forecasting with the one that did best. Whether that forecasts well is a question with a standard answer: the [M4 competition](https://github.com/Mcompetitions/M4-methods)'s 100,000 series, scored the way the competition scored its 61 entries. `packages/runtime/forecastbench` does that, so the workload's accuracy is measured rather than claimed, and so every change to it can be measured the same way.
+The `forecast` workload backtests a range of candidate models on a series' own past and forecasts with the median of the best candidate of each of the best-scoring kinds of model. Whether that forecasts well is a question with a standard answer: the [M4 competition](https://github.com/Mcompetitions/M4-methods)'s 100,000 series, scored the way the competition scored its 61 entries. `packages/runtime/forecastbench` does that, so the workload's accuracy is measured rather than claimed, and so every change to it can be measured the same way.
 
 ## What is measured
 
@@ -28,24 +28,35 @@ SISYPHUS_M4=~/m4-data go test -run 'TestM4$' -v -timeout 1h ./packages/runtime/f
 
 ## Results
 
-All 100,000 series, with the workload as of [#634](https://github.com/sisyphus-network/Sisyphus/pull/634):
+All 100,000 series, with the workload as it is now:
 
 | Frequency | Series | sMAPE | MASE | OWA | Naive2 sMAPE | Naive2 MASE |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Yearly | 23,000 | 15.453 | 3.580 | 0.923 | 16.342 | 3.974 |
-| Quarterly | 24,000 | 11.562 | 1.280 | 0.992 | 11.012 | 1.371 |
-| Monthly | 48,000 | 15.177 | 1.048 | 1.019 | 14.427 | 1.063 |
-| Weekly | 359 | 8.557 | 2.435 | 0.905 | 9.161 | 2.777 |
-| Daily | 4,227 | 3.507 | 3.693 | 1.139 | 3.045 | 3.278 |
-| Hourly | 414 | 17.957 | 1.012 | 0.700 | 18.383 | 2.395 |
-| **Overall** | **100,000** | **13.867** | **1.803** | **0.983** | **13.564** | **1.912** |
+| Yearly | 23,000 | 13.950 | 3.087 | 0.815 | 16.342 | 3.974 |
+| Quarterly | 24,000 | 10.648 | 1.213 | 0.926 | 11.012 | 1.371 |
+| Monthly | 48,000 | 13.680 | 0.973 | 0.932 | 14.427 | 1.063 |
+| Weekly | 359 | 8.622 | 2.357 | 0.895 | 9.161 | 2.777 |
+| Daily | 4,227 | 3.058 | 3.280 | 1.002 | 3.045 | 3.278 |
+| Hourly | 414 | 15.183 | 1.073 | 0.637 | 18.383 | 2.395 |
+| **Overall** | **100,000** | **12.553** | **1.620** | **0.886** | **13.564** | **1.912** |
 
-For comparison, from the competition's results: the winner, Smyl's hybrid of exponential smoothing and a recurrent network, scored an OWA of 0.821 (sMAPE 11.374, MASE 1.536), and the best single method, Theta, 0.897 (sMAPE 12.309, MASE 1.696).
+For comparison, from the competition's results: the winner, Smyl's hybrid of exponential smoothing and a recurrent network, scored an OWA of 0.821 (sMAPE 11.374, MASE 1.536), and the best single method, Theta, 0.897 (sMAPE 12.309, MASE 1.696). The workload now scores better than Theta, and better than every single method in the competition, though not yet than its best combinations.
 
-So today the workload is only slightly better than Naive2 overall, and worse than it on monthly and daily series. It does well where a series' cycle is long and regular (hourly, 0.700) and where trends carry on (yearly, 0.923). What is likely to help, each to be measured here before it is kept:
+### How it got there
 
-- **Choosing by a scale-free error.** The backtest ranks candidates by root mean square error, which a few large misses dominate; M4 scores by sMAPE and MASE.
-- **Combining forecasts.** Averaging the best few candidates is the most consistent gain the competition found.
-- **Taking the cycle out first**, as Naive2 and Theta do, rather than leaving it to Holt-Winters alone.
+Each change was measured on all 100,000 series before it was kept:
+
+| Change | Overall OWA |
+| --- | ---: |
+| Forecast with the candidate of least root mean square error in the backtest ([#634](https://github.com/sisyphus-network/Sisyphus/pull/634)) | 0.983 |
+| Rank the candidates by mean absolute error instead, which a few large misses do not dominate | 0.973 |
+| Forecast with the median of the best candidate of each of the four best kinds, only where its backtest error is less than the best candidate's | 0.961 |
+| **The same median, always** | **0.886** |
+
+The median of a few different kinds of model forecasts better than the backtest's winner even on series where the backtest prefers the winner: picking by a short backtest overfits it, and the median does not. It takes the best candidate of each kind, rather than the best few candidates, since the best few are often the same model with nearly the same settings. Four kinds is the number measured best here (three scored 0.902, five 0.890, six 0.921), and it was chosen on these same series, so the competition's figures, made without seeing them, are the fairer comparison by a little.
+
+### What to try next
+
+- **Taking the cycle out first**, as Naive2 and Theta do, rather than leaving it to Holt-Winters and the seasonal naive model. Daily series, the one frequency where the workload is not better than Naive2, are the likeliest to gain from a model that changes little.
 - **More models**: Theta and damped trends among them.
 - **Foundation models** such as Chronos-Bolt and TimesFM, as container candidates in the same backtest, once their floating-point output can be verified within a tolerance ([#627](https://github.com/sisyphus-network/Sisyphus/issues/627), [#629](https://github.com/sisyphus-network/Sisyphus/pull/629)).

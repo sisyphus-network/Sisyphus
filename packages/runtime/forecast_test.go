@@ -74,9 +74,10 @@ func readStored(t *testing.T, store *storage.Store, c string) string {
 	return string(data)
 }
 
-// A seasonal series is forecast a year ahead with the candidate that
-// backtested best, every candidate's scores are there best first, and the
-// forecast and the scores can be saved as CSV.
+// A seasonal series is forecast a year ahead with the median of the best
+// candidate of each of the best kinds of model, every candidate's scores
+// are there best first, and the forecast and the scores can be saved as
+// CSV.
 func TestASeasonalSeriesIsForecast(t *testing.T) {
 	if (Forecast{}).Name() != "forecast" || !strings.Contains(Forecast{}.Describe(), `"horizon"`) {
 		t.Errorf("forecast calls itself %q and says %q", Forecast{}.Name(), Forecast{}.Describe())
@@ -91,8 +92,11 @@ func TestASeasonalSeriesIsForecast(t *testing.T) {
 	if result.Best != result.Candidates[0] || !strings.HasPrefix(result.Best.Model, "ar ") {
 		t.Errorf("best is %+v, of %+v", result.Best, result.Candidates[:3])
 	}
+	if !strings.HasPrefix(result.Chosen.Model, "median of "+result.Best.Model+"; ") || strings.Count(result.Chosen.Model, ";") != combineKinds-1 || result.Chosen.MAE <= 0 {
+		t.Errorf("the forecast is %+v", result.Chosen)
+	}
 	fitted := slices.DeleteFunc(slices.Clone(result.Candidates), func(c ForecastScore) bool { return c.Error != "" })
-	if !slices.IsSortedFunc(fitted, func(a, b ForecastScore) int { return cmpFloat(a.RMSE, b.RMSE) }) || len(fitted) == 0 {
+	if !slices.IsSortedFunc(fitted, func(a, b ForecastScore) int { return cmpFloat(a.MAE, b.MAE) }) || len(fitted) == 0 {
 		t.Error("the candidates are not best first")
 	}
 	kinds := map[string]bool{}
@@ -105,10 +109,14 @@ func TestASeasonalSeriesIsForecast(t *testing.T) {
 	if len(result.Forecast) != 12 {
 		t.Fatalf("%d steps forecast", len(result.Forecast))
 	}
+	truth := func(i int) float64 {
+		return 100 + 0.5*float64(120+i) + 10*math.Sin(2*math.Pi*float64(120+i)/12) + float64(((120+i)*7)%5)
+	}
+	// The series has a jiggle of up to 4 that only the autoregression
+	// follows; the median of the four kinds keeps to the shape.
 	for i, p := range result.Forecast {
-		truth := 100 + 0.5*float64(120+i) + 10*math.Sin(2*math.Pi*float64(120+i)/12) + float64(((120+i)*7)%5)
-		if p.Step != i+1 || math.Abs(p.Value-truth) > 0.01 || !(p.Lo95 <= p.Lo80 && p.Lo80 <= p.Value && p.Value <= p.Hi80 && p.Hi80 <= p.Hi95) {
-			t.Errorf("step %d is %+v, where the series goes on to %.3f", i+1, p, truth)
+		if p.Step != i+1 || math.Abs(p.Value-truth(i)) > 8 || !(p.Lo95 <= p.Lo80 && p.Lo80 <= p.Value && p.Value <= p.Hi80 && p.Hi80 <= p.Hi95) {
+			t.Errorf("step %d is %+v, where the series goes on to %.3f", i+1, p, truth(i))
 		}
 	}
 	table := strings.Split(strings.TrimSpace(readStored(t, store, result.ForecastTable)), "\n")
@@ -118,6 +126,18 @@ func TestASeasonalSeriesIsForecast(t *testing.T) {
 	scores := strings.Split(strings.TrimSpace(readStored(t, store, result.ScoresTable)), "\n")
 	if scores[0] != "model,mae,rmse,error" || len(scores) != len(result.Candidates)+1 || !strings.HasPrefix(scores[1], result.Best.Model+",") {
 		t.Errorf("scores table:\n%s", strings.Join(scores, "\n"))
+	}
+
+	// With one kind of model there is nothing to combine: the forecast is
+	// the best candidate's, which here is the series itself.
+	result = runForecast(t, store, ForecastParams{Input: input.String(), Season: 12, Models: "ar"}, 2)
+	if result.Chosen != result.Best {
+		t.Errorf("one kind forecast with %+v, not the best, %+v", result.Chosen, result.Best)
+	}
+	for i, p := range result.Forecast {
+		if math.Abs(p.Value-truth(i)) > 0.01 {
+			t.Errorf("step %d is %+v, where the series goes on to %.3f", i+1, p, truth(i))
+		}
 	}
 }
 
@@ -172,7 +192,7 @@ func TestAForecastGivesTheKnownAnswer(t *testing.T) {
 		}
 		digest.Write(output)
 	}
-	const want = "784e6ba9074829923f845081a1bbfafcc191e1fed63b82b0e1b91a44586f5038"
+	const want = "f9ec3f0ddc1acbf3672696b9af399d4e523524a1d5d5a5d1f48eb5136ddb8d36"
 	if got := hex.EncodeToString(digest.Sum(nil)); got != want {
 		t.Errorf("the tasks' outputs hash to %s, want %s", got, want)
 	}
@@ -385,7 +405,7 @@ func TestForecastAggregateChecksWhatTheTasksReturned(t *testing.T) {
 	}{
 		{[][]byte{[]byte("{")}, "task 0 output"},
 		{[][]byte{part(10, good), part(11, good)}, "task 1 output"},
-		{[][]byte{part(10, short)}, "not 1 finite numbers"},
+		{[][]byte{part(10, short)}, "not finite numbers for 1 steps and 1 windows"},
 		{nil, "there were none"},
 		{[][]byte{part(10, failed)}, "ar order=1: too regular"},
 	} {
@@ -433,18 +453,82 @@ func (c countingBlobs) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
 }
 
 func TestOnlyFiniteNumbersAreWellFormed(t *testing.T) {
-	good := forecastOutcome{MAE: 1, RMSE: 1, StepRMSE: []float64{1}, Forecast: []float64{1}}
-	if !wellFormed(good, 1) {
+	good := forecastOutcome{MAE: 1, RMSE: 1, StepRMSE: []float64{1}, Forecast: []float64{1}, Residuals: [][]float64{{1}, {2}}}
+	if !wellFormed(good, 1, 2) {
 		t.Error("finite numbers are not taken")
 	}
 	for _, bad := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 		o := good
 		o.Forecast = []float64{bad}
-		if wellFormed(o, 1) {
+		if wellFormed(o, 1, 2) {
 			t.Errorf("%v is taken", bad)
 		}
+		o = good
+		o.Residuals = [][]float64{{1}, {bad}}
+		if wellFormed(o, 1, 2) {
+			t.Errorf("a residual of %v is taken", bad)
+		}
+	}
+	// Residuals are for each step of each window, or not sent at all.
+	for _, residuals := range [][][]float64{{{1}}, {{1}, {1, 2}}, {}} {
+		o := good
+		o.Residuals = residuals
+		if wellFormed(o, 1, 2) {
+			t.Errorf("residuals %v are taken for 2 windows of 1 step", residuals)
+		}
+	}
+	good.Residuals = nil
+	if !wellFormed(good, 1, 2) {
+		t.Error("a candidate that sent no residuals is not taken")
 	}
 	if csvField("plain") != "plain" || csvField(`a "b", c`) != `"a ""b"", c"` {
 		t.Error("CSV fields are not quoted as they should be")
+	}
+}
+
+// The forecast is the median of the best candidate of each of the best
+// kinds, and its backtest errors the median of theirs; it is not made
+// when fewer than two kinds were fitted or a candidate sent no residuals.
+func TestTheForecastIsTheMedianOfTheBestKinds(t *testing.T) {
+	outcome := func(kind string, alpha float64, forecast, residuals []float64) forecastOutcome {
+		return forecastOutcome{Model: forecastModel{Kind: kind, Alpha: alpha}, Forecast: forecast, Residuals: [][]float64{residuals}}
+	}
+	sorted := []forecastOutcome{
+		outcome("ses", 0.5, []float64{10, 20}, []float64{1, -4}),
+		outcome("ses", 0.2, []float64{99, 99}, []float64{0, 0}),
+		outcome("naive", 0, []float64{12, 26}, []float64{-1, 2}),
+		outcome("drift", 0, []float64{11, 22}, []float64{3, 0}),
+		outcome("mean", 0, []float64{14, 18}, []float64{-2, -2}),
+		outcome("holt", 0.2, []float64{0, 0}, []float64{50, 50}),
+		{Model: forecastModel{Kind: "ar", Order: 1}, Error: "too regular"},
+	}
+	// The first four kinds, ses at its best: the median of four is the
+	// mean of the middle two.
+	got, name, ok := combine(sorted, 1)
+	if !ok || name != "median of ses alpha=0.5; naive; drift; mean" {
+		t.Fatalf("combined %q (%v)", name, ok)
+	}
+	if !slices.Equal(got.Forecast, []float64{11.5, 21}) {
+		t.Errorf("forecast %v, not [11.5 21]", got.Forecast)
+	}
+	// Residuals {1, -1, 3, -2} and {-4, 2, 0, -2} have medians 0 and -1.
+	if got.MAE != 0.5 || got.RMSE != math.Sqrt(0.5) || !slices.Equal(got.StepRMSE, []float64{0, 1}) {
+		t.Errorf("backtest %+v", got)
+	}
+	// Three kinds, before one that failed: the median of three is the
+	// middle one.
+	got, _, ok = combine([]forecastOutcome{sorted[0], sorted[2], sorted[3], sorted[6], sorted[4]}, 1)
+	if !ok || !slices.Equal(got.Forecast, []float64{11, 22}) {
+		t.Errorf("of three kinds, forecast %v (%v)", got.Forecast, ok)
+	}
+
+	for _, c := range [][]forecastOutcome{
+		sorted[:2],             // one kind
+		{sorted[0], sorted[6]}, // one kind fitted
+		{sorted[0], {Model: forecastModel{Kind: "mean"}, Forecast: []float64{1, 1}}}, // no residuals
+	} {
+		if _, _, ok := combine(c, 1); ok {
+			t.Errorf("combined %+v", c)
+		}
 	}
 }

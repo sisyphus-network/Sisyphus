@@ -17,7 +17,8 @@ import (
 )
 
 // Forecast fits candidate models to a time series, backtests each on the
-// series' own recent past, and forecasts ahead with the one that did best.
+// series' own recent past, and forecasts ahead with the median of the best
+// candidate of each of the best-scoring kinds of model.
 // The candidates are shared out across the pool, a few to each task, so
 // many models and settings are tried side by side.
 //
@@ -65,6 +66,13 @@ const (
 	// maxForecastOrder bounds an autoregression, whose fitting grows with
 	// the square of its order.
 	maxForecastOrder = 24
+	// maxForecastResiduals bounds how many backtest residuals a candidate
+	// sends back, so that a task's output stays small; past it, the
+	// forecast is the best candidate's alone.
+	maxForecastResiduals = 2048
+	// combineKinds is how many kinds of model the forecast combines: the
+	// best candidate of each of the best-scoring kinds.
+	combineKinds = 4
 )
 
 // forecastModel is one candidate: a kind of model and its settings.
@@ -163,7 +171,10 @@ type forecastOutcome struct {
 	RMSE     float64       `json:"rmse"`
 	StepRMSE []float64     `json:"step_rmse,omitempty"`
 	Forecast []float64     `json:"forecast,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	// Residuals are what each backtest window's values were less what
+	// was forecast for them, when there are few enough of them to send.
+	Residuals [][]float64 `json:"residuals,omitempty"`
+	Error     string      `json:"error,omitempty"`
 }
 
 // ForecastScore is one candidate's backtest, as the result gives it.
@@ -197,7 +208,13 @@ type ForecastResult struct {
 	Folds   int    `json:"folds"`
 	// Best is the candidate with the least root mean square error over
 	// the backtest, and Forecast what it forecasts.
-	Best     ForecastScore   `json:"best"`
+	Best ForecastScore `json:"best"`
+	// Chosen is what Forecast is: the median, step by step, of the best
+	// candidate of each of the best-scoring kinds of model, or Best when
+	// only one kind could be fitted. On the M4 competition's series the
+	// median forecasts better than the best candidate alone, even where
+	// the backtest says otherwise; see docs/forecast-benchmark.md.
+	Chosen   ForecastScore   `json:"chosen"`
 	Forecast []ForecastPoint `json:"forecast"`
 	// Candidates are all of them, best first; those that could not be
 	// fitted come last, saying why.
@@ -212,7 +229,7 @@ type ForecastResult struct {
 func (Forecast) Name() string { return "forecast" }
 
 func (Forecast) Describe() string {
-	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal) and autoregressive models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the best. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, default 4>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
+	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal) and autoregressive models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, default 4>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
 }
 
 func (Forecast) Form() []Field {
@@ -390,6 +407,7 @@ func backtest(m forecastModel, values []float64, horizon, folds int) forecastOut
 	}
 	var absSum, sqSum float64
 	stepSq := make([]float64, horizon)
+	keep := folds*horizon <= maxForecastResiduals
 	for k := range folds {
 		end := len(values) - (folds-k)*horizon
 		past, err := fitForecast(m, values[:end], horizon)
@@ -397,8 +415,14 @@ func backtest(m forecastModel, values []float64, horizon, folds int) forecastOut
 			out.Error = err.Error()
 			return out
 		}
+		if keep {
+			out.Residuals = append(out.Residuals, make([]float64, horizon))
+		}
 		for j, v := range values[end : end+horizon] {
 			e := v - past[j]
+			if keep {
+				out.Residuals[k][j] = e
+			}
 			sq := float64(e * e)
 			absSum += math.Abs(e)
 			sqSum += sq
@@ -575,8 +599,8 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 			return nil, fmt.Errorf("task %d output: forecast %d steps of a series of %d points ending at %q with %d windows, where task 0 did %d of %d ending at %q with %d", i, part.Horizon, part.Points, part.Last, part.Folds, result.Horizon, result.Points, result.Last, result.Folds)
 		}
 		for _, o := range part.Candidates {
-			if o.Error == "" && !wellFormed(o, result.Horizon) {
-				return nil, fmt.Errorf("task %d output: candidate %s has scores or a forecast that are not %d finite numbers", i, o.Model.Name(), result.Horizon)
+			if o.Error == "" && !wellFormed(o, result.Horizon, result.Folds) {
+				return nil, fmt.Errorf("task %d output: candidate %s has scores, a forecast or residuals that are not finite numbers for %d steps and %d windows", i, o.Model.Name(), result.Horizon, result.Folds)
 			}
 			outcomes = append(outcomes, o)
 		}
@@ -588,7 +612,7 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 			}
 			return 1
 		}
-		return cmp.Or(cmp.Compare(a.RMSE, b.RMSE), cmp.Compare(a.MAE, b.MAE), strings.Compare(a.Model.Name(), b.Model.Name()))
+		return cmp.Or(cmp.Compare(a.MAE, b.MAE), cmp.Compare(a.RMSE, b.RMSE), strings.Compare(a.Model.Name(), b.Model.Name()))
 	})
 	if len(outcomes) == 0 || outcomes[0].Error != "" {
 		why := "there were none"
@@ -611,6 +635,11 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 	}
 	best := outcomes[0]
 	result.Best = result.Candidates[0]
+	result.Chosen = result.Best
+	if c, name, ok := combine(outcomes, result.Folds); ok {
+		best = c
+		result.Chosen = ForecastScore{Model: name, MAE: c.MAE, RMSE: c.RMSE}
+	}
 
 	var table bytes.Buffer
 	table.WriteString("step,value,lo80,hi80,lo95,hi95\n")
@@ -637,12 +666,23 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 }
 
 // wellFormed reports whether a fitted candidate's numbers are all there and
-// finite.
-func wellFormed(o forecastOutcome, horizon int) bool {
+// finite: a forecast and an error for each step, and residuals, if any,
+// for each step of each backtest window.
+func wellFormed(o forecastOutcome, horizon, folds int) bool {
 	if len(o.Forecast) != horizon || len(o.StepRMSE) != horizon {
 		return false
 	}
-	for _, v := range slices.Concat([]float64{o.MAE, o.RMSE}, o.StepRMSE, o.Forecast) {
+	if o.Residuals != nil && len(o.Residuals) != folds {
+		return false
+	}
+	numbers := slices.Concat([]float64{o.MAE, o.RMSE}, o.StepRMSE, o.Forecast)
+	for _, window := range o.Residuals {
+		if len(window) != horizon {
+			return false
+		}
+		numbers = append(numbers, window...)
+	}
+	for _, v := range numbers {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return false
 		}
@@ -718,4 +758,64 @@ func readSeries(ctx context.Context, blobs Blobs, input string) ([]float64, stri
 		return nil, "", fmt.Errorf("forecast input %s: %d points, too few to forecast from", c, len(values))
 	}
 	return values, last, nil
+}
+
+// combine returns the median, step by step, of the forecasts of the best
+// candidate of each of the combineKinds best-scoring kinds among fitted,
+// which are sorted best first, and its backtest errors: the median of
+// theirs, since the median of forecasts misses by the median of their
+// misses. It returns false when fewer than two kinds were fitted, or a
+// candidate sent no residuals.
+func combine(sorted []forecastOutcome, folds int) (forecastOutcome, string, bool) {
+	var picks []forecastOutcome
+	var names []string
+	seen := map[string]bool{}
+	for _, o := range sorted {
+		if o.Error != "" || len(picks) == combineKinds {
+			break
+		}
+		if seen[o.Model.Kind] {
+			continue
+		}
+		if len(o.Residuals) != folds {
+			return forecastOutcome{}, "", false
+		}
+		seen[o.Model.Kind] = true
+		picks = append(picks, o)
+		names = append(names, o.Model.Name())
+	}
+	if len(picks) < 2 {
+		return forecastOutcome{}, "", false
+	}
+	column := make([]float64, len(picks))
+	median := func(at func(o forecastOutcome) float64) float64 {
+		for i, o := range picks {
+			column[i] = at(o)
+		}
+		slices.Sort(column)
+		mid := len(column) / 2
+		if len(column)%2 == 1 {
+			return column[mid]
+		}
+		return (column[mid-1] + column[mid]) / 2
+	}
+	horizon := len(picks[0].Forecast)
+	out := forecastOutcome{Forecast: make([]float64, horizon), StepRMSE: make([]float64, horizon)}
+	var absSum, sqSum float64
+	for j := range horizon {
+		out.Forecast[j] = median(func(o forecastOutcome) float64 { return o.Forecast[j] })
+		var stepSq float64
+		for k := range folds {
+			e := median(func(o forecastOutcome) float64 { return o.Residuals[k][j] })
+			sq := float64(e * e)
+			absSum += math.Abs(e)
+			sqSum += sq
+			stepSq += sq
+		}
+		out.StepRMSE[j] = math.Sqrt(stepSq / float64(folds))
+	}
+	count := float64(folds * horizon)
+	out.MAE = absSum / count
+	out.RMSE = math.Sqrt(sqSum / count)
+	return out, "median of " + strings.Join(names, "; "), true
 }
