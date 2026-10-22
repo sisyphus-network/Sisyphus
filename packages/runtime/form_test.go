@@ -29,7 +29,9 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 	scan, _ := store.Put(ctx, strings.NewReader("%PDF-1.7\n"))
 	topology, _ := store.Put(ctx, strings.NewReader("%VERSION  VERSION_STAMP = V0001.000\n"))
 	trajectory, _ := store.Put(ctx, strings.NewReader("T\x00\x00\x00CORD"))
-	files := map[string]string{"qchem": water.String(), "ocr": scan.String(), "traj.topology": topology.String(), "traj.trajectory": trajectory.String()}
+	// forecast reads its series, which must be long enough to backtest.
+	series, _ := store.Put(ctx, strings.NewReader(seasonalSeries(60)))
+	files := map[string]string{"qchem": water.String(), "ocr": scan.String(), "traj.topology": topology.String(), "traj.trajectory": trajectory.String(), "forecast": series.String()}
 
 	// Some file fields stand in place of another, which a form's fields
 	// cannot say, and their help does: md's Amber system, its topology and
@@ -141,7 +143,7 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			}
 		}
 	}
-	if !slices.Equal(formed, []string{"md", "ocr", "primes", "qchem", "render", "traj", "transcode", "transcribe", "wordcount"}) {
+	if !slices.Equal(formed, []string{"forecast", "md", "ocr", "primes", "qchem", "render", "traj", "transcode", "transcribe", "wordcount"}) {
 		t.Errorf("the workloads with forms are %v", formed)
 	}
 	if Builtin().Form("no-such-workload") != nil || registry.Form("graph") != nil {

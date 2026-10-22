@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -149,7 +150,7 @@ func TestIsqrtIsExactAcrossThePrimesRange(t *testing.T) {
 
 func TestRegistry(t *testing.T) {
 	r := Builtin()
-	if got := r.Names(); len(got) != 2 || got[0] != "primes" || got[1] != "wordcount" {
+	if got := r.Names(); !slices.Equal(got, []string{"forecast", "primes", "wordcount"}) {
 		t.Errorf("built-in workloads: %v", got)
 	}
 	if _, err := r.Get("nope"); err == nil {
