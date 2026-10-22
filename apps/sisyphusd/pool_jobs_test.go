@@ -246,3 +246,38 @@ func TestAJoinedClientNodesJobsWhenThingsFail(t *testing.T) {
 		t.Errorf("following %v, over %v", jobs.following, jobs.over)
 	}
 }
+
+// Resuming follows each job the node has recorded once: a job recorded twice
+// is followed once, and one already followed to its end is not followed
+// again. The end-to-end tests reach these only when a reconnect happens to
+// meet a recorded job, so they are driven here (#642).
+func TestAJoinedClientNodeFollowsEachRecordedJobOnce(t *testing.T) {
+	client := worker.JoinedPool{ID: "c", Roles: []pb.Role{pb.Role_ROLE_CLIENT}, Connected: true}
+	changed := make(chan struct{}, 8)
+	jobs := newPoolJobs(context.Background(), &fakePool{events: []*pb.JobEvent{{Seq: 1}}, recvErr: io.EOF}, &fakeRecords{ids: []string{"j", "j"}},
+		func() worker.JoinedPool { return client }, func() { changed <- struct{}{} })
+
+	jobs.Resume()
+	// A watch tells of its event, then of its end, which it notes first.
+	for range 2 {
+		select {
+		case <-changed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the job was never followed to its end")
+		}
+	}
+	jobs.mu.Lock()
+	followed, over := len(jobs.following), jobs.over["j"]
+	jobs.mu.Unlock()
+	if followed != 0 || !over {
+		t.Fatalf("after its watch ended: following %d, over %v", followed, over)
+	}
+
+	// Neither the job recorded twice nor resuming again starts a second watch.
+	jobs.Resume()
+	select {
+	case <-changed:
+		t.Error("a job already followed to its end was followed again")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
