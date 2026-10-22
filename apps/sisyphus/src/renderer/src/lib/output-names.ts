@@ -3,7 +3,8 @@
 // molecule's last frame as .pdb, a rendered frame as .png, a transcript as
 // .txt and its subtitles as .srt, molecules' geometries as .xyz and their
 // table as .csv, a scan's searchable PDF as .pdf, a trajectory analysis's
-// tables as .csv, a file a container wrote by its own name.
+// tables and a forecast and its models' scores as .csv, a file a container
+// wrote by its own name.
 
 // What a result calls a file, and the extension that kind of file has.
 const kinds: Record<string, string> = {
@@ -12,6 +13,7 @@ const kinds: Record<string, string> = {
   text: '.txt', subtitles: '.srt', pdf: '.pdf', pdfs: '.pdf',
   csv: '.csv', xyz: '.xyz', geometry: '.xyz', frequencies: '.txt',
   series: '.csv', hbonds: '.csv', rmsf: '.csv', dssp: '.csv', dssp_residues: '.csv',
+  forecast_table: '.csv', scores_table: '.csv',
 }
 
 function decode(result?: Uint8Array): unknown {

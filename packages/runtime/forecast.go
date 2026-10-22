@@ -1,0 +1,721 @@
+package runtime
+
+import (
+	"bufio"
+	"bytes"
+	"cmp"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/ipfs/go-cid"
+)
+
+// Forecast fits candidate models to a time series, backtests each on the
+// series' own recent past, and forecasts ahead with the one that did best.
+// The candidates are shared out across the pool, a few to each task, so
+// many models and settings are tried side by side.
+//
+// It is plain arithmetic in the daemon, with no image and no randomness,
+// so any worker can run it, and two workers given the same task return
+// the same bytes: a job is checked by comparing them. Go may fuse a
+// multiplication and an addition into one instruction on some processors,
+// rounding once where others round twice; every product here is
+// converted to float64 explicitly, which the language says rounds it, so
+// the answer is the same on every processor the daemon is built for.
+type Forecast struct{}
+
+// ForecastParams are the job parameters.
+type ForecastParams struct {
+	// Input is the CID of the series: a CSV file with a value on each
+	// line, in the last column, oldest first. A first line whose value is
+	// not a number is taken as a header.
+	Input string `json:"input"`
+	// Horizon is how many steps ahead to forecast; 12 if not given.
+	Horizon int `json:"horizon,omitempty"`
+	// Season is the length of the series' cycle in steps, 12 for months
+	// in a year, or 0 for none. Seasonal models are tried only with one.
+	Season int `json:"season,omitempty"`
+	// Folds is how many windows of Horizon steps at the end of the series
+	// each candidate is backtested on; 4 if not given.
+	Folds int `json:"folds,omitempty"`
+	// Models is which kinds of model to try: "all", the default, or one
+	// kind, or several separated by commas.
+	Models string `json:"models,omitempty"`
+	// Tasks caps how many tasks the candidates are shared out among; 0
+	// leaves it to the pool.
+	Tasks int `json:"tasks,omitempty"`
+}
+
+// forecastKinds are the kinds of model, in the order their candidates are
+// tried.
+var forecastKinds = []string{"naive", "mean", "drift", "snaive", "ses", "holt", "holtwinters", "ar"}
+
+const (
+	maxForecastBytes   = 16 << 20
+	maxForecastPoints  = 200_000
+	maxForecastHorizon = 1000
+	maxForecastSeason  = 1000
+	maxForecastFolds   = 50
+	// maxForecastOrder bounds an autoregression, whose fitting grows with
+	// the square of its order.
+	maxForecastOrder = 24
+)
+
+// forecastModel is one candidate: a kind of model and its settings.
+type forecastModel struct {
+	Kind   string  `json:"kind"`
+	Alpha  float64 `json:"alpha,omitempty"`
+	Beta   float64 `json:"beta,omitempty"`
+	Gamma  float64 `json:"gamma,omitempty"`
+	Order  int     `json:"order,omitempty"`
+	Season int     `json:"season,omitempty"`
+}
+
+// Name says what the candidate is, settings and all.
+func (m forecastModel) Name() string {
+	var b strings.Builder
+	b.WriteString(m.Kind)
+	setting := func(key string, v float64) {
+		if v != 0 {
+			fmt.Fprintf(&b, " %s=%s", key, strconv.FormatFloat(v, 'g', -1, 64))
+		}
+	}
+	setting("alpha", m.Alpha)
+	setting("beta", m.Beta)
+	setting("gamma", m.Gamma)
+	setting("order", float64(m.Order))
+	setting("season", float64(m.Season))
+	return b.String()
+}
+
+// fewest is how many points the model needs to be fitted to.
+func (m forecastModel) fewest() int {
+	switch m.Kind {
+	case "snaive":
+		return m.Season
+	case "holtwinters":
+		return 2 * m.Season
+	case "drift", "holt":
+		return 2
+	case "ar":
+		return 3*m.Order + 2
+	}
+	return 1
+}
+
+// invalid says what is wrong with a candidate's settings, or "" if
+// nothing is. Split makes only valid ones; a task is checked all the same.
+func (m forecastModel) invalid() string {
+	rate := func(v float64) bool { return v > 0 && v <= 1 }
+	season := m.Season >= 2 && m.Season <= maxForecastSeason
+	ok := false
+	switch m.Kind {
+	case "naive", "mean", "drift":
+		ok = true
+	case "snaive":
+		ok = season
+	case "ses":
+		ok = rate(m.Alpha)
+	case "holt":
+		ok = rate(m.Alpha) && rate(m.Beta)
+	case "holtwinters":
+		ok = season && rate(m.Alpha) && rate(m.Beta) && rate(m.Gamma)
+	case "ar":
+		ok = m.Order >= 1 && m.Order <= maxForecastOrder
+	default:
+		return fmt.Sprintf("no such kind of model as %q", m.Kind)
+	}
+	if !ok {
+		return fmt.Sprintf("%s is not a model with settings it can take", m.Name())
+	}
+	return ""
+}
+
+// forecastTask is a task payload: backtest and forecast these candidates.
+type forecastTask struct {
+	Input   string          `json:"input"`
+	Horizon int             `json:"horizon"`
+	Folds   int             `json:"folds"`
+	Models  []forecastModel `json:"models"`
+}
+
+// forecastPart is a task output.
+type forecastPart struct {
+	Points     int               `json:"points"`
+	Horizon    int               `json:"horizon"`
+	Folds      int               `json:"folds"`
+	Last       string            `json:"last"`
+	Candidates []forecastOutcome `json:"candidates"`
+}
+
+// forecastOutcome is how one candidate did: its errors over the backtest,
+// the root mean square error at each step ahead, and its forecast from the
+// whole series; or why it could not be fitted.
+type forecastOutcome struct {
+	Model    forecastModel `json:"model"`
+	MAE      float64       `json:"mae"`
+	RMSE     float64       `json:"rmse"`
+	StepRMSE []float64     `json:"step_rmse,omitempty"`
+	Forecast []float64     `json:"forecast,omitempty"`
+	Error    string        `json:"error,omitempty"`
+}
+
+// ForecastScore is one candidate's backtest, as the result gives it.
+type ForecastScore struct {
+	Model string  `json:"model"`
+	MAE   float64 `json:"mae,omitempty"`
+	RMSE  float64 `json:"rmse,omitempty"`
+	Error string  `json:"error,omitempty"`
+}
+
+// ForecastPoint is one step of the forecast, with the ranges the value
+// fell in 80 and 95 times in a hundred in the backtest, taking its errors
+// at that step as normal.
+type ForecastPoint struct {
+	Step  int     `json:"step"`
+	Value float64 `json:"value"`
+	Lo80  float64 `json:"lo80"`
+	Hi80  float64 `json:"hi80"`
+	Lo95  float64 `json:"lo95"`
+	Hi95  float64 `json:"hi95"`
+}
+
+// ForecastResult is the job result.
+type ForecastResult struct {
+	// Points is how long the series is, and Last its last time, as its
+	// first column gave it, or its last line's number if it had one
+	// column only. The forecast goes on from there.
+	Points  int    `json:"points"`
+	Last    string `json:"last"`
+	Horizon int    `json:"horizon"`
+	Folds   int    `json:"folds"`
+	// Best is the candidate with the least root mean square error over
+	// the backtest, and Forecast what it forecasts.
+	Best     ForecastScore   `json:"best"`
+	Forecast []ForecastPoint `json:"forecast"`
+	// Candidates are all of them, best first; those that could not be
+	// fitted come last, saying why.
+	Candidates []ForecastScore `json:"candidates"`
+	// ForecastTable and ScoresTable are the CIDs of CSV files of the
+	// forecast and of the candidates' scores.
+	ForecastTable string `json:"forecast_table"`
+	ScoresTable   string `json:"scores_table"`
+	Tasks         int    `json:"tasks"`
+}
+
+func (Forecast) Name() string { return "forecast" }
+
+func (Forecast) Describe() string {
+	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal) and autoregressive models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the best. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, default 4>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
+}
+
+func (Forecast) Form() []Field {
+	return []Field{
+		{Name: "input", Kind: KindFile, Label: "Series", Help: "A CSV file with a value on each line, in its last column, oldest first; a header line is skipped.", Required: true},
+		{Name: "horizon", Kind: KindInteger, Label: "Steps ahead", Help: "How many steps of the series to forecast.", Default: 12, Minimum: bound(1), Maximum: bound(maxForecastHorizon)},
+		{Name: "season", Kind: KindInteger, Label: "Season length", Help: "How many steps the series' cycle takes, such as 12 for months or 7 for days of the week, or 0 if it has none.", Default: 0, Minimum: bound(0), Maximum: bound(maxForecastSeason)},
+		{Name: "folds", Kind: KindInteger, Label: "Backtest windows", Help: "How many windows at the end of the series each model is tested on before one is chosen.", Default: 4, Minimum: bound(1), Maximum: bound(maxForecastFolds)},
+		{Name: "models", Kind: KindChoice, Label: "Models", Help: "Which kind of model to try, or all of them.", Default: "all", Choices: append([]string{"all"}, forecastKinds...)},
+	}
+}
+
+// settings checks the parameters and fills in their defaults.
+func (p *ForecastParams) settings() error {
+	p.Horizon = cmp.Or(p.Horizon, 12)
+	p.Folds = cmp.Or(p.Folds, 4)
+	switch {
+	case p.Horizon < 1 || p.Horizon > maxForecastHorizon:
+		return fmt.Errorf("horizon %d is not between 1 and %d", p.Horizon, maxForecastHorizon)
+	case p.Season == 1 || p.Season < 0 || p.Season > maxForecastSeason:
+		return fmt.Errorf("season %d is neither 0, for none, nor between 2 and %d", p.Season, maxForecastSeason)
+	case p.Folds < 1 || p.Folds > maxForecastFolds:
+		return fmt.Errorf("folds %d is not between 1 and %d", p.Folds, maxForecastFolds)
+	case p.Tasks < 0 || p.Tasks > MaxTasks:
+		return fmt.Errorf("tasks %d is not between 0 and %d", p.Tasks, MaxTasks)
+	}
+	return nil
+}
+
+// kinds returns the kinds of model the parameters ask for.
+func (p ForecastParams) kinds() ([]string, error) {
+	if p.Models == "" || p.Models == "all" {
+		return forecastKinds, nil
+	}
+	var kinds []string
+	for _, kind := range strings.Split(p.Models, ",") {
+		kind = strings.TrimSpace(kind)
+		if !slices.Contains(forecastKinds, kind) {
+			return nil, fmt.Errorf("models: %q is none of %s", kind, strings.Join(forecastKinds, ", "))
+		}
+		if !slices.Contains(kinds, kind) {
+			kinds = append(kinds, kind)
+		}
+	}
+	return kinds, nil
+}
+
+// forecastCandidates returns the candidates of these kinds that can be
+// fitted to every backtest window of a series of the given length.
+func forecastCandidates(kinds []string, season, shortest int) []forecastModel {
+	var models []forecastModel
+	for _, kind := range forecastKinds {
+		if !slices.Contains(kinds, kind) {
+			continue
+		}
+		switch kind {
+		case "snaive":
+			if season > 0 {
+				models = append(models, forecastModel{Kind: kind, Season: season})
+			}
+		case "ses":
+			for _, a := range []float64{0.1, 0.2, 0.3, 0.5, 0.7, 0.9} {
+				models = append(models, forecastModel{Kind: kind, Alpha: a})
+			}
+		case "holt":
+			for _, a := range []float64{0.2, 0.5, 0.8} {
+				for _, b := range []float64{0.05, 0.2} {
+					models = append(models, forecastModel{Kind: kind, Alpha: a, Beta: b})
+				}
+			}
+		case "holtwinters":
+			if season == 0 {
+				continue
+			}
+			for _, a := range []float64{0.2, 0.5} {
+				for _, b := range []float64{0.05, 0.2} {
+					for _, g := range []float64{0.1, 0.3} {
+						models = append(models, forecastModel{Kind: kind, Alpha: a, Beta: b, Gamma: g, Season: season})
+					}
+				}
+			}
+		case "ar":
+			orders := []int{1, 2, 3, 4, 6, 8, 12}
+			if season > 0 && season <= maxForecastOrder && !slices.Contains(orders, season) {
+				orders = append(orders, season)
+			}
+			for _, p := range orders {
+				models = append(models, forecastModel{Kind: kind, Order: p})
+			}
+		default:
+			models = append(models, forecastModel{Kind: kind})
+		}
+	}
+	return slices.DeleteFunc(models, func(m forecastModel) bool { return m.fewest() > shortest })
+}
+
+func (Forecast) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
+	var p ForecastParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, fmt.Errorf("forecast params: %w", err)
+	}
+	if err := p.settings(); err != nil {
+		return nil, fmt.Errorf("forecast params: %w", err)
+	}
+	kinds, err := p.kinds()
+	if err != nil {
+		return nil, fmt.Errorf("forecast params: %w", err)
+	}
+	values, _, err := readSeries(ctx, blobs, p.Input)
+	if err != nil {
+		return nil, err
+	}
+	shortest := len(values) - p.Folds*p.Horizon
+	if shortest < 1 {
+		return nil, fmt.Errorf("forecast: a series of %d points is too short to backtest %d windows of %d steps", len(values), p.Folds, p.Horizon)
+	}
+	models := forecastCandidates(kinds, p.Season, shortest)
+	if len(models) == 0 {
+		return nil, fmt.Errorf("forecast: no model of the kinds asked for (%s) can be fitted to %d points with season %d", strings.Join(kinds, ", "), shortest, p.Season)
+	}
+	n := min(max(parts, 1), len(models))
+	if p.Tasks > 0 {
+		n = min(n, p.Tasks)
+	}
+	var payloads [][]byte
+	for i := range n {
+		share := models[len(models)*i/n : len(models)*(i+1)/n]
+		payloads = append(payloads, mustJSON(forecastTask{Input: p.Input, Horizon: p.Horizon, Folds: p.Folds, Models: share}))
+	}
+	return payloads, nil
+}
+
+func (Forecast) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
+	var task forecastTask
+	if err := json.Unmarshal(payload, &task); err != nil {
+		return nil, fmt.Errorf("forecast payload: %w", err)
+	}
+	if task.Horizon < 1 || task.Horizon > maxForecastHorizon || task.Folds < 1 || task.Folds > maxForecastFolds {
+		return nil, fmt.Errorf("forecast payload: horizon %d or folds %d out of range", task.Horizon, task.Folds)
+	}
+	values, last, err := readSeries(ctx, blobs, task.Input)
+	if err != nil {
+		return nil, err
+	}
+	report := Report(ctx)
+	report.Log(fmt.Sprintf("backtesting %d candidates on %d points", len(task.Models), len(values)))
+	part := forecastPart{Points: len(values), Horizon: task.Horizon, Folds: task.Folds, Last: last}
+	for i, m := range task.Models {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		part.Candidates = append(part.Candidates, backtest(m, values, task.Horizon, task.Folds))
+		report.Progress(float64(i+1) / float64(len(task.Models)))
+	}
+	return mustJSON(part), nil
+}
+
+// backtest fits the model to the whole series and forecasts from there,
+// then fits it to each window's past and scores its forecast of the
+// window.
+func backtest(m forecastModel, values []float64, horizon, folds int) forecastOutcome {
+	out := forecastOutcome{Model: m}
+	if why := m.invalid(); why != "" {
+		out.Error = why
+		return out
+	}
+	if need := m.fewest() + folds*horizon; len(values) < need {
+		out.Error = fmt.Sprintf("needs at least %d points, %d to fit and %d to test", need, m.fewest(), folds*horizon)
+		return out
+	}
+	f, err := fitForecast(m, values, horizon)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	var absSum, sqSum float64
+	stepSq := make([]float64, horizon)
+	for k := range folds {
+		end := len(values) - (folds-k)*horizon
+		past, err := fitForecast(m, values[:end], horizon)
+		if err != nil {
+			out.Error = err.Error()
+			return out
+		}
+		for j, v := range values[end : end+horizon] {
+			e := v - past[j]
+			sq := float64(e * e)
+			absSum += math.Abs(e)
+			sqSum += sq
+			stepSq[j] += sq
+		}
+	}
+	count := float64(folds * horizon)
+	out.MAE = absSum / count
+	out.RMSE = math.Sqrt(sqSum / count)
+	out.StepRMSE = make([]float64, horizon)
+	for j, sq := range stepSq {
+		out.StepRMSE[j] = math.Sqrt(sq / float64(folds))
+	}
+	out.Forecast = f
+	return out
+}
+
+// fitForecast fits the model to y and forecasts h steps beyond it. y is at
+// least as long as the model needs.
+func fitForecast(m forecastModel, y []float64, h int) ([]float64, error) {
+	n := len(y)
+	f := make([]float64, h)
+	switch m.Kind {
+	case "naive":
+		for k := range f {
+			f[k] = y[n-1]
+		}
+	case "mean":
+		var sum float64
+		for _, v := range y {
+			sum += v
+		}
+		for k := range f {
+			f[k] = sum / float64(n)
+		}
+	case "drift":
+		slope := (y[n-1] - y[0]) / float64(n-1)
+		for k := range f {
+			f[k] = y[n-1] + float64(float64(k+1)*slope)
+		}
+	case "snaive":
+		for k := range f {
+			f[k] = y[n-m.Season+k%m.Season]
+		}
+	case "ses":
+		level := y[0]
+		for _, v := range y[1:] {
+			level += float64(m.Alpha * (v - level))
+		}
+		for k := range f {
+			f[k] = level
+		}
+	case "holt":
+		level, trend := y[0], y[1]-y[0]
+		for _, v := range y[1:] {
+			before := level
+			ahead := level + trend
+			level = ahead + float64(m.Alpha*(v-ahead))
+			trend += float64(m.Beta * ((level - before) - trend))
+		}
+		for k := range f {
+			f[k] = level + float64(float64(k+1)*trend)
+		}
+	case "holtwinters":
+		s := m.Season
+		var first, second float64
+		for i := range s {
+			first += y[i]
+			second += y[s+i]
+		}
+		first /= float64(s)
+		second /= float64(s)
+		level, trend := first, (second-first)/float64(s)
+		seasonal := make([]float64, s)
+		for i := range s {
+			seasonal[i] = y[i] - first
+		}
+		for t := s; t < n; t++ {
+			i := t % s
+			before, slope := level, trend
+			ahead := level + trend
+			level = ahead + float64(m.Alpha*((y[t]-seasonal[i])-ahead))
+			trend += float64(m.Beta * ((level - before) - trend))
+			seasonal[i] += float64(m.Gamma * ((y[t] - before - slope) - seasonal[i]))
+		}
+		for k := range f {
+			f[k] = level + float64(float64(k+1)*trend) + seasonal[(n+k)%s]
+		}
+	case "ar":
+		coef, err := fitAR(y, m.Order)
+		if err != nil {
+			return nil, err
+		}
+		hist := append(slices.Clone(y), f...)
+		for k := range f {
+			t := n + k
+			v := coef[0]
+			for i := 1; i <= m.Order; i++ {
+				v += float64(coef[i] * hist[t-i])
+			}
+			hist[t] = v
+			f[k] = v
+		}
+	}
+	return f, nil
+}
+
+// fitAR fits y[t] = c + a1·y[t-1] + … + ap·y[t-p] by least squares,
+// solving the normal equations by Gaussian elimination with partial
+// pivoting, and returns c, a1, …, ap.
+func fitAR(y []float64, p int) ([]float64, error) {
+	size := p + 1
+	a := make([][]float64, size)
+	for i := range a {
+		a[i] = make([]float64, size+1)
+	}
+	row := make([]float64, size)
+	for t := p; t < len(y); t++ {
+		row[0] = 1
+		for i := 1; i <= p; i++ {
+			row[i] = y[t-i]
+		}
+		for i := range size {
+			for j := range size {
+				a[i][j] += float64(row[i] * row[j])
+			}
+			a[i][size] += float64(row[i] * y[t])
+		}
+	}
+	scale := 0.0
+	for i := range size {
+		scale = max(scale, math.Abs(a[i][i]))
+	}
+	for c := range size {
+		pivot := c
+		for r := c + 1; r < size; r++ {
+			if math.Abs(a[r][c]) > math.Abs(a[pivot][c]) {
+				pivot = r
+			}
+		}
+		if math.Abs(a[pivot][c]) <= float64(1e-12*scale) {
+			return nil, errors.New("the series is too regular to fit an autoregression of this order to")
+		}
+		a[c], a[pivot] = a[pivot], a[c]
+		for r := c + 1; r < size; r++ {
+			factor := a[r][c] / a[c][c]
+			for j := c; j <= size; j++ {
+				a[r][j] -= float64(factor * a[c][j])
+			}
+		}
+	}
+	coef := make([]float64, size)
+	for i := size - 1; i >= 0; i-- {
+		v := a[i][size]
+		for j := i + 1; j < size; j++ {
+			v -= float64(a[i][j] * coef[j])
+		}
+		coef[i] = v / a[i][i]
+	}
+	return coef, nil
+}
+
+func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error) {
+	var result ForecastResult
+	var outcomes []forecastOutcome
+	for i, output := range outputs {
+		var part forecastPart
+		if err := json.Unmarshal(output, &part); err != nil {
+			return nil, fmt.Errorf("task %d output: %w", i, err)
+		}
+		if i == 0 {
+			result.Points, result.Last, result.Horizon, result.Folds = part.Points, part.Last, part.Horizon, part.Folds
+		} else if part.Points != result.Points || part.Last != result.Last || part.Horizon != result.Horizon || part.Folds != result.Folds {
+			return nil, fmt.Errorf("task %d output: forecast %d steps of a series of %d points ending at %q with %d windows, where task 0 did %d of %d ending at %q with %d", i, part.Horizon, part.Points, part.Last, part.Folds, result.Horizon, result.Points, result.Last, result.Folds)
+		}
+		for _, o := range part.Candidates {
+			if o.Error == "" && !wellFormed(o, result.Horizon) {
+				return nil, fmt.Errorf("task %d output: candidate %s has scores or a forecast that are not %d finite numbers", i, o.Model.Name(), result.Horizon)
+			}
+			outcomes = append(outcomes, o)
+		}
+	}
+	slices.SortStableFunc(outcomes, func(a, b forecastOutcome) int {
+		if (a.Error == "") != (b.Error == "") {
+			if a.Error == "" {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Or(cmp.Compare(a.RMSE, b.RMSE), cmp.Compare(a.MAE, b.MAE), strings.Compare(a.Model.Name(), b.Model.Name()))
+	})
+	if len(outcomes) == 0 || outcomes[0].Error != "" {
+		why := "there were none"
+		if len(outcomes) > 0 {
+			why = outcomes[0].Model.Name() + ": " + outcomes[0].Error
+		}
+		return nil, fmt.Errorf("forecast: no candidate model could be fitted (%s)", why)
+	}
+
+	var scores bytes.Buffer
+	scores.WriteString("model,mae,rmse,error\n")
+	for _, o := range outcomes {
+		score := ForecastScore{Model: o.Model.Name(), MAE: o.MAE, RMSE: o.RMSE, Error: o.Error}
+		result.Candidates = append(result.Candidates, score)
+		if o.Error != "" {
+			fmt.Fprintf(&scores, "%s,,,%s\n", score.Model, csvField(o.Error))
+		} else {
+			fmt.Fprintf(&scores, "%s,%s,%s,\n", score.Model, plain(o.MAE), plain(o.RMSE))
+		}
+	}
+	best := outcomes[0]
+	result.Best = result.Candidates[0]
+
+	var table bytes.Buffer
+	table.WriteString("step,value,lo80,hi80,lo95,hi95\n")
+	for j, v := range best.Forecast {
+		w80 := float64(1.2815515655446004 * best.StepRMSE[j])
+		w95 := float64(1.959963984540054 * best.StepRMSE[j])
+		point := ForecastPoint{Step: j + 1, Value: v, Lo80: v - w80, Hi80: v + w80, Lo95: v - w95, Hi95: v + w95}
+		result.Forecast = append(result.Forecast, point)
+		fmt.Fprintf(&table, "%d,%s,%s,%s,%s,%s\n", point.Step, plain(point.Value), plain(point.Lo80), plain(point.Hi80), plain(point.Lo95), plain(point.Hi95))
+	}
+	for _, t := range []struct {
+		into *string
+		data *bytes.Buffer
+		what string
+	}{{&result.ForecastTable, &table, "forecast"}, {&result.ScoresTable, &scores, "scores"}} {
+		stored, err := blobs.Put(ctx, t.data)
+		if err != nil {
+			return nil, fmt.Errorf("store the %s table: %w", t.what, err)
+		}
+		*t.into = stored.String()
+	}
+	result.Tasks = len(outputs)
+	return mustJSON(result), nil
+}
+
+// wellFormed reports whether a fitted candidate's numbers are all there and
+// finite.
+func wellFormed(o forecastOutcome, horizon int) bool {
+	if len(o.Forecast) != horizon || len(o.StepRMSE) != horizon {
+		return false
+	}
+	for _, v := range slices.Concat([]float64{o.MAE, o.RMSE}, o.StepRMSE, o.Forecast) {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+// plain writes a number as a CSV table wants it.
+func plain(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
+
+// csvField quotes a field that has a comma, a quote or a line break in it.
+func csvField(s string) string {
+	if !strings.ContainsAny(s, ",\"\n\r") {
+		return s
+	}
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+// readSeries reads a series: a CSV file with a value on each line, in the
+// last column, and the line's time in the first. A first line whose value
+// is not a number is a header. It returns the values and the last time, or
+// the last line's number if the file has one column.
+func readSeries(ctx context.Context, blobs Blobs, input string) ([]float64, string, error) {
+	c, err := cid.Decode(input)
+	if err != nil {
+		return nil, "", fmt.Errorf("forecast: input is not a CID: %w", err)
+	}
+	blob, err := blobs.Open(ctx, c)
+	if err != nil {
+		return nil, "", fmt.Errorf("forecast input %s: %w", c, err)
+	}
+	defer blob.Close()
+	if blob.Size() > maxForecastBytes {
+		return nil, "", fmt.Errorf("forecast input %s: %d bytes, more than %d", c, blob.Size(), maxForecastBytes)
+	}
+	var values []float64
+	var last string
+	lines := bufio.NewScanner(blob)
+	lines.Buffer(make([]byte, 0, 4096), 64<<10)
+	header := true
+	for number := 1; lines.Scan(); number++ {
+		line := strings.TrimSpace(lines.Text())
+		if line == "" {
+			continue
+		}
+		fields := strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == '\t' || r == ';' })
+		value := ""
+		if len(fields) > 0 {
+			value = strings.TrimSpace(fields[len(fields)-1])
+		}
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil && header {
+			header = false
+			continue
+		}
+		header = false
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil, "", fmt.Errorf("forecast input %s: line %d: %q is not a number", c, number, value)
+		}
+		if len(values) == maxForecastPoints {
+			return nil, "", fmt.Errorf("forecast input %s: more than %d points", c, maxForecastPoints)
+		}
+		values = append(values, v)
+		last = strconv.Itoa(number)
+		if len(fields) > 1 {
+			last = strings.TrimSpace(fields[0])
+		}
+	}
+	if err := lines.Err(); err != nil {
+		return nil, "", fmt.Errorf("forecast input %s: %w", c, err)
+	}
+	if len(values) < 2 {
+		return nil, "", fmt.Errorf("forecast input %s: %d points, too few to forecast from", c, len(values))
+	}
+	return values, last, nil
+}

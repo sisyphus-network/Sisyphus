@@ -91,7 +91,7 @@ func TestWorkerAdvertisesItselfAndReportsAnUnknownWorkload(t *testing.T) {
 	if hello.GetName() != "w" || caps.GetTaskSlots() != 3 || caps.GetCpuCores() == 0 || caps.GetOs() == "" {
 		t.Errorf("hello: %v", hello)
 	}
-	if got := strings.Join(caps.GetWorkloads(), ","); got != "primes,wordcount" {
+	if got := strings.Join(caps.GetWorkloads(), ","); got != "forecast,primes,wordcount" {
 		t.Errorf("advertised workloads %q", got)
 	}
 

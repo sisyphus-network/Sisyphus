@@ -61,6 +61,12 @@ test('a scan’s text is saved as text, and its searchable PDFs as PDFs in order
   assert.equal(outputFileName(parts, 'bafyzip', 4, new Uint8Array()), 'abcdef01-archive.zip')
 })
 
+test('a forecast and its models’ scores are saved as CSV', () => {
+  const job = { jobId: 'abcdef0123456789', result: json({ best: { model: 'ar order=12' }, forecast_table: 'bafyforecast', scores_table: 'bafyscores' }) }
+  assert.equal(outputFileName(job, 'bafyforecast', 0, new Uint8Array()), 'abcdef01-forecast_table.csv')
+  assert.equal(outputFileName(job, 'bafyscores', 1, new Uint8Array()), 'abcdef01-scores_table.csv')
+})
+
 test('a trajectory analysis’s tables are saved as CSV', () => {
   const job = { jobId: 'abcdef0123456789', result: json({ frames: 60, trajectories: 1, trajectory_frames: [60], analyses: ['rmsd', 'hbond', 'dssp', 'rmsf'], series: 'bafyseries', rmsd_angstrom: { mean: 0.2, stdev: 0.1, min: 0, max: 0.4 }, hbonds: 'bafyhb', dssp: 'bafydssp', dssp_residues: 'bafyres', rmsf: 'bafyrmsf', structure: { alpha: 0.4 }, tasks: 4 }) }
   assert.equal(outputFileName(job, 'bafyseries', 0, new Uint8Array()), 'abcdef01-series.csv')

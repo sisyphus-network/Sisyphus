@@ -256,7 +256,7 @@ jobs:
       - name: Check known-answer workloads
         run: >-
           go test ./packages/runtime
-          -run '^(TestCountPrimes|TestPrimesSplitExecuteAggregate|TestIsqrtIsExactAcrossThePrimesRange|TestCountWordsOverTheWholeText|TestCountWordsIsUnaffectedByWhereRangesAreCut|TestWordCountProducesASortedTable|TestWordCountResultCIDIsTheSameHoweverTheJobIsSplit)$'
+          -run '^(TestCountPrimes|TestPrimesSplitExecuteAggregate|TestIsqrtIsExactAcrossThePrimesRange|TestCountWordsOverTheWholeText|TestCountWordsIsUnaffectedByWhereRangesAreCut|TestWordCountProducesASortedTable|TestWordCountResultCIDIsTheSameHoweverTheJobIsSplit|TestAForecastGivesTheKnownAnswer|TestEachForecastModelForecastsWhatItShould|TestAForecastIsTheSameHoweverTheJobIsSplit)$'
 
   # The other systems and processors a release is built for, which GitHub
   # has no runner of: the tests are compiled for each and run in an emulator
@@ -288,7 +288,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     env:
-      KNOWN_ANSWERS: '^(TestCountPrimes|TestPrimesSplitExecuteAggregate|TestIsqrtIsExactAcrossThePrimesRange|TestCountWordsOverTheWholeText|TestCountWordsIsUnaffectedByWhereRangesAreCut|TestWordCountProducesASortedTable|TestWordCountResultCIDIsTheSameHoweverTheJobIsSplit)$'
+      KNOWN_ANSWERS: '^(TestCountPrimes|TestPrimesSplitExecuteAggregate|TestIsqrtIsExactAcrossThePrimesRange|TestCountWordsOverTheWholeText|TestCountWordsIsUnaffectedByWhereRangesAreCut|TestWordCountProducesASortedTable|TestWordCountResultCIDIsTheSameHoweverTheJobIsSplit|TestAForecastGivesTheKnownAnswer|TestEachForecastModelForecastsWhatItShould|TestAForecastIsTheSameHoweverTheJobIsSplit)$'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
