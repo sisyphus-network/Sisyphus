@@ -14,7 +14,7 @@ const kinds: Record<string, string> = {
   text: '.txt', subtitles: '.srt', pdf: '.pdf', pdfs: '.pdf',
   csv: '.csv', xyz: '.xyz', geometry: '.xyz', frequencies: '.txt',
   series: '.csv', hbonds: '.csv', rmsf: '.csv', dssp: '.csv', dssp_residues: '.csv',
-  forecast_table: '.csv', scores_table: '.csv',
+  forecast_table: '.csv', scores_table: '.csv', models_table: '.csv',
   prmtop: '.prmtop', inpcrd: '.inpcrd', pdb: '.pdb', log: '.txt',
 }
 

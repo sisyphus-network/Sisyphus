@@ -66,3 +66,55 @@ func TestAForecastIsBacktestedOnTwoWorkersThatAgree(t *testing.T) {
 		t.Errorf("the pool forecast %+v with %v, where one process forecasts %+v with %v", got.Best, got.Forecast, want.Best, want.Forecast)
 	}
 }
+
+// Many series are shared out across the pool, each task run by two workers
+// whose forecasts must come to the same bytes, and the tables are those the
+// same job run in one process makes.
+func TestManySeriesAreForecastOnTwoWorkersThatAgree(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	p.startWorker("a", 2)
+	p.startWorker("b", 2)
+	p.waitForWorkers(2)
+
+	var panel strings.Builder
+	panel.WriteString("store,week,orders\n")
+	for s := range 5 {
+		for i := range 40 + 6*s {
+			fmt.Fprintf(&panel, "store-%d,%d,%.2f\n", s, i, float64(20*s)+50+0.3*float64(i)+6*math.Cos(2*math.Pi*float64(i)/7)+float64((i+s)%3))
+		}
+	}
+	input, err := blobclient.Upload(p.ctx, p.blobs, strings.NewReader(panel.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := `{"input":"` + input.String() + `","horizon":7,"season":7}`
+	job := p.wait(p.submit(&pb.JobSpec{Workload: "forecasts", Params: []byte(params), MaxTasks: 3, Verify: 2}).GetJobId())
+	if job.GetState() != pb.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("job %v: %s", job.GetState(), job.GetError())
+	}
+	if record := p.recordText(job.GetJobId()); strings.Count(record, `"agreed":true`) != 6 || strings.Contains(record, `"agreed":false`) {
+		t.Errorf("the workers did not all agree: %s", record)
+	}
+	var got runtime.ForecastsResult
+	if err := json.Unmarshal(job.GetResult(), &got); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := runtime.Builtin().Get("forecasts")
+	payloads, err := w.Split(p.ctx, p.store, []byte(params), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := w.Execute(p.ctx, p.store, payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := w.Aggregate(p.ctx, p.store, [][]byte{output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want runtime.ForecastsResult
+	json.Unmarshal(raw, &want)
+	if got.Series != 5 || got.Forecast != 5 || got.Tasks != 3 || got.ForecastTable != want.ForecastTable || got.ModelsTable != want.ModelsTable {
+		t.Errorf("the pool forecast %+v, where one process forecasts %+v", got, want)
+	}
+}
