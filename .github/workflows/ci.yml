@@ -81,7 +81,9 @@ jobs:
     # pull requests stay on GitHub's runners, so only this repository's own
     # code runs on the project's machine.
     runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-26.04' || 'sisyphus-ci' }}
-    timeout-minutes: 45
+    # The race suite (25 m budget) and make cover (40 m, real-image tests
+    # included) run one after the other, plus setup.
+    timeout-minutes: 75
     env:
       # Harmless on a machine of the job's own, and still what keeps the
       # integration steps from sharing ports with each other.
