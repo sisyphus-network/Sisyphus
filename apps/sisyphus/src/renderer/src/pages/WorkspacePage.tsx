@@ -129,6 +129,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   // wait for that state, such as the end-to-end tests.
   const stepsRef = useRef(0)
   const [stepping, setStepping] = useState(false)
+  const [zoomStepCount, setZoomStepCount] = useState(0)
   const regionsRef = useRef<LineSegments | null>(null)
   const regionMaterial = useMemo(regionLineMaterial, [])
   const [regionsLoaded, setRegionsLoaded] = useState(false)
@@ -230,6 +231,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const duration = reduceMotion ? 0 : 320
     globe.pointOfView({ lat: view.lat, lng: view.lng, altitude: distance / radius - 1 }, duration)
     stepsRef.current++
+    setZoomStepCount((step) => step + 1)
     setStepping(true)
     window.setTimeout(() => {
       handleZoom()
@@ -348,7 +350,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const rendererConfig = useMemo(() => ({ alpha: true, antialias: true, powerPreference: 'low-power' as const }), [])
   const ringMaxRadius = useCallback(() => 5, [])
   return <>
-  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-zoom={zoom?.percent} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && wantRegions ? 'shown' : 'hidden'}>
+  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-zoom={zoom?.percent} data-zoom-step={zoomStepCount} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && wantRegions ? 'shown' : 'hidden'}>
     {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
       <Globe
       ref={globeRef}
