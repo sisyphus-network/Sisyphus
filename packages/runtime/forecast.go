@@ -17,7 +17,8 @@ import (
 )
 
 // Forecast fits candidate models to a time series, backtests each on the
-// series' own recent past, and forecasts ahead with the one that did best.
+// series' own recent past, and forecasts ahead with the median of the best
+// candidate of each of the best-scoring kinds of model.
 // The candidates are shared out across the pool, a few to each task, so
 // many models and settings are tried side by side.
 //
@@ -42,7 +43,8 @@ type ForecastParams struct {
 	// in a year, or 0 for none. Seasonal models are tried only with one.
 	Season int `json:"season,omitempty"`
 	// Folds is how many windows of Horizon steps at the end of the series
-	// each candidate is backtested on; 4 if not given.
+	// each candidate is backtested on. If not given, as many as leave a
+	// horizon's worth of points before them, up to autoFolds.
 	Folds int `json:"folds,omitempty"`
 	// Models is which kinds of model to try: "all", the default, or one
 	// kind, or several separated by commas.
@@ -54,7 +56,7 @@ type ForecastParams struct {
 
 // forecastKinds are the kinds of model, in the order their candidates are
 // tried.
-var forecastKinds = []string{"naive", "mean", "drift", "snaive", "ses", "holt", "holtwinters", "ar"}
+var forecastKinds = []string{"naive", "mean", "drift", "snaive", "ses", "holt", "holtwinters", "ar", "theta"}
 
 const (
 	maxForecastBytes   = 16 << 20
@@ -65,6 +67,17 @@ const (
 	// maxForecastOrder bounds an autoregression, whose fitting grows with
 	// the square of its order.
 	maxForecastOrder = 24
+	// maxForecastResiduals bounds how many backtest residuals a candidate
+	// sends back, so that a task's output stays small; past it, the
+	// forecast is the best candidate's alone.
+	maxForecastResiduals = 2048
+	// combineKinds is how many kinds of model the forecast combines: the
+	// best candidate of each of the best-scoring kinds.
+	combineKinds = 4
+	// autoFolds is the most backtest windows a job that does not say how
+	// many is given. On the M4 competition's series, choosing on 8 windows
+	// forecast better than on 2 or 4, and as well as on 12.
+	autoFolds = 8
 )
 
 // forecastModel is one candidate: a kind of model and its settings.
@@ -101,7 +114,7 @@ func (m forecastModel) fewest() int {
 		return m.Season
 	case "holtwinters":
 		return 2 * m.Season
-	case "drift", "holt":
+	case "drift", "holt", "theta":
 		return 2
 	case "ar":
 		return 3*m.Order + 2
@@ -122,6 +135,8 @@ func (m forecastModel) invalid() string {
 		ok = season
 	case "ses":
 		ok = rate(m.Alpha)
+	case "theta":
+		ok = rate(m.Alpha) && (m.Season == 0 || season)
 	case "holt":
 		ok = rate(m.Alpha) && rate(m.Beta)
 	case "holtwinters":
@@ -163,7 +178,10 @@ type forecastOutcome struct {
 	RMSE     float64       `json:"rmse"`
 	StepRMSE []float64     `json:"step_rmse,omitempty"`
 	Forecast []float64     `json:"forecast,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	// Residuals are what each backtest window's values were less what
+	// was forecast for them, when there are few enough of them to send.
+	Residuals [][]float64 `json:"residuals,omitempty"`
+	Error     string      `json:"error,omitempty"`
 }
 
 // ForecastScore is one candidate's backtest, as the result gives it.
@@ -197,7 +215,13 @@ type ForecastResult struct {
 	Folds   int    `json:"folds"`
 	// Best is the candidate with the least root mean square error over
 	// the backtest, and Forecast what it forecasts.
-	Best     ForecastScore   `json:"best"`
+	Best ForecastScore `json:"best"`
+	// Chosen is what Forecast is: the median, step by step, of the best
+	// candidate of each of the best-scoring kinds of model, or Best when
+	// only one kind could be fitted. On the M4 competition's series the
+	// median forecasts better than the best candidate alone, even where
+	// the backtest says otherwise; see docs/forecast-benchmark.md.
+	Chosen   ForecastScore   `json:"chosen"`
 	Forecast []ForecastPoint `json:"forecast"`
 	// Candidates are all of them, best first; those that could not be
 	// fitted come last, saying why.
@@ -212,7 +236,7 @@ type ForecastResult struct {
 func (Forecast) Name() string { return "forecast" }
 
 func (Forecast) Describe() string {
-	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal) and autoregressive models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the best. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, default 4>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
+	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
 }
 
 func (Forecast) Form() []Field {
@@ -220,7 +244,7 @@ func (Forecast) Form() []Field {
 		{Name: "input", Kind: KindFile, Label: "Series", Help: "A CSV file with a value on each line, in its last column, oldest first; a header line is skipped.", Required: true},
 		{Name: "horizon", Kind: KindInteger, Label: "Steps ahead", Help: "How many steps of the series to forecast.", Default: 12, Minimum: bound(1), Maximum: bound(maxForecastHorizon)},
 		{Name: "season", Kind: KindInteger, Label: "Season length", Help: "How many steps the series' cycle takes, such as 12 for months or 7 for days of the week, or 0 if it has none.", Default: 0, Minimum: bound(0), Maximum: bound(maxForecastSeason)},
-		{Name: "folds", Kind: KindInteger, Label: "Backtest windows", Help: "How many windows at the end of the series each model is tested on before one is chosen.", Default: 4, Minimum: bound(1), Maximum: bound(maxForecastFolds)},
+		{Name: "folds", Kind: KindInteger, Label: "Backtest windows", Help: "How many windows at the end of the series each model is tested on before one is chosen. Leave it empty to use as many as the series has room for, up to 8.", Minimum: bound(1), Maximum: bound(maxForecastFolds)},
 		{Name: "models", Kind: KindChoice, Label: "Models", Help: "Which kind of model to try, or all of them.", Default: "all", Choices: append([]string{"all"}, forecastKinds...)},
 	}
 }
@@ -228,14 +252,13 @@ func (Forecast) Form() []Field {
 // settings checks the parameters and fills in their defaults.
 func (p *ForecastParams) settings() error {
 	p.Horizon = cmp.Or(p.Horizon, 12)
-	p.Folds = cmp.Or(p.Folds, 4)
 	switch {
 	case p.Horizon < 1 || p.Horizon > maxForecastHorizon:
 		return fmt.Errorf("horizon %d is not between 1 and %d", p.Horizon, maxForecastHorizon)
 	case p.Season == 1 || p.Season < 0 || p.Season > maxForecastSeason:
 		return fmt.Errorf("season %d is neither 0, for none, nor between 2 and %d", p.Season, maxForecastSeason)
-	case p.Folds < 1 || p.Folds > maxForecastFolds:
-		return fmt.Errorf("folds %d is not between 1 and %d", p.Folds, maxForecastFolds)
+	case p.Folds < 0 || p.Folds > maxForecastFolds:
+		return fmt.Errorf("folds %d is neither 0, for as many as fit, nor between 1 and %d", p.Folds, maxForecastFolds)
 	case p.Tasks < 0 || p.Tasks > MaxTasks:
 		return fmt.Errorf("tasks %d is not between 0 and %d", p.Tasks, MaxTasks)
 	}
@@ -302,6 +325,10 @@ func forecastCandidates(kinds []string, season, shortest int) []forecastModel {
 			for _, p := range orders {
 				models = append(models, forecastModel{Kind: kind, Order: p})
 			}
+		case "theta":
+			for _, a := range []float64{0.1, 0.2, 0.3, 0.5, 0.7, 0.9} {
+				models = append(models, forecastModel{Kind: kind, Alpha: a, Season: season})
+			}
 		default:
 			models = append(models, forecastModel{Kind: kind})
 		}
@@ -324,6 +351,9 @@ func (Forecast) Split(ctx context.Context, blobs Blobs, params []byte, parts int
 	values, _, err := readSeries(ctx, blobs, p.Input)
 	if err != nil {
 		return nil, err
+	}
+	if p.Folds == 0 {
+		p.Folds = min(autoFolds, max(1, (len(values)-p.Horizon)/p.Horizon))
 	}
 	shortest := len(values) - p.Folds*p.Horizon
 	if shortest < 1 {
@@ -390,6 +420,7 @@ func backtest(m forecastModel, values []float64, horizon, folds int) forecastOut
 	}
 	var absSum, sqSum float64
 	stepSq := make([]float64, horizon)
+	keep := folds*horizon <= maxForecastResiduals
 	for k := range folds {
 		end := len(values) - (folds-k)*horizon
 		past, err := fitForecast(m, values[:end], horizon)
@@ -397,8 +428,14 @@ func backtest(m forecastModel, values []float64, horizon, folds int) forecastOut
 			out.Error = err.Error()
 			return out
 		}
+		if keep {
+			out.Residuals = append(out.Residuals, make([]float64, horizon))
+		}
 		for j, v := range values[end : end+horizon] {
 			e := v - past[j]
+			if keep {
+				out.Residuals[k][j] = e
+			}
 			sq := float64(e * e)
 			absSum += math.Abs(e)
 			sqSum += sq
@@ -487,6 +524,43 @@ func fitForecast(m forecastModel, y []float64, h int) ([]float64, error) {
 		for k := range f {
 			f[k] = level + float64(float64(k+1)*trend) + seasonal[(n+k)%s]
 		}
+	case "theta":
+		// The cycle is taken out first if the series has one, by M4's
+		// test and classical decomposition, and put back in the forecast.
+		x, index := y, []float64{1}
+		if m.Season > 1 && cyclic(y, m.Season) {
+			index = seasonIndices(y, m.Season)
+			x = make([]float64, n)
+			for t, v := range y {
+				x[t] = v / index[t%m.Season]
+			}
+		}
+		// Simple exponential smoothing with a drift of half the slope of
+		// the least-squares line through the series: the theta method as
+		// Hyndman and Billah wrote it.
+		var tMean, xMean float64
+		for t, v := range x {
+			tMean += float64(t)
+			xMean += v
+		}
+		tMean /= float64(n)
+		xMean /= float64(n)
+		var sxy, sxx float64
+		for t, v := range x {
+			dt := float64(t) - tMean
+			sxy += float64(dt * (v - xMean))
+			sxx += float64(dt * dt)
+		}
+		slope := sxy / sxx
+		level, decay := x[0], 1-m.Alpha
+		for _, v := range x[1:] {
+			level += float64(m.Alpha * (v - level))
+			decay = float64(decay * (1 - m.Alpha))
+		}
+		for k := range f {
+			drift := float64(slope / 2 * (float64(k) + (1-decay)/m.Alpha))
+			f[k] = float64((level + drift) * index[(n+k)%len(index)])
+		}
 	case "ar":
 		coef, err := fitAR(y, m.Order)
 		if err != nil {
@@ -569,14 +643,17 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 		if err := json.Unmarshal(output, &part); err != nil {
 			return nil, fmt.Errorf("task %d output: %w", i, err)
 		}
+		if part.Folds < 1 || part.Folds > maxForecastFolds {
+			return nil, fmt.Errorf("task %d output: %d backtest windows, not between 1 and %d", i, part.Folds, maxForecastFolds)
+		}
 		if i == 0 {
 			result.Points, result.Last, result.Horizon, result.Folds = part.Points, part.Last, part.Horizon, part.Folds
 		} else if part.Points != result.Points || part.Last != result.Last || part.Horizon != result.Horizon || part.Folds != result.Folds {
 			return nil, fmt.Errorf("task %d output: forecast %d steps of a series of %d points ending at %q with %d windows, where task 0 did %d of %d ending at %q with %d", i, part.Horizon, part.Points, part.Last, part.Folds, result.Horizon, result.Points, result.Last, result.Folds)
 		}
 		for _, o := range part.Candidates {
-			if o.Error == "" && !wellFormed(o, result.Horizon) {
-				return nil, fmt.Errorf("task %d output: candidate %s has scores or a forecast that are not %d finite numbers", i, o.Model.Name(), result.Horizon)
+			if o.Error == "" && !wellFormed(o, result.Horizon, result.Folds) {
+				return nil, fmt.Errorf("task %d output: candidate %s has scores, a forecast or residuals that are not finite numbers for %d steps and %d windows", i, o.Model.Name(), result.Horizon, result.Folds)
 			}
 			outcomes = append(outcomes, o)
 		}
@@ -588,7 +665,7 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 			}
 			return 1
 		}
-		return cmp.Or(cmp.Compare(a.RMSE, b.RMSE), cmp.Compare(a.MAE, b.MAE), strings.Compare(a.Model.Name(), b.Model.Name()))
+		return cmp.Or(cmp.Compare(a.MAE, b.MAE), cmp.Compare(a.RMSE, b.RMSE), strings.Compare(a.Model.Name(), b.Model.Name()))
 	})
 	if len(outcomes) == 0 || outcomes[0].Error != "" {
 		why := "there were none"
@@ -611,12 +688,20 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 	}
 	best := outcomes[0]
 	result.Best = result.Candidates[0]
+	result.Chosen = result.Best
+	if c, name, ok := combine(outcomes, result.Folds); ok {
+		best = c
+		result.Chosen = ForecastScore{Model: name, MAE: c.MAE, RMSE: c.RMSE}
+	}
 
 	var table bytes.Buffer
 	table.WriteString("step,value,lo80,hi80,lo95,hi95\n")
+	q80, q95 := tQuantile80[result.Folds-1], tQuantile95[result.Folds-1]
+	var spread float64
 	for j, v := range best.Forecast {
-		w80 := float64(1.2815515655446004 * best.StepRMSE[j])
-		w95 := float64(1.959963984540054 * best.StepRMSE[j])
+		spread = max(spread, best.StepRMSE[j], float64(best.RMSE*math.Sqrt(float64(j+1)/(float64(len(best.Forecast)+1)/2))))
+		w80 := float64(q80 * spread)
+		w95 := float64(q95 * spread)
 		point := ForecastPoint{Step: j + 1, Value: v, Lo80: v - w80, Hi80: v + w80, Lo95: v - w95, Hi95: v + w95}
 		result.Forecast = append(result.Forecast, point)
 		fmt.Fprintf(&table, "%d,%s,%s,%s,%s,%s\n", point.Step, plain(point.Value), plain(point.Lo80), plain(point.Hi80), plain(point.Lo95), plain(point.Hi95))
@@ -637,12 +722,23 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 }
 
 // wellFormed reports whether a fitted candidate's numbers are all there and
-// finite.
-func wellFormed(o forecastOutcome, horizon int) bool {
+// finite: a forecast and an error for each step, and residuals, if any,
+// for each step of each backtest window.
+func wellFormed(o forecastOutcome, horizon, folds int) bool {
 	if len(o.Forecast) != horizon || len(o.StepRMSE) != horizon {
 		return false
 	}
-	for _, v := range slices.Concat([]float64{o.MAE, o.RMSE}, o.StepRMSE, o.Forecast) {
+	if o.Residuals != nil && len(o.Residuals) != folds {
+		return false
+	}
+	numbers := slices.Concat([]float64{o.MAE, o.RMSE}, o.StepRMSE, o.Forecast)
+	for _, window := range o.Residuals {
+		if len(window) != horizon {
+			return false
+		}
+		numbers = append(numbers, window...)
+	}
+	for _, v := range numbers {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return false
 		}
@@ -718,4 +814,156 @@ func readSeries(ctx context.Context, blobs Blobs, input string) ([]float64, stri
 		return nil, "", fmt.Errorf("forecast input %s: %d points, too few to forecast from", c, len(values))
 	}
 	return values, last, nil
+}
+
+// combine returns the median, step by step, of the forecasts of the best
+// candidate of each of the combineKinds best-scoring kinds among fitted,
+// which are sorted best first, and its backtest errors: the median of
+// theirs, since the median of forecasts misses by the median of their
+// misses. It returns false when fewer than two kinds were fitted, or a
+// candidate sent no residuals.
+func combine(sorted []forecastOutcome, folds int) (forecastOutcome, string, bool) {
+	var picks []forecastOutcome
+	var names []string
+	seen := map[string]bool{}
+	for _, o := range sorted {
+		if o.Error != "" || len(picks) == combineKinds {
+			break
+		}
+		if seen[o.Model.Kind] {
+			continue
+		}
+		if len(o.Residuals) != folds {
+			return forecastOutcome{}, "", false
+		}
+		seen[o.Model.Kind] = true
+		picks = append(picks, o)
+		names = append(names, o.Model.Name())
+	}
+	if len(picks) < 2 {
+		return forecastOutcome{}, "", false
+	}
+	column := make([]float64, len(picks))
+	median := func(at func(o forecastOutcome) float64) float64 {
+		for i, o := range picks {
+			column[i] = at(o)
+		}
+		slices.Sort(column)
+		mid := len(column) / 2
+		if len(column)%2 == 1 {
+			return column[mid]
+		}
+		return (column[mid-1] + column[mid]) / 2
+	}
+	horizon := len(picks[0].Forecast)
+	out := forecastOutcome{Forecast: make([]float64, horizon), StepRMSE: make([]float64, horizon)}
+	var absSum, sqSum float64
+	for j := range horizon {
+		out.Forecast[j] = median(func(o forecastOutcome) float64 { return o.Forecast[j] })
+		var stepSq float64
+		for k := range folds {
+			e := median(func(o forecastOutcome) float64 { return o.Residuals[k][j] })
+			sq := float64(e * e)
+			absSum += math.Abs(e)
+			sqSum += sq
+			stepSq += sq
+		}
+		out.StepRMSE[j] = math.Sqrt(stepSq / float64(folds))
+	}
+	count := float64(folds * horizon)
+	out.MAE = absSum / count
+	out.RMSE = math.Sqrt(sqSum / count)
+	return out, "median of " + strings.Join(names, "; "), true
+}
+
+// cyclic is the M4 competition's test of whether a series has a cycle of
+// the given length: whether its autocorrelation at that lag is beyond
+// what 90% of series without one would show. A series of fewer than
+// three cycles is taken to have none.
+func cyclic(y []float64, season int) bool {
+	n := len(y)
+	if n < 3*season {
+		return false
+	}
+	var mean float64
+	for _, v := range y {
+		mean += v
+	}
+	mean /= float64(n)
+	var c0 float64
+	for _, v := range y {
+		c0 += float64((v - mean) * (v - mean))
+	}
+	acf := func(k int) float64 {
+		var s float64
+		for t := k; t < n; t++ {
+			s += float64((y[t] - mean) * (y[t-k] - mean))
+		}
+		return s / c0
+	}
+	sum := 1.0
+	for k := 1; k < season; k++ {
+		a := acf(k)
+		sum += float64(2 * float64(a*a))
+	}
+	return math.Abs(acf(season)) > float64(1.645/math.Sqrt(float64(n))*math.Sqrt(sum))
+}
+
+// seasonIndices are a series' multiplicative seasonal indices, one for
+// each place in its cycle, averaging one: each value's ratio to the
+// centred moving average around it, averaged over its place in the cycle.
+func seasonIndices(y []float64, season int) []float64 {
+	half := season / 2
+	sums := make([]float64, season)
+	counts := make([]float64, season)
+	for t := half; t < len(y)-half; t++ {
+		var trend float64
+		if season%2 == 0 {
+			trend = (y[t-half] + y[t+half]) / 2
+			for j := t - half + 1; j < t+half; j++ {
+				trend += y[j]
+			}
+		} else {
+			for j := t - half; j <= t+half; j++ {
+				trend += y[j]
+			}
+		}
+		trend /= float64(season)
+		sums[t%season] += y[t] / trend
+		counts[t%season]++
+	}
+	var mean float64
+	for i := range sums {
+		sums[i] /= counts[i]
+		mean += sums[i]
+	}
+	mean /= float64(season)
+	for i := range sums {
+		sums[i] /= mean
+	}
+	return sums
+}
+
+// tQuantile80 and tQuantile95 are the 90th and 97.5th percentiles of
+// Student's t distribution with 1 to 50 degrees of freedom, which bound
+// the middle 80 and 95 of every hundred values. A forecast's ranges are
+// these times the spread of its backtest errors, with as many degrees of
+// freedom as there were backtest windows: the fewer the windows, the less
+// the spread is known, and the wider the ranges. On the M4 competition's
+// series this makes the 80% and 95% ranges hold 83% and 95% of what
+// followed, where the normal distribution's held 67% and 81%.
+var tQuantile80 = [maxForecastFolds]float64{
+	3.0777, 1.8856, 1.6377, 1.5332, 1.4759, 1.4398, 1.4149, 1.3968, 1.3830, 1.3722,
+	1.3634, 1.3562, 1.3502, 1.3450, 1.3406, 1.3368, 1.3334, 1.3304, 1.3277, 1.3253,
+	1.3232, 1.3212, 1.3195, 1.3178, 1.3163, 1.3150, 1.3137, 1.3125, 1.3114, 1.3104,
+	1.3095, 1.3086, 1.3077, 1.3070, 1.3062, 1.3055, 1.3049, 1.3042, 1.3036, 1.3031,
+	1.3025, 1.3020, 1.3016, 1.3011, 1.3006, 1.3002, 1.2998, 1.2994, 1.2991, 1.2987,
+}
+
+var tQuantile95 = [maxForecastFolds]float64{
+	12.7062, 4.3027, 3.1824, 2.7764, 2.5706, 2.4469, 2.3646, 2.3060, 2.2622, 2.2281,
+	2.2010, 2.1788, 2.1604, 2.1448, 2.1314, 2.1199, 2.1098, 2.1009, 2.0930, 2.0860,
+	2.0796, 2.0739, 2.0687, 2.0639, 2.0595, 2.0555, 2.0518, 2.0484, 2.0452, 2.0423,
+	2.0395, 2.0369, 2.0345, 2.0322, 2.0301, 2.0281, 2.0262, 2.0244, 2.0227, 2.0211,
+	2.0195, 2.0181, 2.0167, 2.0154, 2.0141, 2.0129, 2.0117, 2.0106, 2.0096, 2.0086,
 }
