@@ -96,10 +96,12 @@ func lastBytes(b []byte, n int) []byte {
 
 // What of Docker's debug log could carry a credential: an authorization
 // or registry-auth header, whose value may be several words and is cut to
-// the end of its line, or a token, password or secret given as a value.
+// the end of its line, or a token, password or secret given as a value,
+// whole: in double or single quotes, an authentication scheme and what it
+// carries (Bearer abc.def), or one word.
 var (
 	headerInDockerDebug = regexp.MustCompile(`(?i)((?:authorization|x-registry-auth)["']?\s*[:=]\s*)[^\n]*`)
-	secretInDockerDebug = regexp.MustCompile(`(?i)((?:token|password|secret)["']?\s*[:=]\s*)("[^"]*"|\S+)`)
+	secretInDockerDebug = regexp.MustCompile(`(?i)((?:token|password|secret)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|(?:bearer|basic|token)\s+\S+|\S+)`)
 )
 
 // redactDockerDebug replaces any such value with <redacted>.
@@ -204,6 +206,21 @@ DEBU[0000] {"identitytoken":"xyz", "password": "hunter2", "auth": "ok"} X-Regist
 DEBU[0000] {"identitytoken":<redacted>, "password": <redacted>, "auth": "ok"} X-Registry-Auth=<redacted>`
 	if got := redactDockerDebug([]byte(log)); got != want {
 		t.Errorf("redacted:\n%s\nwant:\n%s", got, want)
+	}
+
+	// A token, password or secret's whole value goes, whether it is an
+	// authentication scheme and its credential or several words in quotes.
+	for log, want := range map[string]string{
+		`token: Bearer abc.def end`:        `token: <redacted> end`,
+		`password: 'two words' end`:        `password: <redacted> end`,
+		`"secret": "three more words" end`: `"secret": <redacted> end`,
+		`TOKEN=Basic dXNlcjpwYXNz end`:     `TOKEN=<redacted> end`,
+		`token=t0k end`:                    `token=<redacted> end`,
+		`refresh_token: token abc.def end`: `refresh_token: <redacted> end`,
+	} {
+		if got := redactDockerDebug([]byte(log)); got != want {
+			t.Errorf("%q redacted to %q, not %q", log, got, want)
+		}
 	}
 
 	// Put the start of the authorization header just before the retained tail.
