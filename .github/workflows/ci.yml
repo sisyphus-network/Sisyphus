@@ -358,7 +358,9 @@ jobs:
           # VM's files back has failed on its own (tar on FreeBSD/arm64).
           copyback: false
           arch: ${{ matrix.goarch == 'arm64' && 'aarch64' || '' }}
-          sync: ${{ matrix.goarch == 'arm64' && 'tar' || 'rsync' }}
+          # rsync is fetched with pkg first, so a stalled mirror can hold
+          # the leg past its timeout; tar is in the base system.
+          sync: tar
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
       - name: Run the known-answer workloads on OpenBSD
@@ -368,6 +370,9 @@ jobs:
           # The tests' answer is all that is wanted back, and copying the
           # VM's files back has failed on its own (tar on FreeBSD/arm64).
           copyback: false
+          # rsync is fetched with pkg_add first, so a stalled mirror can
+          # hold the leg past its timeout; tar is in the base system.
+          sync: tar
           arch: ${{ matrix.goarch == 'arm64' && 'aarch64' || '' }}
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
@@ -378,6 +383,10 @@ jobs:
           # The tests' answer is all that is wanted back, and copying the
           # VM's files back has failed on its own (tar on FreeBSD/arm64).
           copyback: false
+          # rsync is fetched with pkg_add first, and a mirror that stalls
+          # mid-download has held that past the job's timeout; tar is in
+          # the base system.
+          sync: tar
           envs: KNOWN_ANSWERS
           run: cd packages/runtime && ./runtime.test -test.v -test.run "$KNOWN_ANSWERS"
 
