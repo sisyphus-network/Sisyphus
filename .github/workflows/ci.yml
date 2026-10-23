@@ -203,6 +203,8 @@ jobs:
           cache: ${{ runner.environment == 'github-hosted' }}
       - name: Pull the base image used by real workloads
         run: docker pull alpine:3.20
+      - name: Check Docker resource limits on this runner
+        run: docker run --rm --cpus 1 --memory 64m alpine:3.20 true
       - name: Run the real-image workload tests, measuring what they cover
         run: |
           flock "$SISYPHUS_CI_LOCAL_NETWORK_LOCK" bash -euo pipefail -c '
