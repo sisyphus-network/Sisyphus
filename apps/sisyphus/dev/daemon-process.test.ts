@@ -143,7 +143,7 @@ test('a restart stops the owned node gracefully and starts it again with changed
   await daemon.stop()
 })
 
-test('a child that exits immediately after restart cannot apply running settings', async () => {
+test('a child that exits immediately after restart cannot apply running settings', { timeout: 5000 }, async () => {
   const children: FakeChild[] = []
   const listeners = new Set<(snapshot: Snapshot) => void>()
   let current: Snapshot = { status: 'connected' }
