@@ -10,8 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"slices"
 	"strings"
 
 	"github.com/ipfs/go-cid"
@@ -48,9 +46,21 @@ var chronosVariants = map[string]chronosPin{
 	"base":  {"amazon/chronos-bolt-base", "5d9f166d69f47aef3401367a7b842e78fe97b121", "46f7e7e695569f67b06178faa4f236c281392945aa2d1bdf844442e57155530b", "31f875483a3215bc6880a0837ea608a13ce55f88ad90538c3cdd0b29aeb60b36"},
 }
 
-// chronosKinds are the kinds of model a job names the Chronos-Bolt models
-// by, smallest first. "all" does not include them: they are asked for.
-var chronosKinds = []string{"chronos-tiny", "chronos-mini", "chronos-small", "chronos-base"}
+// chronosSizes are the Chronos-Bolt models, smallest first.
+var chronosSizes = []string{"tiny", "mini", "small", "base"}
+
+// chronosFamily is Chronos-Bolt as a forecast family: a job names its
+// models chronos-tiny to chronos-base, and they run in ChronosImage.
+var chronosFamily = forecastFamily{
+	kind:      "chronos",
+	name:      "Chronos-Bolt",
+	variants:  chronosSizes,
+	fewest:    chronosFewest,
+	memoryMB:  chronosMemoryMB,
+	tolerance: chronosTolerance,
+	label:     ChronosLabel,
+	runner:    func(f Forecast) forecastRunner { return chronosRunner{f} },
+}
 
 const (
 	// chronosFewest is how many points Chronos-Bolt is given at least to
@@ -71,11 +81,6 @@ const (
 	// series differed by at most 1.0e-4 relative; this is ten times that.
 	chronosTolerance = 1e-3
 )
-
-// wantsChronos reports whether any of the kinds is a Chronos-Bolt model.
-func wantsChronos(kinds []string) bool {
-	return slices.ContainsFunc(kinds, func(k string) bool { return slices.Contains(chronosKinds, k) })
-}
 
 // chronosRequirements are the Python packages the image is built from, each
 // held to its hashes, for x86-64 and 64-bit ARM.
@@ -130,7 +135,7 @@ tzdata==2026.5 --hash=sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb
 var chronosFetch = func() string {
 	var b strings.Builder
 	b.WriteString("import hashlib,sys\nfrom huggingface_hub import snapshot_download\n")
-	for _, name := range []string{"tiny", "mini", "small", "base"} {
+	for _, name := range chronosSizes {
 		p := chronosVariants[name]
 		fmt.Fprintf(&b, "d=snapshot_download(%q,revision=%q,local_dir='/models/%s',allow_patterns=['config.json','model.safetensors'])\n", p.repo, p.revision, name)
 		fmt.Fprintf(&b, "for f,s in (('config.json',%q),('model.safetensors',%q)):\n", p.config, p.weights)
@@ -295,241 +300,4 @@ func (r chronosRunner) fit(ctx context.Context, requests []fitRequest, done func
 	}
 	done(len(requests))
 	return answers, nil
-}
-
-// runners is how a forecast task fits its candidates: Chronos-Bolt in its
-// image, everything else in process.
-func (f Forecast) runners(models []forecastModel) (runnerFor, error) {
-	if !slices.ContainsFunc(models, func(m forecastModel) bool { return m.Kind == "chronos" }) {
-		return inProcess, nil
-	}
-	if why := f.cannotRunChronos(); why != "" {
-		return nil, errors.New("forecast payload: the task has Chronos-Bolt candidates, and " + why)
-	}
-	return func(m forecastModel) forecastRunner {
-		if m.Kind == "chronos" {
-			return chronosRunner{f}
-		}
-		return goRunner{}
-	}, nil
-}
-
-// Needs says that a job that asks for Chronos-Bolt needs a worker that
-// runs it in the coordinator's image.
-func (Forecast) Needs(params []byte) []string {
-	var p ForecastParams
-	if json.Unmarshal(params, &p) != nil {
-		return nil
-	}
-	if kinds, err := p.kinds(); err != nil || !wantsChronos(kinds) {
-		return nil
-	}
-	return []string{ChronosLabel}
-}
-
-// cannotRunChronos says why this node cannot run the Chronos-Bolt image,
-// or nothing if it can: it must run container work, and give a container
-// the memory the image asks for, if its owner holds containers to less.
-func (f Forecast) cannotRunChronos() string {
-	switch {
-	case !f.Containers:
-		return "this node does not run container work"
-	case f.Confined.MemoryMB > 0 && f.Confined.MemoryMB < chronosMemoryMB:
-		return fmt.Sprintf("this node holds a container to %d MB, and Chronos-Bolt needs %d", f.Confined.MemoryMB, chronosMemoryMB)
-	}
-	return ""
-}
-
-// Offers is Chronos-Bolt, where this node can run it.
-func (f Forecast) Offers(context.Context) []string {
-	if f.cannotRunChronos() != "" {
-		return nil
-	}
-	return []string{ChronosLabel}
-}
-
-// modelChoices are the kinds a form offers: Chronos-Bolt's only where the
-// node can run it.
-func (f Forecast) modelChoices() []string {
-	choices := append([]string{"all"}, forecastKinds...)
-	if f.cannotRunChronos() == "" {
-		choices = append(choices, chronosKinds...)
-	}
-	return choices
-}
-
-func (f Forecast) modelsHelp() string {
-	if f.cannotRunChronos() != "" {
-		return "Which kind of model to try, or all of them."
-	}
-	return "Which kind of model to try, or all of them. The Chronos-Bolt models are pretrained, run in an image on workers that run containers, and are tried only when asked for."
-}
-
-// Varies says that, with a Chronos-Bolt candidate, two honest workers'
-// outputs can differ in their last digits. Compare says when they still
-// agree.
-func (Forecast) Varies() bool { return true }
-
-// Compare says whether two outputs of one forecast task are the same
-// result. Outputs without a Chronos-Bolt candidate are the same only if
-// their bytes are, as before there was one. With one, every other
-// candidate must still be the same to the bit, and each Chronos-Bolt
-// candidate's forecasts, residuals and scores must agree to within
-// chronosTolerance of the size of the series or of what it forecast,
-// whichever is larger. The series' size is given by both outputs and must
-// be the same, since it is read from the task's input. The choice of
-// forecast is not compared: Aggregate makes it once, from the outputs
-// taken.
-func (Forecast) Compare(a, b []byte) (bool, string) {
-	if bytes.Equal(a, b) {
-		return true, ""
-	}
-	if bytes.Compare(a, b) > 0 {
-		a, b = b, a
-	}
-	var x, y forecastPart
-	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
-		return false, "an output is not a forecast task's"
-	}
-	if x.Points != y.Points || x.Horizon != y.Horizon || x.Folds != y.Folds || x.Last != y.Last || x.Scale != y.Scale || len(x.Candidates) != len(y.Candidates) {
-		return false, fmt.Sprintf("one backtested %d candidates %d steps ahead on %d windows of %d points of size %g ending at %q, the other %d %d steps ahead on %d windows of %d points of size %g ending at %q", len(x.Candidates), x.Horizon, x.Folds, x.Points, x.Scale, x.Last, len(y.Candidates), y.Horizon, y.Folds, y.Points, y.Scale, y.Last)
-	}
-	chronos, why := compareCandidates(x.Candidates, y.Candidates, x.Scale)
-	if why != "" {
-		return false, why
-	}
-	if !chronos {
-		return false, "the outputs differ, and neither has a candidate that may"
-	}
-	return true, ""
-}
-
-// compareCandidates says how two runs' backtests of the same candidates,
-// in the same order, differ by more than they may, or nothing where they
-// agree, and whether there was a Chronos-Bolt candidate among them, the
-// only kind that may differ at all.
-func compareCandidates(xs, ys []forecastOutcome, seriesSize float64) (chronos bool, why string) {
-	for i := range xs {
-		p, q := xs[i], ys[i]
-		switch {
-		case p.Model != q.Model:
-			return false, fmt.Sprintf("candidate %d is %s in one and %s in the other", i+1, p.Model.Name(), q.Model.Name())
-		case p.Model.Kind != "chronos":
-			if !bytes.Equal(mustJSON(p), mustJSON(q)) {
-				return false, fmt.Sprintf("candidate %s, which is the same on every processor, differs", p.Model.Name())
-			}
-		default:
-			chronos = true
-			if why := compareChronos(p, q, seriesSize); why != "" {
-				return false, fmt.Sprintf("candidate %s: %s", p.Model.Name(), why)
-			}
-		}
-	}
-	return chronos, ""
-}
-
-// Varies says that, with a Chronos-Bolt candidate, two honest workers'
-// outputs can differ in their last digits, as forecast's can.
-func (Forecasts) Varies() bool { return true }
-
-// Compare says whether two outputs of one forecasts task are the same
-// result, as forecast's Compare does for one series: each series' must be
-// the same but for its Chronos-Bolt candidates, which must agree within
-// chronosTolerance. Which forecast those candidates lead to is chosen once,
-// by Aggregate, from the output taken.
-func (Forecasts) Compare(a, b []byte) (bool, string) {
-	if bytes.Equal(a, b) {
-		return true, ""
-	}
-	if bytes.Compare(a, b) > 0 {
-		a, b = b, a
-	}
-	var x, y forecastsPart
-	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
-		return false, "an output is not a forecasts task's"
-	}
-	if x.From != y.From || x.Horizon != y.Horizon || len(x.Series) != len(y.Series) {
-		return false, fmt.Sprintf("one forecast %d series from %d, %d steps ahead, the other %d from %d, %d steps ahead", len(x.Series), x.From, x.Horizon, len(y.Series), y.From, y.Horizon)
-	}
-	chronos := false
-	for i := range x.Series {
-		p, q := x.Series[i], y.Series[i]
-		pc, qc := p.Candidates, q.Candidates
-		p.Candidates, q.Candidates = nil, nil
-		if !bytes.Equal(mustJSON(p), mustJSON(q)) || len(pc) != len(qc) {
-			return false, fmt.Sprintf("series %q differs otherwise than in its Chronos-Bolt candidates", p.ID)
-		}
-		some, why := compareCandidates(pc, qc, p.Scale)
-		if why != "" {
-			return false, fmt.Sprintf("series %q: %s", p.ID, why)
-		}
-		chronos = chronos || some
-	}
-	if !chronos {
-		return false, "the outputs differ, and neither has a candidate that may"
-	}
-	return true, ""
-}
-
-// Needs is as forecast's: a job that asks for Chronos-Bolt needs a worker
-// that runs it in the coordinator's image.
-func (Forecasts) Needs(params []byte) []string {
-	var p ForecastsParams
-	if json.Unmarshal(params, &p) != nil {
-		return nil
-	}
-	return Forecast{}.Needs(mustJSON(ForecastParams{Models: p.Models}))
-}
-
-// Offers is as forecast's.
-func (f Forecasts) Offers(ctx context.Context) []string { return f.forecast().Offers(ctx) }
-
-// compareChronos says how two runs of one Chronos-Bolt candidate differ by
-// more than chronosTolerance of the size of what was forecast, or nothing
-// where they agree. The size is the series' own, its largest value by
-// magnitude, or the largest forecast either made if that is larger. A
-// residual is what the series did less a forecast of it from a window's
-// past, so it moves as much as that forecast does; and a window's forecast
-// is the size of the series, though the forecast from its end may be near
-// zero, as for a series that swings about it.
-func compareChronos(p, q forecastOutcome, seriesSize float64) string {
-	switch {
-	case p.Error != q.Error:
-		return fmt.Sprintf("one failed with %q and the other with %q", p.Error, q.Error)
-	case p.Error != "":
-		return ""
-	case len(p.Forecast) != len(q.Forecast) || len(p.StepRMSE) != len(q.StepRMSE) || len(p.Residuals) != len(q.Residuals):
-		return "the two forecast, scored or kept residuals for different numbers of steps"
-	}
-	scale := seriesSize
-	for _, v := range slices.Concat(p.Forecast, q.Forecast) {
-		scale = max(scale, math.Abs(v))
-	}
-	limit := chronosTolerance * max(scale, 1e-12)
-	within := func(what string, xs, ys []float64) string {
-		for i := range xs {
-			if gap := math.Abs(xs[i] - ys[i]); !(gap <= limit) {
-				return fmt.Sprintf("its %s %d is %g in one and %g in the other, %.3g apart, more than %g of the size %g", what, i+1, xs[i], ys[i], gap, chronosTolerance, scale)
-			}
-		}
-		return ""
-	}
-	if why := within("forecast step", p.Forecast, q.Forecast); why != "" {
-		return why
-	}
-	if why := within("score", []float64{p.MAE, p.RMSE}, []float64{q.MAE, q.RMSE}); why != "" {
-		return why
-	}
-	if why := within("error at step", p.StepRMSE, q.StepRMSE); why != "" {
-		return why
-	}
-	for k := range p.Residuals {
-		if len(p.Residuals[k]) != len(q.Residuals[k]) {
-			return fmt.Sprintf("window %d kept residuals for different numbers of steps", k+1)
-		}
-		if why := within(fmt.Sprintf("window %d residual", k+1), p.Residuals[k], q.Residuals[k]); why != "" {
-			return why
-		}
-	}
-	return ""
 }

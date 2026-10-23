@@ -139,8 +139,8 @@ func TestOnlyANodeThatRunsContainersTakesChronos(t *testing.T) {
 	}
 	// "all" is the models written in Go, as it was.
 	kinds, _ := ForecastParams{}.kinds()
-	if wantsChronos(kinds) {
-		t.Errorf("all is %v", kinds)
+	if wanted := wantedFamilies(kinds); len(wanted) != 0 {
+		t.Errorf("all is %v, which asks for %s", kinds, familyNames(wanted))
 	}
 	if _, err := (ForecastParams{Models: "chronos-huge"}).kinds(); err == nil || !strings.Contains(err.Error(), "chronos-base") {
 		t.Errorf("an unknown model: %v", err)
@@ -206,8 +206,11 @@ func TestAChronosCandidateIsAModelWithOnlyAVariant(t *testing.T) {
 	}
 	// The pins are what they say they are.
 	hex40, hex64 := regexp.MustCompile(`^[0-9a-f]{40}$`), regexp.MustCompile(`^[0-9a-f]{64}$`)
+	if len(chronosVariants) != len(chronosSizes) {
+		t.Errorf("%d models are pinned and %d offered", len(chronosVariants), len(chronosSizes))
+	}
 	for name, p := range chronosVariants {
-		if !slices.Contains(chronosKinds, "chronos-"+name) || p.repo != "amazon/chronos-bolt-"+name || !hex40.MatchString(p.revision) || !hex64.MatchString(p.config) || !hex64.MatchString(p.weights) {
+		if !slices.Contains(chronosFamily.kinds(), "chronos-"+name) || p.repo != "amazon/chronos-bolt-"+name || !hex40.MatchString(p.revision) || !hex64.MatchString(p.config) || !hex64.MatchString(p.weights) {
 			t.Errorf("%s is pinned as %+v", name, p)
 		}
 		if !strings.Contains(chronosFetch, p.revision) || !strings.Contains(chronosFetch, p.weights) {

@@ -150,8 +150,8 @@ func (f Forecasts) Split(ctx context.Context, blobs Blobs, params []byte, parts 
 	if err != nil {
 		return nil, fmt.Errorf("forecasts params: %w", err)
 	}
-	if why := f.forecast().cannotRunChronos(); wantsChronos(kinds) && why != "" {
-		return nil, errors.New("forecasts params: the Chronos-Bolt models run in containers, and " + why)
+	if err := f.forecast().refuseFamilies("forecasts params", kinds); err != nil {
+		return nil, err
 	}
 	panel, err := readPanel(ctx, blobs, p.Input)
 	if err != nil {
@@ -160,11 +160,11 @@ func (f Forecasts) Split(ctx context.Context, blobs Blobs, params []byte, parts 
 	// As many tasks as the pool asks for, and at least as many as keep each
 	// task's forecasts within bounds; no more than there are series.
 	perTask := max(1, maxForecastsStepsPerTask/one.Horizon)
-	if wantsChronos(kinds) {
+	if len(wantedFamilies(kinds)) > 0 {
 		// Each series then carries its candidates' backtests: a forecast,
 		// an error at each step and up to a window's residuals at each, for
-		// each kind's best and each Chronos-Bolt model.
-		perTask = max(1, maxForecastsStepsPerTask/(one.Horizon*(len(forecastKinds)+len(chronosKinds))*(2+autoFolds)))
+		// each kind's best and each family's model.
+		perTask = max(1, maxForecastsStepsPerTask/(one.Horizon*(len(forecastKinds)+len(familyKinds()))*(2+autoFolds)))
 	}
 	n := min(len(panel), max(parts, 1, (len(panel)+perTask-1)/perTask))
 	n = min(n, MaxTasks)
@@ -185,7 +185,7 @@ func (f Forecasts) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 		return nil, fmt.Errorf("forecasts payload: horizon %d, season %d or folds %d out of range", task.Horizon, task.Season, task.Folds)
 	}
 	for _, kind := range task.Kinds {
-		if !slices.Contains(forecastKinds, kind) && !slices.Contains(chronosKinds, kind) {
+		if !slices.Contains(forecastKinds, kind) && !slices.Contains(familyKinds(), kind) {
 			return nil, fmt.Errorf("forecasts payload: no such kind of model as %q", kind)
 		}
 	}
@@ -219,11 +219,11 @@ func (f Forecasts) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	if err != nil {
 		return nil, err
 	}
-	chronos := wantsChronos(task.Kinds)
+	varied := len(wantedFamilies(task.Kinds)) > 0
 	for i := range part.Series {
 		switch {
 		case part.Series[i].Error != "":
-		case chronos:
+		case varied:
 			part.Series[i].Folds, part.Series[i].Scale, part.Series[i].Candidates = folds[i], seriesScale(values[i]), keptCandidates(outcomes[i])
 		default:
 			decideSeries(&part.Series[i], outcomes[i], folds[i])
@@ -257,7 +257,7 @@ func seriesCandidates(s panelSeries, task forecastsTask) (int, []forecastModel, 
 func keptCandidates(outcomes []forecastOutcome) []forecastOutcome {
 	best := map[string]int{}
 	for i, o := range outcomes {
-		if o.Model.Kind == "chronos" {
+		if o.Model.varies() {
 			continue
 		}
 		if at, ok := best[o.Model.Kind]; !ok || outcomeOrder(o, outcomes[at]) < 0 {
@@ -266,7 +266,7 @@ func keptCandidates(outcomes []forecastOutcome) []forecastOutcome {
 	}
 	var kept []forecastOutcome
 	for i, o := range outcomes {
-		if o.Model.Kind == "chronos" || best[o.Model.Kind] == i {
+		if o.Model.varies() || best[o.Model.Kind] == i {
 			kept = append(kept, o)
 		}
 	}
