@@ -42,7 +42,7 @@ export function autoRotateSpeed(distance: number, radius: number, limits: ZoomLi
   return 0.45 * Math.min(1, Math.max(0.1, share))
 }
 
-// decodeRegionLines reads admin1-lines.json (see dev/build-region-lines.mjs):
+// decodeRegionLines reads admin1-lines.json (see dev/build-region-lines.ts):
 // each line is its first point's longitude and latitude in hundredths of a
 // degree, then each next point's difference from the one before.
 export function decodeRegionLines(data: unknown): Array<Array<[number, number]>> {

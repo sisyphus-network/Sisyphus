@@ -10,15 +10,15 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build && node --experimental-strip-types dev/verify-locale-flags.mjs",
+    "build": "electron-vite build && node --experimental-strip-types dev/verify-locale-flags.ts",
     "proto:generate": "protoc -I ../../proto --es_out=../../packages/client/src/gen --es_opt=target=ts,import_extension=.js ../../proto/sisyphus/node/v1/node.proto",
     "package:dir": "npm run build && electron-builder --config electron-builder.config.cjs --dir --publish never",
     "package:dist": "npm run build && electron-builder --config electron-builder.config.cjs --publish never",
-    "test:package": "node dev/verify-package.mjs",
+    "test:package": "node --experimental-strip-types dev/verify-package.ts",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
-    "test": "node --experimental-strip-types --test dev/*.test.mjs dev/*.test.ts",
-    "test:daemon": "node --experimental-strip-types dev/daemon-lifecycle-smoke.mjs",
+    "test": "node --experimental-strip-types --test dev/*.test.*",
+    "test:daemon": "node --experimental-strip-types dev/daemon-lifecycle-smoke.ts",
     "test:e2e": "node --experimental-strip-types e2e/run.ts"
   },
   "dependencies": {

@@ -1,4 +1,4 @@
-export function packageResourcesDirectory(platform, architecture) {
+export function packageResourcesDirectory(platform: string, architecture: string): string {
   const suffix = architecture === 'arm64' ? '-arm64' : ''
   if (platform === 'linux') return `linux${suffix}-unpacked/resources`
   if (platform === 'win32') return `win${suffix}-unpacked/resources`

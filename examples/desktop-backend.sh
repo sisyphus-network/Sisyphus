@@ -70,7 +70,7 @@ The backend is running. Start the desktop app against it, in another terminal:
 
 Or ask it the questions the app asks, without opening a window:
 
-  cd apps/sisyphus && node dev/check-daemon.mjs $API $POOL_DIR/alpha/api.token
+  cd apps/sisyphus && node dev/check-daemon.ts $API $POOL_DIR/alpha/api.token
 
 gamma's node ID, to look for in the peer list:  $("$BIN" id --data-dir "$POOL_DIR/gamma")
 

@@ -8,7 +8,7 @@ const scripts = await Promise.all(files.filter(name => name.endsWith('.js')).map
 const svgContents = await Promise.all(files.filter(name => name.endsWith('.svg')).map(name => readFile(new URL(name, assets), 'utf8')));
 const bundled = scripts.join('\n');
 // Vite's SVG data-URL encoder changes quote style and removes line breaks.
-const normalize = svg => svg.trim().replaceAll('"', "'").replace(/>\s+</g, '><').replace(/[\r\n]+/g, '');
+const normalize = (svg: string): string => svg.trim().replaceAll('"', "'").replace(/>\s+</g, '><').replace(/[\r\n]+/g, '');
 for (const [, encoded] of bundled.matchAll(/data:image\/svg\+xml,([^"\s]+)/g)) {
   svgContents.push(decodeURIComponent(encoded));
 }
