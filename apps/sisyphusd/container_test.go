@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,23 +68,48 @@ func dockerNetworkEventsSince(start time.Time) (string, error) {
 
 // dockerProbeWithin bounds the failure diagnostic's probe container, and
 // dockerProbeKeeps how much of what docker -D says of it is kept: the end,
-// where a stalled request is.
+// where a stalled request is. dockerStalled is how long the probe may take
+// before the host's Docker daemon is taken to have stalled: a healthy one
+// starts and removes it in well under a second.
 const (
 	dockerProbeWithin = 15 * time.Second
 	dockerProbeKeeps  = 4 << 10
+	dockerStalled     = 2 * time.Second
 )
+
+// dockerdLog is where a CI runner's own Docker daemon, started inside the
+// job's container, writes its log (#314). Elsewhere there is none.
+var dockerdLog = "/tmp/dockerd.log"
+
+// dockerdLogTail is the end of the daemon's log, redacted, or why there is
+// none: what the daemon was doing when the test's job stalled.
+func dockerdLogTail() string {
+	f, err := os.Open(dockerdLog)
+	if err != nil {
+		return fmt.Sprintf("no daemon log (%v)", err)
+	}
+	defer f.Close()
+	// Read a little more than is kept, so that a credential whose start
+	// falls just before the kept end is still recognised and redacted.
+	if info, err := f.Stat(); err == nil && info.Size() > 2*dockerProbeKeeps {
+		f.Seek(info.Size()-2*dockerProbeKeeps, io.SeekStart)
+	}
+	b, _ := io.ReadAll(f)
+	return dockerDebugTail(b)
+}
 
 // dockerProbe starts a container as the worker would start a task's, with
 // no network, through the Docker client's debug log, and says how long it
 // took and the end of that log. Run while the test's job is stalled, it
 // shows whether a new container can be created at all, and if not, which
 // request the client is waiting on.
-func dockerProbe() string {
+func dockerProbe() (time.Duration, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), dockerProbeWithin)
 	defer cancel()
 	began := time.Now()
 	out, err := exec.CommandContext(ctx, "docker", "-D", "run", "--rm", "--network", "none", containerTestImage, "true").CombinedOutput()
-	return fmt.Sprintf("took %s (error %v): %s", time.Since(began).Round(time.Millisecond), err, dockerDebugTail(out))
+	took := time.Since(began)
+	return took, fmt.Sprintf("took %s (error %v): %s", took.Round(time.Millisecond), err, dockerDebugTail(out))
 }
 
 // lastBytes is the last n bytes of b, marked as cut where they are.
@@ -235,14 +261,36 @@ DEBU[0000] {"identitytoken":<redacted>, "password": <redacted>, "auth": "ok"} X-
 	}
 }
 
+// The daemon's log is read from its end, redacted before it is cut, and
+// its absence is said rather than failed on.
+func TestTheDaemonLogIsReadFromItsEndAndRedacted(t *testing.T) {
+	was := dockerdLog
+	t.Cleanup(func() { dockerdLog = was })
+	dockerdLog = filepath.Join(t.TempDir(), "dockerd.log")
+	if got := dockerdLogTail(); !strings.HasPrefix(got, "no daemon log (") {
+		t.Errorf("with no log: %q", got)
+	}
+	// The credential's header starts before the kept end and its value
+	// falls in it; the start of the file is beyond what is read at all.
+	head := "level=info msg=\"the start\"\n" + strings.Repeat("x", 3*dockerProbeKeeps) + "\n"
+	tail := "Authorization: Bearer daemon-log-token\n" + strings.Repeat("y", dockerProbeKeeps-20) + "\nlevel=error msg=\"the end\"\n"
+	if err := os.WriteFile(dockerdLog, []byte(head+tail), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := dockerdLogTail()
+	if strings.Contains(got, "daemon-log-token") || strings.Contains(got, "the start") || !strings.HasSuffix(got, "level=error msg=\"the end\"\n") || len(got) > dockerProbeKeeps+len("…") {
+		t.Errorf("the daemon log's tail: %q", got)
+	}
+}
+
 func TestTheDockerProbesAreBounded(t *testing.T) {
 	requireDocker(t)
 	began := time.Now()
 	if summary, err := dockerNetworkEventsSince(time.Now().Add(-time.Second)); err != nil || summary == "" {
 		t.Errorf("docker network events: %q, %v", summary, err)
 	}
-	if probe := dockerProbe(); !strings.HasPrefix(probe, "took ") {
-		t.Errorf("probe: %q", probe)
+	if took, probe := dockerProbe(); !strings.HasPrefix(probe, "took ") || took <= 0 {
+		t.Errorf("probe: %s, %q", took, probe)
 	}
 	if took := time.Since(began); took > dockerEventsWithin+dockerProbeWithin {
 		t.Errorf("the probes took %s", took)
@@ -290,10 +338,20 @@ func waitForContainerJob(t *testing.T, within time.Duration, addr, id string, su
 			cancel()
 			events, eventsErr := dockerEventsSince(submitted)
 			networks, networksErr := dockerNetworkEventsSince(submitted)
-			probe := dockerProbe()
+			took, probe := dockerProbe()
 			_, cancelErr := cliWithin(t, 5*time.Second, "job", "cancel", "--addr", addr, id)
 			logs, logsErr := cliWithin(t, 5*time.Second, "job", "logs", "--addr", addr, id)
-			t.Fatalf("job did not finish within %s; last job get %q (error %v); matching Docker containers %q (error %v); alpine:3.20 image %q (error %v); alpine:3.20 Docker events since submission %q (error %v); network events since submission %q (error %v); a probe container %s; cancel error %v; job logs %q (error %v)", within, last, lastErr, containers, dockerErr, image, imageErr, events, eventsErr, networks, networksErr, probe, cancelErr, logs, logsErr)
+			what := fmt.Sprintf("job did not finish within %s; last job get %q (error %v); matching Docker containers %q (error %v); alpine:3.20 image %q (error %v); alpine:3.20 Docker events since submission %q (error %v); network events since submission %q (error %v); a probe container %s; the daemon's log %q; cancel error %v; job logs %q (error %v)", within, last, lastErr, containers, dockerErr, image, imageErr, events, eventsErr, networks, networksErr, probe, dockerdLogTail(), cancelErr, logs, logsErr)
+			// A probe container that is itself slow means the host's
+			// Docker daemon stalled, holding up every container alike,
+			// which is the host's failure and not the pool's (#314). The
+			// test is skipped, saying so, and not passed: the container
+			// path was not exercised to the end. A healthy probe and a
+			// missed deadline are still a failure.
+			if took > dockerStalled {
+				t.Skipf("SKIPPED, NOT PASSED: the Docker daemon on this host stalled, so the container path was not exercised to the end: a probe container with no network took %s, more than the %s a healthy daemon takes. %s", took.Round(time.Millisecond), dockerStalled, what)
+			}
+			t.Fatal(what)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
