@@ -533,19 +533,46 @@ func compareStructures(x, y qchemTaskStructure) string {
 			return why
 		}
 	}
-	dx, dy := strings.Fields(x.Dipole), strings.Fields(y.Dipole)
-	if len(dx) != len(dy) {
-		return "one gave a dipole and the other none"
-	}
-	for i := range dx {
-		if why := qchemWithin("dipole", dx[i], dy[i], qchemDipoleTolerance); why != "" {
-			return why
-		}
-	}
 	if why := compareFrequencies(x.Frequencies, y.Frequencies); why != "" {
 		return why
 	}
-	return compareGeometries(x.Atoms, y.Atoms)
+	turn, why := compareGeometries(x.Atoms, y.Atoms)
+	if why != "" {
+		return why
+	}
+	return compareDipoles(x.Dipole, y.Dipole, turn)
+}
+
+// compareDipoles compares two runs' dipoles, each component within
+// qchemDipoleTolerance, once the first is turned as its geometry turns to
+// lie over the other's: a dipole turns with its molecule, so two runs whose
+// optimisations end turned apart give the same dipole in different axes.
+func compareDipoles(x, y string, turn [3][3]float64) string {
+	dx, dy := strings.Fields(x), strings.Fields(y)
+	switch {
+	case len(dx) != len(dy):
+		return "one gave a dipole and the other none"
+	case len(dx) == 0:
+		return ""
+	case len(dx) != 3:
+		return fmt.Sprintf("the dipole %q or %q is not three numbers", x, y)
+	}
+	var a, b [3]float64
+	for i := range 3 {
+		var errA, errB error
+		a[i], errA = strconv.ParseFloat(dx[i], 64)
+		b[i], errB = strconv.ParseFloat(dy[i], 64)
+		if errA != nil || errB != nil || !decimal.MatchString(dx[i]) || !decimal.MatchString(dy[i]) {
+			return fmt.Sprintf("the dipole %q or %q is not a number", dx[i], dy[i])
+		}
+	}
+	for i := range 3 {
+		turned := turn[i][0]*a[0] + turn[i][1]*a[1] + turn[i][2]*a[2]
+		if gap := math.Abs(turned - b[i]); !(gap <= qchemDipoleTolerance) {
+			return fmt.Sprintf("the dipole is %q in one and %q in the other, %.3g apart in one direction once the geometries are laid over each other, more than %g", x, y, gap, qchemDipoleTolerance)
+		}
+	}
+	return ""
 }
 
 // qchemWithin says how two numbers as a task gave them differ by more than the
@@ -605,40 +632,44 @@ func compareFrequencies(x, y [][]string) string {
 // compareGeometries compares two runs' optimised geometries: the same
 // elements in the same order, and the atoms, once the geometries are laid
 // over each other as closely as they go, at most qchemRMSDTolerance apart
-// in root mean square.
-func compareGeometries(x, y []string) string {
+// in root mean square. It gives the turn that lays the first over the
+// second, which is no turn where there are no geometries.
+func compareGeometries(x, y []string) ([3][3]float64, string) {
+	none := [3][3]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}
 	if len(x) != len(y) {
-		return fmt.Sprintf("one gave a geometry of %d atoms, the other of %d", len(x), len(y))
+		return none, fmt.Sprintf("one gave a geometry of %d atoms, the other of %d", len(x), len(y))
 	}
 	if len(x) == 0 {
-		return ""
+		return none, ""
 	}
 	p, q := make([][3]float64, len(x)), make([][3]float64, len(y))
 	for i := range x {
 		a, b := blankFields(x[i]), blankFields(y[i])
 		if len(a) != 4 || len(b) != 4 || a[0] != b[0] {
-			return fmt.Sprintf("atom %d is %q in one and %q in the other", i+1, x[i], y[i])
+			return none, fmt.Sprintf("atom %d is %q in one and %q in the other", i+1, x[i], y[i])
 		}
 		for k := range 3 {
 			var errA, errB error
 			p[i][k], errA = strconv.ParseFloat(a[k+1], 64)
 			q[i][k], errB = strconv.ParseFloat(b[k+1], 64)
 			if errA != nil || errB != nil || !decimal.MatchString(a[k+1]) || !decimal.MatchString(b[k+1]) {
-				return fmt.Sprintf("atom %d is %q in one and %q in the other", i+1, x[i], y[i])
+				return none, fmt.Sprintf("atom %d is %q in one and %q in the other", i+1, x[i], y[i])
 			}
 		}
 	}
-	if rmsd := alignedRMSD(p, q); !(rmsd <= qchemRMSDTolerance) {
-		return fmt.Sprintf("the geometries are %.3g ångström apart in root mean square, laid over each other, more than %g", rmsd, qchemRMSDTolerance)
+	rmsd, turn := alignment(p, q)
+	if !(rmsd <= qchemRMSDTolerance) {
+		return none, fmt.Sprintf("the geometries are %.3g ångström apart in root mean square, laid over each other, more than %g", rmsd, qchemRMSDTolerance)
 	}
-	return ""
+	return turn, ""
 }
 
-// alignedRMSD is the root mean square distance between the atoms of two
-// geometries of the same atoms once one is moved and turned to lie over
-// the other as closely as it goes, found as Horn's quaternion method finds
-// it: from the largest eigenvalue of a 4×4 matrix made from the two.
-func alignedRMSD(p, q [][3]float64) float64 {
+// alignment is the root mean square distance between the atoms of two
+// geometries of the same atoms once the first is moved and turned to lie
+// over the second as closely as it goes, and the turn that does it, found
+// as Horn's quaternion method finds them: from the largest eigenvalue of a
+// 4×4 matrix made from the two, and its eigenvector, the turn's quaternion.
+func alignment(p, q [][3]float64) (float64, [3][3]float64) {
 	n := float64(len(p))
 	var cp, cq [3]float64
 	for i := range p {
@@ -667,13 +698,22 @@ func alignedRMSD(p, q [][3]float64) float64 {
 		{s[2][0] - s[0][2], s[0][1] + s[1][0], -s[0][0] + s[1][1] - s[2][2], s[1][2] + s[2][1]},
 		{s[0][1] - s[1][0], s[2][0] + s[0][2], s[1][2] + s[2][1], -s[0][0] - s[1][1] + s[2][2]},
 	}
-	return math.Sqrt(math.Max(0, (squares-2*largestEigenvalue(m))/n))
+	value, v := largestEigen(m)
+	w, x, y, z := v[0], v[1], v[2], v[3]
+	turn := [3][3]float64{
+		{w*w + x*x - y*y - z*z, 2 * (x*y - w*z), 2 * (x*z + w*y)},
+		{2 * (y*x + w*z), w*w - x*x + y*y - z*z, 2 * (y*z - w*x)},
+		{2 * (z*x - w*y), 2 * (z*y + w*x), w*w - x*x - y*y + z*z},
+	}
+	return math.Sqrt(math.Max(0, (squares-2*value)/n)), turn
 }
 
-// largestEigenvalue finds the largest eigenvalue of a symmetric 4×4 matrix
-// by Jacobi's method: turning it, a pair of rows and columns at a time,
-// until what is off its diagonal is gone.
-func largestEigenvalue(m [4][4]float64) float64 {
+// largestEigen finds the largest eigenvalue of a symmetric 4×4 matrix, and
+// its eigenvector of unit length, by Jacobi's method: turning it, a pair of
+// rows and columns at a time, until what is off its diagonal is gone, and
+// keeping the turns, whose columns are then the eigenvectors.
+func largestEigen(m [4][4]float64) (float64, [4]float64) {
+	v := [4][4]float64{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}}
 	for range 64 {
 		var off float64
 		for i := range 4 {
@@ -702,10 +742,19 @@ func largestEigenvalue(m [4][4]float64) float64 {
 				for k := range 4 {
 					m[i][k], m[j][k] = c*m[i][k]-s*m[j][k], s*m[i][k]+c*m[j][k]
 				}
+				for k := range 4 {
+					v[k][i], v[k][j] = c*v[k][i]-s*v[k][j], s*v[k][i]+c*v[k][j]
+				}
 			}
 		}
 	}
-	return max(m[0][0], m[1][1], m[2][2], m[3][3])
+	best := 0
+	for i := 1; i < 4; i++ {
+		if m[i][i] > m[best][best] {
+			best = i
+		}
+	}
+	return m[best][best], [4]float64{v[0][best], v[1][best], v[2][best], v[3][best]}
 }
 
 // qchemTaskStructure is what a task says of one structure, its numbers as

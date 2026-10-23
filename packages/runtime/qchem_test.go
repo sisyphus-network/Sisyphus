@@ -758,6 +758,19 @@ func TestQchemOutputsAreComparedWithinTolerances(t *testing.T) {
 			s.Atoms[i] = fmt.Sprintf("%s %.14f %.14f %.14f", f[0], -y+3, x-1, z+0.5)
 		}
 	}
+	// The geometry turned a quarter turn about x, as an optimisation that
+	// ends turned would leave it, with its dipole turned too, or not.
+	tipped := func(dipole string) func(s *qchemTaskStructure) {
+		return func(s *qchemTaskStructure) {
+			for i, atom := range s.Atoms {
+				f := strings.Fields(atom)
+				y, _ := strconv.ParseFloat(f[2], 64)
+				z, _ := strconv.ParseFloat(f[3], 64)
+				s.Atoms[i] = fmt.Sprintf("%s %s %.14f %.14f", f[0], f[1], -z, y)
+			}
+			s.Dipole = dipole
+		}
+	}
 	original := mustJSON(base())
 	for _, tt := range []struct {
 		name  string
@@ -771,6 +784,8 @@ func TestQchemOutputsAreComparedWithinTolerances(t *testing.T) {
 			s.Atoms[1] = "H 0.00000000000000 0.78389616730418 -0.19529292238021"
 		}), ""},
 		{"turned and moved as a whole", changed(turned), ""},
+		{"turned about x, its dipole with it", changed(tipped("0.000 -0.857 0.000")), ""},
+		{"turned about x, its dipole not", changed(tipped("-0.000 0.000 0.857")), "the dipole is"},
 		{"near-degenerate modes in the other order", changed(func(s *qchemTaskStructure) {
 			s.Frequencies[1], s.Frequencies[2] = s.Frequencies[2], s.Frequencies[1]
 		}), ""},
@@ -809,6 +824,8 @@ func TestQchemOutputsAreComparedWithinTolerances(t *testing.T) {
 	}
 }
 
+func first[A, B any](a A, _ B) A { return a }
+
 // Laid over each other, a geometry and the same turned and moved are no
 // distance apart, and one grown about its middle is as far as it grew,
 // since no turning brings it closer.
@@ -821,8 +838,31 @@ func TestGeometriesAreLaidOverEachOtherBeforeTheyAreMeasured(t *testing.T) {
 		x, y, z := c*a[0]-s*a[1], s*a[0]+c*a[1], a[2]
 		q[i] = [3]float64{x + 4, c*y - s*z - 2, s*y + c*z + 7}
 	}
-	if d := alignedRMSD(p, q); d > 1e-9 {
+	d, turn := alignment(p, q)
+	if d > 1e-9 {
 		t.Errorf("turned and moved, the geometry is %g apart", d)
+	}
+	// The turn found is the one made: it takes each of p's atoms, about
+	// p's middle, to where q's is about q's.
+	centre := func(g [][3]float64) (m [3]float64) {
+		for _, a := range g {
+			for k := range 3 {
+				m[k] += a[k] / float64(len(g))
+			}
+		}
+		return m
+	}
+	mp, mq := centre(p), centre(q)
+	for i := range p {
+		for r := range 3 {
+			var got float64
+			for k := range 3 {
+				got += turn[r][k] * (p[i][k] - mp[k])
+			}
+			if want := q[i][r] - mq[r]; math.Abs(got-want) > 1e-9 {
+				t.Fatalf("atom %d, axis %d: turned to %g, want %g", i, r, got, want)
+			}
+		}
 	}
 	var middle [3]float64
 	for _, a := range p {
@@ -837,7 +877,7 @@ func TestGeometriesAreLaidOverEachOtherBeforeTheyAreMeasured(t *testing.T) {
 			spread += (a[k] - middle[k]) * (a[k] - middle[k])
 		}
 	}
-	if d, want := alignedRMSD(p, q), 0.01*math.Sqrt(spread/float64(len(p))); math.Abs(d-want) > 1e-9 {
+	if d, want := first(alignment(p, q)), 0.01*math.Sqrt(spread/float64(len(p))); math.Abs(d-want) > 1e-9 {
 		t.Errorf("grown a hundredth, the geometry is %g apart, want %g", d, want)
 	}
 }
