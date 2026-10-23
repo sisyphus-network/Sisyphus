@@ -147,6 +147,7 @@ test('a child that exits immediately after restart cannot apply running settings
   const children: FakeChild[] = []
   const listeners = new Set<(snapshot: Snapshot) => void>()
   let current: Snapshot = { status: 'connected' }
+  let exited!: Promise<void>
   const daemon = new DesktopDaemon({
     executable: '/test/sisyphusd', endpoint: '127.0.0.1:50051', dataDir: '/test/data', enabled: true,
     unused: async () => true,
@@ -154,7 +155,12 @@ test('a child that exits immediately after restart cannot apply running settings
       const child = new FakeChild()
       child.kill = (signal) => { setImmediate(() => child.emit('close', 0, signal)); return true }
       children.push(child)
-      if (children.length === 2) setImmediate(() => child.emit('exit', 1, null))
+      if (children.length === 2) {
+        // The reconnect timeout can fire before this exit on a slow runner,
+        // so the assertions below wait for it rather than assume its order.
+        exited = new Promise((resolve) => child.once('exit', () => resolve()))
+        setImmediate(() => child.emit('exit', 1, null))
+      }
       return child as unknown as ChildProcess
     },
     onError: () => {
@@ -178,6 +184,7 @@ test('a child that exits immediately after restart cannot apply running settings
     timeoutMessage: 'reconnect timed out',
     onConnected: () => { runningSettings = 'new' },
   }), /reconnect timed out/)
+  await exited
   assert.equal(children.length, 2)
   assert.equal(daemon.ownsProcess, false)
   assert.equal(runningSettings, 'old')
