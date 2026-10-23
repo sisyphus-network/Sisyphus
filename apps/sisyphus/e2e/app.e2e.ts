@@ -2130,9 +2130,9 @@ test('advanced page surfaces follow light, dark and accent tokens', async () => 
     const surfaces = [
       { name: 'Node overview', heading: 'Node overview', selector: '[data-slot="card"]', open: () => open(page, 'Node overview') },
       { name: 'Operations', heading: 'Operations', selector: '#operations-jobs', open: () => open(page, 'Operations') },
-      { name: 'General settings', heading: 'General', selector: '.settings-category-content [data-slot="card"]', open: () => openSettingsCategory(page, 'General') },
-      { name: 'Access settings', heading: 'Access', selector: '.browser-access-page [data-slot="card"]', open: () => openSettingsCategory(page, 'Access') },
-      { name: 'Model provider settings', heading: 'Model provider', selector: '.settings-category-content [data-slot="card"]', open: () => openSettingsCategory(page, 'Model provider') },
+      { name: 'General settings', heading: 'General', selector: '.settings-category-content [data-slot="card"]', accentSelector: '.settings-category-content', open: () => openSettingsCategory(page, 'General') },
+      { name: 'Access settings', heading: 'Access', selector: '.browser-access-page [data-slot="card"]', accentSelector: '.browser-access-page', open: () => openSettingsCategory(page, 'Access') },
+      { name: 'Model provider settings', heading: 'Model provider', selector: '.settings-category-content [data-slot="card"]', accentSelector: '.settings-category-content', open: () => openSettingsCategory(page, 'Model provider') },
     ]
     const colors = new Map<string, { background: string, border: string, accent: string, primary: string }>()
     for (const mode of ['light', 'dark'] as const) {
@@ -2157,14 +2157,31 @@ test('advanced page surfaces follow light, dark and accent tokens', async () => 
             primary: root.getPropertyValue('--primary').trim(),
           }
         })
-        assert.equal(style.primary, style.accent, `${surface.name} primary color should use the app accent token`)
+        if (surface.accentSelector) {
+          const themedSurface = page.locator(surface.accentSelector).first()
+          await themedSurface.waitFor({ state: 'visible' })
+          style.primary = await themedSurface.evaluate((target) => {
+            const reference = document.createElement('span')
+            reference.style.color = 'var(--app-accent)'
+            target.append(reference)
+            const accentColor = getComputedStyle(reference).color
+            reference.remove()
+            const hasAccent = [...target.querySelectorAll('*')].some((element) => {
+              const computed = getComputedStyle(element)
+              return computed.color === accentColor || computed.backgroundColor === accentColor
+            })
+            return hasAccent ? accentColor : ''
+          })
+          assert.ok(style.primary, `${surface.name} should contain a control colored with the app accent`)
+        }
         assert.notEqual(style.background, 'rgba(0, 0, 0, 0)', `${surface.name} should expose a themed surface`)
         colors.set(`${mode}:${surface.name}`, style)
       }
     }
     for (const surface of surfaces) {
-      const light = colors.get(`light:${surface.name}`)!
-      const dark = colors.get(`dark:${surface.name}`)!
+      const light = colors.get(`light:${surface.name}`)
+      const dark = colors.get(`dark:${surface.name}`)
+      assert.ok(light && dark, `${surface.name} should have both light and dark measurements`)
       assert.notEqual(light.background, dark.background, `${surface.name} surface should change between light and dark`)
       assert.notEqual(light.border, dark.border, `${surface.name} border should change between light and dark`)
     }
@@ -2173,10 +2190,35 @@ test('advanced page surfaces follow light, dark and accent tokens', async () => 
     await page.reload()
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.themeStyle === 'pink')
     const pinkAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim())
+    const renderedPinkAccent = await page.evaluate(() => {
+      const reference = document.createElement('span')
+      reference.style.color = 'var(--app-accent)'
+      document.body.append(reference)
+      const color = getComputedStyle(reference).color
+      reference.remove()
+      return color
+    })
     assert.notEqual(pinkAccent, colors.get('dark:Node overview')?.accent, 'changing the accent preset should change the app accent token')
     for (const surface of surfaces) {
       await surface.open()
       await page.getByRole('heading', { name: surface.heading, level: 1 }).waitFor()
+      if (surface.accentSelector) {
+        const themedSurface = page.locator(surface.accentSelector).first()
+        await themedSurface.waitFor({ state: 'visible' })
+        const accentColor = await themedSurface.evaluate((target) => {
+          const reference = document.createElement('span')
+          reference.style.color = 'var(--app-accent)'
+          target.append(reference)
+          const color = getComputedStyle(reference).color
+          reference.remove()
+          return [...target.querySelectorAll('*')].some((element) => {
+            const computed = getComputedStyle(element)
+            return computed.color === color || computed.backgroundColor === color
+          }) ? color : ''
+        })
+        assert.ok(accentColor, `${surface.name} should render an element with the selected accent`)
+        assert.equal(accentColor, renderedPinkAccent, `${surface.name} should render its selected pink accent (${pinkAccent})`)
+      }
       const primary = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary').trim())
       assert.equal(primary, pinkAccent, `${surface.name} should retain the selected accent token after navigation`)
     }
