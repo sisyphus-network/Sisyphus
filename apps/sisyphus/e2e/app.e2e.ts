@@ -678,7 +678,10 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
     // In, step by step, as far as it goes: the region lines appear on the way.
     for (let presses = 0; presses < 20; presses++) {
       const before = await zoom()
-      if (!await step(zoomIn, () => zoomIn.click({ timeout: 1000 }))) break
+      // Playwright waits for two stable animation frames before clicking. On
+      // the CI runner, software-rendered WebGL can make that take over a
+      // second even though this fixed overlay button is otherwise actionable.
+      if (!await step(zoomIn, () => zoomIn.click({ timeout: 10_000 }))) break
       assert.ok(await zoom() >= before, 'zooming in took the globe out')
     }
     assert.equal(await zoomIn.isEnabled(), false, 'zooming in did not reach its limit')
