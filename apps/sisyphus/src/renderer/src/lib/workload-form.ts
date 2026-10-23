@@ -8,9 +8,10 @@
 // bounds left out, and nothing of the protobuf markers once the bridge has
 // normalized it. Either way the page sees the same plain workload.
 
-export type FieldKind = 'file' | 'integer' | 'number' | 'text' | 'choice' | 'toggle' | 'unknown'
+export type FieldKind = 'file' | 'files' | 'integer' | 'number' | 'text' | 'choice' | 'toggle' | 'unknown'
 
-export type FormValue = string | boolean
+// A field of several files holds their CIDs as a list.
+export type FormValue = string | boolean | string[]
 export type FormValues = Record<string, FormValue>
 
 export type FormField = {
@@ -39,8 +40,8 @@ export type Workload = {
 export type FieldErrorKey = 'required' | 'notANumber' | 'notWhole' | 'belowMinimum' | 'aboveMaximum' | 'offStep' | 'notAChoice'
 export type FieldError = { key: FieldErrorKey; bound?: number }
 
-const kindNumbers: Record<number, FieldKind> = { 1: 'file', 2: 'integer', 3: 'number', 4: 'text', 5: 'choice', 6: 'toggle' }
-const kindNames = new Set<FieldKind>(['file', 'integer', 'number', 'text', 'choice', 'toggle'])
+const kindNumbers: Record<number, FieldKind> = { 1: 'file', 2: 'integer', 3: 'number', 4: 'text', 5: 'choice', 6: 'toggle', 7: 'files' }
+const kindNames = new Set<FieldKind>(['file', 'files', 'integer', 'number', 'text', 'choice', 'toggle'])
 
 // fieldKind reads a field's kind as a number, its enum name, or its short name.
 export function fieldKind(kind: unknown): FieldKind {
@@ -158,6 +159,9 @@ export function initialValues(fields: FormField[]): FormValues {
       case 'choice':
         values[field.name] = typeof value === 'string' ? value : field.required && field.choices.length > 0 ? field.choices[0] : ''
         break
+      case 'files':
+        values[field.name] = Array.isArray(value) ? value.filter((cid): cid is string => typeof cid === 'string') : []
+        break
       default:
         values[field.name] = typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
     }
@@ -166,6 +170,7 @@ export function initialValues(fields: FormField[]): FormValues {
 }
 
 function isEmpty(value: FormValue | undefined): boolean {
+  if (Array.isArray(value)) return value.every((cid) => cid.trim() === '')
   return value === undefined || (typeof value === 'string' && value.trim() === '')
 }
 
@@ -223,7 +228,8 @@ export function isValid(fields: FormField[], values: FormValues): boolean {
 }
 
 // toParams turns a form's values into the job's JSON parameters: numbers as
-// numbers, toggles as true or false, the rest as text. An optional field left
+// numbers, toggles as true or false, several files as a list of CIDs, the
+// rest as text. An optional field left
 // empty is left out, so that the workload uses its own default.
 export function toParams(fields: FormField[], values: FormValues): Record<string, unknown> {
   const params: Record<string, unknown> = {}
@@ -234,6 +240,10 @@ export function toParams(fields: FormField[], values: FormValues): Record<string
       continue
     }
     if (isEmpty(value)) continue
+    if (Array.isArray(value)) {
+      params[field.name] = value.map((cid) => cid.trim()).filter((cid) => cid !== '')
+      continue
+    }
     const given = typeof value === 'string' ? value.trim() : String(value)
     if (field.kind === 'integer' || field.kind === 'number') {
       const number = parseNumber(given)

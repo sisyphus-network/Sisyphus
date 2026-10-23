@@ -451,6 +451,9 @@ enum WorkloadFieldKind {
   WORKLOAD_FIELD_KIND_CHOICE = 5;
   // True or false.
   WORKLOAD_FIELD_KIND_TOGGLE = 6;
+  // Several stored files, given as a list of their CIDs, each what
+  // StoreFile returns.
+  WORKLOAD_FIELD_KIND_FILES = 7;
 }
 
 message WorkerGpu {

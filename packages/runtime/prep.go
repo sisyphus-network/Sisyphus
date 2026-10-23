@@ -413,7 +413,7 @@ func (Prep) Describe() string {
 
 func (Prep) Form() []Field {
 	return []Field{
-		{Name: "input", Kind: KindFile, Label: "Molecule (PDB)", Help: "A stored PDB file of proteins or nucleic acids, of standard residues only: a ligand needs parameters that are not made here.", Required: true},
+		{Name: "inputs", Kind: KindFiles, Label: "Molecules (PDB)", Help: "Stored PDB files of proteins or nucleic acids, of standard residues only, each a system of its own: a ligand needs parameters that are not made here. Several are shared out across the pool.", Required: true},
 		{Name: "forcefield", Kind: KindChoice, Label: "Force field", Help: "ff19SB, Amber's newest for proteins, made for OPC water, or ff14SB, made for TIP3P.", Default: "ff19SB", Choices: slices.Clone(prepForcefields)},
 		{Name: "water", Kind: KindChoice, Label: "Water", Help: "The water to put the molecule in: OPC for ff19SB, TIP3P for ff14SB, or none for the molecule alone, in a vacuum.", Default: "opc", Choices: slices.Clone(prepWaters)},
 		{Name: "box", Kind: KindNumber, Label: "Padding", Help: "How far the box's walls are from the molecule, at least, in ångströms.", Default: 10, Minimum: bound(prepLeastBox), Maximum: bound(prepMostBox)},

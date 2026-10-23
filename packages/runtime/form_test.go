@@ -63,6 +63,8 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			case alternatives[f.Name]:
 			case f.Kind == KindFile:
 				defaults[f.Name] = cmp.Or(files[name+"."+f.Name], files[name], stored.String())
+			case f.Kind == KindFiles:
+				defaults[f.Name] = []string{cmp.Or(files[name+"."+f.Name], files[name], stored.String())}
 			case f.Default != nil:
 				defaults[f.Name] = f.Default
 			}
@@ -112,6 +114,9 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			if f.Required {
 				refused(f.Name, nil, "left out, though the form says it is needed")
 			}
+			if f.Kind == KindFiles && f.Required {
+				refused(f.Name, []string{}, "with no files, though the form says it needs some")
+			}
 		}
 		for field, together := range instead[name] {
 			found := 0
@@ -159,7 +164,7 @@ func checkField(t *testing.T, workload string, f Field) {
 	if f.Name == "" || f.Label == "" || !strings.HasSuffix(f.Help, ".") {
 		t.Errorf("%s has a field that is not named, labelled and explained: %+v", workload, f)
 	}
-	if !slices.Contains([]Kind{KindFile, KindInteger, KindNumber, KindText, KindChoice, KindToggle}, f.Kind) {
+	if !slices.Contains([]Kind{KindFile, KindFiles, KindInteger, KindNumber, KindText, KindChoice, KindToggle}, f.Kind) {
 		t.Errorf("%s.%s is of no kind a form knows: %q", workload, f.Name, f.Kind)
 	}
 	chosen, _ := f.Default.(string)

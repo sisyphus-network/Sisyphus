@@ -143,6 +143,7 @@ bin/sisyphusd nodes
 Open a card to see its form. Every field starts at a value the workload accepts, so most jobs are a file and a click:
 
 - **A file** is dropped on its drop zone, or chosen with it, and is stored in the pool for the job to read. A file you stored before can be picked from the list under it.
+- **Several files**, where a workload takes them, as **Prepare Amber systems** takes a PDB file for each system, are dropped or chosen together, or added one by one; each is listed with a button that takes it out again. The workload shares them out across the pool.
 - **Numbers** are checked as you type, against the bounds and steps the workload gives, and a value it would refuse is said so under its field.
 - **Choices** and **toggles** are a list and a switch.
 
