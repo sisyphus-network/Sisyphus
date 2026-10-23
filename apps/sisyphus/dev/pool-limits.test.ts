@@ -77,10 +77,12 @@ test('a daemon refusal is shown in its own words', () => {
   assert.equal(daemonErrorMessage('plain'), 'plain')
 })
 
+type Messages = { [key: string]: string | Messages }
+
 test('every locale has every pool limits label', () => {
   const locales = ['en', 'he', 'ar', 'ru', 'pl', 'es', 'fr']
-  const read = (locale) => JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8')).poolLimitsSettings
-  const flatten = (value, prefix = '') => Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? flatten(item, `${prefix}${key}.`) : [[`${prefix}${key}`, item]])
+  const read = (locale: string): Messages => JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8')).poolLimitsSettings
+  const flatten = (value: Messages, prefix = ''): [string, string][] => Object.entries(value).flatMap(([key, item]) => typeof item === 'object' ? flatten(item, `${prefix}${key}.`) : [[`${prefix}${key}`, item]])
   const keys = flatten(read('en')).map(([key]) => key).sort()
   for (const locale of locales) {
     const entries = flatten(read(locale))

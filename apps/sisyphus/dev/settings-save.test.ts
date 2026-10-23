@@ -23,15 +23,15 @@ test('dock counts individual settings and includes invalid drafts until correcte
 
 test('an invalid section prevents all writes', async () => {
   let writes = 0
-  const entry = disabled => ({ disabled, getSave: () => async () => { writes++ } })
+  const entry = (disabled: boolean) => ({ disabled, getSave: () => async () => { writes++ } })
   assert.deepEqual(await savePendingSettings([entry(false), entry(true)]), [])
   assert.equal(writes, 0)
 })
 
 test('settings writes are serialized and a failed section does not skip the others', async () => {
-  const events = []
-  let release
-  const first = new Promise(resolve => { release = resolve })
+  const events: string[] = []
+  let release = () => {}
+  const first = new Promise<void>(resolve => { release = resolve })
   const result = savePendingSettings([
     { disabled: false, getSave: () => async () => { events.push('first-start'); await first; events.push('first-end') } },
     { disabled: false, getSave: () => async () => { events.push('second'); throw new Error('offline') } },
@@ -44,7 +44,7 @@ test('settings writes are serialized and a failed section does not skip the othe
 })
 
 test('a save captures the current drafts before previous writes update callbacks', async () => {
-  const calls = []
+  const calls: string[] = []
   let second = async () => { calls.push('draft') }
   await savePendingSettings([
     { disabled: false, getSave: () => async () => { second = async () => { calls.push('replaced') } } },
