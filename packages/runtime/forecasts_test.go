@@ -140,6 +140,8 @@ func TestForecastsSplitChecksItsParametersAndFile(t *testing.T) {
 		{`{"input":"` + put("") + `"}`, "no series"},
 		{`{"input":"` + put("a,1\n2\n") + `"}`, "line 2 has no series name and value"},
 		{`{"input":"` + put("a,1\na,x\n") + `"}`, `line 2: "x" is not a number`},
+		{`{"input":"` + put(`a,"1`+"\n") + `"}`, "invalid CSV"},
+		{`{"input":"` + put(",1\n") + `"}`, "line 1 has no series name and value"},
 		{`{"input":"` + put("a,1\na,NaN\n") + `"}`, `"NaN" is not a number`},
 		{`{"input":"` + put("a,"+strings.Repeat("1", 70<<10)+"\n") + `"}`, "token too long"},
 	} {
@@ -171,6 +173,48 @@ func TestForecastsSplitChecksItsParametersAndFile(t *testing.T) {
 		if _, err := (Forecasts{}).Split(ctx, store, []byte(`{"input":"`+put(l.text)+`"}`), 1); err == nil || !strings.Contains(err.Error(), l.why) {
 			t.Errorf("error %v, want one saying %q", err, l.why)
 		}
+	}
+}
+
+func TestReadPanelKeepsQuotedNamesAndDetectsSeparators(t *testing.T) {
+	if got := panelDelimiter(`a,"1"`); got != ',' {
+		t.Errorf("panelDelimiter returned %q for a comma-delimited row with a quoted last field", got)
+	}
+	if got := panelDelimiter(`"a""b",1`); got != ',' {
+		t.Errorf("panelDelimiter returned %q for a comma-delimited row with an escaped quote", got)
+	}
+	store := storage.NewMemory()
+	for _, test := range []struct {
+		name      string
+		delimiter string
+		series    string
+		want      string
+	}{
+		{name: "comma in a comma-delimited name", delimiter: ",", series: `"North, East"`},
+		{name: "escaped quote and comma in a name", delimiter: ",", series: `"North ""East"", West"`, want: `North "East", West`},
+		{name: "semicolon in a semicolon-delimited name", delimiter: ";", series: `"North; East"`},
+		{name: "tab in a tab-delimited name", delimiter: "\t", series: "\"North\tEast\""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := "series" + test.delimiter + "time" + test.delimiter + "value\n" +
+				test.series + test.delimiter + "Jan" + test.delimiter + "1\n" +
+				test.series + test.delimiter + "Feb" + test.delimiter + "2\n"
+			cid, err := store.Put(ctx, strings.NewReader(input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			panel, err := readPanel(ctx, store, cid.String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := test.want
+			if want == "" {
+				want = strings.Trim(test.series, `"`)
+			}
+			if len(panel) != 1 || panel[0].id != want || panel[0].last != "Feb" || !slices.Equal(panel[0].values, []float64{1, 2}) {
+				t.Errorf("readPanel returned %+v, want one %q series with the last time and both values", panel, want)
+			}
+		})
 	}
 }
 

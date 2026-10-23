@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -305,16 +306,30 @@ func readPanel(ctx context.Context, blobs Blobs, input string) ([]panelSeries, e
 	lines := bufio.NewScanner(blob)
 	lines.Buffer(make([]byte, 0, 4096), 64<<10)
 	header, values := true, 0
+	var delimiter rune
 	for number := 1; lines.Scan(); number++ {
 		line := strings.TrimSpace(lines.Text())
 		if line == "" {
 			continue
 		}
-		fields := strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == '\t' || r == ';' })
+		if delimiter == 0 {
+			delimiter = panelDelimiter(line)
+		}
+		row := csv.NewReader(strings.NewReader(line))
+		row.Comma = delimiter
+		row.FieldsPerRecord = -1
+		row.TrimLeadingSpace = true
+		fields, err := row.Read()
+		if err != nil {
+			return nil, fmt.Errorf("forecasts input %s: line %d: invalid CSV: %w", c, number, err)
+		}
 		if len(fields) < 2 {
 			return nil, fmt.Errorf("forecasts input %s: line %d has no series name and value", c, number)
 		}
 		id, value := strings.TrimSpace(fields[0]), strings.TrimSpace(fields[len(fields)-1])
+		if id == "" {
+			return nil, fmt.Errorf("forecasts input %s: line %d has no series name and value", c, number)
+		}
 		v, err := strconv.ParseFloat(value, 64)
 		if err != nil && header {
 			header = false
@@ -350,4 +365,33 @@ func readPanel(ctx context.Context, blobs Blobs, input string) ([]panelSeries, e
 		return nil, fmt.Errorf("forecasts input %s: no series", c)
 	}
 	return panel, nil
+}
+
+// panelDelimiter chooses the most common supported separator outside quoted
+// CSV fields. Commas win ties so an unquoted comma in a name does not make a
+// comma-delimited file look semicolon-delimited.
+func panelDelimiter(line string) rune {
+	counts := map[byte]int{',': 0, ';': 0, '\t': 0}
+	quoted := false
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '"':
+			if quoted && i+1 < len(line) && line[i+1] == '"' {
+				i++
+			} else {
+				quoted = !quoted
+			}
+		case ',', ';', '\t':
+			if !quoted {
+				counts[line[i]]++
+			}
+		}
+	}
+	delimiter := byte(',')
+	for _, candidate := range []byte{';', '\t'} {
+		if counts[candidate] > counts[delimiter] {
+			delimiter = candidate
+		}
+	}
+	return rune(delimiter)
 }
