@@ -2,9 +2,26 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:net'
+import type { Server } from 'node:net'
 import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { DesktopDaemon, daemonShutdownGraceMs, localApiAddress, portIsUnused } from '../src/main/daemon-process.ts'
 import { restartManagedNode } from '../src/main/restart-managed-node.ts'
+
+type Options = ConstructorParameters<typeof DesktopDaemon>[0]
+type Snapshot = { status: string }
+
+// A fake child has only the events and kill the daemon uses, so it is cast
+// to a ChildProcess where it is handed over.
+class FakeChild extends EventEmitter {
+  kill: (signal?: NodeJS.Signals | number) => boolean = () => true
+}
+
+function portOf(server: Server): number {
+  const address = server.address()
+  assert.ok(address && typeof address === 'object', 'the server is not listening on a port')
+  return address.port
+}
 
 test('only explicit loopback API addresses may start a daemon', () => {
   for (const endpoint of ['example.com:50051', '0.0.0.0:50051', '127.0.0.1:0', 'localhost:65536', 'unix:/tmp/node']) assert.equal(localApiAddress(endpoint), null)
@@ -14,24 +31,24 @@ test('only explicit loopback API addresses may start a daemon', () => {
 
 test('real port probe never takes over a running service', async () => {
   const server = createServer((socket) => socket.end())
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const endpoint = `127.0.0.1:${server.address().port}`
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+  const endpoint = `127.0.0.1:${portOf(server)}`
   try { assert.equal(await portIsUnused(endpoint), false) }
-  finally { await new Promise((resolve) => server.close(resolve)) }
+  finally { await new Promise<void>((resolve) => server.close(() => resolve())) }
   assert.equal(await portIsUnused(endpoint), true)
   assert.equal(await portIsUnused('example.com:50051'), false)
 })
 
-function fixture(overrides = {}) {
-  const child = new EventEmitter()
-  const signals = []
+function fixture(overrides: Partial<Options> = {}) {
+  const child = new FakeChild()
+  const signals: (NodeJS.Signals | number | undefined)[] = []
   child.kill = (signal) => { signals.push(signal); child.emit('close', 0, signal); return true }
-  const launches = []
-  const errors = []
+  const launches: { executable: string, args: string[] }[] = []
+  const errors: string[] = []
   const daemon = new DesktopDaemon({
     executable: '/test path/sisyphusd', endpoint: '127.0.0.1:50051', webListenAddress: '127.0.0.1:50052', dataDir: '/test path/data', enabled: true,
     unused: async () => true,
-    launch: (executable, args) => { launches.push({ executable, args }); return child },
+    launch: (executable, args) => { launches.push({ executable, args }); return child as unknown as ChildProcess },
     onError: (error) => errors.push(error), ...overrides,
   })
   return { daemon, child, signals, launches, errors }
@@ -81,7 +98,7 @@ test('a hosting node listens where the owner chose and is discoverable', async (
 })
 
 test('the container flags are worked out as each start happens, so a restart picks up what was saved since', async () => {
-  let flags = []
+  let flags: string[] = []
   let asked = 0
   const { daemon, launches } = fixture({ containers: async () => { asked++; return flags } })
   await daemon.ensureStarted()
@@ -94,7 +111,7 @@ test('the container flags are worked out as each start happens, so a restart pic
   await daemon.stop()
 
   // A node stopped while Docker is being asked is not started after all.
-  let release
+  let release = () => {}
   const slow = fixture({ containers: () => new Promise((done) => { release = () => done(['--containers']) }) })
   const starting = slow.daemon.ensureStarted()
   await new Promise((wake) => setImmediate(wake))
@@ -127,18 +144,18 @@ test('a restart stops the owned node gracefully and starts it again with changed
 })
 
 test('a child that exits immediately after restart cannot apply running settings', async () => {
-  const children = []
-  const listeners = new Set()
-  let current = { status: 'connected' }
+  const children: FakeChild[] = []
+  const listeners = new Set<(snapshot: Snapshot) => void>()
+  let current: Snapshot = { status: 'connected' }
   const daemon = new DesktopDaemon({
     executable: '/test/sisyphusd', endpoint: '127.0.0.1:50051', dataDir: '/test/data', enabled: true,
     unused: async () => true,
     launch: () => {
-      const child = new EventEmitter()
+      const child = new FakeChild()
       child.kill = (signal) => { setImmediate(() => child.emit('close', 0, signal)); return true }
       children.push(child)
       if (children.length === 2) setImmediate(() => child.emit('exit', 1, null))
-      return child
+      return child as unknown as ChildProcess
     },
     onError: () => {
       current = { status: 'disconnected' }
@@ -178,11 +195,12 @@ test('a node the app did not start cannot be restarted from the app', async () =
 })
 
 test('refuses an invalid or occupied web API address without spawning the daemon', async () => {
-  for (const options of [
+  const refused: Partial<Options>[] = [
     { webListenAddress: '0.0.0.0:50052' },
     { webListenAddress: 'localhost:50052' },
     { unused: async address => Promise.resolve(address !== '127.0.0.1:50052') },
-  ]) {
+  ]
+  for (const options of refused) {
     const { daemon, launches, errors } = fixture(options)
     await daemon.ensureStarted()
     assert.equal(launches.length, 0)
@@ -193,15 +211,15 @@ test('refuses an invalid or occupied web API address without spawning the daemon
 
 test('occupied default pool port falls back without taking over its service', async () => {
   const server = createServer(socket => socket.end())
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
-  const occupied = `127.0.0.1:${server.address().port}`
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => resolve()) })
+  const occupied = `127.0.0.1:${portOf(server)}`
   try {
     const { daemon, launches } = fixture({ unused: endpoint => endpoint === '127.0.0.1:50051' || endpoint === '127.0.0.1:50052' ? Promise.resolve(true) : portIsUnused(occupied) })
     await daemon.ensureStarted()
     assert.equal(launches[0].args[6], '127.0.0.1:0')
     assert.equal(await portIsUnused(occupied), false)
     await daemon.stop()
-  } finally { await new Promise(resolve => server.close(resolve)) }
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())) }
 })
 
 test('API on the preferred pool port cannot conflict with the pool listener', async () => {
@@ -212,8 +230,8 @@ test('API on the preferred pool port cannot conflict with the pool listener', as
 })
 
 test('quit during the second port probe still cannot spawn', async () => {
-  let release
-  const { daemon, launches } = fixture({ unused: endpoint => endpoint.endsWith(':50051') ? Promise.resolve(true) : new Promise(resolve => { release = resolve }) })
+  let release: (unused: boolean) => void = () => {}
+  const { daemon, launches } = fixture({ unused: endpoint => endpoint.endsWith(':50051') ? Promise.resolve(true) : new Promise<boolean>(resolve => { release = resolve }) })
   const start = daemon.ensureStarted()
   await new Promise(resolve => setImmediate(resolve))
   const stop = daemon.stop()
@@ -234,8 +252,8 @@ test('external, disabled and remote daemons are never started or stopped', async
 })
 
 test('quit during probing cannot spawn a late orphan', async () => {
-  let release
-  const { daemon, launches } = fixture({ unused: () => new Promise((resolve) => { release = resolve }) })
+  let release: (unused: boolean) => void = () => {}
+  const { daemon, launches } = fixture({ unused: () => new Promise<boolean>((resolve) => { release = resolve }) })
   const start = daemon.ensureStarted()
   const stop = daemon.stop()
   release(true)
@@ -264,17 +282,19 @@ test('launch failure and unexpected exit are reported without a restart storm', 
 })
 
 test('an actual owned child is stopped and reaped, without touching other processes', async () => {
-  let child
+  let child: ChildProcess | undefined
   const { daemon } = fixture({ launch: () => {
     child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
     return child
   } })
   await daemon.ensureStarted()
-  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject) })
-  const closed = new Promise((resolve) => child.once('close', resolve))
+  assert.ok(child, 'the daemon did not launch a child')
+  const owned = child
+  await new Promise((resolve, reject) => { owned.once('spawn', resolve); owned.once('error', reject) })
+  const closed = new Promise((resolve) => owned.once('close', resolve))
   await daemon.stop()
   await closed
-  assert.ok(child.exitCode !== null || child.signalCode !== null)
+  assert.ok(owned.exitCode !== null || owned.signalCode !== null)
 })
 
 test('probe errors become a connection diagnostic, not an unhandled rejection', async () => {
