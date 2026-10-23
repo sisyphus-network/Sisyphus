@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, test } from 'node:test'
-import { existsSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Locator, Page } from 'playwright-core'
 import { hasWebgl, launch, launchOwnNode, narrow, open, planWith, poolInvitation, poolMembers, standInModel, standInOpenAI, testNode, testProfile, until, wide, type TestNode } from './harness.ts'
@@ -1388,29 +1388,45 @@ test('advanced navigation switches between the sidebar and mobile dock as the wi
 test('advanced pages fit narrow phone widths without horizontal overflow in LTR and RTL', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
+  const localeMessages = Object.fromEntries((['en', 'he'] as const).map((locale) => [locale, JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8')) as {
+    nodeOverview: string
+    computeOperations: string
+    general: string
+    webAccess: { title: string }
+    modelSettings: { title: string }
+  }]))
+  const routes = [
+    { path: '/node', title: (locale: typeof localeMessages.en) => locale.nodeOverview },
+    { path: '/operations', title: (locale: typeof localeMessages.en) => locale.computeOperations },
+    { path: '/settings/general', title: (locale: typeof localeMessages.en) => locale.general },
+    { path: '/settings/access', title: (locale: typeof localeMessages.en) => locale.webAccess.title },
+    { path: '/settings/models', title: (locale: typeof localeMessages.en) => locale.modelSettings.title },
+  ]
   try {
     for (const dir of ['ltr', 'rtl']) {
       await page.evaluate((dir) => localStorage.setItem('sisyphus-locale', dir === 'rtl' ? 'he' : 'en'), dir)
       await page.reload()
       await page.waitForFunction((dir) => document.documentElement.dir === dir, dir)
+      const locale = localeMessages[dir === 'rtl' ? 'he' : 'en']
 
       for (const width of [320, 360, 390, 820]) {
         await page.setViewportSize({ width, height: 780 })
         await page.waitForFunction((width) => window.innerWidth === width, width)
-        for (const route of ['/node', '/operations', '/settings/general', '/settings/access', '/settings/models']) {
-          await page.evaluate((route) => { window.location.hash = route }, route)
-          await page.waitForFunction((route) => location.hash === `#${route}` && document.querySelector('.route-transition'), route)
-          await page.waitForTimeout(300)
+        for (const route of routes) {
+          await page.evaluate((path) => { window.location.hash = path }, route.path)
+          await page.waitForFunction((path) => location.hash === `#${path}` && document.querySelector('.route-transition'), route.path)
+          await page.locator('.app-main').getByRole('heading', { name: route.title(locale), exact: true }).waitFor({ state: 'visible' })
           const layout = await page.evaluate(() => ({
             viewport: window.innerWidth,
             document: document.documentElement.scrollWidth,
             body: document.body.scrollWidth,
-            main: document.querySelector<HTMLElement>('.app-main')?.scrollWidth,
-            mainClient: document.querySelector<HTMLElement>('.app-main')?.clientWidth,
+            main: document.querySelector<HTMLElement>('.app-main')?.scrollWidth ?? null,
+            mainClient: document.querySelector<HTMLElement>('.app-main')?.clientWidth ?? null,
           }))
-          assert.ok(layout.document <= width + 1, `${dir} ${width}px ${route}: document overflows horizontally: ${JSON.stringify(layout)}`)
-          assert.ok(layout.body <= width + 1, `${dir} ${width}px ${route}: body overflows horizontally: ${JSON.stringify(layout)}`)
-          assert.ok((layout.main ?? 0) <= (layout.mainClient ?? 0) + 1, `${dir} ${width}px ${route}: page content overflows horizontally: ${JSON.stringify(layout)}`)
+          assert.ok(layout.main !== null && layout.mainClient !== null, `${dir} ${width}px ${route.path}: main content is missing`)
+          assert.ok(layout.document <= width + 1, `${dir} ${width}px ${route.path}: document overflows horizontally: ${JSON.stringify(layout)}`)
+          assert.ok(layout.body <= width + 1, `${dir} ${width}px ${route.path}: body overflows horizontally: ${JSON.stringify(layout)}`)
+          assert.ok(layout.main <= layout.mainClient + 1, `${dir} ${width}px ${route.path}: page content overflows horizontally: ${JSON.stringify(layout)}`)
         }
       }
     }
