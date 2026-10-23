@@ -35,7 +35,10 @@ import (
 // it names, as a job's models are named, in place of a forecast job of each
 // series with the default models. Naming a Chronos-Bolt kind runs it in its
 // image, which needs Docker. SISYPHUS_M4_WORKERS is how many of the job's
-// tasks run at once, by default one for each processor.
+// tasks run at once: by default one for each processor, or, with a
+// Chronos-Bolt kind, one, since each such task is a container of up to 4 GB
+// and the benchmark does not hold them to the machine's memory as a pool's
+// scheduler does.
 func TestM4(t *testing.T) {
 	dir := os.Getenv("SISYPHUS_M4")
 	if dir == "" {
@@ -49,7 +52,11 @@ func TestM4(t *testing.T) {
 		}
 	}
 	models := os.Getenv("SISYPHUS_M4_MODELS")
+	chronos := strings.Contains(models, "chronos")
 	workers := goruntime.NumCPU()
+	if chronos {
+		workers = 1
+	}
 	if s := os.Getenv("SISYPHUS_M4_WORKERS"); s != "" {
 		var err error
 		if workers, err = strconv.Atoi(s); err != nil || workers < 1 {
@@ -77,7 +84,7 @@ func TestM4(t *testing.T) {
 			score, err = Run(ctx, sample, freq, workers, Workload)
 		} else {
 			var forecasts [][]runtime.ForecastPoint
-			w := runtime.Forecasts{Containers: strings.Contains(models, "chronos")}
+			w := runtime.Forecasts{Containers: chronos}
 			if forecasts, err = Batch(ctx, w, sample, freq, models, 4*workers, workers); err == nil {
 				score, err = Scored(sample, freq, forecasts)
 			}
