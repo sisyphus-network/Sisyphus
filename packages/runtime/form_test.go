@@ -24,14 +24,16 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 	// structures in it, and refuses what is not a file of them; ocr tells
 	// a PDF or a picture from its first bytes, and refuses anything else;
 	// traj tells a topology and a trajectory from theirs, so each of its
-	// fields is given a file of its own.
+	// fields is given a file of its own; prep reads a PDB file through, and
+	// refuses one with no atoms.
 	water, _ := store.Put(ctx, strings.NewReader("3\nwater\nO 0 0 0.12\nH 0 0.76 -0.47\nH 0 -0.76 -0.47\n"))
 	scan, _ := store.Put(ctx, strings.NewReader("%PDF-1.7\n"))
 	topology, _ := store.Put(ctx, strings.NewReader("%VERSION  VERSION_STAMP = V0001.000\n"))
 	trajectory, _ := store.Put(ctx, strings.NewReader("T\x00\x00\x00CORD"))
 	// forecast reads its series, which must be long enough to backtest.
 	series, _ := store.Put(ctx, strings.NewReader(seasonalSeries(60)))
-	files := map[string]string{"qchem": water.String(), "ocr": scan.String(), "traj.topology": topology.String(), "traj.trajectory": trajectory.String(), "forecast": series.String()}
+	molecule, _ := store.Put(ctx, strings.NewReader("ATOM      1  N   ALA A   1       0.000   0.000   0.000  1.00  0.00           N\nEND\n"))
+	files := map[string]string{"qchem": water.String(), "ocr": scan.String(), "traj.topology": topology.String(), "traj.trajectory": trajectory.String(), "forecast": series.String(), "prep": molecule.String()}
 
 	// Some file fields stand in place of another, which a form's fields
 	// cannot say, and their help does: md's Amber system, its topology and
@@ -143,7 +145,7 @@ func TestEachFormAsksForWhatItsWorkloadAccepts(t *testing.T) {
 			}
 		}
 	}
-	if !slices.Equal(formed, []string{"forecast", "md", "ocr", "primes", "qchem", "render", "traj", "transcode", "transcribe", "wordcount"}) {
+	if !slices.Equal(formed, []string{"forecast", "md", "ocr", "prep", "primes", "qchem", "render", "traj", "transcode", "transcribe", "wordcount"}) {
 		t.Errorf("the workloads with forms are %v", formed)
 	}
 	if Builtin().Form("no-such-workload") != nil || registry.Form("graph") != nil {

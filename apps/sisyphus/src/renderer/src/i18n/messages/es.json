@@ -493,6 +493,7 @@
       "ocr": { "title": "Leer texto de escaneos", "description": "Lee el texto de un PDF escaneado o una imagen con Tesseract, por tramos de páginas por todo el pool, como texto plano o un PDF con búsqueda." },
       "forecast": { "title": "Pronosticar una serie", "description": "Ajusta modelos de suavizado, autorregresivos y sencillos a una serie temporal, evalúa cada uno sobre su pasado reciente por todo el pool y pronostica con la mediana de los mejores tipos de modelo, con intervalos." },
       "traj": { "title": "Analizar trayectorias", "description": "Calcula el RMSD, el radio de giro, distancias, enlaces de hidrógeno, la estructura secundaria o el RMSF a lo largo de trayectorias de dinámica molecular con cpptraj, por tramos de fotogramas por todo el pool." },
+      "prep": { "title": "Preparar sistemas Amber", "description": "Coloca cada proteína o ácido nucleico en una caja de agua con iones mediante tleap de AmberTools, por tramos de archivos PDB por todo el pool, listos para simular como topología y coordenadas de Amber." },
       "md": { "title": "Simular una molécula", "description": "Ejecuta dinámica molecular como réplicas por todo el pool." }
     }
   },
