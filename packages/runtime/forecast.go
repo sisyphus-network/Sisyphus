@@ -134,8 +134,9 @@ func (m forecastModel) fewest() int {
 		return 2
 	case "ar":
 		return 3*m.Order + 2
-	case "chronos":
-		return chronosFewest
+	}
+	if fam, ok := familyOf(m.Kind); ok {
+		return fam.fewest
 	}
 	return 1
 }
@@ -161,13 +162,14 @@ func (m forecastModel) invalid() string {
 		ok = season && rate(m.Alpha) && rate(m.Beta) && rate(m.Gamma)
 	case "ar":
 		ok = m.Order >= 1 && m.Order <= maxForecastOrder
-	case "chronos":
-		_, ok = chronosVariants[m.Variant]
-		ok = ok && m.Alpha == 0 && m.Beta == 0 && m.Gamma == 0 && m.Order == 0 && m.Season == 0
 	default:
-		return fmt.Sprintf("no such kind of model as %q", m.Kind)
+		fam, family := familyOf(m.Kind)
+		if !family {
+			return fmt.Sprintf("no such kind of model as %q", m.Kind)
+		}
+		ok = slices.Contains(fam.variants, m.Variant) && m.Alpha == 0 && m.Beta == 0 && m.Gamma == 0 && m.Order == 0 && m.Season == 0
 	}
-	if !ok || (m.Kind != "chronos" && m.Variant != "") {
+	if !ok || (!m.varies() && m.Variant != "") {
 		return fmt.Sprintf("%s is not a model with settings it can take", m.Name())
 	}
 	return ""
@@ -298,8 +300,8 @@ func (p ForecastParams) kinds() ([]string, error) {
 	var kinds []string
 	for _, kind := range strings.Split(p.Models, ",") {
 		kind = strings.TrimSpace(kind)
-		if !slices.Contains(forecastKinds, kind) && !slices.Contains(chronosKinds, kind) {
-			return nil, fmt.Errorf("models: %q is none of %s", kind, strings.Join(slices.Concat(forecastKinds, chronosKinds), ", "))
+		if !slices.Contains(forecastKinds, kind) && !slices.Contains(familyKinds(), kind) {
+			return nil, fmt.Errorf("models: %q is none of %s", kind, strings.Join(slices.Concat(forecastKinds, familyKinds()), ", "))
 		}
 		if !slices.Contains(kinds, kind) {
 			kinds = append(kinds, kind)
@@ -358,11 +360,7 @@ func forecastCandidates(kinds []string, season, shortest int) []forecastModel {
 			models = append(models, forecastModel{Kind: kind})
 		}
 	}
-	for _, kind := range chronosKinds {
-		if slices.Contains(kinds, kind) {
-			models = append(models, forecastModel{Kind: "chronos", Variant: strings.TrimPrefix(kind, "chronos-")})
-		}
-	}
+	models = append(models, familyCandidates(kinds)...)
 	return slices.DeleteFunc(models, func(m forecastModel) bool { return m.fewest() > shortest })
 }
 
@@ -378,8 +376,8 @@ func (f Forecast) Split(ctx context.Context, blobs Blobs, params []byte, parts i
 	if err != nil {
 		return nil, fmt.Errorf("forecast params: %w", err)
 	}
-	if why := f.cannotRunChronos(); wantsChronos(kinds) && why != "" {
-		return nil, errors.New("forecast params: the Chronos-Bolt models run in containers, and " + why)
+	if err := f.refuseFamilies("forecast params", kinds); err != nil {
+		return nil, err
 	}
 	values, _, err := readSeries(ctx, blobs, p.Input)
 	if err != nil {
@@ -423,7 +421,7 @@ func (f Forecast) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]b
 	report := Report(ctx)
 	report.Log(fmt.Sprintf("backtesting %d candidates on %d points", len(task.Models), len(values)))
 	part := forecastPart{Points: len(values), Horizon: task.Horizon, Folds: task.Folds, Last: last}
-	if slices.ContainsFunc(task.Models, func(m forecastModel) bool { return m.Kind == "chronos" }) {
+	if slices.ContainsFunc(task.Models, forecastModel.varies) {
 		part.Scale = seriesScale(values)
 	}
 	runners, err := f.runners(task.Models)
