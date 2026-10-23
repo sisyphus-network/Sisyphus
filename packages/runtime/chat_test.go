@@ -189,7 +189,7 @@ func TestAWorkerOffersItsModelsAndAJobNeedsTheOneItNames(t *testing.T) {
 	if got := fmt.Sprint(LoadedModels(labels)); got != "[{llama3.1:8b 75} {qwen3:8b 100} {a=b:latest 40}]" {
 		t.Errorf("its models in memory are %s", got)
 	}
-	if got := strings.Join(serving.Names(), " "); got != "chat forecast primes wordcount" {
+	if got := strings.Join(serving.Names(), " "); got != "chat forecast forecasts primes wordcount" {
 		t.Errorf("it runs %q", got)
 	}
 	// One that only takes such jobs in offers nothing, nor does one whose

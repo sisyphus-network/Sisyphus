@@ -1193,7 +1193,7 @@ func TestTheLocalAPISubmitsAndFollowsJobs(t *testing.T) {
 	ctx := withToken("the-token")
 
 	info, err := client.GetNodeInfo(ctx, &nodepb.GetNodeInfoRequest{})
-	if err != nil || !slices.Equal(info.GetWorkloads(), []string{"forecast", "primes", "wordcount"}) {
+	if err != nil || !slices.Equal(info.GetWorkloads(), []string{"forecast", "forecasts", "primes", "wordcount"}) {
 		t.Errorf("node info %v, %v", info, err)
 	}
 	watching, cancel := context.WithCancel(ctx)
@@ -1301,13 +1301,18 @@ func TestTheLocalAPIListsTheWorkloadsWithTheirFormsAndWhoOffersThem(t *testing.T
 	// What it says of the pool, anything on the machine may read, as it
 	// may the list of workers.
 	listed, err := startOffice(t, pool).ListWorkloads(context.Background(), &nodepb.ListWorkloadsRequest{})
-	if err != nil || len(listed.GetWorkloads()) != 3 {
+	if err != nil || len(listed.GetWorkloads()) != 4 {
 		t.Fatalf("ListWorkloads = %v, %v", listed, err)
 	}
 	// One that no worker offers yet is listed all the same, with its form.
-	forecast, primes, wordcount := listed.GetWorkloads()[0], listed.GetWorkloads()[1], listed.GetWorkloads()[2]
-	if forecast.GetName() != "forecast" || forecast.GetWorkersRunningIt() != 0 || len(forecast.GetFields()) == 0 {
-		t.Errorf("forecast is listed as %v", forecast)
+	forecast, primes, wordcount := listed.GetWorkloads()[0], listed.GetWorkloads()[2], listed.GetWorkloads()[3]
+	for _, w := range listed.GetWorkloads()[:2] {
+		if !strings.HasPrefix(w.GetName(), "forecast") || w.GetWorkersRunningIt() != 0 || len(w.GetFields()) == 0 {
+			t.Errorf("%s is listed as %v", w.GetName(), w)
+		}
+	}
+	if forecast.GetName() != "forecast" || listed.GetWorkloads()[1].GetName() != "forecasts" {
+		t.Errorf("the forecast workloads are listed as %v", listed.GetWorkloads()[:2])
 	}
 	// Busy or not, a worker that offers a workload is counted.
 	if primes.GetName() != "primes" || primes.GetWorkersRunningIt() != 2 || wordcount.GetName() != "wordcount" || wordcount.GetWorkersRunningIt() != 1 ||

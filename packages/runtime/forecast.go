@@ -658,52 +658,23 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 			outcomes = append(outcomes, o)
 		}
 	}
-	slices.SortStableFunc(outcomes, func(a, b forecastOutcome) int {
-		if (a.Error == "") != (b.Error == "") {
-			if a.Error == "" {
-				return -1
-			}
-			return 1
-		}
-		return cmp.Or(cmp.Compare(a.MAE, b.MAE), cmp.Compare(a.RMSE, b.RMSE), strings.Compare(a.Model.Name(), b.Model.Name()))
-	})
-	if len(outcomes) == 0 || outcomes[0].Error != "" {
-		why := "there were none"
-		if len(outcomes) > 0 {
-			why = outcomes[0].Model.Name() + ": " + outcomes[0].Error
-		}
-		return nil, fmt.Errorf("forecast: no candidate model could be fitted (%s)", why)
+	d, err := decide(outcomes, result.Folds)
+	if err != nil {
+		return nil, err
 	}
-
+	result.Candidates, result.Best, result.Chosen, result.Forecast = d.scores, d.scores[0], d.chosen, d.points
 	var scores bytes.Buffer
 	scores.WriteString("model,mae,rmse,error\n")
-	for _, o := range outcomes {
-		score := ForecastScore{Model: o.Model.Name(), MAE: o.MAE, RMSE: o.RMSE, Error: o.Error}
-		result.Candidates = append(result.Candidates, score)
-		if o.Error != "" {
-			fmt.Fprintf(&scores, "%s,,,%s\n", score.Model, csvField(o.Error))
+	for _, score := range d.scores {
+		if score.Error != "" {
+			fmt.Fprintf(&scores, "%s,,,%s\n", score.Model, csvField(score.Error))
 		} else {
-			fmt.Fprintf(&scores, "%s,%s,%s,\n", score.Model, plain(o.MAE), plain(o.RMSE))
+			fmt.Fprintf(&scores, "%s,%s,%s,\n", score.Model, plain(score.MAE), plain(score.RMSE))
 		}
 	}
-	best := outcomes[0]
-	result.Best = result.Candidates[0]
-	result.Chosen = result.Best
-	if c, name, ok := combine(outcomes, result.Folds); ok {
-		best = c
-		result.Chosen = ForecastScore{Model: name, MAE: c.MAE, RMSE: c.RMSE}
-	}
-
 	var table bytes.Buffer
 	table.WriteString("step,value,lo80,hi80,lo95,hi95\n")
-	q80, q95 := tQuantile80[result.Folds-1], tQuantile95[result.Folds-1]
-	var spread float64
-	for j, v := range best.Forecast {
-		spread = max(spread, best.StepRMSE[j], float64(best.RMSE*math.Sqrt(float64(j+1)/(float64(len(best.Forecast)+1)/2))))
-		w80 := float64(q80 * spread)
-		w95 := float64(q95 * spread)
-		point := ForecastPoint{Step: j + 1, Value: v, Lo80: v - w80, Hi80: v + w80, Lo95: v - w95, Hi95: v + w95}
-		result.Forecast = append(result.Forecast, point)
+	for _, point := range d.points {
 		fmt.Fprintf(&table, "%d,%s,%s,%s,%s,%s\n", point.Step, plain(point.Value), plain(point.Lo80), plain(point.Hi80), plain(point.Lo95), plain(point.Hi95))
 	}
 	for _, t := range []struct {
@@ -719,6 +690,57 @@ func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([
 	}
 	result.Tasks = len(outputs)
 	return mustJSON(result), nil
+}
+
+// decision is what a series' backtest comes to: every candidate's scores,
+// best first, the forecast chosen, and its steps with their ranges.
+type decision struct {
+	scores []ForecastScore
+	chosen ForecastScore
+	points []ForecastPoint
+}
+
+// decide ranks a series' candidates by their backtest, those that could
+// not be fitted last, and forecasts with the median of the best of each
+// of the best kinds, or the best alone, with ranges from Student's t for
+// as many degrees of freedom as there were windows. folds is between 1 and
+// maxForecastFolds.
+func decide(outcomes []forecastOutcome, folds int) (decision, error) {
+	slices.SortStableFunc(outcomes, func(a, b forecastOutcome) int {
+		if (a.Error == "") != (b.Error == "") {
+			if a.Error == "" {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Or(cmp.Compare(a.MAE, b.MAE), cmp.Compare(a.RMSE, b.RMSE), strings.Compare(a.Model.Name(), b.Model.Name()))
+	})
+	if len(outcomes) == 0 || outcomes[0].Error != "" {
+		why := "there were none"
+		if len(outcomes) > 0 {
+			why = outcomes[0].Model.Name() + ": " + outcomes[0].Error
+		}
+		return decision{}, fmt.Errorf("forecast: no candidate model could be fitted (%s)", why)
+	}
+	var d decision
+	for _, o := range outcomes {
+		d.scores = append(d.scores, ForecastScore{Model: o.Model.Name(), MAE: o.MAE, RMSE: o.RMSE, Error: o.Error})
+	}
+	best := outcomes[0]
+	d.chosen = d.scores[0]
+	if c, name, ok := combine(outcomes, folds); ok {
+		best = c
+		d.chosen = ForecastScore{Model: name, MAE: c.MAE, RMSE: c.RMSE}
+	}
+	q80, q95 := tQuantile80[folds-1], tQuantile95[folds-1]
+	var spread float64
+	for j, v := range best.Forecast {
+		spread = max(spread, best.StepRMSE[j], float64(best.RMSE*math.Sqrt(float64(j+1)/(float64(len(best.Forecast)+1)/2))))
+		w80 := float64(q80 * spread)
+		w95 := float64(q95 * spread)
+		d.points = append(d.points, ForecastPoint{Step: j + 1, Value: v, Lo80: v - w80, Hi80: v + w80, Lo95: v - w95, Hi95: v + w95})
+	}
+	return d, nil
 }
 
 // wellFormed reports whether a fitted candidate's numbers are all there and

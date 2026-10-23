@@ -79,6 +79,12 @@ test('a prepared Amber system’s files are saved by system and kind, its log as
   assert.equal(outputFileName(job, 'bafyzip', 4, new Uint8Array()), 'abcdef01-archive.zip')
 })
 
+test('many series’ forecasts and how each was forecast are saved as CSV', () => {
+  const job = { jobId: 'abcdef0123456789', result: json({ series: 3, forecast: 2, failed: 1, forecast_table: 'bafyforecasts', models_table: 'bafymodels' }) }
+  assert.equal(outputFileName(job, 'bafyforecasts', 0, new Uint8Array()), 'abcdef01-forecast_table.csv')
+  assert.equal(outputFileName(job, 'bafymodels', 1, new Uint8Array()), 'abcdef01-models_table.csv')
+})
+
 test('a trajectory analysis’s tables are saved as CSV', () => {
   const job = { jobId: 'abcdef0123456789', result: json({ frames: 60, trajectories: 1, trajectory_frames: [60], analyses: ['rmsd', 'hbond', 'dssp', 'rmsf'], series: 'bafyseries', rmsd_angstrom: { mean: 0.2, stdev: 0.1, min: 0, max: 0.4 }, hbonds: 'bafyhb', dssp: 'bafydssp', dssp_residues: 'bafyres', rmsf: 'bafyrmsf', structure: { alpha: 0.4 }, tasks: 4 }) }
   assert.equal(outputFileName(job, 'bafyseries', 0, new Uint8Array()), 'abcdef01-series.csv')
