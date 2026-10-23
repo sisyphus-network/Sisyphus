@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/ipfs/go-cid"
+	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
 // Qchem computes molecules with xtb, the Grimme group's semiempirical
@@ -328,11 +329,12 @@ func (Qchem) Split(ctx context.Context, blobs Blobs, params []byte, parts int) (
 	if err != nil {
 		return nil, fmt.Errorf("qchem input %s: %w", input, err)
 	}
-	format, structures, err := countStructures(blob)
+	format, sizes, err := countStructures(blob)
 	blob.Close()
 	if err != nil {
 		return nil, fmt.Errorf("qchem input: %w", err)
 	}
+	structures := len(sizes)
 	args := qchemMethods[p.Method] + " --chrg " + strconv.Itoa(p.Charge) + " --uhf " + strconv.Itoa(p.UHF)
 	switch p.Job {
 	case "opt", "ohess":
@@ -343,7 +345,10 @@ func (Qchem) Split(ctx context.Context, blobs Blobs, params []byte, parts int) (
 	if p.Solvent != "none" {
 		args += " --alpb " + p.Solvent
 	}
-	tasks := min(cmp.Or(p.Tasks, parts), structures)
+	tasks, err := qchemTasks(sizes, p.Job, min(cmp.Or(p.Tasks, parts), structures))
+	if err != nil {
+		return nil, fmt.Errorf("qchem input: %w", err)
+	}
 	payloads, err := Container{}.Split(ctx, blobs, mustJSON(ContainerParams{
 		Image: QchemImage, Command: []string{"sh", "-c", qchemScript},
 		Input: p.Input, Tasks: tasks,
@@ -379,7 +384,71 @@ func (q Qchem) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte
 	if err := haveImage(ctx, engine, QchemImage, qchemDockerfile, "quantum chemistry"); err != nil {
 		return nil, err
 	}
-	return Container{Engine: engine, Confined: q.Confined}.Execute(ctx, blobs, payload)
+	// What the container leaves is read here and said inline, not stored:
+	// honest workers' numbers differ in their last digits from one kind
+	// of processor to another, so files of them would be named
+	// differently, and results that store different blobs are never the
+	// same. Inline, Compare can hold them to a tolerance instead.
+	held := &heldBlobs{Blobs: blobs, held: storage.NewMemory()}
+	raw, err := Container{Engine: engine, Confined: q.Confined, MaxOutput: qchemMostOutput}.Execute(ctx, held, payload)
+	if err != nil {
+		return nil, err
+	}
+	var out ContainerOutput
+	json.Unmarshal(raw, &out) // made just now
+	var summary qchemSummary
+	if err := held.left(ctx, out, "summary.json", func(r io.Reader) error {
+		return json.NewDecoder(io.LimitReader(r, qchemMostOutput)).Decode(&summary)
+	}); err != nil {
+		return nil, fmt.Errorf("the task's summary: %w", err)
+	}
+	if summary.Job == "opt" || summary.Job == "ohess" {
+		var blocks []string
+		if err := held.left(ctx, out, "structures.xyz", func(r io.Reader) error {
+			return eachStructure(r, "xyz", func(_ string, atoms []string) error {
+				blocks = append(blocks, strings.Join(atoms, "\n"))
+				return nil
+			})
+		}); err != nil {
+			return nil, fmt.Errorf("the task's geometries: %w", err)
+		}
+		for i := range summary.Structures {
+			if s := &summary.Structures[i]; s.Geometry && len(blocks) > 0 {
+				s.Atoms, blocks = strings.Split(blocks[0], "\n"), blocks[1:]
+			}
+		}
+	}
+	output := mustJSON(summary)
+	if len(output) > qchemMostOutput {
+		return nil, fmt.Errorf("the task came to %d bytes, more than the %d it may say", len(output), qchemMostOutput)
+	}
+	return output, nil
+}
+
+// heldBlobs stores what is put in it in memory, apart from the worker's
+// store, and opens from the worker's store.
+type heldBlobs struct {
+	Blobs
+	held *storage.Store
+}
+
+func (h *heldBlobs) Put(ctx context.Context, r io.Reader) (cid.Cid, error) {
+	return h.held.Put(ctx, r)
+}
+
+// left reads the file of the name given that a task left, which is held
+// here, with read.
+func (h *heldBlobs) left(ctx context.Context, out ContainerOutput, name string, read func(io.Reader) error) error {
+	c, err := cid.Decode(out.Files[name])
+	if err != nil {
+		return errors.New("the task left none")
+	}
+	blob, err := h.held.Open(ctx, c)
+	if err == nil {
+		defer blob.Close()
+		err = read(blob)
+	}
+	return err
 }
 
 // Varies says that two honest workers can give different bytes for a task.
@@ -389,8 +458,304 @@ func (q Qchem) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte
 // runs of it, or of the job shared out otherwise, agree to the bit. But the
 // build also picks its own arithmetic by the processor it finds, and run on
 // processors with AVX2 and FMA, or on AMD's, the last digits xtb prints
-// differ: a gap in its eleventh decimal, a coordinate in its tenth.
+// differ: a gap in its eleventh decimal, a coordinate in its tenth. So its
+// results are compared within a tolerance, by Compare.
 func (Qchem) Varies() bool { return true }
+
+// The tolerances Compare holds two runs of a task to. Measured on one
+// machine with MKL's code paths for SSE4.2, AVX and its own compatible
+// arithmetic, which differ from one another as processors do, the same
+// butane optimisation and frequencies differed by 1e-12 hartree in the
+// energy, 1e-10 in the free energy, 5e-8 eV in the gap and 2e-9 ångström
+// in a coordinate, not at all in a frequency as xtb prints it, and 2e-5
+// km/mol in an intensity. The tolerances are far wider than that, for
+// processors that differ more and optimisations that end a little apart,
+// and far narrower than any difference that would matter to a chemist: a
+// millionth of a hartree is 0.0006 kcal/mol.
+const (
+	qchemEnergyTolerance    = 1e-6 // hartree, for the energy and free energy
+	qchemGapTolerance       = 1e-3 // eV
+	qchemDipoleTolerance    = 1e-3 // atomic units, each component
+	qchemRMSDTolerance      = 1e-3 // ångström, the geometries aligned
+	qchemWaveTolerance      = 1.0  // cm⁻¹
+	qchemIntensityTolerance = 0.01 // km/mol, and as much again a percent
+)
+
+// Compare says whether two outputs of one task are the same result, to
+// within the tolerances above: the same structures, each with the same
+// title, status and outcome, its numbers within their tolerances, its
+// optimised geometry within qchemRMSDTolerance of the other once the two
+// are laid over each other, which honest optimisations that drift apart
+// as a whole do not hold against them, and its frequencies, in order,
+// each within its tolerance. The outputs are taken in the order of their
+// bytes, so that which is given first never changes the answer.
+func (Qchem) Compare(a, b []byte) (bool, string) {
+	if bytes.Compare(a, b) > 0 {
+		a, b = b, a
+	}
+	var x, y qchemSummary
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false, "an output is not a qchem task's"
+	}
+	switch {
+	case x.Method != y.Method || x.Job != y.Job:
+		return false, fmt.Sprintf("one ran %s %s, the other %s %s", x.Method, x.Job, y.Method, y.Job)
+	case len(x.Structures) != len(y.Structures):
+		return false, fmt.Sprintf("one computed %d structures, the other %d", len(x.Structures), len(y.Structures))
+	}
+	for i := range x.Structures {
+		if why := compareStructures(x.Structures[i], y.Structures[i]); why != "" {
+			return false, fmt.Sprintf("structure %d: %s", x.Structures[i].Index, why)
+		}
+	}
+	return true, ""
+}
+
+// compareStructures says how what two runs said of one structure differs
+// by more than the tolerances, or nothing where it does not.
+func compareStructures(x, y qchemTaskStructure) string {
+	switch {
+	case x.Index != y.Index || x.Title != y.Title:
+		return "they are not the same structure"
+	case x.Status != y.Status || x.Converged != y.Converged || x.Geometry != y.Geometry:
+		return fmt.Sprintf("one ended with status %d, converged %t, the other with status %d, converged %t", x.Status, x.Converged, y.Status, y.Converged)
+	}
+	for _, n := range []struct {
+		what      string
+		x, y      string
+		tolerance float64
+	}{
+		{"energy", x.Energy, y.Energy, qchemEnergyTolerance},
+		{"free energy", x.FreeEnergy, y.FreeEnergy, qchemEnergyTolerance},
+		{"gap", x.Gap, y.Gap, qchemGapTolerance},
+	} {
+		if why := qchemWithin(n.what, n.x, n.y, n.tolerance); why != "" {
+			return why
+		}
+	}
+	if why := compareFrequencies(x.Frequencies, y.Frequencies); why != "" {
+		return why
+	}
+	turn, why := compareGeometries(x.Atoms, y.Atoms)
+	if why != "" {
+		return why
+	}
+	return compareDipoles(x.Dipole, y.Dipole, turn)
+}
+
+// compareDipoles compares two runs' dipoles, each component within
+// qchemDipoleTolerance, once the first is turned as its geometry turns to
+// lie over the other's: a dipole turns with its molecule, so two runs whose
+// optimisations end turned apart give the same dipole in different axes.
+func compareDipoles(x, y string, turn [3][3]float64) string {
+	dx, dy := strings.Fields(x), strings.Fields(y)
+	switch {
+	case len(dx) != len(dy):
+		return "one gave a dipole and the other none"
+	case len(dx) == 0:
+		return ""
+	case len(dx) != 3:
+		return fmt.Sprintf("the dipole %q or %q is not three numbers", x, y)
+	}
+	var a, b [3]float64
+	for i := range 3 {
+		var errA, errB error
+		a[i], errA = strconv.ParseFloat(dx[i], 64)
+		b[i], errB = strconv.ParseFloat(dy[i], 64)
+		if errA != nil || errB != nil || !decimal.MatchString(dx[i]) || !decimal.MatchString(dy[i]) {
+			return fmt.Sprintf("the dipole %q or %q is not a number", dx[i], dy[i])
+		}
+	}
+	for i := range 3 {
+		turned := turn[i][0]*a[0] + turn[i][1]*a[1] + turn[i][2]*a[2]
+		if gap := math.Abs(turned - b[i]); !(gap <= qchemDipoleTolerance) {
+			return fmt.Sprintf("the dipole is %q in one and %q in the other, %.3g apart in one direction once the geometries are laid over each other, more than %g", x, y, gap, qchemDipoleTolerance)
+		}
+	}
+	return ""
+}
+
+// qchemWithin says how two numbers as a task gave them differ by more than the
+// tolerance, or are not both numbers, or nothing where they agree. Two
+// that are both empty, none given, agree.
+func qchemWithin(what, x, y string, tolerance float64) string {
+	if x == "" || y == "" {
+		if x != y {
+			return "one gave the " + what + " and the other none"
+		}
+		return ""
+	}
+	a, errA := strconv.ParseFloat(x, 64)
+	b, errB := strconv.ParseFloat(y, 64)
+	switch {
+	case errA != nil || errB != nil || !decimal.MatchString(x) || !decimal.MatchString(y):
+		return fmt.Sprintf("the %s %q or %q is not a number", what, x, y)
+	case math.Abs(a-b) > tolerance:
+		return fmt.Sprintf("the %s is %s in one and %s in the other, %.3g apart, more than %g", what, x, y, math.Abs(a-b), tolerance)
+	}
+	return ""
+}
+
+// compareFrequencies compares two runs' frequencies, each a wave number
+// and an intensity, in order of wave number, where near-degenerate modes
+// may come in either order.
+func compareFrequencies(x, y [][]string) string {
+	if len(x) != len(y) {
+		return fmt.Sprintf("one gave %d frequencies, the other %d", len(x), len(y))
+	}
+	sorted := func(modes [][]string) ([][2]float64, bool) {
+		out := make([][2]float64, len(modes))
+		for i, mode := range modes {
+			if len(mode) != 2 || !decimal.MatchString(mode[0]) || !decimal.MatchString(mode[1]) {
+				return nil, false
+			}
+			out[i][0], _ = strconv.ParseFloat(mode[0], 64)
+			out[i][1], _ = strconv.ParseFloat(mode[1], 64)
+		}
+		slices.SortFunc(out, func(a, b [2]float64) int { return cmp.Compare(a[0], b[0]) })
+		return out, true
+	}
+	a, okA := sorted(x)
+	b, okB := sorted(y)
+	if !okA || !okB {
+		return "a frequency is not a wave number and an intensity"
+	}
+	for i := range a {
+		wave, intensity := math.Abs(a[i][0]-b[i][0]), math.Abs(a[i][1]-b[i][1])
+		if wave > qchemWaveTolerance || intensity > qchemIntensityTolerance*(1+math.Max(math.Abs(a[i][1]), math.Abs(b[i][1]))) {
+			return fmt.Sprintf("mode %d is %g cm-1 at %g km/mol in one and %g cm-1 at %g km/mol in the other", i+1, a[i][0], a[i][1], b[i][0], b[i][1])
+		}
+	}
+	return ""
+}
+
+// compareGeometries compares two runs' optimised geometries: the same
+// elements in the same order, and the atoms, once the geometries are laid
+// over each other as closely as they go, at most qchemRMSDTolerance apart
+// in root mean square. It gives the turn that lays the first over the
+// second, which is no turn where there are no geometries.
+func compareGeometries(x, y []string) ([3][3]float64, string) {
+	none := [3][3]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}
+	if len(x) != len(y) {
+		return none, fmt.Sprintf("one gave a geometry of %d atoms, the other of %d", len(x), len(y))
+	}
+	if len(x) == 0 {
+		return none, ""
+	}
+	p, q := make([][3]float64, len(x)), make([][3]float64, len(y))
+	for i := range x {
+		a, b := blankFields(x[i]), blankFields(y[i])
+		if len(a) != 4 || len(b) != 4 || a[0] != b[0] {
+			return none, fmt.Sprintf("atom %d is %q in one and %q in the other", i+1, x[i], y[i])
+		}
+		for k := range 3 {
+			var errA, errB error
+			p[i][k], errA = strconv.ParseFloat(a[k+1], 64)
+			q[i][k], errB = strconv.ParseFloat(b[k+1], 64)
+			if errA != nil || errB != nil || !decimal.MatchString(a[k+1]) || !decimal.MatchString(b[k+1]) {
+				return none, fmt.Sprintf("atom %d is %q in one and %q in the other", i+1, x[i], y[i])
+			}
+		}
+	}
+	rmsd, turn := alignment(p, q)
+	if !(rmsd <= qchemRMSDTolerance) {
+		return none, fmt.Sprintf("the geometries are %.3g ångström apart in root mean square, laid over each other, more than %g", rmsd, qchemRMSDTolerance)
+	}
+	return turn, ""
+}
+
+// alignment is the root mean square distance between the atoms of two
+// geometries of the same atoms once the first is moved and turned to lie
+// over the second as closely as it goes, and the turn that does it, found
+// as Horn's quaternion method finds them: from the largest eigenvalue of a
+// 4×4 matrix made from the two, and its eigenvector, the turn's quaternion.
+func alignment(p, q [][3]float64) (float64, [3][3]float64) {
+	n := float64(len(p))
+	var cp, cq [3]float64
+	for i := range p {
+		for k := range 3 {
+			cp[k] += p[i][k] / n
+			cq[k] += q[i][k] / n
+		}
+	}
+	var s [3][3]float64
+	var squares float64
+	for i := range p {
+		var a, b [3]float64
+		for k := range 3 {
+			a[k], b[k] = p[i][k]-cp[k], q[i][k]-cq[k]
+			squares += a[k]*a[k] + b[k]*b[k]
+		}
+		for j := range 3 {
+			for k := range 3 {
+				s[j][k] += a[j] * b[k]
+			}
+		}
+	}
+	m := [4][4]float64{
+		{s[0][0] + s[1][1] + s[2][2], s[1][2] - s[2][1], s[2][0] - s[0][2], s[0][1] - s[1][0]},
+		{s[1][2] - s[2][1], s[0][0] - s[1][1] - s[2][2], s[0][1] + s[1][0], s[2][0] + s[0][2]},
+		{s[2][0] - s[0][2], s[0][1] + s[1][0], -s[0][0] + s[1][1] - s[2][2], s[1][2] + s[2][1]},
+		{s[0][1] - s[1][0], s[2][0] + s[0][2], s[1][2] + s[2][1], -s[0][0] - s[1][1] + s[2][2]},
+	}
+	value, v := largestEigen(m)
+	w, x, y, z := v[0], v[1], v[2], v[3]
+	turn := [3][3]float64{
+		{w*w + x*x - y*y - z*z, 2 * (x*y - w*z), 2 * (x*z + w*y)},
+		{2 * (y*x + w*z), w*w - x*x + y*y - z*z, 2 * (y*z - w*x)},
+		{2 * (z*x - w*y), 2 * (z*y + w*x), w*w - x*x - y*y + z*z},
+	}
+	return math.Sqrt(math.Max(0, (squares-2*value)/n)), turn
+}
+
+// largestEigen finds the largest eigenvalue of a symmetric 4×4 matrix, and
+// its eigenvector of unit length, by Jacobi's method: turning it, a pair of
+// rows and columns at a time, until what is off its diagonal is gone, and
+// keeping the turns, whose columns are then the eigenvectors.
+func largestEigen(m [4][4]float64) (float64, [4]float64) {
+	v := [4][4]float64{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}}
+	for range 64 {
+		var off float64
+		for i := range 4 {
+			for j := i + 1; j < 4; j++ {
+				off += m[i][j] * m[i][j]
+			}
+		}
+		if off < 1e-300 {
+			break
+		}
+		for i := range 4 {
+			for j := i + 1; j < 4; j++ {
+				if m[i][j] == 0 {
+					continue
+				}
+				theta := (m[j][j] - m[i][i]) / (2 * m[i][j])
+				t := 1 / (math.Abs(theta) + math.Sqrt(theta*theta+1))
+				if theta < 0 {
+					t = -t
+				}
+				c := 1 / math.Sqrt(t*t+1)
+				s := t * c
+				for k := range 4 {
+					m[k][i], m[k][j] = c*m[k][i]-s*m[k][j], s*m[k][i]+c*m[k][j]
+				}
+				for k := range 4 {
+					m[i][k], m[j][k] = c*m[i][k]-s*m[j][k], s*m[i][k]+c*m[j][k]
+				}
+				for k := range 4 {
+					v[k][i], v[k][j] = c*v[k][i]-s*v[k][j], s*v[k][i]+c*v[k][j]
+				}
+			}
+		}
+	}
+	best := 0
+	for i := 1; i < 4; i++ {
+		if m[i][i] > m[best][best] {
+			best = i
+		}
+	}
+	return m[best][best], [4]float64{v[0][best], v[1][best], v[2][best], v[3][best]}
+}
 
 // qchemTaskStructure is what a task says of one structure, its numbers as
 // xtb printed them.
@@ -405,6 +770,10 @@ type qchemTaskStructure struct {
 	Frequencies [][]string `json:"frequencies"`
 	Converged   bool       `json:"converged"`
 	Geometry    bool       `json:"geometry"`
+	// Atoms are the optimised geometry's atoms, each an element and three
+	// coordinates in ångström, which Execute adds where Geometry says
+	// there is one.
+	Atoms []string `json:"atoms,omitempty"`
 }
 
 // qchemSummary is what a task leaves in summary.json.
@@ -422,15 +791,9 @@ func (Qchem) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]by
 	var geometries []string
 	var combined bytes.Buffer
 	for i, output := range outputs {
-		var out ContainerOutput
-		if err := json.Unmarshal(output, &out); err != nil {
-			return nil, fmt.Errorf("task %d output: %w", i, err)
-		}
-		// Only the names the task is to leave are read. Whatever else a
-		// worker says it left is not looked at.
 		var summary qchemSummary
-		if err := readTaskJSON(ctx, blobs, out.Files["summary.json"], 64<<20, &summary); err != nil {
-			return nil, fmt.Errorf("task %d's summary: %w", i, err)
+		if err := json.Unmarshal(output, &summary); err != nil {
+			return nil, fmt.Errorf("task %d output: %w", i, err)
 		}
 		if i == 0 {
 			result.Method, result.Job = summary.Method, summary.Job
@@ -444,14 +807,6 @@ func (Qchem) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]by
 			return nil, fmt.Errorf("task %d computed no structures", i)
 		}
 		optimised := summary.Job == "opt" || summary.Job == "ohess"
-		var left []string
-		if optimised {
-			blocks, err := readTaskGeometries(ctx, blobs, out.Files["structures.xyz"])
-			if err != nil {
-				return nil, fmt.Errorf("task %d's geometries: %w", i, err)
-			}
-			left = blocks
-		}
 		for _, s := range summary.Structures {
 			// The tasks' runs follow one another, from the first
 			// structure, with none left out or twice.
@@ -462,19 +817,18 @@ func (Qchem) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]by
 			if err != nil {
 				return nil, fmt.Errorf("task %d, structure %d: %w", i, s.Index, err)
 			}
-			if s.Geometry {
-				if !optimised || len(left) == 0 {
-					return nil, fmt.Errorf("task %d, structure %d: a geometry is said to be left that is not there", i, s.Index)
+			switch {
+			case s.Geometry != (len(s.Atoms) > 0) || s.Geometry && !optimised:
+				return nil, fmt.Errorf("task %d, structure %d: a geometry is said to be left that is not there, or one is there that is not said to be", i, s.Index)
+			case s.Geometry:
+				if err := qchemAtoms(s.Atoms); err != nil {
+					return nil, fmt.Errorf("task %d, structure %d: %w", i, s.Index, err)
 				}
-				geometries = append(geometries, xyzBlock(left[0], done))
-				left = left[1:]
-			} else {
+				geometries = append(geometries, xyzBlock(strings.Join(s.Atoms, "\n")+"\n", done))
+			default:
 				geometries = append(geometries, "")
 			}
 			result.Results = append(result.Results, done)
-		}
-		if len(left) > 0 {
-			return nil, fmt.Errorf("task %d left %d geometries more than its structures", i, len(left))
 		}
 	}
 	// The lowest energy among the structures xtb finished, which the
@@ -631,6 +985,18 @@ func oneLine(title string) string {
 	}, title)
 }
 
+// qchemAtoms checks a geometry a task gave: each atom an element and three
+// coordinates, as an XYZ file has them.
+func qchemAtoms(atoms []string) error {
+	for _, atom := range atoms {
+		fields := blankFields(atom)
+		if len(fields) != 4 || !element.MatchString(fields[0]) || !decimal.MatchString(fields[1]) || !decimal.MatchString(fields[2]) || !decimal.MatchString(fields[3]) {
+			return fmt.Errorf("%q is not an atom of a geometry, an element and three coordinates", atom)
+		}
+	}
+	return nil
+}
+
 // xyzBlock writes an optimised geometry, whose atoms lines are given, as
 // one structure of an XYZ file, with the structure's title and energy as
 // its title line.
@@ -642,74 +1008,94 @@ func xyzBlock(atoms string, s QchemStructure) string {
 	return strconv.Itoa(strings.Count(atoms, "\n")) + "\n" + title + "\n" + atoms
 }
 
-// readTaskJSON decodes the JSON file with the CID given, of at most limit
-// bytes, which a task left.
-func readTaskJSON(ctx context.Context, blobs Blobs, id string, limit int64, v any) error {
-	c, err := cid.Decode(id)
-	if err != nil {
-		return errors.New("the task left none")
-	}
-	blob, err := blobs.Open(ctx, c)
-	if err != nil {
-		return err
-	}
-	defer blob.Close()
-	return json.NewDecoder(io.LimitReader(blob, limit)).Decode(v)
-}
-
-// readTaskGeometries reads the XYZ file of optimised geometries with the
-// CID given, which a task left, as each structure's atoms lines.
-func readTaskGeometries(ctx context.Context, blobs Blobs, id string) ([]string, error) {
-	c, err := cid.Decode(id)
-	if err != nil {
-		return nil, errors.New("the task left none")
-	}
-	blob, err := blobs.Open(ctx, c)
-	if err != nil {
-		return nil, err
-	}
-	defer blob.Close()
-	var blocks []string
-	err = eachStructure(io.LimitReader(blob, qchemMostInput), "xyz", func(_ string, atoms []string) error {
-		blocks = append(blocks, strings.Join(atoms, "\n")+"\n")
-		return nil
-	})
-	return blocks, err
-}
-
-// countStructures finds what format a file of structures is in, and how
-// many structures it holds, checking each as the tasks will read it. A
-// file whose fourth line is a molfile's counts line is SDF; any other,
-// XYZ.
-func countStructures(r io.Reader) (format string, structures int, err error) {
+// countStructures finds what format a file of structures is in, and the
+// size of each structure it holds, checking each as the tasks will read
+// it. A file whose fourth line is a molfile's counts line is SDF; any
+// other, XYZ.
+func countStructures(r io.Reader) (format string, sizes []qchemSize, err error) {
 	in := bufio.NewReader(io.LimitReader(r, qchemMostInput+1))
 	head, _ := in.Peek(4096)
 	format = "xyz"
 	if lines := strings.SplitN(string(head), "\n", 5); len(lines) > 3 {
 		switch counts := lines[3]; {
 		case strings.Contains(counts, "V3000"):
-			return "", 0, errors.New("it is an SDF file of V3000 molfiles, and only V2000 ones are read: save it as V2000 or XYZ")
+			return "", nil, errors.New("it is an SDF file of V3000 molfiles, and only V2000 ones are read: save it as V2000 or XYZ")
 		case strings.Contains(counts, "V2000"):
 			format = "sdf"
 		}
 	}
 	counted := &counted{r: in}
-	err = eachStructure(counted, format, func(string, []string) error {
-		structures++
-		if structures > qchemMostStructures {
+	err = eachStructure(counted, format, func(title string, atoms []string) error {
+		sizes = append(sizes, qchemSize{atoms: len(atoms), title: len(title)})
+		if len(sizes) > qchemMostStructures {
 			return fmt.Errorf("it holds more than the %d structures a job may have", qchemMostStructures)
 		}
 		return nil
 	})
 	switch {
 	case counted.n > uint64(qchemMostInput):
-		return "", 0, fmt.Errorf("it is larger than the %d bytes a job's structures may be", qchemMostInput)
+		return "", nil, fmt.Errorf("it is larger than the %d bytes a job's structures may be", qchemMostInput)
 	case err != nil:
-		return "", 0, err
-	case structures == 0:
-		return "", 0, errors.New("it holds no structures")
+		return "", nil, err
+	case len(sizes) == 0:
+		return "", nil, errors.New("it holds no structures")
 	}
-	return format, structures, nil
+	return format, sizes, nil
+}
+
+// qchemSize is how many atoms a structure has, and how long its title is,
+// which is what decides how much a task says of it.
+type qchemSize struct{ atoms, title int }
+
+// qchemMostOutput is how much a task may say, inline, of its run of
+// structures: well within the 4 MiB a message between nodes may be.
+const qchemMostOutput = 3 << 20
+
+// output is at most how many bytes a task says of a structure of this
+// size, in a job of this kind: its numbers, its title, which JSON may
+// write at six bytes a character, and, where the job finds them, the
+// optimised geometry, at most 96 bytes an atom as xtb writes it, and the
+// frequencies, three an atom, at most 32 bytes each.
+func (s qchemSize) output(job string) int {
+	n := 512 + 6*s.title
+	if job == "opt" || job == "ohess" {
+		n += 96 * s.atoms
+	}
+	if job == "hess" || job == "ohess" {
+		n += 3 * 32 * s.atoms
+	}
+	return n
+}
+
+// qchemTasks is how many runs to share structures of these sizes out as:
+// as many as were asked for, or more, as few more as there must be for no
+// task to say more of its run than qchemMostOutput. Runs are as even in
+// number as qchem's Split makes them.
+func qchemTasks(sizes []qchemSize, job string, asked int) (int, error) {
+	total := make([]int, len(sizes)+1)
+	for i, size := range sizes {
+		if n := size.output(job); n > qchemMostOutput {
+			return 0, fmt.Errorf("structure %d, of %d atoms, is more than a task can say of in a %s job: what it computes would come to %d bytes, more than %d", i, size.atoms, job, n, qchemMostOutput)
+		}
+		total[i+1] = total[i] + size.output(job)
+	}
+	fits := func(tasks int) bool {
+		for i := range tasks {
+			if total[len(sizes)*(i+1)/tasks]-total[len(sizes)*i/tasks] > qchemMostOutput {
+				return false
+			}
+		}
+		return true
+	}
+	// No fewer runs than the whole divided by what one may say, and with
+	// one structure a run, every run fits, so the search ends.
+	tasks := max(asked, (total[len(sizes)]+qchemMostOutput-1)/qchemMostOutput)
+	for ; !fits(tasks); tasks++ {
+		if tasks >= MaxTasks {
+			return 0, fmt.Errorf("its %d structures need more than the %d tasks a job may have for no task to say more than %d bytes of its run", len(sizes), MaxTasks, qchemMostOutput)
+		}
+	}
+	return tasks, nil
 }
 
 // eachStructure reads the structures of an XYZ or SDF file, calling each
