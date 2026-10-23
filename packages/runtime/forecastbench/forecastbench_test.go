@@ -53,15 +53,9 @@ func TestM4(t *testing.T) {
 	}
 	models := os.Getenv("SISYPHUS_M4_MODELS")
 	chronos := strings.Contains(models, "chronos")
-	workers := goruntime.NumCPU()
-	if chronos {
-		workers = 1
-	}
-	if s := os.Getenv("SISYPHUS_M4_WORKERS"); s != "" {
-		var err error
-		if workers, err = strconv.Atoi(s); err != nil || workers < 1 {
-			t.Fatalf("SISYPHUS_M4_WORKERS=%q is not a whole number above zero", s)
-		}
+	workers, err := m4Workers(os.Getenv("SISYPHUS_M4_WORKERS"), models, goruntime.NumCPU())
+	if err != nil {
+		t.Fatal(err)
 	}
 	ctx := context.Background()
 	table := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.AlignRight)
@@ -101,6 +95,24 @@ func TestM4(t *testing.T) {
 	}
 	row("Overall", overall, time.Since(began))
 	table.Flush()
+}
+
+// m4Workers is how many of a job's tasks TestM4 runs at once: setting, the
+// value of SISYPHUS_M4_WORKERS, if it is given; otherwise one for each of
+// cpus, or one when models name a Chronos-Bolt kind, since each such task is
+// a container of up to 4 GB that nothing here holds to the machine's memory.
+func m4Workers(setting, models string, cpus int) (int, error) {
+	if setting != "" {
+		workers, err := strconv.Atoi(setting)
+		if err != nil || workers < 1 {
+			return 0, fmt.Errorf("SISYPHUS_M4_WORKERS=%q is not a whole number above zero", setting)
+		}
+		return workers, nil
+	}
+	if strings.Contains(models, "chronos") {
+		return 1, nil
+	}
+	return cpus, nil
 }
 
 func readFrequency(t *testing.T, dir, name string) []Series {
@@ -509,5 +521,28 @@ func TestOnlyAsManyForecastsAsSeriesAreScored(t *testing.T) {
 	}
 	if _, err := Scored(nil, freq, nil); err == nil {
 		t.Error("no series were scored")
+	}
+}
+
+func TestTheM4BenchmarkRunsOneChronosTaskAtATimeUnlessToldOtherwise(t *testing.T) {
+	for _, c := range []struct {
+		setting, models string
+		want            int
+	}{
+		{"", "", 32},
+		{"", "naive,theta", 32},
+		{"", "naive,theta,chronos-base", 1},
+		{"", "chronos-tiny", 1},
+		{"8", "naive,chronos-base", 8},
+		{"3", "", 3},
+	} {
+		if got, err := m4Workers(c.setting, c.models, 32); err != nil || got != c.want {
+			t.Errorf("workers %q with models %q on 32 processors gave %d (%v), want %d", c.setting, c.models, got, err, c.want)
+		}
+	}
+	for _, setting := range []string{"0", "-2", "many"} {
+		if _, err := m4Workers(setting, "", 32); err == nil || !strings.Contains(err.Error(), "not a whole number above zero") {
+			t.Errorf("workers %q gave %v", setting, err)
+		}
 	}
 }
