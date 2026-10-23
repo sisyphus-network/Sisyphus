@@ -4,11 +4,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaultTrayPreferences, loadTrayPreferences, quitsWhenWindowsClose, saveTrayPreferences, trayHostAvailable, trayIconFile, trayLabelsFor, trayMenu, trayStatusLabel } from '../src/main/tray-policy.ts'
+import type { TrayPreferences } from '../src/main/tray-policy.ts'
 
+const platforms: NodeJS.Platform[] = ['win32', 'linux', 'darwin']
 const labels = { open: 'Open Sisyphus', quit: 'Quit Sisyphus', connected: 'Connected', connecting: 'Connecting…', offline: 'Offline', stillRunningTitle: 'Still running', stillRunningBody: 'Quit from the tray.' }
 
 test('closing the window keeps the app running only for its own node, and only with a tray to reopen it', () => {
-  for (const platform of ['win32', 'linux', 'darwin']) {
+  for (const platform of platforms) {
     assert.equal(quitsWhenWindowsClose({ platform, managesDaemon: true, trayShown: true }), false, platform)
   }
   // A node someone else started has nothing of ours to keep running.
@@ -50,10 +52,10 @@ test('the icon’s badge says the node state, and macOS gets an image it can tin
 
 test('every tray icon is drawn, at 16 pixels and twice that', () => {
   const folder = join(import.meta.dirname, '..', 'build', 'tray')
-  for (const platform of ['win32', 'linux', 'darwin']) {
-    for (const status of ['connected', 'connecting', 'disconnected']) {
+  for (const platform of platforms) {
+    for (const status of ['connected', 'connecting', 'disconnected'] as const) {
       const file = trayIconFile(platform, status)
-      for (const [name, size] of [[file, 16], [file.replace('.png', '@2x.png'), 32]]) {
+      for (const [name, size] of [[file, 16], [file.replace('.png', '@2x.png'), 32]] as const) {
         const path = join(folder, name)
         assert.ok(existsSync(path), `Missing tray icon ${name}`)
         // A PNG's width and height follow its signature and header name.
@@ -78,13 +80,14 @@ test('the tray remembers its language and that it has said it keeps running', ()
     saveTrayPreferences(path, { locale: 'he', noticeShown: true })
     assert.deepEqual(loadTrayPreferences(path), { locale: 'he', noticeShown: true })
     assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { locale: 'he', noticeShown: true })
-    for (const [contents, expected] of [
+    const cases: [string, TrayPreferences][] = [
       ['not json', defaultTrayPreferences],
       ['[]', defaultTrayPreferences],
       ['null', defaultTrayPreferences],
       ['{"locale":"","noticeShown":"yes"}', defaultTrayPreferences],
       ['{"locale":"fr"}', { locale: 'fr', noticeShown: false }],
-    ]) {
+    ]
+    for (const [contents, expected] of cases) {
       writeFileSync(path, contents)
       assert.deepEqual(loadTrayPreferences(path), expected, contents)
     }
