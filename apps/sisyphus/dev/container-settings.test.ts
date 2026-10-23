@@ -4,8 +4,12 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkDocker, containerFlags, containerLaunch, containerState, defaultContainerSettings, dockerCheckFromEnvironment, loadContainerSettings, normalizeContainerSettings, sameContainerSettings, saveContainerSettings, validateContainerSettings } from '../src/main/container-settings.ts'
+import type { ContainerSettings, DockerCheck, DockerStatus } from '../src/main/container-settings.ts'
 
-const on = { enabled: true, network: false, readOnly: true, tmpMb: 1024 }
+type Run = NonNullable<NonNullable<Parameters<typeof checkDocker>[0]>['run']>
+type Ran = Awaited<ReturnType<Run>>
+
+const on: ContainerSettings = { enabled: true, network: false, readOnly: true, tmpMb: 1024 }
 
 test('containers are off, offline and read-only unless saved otherwise, and malformed preferences fall back', () => {
   const directory = mkdtempSync(join(tmpdir(), 'sisyphus-containers-'))
@@ -49,7 +53,7 @@ test('the daemon is given --containers and the confinement the owner chose, and 
 })
 
 test('a restart is needed only when the app’s own node would run containers differently', () => {
-  const state = (saved, running, managed = true) => containerState({ managed, saved, running, unavailable: false, docker: null })
+  const state = (saved: ContainerSettings, running: ContainerSettings, managed = true) => containerState({ managed, saved, running, unavailable: false, docker: null })
   assert.equal(state(on, { ...on, enabled: false }).restartNeeded, true)
   assert.equal(state({ ...on, enabled: false }, on).restartNeeded, true)
   assert.equal(state(on, on).restartNeeded, false)
@@ -64,18 +68,18 @@ test('a restart is needed only when the app’s own node would run containers di
 
 test('saved containers start only when Docker answers, so the node still starts without it', async () => {
   let asked = 0
-  const ready = async () => { asked++; return { state: 'ready', version: '29.0.1' } }
+  const ready: DockerCheck = async () => { asked++; return { state: 'ready', version: '29.0.1' } }
   assert.deepEqual(await containerLaunch(defaultContainerSettings, ready), { flags: [], running: defaultContainerSettings, unavailable: false, docker: null })
   assert.equal(asked, 0, 'Docker is not asked while containers are off')
   assert.deepEqual(await containerLaunch(on, ready), { flags: containerFlags(on), running: on, unavailable: false, docker: { state: 'ready', version: '29.0.1' } })
-  const stopped = { state: 'stopped', detail: 'Cannot connect to the Docker daemon.' }
+  const stopped: DockerStatus = { state: 'stopped', detail: 'Cannot connect to the Docker daemon.' }
   assert.deepEqual(await containerLaunch(on, async () => stopped), { flags: [], running: { ...on, enabled: false }, unavailable: true, docker: stopped })
   assert.deepEqual((await containerLaunch(on, async () => ({ state: 'missing' }))).flags, [])
 })
 
 test('Docker is told apart as answering, not installed, or installed but not running', async () => {
-  const calls = []
-  const run = (result) => async (command, args, timeoutMs) => { calls.push({ command, args, timeoutMs }); return { stdout: '', stderr: '', error: null, ...result } }
+  const calls: { command: string, args: string[], timeoutMs: number }[] = []
+  const run = (result: Partial<Ran>): Run => async (command, args, timeoutMs) => { calls.push({ command, args, timeoutMs }); return { stdout: '', stderr: '', error: null, ...result } }
   assert.deepEqual(await checkDocker({ run: run({ stdout: '29.6.2\n' }) }), { state: 'ready', version: '29.6.2' })
   assert.deepEqual(calls[0], { command: 'docker', args: ['version', '--format', '{{.Server.Version}}'], timeoutMs: 5000 })
   const missing = Object.assign(new Error('spawn docker ENOENT'), { code: 'ENOENT' })
@@ -95,8 +99,8 @@ test('a real Docker check of a command that is not there says Docker is missing,
 })
 
 test('end-to-end tests can stand in for Docker, and anything else leaves the real check', async () => {
-  assert.deepEqual(await dockerCheckFromEnvironment('ready:27.3.1')(), { state: 'ready', version: '27.3.1' })
-  assert.deepEqual(await dockerCheckFromEnvironment('missing')(), { state: 'missing' })
-  assert.equal((await dockerCheckFromEnvironment('stopped')()).state, 'stopped')
+  assert.deepEqual(await dockerCheckFromEnvironment('ready:27.3.1')?.(), { state: 'ready', version: '27.3.1' })
+  assert.deepEqual(await dockerCheckFromEnvironment('missing')?.(), { state: 'missing' })
+  assert.equal((await dockerCheckFromEnvironment('stopped')?.())?.state, 'stopped')
   for (const value of [undefined, '', 'ready:', 'yes']) assert.equal(dockerCheckFromEnvironment(value), null)
 })

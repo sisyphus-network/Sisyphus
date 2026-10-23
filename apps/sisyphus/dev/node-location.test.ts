@@ -30,7 +30,7 @@ test('shares read as either client gives them, and go back as numbers', () => {
   assert.equal(shareFromProtocol('LOCATION_SHARE_UNSPECIFIED'), 'country')
   assert.equal(shareFromProtocol(0), 'country')
   assert.equal(shareFromProtocol(undefined), 'country')
-  assert.deepEqual(['nothing', 'country', 'city', 'about-1km', 'exact'].map(shareToProtocol), [1, 2, 3, 4, 5])
+  assert.deepEqual((['nothing', 'country', 'city', 'about-1km', 'exact'] as const).map(shareToProtocol), [1, 2, 3, 4, 5])
 })
 
 test('a saved location is read whole or not at all', () => {

@@ -3,10 +3,12 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { NetworkInterfaceInfo } from 'node:os'
 import { defaultPoolHostingSettings, hostAddresses, hostingListen, isLanAddress, loadPoolHostingSettings, normalizePoolHostingSettings, poolHostingState, samePoolHostingSettings, savePoolHostingSettings, validatePoolHostingSettings } from '../src/main/pool-hosting-settings.ts'
 import { allInterfaces, formForHosting, hostingJoinAddresses, windowsFirewallCommand } from '../src/shared/pool-hosting.ts'
 
-const entry = (address, overrides = {}) => ({ address, family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '00:00:00:00:00:00', cidr: `${address}/24`, ...overrides })
+// An IPv6 entry here leaves out its scope ID, which hostAddresses never reads.
+const entry = (address: string, overrides: Partial<NetworkInterfaceInfo> = {}) => ({ address, family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '00:00:00:00:00:00', cidr: `${address}/24`, ...overrides }) as NetworkInterfaceInfo
 
 test('hosting addresses are this machine’s reachable IPv4 ones, LAN first', () => {
   const addresses = hostAddresses({
@@ -43,7 +45,7 @@ test('saving checks every field and round-trips', () => {
   const directory = mkdtempSync(join(tmpdir(), 'sisyphus-hosting-'))
   const path = join(directory, 'preferences', 'pool-hosting.json')
   try {
-    for (const [value, message] of [
+    const refused: [unknown, RegExp][] = [
       [null, /Invalid pool hosting settings/],
       [{ enabled: 'yes', address: '', port: 7700 }, /Invalid pool hosting settings/],
       [{ enabled: true, address: '192.168.1.5', port: 70000 }, /from 1 to 65535/],
@@ -51,7 +53,8 @@ test('saving checks every field and round-trips', () => {
       [{ enabled: true, address: 'example.com', port: 7700 }, /Choose one of this computer’s addresses/],
       [{ enabled: true, address: '127.0.0.1', port: 7700 }, /Choose one of this computer’s addresses/],
       [{ enabled: true, address: '', port: 7700 }, /Choose the address other machines should use/],
-    ]) assert.throws(() => savePoolHostingSettings(path, value), message)
+    ]
+    for (const [value, message] of refused) assert.throws(() => savePoolHostingSettings(path, value), message)
     assert.deepEqual(validatePoolHostingSettings({ enabled: false, address: '', port: 7700 }), { enabled: false, address: '', port: 7700 })
     const saved = savePoolHostingSettings(path, { enabled: true, address: '192.168.137.133', port: 7700, extra: true })
     assert.deepEqual(saved, { enabled: true, address: '192.168.137.133', port: 7700 })
