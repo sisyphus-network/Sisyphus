@@ -167,40 +167,53 @@ func (Forecasts) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]by
 	report := Report(ctx)
 	report.Log(fmt.Sprintf("forecasting series %d to %d of %d", task.From+1, task.To, len(panel)))
 	part := forecastsPart{From: task.From, Horizon: task.Horizon}
-	for i, s := range panel[task.From:task.To] {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	chosen := panel[task.From:task.To]
+	var values [][]float64
+	var candidates [][]forecastModel
+	var folds []int
+	for _, s := range chosen {
+		part.Series = append(part.Series, SeriesForecast{ID: s.id, Points: len(s.values), Last: s.last})
+		n, ms, why := seriesCandidates(s, task)
+		part.Series[len(part.Series)-1].Error = why
+		values = append(values, s.values)
+		candidates = append(candidates, ms)
+		folds = append(folds, n)
+	}
+	outcomes, err := backtestAll(ctx, inProcess, values, candidates, task.Horizon, folds, report.Progress)
+	if err != nil {
+		return nil, err
+	}
+	for i := range part.Series {
+		if part.Series[i].Error == "" {
+			decideSeries(&part.Series[i], outcomes[i], folds[i])
 		}
-		part.Series = append(part.Series, forecastOne(s, task))
-		report.Progress(float64(i+1) / float64(task.To-task.From))
 	}
 	return mustJSON(part), nil
 }
 
-// forecastOne backtests every candidate on one series and decides its
-// forecast, as a forecast job of that series alone would.
-func forecastOne(s panelSeries, task forecastsTask) SeriesForecast {
-	out := SeriesForecast{ID: s.id, Points: len(s.values), Last: s.last}
+// seriesCandidates is how many windows a series is backtested on and the
+// candidates tried on it, as a forecast job of that series alone would
+// have them, or why it has too few points to be backtested at all.
+func seriesCandidates(s panelSeries, task forecastsTask) (int, []forecastModel, string) {
 	folds := task.Folds
 	if folds == 0 {
 		folds = min(autoFolds, max(1, (len(s.values)-task.Horizon)/task.Horizon))
 	}
 	shortest := len(s.values) - folds*task.Horizon
 	if shortest < 1 {
-		out.Error = fmt.Sprintf("%d points are too few to backtest %d windows of %d steps", len(s.values), folds, task.Horizon)
-		return out
+		return folds, nil, fmt.Sprintf("%d points are too few to backtest %d windows of %d steps", len(s.values), folds, task.Horizon)
 	}
-	var outcomes []forecastOutcome
-	for _, m := range forecastCandidates(task.Kinds, task.Season, shortest) {
-		outcomes = append(outcomes, backtest(m, s.values, task.Horizon, folds))
-	}
+	return folds, forecastCandidates(task.Kinds, task.Season, shortest), ""
+}
+
+// decideSeries decides a series' forecast from its candidates' backtests.
+func decideSeries(out *SeriesForecast, outcomes []forecastOutcome, folds int) {
 	d, err := decide(outcomes, folds)
 	if err != nil {
 		out.Error = strings.TrimPrefix(err.Error(), "forecast: ")
-		return out
+		return
 	}
 	out.Model, out.MAE, out.RMSE, out.Forecast = d.chosen.Model, d.chosen.MAE, d.chosen.RMSE, d.points
-	return out
 }
 
 func (Forecasts) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error) {
