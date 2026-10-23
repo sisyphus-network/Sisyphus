@@ -390,67 +390,20 @@ func (Forecast) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byt
 	report := Report(ctx)
 	report.Log(fmt.Sprintf("backtesting %d candidates on %d points", len(task.Models), len(values)))
 	part := forecastPart{Points: len(values), Horizon: task.Horizon, Folds: task.Folds, Last: last}
-	for i, m := range task.Models {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		part.Candidates = append(part.Candidates, backtest(m, values, task.Horizon, task.Folds))
-		report.Progress(float64(i+1) / float64(len(task.Models)))
+	outcomes, err := backtestAll(ctx, inProcess, [][]float64{values}, [][]forecastModel{task.Models}, task.Horizon, []int{task.Folds}, report.Progress)
+	if err != nil {
+		return nil, err
 	}
+	part.Candidates = outcomes[0]
 	return mustJSON(part), nil
 }
 
 // backtest fits the model to the whole series and forecasts from there,
 // then fits it to each window's past and scores its forecast of the
-// window.
+// window. backtestAll does the same for many candidates and series at once.
 func backtest(m forecastModel, values []float64, horizon, folds int) forecastOutcome {
-	out := forecastOutcome{Model: m}
-	if why := m.invalid(); why != "" {
-		out.Error = why
-		return out
-	}
-	if need := m.fewest() + folds*horizon; len(values) < need {
-		out.Error = fmt.Sprintf("needs at least %d points, %d to fit and %d to test", need, m.fewest(), folds*horizon)
-		return out
-	}
-	f, err := fitForecast(m, values, horizon)
-	if err != nil {
-		out.Error = err.Error()
-		return out
-	}
-	var absSum, sqSum float64
-	stepSq := make([]float64, horizon)
-	keep := folds*horizon <= maxForecastResiduals
-	for k := range folds {
-		end := len(values) - (folds-k)*horizon
-		past, err := fitForecast(m, values[:end], horizon)
-		if err != nil {
-			out.Error = err.Error()
-			return out
-		}
-		if keep {
-			out.Residuals = append(out.Residuals, make([]float64, horizon))
-		}
-		for j, v := range values[end : end+horizon] {
-			e := v - past[j]
-			if keep {
-				out.Residuals[k][j] = e
-			}
-			sq := float64(e * e)
-			absSum += math.Abs(e)
-			sqSum += sq
-			stepSq[j] += sq
-		}
-	}
-	count := float64(folds * horizon)
-	out.MAE = absSum / count
-	out.RMSE = math.Sqrt(sqSum / count)
-	out.StepRMSE = make([]float64, horizon)
-	for j, sq := range stepSq {
-		out.StepRMSE[j] = math.Sqrt(sq / float64(folds))
-	}
-	out.Forecast = f
-	return out
+	outcomes, _ := backtestAll(context.Background(), inProcess, [][]float64{values}, [][]forecastModel{{m}}, horizon, []int{folds}, nil)
+	return outcomes[0][0]
 }
 
 // fitForecast fits the model to y and forecasts h steps beyond it. y is at
