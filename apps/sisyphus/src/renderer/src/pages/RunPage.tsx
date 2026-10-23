@@ -138,6 +138,10 @@ function FilesField({ field, id, labelId, describedBy, invalid, value, files, la
   onChange: (cids: string[]) => void; onTouched: () => void
 }) {
   const input = useRef<HTMLInputElement>(null)
+  // The list as it is now, not as it was when an upload began: files can be
+  // removed or picked, or more dropped, while one is being stored.
+  const latest = useRef(value)
+  latest.current = value
   const [dragging, setDragging] = useState(false)
   const [storing, setStoring] = useState('')
   const [names, setNames] = useState<Record<string, FileInfo>>({})
@@ -157,7 +161,8 @@ function FilesField({ field, id, labelId, describedBy, invalid, value, files, la
       } catch (error) { toast.error(messages.operationText.storeFailed, { description: error instanceof Error ? error.message : String(error) }) }
     }
     setStoring('')
-    if (added.length > 0) onChange([...value, ...added.filter((cid) => !value.includes(cid))])
+    const now = latest.current
+    if (added.length > 0) onChange([...now, ...added.filter((cid) => !now.includes(cid))])
   }
   const nameOf = (cid: string) => names[cid] ?? (() => { const file = usable.find((item) => item.cid === cid); return file ? { name: file.name || cid, size: Number(file.sizeBytes) } : { name: cid, size: 0 } })()
   const drop = (event: DragEvent) => { event.preventDefault(); setDragging(false); void store(event.dataTransfer.files) }
