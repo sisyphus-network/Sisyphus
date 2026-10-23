@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strconv"
@@ -29,7 +30,17 @@ import (
 // rounding once where others round twice; every product here is
 // converted to float64 explicitly, which the language says rounds it, so
 // the answer is the same on every processor the daemon is built for.
-type Forecast struct{}
+type Forecast struct {
+	// Containers says that this node runs container work, and so may be
+	// given the Chronos-Bolt candidates, which run in a pinned image.
+	// Without it, a job that asks for them is refused.
+	Containers bool
+	// Engine runs the container engine, as Container's does. Nil means
+	// Docker.
+	Engine func(ctx context.Context, args []string, stdout, stderr io.Writer) (status int, err error)
+	// Confined holds the Chronos containers in as Container's does.
+	Confined Confinement
+}
 
 // ForecastParams are the job parameters.
 type ForecastParams struct {
@@ -88,6 +99,8 @@ type forecastModel struct {
 	Gamma  float64 `json:"gamma,omitempty"`
 	Order  int     `json:"order,omitempty"`
 	Season int     `json:"season,omitempty"`
+	// Variant is which Chronos-Bolt model a chronos candidate is.
+	Variant string `json:"variant,omitempty"`
 }
 
 // Name says what the candidate is, settings and all.
@@ -104,6 +117,9 @@ func (m forecastModel) Name() string {
 	setting("gamma", m.Gamma)
 	setting("order", float64(m.Order))
 	setting("season", float64(m.Season))
+	if m.Variant != "" {
+		b.WriteString(" variant=" + m.Variant)
+	}
 	return b.String()
 }
 
@@ -118,6 +134,8 @@ func (m forecastModel) fewest() int {
 		return 2
 	case "ar":
 		return 3*m.Order + 2
+	case "chronos":
+		return chronosFewest
 	}
 	return 1
 }
@@ -143,10 +161,13 @@ func (m forecastModel) invalid() string {
 		ok = season && rate(m.Alpha) && rate(m.Beta) && rate(m.Gamma)
 	case "ar":
 		ok = m.Order >= 1 && m.Order <= maxForecastOrder
+	case "chronos":
+		_, ok = chronosVariants[m.Variant]
+		ok = ok && m.Alpha == 0 && m.Beta == 0 && m.Gamma == 0 && m.Order == 0 && m.Season == 0
 	default:
 		return fmt.Sprintf("no such kind of model as %q", m.Kind)
 	}
-	if !ok {
+	if !ok || (m.Kind != "chronos" && m.Variant != "") {
 		return fmt.Sprintf("%s is not a model with settings it can take", m.Name())
 	}
 	return ""
@@ -236,16 +257,16 @@ type ForecastResult struct {
 func (Forecast) Name() string { return "forecast" }
 
 func (Forecast) Describe() string {
-	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
+	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, which "all" does not include}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
 }
 
-func (Forecast) Form() []Field {
+func (f Forecast) Form() []Field {
 	return []Field{
 		{Name: "input", Kind: KindFile, Label: "Series", Help: "A CSV file with a value on each line, in its last column, oldest first; a header line is skipped.", Required: true},
 		{Name: "horizon", Kind: KindInteger, Label: "Steps ahead", Help: "How many steps of the series to forecast.", Default: 12, Minimum: bound(1), Maximum: bound(maxForecastHorizon)},
 		{Name: "season", Kind: KindInteger, Label: "Season length", Help: "How many steps the series' cycle takes, such as 12 for months or 7 for days of the week, or 0 if it has none.", Default: 0, Minimum: bound(0), Maximum: bound(maxForecastSeason)},
 		{Name: "folds", Kind: KindInteger, Label: "Backtest windows", Help: "How many windows at the end of the series each model is tested on before one is chosen. Leave it empty to use as many as the series has room for, up to 8.", Minimum: bound(1), Maximum: bound(maxForecastFolds)},
-		{Name: "models", Kind: KindChoice, Label: "Models", Help: "Which kind of model to try, or all of them.", Default: "all", Choices: append([]string{"all"}, forecastKinds...)},
+		{Name: "models", Kind: KindChoice, Label: "Models", Help: f.modelsHelp(), Default: "all", Choices: f.modelChoices()},
 	}
 }
 
@@ -273,8 +294,8 @@ func (p ForecastParams) kinds() ([]string, error) {
 	var kinds []string
 	for _, kind := range strings.Split(p.Models, ",") {
 		kind = strings.TrimSpace(kind)
-		if !slices.Contains(forecastKinds, kind) {
-			return nil, fmt.Errorf("models: %q is none of %s", kind, strings.Join(forecastKinds, ", "))
+		if !slices.Contains(forecastKinds, kind) && !slices.Contains(chronosKinds, kind) {
+			return nil, fmt.Errorf("models: %q is none of %s", kind, strings.Join(slices.Concat(forecastKinds, chronosKinds), ", "))
 		}
 		if !slices.Contains(kinds, kind) {
 			kinds = append(kinds, kind)
@@ -333,10 +354,15 @@ func forecastCandidates(kinds []string, season, shortest int) []forecastModel {
 			models = append(models, forecastModel{Kind: kind})
 		}
 	}
+	for _, kind := range chronosKinds {
+		if slices.Contains(kinds, kind) {
+			models = append(models, forecastModel{Kind: "chronos", Variant: strings.TrimPrefix(kind, "chronos-")})
+		}
+	}
 	return slices.DeleteFunc(models, func(m forecastModel) bool { return m.fewest() > shortest })
 }
 
-func (Forecast) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
+func (f Forecast) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
 	var p ForecastParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("forecast params: %w", err)
@@ -347,6 +373,9 @@ func (Forecast) Split(ctx context.Context, blobs Blobs, params []byte, parts int
 	kinds, err := p.kinds()
 	if err != nil {
 		return nil, fmt.Errorf("forecast params: %w", err)
+	}
+	if wantsChronos(kinds) && !f.Containers {
+		return nil, errors.New("forecast params: the Chronos-Bolt models run in containers, and this node does not run container work")
 	}
 	values, _, err := readSeries(ctx, blobs, p.Input)
 	if err != nil {
@@ -375,7 +404,7 @@ func (Forecast) Split(ctx context.Context, blobs Blobs, params []byte, parts int
 	return payloads, nil
 }
 
-func (Forecast) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
+func (f Forecast) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
 	var task forecastTask
 	if err := json.Unmarshal(payload, &task); err != nil {
 		return nil, fmt.Errorf("forecast payload: %w", err)
@@ -390,7 +419,11 @@ func (Forecast) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byt
 	report := Report(ctx)
 	report.Log(fmt.Sprintf("backtesting %d candidates on %d points", len(task.Models), len(values)))
 	part := forecastPart{Points: len(values), Horizon: task.Horizon, Folds: task.Folds, Last: last}
-	outcomes, err := backtestAll(ctx, inProcess, [][]float64{values}, [][]forecastModel{task.Models}, task.Horizon, []int{task.Folds}, report.Progress)
+	runners, err := f.runners(task.Models)
+	if err != nil {
+		return nil, err
+	}
+	outcomes, err := backtestAll(ctx, runners, [][]float64{values}, [][]forecastModel{task.Models}, task.Horizon, []int{task.Folds}, report.Progress)
 	if err != nil {
 		return nil, err
 	}

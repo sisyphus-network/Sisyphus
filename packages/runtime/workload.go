@@ -258,7 +258,7 @@ func WithContainers() *Registry {
 // ContainersConfined returns what WithContainers does, with the containers
 // held in as a worker's owner asked.
 func ContainersConfined(confined Confinement) *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Forecast{}, Forecasts{}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}, Transcribe{Confined: confined}, Qchem{Confined: confined}, OCR{Confined: confined}, Traj{Confined: confined}, Prep{Confined: confined}).With(WithModels("", Owner{})...)
+	return NewRegistry(Primes{}, WordCount{}, Forecast{Containers: true, Confined: confined}, Forecasts{}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}, Transcribe{Confined: confined}, Qchem{Confined: confined}, OCR{Confined: confined}, Traj{Confined: confined}, Prep{Confined: confined}).With(WithModels("", Owner{})...)
 }
 
 // WithModels returns the workloads that use the language models of the
