@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -192,9 +193,10 @@ func TestAWorkerOffersItsModelsAndAJobNeedsTheOneItNames(t *testing.T) {
 	if got := strings.Join(serving.Names(), " "); got != "chat forecast forecasts primes wordcount" {
 		t.Errorf("it runs %q", got)
 	}
-	// One that only takes such jobs in offers nothing, nor does one whose
-	// server is not there or has no address to speak of.
-	if got := WithContainers().Offers(ctx); got != nil {
+	// One that only takes such jobs in offers no model, only the
+	// Chronos-Bolt image its containers run; nor does one whose server is
+	// not there or has no address to speak of offer any.
+	if got := WithContainers().Offers(ctx); !slices.Equal(got, []string{ChronosLabel}) {
 		t.Errorf("a node with no model server offers %v", got)
 	}
 	server.Close()

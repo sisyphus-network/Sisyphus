@@ -306,6 +306,12 @@ func TestContainerTasksThatFail(t *testing.T) {
 			io.WriteString(stderr, "first\nno such file\n")
 			return 3, nil
 		}, "exited with status 3: no such file"},
+		// Docker follows an error of its own with a blank line and a hint
+		// to read its help; the error is what is kept.
+		"an engine that refuses the container": {plain, store, func(_ []string, _, stderr io.Writer) (int, error) {
+			io.WriteString(stderr, "docker: Error response from daemon: NanoCPUs can not be set.\n\nRun 'docker run --help' for more information\n")
+			return 125, nil
+		}, "exited with status 125: docker: Error response from daemon: NanoCPUs can not be set."},
 		"output that cannot be stored": {plain, &awkward{Blobs: store, failPut: 1}, quiet, "store what the command printed"},
 		"a file that cannot be stored": {plain, &awkward{Blobs: store, failPut: 2}, leaves, "store the task's output f"},
 		"a file that cannot be read": {plain, store, func(args []string, _, _ io.Writer) (int, error) {

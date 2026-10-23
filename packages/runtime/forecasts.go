@@ -127,6 +127,9 @@ func (Forecasts) Split(ctx context.Context, blobs Blobs, params []byte, parts in
 	if err != nil {
 		return nil, fmt.Errorf("forecasts params: %w", err)
 	}
+	if wantsChronos(kinds) {
+		return nil, errors.New("forecasts params: the Chronos-Bolt models are not yet offered for many series; forecast takes them for one")
+	}
 	panel, err := readPanel(ctx, blobs, p.Input)
 	if err != nil {
 		return nil, err
