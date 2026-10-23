@@ -107,7 +107,7 @@ What they check today (`e2e/app.e2e.ts`):
 - a job the planner runs is tracked in the chat: its tasks done, and each worker's share;
 - a file stored as private is listed, and an invitation is issued;
 - the language picker opens from the keyboard and keeps the focus among its choices, Hebrew turns the window right-to-left without a sideways scroll, and the choice is still there at the next start;
-- representative surfaces on Node overview, Operations, General, Access, and Model provider settings change between light and dark themes, and keep the selected accent token after navigation;
+- representative surfaces on Node overview, Operations, General, Access, and Model provider settings change between light and dark themes; each page renders the selected accent, which remains selected after navigation;
 - a node that stops is said to be gone with the sidebar left in place, and the window finds it again when it returns;
 - containers for the app's own node: turned on only once (stand-in) Docker answers, saved, read back and shown as waiting for a restart; with Docker missing the switch stays off and the page says where to get it; a node run by hand is left to its own `--containers`;
 - a question with a file attached is planned by a stand-in model, computed on the pool and answered; the model is told of the file as private and is never sent its content; a second turn carries on, and the conversation is in the history.

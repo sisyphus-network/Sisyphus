@@ -2128,8 +2128,8 @@ test('advanced page surfaces follow light, dark and accent tokens', async () => 
     await page.getByText('Model configuration saved').waitFor()
 
     const surfaces = [
-      { name: 'Node overview', heading: 'Node overview', selector: '[data-slot="card"]', open: () => open(page, 'Node overview') },
-      { name: 'Operations', heading: 'Operations', selector: '#operations-jobs', open: () => open(page, 'Operations') },
+      { name: 'Node overview', heading: 'Node overview', selector: '[data-slot="card"]', accentSelector: '.space-y-1.pb-7', open: () => open(page, 'Node overview') },
+      { name: 'Operations', heading: 'Operations', selector: '#operations-jobs', accentSelector: '#operations-jobs [data-slot="collapsible-trigger"]', open: () => open(page, 'Operations') },
       { name: 'General settings', heading: 'General', selector: '.settings-category-content [data-slot="card"]', accentSelector: '.settings-category-content', open: () => openSettingsCategory(page, 'General') },
       { name: 'Access settings', heading: 'Access', selector: '.browser-access-page [data-slot="card"]', accentSelector: '.browser-access-page', open: () => openSettingsCategory(page, 'Access') },
       { name: 'Model provider settings', heading: 'Model provider', selector: '.settings-category-content [data-slot="card"]', accentSelector: '.settings-category-content', open: () => openSettingsCategory(page, 'Model provider') },
