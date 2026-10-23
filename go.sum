@@ -4,8 +4,8 @@ cloud.google.com/go/auth/oauth2adapt v0.2.3 h1:MlxF+Pd3OmSudg/b1yZ5lJwoXCEaeedAg
 cloud.google.com/go/auth/oauth2adapt v0.2.3/go.mod h1:tMQXOfZzFuNuUxOypHlQEXgdfX5cuhwU+ffUuXRJE8I=
 cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=
 cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
-connectrpc.com/connect/v2 v2.0.0 h1:PVVpWl2Xv9dIWN2gijs4HK40NSnPFzLqCEEmZ8fCUQ8=
-connectrpc.com/connect/v2 v2.0.0/go.mod h1:N32OLrstcPUzkykFynnefFro3+xzSdOrZlK2jHmS/xo=
+connectrpc.com/connect/v2 v2.0.1 h1:WTAycxe87UqxSM5oxS30d1dalZ+C5xz8Ec8O6zVYkHQ=
+connectrpc.com/connect/v2 v2.0.1/go.mod h1:N32OLrstcPUzkykFynnefFro3+xzSdOrZlK2jHmS/xo=
 connectrpc.com/vanguard v0.5.0 h1:5SSf7BPlkyixtdYvCg+FQQMGbwSmNZwniBqI4yknHHE=
 connectrpc.com/vanguard v0.5.0/go.mod h1:qE6LKOhejkWTH+/rzbrbO5aRovpHx5hCcHJTxxpj7bQ=
 filippo.io/bigmod v0.1.1-0.20260103110540-f8a47775ebe5 h1:JA0fFr+kxpqTdxR9LOBiTWpGNchqmkcsgmdeJZRclZ0=
