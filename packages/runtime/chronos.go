@@ -211,6 +211,9 @@ type chronosRequest struct {
 	Ends    []int     `json:"ends"`
 }
 
+// chronosFailed is a Chronos-Bolt candidate's error when its image fails.
+const chronosFailed = "chronos: the image failed on this worker"
+
 // chronosRunner fits Chronos-Bolt candidates in the image, all of a task's
 // at once.
 type chronosRunner struct{ f Forecast }
@@ -240,14 +243,19 @@ func (r chronosRunner) fit(ctx context.Context, requests []fitRequest, done func
 	}
 	// The image failing, as when it runs out of memory, is its candidates'
 	// failure, not the task's: the candidates written in Go are still
-	// scored. Only a task given up as a whole fails.
+	// scored. Only a task given up as a whole fails. The candidates are
+	// given one error whatever went wrong, since what went wrong is told
+	// in words of this worker's own, a container's ID or a traceback, and
+	// two workers whose images both failed should agree; the words go to
+	// the task's log.
 	failed := func(err error) ([]fitAnswer, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		Report(ctx).Log(err.Error())
 		answers := make([]fitAnswer, len(requests))
 		for i := range answers {
-			answers[i] = fitAnswer{Err: err.Error()}
+			answers[i] = fitAnswer{Err: chronosFailed}
 		}
 		done(len(requests))
 		return answers, nil

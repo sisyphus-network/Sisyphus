@@ -229,11 +229,14 @@ func TestChronosImageFailuresAreItsCandidatesErrors(t *testing.T) {
 	store := storage.NewMemory()
 	series, _ := store.Put(ctx, strings.NewReader(seasonalSeries(48)))
 	payload := mustJSON(forecastTask{Input: series.String(), Horizon: 4, Folds: 2, Models: []forecastModel{{Kind: "naive"}, {Kind: "chronos", Variant: "tiny"}}})
-	answered := func(engine func(context.Context, []string, io.Writer, io.Writer) (int, error)) ([]forecastOutcome, error) {
-		raw, err := (Forecast{Containers: true, Engine: engine}).Execute(ctx, store, payload)
+	outputs := map[string][]byte{}
+	answered := func(name string, engine func(context.Context, []string, io.Writer, io.Writer) (int, error)) ([]forecastOutcome, []string, error) {
+		var log heard
+		raw, err := (Forecast{Containers: true, Engine: engine}).Execute(WithReporter(ctx, &log), store, payload)
+		outputs[name] = raw
 		var part forecastPart
 		json.Unmarshal(raw, &part)
-		return part.Candidates, err
+		return part.Candidates, log.lines, err
 	}
 	broken := &pretend{do: func(args []string, stdout, stderr io.Writer) (int, error) {
 		if args[0] == "image" {
@@ -262,10 +265,27 @@ func TestChronosImageFailuresAreItsCandidatesErrors(t *testing.T) {
 			return a
 		}).engine, "1 steps where 4"},
 	} {
-		candidates, err := answered(tt.engine)
-		if err != nil || len(candidates) != 2 || candidates[0].Error != "" || candidates[0].Forecast == nil || !strings.Contains(candidates[1].Error, tt.why) {
-			t.Errorf("%s: %v %+v, want the Chronos-Bolt candidate failed with %q and naive scored", tt.name, err, candidates, tt.why)
+		candidates, lines, err := answered(tt.name, tt.engine)
+		if err != nil || len(candidates) != 2 || candidates[0].Error != "" || candidates[0].Forecast == nil {
+			t.Errorf("%s: %v %+v, want naive scored", tt.name, err, candidates)
+			continue
 		}
+		// What went wrong in the image is in the task's log, and the
+		// candidate's error says only that it failed, in words every
+		// worker uses alike; a forecast of the wrong length is scored
+		// as any runner's is.
+		logged := strings.Contains(strings.Join(lines, "\n"), tt.why)
+		if tt.name == "a forecast of the wrong length" {
+			if !strings.Contains(candidates[1].Error, tt.why) {
+				t.Errorf("%s: %q, want %q", tt.name, candidates[1].Error, tt.why)
+			}
+		} else if candidates[1].Error != chronosFailed || !logged {
+			t.Errorf("%s: candidate error %q, logged %t, want %q with %q logged", tt.name, candidates[1].Error, logged, chronosFailed, tt.why)
+		}
+	}
+	// So two honest workers whose images failed in their own ways agree.
+	if same, why := (Forecast{}).Compare(outputs["short of memory"], outputs["not built"]); !same {
+		t.Errorf("two images failing in their own ways: %q", why)
 	}
 	// A task given up as a whole fails.
 	cancelled, cancel := context.WithCancel(ctx)
