@@ -1,34 +1,46 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { loadMessages } from '../src/renderer/src/lib/chat-history.ts'
+import type { Activity, AttachedFile, ChatItem, StoredCall, StoredChatMessage } from '../src/renderer/src/lib/chat-history.ts'
 
-const assistant = (calls) => ({ role: 'assistant', content: '', calls })
-const call = (name = 'run_job', args = '{}') => ({ name, arguments: args })
-const result = (content, tool = 'run_job') => ({ role: 'tool', tool, content })
+const assistant = (calls: StoredCall[]): StoredChatMessage => ({ role: 'assistant', content: '', calls })
+const call = (name = 'run_job', args = '{}'): StoredCall => ({ name, arguments: args })
+const result = (content: string, tool = 'run_job'): StoredChatMessage => ({ role: 'tool', tool, content })
+
+// An item's activities and attachments are optional; these fail the test
+// when they are missing rather than reading through undefined.
+function activitiesOf(item: ChatItem): Activity[] {
+  assert.ok(item.activities, 'the item has no activities')
+  return item.activities
+}
+function attachmentsOf(item: ChatItem): AttachedFile[] {
+  assert.ok(item.attachments, 'the item has no attachments')
+  return item.attachments
+}
 
 test('a saved call without a result is interrupted, never live', () => {
-  assert.equal(loadMessages([assistant([call()])])[0].activities[0].state, 'interrupted')
+  assert.equal(activitiesOf(loadMessages([assistant([call()])])[0])[0].state, 'interrupted')
 })
 test('restores job links from the planner’s saved JSON result', () => {
   const items = loadMessages([assistant([call()]), result('{"job_id":"job-1","result":{"count":25}}')])
   assert.equal(items.length, 1)
-  assert.equal(items[0].activities[0].jobId, 'job-1')
-  assert.equal(items[0].activities[0].state, 'complete')
+  assert.equal(activitiesOf(items[0])[0].jobId, 'job-1')
+  assert.equal(activitiesOf(items[0])[0].state, 'complete')
 })
 test('repeated calls to the same tool retain result order', () => {
   const items = loadMessages([assistant([call(), call()]), result('{"job_id":"first"}'), result('{"job_id":"second"}')])
-  assert.deepEqual(items[0].activities.map((activity) => activity.jobId), ['first', 'second'])
+  assert.deepEqual(activitiesOf(items[0]).map((activity) => activity.jobId), ['first', 'second'])
 })
 test('tool failures remain failures, with a get_job link from arguments', () => {
-  const activity = loadMessages([assistant([call('get_job', '{"job_id":"missing"}')]), result('{"error":"not found"}', 'get_job')])[0].activities[0]
+  const activity = activitiesOf(loadMessages([assistant([call('get_job', '{"job_id":"missing"}')]), result('{"error":"not found"}', 'get_job')])[0])[0]
   assert.equal(activity.state, 'failed')
   assert.equal(activity.jobId, 'missing')
 })
 test('unmatched tools and non-JSON results are not lost', () => {
   const items = loadMessages([result('orphan'), assistant([call()]), result('plain text')])
   assert.equal(items[0].role, 'tool')
-  assert.equal(items[1].activities[0].result, 'plain text')
-  assert.equal(items[1].activities[0].state, 'complete')
+  assert.equal(activitiesOf(items[1])[0].result, 'plain text')
+  assert.equal(activitiesOf(items[1])[0].state, 'complete')
 })
 test('user attachment metadata survives history reconstruction', () => {
   const item = loadMessages([{ role: 'user', content: 'hello\n\n[Sisyphus attachments]\n- "photo.png" | cid:abc | image:true' }])[0]
@@ -38,6 +50,6 @@ test('user attachment metadata survives history reconstruction', () => {
 test('private attachment metadata survives reopening an attachment-only chat', () => {
   const items = loadMessages([{ role: 'user', content: '\n\n[Sisyphus attachments]\n- "secret.txt" | cid:example | image:false | private:true' }])
   assert.equal(items[0].content, '')
-  assert.equal(items[0].attachments[0].private, true)
-  assert.equal(items[0].attachments[0].name, 'secret.txt')
+  assert.equal(attachmentsOf(items[0])[0].private, true)
+  assert.equal(attachmentsOf(items[0])[0].name, 'secret.txt')
 })
