@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 
 	"github.com/ipfs/go-cid"
@@ -179,12 +180,18 @@ func (r *Registry) InContainers(name string) bool {
 	return ok
 }
 
-// Offers returns the labels a worker has by running these workloads.
+// Offers returns the labels a worker has by running these workloads, each
+// once, though two workloads offer it, as forecast and forecasts both offer
+// the Chronos-Bolt image.
 func (r *Registry) Offers(ctx context.Context) []string {
 	var labels []string
 	for _, name := range r.Names() {
 		if o, ok := r.workloads[name].(Offering); ok {
-			labels = append(labels, o.Offers(ctx)...)
+			for _, label := range o.Offers(ctx) {
+				if !slices.Contains(labels, label) {
+					labels = append(labels, label)
+				}
+			}
 		}
 	}
 	return labels
@@ -258,7 +265,7 @@ func WithContainers() *Registry {
 // ContainersConfined returns what WithContainers does, with the containers
 // held in as a worker's owner asked.
 func ContainersConfined(confined Confinement) *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Forecast{Containers: true, Confined: confined}, Forecasts{}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}, Transcribe{Confined: confined}, Qchem{Confined: confined}, OCR{Confined: confined}, Traj{Confined: confined}, Prep{Confined: confined}).With(WithModels("", Owner{})...)
+	return NewRegistry(Primes{}, WordCount{}, Forecast{Containers: true, Confined: confined}, Forecasts{Containers: true, Confined: confined}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}, Transcribe{Confined: confined}, Qchem{Confined: confined}, OCR{Confined: confined}, Traj{Confined: confined}, Prep{Confined: confined}).With(WithModels("", Owner{})...)
 }
 
 // WithModels returns the workloads that use the language models of the

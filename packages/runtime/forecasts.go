@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strconv"
@@ -23,8 +24,18 @@ import (
 // the pool, a run of them to each task.
 //
 // Like forecast it is plain arithmetic with no randomness, so two workers
-// given the same task return the same bytes.
-type Forecasts struct{}
+// given the same task return the same bytes, unless it was asked for the
+// Chronos-Bolt models, which it runs as forecast does.
+type Forecasts struct {
+	// Containers, Engine and Confined are as forecast's: whether this node
+	// runs the Chronos-Bolt candidates, and how.
+	Containers bool
+	Engine     func(ctx context.Context, args []string, stdout, stderr io.Writer) (status int, err error)
+	Confined   Confinement
+}
+
+// forecast is the forecast workload as this one runs its candidates.
+func (f Forecasts) forecast() Forecast { return Forecast(f) }
 
 // ForecastsParams are the job parameters.
 type ForecastsParams struct {
@@ -75,6 +86,18 @@ type SeriesForecast struct {
 	RMSE     float64         `json:"rmse,omitempty"`
 	Forecast []ForecastPoint `json:"forecast,omitempty"`
 	Error    string          `json:"error,omitempty"`
+	// Folds and Candidates are, for a task with Chronos-Bolt candidates,
+	// the windows the series was backtested on and the backtests the
+	// coordinator chooses its forecast from (see keptCandidates), in place
+	// of a model and a forecast. Two workers' Chronos-Bolt backtests may
+	// differ in their last digits, and with them which candidate scores
+	// best; choosing once, from the result taken, keeps that choice from
+	// being a difference between workers.
+	Folds int `json:"folds,omitempty"`
+	// Scale is the series' largest value by magnitude, given with its
+	// candidates: their Chronos-Bolt runs are compared against it.
+	Scale      float64           `json:"scale,omitempty"`
+	Candidates []forecastOutcome `json:"candidates,omitempty"`
 }
 
 type forecastsPart struct {
@@ -101,20 +124,20 @@ type ForecastsResult struct {
 func (Forecasts) Name() string { return "forecasts" }
 
 func (Forecasts) Describe() string {
-	return `Forecasts many time series at once, each as forecast forecasts one: every candidate model backtested on the series' own past and the median of the best kinds chosen, with ranges. The series are shared out across the pool, a run of them to each task. Parameters: {"input": "<CID of a CSV file with a line for each value: the series' name first, the value last, and its time between if given>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta}. Result: {"series", "forecast", "failed", "forecast_table": "<CID of every forecast as CSV: id,step,value,lo80,hi80,lo95,hi95>", "models_table": "<CID of how each series was forecast as CSV>"}.`
+	return `Forecasts many time series at once, each as forecast forecasts one: every candidate model backtested on the series' own past and the median of the best kinds chosen, with ranges. The series are shared out across the pool, a run of them to each task. Parameters: {"input": "<CID of a CSV file with a line for each value: the series' name first, the value last, and its time between if given>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, which "all" does not include}. Result: {"series", "forecast", "failed", "forecast_table": "<CID of every forecast as CSV: id,step,value,lo80,hi80,lo95,hi95>", "models_table": "<CID of how each series was forecast as CSV>"}.`
 }
 
-func (Forecasts) Form() []Field {
+func (f Forecasts) Form() []Field {
 	return []Field{
 		{Name: "input", Kind: KindFile, Label: "Series", Help: "A CSV file with a line for each value: the series' name in the first column, the value in the last, oldest first; a header line is skipped.", Required: true},
 		{Name: "horizon", Kind: KindInteger, Label: "Steps ahead", Help: "How many steps of each series to forecast.", Default: 12, Minimum: bound(1), Maximum: bound(maxForecastHorizon)},
 		{Name: "season", Kind: KindInteger, Label: "Season length", Help: "How many steps the series' cycle takes, such as 12 for months or 7 for days of the week, or 0 if they have none.", Default: 0, Minimum: bound(0), Maximum: bound(maxForecastSeason)},
 		{Name: "folds", Kind: KindInteger, Label: "Backtest windows", Help: "How many windows at the end of each series its models are tested on. Leave it empty to use as many as each series has room for, up to 8.", Minimum: bound(1), Maximum: bound(maxForecastFolds)},
-		{Name: "models", Kind: KindChoice, Label: "Models", Help: "Which kind of model to try, or all of them.", Default: "all", Choices: append([]string{"all"}, forecastKinds...)},
+		{Name: "models", Kind: KindChoice, Label: "Models", Help: f.forecast().modelsHelp(), Default: "all", Choices: f.forecast().modelChoices()},
 	}
 }
 
-func (Forecasts) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
+func (f Forecasts) Split(ctx context.Context, blobs Blobs, params []byte, parts int) ([][]byte, error) {
 	var p ForecastsParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, fmt.Errorf("forecasts params: %w", err)
@@ -127,8 +150,8 @@ func (Forecasts) Split(ctx context.Context, blobs Blobs, params []byte, parts in
 	if err != nil {
 		return nil, fmt.Errorf("forecasts params: %w", err)
 	}
-	if wantsChronos(kinds) {
-		return nil, errors.New("forecasts params: the Chronos-Bolt models are not yet offered for many series; forecast takes them for one")
+	if why := f.forecast().cannotRunChronos(); wantsChronos(kinds) && why != "" {
+		return nil, errors.New("forecasts params: the Chronos-Bolt models run in containers, and " + why)
 	}
 	panel, err := readPanel(ctx, blobs, p.Input)
 	if err != nil {
@@ -137,6 +160,12 @@ func (Forecasts) Split(ctx context.Context, blobs Blobs, params []byte, parts in
 	// As many tasks as the pool asks for, and at least as many as keep each
 	// task's forecasts within bounds; no more than there are series.
 	perTask := max(1, maxForecastsStepsPerTask/one.Horizon)
+	if wantsChronos(kinds) {
+		// Each series then carries its candidates' backtests: a forecast,
+		// an error at each step and up to a window's residuals at each, for
+		// each kind's best and each Chronos-Bolt model.
+		perTask = max(1, maxForecastsStepsPerTask/(one.Horizon*(len(forecastKinds)+len(chronosKinds))*(2+autoFolds)))
+	}
 	n := min(len(panel), max(parts, 1, (len(panel)+perTask-1)/perTask))
 	n = min(n, MaxTasks)
 	var payloads [][]byte
@@ -146,7 +175,7 @@ func (Forecasts) Split(ctx context.Context, blobs Blobs, params []byte, parts in
 	return payloads, nil
 }
 
-func (Forecasts) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
+func (f Forecasts) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byte, error) {
 	var task forecastsTask
 	if err := json.Unmarshal(payload, &task); err != nil {
 		return nil, fmt.Errorf("forecasts payload: %w", err)
@@ -156,7 +185,7 @@ func (Forecasts) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]by
 		return nil, fmt.Errorf("forecasts payload: horizon %d, season %d or folds %d out of range", task.Horizon, task.Season, task.Folds)
 	}
 	for _, kind := range task.Kinds {
-		if !slices.Contains(forecastKinds, kind) {
+		if !slices.Contains(forecastKinds, kind) && !slices.Contains(chronosKinds, kind) {
 			return nil, fmt.Errorf("forecasts payload: no such kind of model as %q", kind)
 		}
 	}
@@ -182,12 +211,21 @@ func (Forecasts) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]by
 		candidates = append(candidates, ms)
 		folds = append(folds, n)
 	}
-	outcomes, err := backtestAll(ctx, inProcess, values, candidates, task.Horizon, folds, report.Progress)
+	runners, err := f.forecast().runners(slices.Concat(candidates...))
 	if err != nil {
 		return nil, err
 	}
+	outcomes, err := backtestAll(ctx, runners, values, candidates, task.Horizon, folds, report.Progress)
+	if err != nil {
+		return nil, err
+	}
+	chronos := wantsChronos(task.Kinds)
 	for i := range part.Series {
-		if part.Series[i].Error == "" {
+		switch {
+		case part.Series[i].Error != "":
+		case chronos:
+			part.Series[i].Folds, part.Series[i].Scale, part.Series[i].Candidates = folds[i], seriesScale(values[i]), keptCandidates(outcomes[i])
+		default:
 			decideSeries(&part.Series[i], outcomes[i], folds[i])
 		}
 	}
@@ -207,6 +245,32 @@ func seriesCandidates(s panelSeries, task forecastsTask) (int, []forecastModel, 
 		return folds, nil, fmt.Sprintf("%d points are too few to backtest %d windows of %d steps", len(s.values), folds, task.Horizon)
 	}
 	return folds, forecastCandidates(task.Kinds, task.Season, shortest), ""
+}
+
+// keptCandidates is the backtests a series' forecast is decided from: the
+// best candidate of each kind written in Go, and every Chronos-Bolt
+// candidate, in the order they were tried. decide chooses from these as it
+// would from all of them, since it takes the best candidate, or the median
+// of the best of each of the best kinds, and the best of a kind is kept.
+// Every Chronos-Bolt candidate is kept, not only the best, because which
+// of them is best may be one of the things two honest workers differ on.
+func keptCandidates(outcomes []forecastOutcome) []forecastOutcome {
+	best := map[string]int{}
+	for i, o := range outcomes {
+		if o.Model.Kind == "chronos" {
+			continue
+		}
+		if at, ok := best[o.Model.Kind]; !ok || outcomeOrder(o, outcomes[at]) < 0 {
+			best[o.Model.Kind] = i
+		}
+	}
+	var kept []forecastOutcome
+	for i, o := range outcomes {
+		if o.Model.Kind == "chronos" || best[o.Model.Kind] == i {
+			kept = append(kept, o)
+		}
+	}
+	return kept
 }
 
 // decideSeries decides a series' forecast from its candidates' backtests.
@@ -236,6 +300,9 @@ func (Forecasts) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) (
 		for _, s := range part.Series {
 			if why := seriesProblem(s, result.Horizon); why != "" {
 				return nil, fmt.Errorf("task %d output: series %q: %s", i, s.ID, why)
+			}
+			if len(s.Candidates) > 0 {
+				decideSeries(&s, s.Candidates, s.Folds)
 			}
 			result.Series++
 			if s.Error != "" {
@@ -276,6 +343,17 @@ func (Forecasts) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) (
 func seriesProblem(s SeriesForecast, horizon int) string {
 	if s.ID == "" || s.Points < 1 {
 		return "no name, or no points"
+	}
+	if s.Candidates != nil || s.Folds != 0 || s.Scale != 0 {
+		if s.Error != "" || s.Model != "" || len(s.Forecast) > 0 || len(s.Candidates) == 0 || s.Folds < 1 || s.Folds > maxForecastFolds {
+			return "both candidates to choose from and a forecast or an error, or candidates without backtest windows"
+		}
+		for _, o := range s.Candidates {
+			if o.Error == "" && !wellFormed(o, horizon, s.Folds) {
+				return fmt.Sprintf("candidate %s has scores, a forecast or residuals that are not finite numbers for %d steps and %d windows", o.Model.Name(), horizon, s.Folds)
+			}
+		}
+		return ""
 	}
 	if s.Error != "" {
 		if s.Model != "" || len(s.Forecast) > 0 {

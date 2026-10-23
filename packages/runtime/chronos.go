@@ -394,9 +394,23 @@ func (Forecast) Compare(a, b []byte) (bool, string) {
 	if x.Points != y.Points || x.Horizon != y.Horizon || x.Folds != y.Folds || x.Last != y.Last || x.Scale != y.Scale || len(x.Candidates) != len(y.Candidates) {
 		return false, fmt.Sprintf("one backtested %d candidates %d steps ahead on %d windows of %d points of size %g ending at %q, the other %d %d steps ahead on %d windows of %d points of size %g ending at %q", len(x.Candidates), x.Horizon, x.Folds, x.Points, x.Scale, x.Last, len(y.Candidates), y.Horizon, y.Folds, y.Points, y.Scale, y.Last)
 	}
-	chronos := false
-	for i := range x.Candidates {
-		p, q := x.Candidates[i], y.Candidates[i]
+	chronos, why := compareCandidates(x.Candidates, y.Candidates, x.Scale)
+	if why != "" {
+		return false, why
+	}
+	if !chronos {
+		return false, "the outputs differ, and neither has a candidate that may"
+	}
+	return true, ""
+}
+
+// compareCandidates says how two runs' backtests of the same candidates,
+// in the same order, differ by more than they may, or nothing where they
+// agree, and whether there was a Chronos-Bolt candidate among them, the
+// only kind that may differ at all.
+func compareCandidates(xs, ys []forecastOutcome, seriesSize float64) (chronos bool, why string) {
+	for i := range xs {
+		p, q := xs[i], ys[i]
 		switch {
 		case p.Model != q.Model:
 			return false, fmt.Sprintf("candidate %d is %s in one and %s in the other", i+1, p.Model.Name(), q.Model.Name())
@@ -406,16 +420,69 @@ func (Forecast) Compare(a, b []byte) (bool, string) {
 			}
 		default:
 			chronos = true
-			if why := compareChronos(p, q, x.Scale); why != "" {
+			if why := compareChronos(p, q, seriesSize); why != "" {
 				return false, fmt.Sprintf("candidate %s: %s", p.Model.Name(), why)
 			}
 		}
+	}
+	return chronos, ""
+}
+
+// Varies says that, with a Chronos-Bolt candidate, two honest workers'
+// outputs can differ in their last digits, as forecast's can.
+func (Forecasts) Varies() bool { return true }
+
+// Compare says whether two outputs of one forecasts task are the same
+// result, as forecast's Compare does for one series: each series' must be
+// the same but for its Chronos-Bolt candidates, which must agree within
+// chronosTolerance. Which forecast those candidates lead to is chosen once,
+// by Aggregate, from the output taken.
+func (Forecasts) Compare(a, b []byte) (bool, string) {
+	if bytes.Equal(a, b) {
+		return true, ""
+	}
+	if bytes.Compare(a, b) > 0 {
+		a, b = b, a
+	}
+	var x, y forecastsPart
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false, "an output is not a forecasts task's"
+	}
+	if x.From != y.From || x.Horizon != y.Horizon || len(x.Series) != len(y.Series) {
+		return false, fmt.Sprintf("one forecast %d series from %d, %d steps ahead, the other %d from %d, %d steps ahead", len(x.Series), x.From, x.Horizon, len(y.Series), y.From, y.Horizon)
+	}
+	chronos := false
+	for i := range x.Series {
+		p, q := x.Series[i], y.Series[i]
+		pc, qc := p.Candidates, q.Candidates
+		p.Candidates, q.Candidates = nil, nil
+		if !bytes.Equal(mustJSON(p), mustJSON(q)) || len(pc) != len(qc) {
+			return false, fmt.Sprintf("series %q differs otherwise than in its Chronos-Bolt candidates", p.ID)
+		}
+		some, why := compareCandidates(pc, qc, p.Scale)
+		if why != "" {
+			return false, fmt.Sprintf("series %q: %s", p.ID, why)
+		}
+		chronos = chronos || some
 	}
 	if !chronos {
 		return false, "the outputs differ, and neither has a candidate that may"
 	}
 	return true, ""
 }
+
+// Needs is as forecast's: a job that asks for Chronos-Bolt needs a worker
+// that runs it in the coordinator's image.
+func (Forecasts) Needs(params []byte) []string {
+	var p ForecastsParams
+	if json.Unmarshal(params, &p) != nil {
+		return nil
+	}
+	return Forecast{}.Needs(mustJSON(ForecastParams{Models: p.Models}))
+}
+
+// Offers is as forecast's.
+func (f Forecasts) Offers(ctx context.Context) []string { return f.forecast().Offers(ctx) }
 
 // compareChronos says how two runs of one Chronos-Bolt candidate differ by
 // more than chronosTolerance of the size of what was forecast, or nothing

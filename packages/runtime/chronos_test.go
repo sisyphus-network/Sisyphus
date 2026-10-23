@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -128,8 +129,13 @@ func TestOnlyANodeThatRunsContainersTakesChronos(t *testing.T) {
 	if _, err := (Forecast{}).Execute(ctx, store, payload); err == nil || !strings.Contains(err.Error(), "does not run container work") {
 		t.Errorf("a worker without containers ran a Chronos task: %v", err)
 	}
-	if _, err := (Forecasts{}).Split(ctx, store, []byte(params), 1); err == nil || !strings.Contains(err.Error(), "not yet offered for many series") {
-		t.Errorf("forecasts took Chronos: %v", err)
+	if _, err := (Forecasts{}).Split(ctx, store, []byte(params), 1); err == nil || !strings.Contains(err.Error(), "does not run container work") {
+		t.Errorf("a node without containers split a Chronos job of many series: %v", err)
+	}
+	panel, _ := store.Put(ctx, strings.NewReader(panelOf(map[string]string{"north": seasonalSeries(48)})))
+	task := mustJSON(forecastsTask{Input: panel.String(), To: 1, Horizon: 4, Kinds: []string{"chronos-tiny"}})
+	if _, err := (Forecasts{}).Execute(ctx, store, task); err == nil || !strings.Contains(err.Error(), "does not run container work") {
+		t.Errorf("a worker without containers ran a Chronos task of many series: %v", err)
 	}
 	// "all" is the models written in Go, as it was.
 	kinds, _ := ForecastParams{}.kinds()
@@ -490,5 +496,254 @@ func TestChronosForecastsARealSeriesInItsImage(t *testing.T) {
 	json.Unmarshal(raw, &result)
 	if len(result.Forecast) != 6 {
 		t.Errorf("the job's result: %s", raw)
+	}
+}
+
+// forecastsJob splits and runs a forecasts job on the workload given,
+// returning its tasks' outputs and what Aggregate made of them.
+func forecastsJob(t *testing.T, f Forecasts, store *storage.Store, params ForecastsParams, parts int) ([][]byte, ForecastsResult) {
+	t.Helper()
+	payloads, err := f.Split(ctx, store, mustJSON(params), parts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outputs [][]byte
+	for _, p := range payloads {
+		out, err := f.Execute(ctx, store, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outputs = append(outputs, out)
+	}
+	raw, err := f.Aggregate(ctx, store, outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result ForecastsResult
+	json.Unmarshal(raw, &result)
+	return outputs, result
+}
+
+// With Chronos-Bolt, each series of a forecasts task carries the backtests
+// its forecast is chosen from, and the coordinator chooses it: the same
+// forecast a forecast job of that series alone comes to.
+func TestManySeriesWithChronosAreEachForecastAsOneWouldBe(t *testing.T) {
+	store := storage.NewMemory()
+	input, _ := store.Put(ctx, strings.NewReader(panelOf(map[string]string{"north": seasonalSeries(72), "south": seasonalSeries(60), "tiny": seasonalSeries(5)})))
+	var asked chronosAsked
+	engine := pretendChronos(t, &asked, func(answers []map[string]any) any {
+		// Chronos forecasts a little above the last value, so that it
+		// scores otherwise than naive.
+		for _, a := range answers {
+			for _, f := range a["forecasts"].([][]float64) {
+				for j := range f {
+					f[j] += 0.5
+				}
+			}
+		}
+		return answers
+	})
+	f := Forecasts{Containers: true, Engine: engine.engine}
+	models := "naive,ses,holtwinters,chronos-base,chronos-tiny"
+	outputs, result := forecastsJob(t, f, store, ForecastsParams{Input: input.String(), Horizon: 6, Season: 12, Models: models}, 2)
+	if result.Series != 3 || result.Forecast != 2 || result.Failed != 1 {
+		t.Errorf("result %+v", result)
+	}
+	// What a task returns: for each series that could be backtested, the
+	// best of each kind written in Go and every Chronos-Bolt candidate.
+	var part forecastsPart
+	json.Unmarshal(outputs[0], &part)
+	north := part.Series[0]
+	var names []string
+	for _, o := range north.Candidates {
+		names = append(names, o.Model.Kind)
+	}
+	if north.ID != "north" || north.Model != "" || north.Forecast != nil || north.Folds != 8 || strings.Join(names, " ") != "naive ses holtwinters chronos chronos" {
+		t.Errorf("north as its task returned it: %s", mustJSON(north))
+	}
+	// What Aggregate makes of it is what forecast makes of north alone.
+	one, _ := store.Put(ctx, strings.NewReader(seasonalSeries(72)))
+	alone, err := forecastJob(t, f.forecast(), store, `{"input":"`+one.String()+`","horizon":6,"season":12,"models":"`+models+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(alone.Chosen.Model, "chronos") {
+		t.Errorf("Chronos-Bolt did not play a part in forecasting north: %s", alone.Chosen.Model)
+	}
+	table := strings.Split(strings.TrimSpace(readStored(t, store, result.ForecastTable)), "\n")
+	for j, p := range alone.Forecast {
+		want := fmt.Sprintf("north,%d,%s,%s,%s,%s,%s", p.Step, plain(p.Value), plain(p.Lo80), plain(p.Hi80), plain(p.Lo95), plain(p.Hi95))
+		if table[1+j] != want {
+			t.Errorf("north step %d is %q, where forecast alone gives %q", j+1, table[1+j], want)
+		}
+	}
+	rows := strings.Split(strings.TrimSpace(readStored(t, store, result.ModelsTable)), "\n")
+	if !strings.Contains(rows[1], ","+alone.Chosen.Model+",") {
+		t.Errorf("north was forecast with %q, where forecast alone chose %q", rows[1], alone.Chosen.Model)
+	}
+	// It needs a worker with the image, and a node that runs containers
+	// offers it once, for both workloads.
+	if got := (Forecasts{}).Needs(mustJSON(ForecastsParams{Models: models})); !slices.Equal(got, []string{ChronosLabel}) {
+		t.Errorf("a forecasts job with Chronos-Bolt needs %v", got)
+	}
+	if (Forecasts{}).Needs(mustJSON(ForecastsParams{Models: "naive"})) != nil || (Forecasts{}).Needs([]byte("{")) != nil {
+		t.Error("a forecasts job without Chronos-Bolt needs something")
+	}
+	if !slices.Contains((Forecasts{Containers: true}).Form()[4].Choices, "chronos-base") || slices.Contains((Forecasts{}).Form()[4].Choices, "chronos-base") {
+		t.Error("the form offers Chronos-Bolt where it should not, or not where it should")
+	}
+}
+
+// Of a series' candidates, the best of each kind written in Go is all
+// forecast's choice needs, and every Chronos-Bolt candidate is kept.
+func TestTheCandidatesKeptChooseAsAllOfThemWould(t *testing.T) {
+	o := func(kind, variant string, mae float64, why string) forecastOutcome {
+		return forecastOutcome{Model: forecastModel{Kind: kind, Variant: variant, Alpha: mae / 10}, MAE: mae, RMSE: mae, Error: why}
+	}
+	all := []forecastOutcome{o("naive", "", 3, ""), o("ses", "", 2, ""), o("ses", "", 1, ""), o("ses", "", 0, "no"), o("ar", "", 0, "no"), o("ar", "", 0, "worse"), o("chronos", "tiny", 4, ""), o("chronos", "base", 5, "")}
+	var got []string
+	for _, k := range keptCandidates(all) {
+		got = append(got, k.Model.Name()+" "+k.Error)
+	}
+	want := []string{all[0].Model.Name() + " ", all[2].Model.Name() + " ", all[4].Model.Name() + " no", all[6].Model.Name() + " ", all[7].Model.Name() + " "}
+	if !slices.Equal(got, want) {
+		t.Errorf("kept %q, want %q", got, want)
+	}
+}
+
+func TestForecastsOutputsAreComparedExactlyExceptChronos(t *testing.T) {
+	base := func() forecastsPart {
+		return forecastsPart{From: 0, Horizon: 2, Series: []SeriesForecast{
+			{ID: "north", Points: 48, Last: "48", Folds: 2, Candidates: []forecastOutcome{
+				{Model: forecastModel{Kind: "naive"}, MAE: 1.5, RMSE: 2, StepRMSE: []float64{1, 2}, Forecast: []float64{100, 100}},
+				{Model: forecastModel{Kind: "chronos", Variant: "base"}, MAE: 1.25, RMSE: 1.75, StepRMSE: []float64{1.5, 2}, Forecast: []float64{101, 103}},
+			}},
+			{ID: "tiny", Points: 3, Error: "3 points are too few"},
+		}}
+	}
+	changed := func(change func(*forecastsPart)) []byte {
+		p := base()
+		change(&p)
+		return mustJSON(p)
+	}
+	plainly := mustJSON(forecastsPart{Horizon: 2, Series: []SeriesForecast{{ID: "tiny", Points: 3, Error: "too few"}}})
+	original := mustJSON(base())
+	for _, tt := range []struct {
+		name  string
+		other []byte
+		want  string
+	}{
+		{"the same bytes", original, ""},
+		{"Chronos-Bolt within the tolerance", changed(func(p *forecastsPart) { p.Series[0].Candidates[1].Forecast[1] = 103.1 }), ""},
+		{"Chronos-Bolt beyond it", changed(func(p *forecastsPart) { p.Series[0].Candidates[1].Forecast[1] = 104 }), `series "north": candidate chronos variant=base: its forecast step 2`},
+		{"a candidate in Go differs", changed(func(p *forecastsPart) { p.Series[0].Candidates[0].MAE = 1.5000001 }), "candidate naive, which is the same on every processor, differs"},
+		{"a candidate fewer", changed(func(p *forecastsPart) { p.Series[0].Candidates = p.Series[0].Candidates[:1] }), `series "north" differs otherwise`},
+		{"another error", changed(func(p *forecastsPart) { p.Series[1].Error = "too few" }), `series "tiny" differs otherwise`},
+		{"a series fewer", changed(func(p *forecastsPart) { p.Series = p.Series[:1] }), "series from 0, 2 steps ahead"},
+		{"not an output", []byte("{"), "an output is not a forecasts task's"},
+	} {
+		same, why := Forecasts{}.Compare(original, tt.other)
+		back, whyBack := Forecasts{}.Compare(tt.other, original)
+		if same != back || why != whyBack {
+			t.Errorf("%s: compared one way %t %q, the other %t %q", tt.name, same, why, back, whyBack)
+		}
+		if same != (tt.want == "") || !strings.Contains(why, tt.want) {
+			t.Errorf("%s: %t, %q, want %q", tt.name, same, why, tt.want)
+		}
+	}
+	// Outputs without Chronos-Bolt are the same only if their bytes are.
+	other := mustJSON(forecastsPart{Horizon: 2, Series: []SeriesForecast{{ID: "tiny", Points: 3, Error: "too few!"}}})
+	if same, why := (Forecasts{}).Compare(plainly, other); same || !strings.Contains(why, "differs otherwise") {
+		t.Errorf("two outputs without Chronos-Bolt: %t %q", same, why)
+	}
+	if same, why := (Forecasts{}).Compare(plainly, append(slices.Clone(plainly), ' ')); same || !strings.Contains(why, "neither has a candidate that may") {
+		t.Errorf("two outputs that differ only in their bytes: %t %q", same, why)
+	}
+	if !Checkable(Forecasts{}) {
+		t.Error("forecasts' tasks cannot be checked")
+	}
+}
+
+// Each series' Chronos-Bolt candidates are compared against that series'
+// size, which a task gives with its candidates and which both outputs must
+// give alike; and a node that cannot give Chronos-Bolt its memory takes no
+// forecasts job that asks for it.
+func TestManySeriesAreComparedEachAgainstItsOwnSize(t *testing.T) {
+	part := func(residual, size float64) forecastsPart {
+		return forecastsPart{Horizon: 1, Series: []SeriesForecast{{ID: "swing", Points: 9, Folds: 1, Scale: size, Candidates: []forecastOutcome{
+			{Model: forecastModel{Kind: "chronos", Variant: "base"}, MAE: 50, RMSE: 50, StepRMSE: []float64{50}, Forecast: []float64{0.01}, Residuals: [][]float64{{residual}}},
+		}}}}
+	}
+	if same, why := (Forecasts{}).Compare(mustJSON(part(50, 100)), mustJSON(part(50.05, 100))); !same {
+		t.Errorf("a residual 0.05 apart on a series of size 100: %q", why)
+	}
+	if same, why := (Forecasts{}).Compare(mustJSON(part(50, 100)), mustJSON(part(50.2, 100))); same || !strings.Contains(why, `series "swing"`) || !strings.Contains(why, "of the size 100") {
+		t.Errorf("a residual 0.2 apart on a series of size 100: %t %q", same, why)
+	}
+	if same, why := (Forecasts{}).Compare(mustJSON(part(50, 100)), mustJSON(part(50.2, 1000))); same || !strings.Contains(why, "differs otherwise") {
+		t.Errorf("a size given larger: %t %q", same, why)
+	}
+	// A size without candidates is not a series' output.
+	if _, err := (Forecasts{}).Aggregate(ctx, storage.NewMemory(), [][]byte{mustJSON(forecastsPart{Horizon: 1, Series: []SeriesForecast{{ID: "a", Points: 9, Scale: 3}}})}); err == nil {
+		t.Error("a size without candidates was taken")
+	}
+	// A task gives each series' size with its candidates.
+	store := storage.NewMemory()
+	input, _ := store.Put(ctx, strings.NewReader(panelOf(map[string]string{"north": seasonalSeries(48)})))
+	var asked chronosAsked
+	f := Forecasts{Containers: true, Engine: pretendChronos(t, &asked, nil).engine}
+	outputs, _ := forecastsJob(t, f, store, ForecastsParams{Input: input.String(), Horizon: 4, Models: "naive,chronos-tiny"}, 1)
+	var got forecastsPart
+	json.Unmarshal(outputs[0], &got)
+	values, _, _ := readSeries(ctx, store, mustPut(t, store, seasonalSeries(48)))
+	if got.Series[0].Scale != seriesScale(values) || got.Series[0].Scale == 0 {
+		t.Errorf("north's size: %g, want %g", got.Series[0].Scale, seriesScale(values))
+	}
+	// A node held to less memory than Chronos-Bolt needs offers it for
+	// neither workload, and takes no such job.
+	small := Forecasts{Containers: true, Confined: Confinement{MemoryMB: 2048}}
+	if small.Offers(ctx) != nil || slices.Contains(small.Form()[4].Choices, "chronos-tiny") {
+		t.Error("a node held to 2048 MB offers Chronos-Bolt for many series")
+	}
+	if _, err := small.Split(ctx, store, mustJSON(ForecastsParams{Input: input.String(), Horizon: 4, Models: "chronos-tiny"}), 1); err == nil || !strings.Contains(err.Error(), "holds a container to 2048 MB") {
+		t.Errorf("a node held to 2048 MB split a Chronos-Bolt job of many series: %v", err)
+	}
+}
+
+// mustPut stores text and returns its CID as a string.
+func mustPut(t *testing.T, store *storage.Store, text string) string {
+	t.Helper()
+	c, err := store.Put(ctx, strings.NewReader(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.String()
+}
+
+// A task's candidates to choose from are checked as forecast checks a
+// task's: a series with them has no forecast of its own, and every
+// candidate fitted is finite and of the right shape.
+func TestForecastsCandidatesOfTheWrongShapeAreRefused(t *testing.T) {
+	store := storage.NewMemory()
+	good := forecastOutcome{Model: forecastModel{Kind: "naive"}, MAE: 1, RMSE: 1, StepRMSE: []float64{1, 1}, Forecast: []float64{1, 1}}
+	for name, s := range map[string]SeriesForecast{
+		"candidates and a model":     {ID: "a", Points: 9, Folds: 2, Model: "naive", Candidates: []forecastOutcome{good}},
+		"candidates and an error":    {ID: "a", Points: 9, Folds: 2, Error: "no", Candidates: []forecastOutcome{good}},
+		"windows and no candidates":  {ID: "a", Points: 9, Folds: 2},
+		"candidates and no windows":  {ID: "a", Points: 9, Candidates: []forecastOutcome{good}},
+		"a candidate of three steps": {ID: "a", Points: 9, Folds: 2, Candidates: []forecastOutcome{{Model: good.Model, StepRMSE: []float64{1, 1, 1}, Forecast: []float64{1, 1, 1}}}},
+	} {
+		output := mustJSON(forecastsPart{Horizon: 2, Series: []SeriesForecast{s}})
+		if _, err := (Forecasts{}).Aggregate(ctx, store, [][]byte{output}); err == nil {
+			t.Errorf("%s: taken", name)
+		}
+	}
+	// One whose candidates were all failures is a series that failed.
+	output := mustJSON(forecastsPart{Horizon: 2, Series: []SeriesForecast{{ID: "a", Points: 9, Folds: 2, Candidates: []forecastOutcome{{Model: good.Model, Error: "no"}}}}})
+	raw, err := (Forecasts{}).Aggregate(ctx, store, [][]byte{output})
+	var result ForecastsResult
+	json.Unmarshal(raw, &result)
+	if err != nil || result.Failed != 1 {
+		t.Errorf("a series none of whose candidates were fitted: %+v, %v", result, err)
 	}
 }

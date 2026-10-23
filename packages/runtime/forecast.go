@@ -707,16 +707,20 @@ type decision struct {
 // of the best kinds, or the best alone, with ranges from Student's t for
 // as many degrees of freedom as there were windows. folds is between 1 and
 // maxForecastFolds.
-func decide(outcomes []forecastOutcome, folds int) (decision, error) {
-	slices.SortStableFunc(outcomes, func(a, b forecastOutcome) int {
-		if (a.Error == "") != (b.Error == "") {
-			if a.Error == "" {
-				return -1
-			}
-			return 1
+// outcomeOrder orders candidates best first: those fitted before those
+// not, then by MAE, RMSE and name.
+func outcomeOrder(a, b forecastOutcome) int {
+	if (a.Error == "") != (b.Error == "") {
+		if a.Error == "" {
+			return -1
 		}
-		return cmp.Or(cmp.Compare(a.MAE, b.MAE), cmp.Compare(a.RMSE, b.RMSE), strings.Compare(a.Model.Name(), b.Model.Name()))
-	})
+		return 1
+	}
+	return cmp.Or(cmp.Compare(a.MAE, b.MAE), cmp.Compare(a.RMSE, b.RMSE), strings.Compare(a.Model.Name(), b.Model.Name()))
+}
+
+func decide(outcomes []forecastOutcome, folds int) (decision, error) {
+	slices.SortStableFunc(outcomes, outcomeOrder)
 	if len(outcomes) == 0 || outcomes[0].Error != "" {
 		why := "there were none"
 		if len(outcomes) > 0 {
