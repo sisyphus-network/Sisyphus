@@ -44,7 +44,7 @@ community:
       - any-glob-to-any-file: ['CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'SUPPORT.md', 'CITATION.cff', '.github/ISSUE_TEMPLATE/**', '.github/pull_request_template.md']
 testing:
   - changed-files:
-      - all-globs-to-all-files: ['**/*_test.go', 'apps/sisyphus/e2e/**', 'apps/sisyphus/dev/*.test.mjs']
+      - all-globs-to-all-files: ['**/*_test.go', 'apps/sisyphus/e2e/**', 'apps/sisyphus/dev/*.test.*']
 enhancement:
   - head-branch: ['^feat/']
 bug:
