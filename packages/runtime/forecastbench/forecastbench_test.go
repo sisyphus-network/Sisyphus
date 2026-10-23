@@ -30,6 +30,15 @@ import (
 // published in the Dataset directory of
 // https://github.com/Mcompetitions/M4-methods. See
 // docs/forecast-benchmark.md.
+//
+// SISYPHUS_M4_MODELS runs each frequency as one forecasts job of the models
+// it names, as a job's models are named, in place of a forecast job of each
+// series with the default models. Naming a Chronos-Bolt kind runs it in its
+// image, which needs Docker. SISYPHUS_M4_WORKERS is how many of the job's
+// tasks run at once: by default one for each processor, or, with a
+// Chronos-Bolt kind, one, since each such task is a container of up to 4 GB
+// and the benchmark does not hold them to the machine's memory as a pool's
+// scheduler does.
 func TestM4(t *testing.T) {
 	dir := os.Getenv("SISYPHUS_M4")
 	if dir == "" {
@@ -41,6 +50,12 @@ func TestM4(t *testing.T) {
 		if every, err = strconv.Atoi(s); err != nil || every < 1 {
 			t.Fatalf("SISYPHUS_M4_EVERY=%q is not a whole number above zero", s)
 		}
+	}
+	models := os.Getenv("SISYPHUS_M4_MODELS")
+	chronos := strings.Contains(models, "chronos")
+	workers, err := m4Workers(os.Getenv("SISYPHUS_M4_WORKERS"), models, goruntime.NumCPU())
+	if err != nil {
+		t.Fatal(err)
 	}
 	ctx := context.Background()
 	table := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.AlignRight)
@@ -57,7 +72,17 @@ func TestM4(t *testing.T) {
 			sample = append(sample, series[i])
 		}
 		start := time.Now()
-		score, err := Run(ctx, sample, freq, goruntime.NumCPU(), Workload)
+		var score Score
+		var err error
+		if models == "" {
+			score, err = Run(ctx, sample, freq, workers, Workload)
+		} else {
+			var forecasts [][]runtime.ForecastPoint
+			w := runtime.Forecasts{Containers: chronos}
+			if forecasts, err = Batch(ctx, w, sample, freq, models, 4*workers, workers); err == nil {
+				score, err = Scored(sample, freq, forecasts)
+			}
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,6 +95,24 @@ func TestM4(t *testing.T) {
 	}
 	row("Overall", overall, time.Since(began))
 	table.Flush()
+}
+
+// m4Workers is how many of a job's tasks TestM4 runs at once: setting, the
+// value of SISYPHUS_M4_WORKERS, if it is given; otherwise one for each of
+// cpus, or one when models name a Chronos-Bolt kind, since each such task is
+// a container of up to 4 GB that nothing here holds to the machine's memory.
+func m4Workers(setting, models string, cpus int) (int, error) {
+	if setting != "" {
+		workers, err := strconv.Atoi(setting)
+		if err != nil || workers < 1 {
+			return 0, fmt.Errorf("SISYPHUS_M4_WORKERS=%q is not a whole number above zero", setting)
+		}
+		return workers, nil
+	}
+	if strings.Contains(models, "chronos") {
+		return 1, nil
+	}
+	return cpus, nil
 }
 
 func readFrequency(t *testing.T, dir, name string) []Series {
@@ -352,5 +395,154 @@ func TestRunScoresEachSeriesAndFallsBackToNaive2(t *testing.T) {
 	cancel()
 	if _, err := Run(cancelled, series, freq, 0, naive2); !errors.Is(err, context.Canceled) {
 		t.Errorf("a cancelled run gave %v", err)
+	}
+}
+
+// A batch forecasts each series as the workload forecasts it alone,
+// however the job is split and however many work at it, and leaves out a
+// series it cannot forecast.
+func TestABatchForecastsEachSeriesAsTheWorkloadDoesAlone(t *testing.T) {
+	ctx := context.Background()
+	freq := Frequency{"Quarterly", 4, 4}
+	var series []Series
+	for i := range 7 {
+		// A comma in an ID is quoted in the job's input and its table.
+		series = append(series, Series{ID: fmt.Sprint("Q,", i), Train: cycle(40+i, 50+float64(i), 0.5, 0.8, 1.2, 1.1, 0.9)})
+	}
+	series = append(series, Series{ID: "short", Train: []float64{1, 2, 3}})
+	var want [][]runtime.ForecastPoint
+	for _, s := range series[:7] {
+		f, err := Workload(ctx, s.Train, freq.Horizon, freq.Season)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, f)
+	}
+	for _, c := range []struct{ tasks, workers int }{{1, 1}, {3, 2}, {8, 0}} {
+		got, err := Batch(ctx, runtime.Forecasts{}, series, freq, "", c.tasks, c.workers)
+		if err != nil {
+			t.Fatalf("%d tasks, %d workers: %v", c.tasks, c.workers, err)
+		}
+		if len(got) != len(series) {
+			t.Fatalf("%d tasks, %d workers: %d forecasts of %d series", c.tasks, c.workers, len(got), len(series))
+		}
+		for i, w := range want {
+			if !slices.Equal(got[i], w) {
+				t.Errorf("%d tasks, %d workers: series %s forecast %v, alone %v", c.tasks, c.workers, series[i].ID, got[i], w)
+			}
+		}
+		if got[7] != nil {
+			t.Errorf("a series shorter than the horizon was forecast %v", got[7])
+		}
+	}
+	// The models asked for are the job's: naive alone carries the last
+	// value forward.
+	got, err := Batch(ctx, runtime.Forecasts{}, series[:1], Frequency{"Yearly", 3, 1}, "naive", 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := series[0].Train[len(series[0].Train)-1]
+	if len(got) != 1 || len(got[0]) != 3 || got[0][0].Value != last || got[0][2].Value != last {
+		t.Errorf("naive forecast %v of a series ending at %g", got, last)
+	}
+	// Scored as one, the batch scores as the workload run series by series.
+	split := make([]Series, 7)
+	for i, s := range series[:7] {
+		split[i] = Series{ID: s.ID, Train: s.Train[:len(s.Train)-4], Test: s.Train[len(s.Train)-4:]}
+	}
+	forecasts, err := Batch(ctx, runtime.Forecasts{}, split, freq, "", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batched, err := Scored(split, freq, forecasts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alone, err := Run(ctx, split, freq, 2, Workload)
+	if err != nil || batched != alone {
+		t.Errorf("the batch scored %+v and the workload alone %+v (%v)", batched, alone, err)
+	}
+}
+
+func TestABatchThatCannotRunSaysWhy(t *testing.T) {
+	ctx := context.Background()
+	freq := Frequency{"Yearly", 3, 1}
+	series := []Series{{ID: "a", Train: cycle(30, 10, 1, 1)}, {ID: "b", Train: cycle(30, 20, 1, 1)}}
+	for _, c := range []struct {
+		series []Series
+		models string
+		why    string
+	}{
+		{[]Series{series[0], series[0]}, "", `series "a" is given twice`},
+		{series, "crystal ball", "crystal ball"},
+		{series, "chronos-tiny", "container"},
+	} {
+		if _, err := Batch(ctx, runtime.Forecasts{}, c.series, freq, c.models, 1, 1); err == nil || !strings.Contains(err.Error(), c.why) {
+			t.Errorf("models %q gave %v, want an error saying %q", c.models, err, c.why)
+		}
+	}
+	// The series are put and opened to split, each task opens them, and
+	// the tables are put and the forecasts opened; each failing in turn
+	// fails the batch.
+	for _, c := range []struct{ puts, opens int }{{0, 9}, {9, 0}, {9, 1}, {1, 9}, {9, 2}} {
+		if _, err := batchIn(ctx, &failing{storage.NewMemory(), c.puts, c.opens}, runtime.Forecasts{}, series, freq, "", 1, 1); !errors.Is(err, errFailed) {
+			t.Errorf("with %d puts and %d opens before failing, the batch gave %v", c.puts, c.opens, err)
+		}
+	}
+}
+
+func TestAForecastTableIsReadBySeriesID(t *testing.T) {
+	index := map[string]int{"a": 0, "b": 1}
+	got, err := forecastsByID(strings.NewReader("id,step,value,lo80,hi80,lo95,hi95\nb,1,2,1,3,0,4\nb,2,5,4,6,3,7\n"), index)
+	want := [][]runtime.ForecastPoint{nil, {{Step: 1, Value: 2, Lo80: 1, Hi80: 3, Lo95: 0, Hi95: 4}, {Step: 2, Value: 5, Lo80: 4, Hi80: 6, Lo95: 3, Hi95: 7}}}
+	if err != nil || len(got) != 2 || got[0] != nil || !slices.Equal(got[1], want[1]) {
+		t.Errorf("read %v (%v), want %v", got, err, want)
+	}
+	if got, err := forecastsByID(strings.NewReader(""), index); err != nil || len(got) != 2 || got[0] != nil || got[1] != nil {
+		t.Errorf("an empty table gave %v (%v)", got, err)
+	}
+	for table, why := range map[string]string{
+		"id,step\n\"a,1\n":               "forecast table",
+		"id,step,value\na,1,2\n":         "has 3 fields, not 7",
+		"h,h,h,h,h,h,h\nc,1,2,1,3,0,4":   `forecasts "c"`,
+		"h,h,h,h,h,h,h\na,1,two,1,3,0,4": `line 2: strconv.ParseFloat: parsing "two"`,
+	} {
+		if _, err := forecastsByID(strings.NewReader(table), index); err == nil || !strings.Contains(err.Error(), why) {
+			t.Errorf("table %q gave %v, want an error saying %q", table, err, why)
+		}
+	}
+}
+
+func TestOnlyAsManyForecastsAsSeriesAreScored(t *testing.T) {
+	freq := Frequency{"Yearly", 3, 1}
+	series := []Series{{ID: "a", Train: cycle(10, 1, 1, 1), Test: []float64{11, 12, 13}}}
+	if _, err := Scored(series, freq, nil); err == nil || !strings.Contains(err.Error(), "0 forecasts of 1 Yearly series") {
+		t.Errorf("no forecasts of a series gave %v", err)
+	}
+	if _, err := Scored(nil, freq, nil); err == nil {
+		t.Error("no series were scored")
+	}
+}
+
+func TestTheM4BenchmarkRunsOneChronosTaskAtATimeUnlessToldOtherwise(t *testing.T) {
+	for _, c := range []struct {
+		setting, models string
+		want            int
+	}{
+		{"", "", 32},
+		{"", "naive,theta", 32},
+		{"", "naive,theta,chronos-base", 1},
+		{"", "chronos-tiny", 1},
+		{"8", "naive,chronos-base", 8},
+		{"3", "", 3},
+	} {
+		if got, err := m4Workers(c.setting, c.models, 32); err != nil || got != c.want {
+			t.Errorf("workers %q with models %q on 32 processors gave %d (%v), want %d", c.setting, c.models, got, err, c.want)
+		}
+	}
+	for _, setting := range []string{"0", "-2", "many"} {
+		if _, err := m4Workers(setting, "", 32); err == nil || !strings.Contains(err.Error(), "not a whole number above zero") {
+			t.Errorf("workers %q gave %v", setting, err)
+		}
 	}
 }
