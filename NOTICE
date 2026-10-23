@@ -9,5 +9,5 @@ Sisyphus. IP Geolocation by DB-IP, https://db-ip.com.
 The desktop app's globe draws country outlines from Natural Earth's 1:110m
 "Admin 0 – Countries" and state and province lines from Natural Earth's
 1:10m "Admin 1 – States, Provinces" boundary lines, simplified
-(apps/sisyphus/dev/build-region-lines.mjs). Natural Earth is in the public
+(apps/sisyphus/dev/build-region-lines.ts). Natural Earth is in the public
 domain, https://www.naturalearthdata.com.

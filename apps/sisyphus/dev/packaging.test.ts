@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { packageResourcesDirectory } from './package-layout.mjs'
+import { packageResourcesDirectory } from './package-layout.ts'
 
 const require = createRequire(import.meta.url)
 const config = require('../electron-builder.config.cjs')
@@ -47,9 +47,9 @@ test('package verification locates the unpacked app for every shipped architectu
 // to them or through an import, never from "/".
 test('the pages name no file from the root of the disk', () => {
   const root = resolve(import.meta.dirname, '../src/renderer/src')
-  const sources = readdirSync(root, { recursive: true }).filter((path) => /\.(tsx?|css)$/.test(path))
-  for (const path of sources) {
-    const text = readFileSync(resolve(root, path), 'utf8')
-    assert.doesNotMatch(text, /(?:src|href)=["']\/(?!\/)|url\(["']?\/(?!\/)/, `${path} names a file from the root of the disk`)
+  const sources = readdirSync(root, { recursive: true }).filter((path): path is string => typeof path === 'string' && /\.(tsx?|css)$/.test(path))
+  for (const source of sources) {
+    const text = readFileSync(resolve(root, source), 'utf8')
+    assert.doesNotMatch(text, /(?:src|href)=["']\/(?!\/)|url\(["']?\/(?!\/)/, `${source} names a file from the root of the disk`)
   }
 })

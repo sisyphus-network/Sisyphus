@@ -4,7 +4,7 @@
 // domain:
 //
 //   curl -LO https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_1_states_provinces_lines.geojson
-//   node dev/build-region-lines.mjs ne_10m_admin_1_states_provinces_lines.geojson
+//   node --experimental-strip-types dev/build-region-lines.ts ne_10m_admin_1_states_provinces_lines.geojson
 //
 // Each line is simplified (Douglas–Peucker, to 0.02 degree, a couple of
 // kilometres), its points rounded to 0.01 degree, and written as whole
@@ -13,17 +13,25 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 
+type Position = [longitude: number, latitude: number, ...extra: number[]]
+type Geometry =
+  | { type: 'LineString', coordinates: Position[] }
+  | { type: 'MultiLineString', coordinates: Position[][] }
+type FeatureCollection = { features: Array<{ geometry: Geometry | null }> }
+
 const [source, target = new URL('../src/renderer/src/data/admin1-lines.json', import.meta.url)] = process.argv.slice(2)
-if (!source) throw new Error('usage: node dev/build-region-lines.mjs <ne_10m_admin_1_states_provinces_lines.geojson> [output]')
+if (!source) throw new Error('usage: node --experimental-strip-types dev/build-region-lines.ts <ne_10m_admin_1_states_provinces_lines.geojson> [output]')
 const tolerance = 0.02
 
-function simplify(points) {
+function simplify(points: Position[]): Position[] {
   if (points.length < 3) return points
-  const keep = new Array(points.length).fill(false)
+  const keep = new Array<boolean>(points.length).fill(false)
   keep[0] = keep[points.length - 1] = true
-  const stack = [[0, points.length - 1]]
+  const stack: [number, number][] = [[0, points.length - 1]]
   while (stack.length) {
-    const [a, b] = stack.pop()
+    const segment = stack.pop()
+    if (!segment) continue
+    const [a, b] = segment
     const [ax, ay] = points[a]
     const [bx, by] = points[b]
     const dx = bx - ax
@@ -41,15 +49,16 @@ function simplify(points) {
   return points.filter((_, i) => keep[i])
 }
 
-const lines = []
-for (const feature of JSON.parse(readFileSync(source, 'utf8')).features) {
+const input = JSON.parse(readFileSync(source, 'utf8')) as FeatureCollection
+const lines: number[][] = []
+for (const feature of input.features) {
   const geometry = feature.geometry
   if (!geometry) continue
   const parts = geometry.type === 'LineString' ? [geometry.coordinates] : geometry.coordinates
   for (const part of parts) {
-    const points = []
+    const points: [number, number][] = []
     for (const [lng, lat] of simplify(part)) {
-      const point = [Math.round(lng * 100), Math.round(lat * 100)]
+      const point: [number, number] = [Math.round(lng * 100), Math.round(lat * 100)]
       const last = points.at(-1)
       if (!last || last[0] !== point[0] || last[1] !== point[1]) points.push(point)
     }

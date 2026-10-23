@@ -8,26 +8,40 @@ import grpc from '@grpc/grpc-js'
 import protoLoader from '@grpc/proto-loader'
 import { DesktopDaemon, portIsUnused } from '../src/main/daemon-process.ts'
 
+type Message = Record<string, unknown>
+type NodeInfo = { peerId: string, daemonVersion: string }
+type NodeServiceClient = grpc.Client & {
+  getNodeInfo(request: Message, metadata: grpc.Metadata, options: { deadline: number }, callback: (error: grpc.ServiceError | null, response: NodeInfo) => void): grpc.ClientUnaryCall
+}
+type NodeServiceConstructor = grpc.ServiceClientConstructor & (new (address: string, credentials: grpc.ChannelCredentials) => NodeServiceClient)
+
+function listeningAddress(server: ReturnType<typeof createServer>): string {
+  const address = server.address()
+  assert.ok(address && typeof address === 'object', 'the temporary server is not listening on a TCP port')
+  return `127.0.0.1:${address.port}`
+}
+
 const executable = resolve(process.argv[2] ?? '../../bin/sisyphusd')
 const directory = await mkdtemp(join(tmpdir(), 'sisyphus-desktop-lifecycle-'))
 const reservation = createServer()
-await new Promise((accept) => reservation.listen(0, '127.0.0.1', accept))
-const endpoint = `127.0.0.1:${reservation.address().port}`
-await new Promise((accept) => reservation.close(accept))
+await new Promise<void>((accept) => reservation.listen(0, '127.0.0.1', () => accept()))
+const endpoint = listeningAddress(reservation)
+await new Promise<void>((accept) => reservation.close(() => accept()))
 const webReservation = createServer()
-await new Promise((accept) => webReservation.listen(0, '127.0.0.1', accept))
-const webListenAddress = `127.0.0.1:${webReservation.address().port}`
-await new Promise((accept) => webReservation.close(accept))
-const diagnostics = []
+await new Promise<void>((accept) => webReservation.listen(0, '127.0.0.1', () => accept()))
+const webListenAddress = listeningAddress(webReservation)
+await new Promise<void>((accept) => webReservation.close(() => accept()))
+const diagnostics: unknown[] = []
 const daemon = new DesktopDaemon({ executable, endpoint, webListenAddress, dataDir: directory, enabled: true, onError: (error) => diagnostics.push(error) })
 const proto = resolve('../../proto/sisyphus/node/v1/node.proto')
 const definition = protoLoader.loadSync(proto, { keepCase: false, longs: String, enums: String, defaults: true })
-const service = grpc.loadPackageDefinition(definition).sisyphus.node.v1.NodeService
+const loaded = grpc.loadPackageDefinition(definition) as unknown as { sisyphus: { node: { v1: { NodeService: NodeServiceConstructor } } } }
+const service = loaded.sisyphus.node.v1.NodeService
 const client = new service(endpoint, grpc.credentials.createInsecure())
 try {
   await daemon.ensureStarted()
-  await new Promise((accept, reject) => client.waitForReady(Date.now() + 15000, (error) => error ? reject(error) : accept()))
-  const getInfo = () => new Promise((accept, reject) => client.getNodeInfo({}, { deadline: Date.now() + 5000 }, (error, value) => error ? reject(error) : accept(value)))
+  await new Promise<void>((accept, reject) => client.waitForReady(Date.now() + 15000, (error) => error ? reject(error) : accept()))
+  const getInfo = () => new Promise<NodeInfo>((accept, reject) => client.getNodeInfo({}, new grpc.Metadata(), { deadline: Date.now() + 5000 }, (error: grpc.ServiceError | null, value: NodeInfo) => error ? reject(error) : accept(value)))
   const info = await getInfo()
   assert.ok(info.peerId)
   if (process.argv[3]) assert.equal(info.daemonVersion, process.argv[3])
