@@ -2107,6 +2107,128 @@ test('theme mode and accent survive settings/workspace navigation and renderer r
   }
 })
 
+test('advanced page surfaces follow light, dark and accent tokens', async () => {
+  const model = await standInModel('Theme consistency test model replied.')
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.evaluate(() => {
+      localStorage.setItem('sisyphus-theme', 'light')
+      localStorage.setItem('sisyphus-theme-style', 'blue')
+    })
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light' && document.documentElement.dataset.themeStyle === 'blue')
+
+    await openSettingsCategory(page, 'Model provider')
+    await page.getByRole('button', { name: 'Add provider' }).first().click()
+    await openProviderModelStep(page, { provider: 'Ollama', profile: 'Theme consistency profile', url: model.url })
+    await selectLoadedModel(page, 'test-model')
+    await page.getByRole('button', { name: 'Save and activate' }).click()
+    await page.getByText('Model configuration saved').waitFor()
+
+    const surfaces = [
+      { name: 'Node overview', heading: 'Node overview', selector: '[data-slot="card"]', accentSelector: '.node-details-page', open: () => open(page, 'Node overview') },
+      { name: 'Operations', heading: 'Operations', selector: '#operations-jobs', accentSelector: '#operations-jobs [data-slot="collapsible-trigger"]', open: () => open(page, 'Operations') },
+      { name: 'General settings', heading: 'General', selector: '.settings-category-content [data-slot="card"]', accentSelector: '.settings-category-content', open: () => openSettingsCategory(page, 'General') },
+      { name: 'Access settings', heading: 'Access', selector: '.browser-access-page [data-slot="card"]', accentSelector: '.browser-access-page', open: () => openSettingsCategory(page, 'Access') },
+      { name: 'Model provider settings', heading: 'Model provider', selector: '.settings-category-content [data-slot="card"]', accentSelector: '.settings-category-content', open: () => openSettingsCategory(page, 'Model provider') },
+    ]
+    const colors = new Map<string, { background: string, border: string, accent: string, primary: string }>()
+    for (const mode of ['light', 'dark'] as const) {
+      await page.evaluate((theme) => {
+        localStorage.setItem('sisyphus-theme', theme)
+        localStorage.setItem('sisyphus-theme-style', 'blue')
+      }, mode)
+      await page.reload()
+      await page.waitForFunction((theme) => document.documentElement.dataset.theme === theme && document.documentElement.dataset.themeStyle === 'blue', mode)
+      for (const surface of surfaces) {
+        await surface.open()
+        await page.getByRole('heading', { name: surface.heading, level: 1 }).waitFor()
+        const element = page.locator(surface.selector).first()
+        await element.waitFor({ state: 'visible' })
+        const style = await element.evaluate((target) => {
+          const root = getComputedStyle(document.documentElement)
+          const surfaceStyle = getComputedStyle(target)
+          return {
+            background: surfaceStyle.backgroundColor,
+            border: surfaceStyle.borderTopColor,
+            accent: root.getPropertyValue('--app-accent').trim(),
+            primary: root.getPropertyValue('--primary').trim(),
+          }
+        })
+        if (surface.accentSelector) {
+          const themedSurface = page.locator(surface.accentSelector).first()
+          await themedSurface.waitFor({ state: 'visible' })
+          style.primary = await themedSurface.evaluate((target) => {
+            const reference = document.createElement('span')
+            reference.style.color = 'var(--app-accent)'
+            target.append(reference)
+            const accentColor = getComputedStyle(reference).color
+            reference.remove()
+            const hasAccent = [...target.querySelectorAll('*')].some((element) => {
+              const computed = getComputedStyle(element)
+              return computed.color === accentColor || computed.backgroundColor === accentColor
+            })
+            return hasAccent ? accentColor : ''
+          })
+          assert.ok(style.primary, `${surface.name} should contain a control colored with the app accent`)
+        }
+        assert.notEqual(style.background, 'rgba(0, 0, 0, 0)', `${surface.name} should expose a themed surface`)
+        colors.set(`${mode}:${surface.name}`, style)
+      }
+    }
+    for (const surface of surfaces) {
+      const light = colors.get(`light:${surface.name}`)
+      const dark = colors.get(`dark:${surface.name}`)
+      assert.ok(light && dark, `${surface.name} should have both light and dark measurements`)
+      assert.notEqual(light.background, dark.background, `${surface.name} surface should change between light and dark`)
+      assert.notEqual(light.border, dark.border, `${surface.name} border should change between light and dark`)
+    }
+
+    await page.evaluate(() => localStorage.setItem('sisyphus-theme-style', 'pink'))
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark' && document.documentElement.dataset.themeStyle === 'pink')
+    const pinkAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--app-accent').trim())
+    const renderedPinkAccent = await page.evaluate(() => {
+      const reference = document.createElement('span')
+      reference.style.color = 'var(--app-accent)'
+      document.body.append(reference)
+      const color = getComputedStyle(reference).color
+      reference.remove()
+      return color
+    })
+    assert.notEqual(pinkAccent, colors.get('dark:Node overview')?.accent, 'changing the accent preset should change the app accent token')
+    for (const surface of surfaces) {
+      await surface.open()
+      await page.getByRole('heading', { name: surface.heading, level: 1 }).waitFor()
+      if (surface.accentSelector) {
+        const themedSurface = page.locator(surface.accentSelector).first()
+        await themedSurface.waitFor({ state: 'visible' })
+        const accentColor = await themedSurface.evaluate((target) => {
+          const reference = document.createElement('span')
+          reference.style.color = 'var(--app-accent)'
+          target.append(reference)
+          const color = getComputedStyle(reference).color
+          reference.remove()
+          return [...target.querySelectorAll('*')].some((element) => {
+            const computed = getComputedStyle(element)
+            return computed.color === color || computed.backgroundColor === color
+          }) ? color : ''
+        })
+        assert.ok(accentColor, `${surface.name} should render an element with the selected accent`)
+        assert.equal(accentColor, renderedPinkAccent, `${surface.name} should render its selected pink accent (${pinkAccent})`)
+      }
+      const primary = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary').trim())
+      assert.equal(primary, pinkAccent, `${surface.name} should retain the selected accent token after navigation`)
+    }
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
 test('model settings load and save a local provider used by the planner', async () => {
   const model = await standInModel('The configured planner replied.')
   const apiKey = 'ollama-proxy-test-token'

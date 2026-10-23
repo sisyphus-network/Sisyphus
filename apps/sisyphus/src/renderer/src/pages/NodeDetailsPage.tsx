@@ -183,7 +183,7 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
   }
 
   const labels = messages.nodeOverviewText
-  return <div className="space-y-1 pb-7">
+  return <div className="node-details-page space-y-1 pb-7">
     <PageHeading title={messages.nodeOverview} description={messages.liveDescription} actions={desktopApp && <Button variant="outline" disabled={refreshing} onClick={() => void reconnect()} className="gap-2"><RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? messages.connecting : messages.reconnect}</Button>} />
     <section aria-label={messages.nodeOverview} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <MetricCard label={messages.nodeIdentity} icon={Server} value={<span className="inline-flex min-w-0 max-w-full items-center gap-2 align-middle"><span className="min-w-0 truncate">{snapshot.info ? shortId(snapshot.info.peerId) : '—'}</span>{snapshot.info && <Button type="button" variant="ghost" size="icon" className="relative z-10 size-7 shrink-0 rounded-full border border-[var(--app-line)] bg-[var(--app-card)]/90" aria-label={peerIdCopied ? messages.peerIdCopied : messages.copyPeerId} title={peerIdCopied ? messages.peerIdCopied : messages.copyPeerId} onClick={() => void copyPeerId()}>{peerIdCopied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}</Button>}</span>} detail={snapshot.info ? `${messages.daemonVersion} ${displayDaemonVersion(snapshot.info.daemonVersion)}` : messages.waitingHandshake} mono />
