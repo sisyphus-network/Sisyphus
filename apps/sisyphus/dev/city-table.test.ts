@@ -25,6 +25,7 @@ test('the status says the edition, size and day as the locale writes them', () =
   const state = cityTableFromProtocol({ installed: true, edition: '2026-10', sizeBytes: '93123456', downloadedAtMs: String(Date.UTC(2026, 9, 21, 12)) })
   assert.deepEqual(cityTableStatus(state, 'en-US'), { edition: 'October 2026', size: '93 MB', date: 'Oct 21, 2026' })
   const french = cityTableStatus(state, 'fr')
+  assert.ok(french)
   assert.equal(french.edition, 'octobre 2026')
   assert.match(french.size, /^93\s?Mo$/)
 })
