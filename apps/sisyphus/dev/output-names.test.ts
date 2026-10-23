@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { extensionOf, nameInResult, outputFileName, resultFileName } from '../src/renderer/src/lib/output-names.ts'
 
-const json = (value) => new TextEncoder().encode(JSON.stringify(value))
+const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
 
 test('a re-encoded video is saved as a transport stream', () => {
   const job = { jobId: 'abcdef0123456789', result: json({ output: 'bafyvideo', segments: 3, bytes: 99 }) }

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { formatNumber, parseMdResult } from '../src/renderer/src/lib/md-result.ts'
 
-const json = (value) => new TextEncoder().encode(JSON.stringify(value))
+const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
 
 test('an md result is summed up for the page', () => {
   const summary = parseMdResult(json({
@@ -28,6 +28,7 @@ test('what is not an md result is shown raw instead', () => {
   }
   // A replica missing a field still shows, with a dash.
   const summary = parseMdResult(json({ replicas: 1, mean_potential_energy_kj_mol: -1, runs: [{ seed: 'x' }] }))
+  assert.ok(summary)
   assert.equal(summary.runs[0].index, 0)
   assert.equal(formatNumber(summary.runs[0].seed, 0), '—')
   assert.equal(summary.runs[0].platform, '')

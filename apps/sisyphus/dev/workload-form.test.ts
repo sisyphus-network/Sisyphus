@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { canRun, countGpuWorkers, fieldKind, firstSentence, initialValues, isValid, normalizeWorkloads, toParams, validate } from '../src/renderer/src/lib/workload-form.ts'
+import type { FormField } from '../src/renderer/src/lib/workload-form.ts'
 
 // primes as proto-loader gives it in Electron: enum names, every default
 // set, and the optional bounds named in their synthetic oneofs.
@@ -156,7 +157,7 @@ test('parameters leave out empty optional fields, and keep toggles and choices',
 test('a field of several files holds a list of CIDs and sends it as one', () => {
   assert.equal(fieldKind(7), 'files')
   assert.equal(fieldKind('WORKLOAD_FIELD_KIND_FILES'), 'files')
-  const fields = [{ name: 'inputs', kind: 'files', label: 'Molecules', help: '', defaultValue: undefined, step: 0, choices: [], required: true }]
+  const fields: FormField[] = [{ name: 'inputs', kind: 'files', label: 'Molecules', help: '', defaultValue: undefined, step: 0, choices: [], required: true }]
   const values = initialValues(fields)
   assert.deepEqual(values, { inputs: [] })
   assert.deepEqual(validate(fields, values), { inputs: { key: 'required' } })

@@ -4,11 +4,13 @@ import { test } from 'node:test'
 import { collectDownload, MAX_FILE_DOWNLOAD_BYTES } from '../src/main/file-download.ts'
 import { WindowStreams } from '../src/main/window-streams.ts'
 
+class FakeStream extends EventEmitter {
+  cancellations = 0
+  cancel = () => { this.cancellations++; this.emit('error', new Error('cancelled')) }
+}
+
 function source() {
-  const stream = new EventEmitter()
-  stream.cancellations = 0
-  stream.cancel = () => { stream.cancellations++; stream.emit('error', new Error('cancelled')) }
-  return stream
+  return new FakeStream()
 }
 
 test('collects bytes in order at the exact size limit', async () => {

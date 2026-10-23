@@ -12,7 +12,7 @@ test('all model settings locales contain every nonempty label', () => {
   for (const locale of locales) {
     const labels = dictionaries[locale].modelSettings
     assert.deepEqual(Object.keys(labels).sort(), keys, locale)
-    const assertLocalized = (value, key) => {
+    const assertLocalized = (value: unknown, key: string) => {
       if (typeof value === 'string') {
         assert.ok(value.trim(), `${locale}.${key}`)
         return
