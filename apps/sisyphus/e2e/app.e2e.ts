@@ -178,6 +178,32 @@ test('location discovery controls configure an independently managed daemon and 
   }
 })
 
+test('the node location sharing picker wraps keyboard focus and Escape closes only the picker', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await openSettingsCategory(page, 'This node')
+    const trigger = page.getByRole('button', { name: 'What other members see', exact: true })
+    await trigger.click()
+
+    const picker = page.getByRole('dialog', { name: 'What other members see', exact: true })
+    await picker.waitFor()
+    const options = picker.getByRole('button')
+    assert.equal(await options.count(), 5, 'all five location-sharing choices should be available')
+
+    await options.last().focus()
+    await page.keyboard.press('Tab')
+    assert.equal(await options.first().evaluate((element) => element === document.activeElement), true, 'Tab from the last choice should wrap to the first')
+
+    await page.keyboard.press('Escape')
+    await picker.waitFor({ state: 'detached' })
+    assert.equal(await page.getByRole('button', { name: 'Where this node is', exact: true }).getAttribute('aria-expanded'), 'true', 'Escape should close only the picker, not its settings section')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('the owner pins the node where it is, chooses how much to share, and the pin is kept', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
