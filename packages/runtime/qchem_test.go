@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -131,10 +132,20 @@ func TestTheQchemImageIsBuiltOnlyWhereItIsMissing(t *testing.T) {
 	ctx := context.Background()
 	waters, _ := store.Put(ctx, strings.NewReader(threeWaters))
 	payloads, _ := Qchem{}.Split(ctx, store, []byte(`{"input":"`+waters.String()+`"}`), 1)
-	computes := func(args []string, _, _ io.Writer) (int, error) {
-		os.WriteFile(filepath.Join(volume(args, "/output"), "summary.json"), []byte(`{}`), 0o644)
-		return 0, nil
+	summary := `{"method":"gfn2","job":"opt","structures":[{"index":0,"title":"water one","status":0,"energy":"-5.07","converged":true,"geometry":true},` +
+		`{"index":1,"title":"water two","status":0,"energy":"-5.06","converged":true,"geometry":false}]}`
+	leave := func(summary, geometries string) func([]string, io.Writer, io.Writer) (int, error) {
+		return func(args []string, _, _ io.Writer) (int, error) {
+			if summary != "" {
+				os.WriteFile(filepath.Join(volume(args, "/output"), "summary.json"), []byte(summary), 0o644)
+			}
+			if geometries != "" {
+				os.WriteFile(filepath.Join(volume(args, "/output"), "structures.xyz"), []byte(geometries), 0o644)
+			}
+			return 0, nil
+		}
 	}
+	computes := leave(summary, h2Opt)
 
 	has := &pretend{do: func(args []string, stdout, stderr io.Writer) (int, error) {
 		if args[0] == "image" {
@@ -142,14 +153,48 @@ func TestTheQchemImageIsBuiltOnlyWhereItIsMissing(t *testing.T) {
 		}
 		return computes(args, stdout, stderr)
 	}}
-	raw, err := Qchem{Engine: has.engine, Confined: Confinement{ReadOnly: true}}.Execute(ctx, store, payloads[0])
+	// What the task found is said inline, with the geometry it left, and
+	// nothing is stored: not the files, nor what xtb printed.
+	touched := Record(store)
+	raw, err := Qchem{Engine: has.engine, Confined: Confinement{ReadOnly: true}}.Execute(ctx, touched, payloads[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out ContainerOutput
-	json.Unmarshal(raw, &out)
-	if got := readBlob(t, store, out.Files["summary.json"]); got != `{}` {
-		t.Errorf("the task's output: %q", got)
+	if want := `{"method":"gfn2","job":"opt","structures":[{"index":0,"title":"water one","status":0,"energy":"-5.07","gap":"","free_energy":"","dipole":"","frequencies":null,"converged":true,"geometry":true,"atoms":["H 0.0 0.0 0.0","H 0.0 0.0 0.74"]},` +
+		`{"index":1,"title":"water two","status":0,"energy":"-5.06","gap":"","free_energy":"","dipole":"","frequencies":null,"converged":true,"geometry":false}]}`; string(raw) != want {
+		t.Errorf("the task's output:\n%s\nwant:\n%s", raw, want)
+	}
+	if written := touched.Written(); len(written) != 0 || len(touched.Read()) != 1 {
+		t.Errorf("the task stored %v and read %v", written, touched.Read())
+	}
+	// What it leaves is checked as it is read.
+	// Short atoms lines, within what a task may leave as a file, come to
+	// more said as JSON.
+	var huge strings.Builder
+	for range 18 {
+		huge.WriteString("20000\nbig\n" + strings.Repeat("H 0 0 0\n", 20000))
+	}
+	many := `{"method":"gfn2","job":"opt","structures":[` + strings.Repeat(`{"index":0,"geometry":true},`, 17) + `{"index":0,"geometry":true}]}`
+	for name, tt := range map[string]struct {
+		do   func([]string, io.Writer, io.Writer) (int, error)
+		want string
+	}{
+		"no summary":        {leave("", h2Opt), "the task's summary: "},
+		"a garbled summary": {leave("{", h2Opt), "the task's summary: unexpected EOF"},
+		"no geometries":     {leave(summary, ""), "the task's geometries: the task left none"},
+		"bad geometries":    {leave(summary, "two\n"), `the task's geometries: line 1: "two" is not a number of atoms`},
+		"too much to say":   {leave(many, huge.String()), "more than the 3145728 it may say"},
+		"a task that fails": {func([]string, io.Writer, io.Writer) (int, error) { return 1, nil }, "the command exited with status 1"},
+	} {
+		engine := &pretend{do: func(args []string, stdout, stderr io.Writer) (int, error) {
+			if args[0] == "image" {
+				return 0, nil
+			}
+			return tt.do(args, stdout, stderr)
+		}}
+		if _, err := (Qchem{Engine: engine.engine}).Execute(ctx, store, payloads[0]); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: %v, want an error containing %q", name, err, tt.want)
+		}
 	}
 	if len(has.asked) != 2 || strings.Join(has.asked[0], " ") != "image inspect "+QchemImage || has.asked[1][0] != "run" || !slices.Contains(has.asked[1], "--read-only") {
 		t.Errorf("with the image there, the engine was asked %v", has.asked)
@@ -229,15 +274,17 @@ func molfile(title string, atoms ...[4]string) string {
 
 func TestStructuresAreReadAsTheTasksReadThem(t *testing.T) {
 	read := func(text string) (string, []string, error) {
-		format, n, err := countStructures(strings.NewReader(text))
+		format, sizes, err := countStructures(strings.NewReader(text))
 		var seen []string
 		if err == nil {
+			var read []qchemSize
 			eachStructure(strings.NewReader(text), format, func(title string, atoms []string) error {
 				seen = append(seen, title+": "+strings.Join(atoms, ", "))
+				read = append(read, qchemSize{atoms: len(atoms), title: len(title)})
 				return nil
 			})
-			if len(seen) != n {
-				t.Errorf("%d structures counted, and %d read", n, len(seen))
+			if !slices.Equal(sizes, read) {
+				t.Errorf("structures of sizes %v counted, and %v read", sizes, read)
 			}
 		}
 		return format, seen, err
@@ -319,22 +366,25 @@ func (iotestReader) Read([]byte) (int, error) { return 0, errAwkward }
 
 // qchemTask is a task's output as the script would leave it, with the
 // summary and the geometries given stored.
-func qchemTask(t *testing.T, store Blobs, summary any, geometries string) []byte {
+// qchemTask is a task's output: the summary, with the geometries given,
+// an XYZ file of them, as the atoms of the structures that left one, in
+// order.
+func qchemTask(t *testing.T, summary qchemSummary, geometries string) []byte {
 	t.Helper()
-	ctx := context.Background()
-	files := map[string]string{}
-	stored, err := store.Put(ctx, strings.NewReader(string(mustJSON(summary))))
-	if err != nil {
+	var blocks [][]string
+	if err := eachStructure(strings.NewReader(geometries), "xyz", func(_ string, atoms []string) error {
+		blocks = append(blocks, atoms)
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	files["summary.json"] = stored.String()
-	if geometries != "" {
-		stored, _ = store.Put(ctx, strings.NewReader(geometries))
-		files["structures.xyz"] = stored.String()
+	summary.Structures = slices.Clone(summary.Structures)
+	for i := range summary.Structures {
+		if s := &summary.Structures[i]; s.Geometry && len(blocks) > 0 {
+			s.Atoms, blocks = blocks[0], blocks[1:]
+		}
 	}
-	// Whatever else a worker says it left is never read.
-	files["../../etc/passwd"] = "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
-	return mustJSON(ContainerOutput{Files: files})
+	return mustJSON(summary)
 }
 
 const (
@@ -353,8 +403,8 @@ func TestQchemResultsArePutTogetherInOrder(t *testing.T) {
 	unfinished := s(3, "slow", "-0.99", false, true)
 	unfinished.Gap, unfinished.Dipole = "", ""
 	outputs := [][]byte{
-		qchemTask(t, store, qchemSummary{Method: "gfn2", Job: "opt", Structures: []qchemTaskStructure{s(0, "anti", "-13.665127724012", true, true), s(1, "gauche", "-13.664176232897", true, true)}}, h2Opt+h2Opt2),
-		qchemTask(t, store, qchemSummary{Method: "gfn2", Job: "opt", Structures: []qchemTaskStructure{failed, unfinished}}, h2OptBad),
+		qchemTask(t, qchemSummary{Method: "gfn2", Job: "opt", Structures: []qchemTaskStructure{s(0, "anti", "-13.665127724012", true, true), s(1, "gauche", "-13.664176232897", true, true)}}, h2Opt+h2Opt2),
+		qchemTask(t, qchemSummary{Method: "gfn2", Job: "opt", Structures: []qchemTaskStructure{failed, unfinished}}, h2OptBad),
 	}
 	raw, err := Qchem{}.Aggregate(ctx, store, outputs)
 	if err != nil {
@@ -395,7 +445,7 @@ func TestQchemResultsArePutTogetherInOrder(t *testing.T) {
 	hess := s(0, "water", "-5.07", true, false)
 	hess.FreeEnergy, hess.Frequencies = "-5.06", [][]string{{"-41.20", "0.5"}, {"-0.00", "0.0"}, {"1601.10", "75.3"}, {"3640.0", "2.1"}}
 	plain := s(1, "no modes", "-5.08", true, false)
-	raw, err = Qchem{}.Aggregate(ctx, store, [][]byte{qchemTask(t, store, qchemSummary{Method: "gfnff", Job: "hess", Structures: []qchemTaskStructure{hess, plain}}, "")})
+	raw, err = Qchem{}.Aggregate(ctx, store, [][]byte{qchemTask(t, qchemSummary{Method: "gfnff", Job: "hess", Structures: []qchemTaskStructure{hess, plain}}, "")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,17 +460,15 @@ func TestQchemResultsArePutTogetherInOrder(t *testing.T) {
 	}
 
 	// None converged: none is lowest, and none is measured from it.
-	raw, err = Qchem{}.Aggregate(ctx, store, [][]byte{qchemTask(t, store, qchemSummary{Method: "gfn1", Job: "sp", Structures: []qchemTaskStructure{s(0, "a", "-1", false, false)}}, "")})
+	raw, err = Qchem{}.Aggregate(ctx, store, [][]byte{qchemTask(t, qchemSummary{Method: "gfn1", Job: "sp", Structures: []qchemTaskStructure{s(0, "a", "-1", false, false)}}, "")})
 	result = QchemResult{}
 	json.Unmarshal(raw, &result)
 	if err != nil || result.Lowest != nil || result.LowestEnergy != nil || result.Results[0].Relative != nil || result.Converged != 0 || result.XYZ != "" {
 		t.Errorf("none converged: %s, %v", raw, err)
 	}
 
-	missing := "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
-	garbled, _ := store.Put(ctx, strings.NewReader("not json"))
 	one := func(job string, structure qchemTaskStructure, geometries string) [][]byte {
-		return [][]byte{qchemTask(t, store, qchemSummary{Method: "gfn2", Job: job, Structures: []qchemTaskStructure{structure}}, geometries)}
+		return [][]byte{qchemTask(t, qchemSummary{Method: "gfn2", Job: job, Structures: []qchemTaskStructure{structure}}, geometries)}
 	}
 	with := func(change func(*qchemTaskStructure)) qchemTaskStructure {
 		structure := s(0, "x", "-1", true, false)
@@ -433,45 +481,36 @@ func TestQchemResultsArePutTogetherInOrder(t *testing.T) {
 		blobs   Blobs
 		want    string
 	}{
-		"an output that is not one":         {[][]byte{good[0], []byte("not json")}, store, "task 1 output"},
-		"a task that left no summary":       {[][]byte{mustJSON(ContainerOutput{})}, store, "task 0's summary: the task left none"},
-		"a summary that is not stored":      {[][]byte{mustJSON(ContainerOutput{Files: map[string]string{"summary.json": missing}})}, store, "task 0's summary: "},
-		"a summary that is garbled":         {[][]byte{mustJSON(ContainerOutput{Files: map[string]string{"summary.json": garbled.String()}})}, store, "task 0's summary: invalid character"},
-		"a method that is none":             {[][]byte{qchemTask(t, store, qchemSummary{Method: "b3lyp", Job: "sp"}, "")}, store, `task 0 says it ran "b3lyp" "sp", which is no method and job of xtb's`},
-		"a job that is none":                {[][]byte{qchemTask(t, store, qchemSummary{Method: "gfn2", Job: "md"}, "")}, store, `task 0 says it ran "gfn2" "md"`},
-		"tasks that disagree":               {append(one("sp", s(0, "x", "-1", true, false), ""), one("opt", s(1, "y", "-1", true, false), "")...), store, "task 1 ran gfn2 opt, and task 0 gfn2 sp"},
-		"a task with no structures":         {[][]byte{qchemTask(t, store, qchemSummary{Method: "gfn2", Job: "sp"}, "")}, store, "task 0 computed no structures"},
-		"a structure out of turn":           {one("sp", s(1, "x", "-1", true, false), ""), store, "task 0 gives structure 1 where structure 0 was due"},
-		"a structure given twice":           {append(slices.Clone(good), good...), store, "task 1 gives structure 0 where structure 1 was due"},
-		"an energy that is not a number":    {one("sp", with(func(s *qchemTaskStructure) { s.Energy = "NaN" }), ""), store, `task 0, structure 0: the energy "NaN" is not a number`},
-		"a gap that is not a number":        {one("sp", with(func(s *qchemTaskStructure) { s.Gap = "1e999" }), ""), store, `the gap "1e999" is not a number`},
-		"a free energy that is none":        {one("sp", with(func(s *qchemTaskStructure) { s.FreeEnergy = "0x10" }), ""), store, `the free energy "0x10" is not a number`},
-		"a dipole of two numbers":           {one("sp", with(func(s *qchemTaskStructure) { s.Dipole = "0.1 0.2" }), ""), store, `the dipole "0.1 0.2" is not three numbers`},
-		"a dipole of words":                 {one("sp", with(func(s *qchemTaskStructure) { s.Dipole = "0.1 0.2 north" }), ""), store, `the dipole "0.1 0.2 north" is not three numbers`},
-		"converged with no energy":          {one("sp", with(func(s *qchemTaskStructure) { s.Energy = "" }), ""), store, "it is said to have converged, with no energy"},
-		"a frequency with no intensity":     {one("hess", with(func(s *qchemTaskStructure) { s.Frequencies = [][]string{{"100.0"}} }), ""), store, `the frequency ["100.0"] is not a wave number and an intensity`},
-		"a frequency that is a word":        {one("ohess", with(func(s *qchemTaskStructure) { s.Frequencies = [][]string{{"100.0", "lots"}} }), "\n"), store, "is not a wave number and an intensity"},
-		"a geometry of a single point":      {one("sp", with(func(s *qchemTaskStructure) { s.Geometry = true }), ""), store, "task 0, structure 0: a geometry is said to be left that is not there"},
-		"a geometry that is not there":      {one("opt", with(func(s *qchemTaskStructure) { s.Geometry = true }), h2Opt[:0]+"\n"), store, "a geometry is said to be left that is not there"},
-		"geometries that were not stored":   {one("opt", with(func(s *qchemTaskStructure) { s.Geometry = true }), ""), store, "task 0's geometries: the task left none"},
-		"geometries more than structures":   {one("opt", s(0, "x", "-1", true, true), h2Opt+h2Opt), store, "task 0 left 1 geometries more than its structures"},
-		"geometries that are garbled":       {one("opt", s(0, "x", "-1", true, true), "two\n"), store, `task 0's geometries: line 1: "two" is not a number of atoms`},
-		"geometries that cannot be read":    {good, &awkward{Blobs: store, badReads: true}, "task 0's summary: the store is full"},
-		"a geometry that cannot be stored":  {good, &awkward{Blobs: store, failPut: 1}, "store structure 0's geometry: the store is full"},
-		"frequencies that cannot be stored": {[][]byte{qchemTask(t, store, qchemSummary{Method: "gfn2", Job: "hess", Structures: []qchemTaskStructure{hess}}, "")}, &awkward{Blobs: store, failPut: 1}, "store structure 0's frequencies: the store is full"},
-		"a table that cannot be stored":     {good, &awkward{Blobs: store, failPut: 2}, "store the table of results: the store is full"},
-		"geometries that cannot be stored":  {good, &awkward{Blobs: store, failPut: 3}, "store the optimised geometries: the store is full"},
+		"an output that is not one":          {[][]byte{good[0], []byte("not json")}, store, "task 1 output"},
+		"an output that is empty":            {[][]byte{[]byte("{}")}, store, `task 0 says it ran "" ""`},
+		"a method that is none":              {[][]byte{qchemTask(t, qchemSummary{Method: "b3lyp", Job: "sp"}, "")}, store, `task 0 says it ran "b3lyp" "sp", which is no method and job of xtb's`},
+		"a job that is none":                 {[][]byte{qchemTask(t, qchemSummary{Method: "gfn2", Job: "md"}, "")}, store, `task 0 says it ran "gfn2" "md"`},
+		"tasks that disagree":                {append(one("sp", s(0, "x", "-1", true, false), ""), one("opt", s(1, "y", "-1", true, false), "")...), store, "task 1 ran gfn2 opt, and task 0 gfn2 sp"},
+		"a task with no structures":          {[][]byte{qchemTask(t, qchemSummary{Method: "gfn2", Job: "sp"}, "")}, store, "task 0 computed no structures"},
+		"a structure out of turn":            {one("sp", s(1, "x", "-1", true, false), ""), store, "task 0 gives structure 1 where structure 0 was due"},
+		"a structure given twice":            {append(slices.Clone(good), good...), store, "task 1 gives structure 0 where structure 1 was due"},
+		"an energy that is not a number":     {one("sp", with(func(s *qchemTaskStructure) { s.Energy = "NaN" }), ""), store, `task 0, structure 0: the energy "NaN" is not a number`},
+		"a gap that is not a number":         {one("sp", with(func(s *qchemTaskStructure) { s.Gap = "1e999" }), ""), store, `the gap "1e999" is not a number`},
+		"a free energy that is none":         {one("sp", with(func(s *qchemTaskStructure) { s.FreeEnergy = "0x10" }), ""), store, `the free energy "0x10" is not a number`},
+		"a dipole of two numbers":            {one("sp", with(func(s *qchemTaskStructure) { s.Dipole = "0.1 0.2" }), ""), store, `the dipole "0.1 0.2" is not three numbers`},
+		"a dipole of words":                  {one("sp", with(func(s *qchemTaskStructure) { s.Dipole = "0.1 0.2 north" }), ""), store, `the dipole "0.1 0.2 north" is not three numbers`},
+		"converged with no energy":           {one("sp", with(func(s *qchemTaskStructure) { s.Energy = "" }), ""), store, "it is said to have converged, with no energy"},
+		"a frequency with no intensity":      {one("hess", with(func(s *qchemTaskStructure) { s.Frequencies = [][]string{{"100.0"}} }), ""), store, `the frequency ["100.0"] is not a wave number and an intensity`},
+		"a frequency that is a word":         {one("ohess", with(func(s *qchemTaskStructure) { s.Frequencies = [][]string{{"100.0", "lots"}} }), "\n"), store, "is not a wave number and an intensity"},
+		"a geometry of a single point":       {one("sp", s(0, "x", "-1", true, true), h2Opt), store, "task 0, structure 0: a geometry is said to be left that is not there, or one is there that is not said to be"},
+		"a geometry that is not there":       {one("opt", s(0, "x", "-1", true, true), ""), store, "a geometry is said to be left that is not there"},
+		"a geometry not said to be there":    {one("opt", with(func(s *qchemTaskStructure) { s.Atoms = []string{"H 0 0 0"} }), ""), store, "or one is there that is not said to be"},
+		"a geometry with a word for an atom": {one("opt", with(func(s *qchemTaskStructure) { s.Geometry, s.Atoms = true, []string{"H 0 0 0", "hydrogen"} }), ""), store, `task 0, structure 0: "hydrogen" is not an atom of a geometry`},
+		"a geometry with Inf in it":          {one("opt", with(func(s *qchemTaskStructure) { s.Geometry, s.Atoms = true, []string{"H 0 Inf 0"} }), ""), store, `"H 0 Inf 0" is not an atom`},
+		"a geometry with a fifth field":      {one("opt", with(func(s *qchemTaskStructure) { s.Geometry, s.Atoms = true, []string{"H 0 0 0 0"} }), ""), store, `"H 0 0 0 0" is not an atom`},
+		"a geometry that cannot be stored":   {good, &awkward{Blobs: store, failPut: 1}, "store structure 0's geometry: the store is full"},
+		"frequencies that cannot be stored":  {[][]byte{qchemTask(t, qchemSummary{Method: "gfn2", Job: "hess", Structures: []qchemTaskStructure{hess}}, "")}, &awkward{Blobs: store, failPut: 1}, "store structure 0's frequencies: the store is full"},
+		"a table that cannot be stored":      {good, &awkward{Blobs: store, failPut: 2}, "store the table of results: the store is full"},
+		"geometries that cannot be stored":   {good, &awkward{Blobs: store, failPut: 3}, "store the optimised geometries: the store is full"},
 	} {
 		if _, err := (Qchem{}).Aggregate(ctx, tt.blobs, tt.outputs); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: %v, want an error containing %q", name, err, tt.want)
 		}
-	}
-	// A geometries file that is not stored.
-	var out ContainerOutput
-	json.Unmarshal(good[0], &out)
-	out.Files["structures.xyz"] = missing
-	if _, err := (Qchem{}).Aggregate(ctx, store, [][]byte{mustJSON(out)}); err == nil || !strings.Contains(err.Error(), "task 0's geometries: ") {
-		t.Errorf("geometries that are not stored: %v", err)
 	}
 }
 
@@ -547,8 +586,8 @@ func TestARealConformerSetIsOptimised(t *testing.T) {
 	if strings.Count(geometries, "\n14\n")+1 != 3 || !strings.HasPrefix(geometries, "14\nbutane anti | energy -13.6") {
 		t.Errorf("the geometries:\n%s", geometries)
 	}
-	if _, n, err := countStructures(strings.NewReader(geometries)); n != 3 || err != nil {
-		t.Errorf("the geometries are %d structures of XYZ: %v", n, err)
+	if _, sizes, err := countStructures(strings.NewReader(geometries)); len(sizes) != 3 || err != nil {
+		t.Errorf("the geometries are %d structures of XYZ: %v", len(sizes), err)
 	}
 	rows, _ := csv.NewReader(strings.NewReader(readBlob(t, store, result.CSV))).ReadAll()
 	if len(rows) != 4 || rows[1][1] != "butane anti" || rows[1][8] != "true" {
@@ -606,5 +645,199 @@ func TestARealConformerSetIsOptimised(t *testing.T) {
 	}
 	if modes := strings.Count(readBlob(t, store, solvated.Results[0].Frequencies), "\n") - 1; modes != 3*14-6 {
 		t.Errorf("butane has %d modes", modes)
+	}
+}
+
+// A job is shared out in runs small enough that no task says more of its
+// run than qchemMostOutput, and in as many runs as were asked for where
+// they are small enough.
+func TestQchemTasksAreSizedSoWhatTheySayFits(t *testing.T) {
+	sizes := func(n, atoms int) []qchemSize {
+		out := make([]qchemSize, n)
+		for i := range out {
+			out[i] = qchemSize{atoms: atoms, title: 10}
+		}
+		return out
+	}
+	fits := func(sizes []qchemSize, job string, tasks int) bool {
+		for i := range tasks {
+			said := 0
+			for _, s := range sizes[len(sizes)*i/tasks : len(sizes)*(i+1)/tasks] {
+				said += s.output(job)
+			}
+			if said > qchemMostOutput {
+				return false
+			}
+		}
+		return true
+	}
+	mixed := append(sizes(5000, 12), qchemSize{atoms: 15_000, title: 10})
+	mixed = append(mixed, sizes(5000, 12)...)
+	for _, tt := range []struct {
+		name  string
+		sizes []qchemSize
+		job   string
+		asked int
+		want  int
+	}{
+		{"small molecules, as asked", sizes(10, 14), "opt", 2, 2},
+		{"small molecules, one task", sizes(500, 14), "ohess", 1, 1},
+		{"more small molecules than one task can say of", sizes(1000, 14), "ohess", 1, 2},
+		{"a single point says no geometry", sizes(4, 15_000), "sp", 1, 1},
+		{"two large optimisations a task", sizes(4, 15_000), "opt", 1, 2},
+		{"one large hessian a task", sizes(4, 15_000), "ohess", 1, 4},
+		{"more asked for than must be", sizes(4, 15_000), "ohess", 4, 4},
+	} {
+		got, err := qchemTasks(tt.sizes, tt.job, tt.asked)
+		if err != nil || got != tt.want || !fits(tt.sizes, tt.job, got) {
+			t.Errorf("%s: %d tasks, %v, want %d", tt.name, got, err, tt.want)
+		}
+	}
+	if got, err := qchemTasks(mixed, "opt", 1); err != nil || !fits(mixed, "opt", got) || fits(mixed, "opt", got-1) {
+		t.Errorf("a large molecule among small ones: %d tasks, %v", got, err)
+	}
+	for _, tt := range []struct {
+		name  string
+		sizes []qchemSize
+		job   string
+		want  string
+	}{
+		{"a hessian too large to say", sizes(1, qchemMostAtoms), "ohess", "structure 0, of 20000 atoms, is more than a task can say of in a ohess job"},
+		{"a title too long to say", []qchemSize{{atoms: 3, title: 600_000}}, "sp", "structure 0, of 3 atoms, is more than a task can say of"},
+		{"more tasks than a job may have", sizes(MaxTasks+1, 20_000), "opt", "need more than the 10000 tasks a job may have"},
+	} {
+		if _, err := qchemTasks(tt.sizes, tt.job, 1); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: %v, want an error containing %q", tt.name, err, tt.want)
+		}
+	}
+
+	// Split shares a file out so.
+	store := storage.NewMemory()
+	ctx := context.Background()
+	var big strings.Builder
+	for range 4 {
+		big.WriteString("15000\nlarge\n" + strings.Repeat("C 0.0 0.0 0.0\n", 15_000))
+	}
+	input, _ := store.Put(ctx, strings.NewReader(big.String()))
+	payloads, err := Qchem{}.Split(ctx, store, []byte(`{"input":"`+input.String()+`","job":"ohess","tasks":1}`), 1)
+	if err != nil || len(payloads) != 4 {
+		t.Errorf("four large hessians asked for in one task: %d tasks, %v", len(payloads), err)
+	}
+	input, _ = store.Put(ctx, strings.NewReader("20000\nhuge\n"+strings.Repeat("C 0.0 0.0 0.0\n", 20_000)))
+	if _, err := (Qchem{}).Split(ctx, store, []byte(`{"input":"`+input.String()+`","job":"ohess"}`), 1); err == nil || !strings.Contains(err.Error(), "qchem input: structure 0, of 20000 atoms") {
+		t.Errorf("a hessian too large to say: %v", err)
+	}
+}
+
+// Two runs of a task are the same result where they agree to within the
+// tolerances, as honest runs on different processors do, and not where
+// they differ by more, whichever is given first.
+func TestQchemOutputsAreComparedWithinTolerances(t *testing.T) {
+	base := func() qchemSummary {
+		return qchemSummary{Method: "gfn2", Job: "ohess", Structures: []qchemTaskStructure{{
+			Index: 0, Title: "water", Energy: "-5.070544440612", Gap: "14.464530812342", FreeEnergy: "-5.053410931218", Dipole: "-0.000 0.000 0.857",
+			Frequencies: [][]string{{"1539.43", "106.40141"}, {"3644.31", "4.24533"}, {"3651.85", "14.86032"}},
+			Converged:   true, Geometry: true,
+			Atoms: []string{"O 0.00000000000000 0.00000000000000 0.39058584476042", "H 0.00000000000000 0.78389616530418 -0.19529292238021", "H 0.00000000000000 -0.78389616530418 -0.19529292238021"},
+		}, {
+			Index: 1, Title: "clash", Status: 1,
+		}}}
+	}
+	changed := func(change func(*qchemTaskStructure)) []byte {
+		s := base()
+		change(&s.Structures[0])
+		return mustJSON(s)
+	}
+	// The geometry turned a quarter turn about z and moved, as a whole.
+	turned := func(s *qchemTaskStructure) {
+		for i, atom := range s.Atoms {
+			f := strings.Fields(atom)
+			x, _ := strconv.ParseFloat(f[1], 64)
+			y, _ := strconv.ParseFloat(f[2], 64)
+			z, _ := strconv.ParseFloat(f[3], 64)
+			s.Atoms[i] = fmt.Sprintf("%s %.14f %.14f %.14f", f[0], -y+3, x-1, z+0.5)
+		}
+	}
+	original := mustJSON(base())
+	for _, tt := range []struct {
+		name  string
+		other []byte
+		want  string
+	}{
+		{"the same bytes", original, ""},
+		{"digits apart, as processors differ", changed(func(s *qchemTaskStructure) {
+			s.Energy, s.Gap, s.FreeEnergy, s.Dipole = "-5.070544440613", "14.464530862342", "-5.053410931118", "0.000 0.000 0.857"
+			s.Frequencies[1][1] = "4.24535"
+			s.Atoms[1] = "H 0.00000000000000 0.78389616730418 -0.19529292238021"
+		}), ""},
+		{"turned and moved as a whole", changed(turned), ""},
+		{"near-degenerate modes in the other order", changed(func(s *qchemTaskStructure) {
+			s.Frequencies[1], s.Frequencies[2] = s.Frequencies[2], s.Frequencies[1]
+		}), ""},
+		{"another energy", changed(func(s *qchemTaskStructure) { s.Energy = "-5.070546440612" }), "structure 0: the energy is -5.070544440612 in one and -5.070546440612 in the other"},
+		{"another free energy", changed(func(s *qchemTaskStructure) { s.FreeEnergy = "-5.0534" }), "the free energy is"},
+		{"no free energy", changed(func(s *qchemTaskStructure) { s.FreeEnergy = "" }), "one gave the free energy and the other none"},
+		{"another gap", changed(func(s *qchemTaskStructure) { s.Gap = "14.466" }), "the gap is"},
+		{"another dipole", changed(func(s *qchemTaskStructure) { s.Dipole = "-0.000 0.000 0.859" }), "the dipole is"},
+		{"no dipole", changed(func(s *qchemTaskStructure) { s.Dipole = "" }), "one gave a dipole and the other none"},
+		{"a dipole of words", changed(func(s *qchemTaskStructure) { s.Dipole = "-0.000 0.000 NaN" }), `the dipole "0.857" or "NaN" is not a number`},
+		{"another frequency", changed(func(s *qchemTaskStructure) { s.Frequencies[0][0] = "1541.43" }), "mode 1 is 1539.43 cm-1 at 106.40141 km/mol in one and 1541.43 cm-1"},
+		{"another intensity", changed(func(s *qchemTaskStructure) { s.Frequencies[0][1] = "110.0" }), "mode 1 is"},
+		{"a frequency fewer", changed(func(s *qchemTaskStructure) { s.Frequencies = s.Frequencies[:2] }), "one gave 3 frequencies, the other 2"},
+		{"a frequency of words", changed(func(s *qchemTaskStructure) { s.Frequencies[0][1] = "lots" }), "a frequency is not a wave number and an intensity"},
+		{"an atom moved", changed(func(s *qchemTaskStructure) { s.Atoms[1] = "H 0.00000000000000 0.79389616530418 -0.19529292238021" }), "the geometries are 0.00"},
+		{"another element", changed(func(s *qchemTaskStructure) { s.Atoms[0] = strings.Replace(s.Atoms[0], "O", "S", 1) }), "atom 1 is"},
+		{"a coordinate of words", changed(func(s *qchemTaskStructure) { s.Atoms[2] = "H 0 Inf 0" }), "atom 3 is"},
+		{"an atom fewer", changed(func(s *qchemTaskStructure) { s.Atoms = s.Atoms[:2] }), "one gave a geometry of 3 atoms, the other of 2"},
+		{"not converged", changed(func(s *qchemTaskStructure) { s.Converged = false }), "one ended with status 0, converged false, the other with status 0, converged true"},
+		{"another title", changed(func(s *qchemTaskStructure) { s.Title = "ice" }), "they are not the same structure"},
+		{"another job", mustJSON(qchemSummary{Method: "gfn2", Job: "opt", Structures: base().Structures}), "one ran gfn2 ohess, the other gfn2 opt"},
+		{"a structure fewer", mustJSON(qchemSummary{Method: "gfn2", Job: "ohess", Structures: base().Structures[:1]}), "one computed 2 structures, the other 1"},
+		{"not an output", []byte("not json"), "an output is not a qchem task's"},
+	} {
+		same, why := Qchem{}.Compare(original, tt.other)
+		back, whyBack := Qchem{}.Compare(tt.other, original)
+		if same != back || why != whyBack {
+			t.Errorf("%s: compared one way %t %q, the other %t %q", tt.name, same, why, back, whyBack)
+		}
+		if same != (tt.want == "") || !strings.Contains(why, tt.want) {
+			t.Errorf("%s: %t, %q, want %q", tt.name, same, why, tt.want)
+		}
+	}
+	if !Checkable(Qchem{}) {
+		t.Error("qchem's tasks cannot be checked")
+	}
+}
+
+// Laid over each other, a geometry and the same turned and moved are no
+// distance apart, and one grown about its middle is as far as it grew,
+// since no turning brings it closer.
+func TestGeometriesAreLaidOverEachOtherBeforeTheyAreMeasured(t *testing.T) {
+	p := [][3]float64{{0, 0, 0}, {1.5, 0.2, -0.3}, {2.1, 1.4, 0.4}, {3.6, 1.3, 0.1}, {-0.5, -0.9, 0.8}}
+	q := make([][3]float64, len(p))
+	c, s := math.Cos(1.1), math.Sin(1.1)
+	for i, a := range p {
+		// A turn about z, then one about x, and a move.
+		x, y, z := c*a[0]-s*a[1], s*a[0]+c*a[1], a[2]
+		q[i] = [3]float64{x + 4, c*y - s*z - 2, s*y + c*z + 7}
+	}
+	if d := alignedRMSD(p, q); d > 1e-9 {
+		t.Errorf("turned and moved, the geometry is %g apart", d)
+	}
+	var middle [3]float64
+	for _, a := range p {
+		for k := range 3 {
+			middle[k] += a[k] / float64(len(p))
+		}
+	}
+	var spread float64
+	for i, a := range p {
+		for k := range 3 {
+			q[i][k] = middle[k] + 1.01*(a[k]-middle[k])
+			spread += (a[k] - middle[k]) * (a[k] - middle[k])
+		}
+	}
+	if d, want := alignedRMSD(p, q), 0.01*math.Sqrt(spread/float64(len(p))); math.Abs(d-want) > 1e-9 {
+		t.Errorf("grown a hundredth, the geometry is %g apart, want %g", d, want)
 	}
 }
