@@ -2,15 +2,17 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { waitForConnectedSnapshot } from '../src/shared/wait-for-connected-snapshot.ts'
 
-function snapshot(status) { return { status } }
+type Snapshot = { status: string }
 
-function makeApi({ initial = snapshot('disconnected'), subscribeImmediately = false } = {}) {
-  let listener
+function snapshot(status: string): Snapshot { return { status } }
+
+function makeApi({ initial = snapshot('disconnected'), subscribeImmediately = false }: { initial?: Snapshot, subscribeImmediately?: boolean } = {}) {
+  let listener: ((snapshot: Snapshot) => void) | undefined
   let removed = 0
   return {
     api: {
       getSnapshot: async () => initial,
-      onSnapshot(callback) {
+      onSnapshot(callback: (snapshot: Snapshot) => void) {
         listener = callback
         if (subscribeImmediately) callback(snapshot('connected'))
         return () => { removed++ }

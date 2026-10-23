@@ -87,4 +87,4 @@ These are UI lifecycle, retry, or feedback waits; none is a steady-state node sn
 | `apps/sisyphus/src/renderer/src/pages/OperationsPage.tsx` | Releasing a generated download URL | Resource cleanup | 1 s | Revokes a temporary browser object URL after download starts. |
 | `apps/sisyphus/src/main/daemon-process.ts` | Local API readiness and graceful daemon shutdown | Readiness / deadline | 750 ms socket probe; bounded shutdown timeout | These bound process lifecycle calls; they do not refresh application state. |
 
-Stream reconnection and stale-generation behavior are covered by `apps/sisyphus/dev/node-state-session.test.mjs` and `apps/sisyphus/dev/browser-node-state-session.test.mjs`; retry bounds are covered by `apps/sisyphus/dev/reconnect-backoff.test.mjs`.
+Stream reconnection and stale-generation behavior are covered by `apps/sisyphus/dev/node-state-session.test.ts` and `apps/sisyphus/dev/browser-node-state-session.test.ts`; retry bounds are covered by `apps/sisyphus/dev/reconnect-backoff.test.ts`.

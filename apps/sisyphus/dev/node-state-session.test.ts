@@ -3,30 +3,34 @@ import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
 import { startNodeStateSession } from '../src/main/node-state-session.ts'
 
+type Info = { peerId: string }
+type InfoCallback = (error: Error | null, info?: Info) => void
+
 class FakeStream extends EventEmitter {
   cancelled = 0
   cancel() { this.cancelled++ }
-  data(value) { this.emit('data', value) }
-  fail(error) { this.emit('error', error) }
+  data(value: unknown) { this.emit('data', value) }
+  fail(error: Error) { this.emit('error', error) }
   end() { this.emit('end') }
 }
 
-function clientHarness({ infoError = null, info = { peerId: 'node' } } = {}) {
-  const calls = []
+function clientHarness({ infoError = null, info = { peerId: 'node' } }: { infoError?: Error | null, info?: Info } = {}) {
+  const calls: string[] = []
   const states = new FakeStream()
   const peers = new FakeStream()
   const client = {
-    getNodeInfo(_request, _options, callback) { calls.push('info'); callback(infoError, info) },
+    getNodeInfo(_request: object, _options: { deadline: number }, callback: InfoCallback) { calls.push('info'); callback(infoError, info) },
     watchNodeState() { calls.push('state'); return states },
     watchPeers() { calls.push('peers'); return peers },
   }
-  return { client, calls, states, peers }
+  const harness: { client: typeof client, calls: string[], states: FakeStream, peers: FakeStream, infoCallback?: InfoCallback } = { client, calls, states, peers }
+  return harness
 }
 
 const unimplemented = Object.assign(new Error('stream not supported'), { code: 12 })
 
 test('fetches a fresh baseline before opening the live stream and forwards revisions', () => {
-  const h = clientHarness(), seen = [], failures = []
+  const h = clientHarness(), seen: unknown[] = [], failures: string[] = []
   const stop = startNodeStateSession({
     client: h.client, isCurrent: () => true, unimplementedCode: 12,
     onReady: (info) => seen.push(['baseline', info]),
@@ -46,7 +50,7 @@ test('fetches a fresh baseline before opening the live stream and forwards revis
 })
 
 test('falls back to the peer stream only when the combined stream is unimplemented', () => {
-  const h = clientHarness(), seen = [], failures = []
+  const h = clientHarness(), seen: unknown[] = [], failures: string[] = []
   const stop = startNodeStateSession({
     client: h.client, isCurrent: () => true, unimplementedCode: 12,
     onReady: (info) => seen.push(['baseline', info]),
@@ -67,10 +71,10 @@ test('falls back to the peer stream only when the combined stream is unimplement
 
 test('stream failure and end request one reconnect, but obsolete generations are ignored', () => {
   for (const terminate of [
-    (stream) => stream.fail(new Error('network lost')),
-    (stream) => stream.end(),
+    (stream: FakeStream) => stream.fail(new Error('network lost')),
+    (stream: FakeStream) => stream.end(),
   ]) {
-    const h = clientHarness(), failures = []
+    const h = clientHarness(), failures: string[] = []
     let generation = true
     const stop = startNodeStateSession({
       client: h.client, isCurrent: () => generation, unimplementedCode: 12,
@@ -87,7 +91,7 @@ test('stream failure and end request one reconnect, but obsolete generations are
 })
 
 test('cancellation before the initial response suppresses setup and callbacks', () => {
-  const h = clientHarness(), seen = []
+  const h = clientHarness(), seen: unknown[] = []
   let current = true
   h.client.getNodeInfo = (_request, _options, callback) => { h.calls.push('info'); h.infoCallback = callback }
   const stop = startNodeStateSession({
@@ -96,14 +100,14 @@ test('cancellation before the initial response suppresses setup and callbacks', 
   })
   current = false
   stop()
-  h.infoCallback(null, { peerId: 'late' })
+  h.infoCallback!(null, { peerId: 'late' })
   assert.deepEqual(h.calls, ['info'])
   assert.deepEqual(seen, [])
 })
 
 test('initial RPC failure does not open a state stream', () => {
   const error = new Error('offline')
-  const h = clientHarness({ infoError: error }), failures = []
+  const h = clientHarness({ infoError: error }), failures: Error[] = []
   startNodeStateSession({
     client: h.client, isCurrent: () => true, unimplementedCode: 12,
     onReady() {}, onUpdate() {}, onError: (value) => failures.push(value),
