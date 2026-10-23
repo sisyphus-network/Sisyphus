@@ -792,6 +792,7 @@ func TestQchemOutputsAreComparedWithinTolerances(t *testing.T) {
 		{"another energy", changed(func(s *qchemTaskStructure) { s.Energy = "-5.070546440612" }), "structure 0: the energy is -5.070544440612 in one and -5.070546440612 in the other"},
 		{"another free energy", changed(func(s *qchemTaskStructure) { s.FreeEnergy = "-5.0534" }), "the free energy is"},
 		{"no free energy", changed(func(s *qchemTaskStructure) { s.FreeEnergy = "" }), "one gave the free energy and the other none"},
+		{"a free energy of words", changed(func(s *qchemTaskStructure) { s.FreeEnergy = "lots" }), "the free energy"},
 		{"another gap", changed(func(s *qchemTaskStructure) { s.Gap = "14.466" }), "the gap is"},
 		{"another dipole", changed(func(s *qchemTaskStructure) { s.Dipole = "-0.000 0.000 0.859" }), "the dipole is"},
 		{"no dipole", changed(func(s *qchemTaskStructure) { s.Dipole = "" }), "one gave a dipole and the other none"},
@@ -821,6 +822,10 @@ func TestQchemOutputsAreComparedWithinTolerances(t *testing.T) {
 	}
 	if !Checkable(Qchem{}) {
 		t.Error("qchem's tasks cannot be checked")
+	}
+	// Dipoles that are not three numbers on either side are not compared.
+	if why := compareDipoles("0.1 0.2", "0.1 0.2", [3][3]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}); !strings.Contains(why, "not three numbers") {
+		t.Errorf("two dipoles of two numbers: %q", why)
 	}
 }
 
