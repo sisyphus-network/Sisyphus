@@ -183,10 +183,14 @@ type forecastTask struct {
 
 // forecastPart is a task output.
 type forecastPart struct {
-	Points     int               `json:"points"`
-	Horizon    int               `json:"horizon"`
-	Folds      int               `json:"folds"`
-	Last       string            `json:"last"`
+	Points  int    `json:"points"`
+	Horizon int    `json:"horizon"`
+	Folds   int    `json:"folds"`
+	Last    string `json:"last"`
+	// Scale is the series' largest value by magnitude, given only when
+	// the task has a Chronos-Bolt candidate: Compare measures how far
+	// apart two runs of one may be against it.
+	Scale      float64           `json:"scale,omitempty"`
 	Candidates []forecastOutcome `json:"candidates"`
 }
 
@@ -374,8 +378,8 @@ func (f Forecast) Split(ctx context.Context, blobs Blobs, params []byte, parts i
 	if err != nil {
 		return nil, fmt.Errorf("forecast params: %w", err)
 	}
-	if wantsChronos(kinds) && !f.Containers {
-		return nil, errors.New("forecast params: the Chronos-Bolt models run in containers, and this node does not run container work")
+	if why := f.cannotRunChronos(); wantsChronos(kinds) && why != "" {
+		return nil, errors.New("forecast params: the Chronos-Bolt models run in containers, and " + why)
 	}
 	values, _, err := readSeries(ctx, blobs, p.Input)
 	if err != nil {
@@ -419,6 +423,9 @@ func (f Forecast) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]b
 	report := Report(ctx)
 	report.Log(fmt.Sprintf("backtesting %d candidates on %d points", len(task.Models), len(values)))
 	part := forecastPart{Points: len(values), Horizon: task.Horizon, Folds: task.Folds, Last: last}
+	if slices.ContainsFunc(task.Models, func(m forecastModel) bool { return m.Kind == "chronos" }) {
+		part.Scale = seriesScale(values)
+	}
 	runners, err := f.runners(task.Models)
 	if err != nil {
 		return nil, err
@@ -429,6 +436,15 @@ func (f Forecast) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]b
 	}
 	part.Candidates = outcomes[0]
 	return mustJSON(part), nil
+}
+
+// seriesScale is the largest of a series' values by magnitude.
+func seriesScale(values []float64) float64 {
+	scale := 0.0
+	for _, v := range values {
+		scale = max(scale, math.Abs(v))
+	}
+	return scale
 }
 
 // backtest fits the model to the whole series and forecasts from there,

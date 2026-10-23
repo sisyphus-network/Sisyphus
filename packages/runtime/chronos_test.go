@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -219,40 +221,23 @@ func TestAChronosCandidateIsAModelWithOnlyAVariant(t *testing.T) {
 	}
 }
 
-func TestChronosImageAnswersOfTheWrongShapeFailTheTask(t *testing.T) {
+// Whatever goes wrong in the image, as when it runs out of memory or
+// answers in the wrong shape, is its candidates' error: the candidates
+// written in Go are still scored, and the task fails only if it was given
+// up as a whole.
+func TestChronosImageFailuresAreItsCandidatesErrors(t *testing.T) {
 	store := storage.NewMemory()
 	series, _ := store.Put(ctx, strings.NewReader(seasonalSeries(48)))
 	payload := mustJSON(forecastTask{Input: series.String(), Horizon: 4, Folds: 2, Models: []forecastModel{{Kind: "naive"}, {Kind: "chronos", Variant: "tiny"}}})
-	for _, tt := range []struct {
-		name   string
-		answer func([]map[string]any) any
-		why    string
-	}{
-		{"none left", func([]map[string]any) any { return nil }, "left no answers"},
-		{"not JSON", func([]map[string]any) any { return json.RawMessage(`"x"`) }, "the answers"},
-		{"too few", func([]map[string]any) any { return []any{} }, "answered 0 of 1"},
-	} {
-		var asked chronosAsked
-		engine := pretendChronos(t, &asked, tt.answer)
-		_, err := (Forecast{Containers: true, Engine: engine.engine}).Execute(ctx, store, payload)
-		if err == nil || !strings.Contains(err.Error(), tt.why) {
-			t.Errorf("%s: %v, want %q", tt.name, err, tt.why)
-		}
+	outputs := map[string][]byte{}
+	answered := func(name string, engine func(context.Context, []string, io.Writer, io.Writer) (int, error)) ([]forecastOutcome, []string, error) {
+		var log heard
+		raw, err := (Forecast{Containers: true, Engine: engine}).Execute(WithReporter(ctx, &log), store, payload)
+		outputs[name] = raw
+		var part forecastPart
+		json.Unmarshal(raw, &part)
+		return part.Candidates, log.lines, err
 	}
-	// A forecast of the wrong length is the candidate's error, not the
-	// task's, as from any runner.
-	var asked chronosAsked
-	short := pretendChronos(t, &asked, func(a []map[string]any) any {
-		a[0]["forecasts"] = [][]float64{{1}, {1}, {1}}
-		return a
-	})
-	raw, err := (Forecast{Containers: true, Engine: short.engine}).Execute(ctx, store, payload)
-	var part forecastPart
-	json.Unmarshal(raw, &part)
-	if err != nil || len(part.Candidates) != 2 || !strings.Contains(part.Candidates[1].Error, "1 steps where 4") || part.Candidates[0].Error != "" {
-		t.Errorf("a short forecast: %v %+v", err, part.Candidates)
-	}
-	// An image that fails fails the task.
 	broken := &pretend{do: func(args []string, stdout, stderr io.Writer) (int, error) {
 		if args[0] == "image" {
 			return 0, nil
@@ -260,8 +245,53 @@ func TestChronosImageAnswersOfTheWrongShapeFailTheTask(t *testing.T) {
 		io.WriteString(stderr, "Killed\n")
 		return 137, nil
 	}}
-	if _, err := (Forecast{Containers: true, Engine: broken.engine}).Execute(ctx, store, payload); err == nil || !strings.HasPrefix(err.Error(), "chronos: ") {
-		t.Errorf("an image that fails: %v", err)
+	failing := &pretend{do: func(args []string, stdout, stderr io.Writer) (int, error) {
+		io.WriteString(stderr, "no space left on device\n")
+		return 1, nil
+	}}
+	var asked chronosAsked
+	for _, tt := range []struct {
+		name   string
+		engine func(context.Context, []string, io.Writer, io.Writer) (int, error)
+		why    string
+	}{
+		{"none left", pretendChronos(t, &asked, func([]map[string]any) any { return nil }).engine, "left no answers"},
+		{"not JSON", pretendChronos(t, &asked, func([]map[string]any) any { return json.RawMessage(`"x"`) }).engine, "the answers"},
+		{"too few", pretendChronos(t, &asked, func([]map[string]any) any { return []any{} }).engine, "answered 0 of 1"},
+		{"short of memory", broken.engine, "exited with status 137: Killed"},
+		{"not built", failing.engine, "no space left"},
+		{"a forecast of the wrong length", pretendChronos(t, &asked, func(a []map[string]any) any {
+			a[0]["forecasts"] = [][]float64{{1}, {1}, {1}}
+			return a
+		}).engine, "1 steps where 4"},
+	} {
+		candidates, lines, err := answered(tt.name, tt.engine)
+		if err != nil || len(candidates) != 2 || candidates[0].Error != "" || candidates[0].Forecast == nil {
+			t.Errorf("%s: %v %+v, want naive scored", tt.name, err, candidates)
+			continue
+		}
+		// What went wrong in the image is in the task's log, and the
+		// candidate's error says only that it failed, in words every
+		// worker uses alike; a forecast of the wrong length is scored
+		// as any runner's is.
+		logged := strings.Contains(strings.Join(lines, "\n"), tt.why)
+		if tt.name == "a forecast of the wrong length" {
+			if !strings.Contains(candidates[1].Error, tt.why) {
+				t.Errorf("%s: %q, want %q", tt.name, candidates[1].Error, tt.why)
+			}
+		} else if candidates[1].Error != chronosFailed || !logged {
+			t.Errorf("%s: candidate error %q, logged %t, want %q with %q logged", tt.name, candidates[1].Error, logged, chronosFailed, tt.why)
+		}
+	}
+	// So two honest workers whose images failed in their own ways agree.
+	if same, why := (Forecast{}).Compare(outputs["short of memory"], outputs["not built"]); !same {
+		t.Errorf("two images failing in their own ways: %q", why)
+	}
+	// A task given up as a whole fails.
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := (chronosRunner{Forecast{Containers: true, Engine: broken.engine}}).fit(cancelled, []fitRequest{{Model: forecastModel{Kind: "chronos", Variant: "tiny"}, Horizon: 1, Prefixes: [][]float64{{1, 2}}}}, func(int) {}); !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled task: %v", err)
 	}
 	// A request is made only of prefixes of its series.
 	values := []float64{1, 2, 3, 4}
@@ -269,13 +299,31 @@ func TestChronosImageAnswersOfTheWrongShapeFailTheTask(t *testing.T) {
 	if _, err := (chronosRunner{Forecast{Containers: true, Engine: broken.engine}}).fit(ctx, []fitRequest{{Model: forecastModel{Kind: "chronos", Variant: "tiny"}, Horizon: 1, Prefixes: [][]float64{values, other}}}, func(int) {}); err == nil || !strings.Contains(err.Error(), "not the start of its series") {
 		t.Errorf("a prefix of another series: %v", err)
 	}
-	// An image that cannot be built fails the task.
-	failing := &pretend{do: func(args []string, stdout, stderr io.Writer) (int, error) {
-		io.WriteString(stderr, "no space left on device\n")
-		return 1, nil
-	}}
-	if _, err := (Forecast{Containers: true, Engine: failing.engine}).Execute(ctx, store, payload); err == nil || !strings.Contains(err.Error(), "no space left") {
-		t.Errorf("an image that cannot be built: %v", err)
+}
+
+// A node whose owner holds containers to less memory than Chronos-Bolt
+// needs neither offers it nor runs it.
+func TestANodeThatCannotGiveChronosItsMemoryDoesNotOfferIt(t *testing.T) {
+	for _, tt := range []struct {
+		memory int
+		offers bool
+	}{{0, true}, {chronosMemoryMB, true}, {2 * chronosMemoryMB, true}, {chronosMemoryMB - 1, false}, {512, false}} {
+		f := Forecast{Containers: true, Confined: Confinement{MemoryMB: tt.memory}}
+		offered := slices.Equal(f.Offers(ctx), []string{ChronosLabel})
+		choices := slices.Contains(f.modelChoices(), "chronos-tiny")
+		if offered != tt.offers || choices != tt.offers || strings.Contains(f.modelsHelp(), "Chronos-Bolt") != tt.offers {
+			t.Errorf("held to %d MB: offers %t, lists %t, want %t", tt.memory, offered, choices, tt.offers)
+		}
+	}
+	store := storage.NewMemory()
+	series, _ := store.Put(ctx, strings.NewReader(seasonalSeries(48)))
+	small := Forecast{Containers: true, Confined: Confinement{MemoryMB: 1024}}
+	if _, err := small.Split(ctx, store, []byte(`{"input":"`+series.String()+`","horizon":4,"models":"chronos-tiny"}`), 1); err == nil || !strings.Contains(err.Error(), "holds a container to 1024 MB, and Chronos-Bolt needs 4096") {
+		t.Errorf("a small node split a Chronos job: %v", err)
+	}
+	payload := mustJSON(forecastTask{Input: series.String(), Horizon: 4, Folds: 2, Models: []forecastModel{{Kind: "chronos", Variant: "tiny"}}})
+	if _, err := small.Execute(ctx, store, payload); err == nil || !strings.Contains(err.Error(), "holds a container to 1024 MB") {
+		t.Errorf("a small worker ran a Chronos task: %v", err)
 	}
 }
 
@@ -348,6 +396,48 @@ func TestForecastOutputsAreComparedExactlyExceptChronos(t *testing.T) {
 	}
 	if !Checkable(Forecast{}) {
 		t.Error("forecast's tasks cannot be checked")
+	}
+}
+
+// A series that swings about zero can be forecast near zero from its end
+// though its windows' forecasts, and so its residuals, are the size of the
+// series. Two runs are compared against the series' size, which both give
+// and which must be the same.
+func TestChronosIsComparedAgainstTheSizeOfItsSeries(t *testing.T) {
+	swinging := func(residual float64) forecastPart {
+		return forecastPart{Points: 48, Horizon: 2, Folds: 1, Last: "48", Scale: 100, Candidates: []forecastOutcome{
+			{Model: forecastModel{Kind: "chronos", Variant: "base"}, MAE: 50, RMSE: 50, StepRMSE: []float64{50, 50}, Forecast: []float64{0.01, -0.01}, Residuals: [][]float64{{residual, -50}}},
+		}}
+	}
+	// The tolerance is a thousandth of 100, not of 0.01.
+	if same, why := (Forecast{}).Compare(mustJSON(swinging(50)), mustJSON(swinging(50.05))); !same {
+		t.Errorf("a residual 0.05 apart on a series of size 100: %q", why)
+	}
+	if same, why := (Forecast{}).Compare(mustJSON(swinging(50)), mustJSON(swinging(50.2))); same || !strings.Contains(why, "of the size 100") {
+		t.Errorf("a residual 0.2 apart on a series of size 100: %t %q", same, why)
+	}
+	// A worker cannot widen it by giving a larger size.
+	wider := swinging(50.2)
+	wider.Scale = 1000
+	if same, why := (Forecast{}).Compare(mustJSON(swinging(50)), mustJSON(wider)); same || !strings.Contains(why, "of size 100") {
+		t.Errorf("a size given larger: %t %q", same, why)
+	}
+	// A task gives its series' size only when it has a Chronos-Bolt
+	// candidate, so outputs without one are as they were.
+	store := storage.NewMemory()
+	series, _ := store.Put(ctx, strings.NewReader("value\n3\n-7\n5\n-2\n4\n-6\n1\n2\n"))
+	var asked chronosAsked
+	f := Forecast{Containers: true, Engine: pretendChronos(t, &asked, nil).engine}
+	for models, want := range map[string]float64{
+		`[{"kind":"naive"}]`: 0,
+		`[{"kind":"naive"},{"kind":"chronos","variant":"tiny"}]`: 7,
+	} {
+		raw, err := f.Execute(ctx, store, []byte(`{"input":"`+series.String()+`","horizon":1,"folds":1,"models":`+models+`}`))
+		var part forecastPart
+		json.Unmarshal(raw, &part)
+		if err != nil || part.Scale != want {
+			t.Errorf("%s: size %g, %v, want %g", models, part.Scale, err, want)
+		}
 	}
 }
 

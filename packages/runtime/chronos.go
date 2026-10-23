@@ -211,6 +211,9 @@ type chronosRequest struct {
 	Ends    []int     `json:"ends"`
 }
 
+// chronosFailed is a Chronos-Bolt candidate's error when its image fails.
+const chronosFailed = "chronos: the image failed on this worker"
+
 // chronosRunner fits Chronos-Bolt candidates in the image, all of a task's
 // at once.
 type chronosRunner struct{ f Forecast }
@@ -238,8 +241,27 @@ func (r chronosRunner) fit(ctx context.Context, requests []fitRequest, done func
 	if engine == nil {
 		engine = docker
 	}
+	// The image failing, as when it runs out of memory, is its candidates'
+	// failure, not the task's: the candidates written in Go are still
+	// scored. Only a task given up as a whole fails. The candidates are
+	// given one error whatever went wrong, since what went wrong is told
+	// in words of this worker's own, a container's ID or a traceback, and
+	// two workers whose images both failed should agree; the words go to
+	// the task's log.
+	failed := func(err error) ([]fitAnswer, error) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		Report(ctx).Log(err.Error())
+		answers := make([]fitAnswer, len(requests))
+		for i := range answers {
+			answers[i] = fitAnswer{Err: chronosFailed}
+		}
+		done(len(requests))
+		return answers, nil
+	}
 	if err := haveImage(ctx, engine, ChronosImage, chronosDockerfile, "Chronos-Bolt forecasting"); err != nil {
-		return nil, err
+		return failed(err)
 	}
 	task := containerTask{
 		ContainerParams: ContainerParams{Image: ChronosImage, Command: []string{"python", "-I", "-c", chronosScript}, Input: in.String(), MemoryMB: chronosMemoryMB, CPUs: 1},
@@ -248,13 +270,13 @@ func (r chronosRunner) fit(ctx context.Context, requests []fitRequest, done func
 	}
 	raw, err := Container{Engine: engine, Confined: r.f.Confined, MaxOutput: chronosMostOutput}.Execute(ctx, held, mustJSON(task))
 	if err != nil {
-		return nil, fmt.Errorf("chronos: %w", err)
+		return failed(fmt.Errorf("chronos: %w", err))
 	}
 	var out ContainerOutput
 	json.Unmarshal(raw, &out) // made just now
 	c, err := cid.Decode(out.Files["answers.json"])
 	if err != nil {
-		return nil, errors.New("chronos: the image left no answers")
+		return failed(errors.New("chronos: the image left no answers"))
 	}
 	blob, _ := held.Open(ctx, c) // left in the store just now
 	defer blob.Close()
@@ -262,10 +284,10 @@ func (r chronosRunner) fit(ctx context.Context, requests []fitRequest, done func
 		Forecasts [][]float64 `json:"forecasts"`
 	}
 	if err := json.NewDecoder(io.LimitReader(blob, chronosMostOutput)).Decode(&answered); err != nil {
-		return nil, fmt.Errorf("chronos: the answers: %w", err)
+		return failed(fmt.Errorf("chronos: the answers: %w", err))
 	}
 	if len(answered) != len(requests) {
-		return nil, fmt.Errorf("chronos: the image answered %d of %d candidates", len(answered), len(requests))
+		return failed(fmt.Errorf("chronos: the image answered %d of %d candidates", len(answered), len(requests)))
 	}
 	answers := make([]fitAnswer, len(requests))
 	for i, a := range answered {
@@ -281,8 +303,8 @@ func (f Forecast) runners(models []forecastModel) (runnerFor, error) {
 	if !slices.ContainsFunc(models, func(m forecastModel) bool { return m.Kind == "chronos" }) {
 		return inProcess, nil
 	}
-	if !f.Containers {
-		return nil, errors.New("forecast payload: the task has Chronos-Bolt candidates, and this worker does not run container work")
+	if why := f.cannotRunChronos(); why != "" {
+		return nil, errors.New("forecast payload: the task has Chronos-Bolt candidates, and " + why)
 	}
 	return func(m forecastModel) forecastRunner {
 		if m.Kind == "chronos" {
@@ -305,9 +327,22 @@ func (Forecast) Needs(params []byte) []string {
 	return []string{ChronosLabel}
 }
 
-// Offers is Chronos-Bolt, where this node runs container work.
+// cannotRunChronos says why this node cannot run the Chronos-Bolt image,
+// or nothing if it can: it must run container work, and give a container
+// the memory the image asks for, if its owner holds containers to less.
+func (f Forecast) cannotRunChronos() string {
+	switch {
+	case !f.Containers:
+		return "this node does not run container work"
+	case f.Confined.MemoryMB > 0 && f.Confined.MemoryMB < chronosMemoryMB:
+		return fmt.Sprintf("this node holds a container to %d MB, and Chronos-Bolt needs %d", f.Confined.MemoryMB, chronosMemoryMB)
+	}
+	return ""
+}
+
+// Offers is Chronos-Bolt, where this node can run it.
 func (f Forecast) Offers(context.Context) []string {
-	if !f.Containers {
+	if f.cannotRunChronos() != "" {
 		return nil
 	}
 	return []string{ChronosLabel}
@@ -317,14 +352,14 @@ func (f Forecast) Offers(context.Context) []string {
 // node can run it.
 func (f Forecast) modelChoices() []string {
 	choices := append([]string{"all"}, forecastKinds...)
-	if f.Containers {
+	if f.cannotRunChronos() == "" {
 		choices = append(choices, chronosKinds...)
 	}
 	return choices
 }
 
 func (f Forecast) modelsHelp() string {
-	if !f.Containers {
+	if f.cannotRunChronos() != "" {
 		return "Which kind of model to try, or all of them."
 	}
 	return "Which kind of model to try, or all of them. The Chronos-Bolt models are pretrained, run in an image on workers that run containers, and are tried only when asked for."
@@ -340,8 +375,11 @@ func (Forecast) Varies() bool { return true }
 // their bytes are, as before there was one. With one, every other
 // candidate must still be the same to the bit, and each Chronos-Bolt
 // candidate's forecasts, residuals and scores must agree to within
-// chronosTolerance of the size of what it forecast. The choice of forecast
-// is not compared: Aggregate makes it once, from the outputs taken.
+// chronosTolerance of the size of the series or of what it forecast,
+// whichever is larger. The series' size is given by both outputs and must
+// be the same, since it is read from the task's input. The choice of
+// forecast is not compared: Aggregate makes it once, from the outputs
+// taken.
 func (Forecast) Compare(a, b []byte) (bool, string) {
 	if bytes.Equal(a, b) {
 		return true, ""
@@ -353,8 +391,8 @@ func (Forecast) Compare(a, b []byte) (bool, string) {
 	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
 		return false, "an output is not a forecast task's"
 	}
-	if x.Points != y.Points || x.Horizon != y.Horizon || x.Folds != y.Folds || x.Last != y.Last || len(x.Candidates) != len(y.Candidates) {
-		return false, fmt.Sprintf("one backtested %d candidates %d steps ahead on %d windows of %d points ending at %q, the other %d %d steps ahead on %d windows of %d points ending at %q", len(x.Candidates), x.Horizon, x.Folds, x.Points, x.Last, len(y.Candidates), y.Horizon, y.Folds, y.Points, y.Last)
+	if x.Points != y.Points || x.Horizon != y.Horizon || x.Folds != y.Folds || x.Last != y.Last || x.Scale != y.Scale || len(x.Candidates) != len(y.Candidates) {
+		return false, fmt.Sprintf("one backtested %d candidates %d steps ahead on %d windows of %d points of size %g ending at %q, the other %d %d steps ahead on %d windows of %d points of size %g ending at %q", len(x.Candidates), x.Horizon, x.Folds, x.Points, x.Scale, x.Last, len(y.Candidates), y.Horizon, y.Folds, y.Points, y.Scale, y.Last)
 	}
 	chronos := false
 	for i := range x.Candidates {
@@ -368,7 +406,7 @@ func (Forecast) Compare(a, b []byte) (bool, string) {
 			}
 		default:
 			chronos = true
-			if why := compareChronos(p, q); why != "" {
+			if why := compareChronos(p, q, x.Scale); why != "" {
 				return false, fmt.Sprintf("candidate %s: %s", p.Model.Name(), why)
 			}
 		}
@@ -381,10 +419,13 @@ func (Forecast) Compare(a, b []byte) (bool, string) {
 
 // compareChronos says how two runs of one Chronos-Bolt candidate differ by
 // more than chronosTolerance of the size of what was forecast, or nothing
-// where they agree. The size is the largest forecast either made: a
-// residual is what the series did less a forecast of it, so it moves as
-// much as the forecast does, however small it is itself.
-func compareChronos(p, q forecastOutcome) string {
+// where they agree. The size is the series' own, its largest value by
+// magnitude, or the largest forecast either made if that is larger. A
+// residual is what the series did less a forecast of it from a window's
+// past, so it moves as much as that forecast does; and a window's forecast
+// is the size of the series, though the forecast from its end may be near
+// zero, as for a series that swings about it.
+func compareChronos(p, q forecastOutcome, seriesSize float64) string {
 	switch {
 	case p.Error != q.Error:
 		return fmt.Sprintf("one failed with %q and the other with %q", p.Error, q.Error)
@@ -393,7 +434,7 @@ func compareChronos(p, q forecastOutcome) string {
 	case len(p.Forecast) != len(q.Forecast) || len(p.StepRMSE) != len(q.StepRMSE) || len(p.Residuals) != len(q.Residuals):
 		return "the two forecast, scored or kept residuals for different numbers of steps"
 	}
-	scale := 0.0
+	scale := seriesSize
 	for _, v := range slices.Concat(p.Forecast, q.Forecast) {
 		scale = max(scale, math.Abs(v))
 	}
@@ -401,7 +442,7 @@ func compareChronos(p, q forecastOutcome) string {
 	within := func(what string, xs, ys []float64) string {
 		for i := range xs {
 			if gap := math.Abs(xs[i] - ys[i]); !(gap <= limit) {
-				return fmt.Sprintf("its %s %d is %g in one and %g in the other, %.3g apart, more than %g of the forecast's size %g", what, i+1, xs[i], ys[i], gap, chronosTolerance, scale)
+				return fmt.Sprintf("its %s %d is %g in one and %g in the other, %.3g apart, more than %g of the size %g", what, i+1, xs[i], ys[i], gap, chronosTolerance, scale)
 			}
 		}
 		return ""
