@@ -177,12 +177,14 @@ function FilesField({ field, id, labelId, describedBy, invalid, value, files, la
         <Button type="button" variant="ghost" size="icon-sm" aria-label={`${labels.removeFile}: ${shown.name}`} title={labels.removeFile} onClick={() => { onTouched(); onChange(value.filter((item) => item !== cid)) }}><X className="size-4" /></Button>
       </li> })}
     </ul>}
-    {storing ? <div role="status" className="run-dropzone is-busy"><LoaderCircle aria-hidden="true" className="size-5 animate-spin motion-reduce:animate-none" /><span className="text-sm">{formatMessage(labels.storing, { name: storing })}</span></div>
-      : <button id={id} type="button" aria-labelledby={`${labelId} ${id}-zone`} aria-describedby={describedBy} aria-invalid={invalid || undefined} className={`run-dropzone ${dragging ? 'is-dragging' : ''}`} onClick={() => input.current?.click()}>
-        <span className="settings-card__icon"><FileUp aria-hidden="true" className="size-5" /></span>
-        <span id={`${id}-zone`} className="text-sm font-medium">{value.length > 0 ? labels.addFiles : labels.dropFiles}</span>
-        <span className="text-xs text-muted-foreground">{labels.dropFileHint}</span>
-      </button>}
+    {/* The button stays while files are stored, disabled, so the field's
+        label keeps pointing at it; the progress is announced beside it. */}
+    <button id={id} type="button" disabled={Boolean(storing)} aria-busy={storing ? true : undefined} aria-labelledby={`${labelId} ${id}-zone`} aria-describedby={describedBy} aria-invalid={invalid || undefined} className={`run-dropzone ${dragging ? 'is-dragging' : ''} ${storing ? 'is-busy' : ''}`} onClick={() => input.current?.click()}>
+      <span className="settings-card__icon">{storing ? <LoaderCircle aria-hidden="true" className="size-5 animate-spin motion-reduce:animate-none" /> : <FileUp aria-hidden="true" className="size-5" />}</span>
+      <span id={`${id}-zone`} className="text-sm font-medium">{storing ? formatMessage(labels.storing, { name: storing }) : value.length > 0 ? labels.addFiles : labels.dropFiles}</span>
+      {!storing && <span className="text-xs text-muted-foreground">{labels.dropFileHint}</span>}
+    </button>
+    <span role="status" className="sr-only">{storing ? formatMessage(labels.storing, { name: storing }) : ''}</span>
     {choosable.length > 0 && <select aria-label={`${field.label || field.name}: ${labels.pickStored}`} value="" onChange={(event) => { const cid = event.target.value; if (!cid) return; onTouched(); onChange([...value, cid]) }} className="run-select">
       <option value="">{labels.pickStoredPlaceholder}</option>
       {choosable.map((file) => <option key={file.cid} value={file.cid}>{file.name || file.cid} · {prettyBytes(file.sizeBytes)}</option>)}
