@@ -315,13 +315,17 @@ func readPanel(ctx context.Context, blobs Blobs, input string) ([]panelSeries, e
 		if delimiter == 0 {
 			delimiter = panelDelimiter(line)
 		}
-		row := csv.NewReader(strings.NewReader(line))
-		row.Comma = delimiter
-		row.FieldsPerRecord = -1
-		row.TrimLeadingSpace = true
-		fields, err := row.Read()
-		if err != nil {
-			return nil, fmt.Errorf("forecasts input %s: line %d: invalid CSV: %w", c, number, err)
+		// Most lines quote nothing, and splitting them is many times
+		// cheaper than a CSV reader, which each task pays for every line.
+		fields := strings.Split(line, string(delimiter))
+		if strings.ContainsRune(line, '"') {
+			row := csv.NewReader(strings.NewReader(line))
+			row.Comma = delimiter
+			row.FieldsPerRecord = -1
+			row.TrimLeadingSpace = true
+			if fields, err = row.Read(); err != nil {
+				return nil, fmt.Errorf("forecasts input %s: line %d: invalid CSV: %w", c, number, err)
+			}
 		}
 		if len(fields) < 2 {
 			return nil, fmt.Errorf("forecasts input %s: line %d has no series name and value", c, number)
@@ -339,8 +343,6 @@ func readPanel(ctx context.Context, blobs Blobs, input string) ([]panelSeries, e
 		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, fmt.Errorf("forecasts input %s: line %d: %q is not a number", c, number, value)
 		}
-		// The line is trimmed and split on its separators, which drops
-		// empty fields, so the first field, the name, is never empty.
 		i, seen := index[id]
 		if !seen {
 			if len(panel) == maxForecastsSeries {
