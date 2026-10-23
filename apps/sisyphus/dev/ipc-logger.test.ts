@@ -16,7 +16,9 @@ test('redacts credential-like fields recursively and sensitive URL query values'
 })
 
 test('bounds strings, arrays, objects and binary data', () => {
-  assert.match(String(sanitizeIpcLogValue('x'.repeat(4_100))), /truncated 100 chars/)
+  const truncated = sanitizeIpcLogValue('x'.repeat(4_100))
+  assert.ok(typeof truncated === 'string', 'a long string stays a string')
+  assert.match(truncated, /truncated 100 chars/)
   assert.equal(sanitizeIpcLogValue(new Uint8Array(12)), '[Uint8Array: 12 bytes]')
   assert.equal(sanitizeIpcLogValue(new ArrayBuffer(8)), '[ArrayBuffer: 8 bytes]')
   const items = sanitizeIpcLogValue(Array.from({ length: 52 }, (_, index) => index))
