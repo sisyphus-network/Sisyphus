@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/ipfs/go-cid"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
@@ -278,6 +279,115 @@ func forecastIn(ctx context.Context, blobs runtime.Blobs, y []float64, horizon, 
 	return result.Forecast, nil
 }
 
+// Batch forecasts the series all at once with the forecasts workload, run
+// in this process as tasks tasks, workers at a time: what a pool would
+// forecast of them as one job. Models is the job's models, "" for the
+// workload's default; with w.Containers it may name the Chronos-Bolt
+// kinds, which run in their image. It returns each series' forecast, in
+// the series' order, or none for a series the workload could not forecast.
+func Batch(ctx context.Context, w runtime.Forecasts, series []Series, freq Frequency, models string, tasks, workers int) ([][]runtime.ForecastPoint, error) {
+	return batchIn(ctx, storage.NewMemory(), w, series, freq, models, tasks, workers)
+}
+
+// batchIn is Batch with the store the series and tables are kept in.
+func batchIn(ctx context.Context, blobs runtime.Blobs, w runtime.Forecasts, series []Series, freq Frequency, models string, tasks, workers int) ([][]runtime.ForecastPoint, error) {
+	// The job knows a series by its ID, so each must be another's.
+	index := make(map[string]int, len(series))
+	for i, s := range series {
+		if _, seen := index[s.ID]; seen {
+			return nil, fmt.Errorf("series %q is given twice", s.ID)
+		}
+		index[s.ID] = i
+	}
+	var data bytes.Buffer
+	lines := csv.NewWriter(&data)
+	_ = lines.Write([]string{"id", "value"}) // to memory, which does not fail
+	for _, s := range series {
+		for _, v := range s.Train {
+			_ = lines.Write([]string{s.ID, strconv.FormatFloat(v, 'g', -1, 64)})
+		}
+	}
+	lines.Flush()
+	input, err := blobs.Put(ctx, &data)
+	if err != nil {
+		return nil, err
+	}
+	params := runtime.ForecastsParams{Input: input.String(), Horizon: freq.Horizon, Models: models}
+	if freq.Season > 1 {
+		params.Season = freq.Season
+	}
+	encoded, _ := json.Marshal(params)
+	payloads, err := w.Split(ctx, blobs, encoded, tasks)
+	if err != nil {
+		return nil, err
+	}
+	outputs := make([][]byte, len(payloads))
+	failures := make([]error, len(payloads))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range max(workers, 1) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				outputs[i], failures[i] = w.Execute(ctx, blobs, payloads[i])
+			}
+		}()
+	}
+	for i := range payloads {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	for i, err := range failures {
+		if err != nil {
+			return nil, fmt.Errorf("task %d of %d: %w", i+1, len(payloads), err)
+		}
+	}
+	raw, err := w.Aggregate(ctx, blobs, outputs)
+	if err != nil {
+		return nil, err
+	}
+	// The result is the workload's own JSON, naming a table it stored.
+	var result runtime.ForecastsResult
+	_ = json.Unmarshal(raw, &result)
+	table, _ := cid.Decode(result.ForecastTable)
+	stored, err := blobs.Open(ctx, table)
+	if err != nil {
+		return nil, err
+	}
+	defer stored.Close()
+	return forecastsByID(stored, index)
+}
+
+// forecastsByID reads a forecasts job's table, a line for each step of
+// each series' forecast (id,step,value,lo80,hi80,lo95,hi95), into the
+// forecasts of the series, in the order index gives their IDs.
+func forecastsByID(r io.Reader, index map[string]int) ([][]runtime.ForecastPoint, error) {
+	rows, err := csv.NewReader(r).ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("forecast table: %w", err)
+	}
+	forecasts := make([][]runtime.ForecastPoint, len(index))
+	for n, row := range rows[min(1, len(rows)):] {
+		if len(row) != 7 {
+			return nil, fmt.Errorf("forecast table line %d has %d fields, not 7", n+2, len(row))
+		}
+		i, ok := index[row[0]]
+		if !ok {
+			return nil, fmt.Errorf("forecast table line %d forecasts %q, which is none of the series", n+2, row[0])
+		}
+		var numbers [6]float64
+		for j, field := range row[1:] {
+			if numbers[j], err = strconv.ParseFloat(field, 64); err != nil {
+				return nil, fmt.Errorf("forecast table line %d: %w", n+2, err)
+			}
+		}
+		forecasts[i] = append(forecasts[i], runtime.ForecastPoint{Step: int(numbers[0]), Value: numbers[1], Lo80: numbers[2], Hi80: numbers[3], Lo95: numbers[4], Hi95: numbers[5]})
+	}
+	return forecasts, nil
+}
+
 // MSIS is M4's mean scaled interval score of a 95% range: its width, plus
 // forty times how far each value fell outside it, averaged over the steps
 // and scaled as MASE is. A range is better the narrower it is and the
@@ -370,9 +480,7 @@ func Run(ctx context.Context, series []Series, freq Frequency, workers int, fore
 	if len(series) == 0 {
 		return Score{}, fmt.Errorf("no %s series to score", freq.Name)
 	}
-	type scored struct{ smape, mase, n2smape, n2mase, in80, in95, msis float64 }
-	scores := make([]scored, len(series))
-	fellBack := make([]bool, len(series))
+	forecasts := make([][]runtime.ForecastPoint, len(series))
 	next := make(chan int)
 	var wg sync.WaitGroup
 	for range max(workers, 1) {
@@ -380,26 +488,8 @@ func Run(ctx context.Context, series []Series, freq Frequency, workers int, fore
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				s := series[i]
-				naive2 := Naive2(s.Train, freq.Horizon, freq.Season)
-				f, err := forecast(ctx, s.Train, freq.Horizon, freq.Season)
-				if err != nil || len(f) != freq.Horizon {
-					f, fellBack[i] = Points(naive2), true
-				}
-				values := make([]float64, len(f))
-				for j, p := range f {
-					values[j] = p.Value
-				}
-				in80, in95 := coverage(s.Test, f)
-				scores[i] = scored{
-					smape:   SMAPE(s.Test, values),
-					mase:    MASE(s.Train, s.Test, values, freq.Season),
-					n2smape: SMAPE(s.Test, naive2),
-					n2mase:  MASE(s.Train, s.Test, naive2, freq.Season),
-					in80:    in80,
-					in95:    in95,
-					msis:    MSIS(s.Train, s.Test, f, freq.Season),
-				}
+				// A forecast that fails is scored as none, and Naive2's in its place.
+				forecasts[i], _ = forecast(ctx, series[i].Train, freq.Horizon, freq.Season)
 			}
 		}()
 	}
@@ -414,18 +504,40 @@ func Run(ctx context.Context, series []Series, freq Frequency, workers int, fore
 	if err := ctx.Err(); err != nil {
 		return Score{}, err
 	}
+	return Scored(series, freq, forecasts)
+}
+
+// Scored scores the forecasts made of the series, the forecasts in the
+// series' order, and Naive2's, against what followed. A series with no
+// forecast, or one of the wrong length, is scored by Naive2's forecast in
+// its place and counted as a fallback.
+func Scored(series []Series, freq Frequency, forecasts [][]runtime.ForecastPoint) (Score, error) {
+	if len(series) == 0 {
+		return Score{}, fmt.Errorf("no %s series to score", freq.Name)
+	}
+	if len(forecasts) != len(series) {
+		return Score{}, fmt.Errorf("%d forecasts of %d %s series", len(forecasts), len(series), freq.Name)
+	}
 	total := Score{Series: len(series)}
-	for i, s := range scores {
-		total.SMAPE += s.smape
-		total.MASE += s.mase
-		total.Naive2SMAPE += s.n2smape
-		total.Naive2MASE += s.n2mase
-		total.Coverage80 += s.in80
-		total.Coverage95 += s.in95
-		total.MSIS += s.msis
-		if fellBack[i] {
+	for i, s := range series {
+		naive2 := Naive2(s.Train, freq.Horizon, freq.Season)
+		f := forecasts[i]
+		if len(f) != freq.Horizon {
+			f = Points(naive2)
 			total.Fallbacks++
 		}
+		values := make([]float64, len(f))
+		for j, p := range f {
+			values[j] = p.Value
+		}
+		in80, in95 := coverage(s.Test, f)
+		total.SMAPE += SMAPE(s.Test, values)
+		total.MASE += MASE(s.Train, s.Test, values, freq.Season)
+		total.Naive2SMAPE += SMAPE(s.Test, naive2)
+		total.Naive2MASE += MASE(s.Train, s.Test, naive2, freq.Season)
+		total.Coverage80 += in80
+		total.Coverage95 += in95
+		total.MSIS += MSIS(s.Train, s.Test, f, freq.Season)
 	}
 	n := float64(len(series))
 	total.SMAPE /= n
