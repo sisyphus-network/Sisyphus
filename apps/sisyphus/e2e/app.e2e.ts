@@ -1385,6 +1385,41 @@ test('advanced navigation switches between the sidebar and mobile dock as the wi
   }
 })
 
+test('advanced pages fit narrow phone widths without horizontal overflow in LTR and RTL', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    for (const dir of ['ltr', 'rtl']) {
+      await page.evaluate((dir) => localStorage.setItem('sisyphus-locale', dir === 'rtl' ? 'he' : 'en'), dir)
+      await page.reload()
+      await page.waitForFunction((dir) => document.documentElement.dir === dir, dir)
+
+      for (const width of [320, 360, 390, 820]) {
+        await page.setViewportSize({ width, height: 780 })
+        await page.waitForFunction((width) => window.innerWidth === width, width)
+        for (const route of ['/node', '/operations', '/settings/general', '/settings/access', '/settings/models']) {
+          await page.evaluate((route) => { window.location.hash = route }, route)
+          await page.waitForFunction((route) => location.hash === `#${route}` && document.querySelector('.route-transition'), route)
+          await page.waitForTimeout(300)
+          const layout = await page.evaluate(() => ({
+            viewport: window.innerWidth,
+            document: document.documentElement.scrollWidth,
+            body: document.body.scrollWidth,
+            main: document.querySelector<HTMLElement>('.app-main')?.scrollWidth,
+            mainClient: document.querySelector<HTMLElement>('.app-main')?.clientWidth,
+          }))
+          assert.ok(layout.document <= width + 1, `${dir} ${width}px ${route}: document overflows horizontally: ${JSON.stringify(layout)}`)
+          assert.ok(layout.body <= width + 1, `${dir} ${width}px ${route}: body overflows horizontally: ${JSON.stringify(layout)}`)
+          assert.ok((layout.main ?? 0) <= (layout.mainClient ?? 0) + 1, `${dir} ${width}px ${route}: page content overflows horizontally: ${JSON.stringify(layout)}`)
+        }
+      }
+    }
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('collapsed sidebar navigation tooltips stay beside the sidebar and inside the window in LTR and RTL', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
