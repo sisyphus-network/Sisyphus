@@ -756,8 +756,8 @@ type lineWriter struct {
 	each func(line string)
 	also io.Writer
 	part []byte
-	// last is the last line passed on, but for Docker's hint to read its
-	// help.
+	// last is the last line passed on that says something: not a blank
+	// line, nor Docker's hint to read its help.
 	last string
 }
 
@@ -787,8 +787,9 @@ func (w *lineWriter) flush() {
 func (w *lineWriter) line(line string) {
 	line = strings.TrimRight(line, "\r")
 	// Docker follows an error of its own, such as a limit it cannot set,
-	// with a hint to read its help, which says nothing of what went wrong.
-	if !strings.HasPrefix(line, "Run 'docker ") || !strings.HasSuffix(line, "--help' for more information") {
+	// with a blank line and a hint to read its help, which say nothing of
+	// what went wrong.
+	if strings.TrimSpace(line) != "" && (!strings.HasPrefix(line, "Run 'docker ") || !strings.HasSuffix(line, "--help' for more information")) {
 		w.last = line
 	}
 	w.each(line)
