@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -271,6 +272,29 @@ func TestACandidateThatCannotBeFittedSaysWhy(t *testing.T) {
 	out := backtest(forecastModel{Kind: "ar", Order: 1}, []float64{3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 2}, 1, 1)
 	if !strings.Contains(out.Error, "too regular") {
 		t.Errorf("got %+v", out)
+	}
+}
+
+func TestAnAutoregressionRefusesAnOrderOutOfBounds(t *testing.T) {
+	r := rand.New(rand.NewPCG(1, 2))
+	y := make([]float64, 200)
+	for i := range y {
+		y[i] = r.NormFloat64()
+	}
+	for _, p := range []int{-1, 0, maxForecastOrder + 1, math.MaxInt} {
+		coef, err := fitAR(y, p)
+		if err == nil || !strings.Contains(err.Error(), "order must be") || coef != nil {
+			t.Errorf("order %d: %v, %v, want an error about the order", p, coef, err)
+		}
+	}
+	for _, p := range []int{1, maxForecastOrder} {
+		coef, err := fitAR(y, p)
+		if err != nil {
+			t.Fatalf("order %d: %v", p, err)
+		}
+		if len(coef) != p+1 {
+			t.Errorf("order %d: %d coefficients, want %d", p, len(coef), p+1)
+		}
 	}
 }
 
