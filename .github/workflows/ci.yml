@@ -14,13 +14,12 @@ permissions:
   pull-requests: read
 
 # A pull request's newer push replaces its older run, which frees the
-# runners for others. Pushes to dev share one group and are never
-# cancelled: a run in progress always finishes, but a newer push replaces
-# one still waiting, so dev's tip is always checked without a queue of
-# superseded commits holding the runners (#655). Every commit there has
-# already passed as its pull request's head.
+# runners for others. Each push to dev is a group of its own and is never
+# cancelled, so every commit that lands there gets a full run of its own
+# (#655). Those runs are on GitHub's runners, not the project's (see test),
+# so however many merges queue up, pull requests never wait behind them.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -72,10 +71,13 @@ jobs:
     # On the project's disposable runners (sisyphus-ci): each job gets a fresh
     # container of its own, with its own network, /tmp and Docker, so jobs run
     # side by side rather than queuing behind one host-wide lock, and none of
-    # them counts against the account's 20 hosted jobs. Fork and Dependabot
-    # pull requests stay on GitHub's runners, so only this repository's own
-    # code runs on the project's machine.
-    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-26.04' || 'sisyphus-ci' }}
+    # them counts against the account's 20 hosted jobs. Only this
+    # repository's own pull requests run there. Fork and Dependabot pull
+    # requests stay on GitHub's runners, so that no one else's code runs on
+    # the project's machine, and so do pushes to dev, so that pull requests
+    # never wait behind them (#655). Standard hosted runners cost nothing on
+    # a public repository.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && 'sisyphus-ci' || 'ubuntu-26.04' }}
     # The race suite (25 m budget) and the ordinary coverage pass (40 m) run
     # one after the other, plus setup. The real-image tests are in their own
     # job, beside this one.
@@ -190,7 +192,7 @@ jobs:
     # detector. Real images take far longer to build and run than the rest,
     # so they run beside the test job rather than inside its budget, once
     # for every pull request, and their coverage joins the test job's.
-    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-26.04' || 'sisyphus-ci' }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && 'sisyphus-ci' || 'ubuntu-26.04' }}
     timeout-minutes: 90
     env:
       SISYPHUS_CI_LOCAL_NETWORK_LOCK: /tmp/sisyphus-ci-local-network.lock
@@ -398,7 +400,7 @@ jobs:
     if: needs.scope.outputs.changed == 'true'
     # Where test runs, and for the same reasons; the container's own Docker
     # keeps the rehearsal's fixed container names off every other job's.
-    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'ubuntu-26.04' || 'sisyphus-ci' }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && 'sisyphus-ci' || 'ubuntu-26.04' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
