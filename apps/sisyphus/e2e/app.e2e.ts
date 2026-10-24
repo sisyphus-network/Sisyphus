@@ -1742,6 +1742,61 @@ test('the Run page gives a workload’s file field a drop zone', async () => {
   }
 })
 
+test('the Run page can choose a stored file from its file selector in narrow LTR and RTL viewports', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    const stored = await page.evaluate(async () => window.sisyphus.storeFile({
+      name: 'selector-video.mp4',
+      data: new TextEncoder().encode('video bytes for the stored-file selector'),
+      private: false,
+    }))
+    const cid = String(stored.cid ?? '')
+    assert.ok(cid, 'the test node should return the stored file CID')
+
+    const inspectStoredFile = async (width: number, locale: 'en' | 'he', direction: 'ltr' | 'rtl') => {
+      await page.setViewportSize({ width, height: 720 })
+      await page.waitForFunction((expected) => window.innerWidth === expected, width)
+      if (locale === 'he') {
+        await page.evaluate(() => {
+          localStorage.setItem('sisyphus-locale', 'he')
+          window.location.hash = '#/'
+        })
+        await page.reload()
+        await page.waitForFunction(() => document.documentElement.lang === 'he' && document.documentElement.dir === 'rtl')
+      }
+
+      await open(page, 'Run')
+      await page.getByRole('button', { name: locale === 'he' ? /^קידוד וידאו מחדש/ : /^Re-encode video/ }).click()
+      const picker = page.getByRole('combobox', { name: locale === 'he' ? 'Video: או שימוש בקובץ שמור' : 'Video: Or use a stored file', exact: true })
+      await picker.waitFor()
+      const geometry = await picker.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return {
+          left: rect.left,
+          right: rect.right,
+          viewport: window.innerWidth,
+          document: document.documentElement.scrollWidth,
+          direction: getComputedStyle(element).direction,
+        }
+      })
+      assert.equal(geometry.direction, direction, `the stored-file selector should follow ${direction}`)
+      assert.ok(geometry.left >= 0 && geometry.right <= geometry.viewport, `the stored-file selector leaves the viewport: ${JSON.stringify(geometry)}`)
+      assert.ok(geometry.document <= geometry.viewport, `the Run page scrolls horizontally at ${width}px: ${JSON.stringify(geometry)}`)
+
+      await picker.selectOption(cid)
+      assert.equal(await picker.inputValue(), cid)
+      await page.getByRole('form', { name: locale === 'he' ? 'קידוד וידאו מחדש' : 'Re-encode video' }).getByText('selector-video.mp4', { exact: true }).waitFor()
+    }
+
+    await inspectStoredFile(320, 'en', 'ltr')
+    await inspectStoredFile(390, 'he', 'rtl')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('the Run page keeps workload choice controls usable in narrow LTR and RTL viewports', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
