@@ -88,8 +88,10 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
       </form>
     </Tabs.Panel>
     </Tabs.Root>
-    {window.location.protocol === 'http:' && <div role="note" className="auth-http-alert mx-auto flex w-full max-w-[22rem] items-start gap-3 px-3.5 py-3 text-start">
-      <ShieldAlert aria-hidden="true" className="mt-0.5 size-[1.1rem] shrink-0" />
+    {window.location.protocol === 'http:' && <div role="note" className="auth-http-alert relative mx-auto w-full max-w-[22rem] px-4 pb-3.5 pt-7 text-center">
+      <span aria-hidden="true" className="auth-http-alert__icon pointer-events-none absolute left-1/2 top-0 grid size-12 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border">
+        <ShieldAlert className="size-5 shrink-0" />
+      </span>
       <p className="text-xs leading-relaxed">{messages.browserHttpWarning}</p>
     </div>}
   </div>

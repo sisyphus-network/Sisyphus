@@ -49,13 +49,22 @@
 .auth-method-panel { animation: auth-panel-arrive 180ms ease both; }
 
 .auth-http-alert {
-  border: 1px solid color-mix(in srgb, #d97706 30%, var(--app-line));
-  border-radius: 0.8rem;
+  margin-top: 1.75rem;
+  border: 1px solid color-mix(in srgb, #d97706 27%, var(--app-line));
+  border-radius: 1rem;
   background: color-mix(in srgb, #d97706 8%, var(--app-card));
   color: color-mix(in srgb, #b45309 82%, var(--app-ink));
 }
 
+.auth-http-alert__icon {
+  border-color: color-mix(in srgb, #d97706 35%, var(--app-line));
+  background: var(--app-card);
+  color: #c46a08;
+  box-shadow: 0 8px 20px color-mix(in srgb, #b45309 17%, transparent);
+}
+
 .dark .auth-http-alert { color: color-mix(in srgb, #fbbf24 88%, var(--app-ink)); }
+.dark .auth-http-alert__icon { color: #fbbf24; }
 
 @keyframes auth-panel-arrive {
   from { opacity: 0; transform: translateY(4px); }
