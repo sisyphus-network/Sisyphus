@@ -182,7 +182,7 @@ func (r *Registry) InContainers(name string) bool {
 
 // Offers returns the labels a worker has by running these workloads, each
 // once, though two workloads offer it, as forecast and forecasts both offer
-// the Chronos-Bolt image.
+// the Chronos-Bolt and TimesFM images.
 func (r *Registry) Offers(ctx context.Context) []string {
 	var labels []string
 	for _, name := range r.Names() {

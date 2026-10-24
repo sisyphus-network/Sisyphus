@@ -32,13 +32,14 @@ import (
 // the answer is the same on every processor the daemon is built for.
 type Forecast struct {
 	// Containers says that this node runs container work, and so may be
-	// given the Chronos-Bolt candidates, which run in a pinned image.
+	// given the pretrained families' candidates, Chronos-Bolt's and
+	// TimesFM's, which run in pinned images.
 	// Without it, a job that asks for them is refused.
 	Containers bool
 	// Engine runs the container engine, as Container's does. Nil means
 	// Docker.
 	Engine func(ctx context.Context, args []string, stdout, stderr io.Writer) (status int, err error)
-	// Confined holds the Chronos containers in as Container's does.
+	// Confined holds the families' containers in as Container's does.
 	Confined Confinement
 }
 
@@ -99,7 +100,8 @@ type forecastModel struct {
 	Gamma  float64 `json:"gamma,omitempty"`
 	Order  int     `json:"order,omitempty"`
 	Season int     `json:"season,omitempty"`
-	// Variant is which Chronos-Bolt model a chronos candidate is.
+	// Variant is which model of its family a family's candidate is, as
+	// "base" is for chronos and "200m" for timesfm.
 	Variant string `json:"variant,omitempty"`
 }
 
@@ -190,7 +192,7 @@ type forecastPart struct {
 	Folds   int    `json:"folds"`
 	Last    string `json:"last"`
 	// Scale is the series' largest value by magnitude, given only when
-	// the task has a Chronos-Bolt candidate: Compare measures how far
+	// the task has a family's candidate: Compare measures how far
 	// apart two runs of one may be against it.
 	Scale      float64           `json:"scale,omitempty"`
 	Candidates []forecastOutcome `json:"candidates"`
@@ -263,7 +265,7 @@ type ForecastResult struct {
 func (Forecast) Name() string { return "forecast" }
 
 func (Forecast) Describe() string {
-	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, which "all" does not include}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
+	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, or timesfm-200m, the pretrained TimesFM model, which "all" does not include}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
 }
 
 func (f Forecast) Form() []Field {

@@ -46,7 +46,7 @@ type forecastFamily struct {
 
 // forecastFamilies are the families a job may ask for, in the order the
 // form offers them.
-var forecastFamilies = []forecastFamily{chronosFamily}
+var forecastFamilies = []forecastFamily{chronosFamily, timesfmFamily}
 
 // kinds are the kinds a job names the family's models by, smallest first.
 // "all" does not include them: they are asked for.
@@ -114,7 +114,10 @@ func familyNames(families []forecastFamily) string {
 	for _, fam := range families {
 		names = append(names, fam.name)
 	}
-	return strings.Join(names, " and ")
+	if len(names) < 3 {
+		return strings.Join(names, " and ")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
 }
 
 // cannotRun says why this node cannot run the family's image, or nothing

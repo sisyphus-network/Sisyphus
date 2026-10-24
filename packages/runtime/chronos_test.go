@@ -163,7 +163,7 @@ func TestAChronosJobNeedsAWorkerWithTheSameImage(t *testing.T) {
 			t.Errorf("%s needs %v, want %v", params, got, want)
 		}
 	}
-	if got := (Forecast{Containers: true}).Offers(ctx); !slices.Equal(got, []string{ChronosLabel}) {
+	if got := (Forecast{Containers: true}).Offers(ctx); !slices.Equal(got, []string{ChronosLabel, TimesFMLabel}) {
 		t.Errorf("a node with containers offers %v", got)
 	}
 	if got := (Forecast{}).Offers(ctx); got != nil {
@@ -318,7 +318,7 @@ func TestANodeThatCannotGiveChronosItsMemoryDoesNotOfferIt(t *testing.T) {
 		offers bool
 	}{{0, true}, {chronosMemoryMB, true}, {2 * chronosMemoryMB, true}, {chronosMemoryMB - 1, false}, {512, false}} {
 		f := Forecast{Containers: true, Confined: Confinement{MemoryMB: tt.memory}}
-		offered := slices.Equal(f.Offers(ctx), []string{ChronosLabel})
+		offered := slices.Contains(f.Offers(ctx), ChronosLabel)
 		choices := slices.Contains(f.modelChoices(), "chronos-tiny")
 		if offered != tt.offers || choices != tt.offers || strings.Contains(f.modelsHelp(), "Chronos-Bolt") != tt.offers {
 			t.Errorf("held to %d MB: offers %t, lists %t, want %t", tt.memory, offered, choices, tt.offers)

@@ -282,8 +282,8 @@ func forecastIn(ctx context.Context, blobs runtime.Blobs, y []float64, horizon, 
 // Batch forecasts the series all at once with the forecasts workload, run
 // in this process as tasks tasks, workers at a time: what a pool would
 // forecast of them as one job. Models is the job's models, "" for the
-// workload's default; with w.Containers it may name the Chronos-Bolt
-// kinds, which run in their image. It returns each series' forecast, in
+// workload's default; with w.Containers it may name the Chronos-Bolt and
+// TimesFM kinds, which run in their images. It returns each series' forecast, in
 // the series' order, or none for a series the workload could not forecast.
 func Batch(ctx context.Context, w runtime.Forecasts, series []Series, freq Frequency, models string, tasks, workers int) ([][]runtime.ForecastPoint, error) {
 	return batchIn(ctx, storage.NewMemory(), w, series, freq, models, tasks, workers)
