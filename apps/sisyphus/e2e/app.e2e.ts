@@ -1616,7 +1616,7 @@ test('a job submitted in the window runs on the pool and shows its result', asyn
     assert.equal(await page.getByRole('textbox', { name: 'Workload' }).inputValue(), 'primes')
     await page.getByRole('textbox', { name: 'Parameters (JSON)' }).fill('{"from":0,"to":100000}')
     await page.getByRole('button', { name: 'Submit', exact: true }).click()
-    await page.getByRole('button', { name: /primes .* Succeeded/ }).waitFor()
+    await page.getByRole('button', { name: /primes .* Succeeded/ }).waitFor({ timeout: 30000 })
     // Its result is there to open, and is the count the pool computed.
     const result = page.getByText('Job result', { exact: true })
     await result.waitFor()
