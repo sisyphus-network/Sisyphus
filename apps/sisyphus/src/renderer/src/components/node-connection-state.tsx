@@ -106,7 +106,6 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
                 {busy && <LoaderCircle aria-label={messages.connecting} className="absolute size-7 shrink-0 animate-spin text-[var(--app-accent)]" />}
               </div>
               <h1 id="browser-auth-title" className="max-w-sm text-balance text-2xl font-semibold tracking-tight text-[var(--app-ink)] sm:text-[1.8rem]">{messages.browserAuthTitle}</h1>
-              <p className="mt-2 max-w-xs text-sm leading-6 text-[var(--app-muted)]">{messages.browserAuthDescription}</p>
             </div>
             <div className="text-[var(--app-ink)]">{authForm}</div>
           </section>
