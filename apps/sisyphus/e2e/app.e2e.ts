@@ -1787,6 +1787,66 @@ test('the Run page keeps workload choice controls usable in narrow LTR and RTL v
   }
 })
 
+test('Operations keeps its native choice controls usable in narrow LTR and RTL viewports', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    const inspectChoices = async (width: number, locale: 'en' | 'he', direction: 'ltr' | 'rtl') => {
+      await page.setViewportSize({ width, height: 720 })
+      await page.waitForFunction((expected) => window.innerWidth === expected, width)
+      if (locale === 'he') {
+        await page.evaluate(() => {
+          localStorage.setItem('sisyphus-locale', 'he')
+          window.location.hash = '#/'
+        })
+        await page.reload()
+        await page.waitForFunction(() => document.documentElement.lang === 'he' && document.documentElement.dir === 'rtl')
+      }
+
+      await open(page, 'Operations')
+      await openOperationsSection(page, 'Pool')
+      const lifetime = page.getByRole('combobox', { name: locale === 'he' ? 'תוקף ההזמנה' : 'Invitation lifetime', exact: true })
+      await lifetime.waitFor()
+
+      const inspect = async (selector: Locator, name: string) => {
+        const geometry = await selector.evaluate((element) => {
+          const rect = element.getBoundingClientRect()
+          return {
+            left: rect.left,
+            right: rect.right,
+            viewport: window.innerWidth,
+            document: document.documentElement.scrollWidth,
+            direction: getComputedStyle(element).direction,
+          }
+        })
+        assert.equal(geometry.direction, direction, `${name} should follow ${direction}: ${JSON.stringify(geometry)}`)
+        assert.ok(geometry.left >= 0 && geometry.right <= geometry.viewport, `${name} leaves the viewport: ${JSON.stringify(geometry)}`)
+        assert.ok(geometry.document <= geometry.viewport, `Operations scrolls horizontally at ${width}px: ${JSON.stringify(geometry)}`)
+      }
+
+      await inspect(lifetime, 'Invitation lifetime')
+      await lifetime.selectOption('3600')
+      assert.equal(await lifetime.inputValue(), '3600')
+
+      await open(page, 'Run')
+      const advanced = page.locator('[data-slot="collapsible-trigger"]').filter({ hasText: 'JSON' })
+      await advanced.waitFor()
+      if (await advanced.getAttribute('aria-expanded') !== 'true') await advanced.click()
+      const mode = page.getByRole('combobox', { name: locale === 'he' ? 'מצב תזמון' : 'Scheduling mode', exact: true })
+      await mode.waitFor()
+      await inspect(mode, 'Scheduling mode')
+      await mode.selectOption('JOB_MODE_FULL_WORKER')
+      assert.equal(await mode.inputValue(), 'JOB_MODE_FULL_WORKER')
+    }
+
+    await inspectChoices(320, 'en', 'ltr')
+    await inspectChoices(390, 'he', 'rtl')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('a file stored as private is listed, and an invitation is issued', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)

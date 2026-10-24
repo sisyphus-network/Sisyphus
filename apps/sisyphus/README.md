@@ -104,6 +104,7 @@ What they check today (`e2e/app.e2e.ts`):
 - a window with no WebGL is offered no topology (no pane, no handle, no dock entry when narrow), its chat fills the room and answers; a window with WebGL has the topology wide and narrow;
 - a job submitted in Operations runs on the pool, and its result and events are shown;
 - the Run page shows primes with its worker count, refuses a value out of bounds inline, runs it and tracks it to its result, and keeps its values to run again; the transcode form gives its file field a drop zone, and its native choice control remains in-bounds at phone widths in LTR and RTL;
+- Operations' invitation-lifetime and scheduling-mode choices remain in-bounds and selectable at phone widths in English/LTR and Hebrew/RTL;
 - a job the planner runs is tracked in the chat: its tasks done, and each worker's share;
 - a file stored as private is listed, and an invitation is issued;
 - the language picker opens from the keyboard and keeps the focus among its choices, Hebrew turns the window right-to-left without a sideways scroll, and the choice is still there at the next start;
