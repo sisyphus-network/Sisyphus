@@ -661,7 +661,7 @@ claude mcp add sisyphus -- /path/to/sisyphusd mcp     # Claude Code; other agent
 
 The second form is what Claude Desktop (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`) and most others take. The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir`, `--api` and `--addr` if the node's data directory, `--api-listen` and `--listen` are not the usual ones.
 
-There are 44 tools: 19 that only look, 14 more that use the pool, and 11 more with `--admin`.
+There are 53 tools: 28 that only look, 14 more that use the pool, and 11 more with `--admin`.
 
 | Tool | What it does |
 | --- | --- |
