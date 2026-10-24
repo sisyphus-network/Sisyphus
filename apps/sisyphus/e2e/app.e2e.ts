@@ -328,6 +328,63 @@ test('hosting a pool is the app’s own node’s setting, so a node run by hand 
   }
 })
 
+test('the pool-hosting interface picker stays inside a short viewport and follows LTR and RTL', async () => {
+  const own = await launchOwnNode()
+  const { app, page } = own
+  try {
+    await openSettingsCategory(page, 'This node')
+    const inspectPicker = async (name: string, searchName: string, direction: 'ltr' | 'rtl') => {
+      const trigger = page.locator('#pool-hosting-address')
+      assert.equal(await trigger.getAttribute('aria-label'), name)
+      await trigger.waitFor()
+      assert.equal(await trigger.isEnabled(), true, 'the app-owned node should allow its host to choose an interface')
+      await trigger.focus()
+      await page.keyboard.press('Enter')
+      const menu = page.getByRole('dialog', { name, exact: true })
+      await menu.waitFor()
+      const geometry = await menu.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        const search = element.querySelector('input[type="search"]')
+        const list = element.querySelector('[role="listbox"]')
+        return {
+          bounds: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+          viewport: { width: innerWidth, height: innerHeight },
+          direction: getComputedStyle(element).direction,
+          searchDirection: search && getComputedStyle(search).direction,
+          listDirection: list && getComputedStyle(list).direction,
+        }
+      })
+      assert.equal(geometry.direction, direction)
+      assert.equal(geometry.searchDirection, direction)
+      assert.equal(geometry.listDirection, 'ltr', 'interface labels and IP addresses should keep their natural reading order')
+      assert.ok(geometry.bounds.left >= 0 && geometry.bounds.top >= 0 && geometry.bounds.right <= geometry.viewport.width && geometry.bounds.bottom <= geometry.viewport.height, `the picker leaves the short viewport: ${JSON.stringify(geometry)}`)
+
+      const search = menu.getByRole('searchbox', { name: searchName, exact: true })
+      await search.fill('definitely-no-interface-match')
+      await menu.getByText(direction === 'rtl' ? 'לא נמצאו ממשקים תואמים.' : 'No matching interfaces.', { exact: true }).waitFor()
+      await page.keyboard.press('Escape')
+      await menu.waitFor({ state: 'detached' })
+      assert.equal(await trigger.getAttribute('aria-expanded'), 'false')
+    }
+
+    let resized = false
+    for (let attempt = 0; attempt < 3 && !resized; attempt++) {
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 650))
+      resized = await page.waitForFunction(() => Math.abs(window.outerHeight - 650) < 60, null, { timeout: 1500 }).then(() => true, () => false)
+    }
+    assert.ok(resized, 'the app-owned node window did not reach the short desktop viewport')
+    await inspectPicker('Address', 'Search interfaces or addresses…', 'ltr')
+
+    await page.evaluate(() => localStorage.setItem('sisyphus-locale', 'he'))
+    await page.reload()
+    await page.waitForFunction(() => document.documentElement.lang === 'he' && document.documentElement.dir === 'rtl')
+    await openSettingsCategory(page, 'הצומת הזה')
+    await inspectPicker('כתובת', 'חיפוש ממשקים או כתובות…', 'rtl')
+  } finally {
+    await own.close()
+  }
+})
+
 function containersCard(page: Page) {
   return page.locator('.node-settings-section').filter({ has: page.getByRole('button', { name: 'Run containers for the pool', exact: true }) })
 }
