@@ -12,6 +12,7 @@ test('packaging puts only the application, native daemon, window icon and tray i
   assert.deepEqual(config.files, ['out/**/*', 'package.json'])
   assert.deepEqual(config.extraResources, [
     { from: '.packaging/bin', to: 'bin', filter: ['sisyphusd', 'sisyphusd.exe'] },
+    { from: 'out/renderer', to: 'web-ui' },
     { from: 'build/icons/256x256.png', to: 'icon.png' },
     { from: 'build/tray', to: 'tray' },
   ])
@@ -23,7 +24,9 @@ test('packaging puts only the application, native daemon, window icon and tray i
 
 test('every package carries an icon generated from the transparent app icon artwork', () => {
   assert.ok(existsSync(resolve(import.meta.dirname, '../../../assets/app-icon.png')))
-  for (const path of [config.win.icon, config.mac.icon, config.nsis.installerIcon, config.nsis.uninstallerIcon, config.dmg.icon, `${config.linux.icon}/512x512.png`, config.extraResources[1].from]) {
+  const packagedIcon = config.extraResources.find((resource: { to: string }) => resource.to === 'icon.png')
+  assert.ok(packagedIcon, 'The desktop icon must be packaged as icon.png')
+  for (const path of [config.win.icon, config.mac.icon, config.nsis.installerIcon, config.nsis.uninstallerIcon, config.dmg.icon, `${config.linux.icon}/512x512.png`, packagedIcon.from]) {
     assert.ok(existsSync(resolve(import.meta.dirname, '..', path)), `Missing icon ${path}`)
   }
 })

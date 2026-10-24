@@ -16,6 +16,8 @@ module.exports = {
   asar: true,
   extraResources: [
     { from: '.packaging/bin', to: 'bin', filter: ['sisyphusd', 'sisyphusd.exe'] },
+    // The daemon serves this static renderer from its own HTTPS remote-access listener.
+    { from: 'out/renderer', to: 'web-ui' },
     // Linux takes a window's icon from the window, not from the package.
     { from: 'build/icons/256x256.png', to: 'icon.png' },
     // The tray icon in each node state, drawn by scripts/make-icons.py.
