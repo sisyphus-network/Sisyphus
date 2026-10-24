@@ -79,6 +79,9 @@ const desktopDaemon = new DesktopDaemon({
     : join(here, '../../../../bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')),
   endpoint,
   webListenAddress: autoStartManagedDaemon ? webApiAddress : undefined,
+  webUiDirectory: autoStartManagedDaemon
+    ? app.isPackaged ? join(process.resourcesPath, 'web-ui') : join(here, '../renderer')
+    : undefined,
   dataDir: daemonDataDir(),
   // A custom endpoint/token belongs to its operator, not this desktop process.
   enabled: autoStartManagedDaemon,

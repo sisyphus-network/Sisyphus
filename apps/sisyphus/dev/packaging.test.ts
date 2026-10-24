@@ -12,6 +12,7 @@ test('packaging puts only the application, native daemon, window icon and tray i
   assert.deepEqual(config.files, ['out/**/*', 'package.json'])
   assert.deepEqual(config.extraResources, [
     { from: '.packaging/bin', to: 'bin', filter: ['sisyphusd', 'sisyphusd.exe'] },
+    { from: 'out/renderer', to: 'web-ui' },
     { from: 'build/icons/256x256.png', to: 'icon.png' },
     { from: 'build/tray', to: 'tray' },
   ])

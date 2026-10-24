@@ -46,7 +46,7 @@ function fixture(overrides: Partial<Options> = {}) {
   const launches: { executable: string, args: string[] }[] = []
   const errors: string[] = []
   const daemon = new DesktopDaemon({
-    executable: '/test path/sisyphusd', endpoint: '127.0.0.1:50051', webListenAddress: '127.0.0.1:50052', dataDir: '/test path/data', enabled: true,
+    executable: '/test path/sisyphusd', endpoint: '127.0.0.1:50051', webListenAddress: '127.0.0.1:50052', webUiDirectory: '/test path/web-ui', dataDir: '/test path/data', enabled: true,
     unused: async () => true,
     launch: (executable, args) => { launches.push({ executable, args }); return child as unknown as ChildProcess },
     onError: (error) => errors.push(error), ...overrides,
@@ -60,7 +60,7 @@ test('launches once with separate arguments and loopback-only networking', async
   await Promise.all([daemon.ensureStarted(), daemon.ensureStarted()])
   assert.equal(daemon.managesDaemon, true)
   await daemon.ensureStarted()
-  assert.deepEqual(launches, [{ executable: '/test path/sisyphusd', args: ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '127.0.0.1:7700', '--discovery', 'off', '--web-listen', '127.0.0.1:50052'] }])
+  assert.deepEqual(launches, [{ executable: '/test path/sisyphusd', args: ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '127.0.0.1:7700', '--discovery', 'off', '--web-listen', '127.0.0.1:50052', '--web-ui-dir', '/test path/web-ui'] }])
   await daemon.stop()
   assert.equal(daemon.managesDaemon, true)
   assert.deepEqual(signals, ['SIGTERM'])
@@ -93,7 +93,7 @@ test('passes only explicitly enabled location discovery flags to the managed dae
 test('a hosting node listens where the owner chose and is discoverable', async () => {
   const { daemon, launches } = fixture({ hostingListen: '192.168.137.133:7700', unused: async (address) => address !== '127.0.0.1:7700' })
   await daemon.ensureStarted()
-  assert.deepEqual(launches[0].args, ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '192.168.137.133:7700', '--web-listen', '127.0.0.1:50052'])
+  assert.deepEqual(launches[0].args, ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '192.168.137.133:7700', '--web-listen', '127.0.0.1:50052', '--web-ui-dir', '/test path/web-ui'])
   await daemon.stop()
 })
 
@@ -135,7 +135,7 @@ test('a restart stops the owned node gracefully and starts it again with changed
   await daemon.restart({ hostingListen: '192.168.137.133:7700', locationDiscovery: { locateGateway: true, locateCountry: false, stunServer: '' } })
   assert.deepEqual(signals, ['SIGTERM'])
   assert.equal(launches.length, 2)
-  assert.deepEqual(launches[1].args, ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '192.168.137.133:7700', '--web-listen', '127.0.0.1:50052', '--locate-gateway'])
+  assert.deepEqual(launches[1].args, ['run', '--api-listen', '127.0.0.1:50051', '--data-dir', '/test path/data', '--listen', '192.168.137.133:7700', '--web-listen', '127.0.0.1:50052', '--web-ui-dir', '/test path/web-ui', '--locate-gateway'])
   assert.equal(daemon.ownsProcess, true)
   await daemon.restart({ hostingListen: undefined })
   assert.equal(launches.length, 3)

@@ -31,6 +31,8 @@ type Options = {
   executable: string
   endpoint: string
   webListenAddress?: string
+  /** Static renderer files served by the daemon's remote HTTPS listener. */
+  webUiDirectory?: string
   dataDir: string
   enabled: boolean
   locationDiscovery?: { locateGateway: boolean; locateCountry: boolean; stunServer: string }
@@ -96,6 +98,7 @@ export class DesktopDaemon {
           throw new Error(`The local browser API address is already in use: ${this.options.webListenAddress}`)
         }
         args.push('--web-listen', this.options.webListenAddress)
+        if (this.options.webUiDirectory) args.push('--web-ui-dir', this.options.webUiDirectory)
       }
       if (this.options.locationDiscovery?.locateGateway) args.push('--locate-gateway')
       if (this.options.locationDiscovery?.locateCountry) args.push('--locate-country')
