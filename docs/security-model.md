@@ -49,6 +49,8 @@ Paths are relative to the repository root. Links into [`apps/sisyphusd/README.md
 | `--images a,b` | A `container` job submitted with `run_job`, or a `container` step of a `graph` at any depth, must name a listed image, and `ask_planner` is refused, since the planner chooses what to run (`server.permitted`, `server.listed`) | What a listed image is told to do: the command, the input and the environment are the agent's. |
 | `--admin` | Nothing: it adds inviting and removing members, joining pools, trust, the model, garbage collection and restore | An agent with it can admit anyone to the pool. |
 
+Every call in the node's API has a kind in `mcpserver/kinds.go`: read, use, admin, or destructive for one that cannot be undone, such as deleting or leaving the pool. A test fails on any call without one (#650). Destructive tools are offered only with `--admin`, as admin ones are; confirming each with the agent's user is the next step on #650.
+
 An agent reads job results and files, which are data from other parties. Nothing separates what it reads from what it then decides to do.
 
 ## Identity and admission

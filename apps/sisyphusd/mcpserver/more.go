@@ -26,6 +26,9 @@ const (
 	uses
 	// admin is one that changes the node itself or who is in its pool.
 	admin
+	// destructive is an admin tool that cannot be undone, such as one that
+	// deletes or leaves, which its user is to confirm (#650).
+	destructive
 )
 
 // offers reports whether the server offers tools of a kind: all of them
@@ -35,7 +38,7 @@ func (s *server) offers(k kind) bool {
 	switch k {
 	case uses:
 		return !s.ReadOnly
-	case admin:
+	case admin, destructive:
 		return s.Admin && !s.ReadOnly
 	}
 	return true
