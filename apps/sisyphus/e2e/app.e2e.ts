@@ -2052,10 +2052,24 @@ test('a language chosen with the keyboard turns the window round, and is still c
   const profile = testProfile()
   let { app, page } = await launch(node, profile)
   const localeCodes = ['he', 'en', 'ar', 'ru', 'pl', 'es', 'fr'] as const
-  const generalLabels = Object.fromEntries(localeCodes.map((locale) => [
+  type LocaleMessages = { nodeOverview: string; computeOperations: string; general: string; webAccess: { title: string }; modelSettings: { title: string } }
+  const messages = Object.fromEntries(localeCodes.map((locale) => [
     locale,
-    (JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8')) as { general: string }).general,
-  ]))
+    JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8')) as {
+      nodeOverview: string
+      computeOperations: string
+      general: string
+      webAccess: { title: string }
+      modelSettings: { title: string }
+    },
+  ])) as Record<typeof localeCodes[number], LocaleMessages>
+  const routes = [
+    { path: '/node', title: (locale: typeof messages.en) => locale.nodeOverview },
+    { path: '/operations', title: (locale: typeof messages.en) => locale.computeOperations },
+    { path: '/settings/general', title: (locale: typeof messages.en) => locale.general },
+    { path: '/settings/access', title: (locale: typeof messages.en) => locale.webAccess.title },
+    { path: '/settings/models', title: (locale: typeof messages.en) => locale.modelSettings.title },
+  ]
   try {
     await openSettingsCategory(page, 'General')
     assert.equal(await page.locator('html').getAttribute('dir'), 'ltr')
@@ -2092,9 +2106,17 @@ test('a language chosen with the keyboard turns the window round, and is still c
       await nativeOption.waitFor({ state: 'visible' })
       await nativeOption.click()
       await page.waitForFunction(({ code, direction }) => document.documentElement.lang === code && document.documentElement.dir === direction, { code, direction })
-      await page.locator('.app-main').getByRole('heading', { name: generalLabels[code], exact: true, level: 1 }).waitFor({ state: 'visible' })
+      const locale = messages[code]
+      const main = page.locator('.app-main')
+      for (const route of routes) {
+        await page.evaluate((path) => { window.location.hash = path }, route.path)
+        await page.waitForFunction((path) => location.hash === `#${path}` && document.querySelector('.route-transition'), route.path)
+        await main.getByRole('heading', { name: route.title(locale), exact: true, level: 1 }).waitFor({ state: 'visible' })
+      }
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${nativeName} causes horizontal overflow`)
       await page.getByRole('dialog').waitFor({ state: 'detached' })
+      await page.evaluate(() => { window.location.hash = '/settings/general' })
+      await main.getByRole('heading', { name: locale.general, exact: true, level: 1 }).waitFor({ state: 'visible' })
     }
 
     await app.close()
