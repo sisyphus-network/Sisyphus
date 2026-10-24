@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { LoaderCircle, RefreshCw, Unplug, Waypoints } from 'lucide-react'
+import { LoaderCircle, RefreshCw, Unplug } from 'lucide-react'
 import { motion } from 'motion/react'
 import type { NodeSnapshot } from '../../../preload'
 import type { SisyphusMessages } from '@/i18n/messages'
@@ -13,6 +13,7 @@ import { isDesktopApp } from '@/lib/node-api'
 import { Input } from '@/components/ui/input'
 import { InputOTP, InputOTPSlot } from '@/components/ui/input-otp'
 import { getBrowserDeviceName } from '@/lib/browser-device-name'
+import { appIconUrl } from '@/lib/brand'
 
 export function NodeConnectionState({ snapshot, messages, onConnected, direction, fullScreen = false }: { snapshot: NodeSnapshot; messages: SisyphusMessages; onConnected: (snapshot: NodeSnapshot) => void; direction?: 'ltr' | 'rtl'; fullScreen?: boolean }) {
   const [busy, setBusy] = useState(false)
@@ -84,16 +85,14 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
   if (fullScreen && browserAuthRequired) {
     return <main dir={direction ?? 'auto'} className="auth-route relative flex min-h-dvh w-full items-center justify-center overflow-hidden px-4 py-10 sm:px-6">
       <div aria-hidden="true" className="auth-route__wash absolute inset-0" />
-      <div aria-hidden="true" className="auth-route__grid absolute inset-0" />
-      <div aria-hidden="true" className="auth-route__glow absolute left-1/2 top-1/2 h-[28rem] w-[28rem] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl" />
       <div className="relative flex w-full justify-center">
         <motion.div className="w-full max-w-md" initial={{ opacity: 0, y: 14, filter: 'blur(8px)' }} animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }} transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}>
-          <section aria-labelledby="browser-auth-title" className="auth-route__surface relative px-1 py-5 sm:px-8 sm:py-9">
+          <section aria-labelledby="browser-auth-title" className="relative px-1 py-5 sm:px-8 sm:py-9">
             <div className="mb-8 flex flex-col items-center text-center">
-              <div aria-hidden="true" className="auth-route__mark mb-7 flex size-[4.25rem] items-center justify-center rounded-[1.25rem]">
-                {busy ? <LoaderCircle className="size-8 animate-spin" /> : <Waypoints className="size-8" strokeWidth={1.8} />}
+              <div className="relative mb-7 grid size-36 place-items-center sm:size-40">
+                <img aria-hidden="true" src={appIconUrl} className={`size-full object-contain drop-shadow-[0_16px_34px_color-mix(in_srgb,var(--app-accent)_20%,transparent)] ${busy ? 'animate-pulse' : ''}`} />
+                {busy && <LoaderCircle aria-label={messages.connecting} className="absolute size-7 animate-spin text-[var(--app-accent)]" />}
               </div>
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--app-accent)]">Sisyphus</p>
               <h1 id="browser-auth-title" className="max-w-sm text-balance text-2xl font-semibold tracking-tight text-[var(--app-ink)] sm:text-[1.8rem]">{messages.browserAuthTitle}</h1>
               <p className="mt-2 max-w-xs text-sm leading-6 text-[var(--app-muted)]">{messages.browserAuthDescription}</p>
             </div>

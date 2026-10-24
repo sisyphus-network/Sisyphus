@@ -8,43 +8,8 @@
 
 .auth-route__wash {
   background:
-    radial-gradient(ellipse at 50% 38%, color-mix(in srgb, var(--app-accent) 13%, transparent), transparent 42%),
-    radial-gradient(ellipse at 50% 100%, color-mix(in srgb, var(--app-ink) 3%, transparent), transparent 45%),
-    var(--app-bg);
-}
-
-.auth-route__grid {
-  background-image:
-    linear-gradient(color-mix(in srgb, var(--app-ink) 4%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--app-ink) 4%, transparent) 1px, transparent 1px);
-  background-size: 72px 72px;
-  mask-image: radial-gradient(ellipse at center, black, transparent 72%);
-  opacity: 0.38;
-}
-
-.auth-route__glow {
-  background: color-mix(in srgb, var(--app-accent) 10%, transparent);
-}
-
-.auth-route__mark {
-  border: 1px solid color-mix(in srgb, var(--app-accent) 24%, transparent);
-  background: color-mix(in srgb, var(--app-accent) 9%, var(--app-bg));
-  color: var(--app-accent);
-  box-shadow: 0 12px 42px color-mix(in srgb, var(--app-accent) 14%, transparent);
-}
-
-.auth-route__surface {
-  isolation: isolate;
-}
-
-.auth-route__surface::before {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  border-radius: 1.75rem;
-  background: color-mix(in srgb, var(--app-card) 44%, transparent);
-  content: "";
-  mask-image: linear-gradient(to bottom, black, transparent 82%);
+    radial-gradient(ellipse at 50% 38%, color-mix(in srgb, var(--app-accent) 8%, transparent), transparent 38%),
+    linear-gradient(180deg, color-mix(in srgb, var(--app-card) 18%, var(--app-bg)), var(--app-bg) 78%);
 }
 
 .auth-route .auth-otp-slot {
