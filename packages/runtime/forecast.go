@@ -582,8 +582,13 @@ func fitForecast(m forecastModel, y []float64, h int) ([]float64, error) {
 
 // fitAR fits y[t] = c + a1·y[t-1] + … + ap·y[t-p] by least squares,
 // solving the normal equations by Gaussian elimination with partial
-// pivoting, and returns c, a1, …, ap.
+// pivoting, and returns c, a1, …, ap. The order is checked here as well as
+// when a job is read, so that what is allocated stays bounded however
+// fitAR is reached.
 func fitAR(y []float64, p int) ([]float64, error) {
+	if p < 1 || p > maxForecastOrder {
+		return nil, fmt.Errorf("an autoregression's order must be from 1 to %d, not %d", maxForecastOrder, p)
+	}
 	size := p + 1
 	a := make([][]float64, size)
 	for i := range a {
