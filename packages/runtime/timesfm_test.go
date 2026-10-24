@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -150,6 +152,10 @@ func TestTimesFMImageFailuresAreItsCandidatesErrors(t *testing.T) {
 		io.WriteString(stderr, "Killed\n")
 		return 137, nil
 	}}
+	failing := &pretend{do: func(args []string, stdout, stderr io.Writer) (int, error) {
+		io.WriteString(stderr, "no space left on device\n")
+		return 1, nil
+	}}
 	var asked timesfmAsked
 	outputs := map[string][]byte{}
 	for _, tt := range []struct {
@@ -161,6 +167,7 @@ func TestTimesFMImageFailuresAreItsCandidatesErrors(t *testing.T) {
 		{"not JSON", pretendTimesFM(t, &asked, func([]map[string]any) any { return json.RawMessage(`"x"`) }), "the answers"},
 		{"too few", pretendTimesFM(t, &asked, func([]map[string]any) any { return []any{} }), "answered 0 of 1"},
 		{"short of memory", killed, "exited with status 137: Killed"},
+		{"not built", failing, "no space left"},
 	} {
 		var log heard
 		raw, err := (Forecast{Containers: true, Engine: tt.engine.engine}).Execute(WithReporter(ctx, &log), store, payload)
@@ -181,6 +188,12 @@ func TestTimesFMImageFailuresAreItsCandidatesErrors(t *testing.T) {
 	// So two honest workers whose images failed in their own ways agree.
 	if same, why := (Forecast{}).Compare(outputs["short of memory"], outputs["none left"]); !same {
 		t.Errorf("two images failing in their own ways: %q", why)
+	}
+	// A task given up as a whole fails.
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := (timesfmRunner{Forecast{Containers: true, Engine: killed.engine}}).fit(cancelled, []fitRequest{{Model: forecastModel{Kind: "timesfm", Variant: "200m"}, Horizon: 1, Prefixes: [][]float64{{1, 2}}}}, func(int) {}); !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled task: %v", err)
 	}
 	// A request is made only of prefixes of its series.
 	values := []float64{1, 2, 3, 4}
