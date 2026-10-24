@@ -2051,6 +2051,11 @@ test('node overview leaves the joined pool once asked to confirm, and the node s
 test('a language chosen with the keyboard turns the window round, and is still chosen at the next start', async () => {
   const profile = testProfile()
   let { app, page } = await launch(node, profile)
+  const localeCodes = ['he', 'en', 'ar', 'ru', 'pl', 'es', 'fr'] as const
+  const generalLabels = Object.fromEntries(localeCodes.map((locale) => [
+    locale,
+    (JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8')) as { general: string }).general,
+  ]))
   try {
     await openSettingsCategory(page, 'General')
     assert.equal(await page.locator('html').getAttribute('dir'), 'ltr')
@@ -2087,6 +2092,7 @@ test('a language chosen with the keyboard turns the window round, and is still c
       await nativeOption.waitFor({ state: 'visible' })
       await nativeOption.click()
       await page.waitForFunction(({ code, direction }) => document.documentElement.lang === code && document.documentElement.dir === direction, { code, direction })
+      await page.locator('.app-main').getByRole('heading', { name: generalLabels[code], exact: true, level: 1 }).waitFor({ state: 'visible' })
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${nativeName} causes horizontal overflow`)
       await page.getByRole('dialog').waitFor({ state: 'detached' })
     }
