@@ -1959,6 +1959,7 @@ test('Settings pickers open in full view, above every card and inside the window
       await opensInView('General', 'Accent', height)
       await opensInView('This node', 'Unit for Longest task run', height, undefined, false, 'Unit')
       await opensInView('This node', 'Unit for Storage per member', height, undefined, true, 'Unit')
+      await opensInView('This node', 'What other members see', height, undefined, true)
       // This one opens over the wizard's own dialog, not only over a card.
       await opensInView('Model provider', 'Provider', height, 'Add provider')
     }
@@ -1992,6 +1993,7 @@ test('Settings pickers open in full view, above every card and inside the window
     assert.equal(await page.locator('html').getAttribute('dir'), 'rtl', 'the unit selectors must be exercised in Hebrew RTL')
     await opensInView('הצומת הזה', 'יחידה עבור זמן ריצה מרבי למשימה', 800, undefined, true, 'יחידה')
     await opensInView('הצומת הזה', 'יחידה עבור אחסון לכל חבר', 800, undefined, true, 'יחידה')
+    await opensInView('הצומת הזה', 'מה חברים אחרים רואים', 800, undefined, true)
     await openSettingsCategory(page, 'כללי')
     await page.locator('#settings-language').click()
     const englishPicker = page.getByRole('dialog', { name: 'שפה', exact: true })
