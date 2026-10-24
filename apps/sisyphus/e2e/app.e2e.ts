@@ -2052,7 +2052,7 @@ test('a language chosen with the keyboard turns the window round, and is still c
   const profile = testProfile()
   let { app, page } = await launch(node, profile)
   const localeCodes = ['he', 'en', 'ar', 'ru', 'pl', 'es', 'fr'] as const
-  type LocaleMessages = { nodeOverview: string; computeOperations: string; general: string; webAccess: { title: string }; modelSettings: { title: string } }
+  type LocaleMessages = { nodeOverview: string; computeOperations: string; general: string; webAccess: { title: string }; modelSettings: { title: string }; operations: string; settings: string }
   const messages = Object.fromEntries(localeCodes.map((locale) => [
     locale,
     JSON.parse(readFileSync(new URL(`../src/renderer/src/i18n/messages/${locale}.json`, import.meta.url), 'utf8')) as {
@@ -2061,14 +2061,16 @@ test('a language chosen with the keyboard turns the window round, and is still c
       general: string
       webAccess: { title: string }
       modelSettings: { title: string }
+      operations: string
+      settings: string
     },
   ])) as Record<typeof localeCodes[number], LocaleMessages>
   const routes = [
-    { path: '/node', title: (locale: typeof messages.en) => locale.nodeOverview },
-    { path: '/operations', title: (locale: typeof messages.en) => locale.computeOperations },
-    { path: '/settings/general', title: (locale: typeof messages.en) => locale.general },
-    { path: '/settings/access', title: (locale: typeof messages.en) => locale.webAccess.title },
-    { path: '/settings/models', title: (locale: typeof messages.en) => locale.modelSettings.title },
+    { path: '/node', title: (locale: typeof messages.en) => locale.nodeOverview, navigation: (locale: typeof messages.en) => locale.nodeOverview },
+    { path: '/operations', title: (locale: typeof messages.en) => locale.computeOperations, navigation: (locale: typeof messages.en) => locale.operations },
+    { path: '/settings/general', title: (locale: typeof messages.en) => locale.general, navigation: (locale: typeof messages.en) => locale.settings },
+    { path: '/settings/access', title: (locale: typeof messages.en) => locale.webAccess.title, navigation: (locale: typeof messages.en) => locale.settings },
+    { path: '/settings/models', title: (locale: typeof messages.en) => locale.modelSettings.title, navigation: (locale: typeof messages.en) => locale.settings },
   ]
   try {
     await openSettingsCategory(page, 'General')
@@ -2112,6 +2114,8 @@ test('a language chosen with the keyboard turns the window round, and is still c
         await page.evaluate((path) => { window.location.hash = path }, route.path)
         await page.waitForFunction((path) => location.hash === `#${path}` && document.querySelector('.route-transition'), route.path)
         await main.getByRole('heading', { name: route.title(locale), exact: true, level: 1 }).waitFor({ state: 'visible' })
+        const activeNavigation = page.locator('.advanced-sidebar a[aria-current="page"]')
+        await activeNavigation.getByText(route.navigation(locale), { exact: true }).waitFor({ state: 'attached' })
       }
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${nativeName} causes horizontal overflow`)
       await page.getByRole('dialog').waitFor({ state: 'detached' })
