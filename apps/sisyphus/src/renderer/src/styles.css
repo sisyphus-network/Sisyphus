@@ -8,44 +8,96 @@
 
 .auth-route__wash {
   background:
-    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--app-accent) 12%, transparent), transparent 38%),
-    linear-gradient(180deg, color-mix(in srgb, var(--app-accent) 3%, var(--app-bg)), var(--app-bg));
+    radial-gradient(ellipse at 50% 38%, color-mix(in srgb, var(--app-accent) 8%, transparent), transparent 38%),
+    linear-gradient(180deg, color-mix(in srgb, var(--app-card) 18%, var(--app-bg)), var(--app-bg) 78%);
 }
 
-.auth-route__grid {
-  background-image:
-    linear-gradient(color-mix(in srgb, var(--app-ink) 4%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--app-ink) 4%, transparent) 1px, transparent 1px);
-  background-size: 56px 56px;
-  mask-image: linear-gradient(to bottom, black, transparent 85%);
+.auth-method-tabs {
+  isolation: isolate;
+  padding: 0.25rem;
+  border: 1px solid color-mix(in srgb, var(--app-line) 56%, transparent);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--app-ink) 4%, var(--app-bg));
 }
 
-.auth-route__glow {
-  border: 1px solid color-mix(in srgb, var(--app-accent) 12%, transparent);
-  background: color-mix(in srgb, var(--app-accent) 8%, transparent);
+.auth-method-tab {
+  min-width: 0;
+  border: 0;
+  border-radius: 0.65rem;
+  background: transparent;
+  color: var(--app-muted);
+  white-space: nowrap;
 }
 
-.auth-route .auth-route__card {
-  border-color: color-mix(in srgb, var(--app-line) 72%, var(--app-accent) 28%);
-  background-color: color-mix(in srgb, var(--app-card) 82%, transparent);
-  box-shadow: 0 24px 80px color-mix(in srgb, var(--app-ink) 12%, transparent);
+.auth-method-tab[data-active] { color: var(--app-ink); }
+.auth-method-tab:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+
+.auth-method-indicator {
+  position: absolute;
+  z-index: 0;
+  top: var(--active-tab-top);
+  left: var(--active-tab-left);
+  width: var(--active-tab-width);
+  height: var(--active-tab-height);
+  border: 1px solid color-mix(in srgb, var(--app-line) 48%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--app-card) 96%, transparent);
+  box-shadow: 0 1px 5px color-mix(in srgb, var(--app-ink) 8%, transparent);
+  transition: left 220ms cubic-bezier(0.2, 0.8, 0.2, 1), width 220ms cubic-bezier(0.2, 0.8, 0.2, 1), top 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.auth-route__mark {
-  border: 1px solid color-mix(in srgb, var(--app-accent) 20%, var(--app-line));
-  background: color-mix(in srgb, var(--app-accent) 10%, var(--app-card));
-  color: var(--app-accent);
+.auth-method-panel { animation: auth-panel-arrive 180ms ease both; }
+
+.auth-http-alert {
+  margin-top: 1.75rem;
+  border: 1px solid color-mix(in srgb, #d97706 27%, var(--app-line));
+  border-radius: 1rem;
+  background: color-mix(in srgb, #d97706 8%, var(--app-card));
+  color: color-mix(in srgb, #b45309 82%, var(--app-ink));
 }
+
+.auth-http-alert__icon {
+  border-color: color-mix(in srgb, #d97706 35%, var(--app-line));
+  background: var(--app-card);
+  color: #c46a08;
+  box-shadow: 0 8px 20px color-mix(in srgb, #b45309 17%, transparent);
+}
+
+.dark .auth-http-alert { color: color-mix(in srgb, #fbbf24 88%, var(--app-ink)); }
+.dark .auth-http-alert__icon { color: #fbbf24; }
+
+@keyframes auth-panel-arrive {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.auth-route .auth-otp-slots { gap: 0.5rem; }
 
 .auth-route .auth-otp-slot {
-  border-color: color-mix(in srgb, var(--app-line) 68%, var(--app-accent) 32%);
-  background: color-mix(in srgb, var(--app-card) 88%, var(--app-wash));
+  border: 1px solid color-mix(in srgb, var(--app-line) 78%, var(--app-accent) 22%);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--app-card) 82%, transparent);
   color: var(--app-ink);
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--app-ink) 4%, transparent);
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .auth-route .auth-otp-slot[data-active="true"] {
-  border-color: color-mix(in srgb, var(--app-accent) 72%, var(--app-line));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 18%, transparent);
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--app-accent) 78%, var(--app-line));
+  background: color-mix(in srgb, var(--app-accent) 9%, var(--app-card));
+  color: var(--app-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 11%, transparent), 0 5px 12px color-mix(in srgb, var(--app-accent) 10%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-method-indicator,
+  .auth-method-panel { animation: none; transition: none; }
+}
+
+.auth-route .auth-otp-native-input:focus-visible {
+  outline: none;
 }
 
 html,
