@@ -50,21 +50,35 @@
 
 .auth-http-alert {
   margin-top: 1.75rem;
-  border: 1px solid color-mix(in srgb, #d97706 27%, var(--app-line));
-  border-radius: 1rem;
-  background: color-mix(in srgb, #d97706 8%, var(--app-card));
-  color: color-mix(in srgb, #b45309 82%, var(--app-ink));
+  border: 1px solid color-mix(in srgb, #d97706 20%, var(--app-line));
+  border-radius: 1.125rem;
+  background:
+    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, #d97706 8%, transparent), transparent 72%),
+    color-mix(in srgb, #d97706 3%, var(--app-card));
+  color: color-mix(in srgb, #92400e 82%, var(--app-ink));
+  box-shadow: 0 8px 24px color-mix(in srgb, #92400e 5%, transparent);
 }
 
 .auth-http-alert__icon {
-  border-color: color-mix(in srgb, #d97706 35%, var(--app-line));
-  background: var(--app-card);
-  color: #c46a08;
-  box-shadow: 0 8px 20px color-mix(in srgb, #b45309 17%, transparent);
+  border-color: color-mix(in srgb, #d97706 25%, var(--app-border));
+  background: color-mix(in srgb, #d97706 5%, var(--app-card));
+  color: #b45309;
+  box-shadow: 0 0 0 0.375rem var(--app-bg), 0 10px 24px color-mix(in srgb, #b45309 14%, transparent);
 }
 
-.dark .auth-http-alert { color: color-mix(in srgb, #fbbf24 88%, var(--app-ink)); }
-.dark .auth-http-alert__icon { color: #fbbf24; }
+.dark .auth-http-alert {
+  border-color: color-mix(in srgb, #fbbf24 18%, var(--app-line));
+  background:
+    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, #fbbf24 9%, transparent), transparent 72%),
+    color-mix(in srgb, #fbbf24 4%, var(--app-card));
+  color: color-mix(in srgb, #fcd34d 88%, var(--app-ink));
+}
+.dark .auth-http-alert__icon {
+  border-color: color-mix(in srgb, #fbbf24 24%, var(--app-border));
+  background: color-mix(in srgb, #fbbf24 8%, var(--app-card));
+  color: #fbbf24;
+  box-shadow: 0 0 0 0.375rem var(--app-bg), 0 10px 24px color-mix(in srgb, #fbbf24 12%, transparent);
+}
 
 @keyframes auth-panel-arrive {
   from { opacity: 0; transform: translateY(4px); }
