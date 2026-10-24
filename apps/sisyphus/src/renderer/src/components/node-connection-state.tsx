@@ -63,8 +63,8 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
   const authForm = <div className="grid gap-5">
     <Tabs.Root defaultValue="pair" className="grid gap-6">
     <Tabs.List aria-label={messages.browserAuthTitle} className="auth-method-tabs relative mx-auto grid w-full max-w-[22rem] grid-cols-2">
-      <Tabs.Tab value="pair" className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><Link2 className="size-4" />{messages.browserPair}</Tabs.Tab>
-      <Tabs.Tab value="token" className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><KeyRound className="size-4" />{messages.browserAuthTokenLabel}</Tabs.Tab>
+      <Tabs.Tab value="pair" aria-label={messages.browserPair} title={messages.browserPair} className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><Link2 aria-hidden="true" className="size-4 shrink-0" /><span className="hidden sm:inline">{messages.browserPair}</span></Tabs.Tab>
+      <Tabs.Tab value="token" aria-label={messages.browserAuthTokenLabel} title={messages.browserAuthTokenLabel} className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><KeyRound aria-hidden="true" className="size-4 shrink-0" /><span className="hidden sm:inline">{messages.browserAuthTokenLabel}</span></Tabs.Tab>
       <Tabs.Indicator className="auth-method-indicator" />
     </Tabs.List>
     <Tabs.Panel value="pair" className="auth-method-panel grid gap-4">
@@ -78,13 +78,13 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
             {Array.from({ length: 8 }, (_, index) => <InputOTPSlot key={index} index={index} className="auth-otp-slot size-7 shrink-0 text-base sm:size-9 sm:text-xl" />)}
           </div>
         </InputOTP>
-        {busy && <span className="flex items-center gap-2 text-xs text-[var(--app-muted)]"><LoaderCircle className="size-3.5 animate-spin" />{messages.connecting}</span>}
+        {busy && <span className="flex items-center gap-2 text-xs text-[var(--app-muted)]"><LoaderCircle className="size-3.5 shrink-0 animate-spin" />{messages.connecting}</span>}
       </div>
     </Tabs.Panel>
     <Tabs.Panel value="token" className="auth-method-panel">
       <form onSubmit={(event) => void connectBrowser(event)} className="mx-auto grid w-full max-w-[22rem] gap-3">
         <label className="grid gap-1.5 text-xs font-medium"><span>{messages.browserAuthTokenLabel}</span><Input type="password" autoComplete="current-password" dir="ltr" value={apiToken} onChange={(event) => setApiToken(event.target.value)} /></label>
-        <Button type="submit" variant="outline" disabled={busy || !apiToken.trim()} className="gap-2">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}{messages.browserAuthConnect}</Button>
+        <Button type="submit" variant="outline" disabled={busy || !apiToken.trim()} className="gap-2">{busy ? <LoaderCircle className="size-4 shrink-0 animate-spin" /> : <RefreshCw className="size-4 shrink-0" />}{messages.browserAuthConnect}</Button>
       </form>
     </Tabs.Panel>
     </Tabs.Root>
@@ -103,7 +103,7 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
             <div className="mb-8 flex flex-col items-center text-center">
               <div className="relative mb-7 grid size-36 place-items-center sm:size-40">
                 <img aria-hidden="true" src={appIconUrl} className={`size-full object-contain drop-shadow-[0_16px_34px_color-mix(in_srgb,var(--app-accent)_20%,transparent)] ${busy ? 'animate-pulse' : ''}`} />
-                {busy && <LoaderCircle aria-label={messages.connecting} className="absolute size-7 animate-spin text-[var(--app-accent)]" />}
+                {busy && <LoaderCircle aria-label={messages.connecting} className="absolute size-7 shrink-0 animate-spin text-[var(--app-accent)]" />}
               </div>
               <h1 id="browser-auth-title" className="max-w-sm text-balance text-2xl font-semibold tracking-tight text-[var(--app-ink)] sm:text-[1.8rem]">{messages.browserAuthTitle}</h1>
               <p className="mt-2 max-w-xs text-sm leading-6 text-[var(--app-muted)]">{messages.browserAuthDescription}</p>
@@ -118,6 +118,6 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
   return <div className="flex h-full min-h-[65dvh] w-full items-center justify-center">
     <EmptyState icon={connecting ? LoaderCircle : Unplug} loading={connecting} title={connecting ? messages.connectingDaemon : messages.daemonUnavailable}
       description={browserAuthRequired ? messages.browserAuthWaiting : formatMessage(messages.waitingForDaemon, { endpoint: snapshot.endpoint })}
-      action={browserAuthRequired ? authForm : <Button variant="outline" disabled={connecting || busy} onClick={() => void reconnect()} className="gap-2"><RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} />{connecting || busy ? messages.connecting : messages.reconnect}</Button>} />
+      action={browserAuthRequired ? authForm : <Button variant="outline" disabled={connecting || busy} onClick={() => void reconnect()} className="gap-2"><RefreshCw className={`size-4 shrink-0 ${busy ? 'animate-spin' : ''}`} />{connecting || busy ? messages.connecting : messages.reconnect}</Button>} />
   </div>
 }
