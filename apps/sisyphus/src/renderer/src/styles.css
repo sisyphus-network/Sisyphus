@@ -12,17 +12,52 @@
     linear-gradient(180deg, color-mix(in srgb, var(--app-card) 18%, var(--app-bg)), var(--app-bg) 78%);
 }
 
+.auth-route .auth-otp-shell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--app-line) 78%, var(--app-accent) 22%);
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--app-card) 76%, transparent);
+  padding: 0.25rem;
+  box-shadow: 0 5px 22px color-mix(in srgb, var(--app-ink) 5%, transparent);
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.auth-route .auth-otp-shell:focus-within {
+  border-color: color-mix(in srgb, var(--app-accent) 76%, var(--app-line));
+  background: color-mix(in srgb, var(--app-card) 92%, var(--app-accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 12%, transparent), 0 9px 26px color-mix(in srgb, var(--app-accent) 9%, transparent);
+}
+
+.auth-route .auth-otp-slots { gap: 0; }
+
 .auth-route .auth-otp-slot {
-  border-color: color-mix(in srgb, var(--app-line) 56%, var(--app-accent) 44%);
-  border-radius: 0.55rem;
-  background: color-mix(in srgb, var(--app-card) 72%, transparent);
+  position: relative;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
   color: var(--app-ink);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--app-ink) 4%, transparent);
+  font-variant-numeric: tabular-nums;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.auth-route .auth-otp-slot:not(:last-child)::after {
+  position: absolute;
+  inset-block: 28%;
+  inset-inline-end: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--app-line) 72%, transparent);
+  content: "";
 }
 
 .auth-route .auth-otp-slot[data-active="true"] {
-  border-color: color-mix(in srgb, var(--app-accent) 82%, var(--app-line));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 14%, transparent), 0 5px 16px color-mix(in srgb, var(--app-accent) 10%, transparent);
+  background: color-mix(in srgb, var(--app-accent) 12%, transparent);
+  color: var(--app-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 24%, transparent);
+}
+
+.auth-route .auth-otp-native-input:focus-visible {
+  outline: none;
 }
 
 html,

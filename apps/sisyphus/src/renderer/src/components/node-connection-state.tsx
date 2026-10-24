@@ -65,9 +65,9 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
       <InputOTP id="browser-pair-code" autoComplete="one-time-code" aria-label={messages.browserPairCodeLabel} maxLength={8} value={pairingCode} onChange={(value) => {
         setPairingCode(value)
         if (value.length === 8) void pairBrowserDevice(value)
-      }} containerClassName="mx-auto w-full max-w-[22rem] flex-wrap justify-center sm:max-w-none" disabled={busy}>
-        <div dir="ltr" className="flex flex-wrap items-center justify-center gap-1 sm:gap-2">
-          {Array.from({ length: 8 }, (_, index) => <InputOTPSlot key={index} index={index} className="auth-otp-slot size-7 shrink-0 rounded-lg text-sm font-semibold shadow-sm outline-none transition sm:size-9 sm:rounded-xl sm:text-lg md:size-11 md:rounded-2xl md:text-xl" />)}
+      }} containerClassName="auth-otp-shell mx-auto w-full max-w-[22rem] justify-center" className="auth-otp-native-input" disabled={busy}>
+        <div dir="ltr" className="auth-otp-slots flex w-full items-center justify-center">
+          {Array.from({ length: 8 }, (_, index) => <InputOTPSlot key={index} index={index} className="auth-otp-slot size-7 shrink-0 text-base sm:size-10 sm:text-xl" />)}
         </div>
       </InputOTP>
       {busy && <span className="flex items-center gap-2 text-xs text-slate-300"><LoaderCircle className="size-3.5 animate-spin" />{messages.connecting}</span>}
