@@ -1825,8 +1825,8 @@ test('Operations keeps its native choice controls usable in narrow LTR and RTL v
       }
 
       await inspect(lifetime, 'Invitation lifetime')
-      await lifetime.selectOption('3600')
-      assert.equal(await lifetime.inputValue(), '3600')
+      await lifetime.selectOption('86400')
+      assert.equal(await lifetime.inputValue(), '86400')
 
       await open(page, 'Run')
       const advanced = page.locator('[data-slot="collapsible-trigger"]').filter({ hasText: 'JSON' })
