@@ -1742,6 +1742,51 @@ test('the Run page gives a workload’s file field a drop zone', async () => {
   }
 })
 
+test('the Run page keeps workload choice controls usable in narrow LTR and RTL viewports', async () => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    const inspectChoice = async (width: number, locale: 'en' | 'he', workloadTitle: string, direction: 'ltr' | 'rtl') => {
+      await page.setViewportSize({ width, height: 720 })
+      await page.waitForFunction((expected) => window.innerWidth === expected, width)
+      if (locale === 'he') {
+        await page.evaluate(() => {
+          localStorage.setItem('sisyphus-locale', 'he')
+          window.location.hash = '#/'
+        })
+        await page.reload()
+        await page.waitForFunction(() => document.documentElement.lang === 'he' && document.documentElement.dir === 'rtl')
+      }
+
+      await open(page, 'Run')
+      await page.getByRole('button', { name: workloadTitle, exact: false }).click()
+      const preset = page.getByRole('combobox', { name: 'Speed', exact: true })
+      await preset.waitFor()
+      const geometry = await preset.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return {
+          left: rect.left,
+          right: rect.right,
+          viewport: window.innerWidth,
+          document: document.documentElement.scrollWidth,
+          direction: getComputedStyle(element).direction,
+        }
+      })
+      assert.equal(geometry.direction, direction)
+      assert.ok(geometry.left >= 0 && geometry.right <= geometry.viewport, `the choice control leaves the viewport: ${JSON.stringify(geometry)}`)
+      assert.ok(geometry.document <= geometry.viewport, `the Run page scrolls horizontally: ${JSON.stringify(geometry)}`)
+      await preset.selectOption('veryslow')
+      assert.equal(await preset.inputValue(), 'veryslow')
+    }
+
+    await inspectChoice(320, 'en', 'Re-encode video', 'ltr')
+    await inspectChoice(390, 'he', 'קידוד וידאו מחדש', 'rtl')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('a file stored as private is listed, and an invitation is issued', async () => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
