@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { LoaderCircle, RefreshCw, ShieldCheck, Unplug } from 'lucide-react'
+import { LoaderCircle, RefreshCw, Unplug, Waypoints } from 'lucide-react'
 import { motion } from 'motion/react'
 import type { NodeSnapshot } from '../../../preload'
 import type { SisyphusMessages } from '@/i18n/messages'
@@ -13,7 +13,6 @@ import { isDesktopApp } from '@/lib/node-api'
 import { Input } from '@/components/ui/input'
 import { InputOTP, InputOTPSlot } from '@/components/ui/input-otp'
 import { getBrowserDeviceName } from '@/lib/browser-device-name'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
 export function NodeConnectionState({ snapshot, messages, onConnected, direction, fullScreen = false }: { snapshot: NodeSnapshot; messages: SisyphusMessages; onConnected: (snapshot: NodeSnapshot) => void; direction?: 'ltr' | 'rtl'; fullScreen?: boolean }) {
   const [busy, setBusy] = useState(false)
@@ -72,8 +71,8 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
       </InputOTP>
       {busy && <span className="flex items-center gap-2 text-xs text-slate-300"><LoaderCircle className="size-3.5 animate-spin" />{messages.connecting}</span>}
     </div>
-    <p role="note" className="text-center text-[11px] leading-relaxed text-[var(--app-muted)]">{messages.browserHttpWarning}</p>
-    <details className="border-t border-[var(--app-line)] pt-4 text-start">
+    {window.location.protocol === 'http:' && <p role="note" className="text-center text-xs leading-relaxed text-[var(--app-muted)]">{messages.browserHttpWarning}</p>}
+    <details className="pt-1 text-start">
       <summary className="cursor-pointer text-xs text-[var(--app-muted)]">{messages.browserTokenAlternative}</summary>
       <form onSubmit={(event) => void connectBrowser(event)} className="mt-3 grid gap-3">
         <label className="grid gap-1.5 text-xs font-medium"><span>{messages.browserAuthTokenLabel}</span><Input type="password" autoComplete="current-password" dir="ltr" value={apiToken} onChange={(event) => setApiToken(event.target.value)} /></label>
@@ -88,24 +87,19 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
       <div aria-hidden="true" className="auth-route__grid absolute inset-0" />
       <div aria-hidden="true" className="auth-route__glow absolute left-1/2 top-1/2 h-[28rem] w-[28rem] -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl" />
       <div className="relative flex w-full justify-center">
-      <motion.div className="w-full max-w-lg" initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.45, ease: 'easeOut' }}>
-        <Card className="auth-route__card overflow-visible rounded-[2rem] py-5 backdrop-blur-xl">
-          <CardHeader className="items-center space-y-4 text-center">
-            <div className="auth-route__mark mx-auto flex size-14 items-center justify-center rounded-2xl">
-              {busy ? <LoaderCircle className="size-7 animate-spin" /> : <ShieldCheck className="size-7" />}
+        <motion.div className="w-full max-w-md" initial={{ opacity: 0, y: 14, filter: 'blur(8px)' }} animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }} transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}>
+          <section aria-labelledby="browser-auth-title" className="auth-route__surface relative px-1 py-5 sm:px-8 sm:py-9">
+            <div className="mb-8 flex flex-col items-center text-center">
+              <div aria-hidden="true" className="auth-route__mark mb-7 flex size-[4.25rem] items-center justify-center rounded-[1.25rem]">
+                {busy ? <LoaderCircle className="size-8 animate-spin" /> : <Waypoints className="size-8" strokeWidth={1.8} />}
+              </div>
+              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--app-accent)]">Sisyphus</p>
+              <h1 id="browser-auth-title" className="max-w-sm text-balance text-2xl font-semibold tracking-tight text-[var(--app-ink)] sm:text-[1.8rem]">{messages.browserAuthTitle}</h1>
+              <p className="mt-2 max-w-xs text-sm leading-6 text-[var(--app-muted)]">{messages.browserAuthDescription}</p>
             </div>
-            <div className="grid gap-2">
-              <CardTitle className="text-3xl font-semibold tracking-tight text-[var(--app-ink)]">{messages.browserAuthTitle}</CardTitle>
-              <CardDescription className="mt-3 text-base leading-7 text-[var(--app-muted)]">{messages.browserAuthDescription}</CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent className="mt-2 text-[var(--app-ink)]">
-            <div className="space-y-5">
-              {authForm}
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
+            <div className="text-[var(--app-ink)]">{authForm}</div>
+          </section>
+        </motion.div>
       </div>
     </main>
   }
