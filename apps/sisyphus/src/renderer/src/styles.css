@@ -48,6 +48,15 @@
 
 .auth-method-panel { animation: auth-panel-arrive 180ms ease both; }
 
+.auth-http-alert {
+  border: 1px solid color-mix(in srgb, #d97706 30%, var(--app-line));
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, #d97706 8%, var(--app-card));
+  color: color-mix(in srgb, #b45309 82%, var(--app-ink));
+}
+
+.dark .auth-http-alert { color: color-mix(in srgb, #fbbf24 88%, var(--app-ink)); }
+
 @keyframes auth-panel-arrive {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

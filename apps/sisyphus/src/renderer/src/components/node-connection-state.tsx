@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { KeyRound, Link2, LoaderCircle, RefreshCw, Unplug } from 'lucide-react'
+import { KeyRound, Link2, LoaderCircle, RefreshCw, ShieldAlert, Unplug } from 'lucide-react'
 import { motion } from 'motion/react'
 import { Tabs } from '@base-ui/react/tabs'
 import type { NodeSnapshot } from '../../../preload'
@@ -60,7 +60,8 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
       toast.error(messages.browserPair, { description: error instanceof Error ? error.message : String(error) })
     } finally { setBusy(false) }
   }
-  const authForm = <Tabs.Root defaultValue="pair" className="grid gap-6">
+  const authForm = <div className="grid gap-5">
+    <Tabs.Root defaultValue="pair" className="grid gap-6">
     <Tabs.List aria-label={messages.browserAuthTitle} className="auth-method-tabs relative mx-auto grid w-full max-w-[22rem] grid-cols-2">
       <Tabs.Tab value="pair" className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><Link2 className="size-4" />{messages.browserPair}</Tabs.Tab>
       <Tabs.Tab value="token" className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><KeyRound className="size-4" />{messages.browserAuthTokenLabel}</Tabs.Tab>
@@ -79,7 +80,6 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
         </InputOTP>
         {busy && <span className="flex items-center gap-2 text-xs text-[var(--app-muted)]"><LoaderCircle className="size-3.5 animate-spin" />{messages.connecting}</span>}
       </div>
-      {window.location.protocol === 'http:' && <p role="note" className="text-center text-xs leading-relaxed text-[var(--app-muted)]">{messages.browserHttpWarning}</p>}
     </Tabs.Panel>
     <Tabs.Panel value="token" className="auth-method-panel">
       <form onSubmit={(event) => void connectBrowser(event)} className="mx-auto grid w-full max-w-[22rem] gap-3">
@@ -87,7 +87,12 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
         <Button type="submit" variant="outline" disabled={busy || !apiToken.trim()} className="gap-2">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}{messages.browserAuthConnect}</Button>
       </form>
     </Tabs.Panel>
-  </Tabs.Root>
+    </Tabs.Root>
+    {window.location.protocol === 'http:' && <div role="note" className="auth-http-alert mx-auto flex w-full max-w-[22rem] items-start gap-3 px-3.5 py-3 text-start">
+      <ShieldAlert aria-hidden="true" className="mt-0.5 size-[1.1rem] shrink-0" />
+      <p className="text-xs leading-relaxed">{messages.browserHttpWarning}</p>
+    </div>}
+  </div>
 
   if (fullScreen && browserAuthRequired) {
     return <main dir={direction ?? 'auto'} className="auth-route relative flex min-h-dvh w-full items-center justify-center overflow-hidden px-4 py-10 sm:px-6">
