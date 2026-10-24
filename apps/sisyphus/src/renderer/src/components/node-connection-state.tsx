@@ -63,7 +63,7 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
   const authForm = <div className="grid gap-5">
     <Tabs.Root defaultValue="pair" className="grid gap-6">
     <Tabs.List aria-label={messages.browserAuthTitle} className="auth-method-tabs relative mx-auto grid w-full max-w-[22rem] grid-cols-2">
-      <Tabs.Tab value="pair" aria-label={messages.browserPair} title={messages.browserPair} className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><Link2 aria-hidden="true" className="size-4 shrink-0" /><span className="hidden sm:inline">{messages.browserPair}</span></Tabs.Tab>
+      <Tabs.Tab value="pair" aria-label={messages.browserPairCodeTab} title={messages.browserPairCodeTab} className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><Link2 aria-hidden="true" className="size-4 shrink-0" /><span className="hidden sm:inline">{messages.browserPairCodeTab}</span></Tabs.Tab>
       <Tabs.Tab value="token" aria-label={messages.browserAuthTokenLabel} title={messages.browserAuthTokenLabel} className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><KeyRound aria-hidden="true" className="size-4 shrink-0" /><span className="hidden sm:inline">{messages.browserAuthTokenLabel}</span></Tabs.Tab>
       <Tabs.Indicator className="auth-method-indicator" />
     </Tabs.List>

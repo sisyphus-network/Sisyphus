@@ -137,6 +137,7 @@
   "browserHttpWarning": "This connection uses plain HTTP. Devices monitoring this network may see pairing codes and sessions. Use only on a trusted local network.",
   "browserAuthTokenLabel": "Node API token",
   "browserAuthConnect": "Connect browser",
+  "browserPairCodeTab": "Pairing code",
   "browserPairCodeLabel": "Eight-digit pairing code",
   "browserPair": "Pair this browser",
   "browserTokenAlternative": "Use the node API token instead",
