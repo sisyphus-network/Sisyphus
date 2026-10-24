@@ -42,7 +42,7 @@ A pull request that changes only documentation skips the tests. One that touches
 | The race detector | The regular suite and the runtime package with its real-image workload tests | `make test`; `make cover-realimages` (CI's `realimages` job) |
 | Across machines | `examples/rehearsal.sh`: each node in a container with its own address and disk, 26 checks; CI runs it on every pull request | `examples/rehearsal.sh` |
 | Desktop unit tests | Node's own test runner over the app's modules | `npm test` in `apps/sisyphus` |
-| Desktop end to end | Playwright driving the built Electron app against a node of its own; Settings selectors cover short-viewport placement and keyboard dismissal, Hebrew RTL controls, an LTR interface/IP list for Access, and theme-mode switching, persistence and narrow-window fit | `npm run test:e2e` in `apps/sisyphus` |
+| Desktop end to end | Playwright driving the built Electron app against a node of its own; Settings selectors cover short-viewport placement and keyboard dismissal, Pool limits unit menus at desktop heights in LTR and RTL, Hebrew RTL controls, an LTR interface/IP list for Access, and theme-mode switching, persistence and narrow-window fit | `npm run test:e2e` in `apps/sisyphus` |
 | Forecast accuracy | The `forecast` workload scored on the M4 competition's 100,000 series against its Naive2 benchmark, as the competition scored its entries ([`forecast-benchmark.md`](forecast-benchmark.md)). Needs the M4 data, which is not in the repository, so CI does not run it | `SISYPHUS_M4=<dir> go test -run 'TestM4$' -v ./packages/runtime/forecastbench` |
 | Agents | A live trial of the MCP server from Claude Code, by hand, recorded on [#88](https://github.com/sisyphus-network/Sisyphus/issues/88) | by hand |
 

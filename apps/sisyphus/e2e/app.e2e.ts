@@ -29,16 +29,24 @@ afterEach((t) => {
 
 async function openSettingsCategory(page: Page, category: string) {
   await open(page, 'Settings')
-  await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: new RegExp(`^${category}`, 'i') }).click()
-  if (category === 'This node') {
+  const settingsNavigation = category === 'הצומת הזה' || category === 'כללי' ? 'הגדרות' : 'Settings'
+  await page.getByRole('navigation', { name: settingsNavigation }).getByRole('link', { name: new RegExp(`^${category}`, 'i') }).click()
+  if (category === 'This node' || category === 'הצומת הזה') {
+    const rtl = category === 'הצומת הזה'
     // This node now groups settings in nested disclosures. Open them for the
     // tests that exercise controls rather than testing the collapsed state.
-    for (const group of ['Network connections', 'Location & privacy', 'Workloads & resources']) {
+    const groups = rtl
+      ? ['חיבורי רשת', 'מיקום ופרטיות', 'עומסי עבודה ומשאבים']
+      : ['Network connections', 'Location & privacy', 'Workloads & resources']
+    for (const group of groups) {
       const trigger = page.getByRole('button', { name: group, exact: true })
       await trigger.waitFor()
       if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
     }
-    for (const section of ['Let other machines join this pool', 'Where this node is', 'Location discovery', 'City table', 'Run containers for the pool', 'Pool limits', 'Lend Ollama models to the pool']) {
+    const sections = rtl
+      ? ['לאפשר למחשבים אחרים להצטרף ל־pool הזה', 'היכן הצומת הזה נמצא', 'גילוי מיקום ברשת', 'טבלת ערים', 'הרצת קונטיינרים עבור המאגר', 'מגבלות ה־pool', 'שיתוף מודלי Ollama עם ה־pool']
+      : ['Let other machines join this pool', 'Where this node is', 'Location discovery', 'City table', 'Run containers for the pool', 'Pool limits', 'Lend Ollama models to the pool']
+    for (const section of sections) {
       const trigger = page.getByRole('button', { name: section, exact: true })
       await trigger.waitFor()
       if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
@@ -1860,7 +1868,7 @@ test('Settings pickers open in full view, above every card and inside the window
   try {
     // Opens a picker and checks its choices can all be seen and reached:
     // inside the window, clear of its own trigger, and not under a card.
-    const opensInView = async (category: string, name: string, height: number, within?: string, stayOnCategory = false) => {
+    const opensInView = async (category: string, name: string, height: number, within?: string, stayOnCategory = false, menuName = name) => {
       if (!stayOnCategory && !await page.getByRole('heading', { name: category, level: 1 }).isVisible().catch(() => false)) {
         await openSettingsCategory(page, category)
       }
@@ -1873,7 +1881,7 @@ test('Settings pickers open in full view, above every card and inside the window
       await trigger.waitFor({ timeout: 30000 })
       await trigger.scrollIntoViewIfNeeded()
       await trigger.click()
-      const menu = page.getByRole('dialog', { name, exact: true })
+      const menu = page.getByRole('dialog', { name: menuName, exact: true })
       await menu.waitFor()
       await menu.evaluate(async (element) => {
         await new Promise(requestAnimationFrame)
@@ -1892,6 +1900,7 @@ test('Settings pickers open in full view, above every card and inside the window
         }).map((choice) => choice.textContent?.trim())
         return {
           box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom },
+          direction: getComputedStyle(menu).direction,
           trigger: anchor,
           window: { width: window.innerWidth, height: window.innerHeight },
           // The trigger stays in sight to show what is chosen: the menu may
@@ -1902,6 +1911,7 @@ test('Settings pickers open in full view, above every card and inside the window
       }, { name, anchor })
       const where = `${name} in ${category}, ${height}px high: ${JSON.stringify(seen)}`
       assert.ok(seen.box.top >= 0 && seen.box.left >= 0 && seen.box.bottom <= seen.window.height && seen.box.right <= seen.window.width, `the picker goes past the window: ${where}`)
+      assert.equal(seen.direction, await page.locator('html').getAttribute('dir'), `the picker direction does not match the page: ${where}`)
       if (seen.window.width > 767) assert.ok(!seen.overlapsTrigger, `the picker is over the middle of its own trigger: ${where}`)
       assert.deepEqual(seen.covered, [], `choices are under something else: ${where}`)
       if (within && name === 'Provider') {
@@ -1947,6 +1957,8 @@ test('Settings pickers open in full view, above every card and inside the window
       assert.ok(resized, `the window did not reach the requested ${height}px height after retries`)
       await opensInView('General', 'Language', height)
       await opensInView('General', 'Accent', height)
+      await opensInView('This node', 'Unit for Longest task run', height, undefined, false, 'Unit')
+      await opensInView('This node', 'Unit for Storage per member', height, undefined, true, 'Unit')
       // This one opens over the wizard's own dialog, not only over a card.
       await opensInView('Model provider', 'Provider', height, 'Add provider')
     }
@@ -1971,6 +1983,22 @@ test('Settings pickers open in full view, above every card and inside the window
     await page.getByRole('heading', { name: 'General', level: 1 }).waitFor({ state: 'visible' })
     await page.locator('#settings-language').waitFor({ state: 'visible' })
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    await page.locator('#settings-language').click()
+    const languagePicker = page.getByRole('dialog', { name: 'Language', exact: true })
+    await languagePicker.waitFor()
+    await languagePicker.getByRole('button', { name: /עברית/ }).click()
+    await page.waitForFunction(() => document.documentElement.dir === 'rtl' && document.documentElement.lang === 'he')
+    await openSettingsCategory(page, 'הצומת הזה')
+    assert.equal(await page.locator('html').getAttribute('dir'), 'rtl', 'the unit selectors must be exercised in Hebrew RTL')
+    await opensInView('הצומת הזה', 'יחידה עבור זמן ריצה מרבי למשימה', 800, undefined, true, 'יחידה')
+    await opensInView('הצומת הזה', 'יחידה עבור אחסון לכל חבר', 800, undefined, true, 'יחידה')
+    await openSettingsCategory(page, 'כללי')
+    await page.locator('#settings-language').click()
+    const englishPicker = page.getByRole('dialog', { name: 'שפה', exact: true })
+    await englishPicker.waitFor()
+    await englishPicker.getByRole('button', { name: /English/ }).click()
+    await page.waitForFunction(() => document.documentElement.dir === 'ltr' && document.documentElement.lang === 'en')
+    await openSettingsCategory(page, 'General')
 
     // A keyboard or short landscape viewport can leave less than the normal
     // 120px menu floor. The menu must use the actual remaining room instead.
