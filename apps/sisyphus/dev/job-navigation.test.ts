@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { getJobHref, getSelectedJobId, includeLinkedJob } from '../src/renderer/src/lib/job-navigation.ts'
+import { addSubmittedJob, getJobHref, getSelectedJobId, includeLinkedJob } from '../src/renderer/src/lib/job-navigation.ts'
 
 test('job links round-trip IDs without creating extra parameters or fragments', () => {
   for (const id of ['abc-123', 'a&tab=files#fragment', 'job with spaces', 'עבודה/1', '100%']) {
@@ -33,4 +33,15 @@ test('missing responses and responses for previous links are ignored', () => {
   assert.equal(includeLinkedJob(jobs, undefined, 'selected'), jobs)
   assert.equal(includeLinkedJob(jobs, { jobId: 'previous' }, 'selected'), jobs)
   assert.equal(includeLinkedJob(jobs, { jobId: 'previous' }, ''), jobs)
+})
+
+test('a submitted job is added at the top of the list', () => {
+  const list = [{ jobId: 'other', state: 'done' }], job = { jobId: 'new', state: 'pending' }
+  assert.deepEqual(addSubmittedJob(list, job), [job, ...list])
+  assert.equal(list.length, 1)
+})
+
+test('a streamed state is kept over the submit reply that arrives after it', () => {
+  const jobs = [{ jobId: 'new', state: 'succeeded' }]
+  assert.equal(addSubmittedJob(jobs, { jobId: 'new', state: 'pending' }), jobs)
 })
