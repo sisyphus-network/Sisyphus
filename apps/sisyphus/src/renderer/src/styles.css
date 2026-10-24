@@ -49,14 +49,14 @@
 .auth-method-panel { animation: auth-panel-arrive 180ms ease both; }
 
 .auth-http-alert {
-  margin-top: 1.75rem;
-  border: 1px solid color-mix(in srgb, #d97706 20%, var(--app-line));
-  border-radius: 1.125rem;
+  margin-top: 2rem;
+  border: 1px solid color-mix(in srgb, #d97706 16%, var(--app-line));
+  border-radius: 1.35rem;
   background:
-    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, #d97706 8%, transparent), transparent 72%),
-    color-mix(in srgb, #d97706 3%, var(--app-card));
+    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, #d97706 7%, transparent), transparent 68%),
+    color-mix(in srgb, #d97706 2%, var(--app-card));
   color: color-mix(in srgb, #92400e 82%, var(--app-ink));
-  box-shadow: 0 8px 24px color-mix(in srgb, #92400e 5%, transparent);
+  box-shadow: 0 12px 30px color-mix(in srgb, #92400e 6%, transparent), inset 0 1px color-mix(in srgb, white 58%, transparent);
 }
 
 .auth-http-alert__icon {
@@ -67,11 +67,12 @@
 }
 
 .dark .auth-http-alert {
-  border-color: color-mix(in srgb, #fbbf24 18%, var(--app-line));
+  border-color: color-mix(in srgb, #fbbf24 15%, var(--app-line));
   background:
-    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, #fbbf24 9%, transparent), transparent 72%),
-    color-mix(in srgb, #fbbf24 4%, var(--app-card));
+    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, #fbbf24 8%, transparent), transparent 68%),
+    color-mix(in srgb, #fbbf24 3%, var(--app-card));
   color: color-mix(in srgb, #fcd34d 88%, var(--app-ink));
+  box-shadow: 0 14px 34px color-mix(in srgb, black 14%, transparent), inset 0 1px color-mix(in srgb, white 4%, transparent);
 }
 .dark .auth-http-alert__icon {
   border-color: color-mix(in srgb, #fbbf24 24%, var(--app-border));
