@@ -96,7 +96,7 @@ npm run test:e2e
 
 ## End-to-end tests
 
-The seven message catalogs live in `src/renderer/src/i18n/messages/`. `npm test` checks their nested keys and shapes against English and rejects empty message strings; Electron acceptance tests cover the main advanced pages in English/LTR and Hebrew/RTL.
+The seven message catalogs live in `src/renderer/src/i18n/messages/`. `npm test` checks their nested keys and shapes against English and rejects empty message strings; Electron acceptance tests cover the main advanced pages in English/LTR and Hebrew/RTL, and verify that switching among all seven languages immediately applies the correct document language and text direction.
 
 `npm run test:e2e` starts the built app with [Playwright](https://playwright.dev) and drives it as a person would, against a node of its own: the repository's `bin/sisyphusd` on ports nothing else has, with a temporary data directory, and a temporary profile for the app. Your node, your data and your app are not touched. On Linux with no display it runs under `xvfb-run`, which is how CI runs it.
 

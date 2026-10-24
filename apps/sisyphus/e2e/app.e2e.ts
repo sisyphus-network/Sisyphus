@@ -2068,6 +2068,28 @@ test('a language chosen with the keyboard turns the window round, and is still c
     await page.waitForFunction(() => document.documentElement.dir === 'rtl')
     assert.equal(await page.locator('html').getAttribute('lang'), 'he')
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'the window scrolls sideways in Hebrew')
+    await choices.waitFor({ state: 'detached' })
+
+    // Every supported language must update the document language and writing
+    // direction immediately, not only after restarting the application.
+    for (const { code, nativeName, direction } of [
+      { code: 'ar', nativeName: 'العربية', direction: 'rtl' },
+      { code: 'ru', nativeName: 'Русский', direction: 'ltr' },
+      { code: 'pl', nativeName: 'Polski', direction: 'ltr' },
+      { code: 'es', nativeName: 'Español', direction: 'ltr' },
+      { code: 'fr', nativeName: 'Français', direction: 'ltr' },
+      { code: 'en', nativeName: 'English', direction: 'ltr' },
+      { code: 'he', nativeName: 'עברית', direction: 'rtl' },
+    ] as const) {
+      await page.locator('#settings-language').focus()
+      await page.keyboard.press('Enter')
+      const nativeOption = page.getByRole('button', { name: new RegExp(nativeName) })
+      await nativeOption.waitFor({ state: 'visible' })
+      await nativeOption.click()
+      await page.waitForFunction(({ code, direction }) => document.documentElement.lang === code && document.documentElement.dir === direction, { code, direction })
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${nativeName} causes horizontal overflow`)
+      await page.getByRole('dialog').waitFor({ state: 'detached' })
+    }
 
     await app.close()
     ;({ app, page } = await launch(node, profile))
