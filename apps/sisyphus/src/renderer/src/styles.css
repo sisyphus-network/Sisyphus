@@ -12,6 +12,47 @@
     linear-gradient(180deg, color-mix(in srgb, var(--app-card) 18%, var(--app-bg)), var(--app-bg) 78%);
 }
 
+.auth-method-tabs {
+  isolation: isolate;
+  padding: 0.25rem;
+  border: 1px solid color-mix(in srgb, var(--app-line) 56%, transparent);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--app-ink) 4%, var(--app-bg));
+}
+
+.auth-method-tab {
+  min-width: 0;
+  border: 0;
+  border-radius: 0.65rem;
+  background: transparent;
+  color: var(--app-muted);
+  white-space: nowrap;
+}
+
+.auth-method-tab[data-active] { color: var(--app-ink); }
+.auth-method-tab:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+
+.auth-method-indicator {
+  position: absolute;
+  z-index: 0;
+  top: var(--active-tab-top);
+  left: var(--active-tab-left);
+  width: var(--active-tab-width);
+  height: var(--active-tab-height);
+  border: 1px solid color-mix(in srgb, var(--app-line) 48%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--app-card) 96%, transparent);
+  box-shadow: 0 1px 5px color-mix(in srgb, var(--app-ink) 8%, transparent);
+  transition: left 220ms cubic-bezier(0.2, 0.8, 0.2, 1), width 220ms cubic-bezier(0.2, 0.8, 0.2, 1), top 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.auth-method-panel { animation: auth-panel-arrive 180ms ease both; }
+
+@keyframes auth-panel-arrive {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .auth-route .auth-otp-slots { gap: 0.5rem; }
 
 .auth-route .auth-otp-slot {
@@ -30,6 +71,11 @@
   background: color-mix(in srgb, var(--app-accent) 9%, var(--app-card));
   color: var(--app-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 11%, transparent), 0 5px 12px color-mix(in srgb, var(--app-accent) 10%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-method-indicator,
+  .auth-method-panel { animation: none; transition: none; }
 }
 
 .auth-route .auth-otp-native-input:focus-visible {

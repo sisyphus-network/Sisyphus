@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { LoaderCircle, RefreshCw, Unplug } from 'lucide-react'
+import { KeyRound, Link2, LoaderCircle, RefreshCw, Unplug } from 'lucide-react'
 import { motion } from 'motion/react'
+import { Tabs } from '@base-ui/react/tabs'
 import type { NodeSnapshot } from '../../../preload'
 import type { SisyphusMessages } from '@/i18n/messages'
 import { formatMessage } from '@/i18n/messages'
@@ -59,28 +60,34 @@ export function NodeConnectionState({ snapshot, messages, onConnected, direction
       toast.error(messages.browserPair, { description: error instanceof Error ? error.message : String(error) })
     } finally { setBusy(false) }
   }
-  const authForm = <div className="grid gap-5">
-    <div className="grid justify-items-center gap-2">
-      <label className="sr-only" htmlFor="browser-pair-code">{messages.browserPairCodeLabel}</label>
-      <InputOTP id="browser-pair-code" autoComplete="one-time-code" aria-label={messages.browserPairCodeLabel} maxLength={8} value={pairingCode} onChange={(value) => {
-        setPairingCode(value)
-        if (value.length === 8) void pairBrowserDevice(value)
-      }} containerClassName="mx-auto w-full max-w-[22rem] justify-center" className="auth-otp-native-input" disabled={busy}>
-        <div dir="ltr" className="auth-otp-slots flex w-full items-center justify-center gap-2 sm:gap-2">
-          {Array.from({ length: 8 }, (_, index) => <InputOTPSlot key={index} index={index} className="auth-otp-slot size-7 shrink-0 text-base sm:size-9 sm:text-xl" />)}
-        </div>
-      </InputOTP>
-      {busy && <span className="flex items-center gap-2 text-xs text-slate-300"><LoaderCircle className="size-3.5 animate-spin" />{messages.connecting}</span>}
-    </div>
-    {window.location.protocol === 'http:' && <p role="note" className="text-center text-xs leading-relaxed text-[var(--app-muted)]">{messages.browserHttpWarning}</p>}
-    <details className="pt-1 text-start">
-      <summary className="cursor-pointer text-xs text-[var(--app-muted)]">{messages.browserTokenAlternative}</summary>
-      <form onSubmit={(event) => void connectBrowser(event)} className="mt-3 grid gap-3">
+  const authForm = <Tabs.Root defaultValue="pair" className="grid gap-6">
+    <Tabs.List aria-label={messages.browserAuthTitle} className="auth-method-tabs relative mx-auto grid w-full max-w-[22rem] grid-cols-2">
+      <Tabs.Tab value="pair" className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><Link2 className="size-4" />{messages.browserPair}</Tabs.Tab>
+      <Tabs.Tab value="token" className="auth-method-tab relative z-10 inline-flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium transition-colors sm:text-sm"><KeyRound className="size-4" />{messages.browserAuthTokenLabel}</Tabs.Tab>
+      <Tabs.Indicator className="auth-method-indicator" />
+    </Tabs.List>
+    <Tabs.Panel value="pair" className="auth-method-panel grid gap-4">
+      <div className="grid justify-items-center gap-2">
+        <label className="sr-only" htmlFor="browser-pair-code">{messages.browserPairCodeLabel}</label>
+        <InputOTP id="browser-pair-code" autoComplete="one-time-code" aria-label={messages.browserPairCodeLabel} maxLength={8} value={pairingCode} onChange={(value) => {
+          setPairingCode(value)
+          if (value.length === 8) void pairBrowserDevice(value)
+        }} containerClassName="mx-auto w-full max-w-[22rem] justify-center" className="auth-otp-native-input" disabled={busy}>
+          <div dir="ltr" className="auth-otp-slots flex w-full items-center justify-center gap-2">
+            {Array.from({ length: 8 }, (_, index) => <InputOTPSlot key={index} index={index} className="auth-otp-slot size-7 shrink-0 text-base sm:size-9 sm:text-xl" />)}
+          </div>
+        </InputOTP>
+        {busy && <span className="flex items-center gap-2 text-xs text-[var(--app-muted)]"><LoaderCircle className="size-3.5 animate-spin" />{messages.connecting}</span>}
+      </div>
+      {window.location.protocol === 'http:' && <p role="note" className="text-center text-xs leading-relaxed text-[var(--app-muted)]">{messages.browserHttpWarning}</p>}
+    </Tabs.Panel>
+    <Tabs.Panel value="token" className="auth-method-panel">
+      <form onSubmit={(event) => void connectBrowser(event)} className="mx-auto grid w-full max-w-[22rem] gap-3">
         <label className="grid gap-1.5 text-xs font-medium"><span>{messages.browserAuthTokenLabel}</span><Input type="password" autoComplete="current-password" dir="ltr" value={apiToken} onChange={(event) => setApiToken(event.target.value)} /></label>
         <Button type="submit" variant="outline" disabled={busy || !apiToken.trim()} className="gap-2">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}{messages.browserAuthConnect}</Button>
       </form>
-    </details>
-  </div>
+    </Tabs.Panel>
+  </Tabs.Root>
 
   if (fullScreen && browserAuthRequired) {
     return <main dir={direction ?? 'auto'} className="auth-route relative flex min-h-dvh w-full items-center justify-center overflow-hidden px-4 py-10 sm:px-6">
