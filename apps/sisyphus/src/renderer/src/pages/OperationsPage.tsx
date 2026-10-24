@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { getNodeApi } from '@/lib/node-api'
 import { type getMessages } from '@/i18n/messages'
-import { getSelectedJobId, includeLinkedJob } from '@/lib/job-navigation'
+import { addSubmittedJob, getSelectedJobId, includeLinkedJob } from '@/lib/job-navigation'
 import { createJobSnapshotGate } from '@/lib/job-snapshot'
 import { validTaskTimeout } from '@/lib/job-result'
 import { JobOutputs, JobResult } from '@/components/job-result-view'
@@ -179,7 +179,8 @@ export function OperationsPage({ messages }: { messages: Messages }) {
       const result = await getNodeApi().call<{ job?: Job }>('submitJob', { workload, params: new TextEncoder().encode(JSON.stringify(parsed)), mode: mode === 'JOB_MODE_FULL_WORKER' ? 2 : 1, maxTasks, taskTimeoutSeconds: taskTimeout, minMemoryBytes: minMemory, minGpus, private: jobPrivate })
       if (result.job) {
         jobsSnapshot.current.changed()
-        setJobs((current) => [result.job!, ...current.filter((job) => job.jobId !== result.job!.jobId)])
+        const [submitted] = normalizeJobs([result.job])
+        setJobs((current) => addSubmittedJob(current, submitted))
         setSearchParams({ job: result.job.jobId })
         setRunOpen(false)
       }

@@ -12,3 +12,10 @@ export function includeLinkedJob<T extends { jobId: string }>(jobs: T[], linked:
   if (!linked || linked.jobId !== selectedId || jobs.some((job) => job.jobId === selectedId)) return jobs
   return [linked, ...jobs]
 }
+
+// A submit reply holds the job as it was created. The job stream may already
+// have delivered a newer state for it, so only add the job when it is absent.
+export function addSubmittedJob<T extends { jobId: string }>(jobs: T[], submitted: T): T[] {
+  if (jobs.some((job) => job.jobId === submitted.jobId)) return jobs
+  return [submitted, ...jobs]
+}
