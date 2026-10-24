@@ -137,7 +137,7 @@
   "browserHttpWarning": "To połączenie używa nieszyfrowanego HTTP. Urządzenia monitorujące sieć mogą zobaczyć kody i sesje. Używaj go tylko w zaufanej sieci lokalnej.",
   "browserAuthTokenLabel": "Token API węzła",
   "browserAuthConnect": "Połącz przeglądarkę",
-  "browserPairCodeTab": "Kod łączenia",
+  "browserPairCodeTab": "Połącz kodem",
   "browserPairCodeLabel": "Ośmiocyfrowy kod parowania",
   "browserPair": "Sparuj tę przeglądarkę",
   "browserTokenAlternative": "Zamiast tego użyj tokenu API węzła",
