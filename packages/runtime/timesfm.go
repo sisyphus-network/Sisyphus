@@ -18,13 +18,14 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
 )
 
-// TimesFM is a pretrained forecasting model from Google Research. Its 2.5
-// release, of 200M parameters, is published under Apache-2.0; its 3.0
-// release is not, and is not used. As a forecast candidate it is backtested
-// on the same windows as the models written in Go and joins the forecast
-// only if it scores among the best kinds there, as Chronos-Bolt does. It
-// runs in an image of its own, with the weights in it, on workers that run
-// container work, and never reaches the network while a task runs.
+// TimesFM is a pretrained forecasting model from Google Research. The model
+// used is TimesFM 2.5, of 200M parameters, published under Apache-2.0 and
+// pinned below. The timesfm Python package that loads it is versioned on
+// its own, 3.0.2 here, and is Apache-2.0 too. As a forecast candidate it is
+// backtested on the same windows as the models written in Go and joins the
+// forecast only if it scores among the best kinds there, as Chronos-Bolt
+// does. It runs in an image of its own, with the weights in it, on workers
+// that run container work, and never reaches the network while a task runs.
 //
 // On one machine its forecasts are the same to the bit on a rerun, on one
 // thread or four, and in batches of 1 or 64: 102 M4 series so run agreed
