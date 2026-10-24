@@ -81,3 +81,11 @@ func TestTheSettingsToolsShowWhatTheNodeSaysAndWhenItFails(t *testing.T) {
 		}
 	}
 }
+
+// A reply the node's message cannot be written as is the tool's error, not
+// JSON that does not parse.
+func TestAReplyThatCannotBeWrittenIsAnError(t *testing.T) {
+	if _, err := reply(&nodepb.CityTableState{Edition: "\xff"}, nil); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Errorf("a reply with invalid UTF-8: %v", err)
+	}
+}
