@@ -583,18 +583,16 @@ func fitForecast(m forecastModel, y []float64, h int) ([]float64, error) {
 // fitAR fits y[t] = c + a1·y[t-1] + … + ap·y[t-p] by least squares,
 // solving the normal equations by Gaussian elimination with partial
 // pivoting, and returns c, a1, …, ap. The order is checked here as well as
-// when a job is read, so that what is allocated stays bounded however
-// fitAR is reached.
+// when a job is read, and the system is solved in arrays sized by
+// maxForecastOrder, so nothing fitAR allocates depends on the order a job
+// asks for.
 func fitAR(y []float64, p int) ([]float64, error) {
 	if p < 1 || p > maxForecastOrder {
 		return nil, fmt.Errorf("an autoregression's order must be from 1 to %d, not %d", maxForecastOrder, p)
 	}
 	size := p + 1
-	a := make([][]float64, size)
-	for i := range a {
-		a[i] = make([]float64, size+1)
-	}
-	row := make([]float64, size)
+	var a [maxForecastOrder + 1][maxForecastOrder + 2]float64
+	var row [maxForecastOrder + 1]float64
 	for t := p; t < len(y); t++ {
 		row[0] = 1
 		for i := 1; i <= p; i++ {
@@ -629,7 +627,7 @@ func fitAR(y []float64, p int) ([]float64, error) {
 			}
 		}
 	}
-	coef := make([]float64, size)
+	var coef [maxForecastOrder + 1]float64
 	for i := size - 1; i >= 0; i-- {
 		v := a[i][size]
 		for j := i + 1; j < size; j++ {
@@ -637,7 +635,7 @@ func fitAR(y []float64, p int) ([]float64, error) {
 		}
 		coef[i] = v / a[i][i]
 	}
-	return coef, nil
+	return coef[:size:size], nil
 }
 
 func (Forecast) Aggregate(ctx context.Context, blobs Blobs, outputs [][]byte) ([]byte, error) {
