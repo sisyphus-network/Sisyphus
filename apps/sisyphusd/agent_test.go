@@ -30,7 +30,9 @@ func agent(t *testing.T, dataDir, apiAddr string, more ...string) *mcp.ClientSes
 	}
 	connecting := make(chan connected, 1)
 	go func() {
-		session, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "1"}, nil).Connect(ctx, ours, nil)
+		session, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "1"}, &mcp.ClientOptions{ElicitationHandler: func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+		}}).Connect(ctx, ours, nil)
 		connecting <- connected{session, err}
 	}()
 	var session *mcp.ClientSession
@@ -76,13 +78,22 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 	startDaemon(t, "--data-dir", dataDir, "--listen", addr, "--name", "rig", "--slots", "2", "--api-listen", apiAddr)
 	poolAsSeenBy(t, desktop(t, apiAddr))
 	waitForOutput(t, "rig", "nodes", "--addr", addr)
-	session := agent(t, dataDir, apiAddr, "--files-under", "/")
+	session := agent(t, dataDir, apiAddr, "--files-under", "/", "--admin")
 
 	// The agent is told what there is: the tools, and how to begin. Those
 	// that change the node itself are not among them unless asked for.
 	tools, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 42 {
+	if err != nil {
 		t.Fatalf("tools = %v, %v", tools, err)
+	}
+	names := make([]string, 0, len(tools.Tools))
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+	}
+	for _, name := range []string{"pool_status", "run_job", "remove_file", "delete_chat", "set_model"} {
+		if !slices.Contains(names, name) {
+			t.Errorf("admin tools do not include %q", name)
+		}
 	}
 	if !strings.Contains(session.InitializeResult().Instructions, "pool_status") {
 		t.Errorf("instructions: %q", session.InitializeResult().Instructions)

@@ -30,7 +30,7 @@ func TestEveryNodeCallHasAKind(t *testing.T) {
 // allowed admin tools, and never to a read-only server.
 func TestDestructiveToolsAreOfferedAsAdminOnesAre(t *testing.T) {
 	for _, cfg := range []Config{{}, {Admin: true}, {ReadOnly: true}, {ReadOnly: true, Admin: true}} {
-		s := &server{cfg}
+		s := &server{Config: cfg}
 		if got, want := s.offers(destructive), s.offers(admin); got != want {
 			t.Errorf("%+v: destructive offered %t, admin %t", cfg, got, want)
 		}

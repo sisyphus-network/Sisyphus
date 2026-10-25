@@ -167,7 +167,7 @@ func (n *node) StoreFile(context.Context, ...grpc.CallOption) (grpc.ClientStream
 }
 
 func serving(n *node) *server {
-	return &server{Config{Node: n, Token: "the-token"}}
+	return &server{Config: Config{Node: n, Token: "the-token"}}
 }
 
 func TestEveryToolSaysSoWhenTheNodeFailsIt(t *testing.T) {
