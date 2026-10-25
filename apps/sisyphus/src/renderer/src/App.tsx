@@ -223,13 +223,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
         return
       }
       const target = mainScroller ?? document.documentElement
-      if (pointerEvent.target !== target) return
-      const rect = mainScroller?.getBoundingClientRect()
-      const left = rect?.left ?? 0
-      const right = rect?.right ?? window.innerWidth
-      const edgeDistance = Math.min(pointerEvent.clientX - left, right - pointerEvent.clientX)
-      const gutter = mainScroller ? Math.max(mainScroller.offsetWidth - mainScroller.clientWidth, 12) : 16
-      if (edgeDistance <= gutter) markUserScrollIntent()
+      if (pointerEvent.composedPath().includes(target)) markUserScrollIntent()
     }
 
     // Restore before paint so the new route never fades in at the previous

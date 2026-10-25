@@ -3026,10 +3026,13 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     }, savedSettingsTop)
     const shortSettingsState = await main.evaluate((element) => ({ top: element.scrollTop, maxTop: element.scrollHeight - element.clientHeight, saved: Number(JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings/access']) }))
     assert.ok(shortSettingsState.maxTop < shortSettingsState.saved && shortSettingsState.saved > 40, `the scrollbar test did not reach a pending restore state: ${JSON.stringify(shortSettingsState)}`)
-    await main.evaluate((element) => {
+    const scrollbarPoint = await main.evaluate((element) => {
       const rect = element.getBoundingClientRect()
-      element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: rect.right - 2, clientY: rect.top + 100, pointerId: 1, pointerType: 'mouse' }))
+      return { x: rect.right - 2, y: rect.top + 100 }
     })
+    await page.mouse.move(scrollbarPoint.x, scrollbarPoint.y)
+    await page.mouse.down()
+    await page.mouse.up()
     await delayedSettingsContentAfterScrollbarInput.evaluate((style) => (style as HTMLStyleElement).remove())
     await page.waitForFunction((top) => {
       const main = document.querySelector<HTMLElement>('.app-shell--settings .app-main')
