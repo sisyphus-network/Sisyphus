@@ -25,10 +25,10 @@ import (
 //
 // Like forecast it is plain arithmetic with no randomness, so two workers
 // given the same task return the same bytes, unless it was asked for the
-// Chronos-Bolt models, which it runs as forecast does.
+// pretrained Chronos-Bolt or TimesFM models, which it runs as forecast does.
 type Forecasts struct {
 	// Containers, Engine and Confined are as forecast's: whether this node
-	// runs the Chronos-Bolt candidates, and how.
+	// runs the pretrained families' candidates, and how.
 	Containers bool
 	Engine     func(ctx context.Context, args []string, stdout, stderr io.Writer) (status int, err error)
 	Confined   Confinement
@@ -86,16 +86,16 @@ type SeriesForecast struct {
 	RMSE     float64         `json:"rmse,omitempty"`
 	Forecast []ForecastPoint `json:"forecast,omitempty"`
 	Error    string          `json:"error,omitempty"`
-	// Folds and Candidates are, for a task with Chronos-Bolt candidates,
+	// Folds and Candidates are, for a task with a family's candidates,
 	// the windows the series was backtested on and the backtests the
 	// coordinator chooses its forecast from (see keptCandidates), in place
-	// of a model and a forecast. Two workers' Chronos-Bolt backtests may
+	// of a model and a forecast. Two workers' backtests of a family may
 	// differ in their last digits, and with them which candidate scores
 	// best; choosing once, from the result taken, keeps that choice from
 	// being a difference between workers.
 	Folds int `json:"folds,omitempty"`
 	// Scale is the series' largest value by magnitude, given with its
-	// candidates: their Chronos-Bolt runs are compared against it.
+	// candidates: their families' runs are compared against it.
 	Scale      float64           `json:"scale,omitempty"`
 	Candidates []forecastOutcome `json:"candidates,omitempty"`
 }
@@ -124,7 +124,7 @@ type ForecastsResult struct {
 func (Forecasts) Name() string { return "forecasts" }
 
 func (Forecasts) Describe() string {
-	return `Forecasts many time series at once, each as forecast forecasts one: every candidate model backtested on the series' own past and the median of the best kinds chosen, with ranges. The series are shared out across the pool, a run of them to each task. Parameters: {"input": "<CID of a CSV file with a line for each value: the series' name first, the value last, and its time between if given>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, which "all" does not include}. Result: {"series", "forecast", "failed", "forecast_table": "<CID of every forecast as CSV: id,step,value,lo80,hi80,lo95,hi95>", "models_table": "<CID of how each series was forecast as CSV>"}.`
+	return `Forecasts many time series at once, each as forecast forecasts one: every candidate model backtested on the series' own past and the median of the best kinds chosen, with ranges. The series are shared out across the pool, a run of them to each task. Parameters: {"input": "<CID of a CSV file with a line for each value: the series' name first, the value last, and its time between if given>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, or timesfm-200m, the pretrained TimesFM model, which "all" does not include}. Result: {"series", "forecast", "failed", "forecast_table": "<CID of every forecast as CSV: id,step,value,lo80,hi80,lo95,hi95>", "models_table": "<CID of how each series was forecast as CSV>"}.`
 }
 
 func (f Forecasts) Form() []Field {
@@ -248,11 +248,11 @@ func seriesCandidates(s panelSeries, task forecastsTask) (int, []forecastModel, 
 }
 
 // keptCandidates is the backtests a series' forecast is decided from: the
-// best candidate of each kind written in Go, and every Chronos-Bolt
+// best candidate of each kind written in Go, and every family's
 // candidate, in the order they were tried. decide chooses from these as it
 // would from all of them, since it takes the best candidate, or the median
 // of the best of each of the best kinds, and the best of a kind is kept.
-// Every Chronos-Bolt candidate is kept, not only the best, because which
+// Every family's candidate is kept, not only the best, because which
 // of them is best may be one of the things two honest workers differ on.
 func keptCandidates(outcomes []forecastOutcome) []forecastOutcome {
 	best := map[string]int{}

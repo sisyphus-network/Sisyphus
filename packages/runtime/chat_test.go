@@ -194,9 +194,9 @@ func TestAWorkerOffersItsModelsAndAJobNeedsTheOneItNames(t *testing.T) {
 		t.Errorf("it runs %q", got)
 	}
 	// One that only takes such jobs in offers no model, only the
-	// Chronos-Bolt image its containers run; nor does one whose server is
-	// not there or has no address to speak of offer any.
-	if got := WithContainers().Offers(ctx); !slices.Equal(got, []string{ChronosLabel}) {
+	// Chronos-Bolt and TimesFM images its containers run; nor does one
+	// whose server is not there or has no address to speak of offer any.
+	if got := WithContainers().Offers(ctx); !slices.Equal(got, []string{ChronosLabel, TimesFMLabel}) {
 		t.Errorf("a node with no model server offers %v", got)
 	}
 	server.Close()

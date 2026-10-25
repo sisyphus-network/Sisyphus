@@ -33,12 +33,12 @@ import (
 //
 // SISYPHUS_M4_MODELS runs each frequency as one forecasts job of the models
 // it names, as a job's models are named, in place of a forecast job of each
-// series with the default models. Naming a Chronos-Bolt kind runs it in its
-// image, which needs Docker. SISYPHUS_M4_WORKERS is how many of the job's
-// tasks run at once: by default one for each processor, or, with a
-// Chronos-Bolt kind, one, since each such task is a container of up to 4 GB
-// and the benchmark does not hold them to the machine's memory as a pool's
-// scheduler does.
+// series with the default models. Naming a Chronos-Bolt or TimesFM kind runs
+// it in its image, which needs Docker. SISYPHUS_M4_WORKERS is how many of the
+// job's tasks run at once: by default one for each processor, or, with such
+// a kind, one, since each such task is a container of up to 4 GB and the
+// benchmark does not hold them to the machine's memory as a pool's scheduler
+// does.
 func TestM4(t *testing.T) {
 	dir := os.Getenv("SISYPHUS_M4")
 	if dir == "" {
@@ -52,7 +52,7 @@ func TestM4(t *testing.T) {
 		}
 	}
 	models := os.Getenv("SISYPHUS_M4_MODELS")
-	chronos := strings.Contains(models, "chronos")
+	chronos := pretrained(models)
 	workers, err := m4Workers(os.Getenv("SISYPHUS_M4_WORKERS"), models, goruntime.NumCPU())
 	if err != nil {
 		t.Fatal(err)
@@ -99,8 +99,9 @@ func TestM4(t *testing.T) {
 
 // m4Workers is how many of a job's tasks TestM4 runs at once: setting, the
 // value of SISYPHUS_M4_WORKERS, if it is given; otherwise one for each of
-// cpus, or one when models name a Chronos-Bolt kind, since each such task is
-// a container of up to 4 GB that nothing here holds to the machine's memory.
+// cpus, or one when models name a Chronos-Bolt or TimesFM kind, since each
+// such task is a container of up to 4 GB that nothing here holds to the
+// machine's memory.
 func m4Workers(setting, models string, cpus int) (int, error) {
 	if setting != "" {
 		workers, err := strconv.Atoi(setting)
@@ -109,10 +110,16 @@ func m4Workers(setting, models string, cpus int) (int, error) {
 		}
 		return workers, nil
 	}
-	if strings.Contains(models, "chronos") {
+	if pretrained(models) {
 		return 1, nil
 	}
 	return cpus, nil
+}
+
+// pretrained says whether models name a kind of a forecast family, which
+// runs in an image of its own.
+func pretrained(models string) bool {
+	return strings.Contains(models, "chronos") || strings.Contains(models, "timesfm")
 }
 
 func readFrequency(t *testing.T, dir, name string) []Series {
@@ -533,6 +540,7 @@ func TestTheM4BenchmarkRunsOneChronosTaskAtATimeUnlessToldOtherwise(t *testing.T
 		{"", "naive,theta", 32},
 		{"", "naive,theta,chronos-base", 1},
 		{"", "chronos-tiny", 1},
+		{"", "naive,timesfm-200m", 1},
 		{"8", "naive,chronos-base", 8},
 		{"3", "", 3},
 	} {

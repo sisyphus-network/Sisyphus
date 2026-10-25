@@ -34,16 +34,19 @@ func TestTheFamiliesAreNamedApartAndSayWhatTheyNeed(t *testing.T) {
 			t.Errorf("family %s is fitted by %v", fam.kind, run)
 		}
 	}
-	// Chronos-Bolt is the one family, named as it was before there were
-	// families.
-	if len(forecastFamilies) != 1 || forecastFamilies[0].kind != "chronos" {
+	// Chronos-Bolt, named as it was before there were families, and
+	// TimesFM are the families, in the order the form offers them.
+	if len(forecastFamilies) != 2 || forecastFamilies[0].kind != "chronos" || forecastFamilies[1].kind != "timesfm" {
 		t.Fatalf("the families are %+v", forecastFamilies)
 	}
-	if want := []string{"chronos-tiny", "chronos-mini", "chronos-small", "chronos-base"}; !slices.Equal(familyKinds(), want) {
+	if want := []string{"chronos-tiny", "chronos-mini", "chronos-small", "chronos-base", "timesfm-200m"}; !slices.Equal(familyKinds(), want) {
 		t.Errorf("the family kinds are %v, want %v", familyKinds(), want)
 	}
 	if chronosFamily.label != ChronosLabel || chronosFamily.memoryMB != chronosMemoryMB || chronosFamily.tolerance != chronosTolerance {
 		t.Errorf("Chronos-Bolt is described as %+v", chronosFamily)
+	}
+	if timesfmFamily.label != TimesFMLabel || timesfmFamily.memoryMB != timesfmMemoryMB || timesfmFamily.tolerance != timesfmTolerance {
+		t.Errorf("TimesFM is described as %+v", timesfmFamily)
 	}
 }
 
@@ -110,13 +113,13 @@ func TestASecondFamilyTakesTheSamePathAsChronos(t *testing.T) {
 	if got := small.Offers(ctx); !slices.Equal(got, []string{fam.label}) {
 		t.Errorf("a node that holds containers to 2048 MB offers %v", got)
 	}
-	if got := (Forecast{Containers: true}).Offers(ctx); !slices.Equal(got, []string{ChronosLabel, fam.label}) {
+	if got := (Forecast{Containers: true}).Offers(ctx); !slices.Equal(got, []string{ChronosLabel, TimesFMLabel, fam.label}) {
 		t.Errorf("a node that runs containers offers %v", got)
 	}
 	if choices := small.modelChoices(); !slices.Contains(choices, "pretend-large") || slices.Contains(choices, "chronos-tiny") {
 		t.Errorf("choices %v", choices)
 	}
-	if help := (Forecast{Containers: true}).modelsHelp(); !strings.Contains(help, "The Chronos-Bolt and Pretend models are pretrained") {
+	if help := (Forecast{Containers: true}).modelsHelp(); !strings.Contains(help, "The Chronos-Bolt, TimesFM, and Pretend models are pretrained") {
 		t.Errorf("help %q", help)
 	}
 	store := storage.NewMemory()
