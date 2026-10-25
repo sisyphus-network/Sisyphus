@@ -184,6 +184,18 @@ func waitForOutput(t *testing.T, want string, args ...string) string {
 	return waitForOutputWithin(t, 30*time.Second, want, args...)
 }
 
+// listsNode reports whether a `nodes` table has a row for the node named
+// name. It reads the NAME column only: a short name can turn up by chance
+// inside a random peer ID elsewhere in the table.
+func listsNode(table, name string) bool {
+	for _, line := range strings.Split(table, "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == name {
+			return true
+		}
+	}
+	return false
+}
+
 // waitForOutputWithin is waitForOutput for something that can take longer
 // than most, giving up after within.
 func waitForOutputWithin(t *testing.T, within time.Duration, want string, args ...string) string {
@@ -263,7 +275,7 @@ func TestCLIWorkerOnlyNodeJoinsACoordinatorOnlyNode(t *testing.T) {
 
 	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "hand", "--slots", "1")
 	nodes := waitForOutput(t, "hand", "nodes", "--addr", addr)
-	if strings.Contains(nodes, "boss") {
+	if listsNode(nodes, "boss") {
 		t.Errorf("coordinator-only node appears as a worker:\n%s", nodes)
 	}
 }

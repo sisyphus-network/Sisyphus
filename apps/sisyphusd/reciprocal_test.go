@@ -997,7 +997,7 @@ func TestTrustInOneDirectionOnly(t *testing.T) {
 	})
 	// Work flows one way. The rig is no worker of the laptop's, and is not
 	// even asking to be.
-	if out := mustCLI(t, "nodes", "--addr", laptop); strings.Contains(out, "rig") {
+	if out := mustCLI(t, "nodes", "--addr", laptop); listsNode(out, "rig") {
 		t.Errorf("the rig is working for the laptop:\n%s", out)
 	}
 	if members := mustCLI(t, "pool", "members", "--addr", laptop); !strings.Contains(members, "no nodes have been admitted") || !strings.Contains(members, "this node will work for:\n"+rigID) {
