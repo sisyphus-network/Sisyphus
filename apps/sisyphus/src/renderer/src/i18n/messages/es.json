@@ -137,7 +137,7 @@
   "browserHttpWarning": "Esta conexión usa HTTP sin cifrar. Los dispositivos que vigilen la red podrían ver códigos y sesiones. Úsala solo en una red local de confianza.",
   "browserAuthTokenLabel": "Token API del nodo",
   "browserAuthConnect": "Conectar navegador",
-  "browserPairCodeTab": "Código de un solo uso",
+  "browserPairCodeTab": "Código de emparejamiento",
   "browserPairCodeLabel": "Código de un solo uso de ocho dígitos",
   "browserPair": "Vincular navegador",
   "browserTokenAlternative": "Usar el token API del nodo",
