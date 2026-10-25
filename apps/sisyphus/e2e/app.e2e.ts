@@ -2973,6 +2973,9 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
     await page.getByRole('navigation', { name: 'Preferences' }).getByRole('link', { name: 'Settings' }).click()
     await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: /^Access/ }).click()
+    // The shrunken content is already short on the Settings index, so wait for
+    // the Access route itself to commit before measuring or interacting.
+    await page.getByRole('navigation', { name: 'Settings' }).waitFor({ state: 'detached' })
     await settingsScroller.waitFor()
     await page.waitForFunction((top) => {
       const main = document.querySelector<HTMLElement>('.app-shell--settings .app-main')
@@ -2999,6 +3002,9 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
     await page.getByRole('navigation', { name: 'Preferences' }).getByRole('link', { name: 'Settings' }).click()
     await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: /^Access/ }).click()
+    // The shrunken content is already short on the Settings index, so wait for
+    // the Access route itself to commit before measuring or interacting.
+    await page.getByRole('navigation', { name: 'Settings' }).waitFor({ state: 'detached' })
     await page.waitForFunction((top) => {
       const main = document.querySelector<HTMLElement>('.app-shell--settings .app-main')
       return main !== null && main.scrollHeight - main.clientHeight < top
@@ -3020,6 +3026,9 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
     await page.getByRole('navigation', { name: 'Preferences' }).getByRole('link', { name: 'Settings' }).click()
     await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: /^Access/ }).click()
+    // The shrunken content is already short on the Settings index, so wait for
+    // the Access route itself to commit before measuring or interacting.
+    await page.getByRole('navigation', { name: 'Settings' }).waitFor({ state: 'detached' })
     await page.waitForFunction((top) => {
       const main = document.querySelector<HTMLElement>('.app-shell--settings .app-main')
       return main !== null && main.scrollHeight - main.clientHeight < top
