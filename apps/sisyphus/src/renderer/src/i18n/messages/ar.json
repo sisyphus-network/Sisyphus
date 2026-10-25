@@ -137,7 +137,7 @@
   "browserHttpWarning": "يستخدم هذا الاتصال HTTP غير مشفر. قد ترى الأجهزة التي تراقب الشبكة الرموز والجلسات. استخدمه على شبكة محلية موثوقة فقط.",
   "browserAuthTokenLabel": "رمز API للعقدة",
   "browserAuthConnect": "وصّل المتصفح",
-  "browserPairCodeTab": "رمز الاقتران",
+  "browserPairCodeTab": "رمز لمرة واحدة",
   "browserPairCodeLabel": "رمز اقتران من ثمانية أرقام",
   "browserPair": "اقتران هذا المتصفح",
   "browserTokenAlternative": "استخدم رمز API للعقدة بدلاً من ذلك",

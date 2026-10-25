@@ -137,7 +137,7 @@
   "browserHttpWarning": "החיבור משתמש ב־HTTP לא מוצפן. מכשירים שמנטרים את הרשת עשויים לראות קודי קישור והפעלות. השתמשו רק ברשת מקומית מהימנה.",
   "browserAuthTokenLabel": "אסימון API של הצומת",
   "browserAuthConnect": "חבר דפדפן",
-  "browserPairCodeTab": "קוד קישור",
+  "browserPairCodeTab": "קוד חד־פעמי",
   "browserPairCodeLabel": "קוד קישור בן שמונה ספרות",
   "browserPair": "קישור הדפדפן",
   "browserTokenAlternative": "התחברות עם אסימון ה־API במקום זאת",
