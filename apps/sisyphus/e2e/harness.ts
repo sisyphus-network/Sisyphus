@@ -15,15 +15,26 @@ const here = dirname(fileURLToPath(import.meta.url))
 const desktop = resolve(here, '..')
 const daemon = process.env.SISYPHUS_DAEMON_PATH ?? resolve(desktop, '../../bin', process.platform === 'win32' ? 'sisyphusd.exe' : 'sisyphusd')
 
-export function freePort(): Promise<number> {
-  return new Promise((done, failed) => {
-    const server = createServer()
-    server.once('error', failed)
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as AddressInfo
-      server.close(() => done(port))
-    })
-  })
+/**
+ * Ports nothing else has, all different. Every listener stays open until
+ * all of them have their port, since one closed early can be handed out
+ * again at once, and a node given it twice cannot start (#719).
+ */
+export async function freePorts(count: number): Promise<number[]> {
+  const servers: ReturnType<typeof createServer>[] = []
+  try {
+    for (let i = 0; i < count; i++) {
+      const server = createServer()
+      servers.push(server)
+      await new Promise<void>((done, failed) => {
+        server.once('error', failed)
+        server.listen(0, '127.0.0.1', () => done())
+      })
+    }
+    return servers.map((server) => (server.address() as AddressInfo).port)
+  } finally {
+    await Promise.all(servers.map((server) => new Promise((done) => server.close(done))))
+  }
 }
 
 function listening(port: number): Promise<boolean> {
@@ -77,7 +88,7 @@ export async function testNode({ coordinator, role = 'coordinator', invitationRo
     if (!coordinator) throw new Error('a worker test node needs a coordinator to join')
     return coordinator
   }
-  const [pool, api] = [await freePort(), await freePort()]
+  const [pool, api] = await freePorts(2)
   const node: TestNode = {
     dataDir, api: `127.0.0.1:${api}`, pool: `127.0.0.1:${pool}`, tokenFile: join(dataDir, 'api.token'), child: null, output: '',
     async start() {
@@ -161,7 +172,7 @@ export interface LaunchedOwnNode extends Launched {
 
 export async function launchOwnNode({ docker = 'ready:27.3.1' }: { docker?: string } = {}): Promise<LaunchedOwnNode> {
   const home = mkdtempSync(join(tmpdir(), 'sisyphus-e2e-home-'))
-  const [api, web] = [await freePort(), await freePort()]
+  const [api, web] = await freePorts(2)
   // Spreading the environment copies only what is set, so every value is a string.
   const env: Record<string, string> = { ...process.env as Record<string, string>, HOME: home, XDG_DATA_HOME: join(home, 'data'), SISYPHUS_AUTO_START_DAEMON: '1', SISYPHUS_API_ADDRESS: `127.0.0.1:${api}`, SISYPHUS_WEB_API_ADDRESS: `127.0.0.1:${web}`, SISYPHUS_DAEMON_PATH: daemon, SISYPHUS_DOCKER_CHECK: docker }
   delete env.SISYPHUS_API_TOKEN_FILE
