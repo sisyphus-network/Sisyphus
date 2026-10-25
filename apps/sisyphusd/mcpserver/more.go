@@ -62,8 +62,10 @@ func doing[In any](s *server, do func(context.Context, In) (any, error)) mcp.Too
 func (s *server) more(out *mcp.Server) {
 	seen := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	gone := &mcp.ToolAnnotations{DestructiveHint: ptr(true)}
-	add(s, out, uses, &mcp.Tool{Name: "remove_file", Annotations: gone,
-		Description: "Stops keeping a stored file. What it held can no longer be given to a job once the store has cleared it away."}, doing(s, s.removeFile))
+	add(s, out, destructive, &mcp.Tool{Name: "remove_file", Annotations: gone,
+		Description: "Stops keeping a stored file. What it held can no longer be given to a job once the store has cleared it away."}, confirmed(s, func(args cidArgs) string {
+		return fmt.Sprintf("stop keeping stored file %s; it may be deleted when the store next clears unpinned data", args.CID)
+	}, s.removeFile))
 	add(s, out, uses, &mcp.Tool{Name: "ask_model",
 		Description: "Has a language model served by one of the pool's workers answer a prompt, and returns what it said. pool_status shows which models each worker serves. The worker that runs it sees the prompt."}, doing(s, s.askModel))
 	add(s, out, uses, &mcp.Tool{Name: "ask_planner",
@@ -89,8 +91,10 @@ func (s *server) more(out *mcp.Server) {
 		Description: "Fetches a model into the Ollama the planner is set to use, which can take minutes and gigabytes. Returns when it is there."}, doing(s, s.pullModel))
 	add(s, out, admin, &mcp.Tool{Name: "create_invitation",
 		Description: "Issues an invitation that lets another node join this node's pool, as a worker that runs its tasks or a client that submits jobs. Whoever holds it can join until it expires."}, doing(s, s.invite))
-	add(s, out, admin, &mcp.Tool{Name: "remove_member", Annotations: gone,
-		Description: "Takes a node out of this node's pool and disconnects it."}, doing(s, s.removeMember))
+	add(s, out, destructive, &mcp.Tool{Name: "remove_member", Annotations: gone,
+		Description: "Takes a node out of this node's pool and disconnects it."}, confirmed(s, func(args peerArgs) string {
+		return fmt.Sprintf("remove node %s from this pool and disconnect it", args.PeerID)
+	}, s.removeMember))
 	add(s, out, admin, &mcp.Tool{Name: "join_pool",
 		Description: "Joins another node's pool with an invitation it issued, and starts taking its work."}, doing(s, s.joinPool))
 	add(s, out, admin, &mcp.Tool{Name: "connect_peer",

@@ -17,7 +17,7 @@ func TestAnAgentAsksThePlannerAboutAFileAndTheNodeKeepsItForTheConversation(t *t
 	poolAsSeenBy(t, desktop(t, apiAddr))
 	waitForOutput(t, "rig", "nodes", "--addr", addr)
 	mustCLI(t, "model", "set", "--data-dir", dataDir, "--url", served.URL, "--model", "test-model")
-	session := agent(t, dataDir, apiAddr, "--addr", addr, "--files-under", "/")
+	session := agent(t, dataDir, apiAddr, "--addr", addr, "--files-under", "/", "--admin")
 
 	stored, text, failed := use(t, session, "store_file", map[string]any{"path": writeFile(t, "the boulder and the hill"), "name": "myth.txt", "private": true})
 	if failed {

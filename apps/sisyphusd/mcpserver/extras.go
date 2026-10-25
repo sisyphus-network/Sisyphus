@@ -306,10 +306,15 @@ func (s *server) extras(out *mcp.Server) {
 		Description: "Says which texts mean most alike, using an embedding model the pool serves: each text ranked against a query, or every pair of the texts ranked against each other. The workers running it see the texts."}, doing(s, s.compareTexts))
 	add(s, out, reads, &mcp.Tool{Name: "list_model_providers", Annotations: seen,
 		Description: "Lists the kinds of model service the node's planner can plan with."}, doing(s, s.listProviders))
-	add(s, out, uses, &mcp.Tool{Name: "delete_chat", Annotations: gone,
-		Description: "Forgets a conversation with the planner."}, doing(s, s.deleteChat))
-	add(s, out, admin, &mcp.Tool{Name: "remove_model", Annotations: gone,
-		Description: "Deletes a model from the Ollama the planner is set to use, freeing the room it took."}, doing(s, s.removeModel))
+	add(s, out, destructive, &mcp.Tool{Name: "delete_chat", Annotations: gone,
+		Description: "Permanently forgets a conversation with the planner."}, confirmed(s, func(args chatArgs) string {
+		return fmt.Sprintf("permanently delete planner conversation %s", args.ChatID)
+	}, s.deleteChat))
+	add(s, out, destructive, &mcp.Tool{Name: "remove_model", Annotations: gone,
+		Description: "Deletes a fetched model from the Ollama the planner is set to use, freeing the room it took."}, confirmed(s, func(args pullArgs) string {
+		return fmt.Sprintf("delete fetched model %s from the configured Ollama service", args.Model)
+	}, s.removeModel))
+	s.destructive(out)
 
 	// What an agent may read without calling anything: the pool as it is,
 	// and the skill that says how to use it, for one that was not given it.

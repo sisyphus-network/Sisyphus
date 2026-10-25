@@ -76,12 +76,16 @@ func (s *server) storage(out *mcp.Server) {
 		Description: "Says which file a name stands for now. A name is a node's ID and stands for whichever file that node last published under it. This node is asked, which answers for its own name and for the nodes in its pool. The answer is a record the name's node signed, which is checked here: one that is not that node's, or has run out, is refused. sequence numbers the name's records from 0, each publishing one more than the last."}, keeping(s, resolveName))
 	add(s, out, uses, &mcp.Tool{Name: "pin_file",
 		Description: "Keeps a file the node holds, by content ID, until unpin_file or for ttl_hours. Use it on a job's stored outputs, which the job's own pin keeps for seven days after it ends unless the node's owner set another time. The pin is the user's, beside any others, and a file goes only when the last pin on it has lapsed: so this makes a file last longer and never shorter, and the answer lists every pin that holds it, as list_pins does. A file has one pin of the user's: pinning it again replaces that pin's time."}, keeping(s, pinFile))
-	add(s, out, uses, &mcp.Tool{Name: "unpin_file", Annotations: gone,
-		Description: "Releases the user's pin on a file. The file goes once nothing else pins it and the store next clears away what is unpinned; list_pins with its cid shows what still holds it."}, keeping(s, unpinFile))
+	add(s, out, destructive, &mcp.Tool{Name: "unpin_file", Annotations: gone,
+		Description: "Releases the user's pin on a file. The file goes once nothing else pins it and the store next clears away what is unpinned; list_pins with its cid shows what still holds it."}, confirmedKeeping(s, func(args cidArgs) string {
+		return fmt.Sprintf("release your pin on file %s; it may be deleted if no other pin holds it", args.CID)
+	}, unpinFile))
 	add(s, out, uses, &mcp.Tool{Name: "publish_name",
 		Description: "Points this node's name at a file, in a record signed with the node's key. The name is not chosen: it is the node's ID, and a node has the one, so this replaces whatever the name stood for (resolve_name with no name shows what that is). It is for a result that changes: whoever has the name finds the latest file with resolve_name. The record is good for lifetime_hours and nothing publishes it again. Publishing does not keep the file: pin it too."}, keeping(s, publishName))
-	add(s, out, admin, &mcp.Tool{Name: "collect_garbage", Annotations: gone,
-		Description: "Has the node's store drop pins that have run out and delete everything no pin holds, now instead of when it next would. Says how much was freed."}, keeping(s, collectGarbage))
+	add(s, out, destructive, &mcp.Tool{Name: "collect_garbage", Annotations: gone,
+		Description: "Immediately drops expired pins and deletes everything no pin holds. Says how much was freed."}, confirmedKeeping(s, func(none) string {
+		return "immediately delete every stored block that no active pin holds"
+	}, collectGarbage))
 	add(s, out, admin, &mcp.Tool{Name: "restore_files",
 		Description: "For a node whose store was lost: fetches back what its storage followers still hold from the store it had before, on their word, and pins it for the user. A node that still has its key takes back by itself what it had signed for; this is for the rest, which storage_status counts as unsigned."}, keeping(s, restoreFiles))
 

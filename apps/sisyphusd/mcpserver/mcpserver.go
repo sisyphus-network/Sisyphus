@@ -13,6 +13,7 @@ package mcpserver
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -55,7 +57,12 @@ type Config struct {
 	Main func() (*Main, error)
 }
 
-type server struct{ Config }
+type server struct {
+	Config
+	confirmationMu      sync.Mutex
+	confirmations       map[string]pendingConfirmation
+	confirmationEntropy io.Reader
+}
 
 const instructions = `Sisyphus is a pool of computers that run jobs. A job is one workload run over an input, split into tasks that the pool's machines run at once.
 
@@ -67,7 +74,7 @@ Workers may serve language models: ask_model has one answer a prompt, and ask_pl
 
 // New returns a server offering cfg's node to an agent.
 func New(cfg Config) *mcp.Server {
-	s := &server{cfg}
+	s := &server{Config: cfg, confirmationEntropy: rand.Reader}
 	out := mcp.NewServer(&mcp.Implementation{Name: "sisyphus", Title: "Sisyphus", Version: cfg.Version}, &mcp.ServerOptions{Instructions: instructions})
 	seen := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	add(s, out, reads, &mcp.Tool{Name: "pool_status", Annotations: seen,

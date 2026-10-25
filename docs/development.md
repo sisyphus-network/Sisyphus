@@ -162,3 +162,5 @@ The second line rebuilds `apps/sisyphusd/rsrc_windows_*.syso`, which Go links in
 - CI runs again on `dev` after each merge, once for every commit, and no run is replaced or cancelled, so every commit on `dev` has a full result of its own. These runs use GitHub's hosted runners, not the project's self-hosted ones, so pull requests never wait behind them; they are slower, but nothing waits on them (#655).
 - Before pushing, run `gofmt -l apps packages skills` (nothing should be listed), `make cover`, and `go test -race -count=3` on any package with new tests: the coverage run checks neither formatting nor tests that depend on timing or order.
 - When one piece of work builds on another that has not merged yet, its branch is cut from the earlier branch and its pull request targets that branch. Once the bottom of such a chain merges, point the next pull request at `dev`.
+
+The MCP tool tiers and destructive-action confirmation flow are described in [mcp-permissions.md](mcp-permissions.md).
