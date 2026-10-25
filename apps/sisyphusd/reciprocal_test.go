@@ -790,7 +790,7 @@ func TestNodesThatTrustEachOtherWorkForEachOther(t *testing.T) {
 	// the rig, and the rig is turned away from the laptop.
 	trust(onLaptop, laptopDir, rigID, false)
 	waitFor(t, func() bool {
-		return !strings.Contains(workers(rig), "laptop") && !strings.Contains(workers(laptop), "rig")
+		return !strings.Contains(workers(rig), "laptop") && !listsNode(workers(laptop), "rig")
 	})
 	waitFor(t, func() bool {
 		return strings.Contains(logs.String(), "no longer working for a node this one no longer trusts") &&
