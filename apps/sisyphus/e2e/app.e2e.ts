@@ -2969,10 +2969,16 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
     })
     await page.getByRole('complementary').getByRole('link', { name: 'Node overview', exact: true }).click()
     await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
+    const delayedSettingsContent = await page.addStyleTag({ content: '.app-shell--settings .route-transition { flex: 0 0 120px !important; height: 120px !important; min-height: 0 !important; overflow: hidden !important; }' })
     await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
     await page.getByRole('navigation', { name: 'Preferences' }).getByRole('link', { name: 'Settings' }).click()
     await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: /^Access/ }).click()
     await settingsScroller.waitFor()
+    await page.waitForFunction((top) => {
+      const main = document.querySelector<HTMLElement>('.app-shell--settings .app-main')
+      return main !== null && main.scrollHeight - main.clientHeight < top
+    }, savedSettingsTop)
+    await delayedSettingsContent.evaluate((style) => (style as HTMLStyleElement).remove())
     try {
       await page.waitForFunction((top) => Math.abs(Number(document.querySelector('.app-shell--settings .app-main')?.scrollTop) - top) < 2, savedSettingsTop)
     } catch (error) {
@@ -2986,6 +2992,25 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
       throw new Error(`Settings scroll did not restore from ${savedSettingsTop}: ${JSON.stringify(scrollState)}`, { cause: error })
     }
     assert.ok(savedSettingsTop > 40, 'the Settings scroll position was not meaningfully saved')
+
+    await page.getByRole('complementary').getByRole('link', { name: 'Node overview', exact: true }).click()
+    await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
+    const delayedSettingsContentAfterUserInput = await page.addStyleTag({ content: '.app-shell--settings .route-transition { flex: 0 0 120px !important; height: 120px !important; min-height: 0 !important; overflow: hidden !important; }' })
+    await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
+    await page.getByRole('navigation', { name: 'Preferences' }).getByRole('link', { name: 'Settings' }).click()
+    await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: /^Access/ }).click()
+    await page.waitForFunction((top) => {
+      const main = document.querySelector<HTMLElement>('.app-shell--settings .app-main')
+      return main !== null && main.scrollHeight - main.clientHeight < top
+    }, savedSettingsTop)
+    await main.hover()
+    await page.mouse.wheel(0, 100)
+    await delayedSettingsContentAfterUserInput.evaluate((style) => (style as HTMLStyleElement).remove())
+    await page.waitForFunction((top) => {
+      const main = document.querySelector<HTMLElement>('.app-shell--settings .app-main')
+      return main !== null && main.scrollHeight - main.clientHeight >= top
+    }, savedSettingsTop)
+    assert.ok(await settingsScroller.evaluate((element) => element.scrollTop < 40), 'late content growth overrode the user’s decision to scroll while restoration was pending')
   } finally {
     await app.close()
     profile.remove()
