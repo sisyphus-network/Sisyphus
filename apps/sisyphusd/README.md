@@ -661,7 +661,7 @@ claude mcp add sisyphus -- /path/to/sisyphusd mcp     # Claude Code; other agent
 
 The second form is what Claude Desktop (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`) and most others take. The agent starts `sisyphusd mcp` itself and talks to it over standard input and output. It takes `--data-dir`, `--api` and `--addr` if the node's data directory, `--api-listen` and `--listen` are not the usual ones.
 
-There are 53 tools: 28 that only look, 14 more that use the pool, and 11 more with `--admin`.
+There are 58 tools: 28 that only look, 14 more that use the pool, and 16 more with `--admin`.
 
 | Tool | What it does |
 | --- | --- |
@@ -679,7 +679,7 @@ There are 53 tools: 28 that only look, 14 more that use the pool, and 11 more wi
 | `list_peers`, `list_members`, `list_address_book` | The nodes this node knows of, with their countries and which way work flows; who is in its pool; which nodes it connects to each time it starts. |
 | `get_model`, `list_models`, `list_model_providers` | What the planner plans with, what its service offers, and the kinds of service there are. |
 | `get_pool_limits`, `get_model_lending`, `list_model_profiles`, `get_location`, `get_location_discovery`, `get_city_table`, `get_web_access`, `list_network_interfaces`, `get_joined_pool` | How the node is set up: what it holds its pool's clients to, which models it lends, the saved model services (never their keys), where it says it is and how it finds out, how browsers reach it, and which pool it works for. |
-| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `forget_peer`, `set_peer_trust`, `set_model`, `pull_model`, `remove_model`, `collect_garbage`, `restore_files` | Change the node itself: who is in its pool, which nodes it trusts and connects to, what it plans with; clear its store of what nothing pins now, and take back from its followers what a lost store held (`blob gc`, `blob restore`). |
+| With `--admin`: `create_invitation`, `remove_member`, `join_pool`, `connect_peer`, `forget_peer`, `set_peer_trust`, `set_model`, `pull_model`, `remove_model`, `collect_garbage`, `restore_files`, `set_pool_limits`, `set_model_lending`, `set_location`, `set_location_discovery`, `download_city_table` | Change the node itself: who is in its pool, which nodes it trusts and connects to, what it plans with, what it holds its clients to, which models it lends, where it says it is and how it finds out (each changes only the settings it is given); clear its store of what nothing pins now, and take back from its followers what a lost store held (`blob gc`, `blob restore`). |
 
 Besides tools, the server gives an agent things to read (`sisyphus://pool`, `sisyphus://workloads`, and the skill itself as `sisyphus://skill/SKILL.md` and `sisyphus://skill/recipes.md`), three prompts (`run-on-pool`, `pool-report`, `keep-result`), and, while `run_job` or `wait_for_job` waits, word of each task as it finishes.
 

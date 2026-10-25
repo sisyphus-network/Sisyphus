@@ -94,6 +94,7 @@ func New(cfg Config) *mcp.Server {
 	s.extras(out)
 	s.storage(out)
 	s.settings(out)
+	s.setters(out)
 	return out
 }
 
