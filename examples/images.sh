@@ -16,7 +16,6 @@
 # by default it is taken out) and TASKS (default: left to the pool) may be
 # set in the environment.
 set -euo pipefail
-. "$(dirname "$0")/common.sh"
 
 pictures=()
 output=pictures.zip
@@ -30,10 +29,20 @@ if [ ${#pictures[@]} -eq 0 ]; then
 	echo "usage: examples/images.sh <picture>... [-- output.zip]" >&2
 	exit 1
 fi
+# Keep in step with imagesMostPictures in packages/runtime/images.go.
+max_pictures=256
+if [ ${#pictures[@]} -gt "$max_pictures" ]; then
+	echo "too many pictures: at most $max_pictures may be edited in one job" >&2
+	exit 1
+fi
+for picture in "${pictures[@]}"; do
+	[ -f "$picture" ] || { echo "no such file: $picture" >&2; exit 1; }
+done
+
+. "$(dirname "$0")/common.sh"
 
 inputs=
 for picture in "${pictures[@]}"; do
-	[ -f "$picture" ] || { echo "no such file: $picture" >&2; exit 1; }
 	cid=$(node blob put "$picture")
 	echo "stored $picture as $cid"
 	inputs=${inputs:+$inputs,}\"$cid\"

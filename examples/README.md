@@ -117,7 +117,7 @@ examples/render.sh                       # in another: 8 strips of a 1200 by 800
 examples/render.sh 16 2400 1600 big.pgm  # more strips, a bigger picture
 ```
 
-`examples/images.sh` edits a batch of pictures: it stores each, has the pool fit them to a size and save them in a format with libvips (the `images` workload), a run of them on each worker, and fetches a zip of them all. Their metadata, such as where a photo was taken, is taken out unless `KEEP_METADATA=true`.
+`examples/images.sh` edits up to 256 pictures: it stores each, has the pool fit them to a size and save them in a format with libvips (the `images` workload), a run of them on each worker, and fetches a zip of them all. It checks the count and that every file exists before storing any of them. Their metadata, such as where a photo was taken, is taken out unless `KEEP_METADATA=true`.
 
 ```sh
 examples/local-pool.sh --containers                             # in one terminal

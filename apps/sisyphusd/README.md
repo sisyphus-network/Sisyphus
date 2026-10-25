@@ -1308,7 +1308,7 @@ bin/sisyphusd job submit --workload images --params "{\"inputs\":[\"$a\",\"$b\"]
 bin/sisyphusd job submit --workload images --params "{\"input\":\"$a\",\"width\":400,\"format\":\"png\",\"keep_metadata\":true}"
 ```
 
-`examples/images.sh` does the same for any number of pictures and fetches the zip of them all.
+`examples/images.sh` does the same for up to 256 pictures and fetches the zip of them all. It checks the count and that every file exists before storing any of them.
 
 [libvips](https://www.libvips.org/)' `vipsthumbnail` edits each picture: it turns it upright by its EXIF orientation, makes it fit within the width and height asked for, keeping its shape, saves it in the format asked for, and takes out its metadata. The pictures are shared out across the pool, a contiguous run of them to each task, as `prep` shares out its systems, and each task is given only its own. The coordinator gathers the edited pictures, named by their order and format, into the result and a zip file.
 
