@@ -54,6 +54,13 @@ func (s *localService) SetModelLending(ctx context.Context, req *nodepb.SetModel
 		return nil, errNoLending
 	}
 	l := fromLendingPB(req.GetLending())
+	held, err := s.heldOllamaURLs()
+	if err != nil {
+		return nil, err
+	}
+	if l.URL, err = modelAddress(l.URL, held...); err != nil {
+		return nil, err
+	}
 	if err := checkLending(l); err != nil {
 		return nil, err
 	}
@@ -85,10 +92,18 @@ func (s *localService) InspectOllama(ctx context.Context, req *nodepb.InspectOll
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	if err := checkOllamaURL(req.GetUrl()); err != nil {
+	held, err := s.heldOllamaURLs()
+	if err != nil {
 		return nil, err
 	}
-	server, err := inspect(ctx, req.GetUrl(), runtime.Owner{Only: trimmed(req.GetOnly())})
+	address, err := modelAddress(req.GetUrl(), held...)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkOllamaURL(address); err != nil {
+		return nil, err
+	}
+	server, err := inspect(ctx, address, runtime.Owner{Only: trimmed(req.GetOnly())})
 	if err != nil {
 		return &nodepb.InspectOllamaResponse{Error: err.Error()}, nil
 	}
@@ -101,6 +116,23 @@ func (s *localService) InspectOllama(ctx context.Context, req *nodepb.InspectOll
 		response.Loaded = append(response.Loaded, &nodepb.LoadedModel{Name: m.Model, OnCardPercent: uint32(m.OnCard)})
 	}
 	return response, nil
+}
+
+// heldOllamaURLs are the addresses of Ollama the node lends from, as saved
+// and as running, which a request may give back as the node showed them
+// masked (#718).
+func (s *localService) heldOllamaURLs() ([]string, error) {
+	s.lendingMu.RLock()
+	held := []string{s.cfg.Lent.URL}
+	s.lendingMu.RUnlock()
+	if s.cfg.Lending == nil {
+		return held, nil
+	}
+	saved, err := s.cfg.Lending.ModelLending()
+	if err != nil {
+		return nil, asError(err)
+	}
+	return append(held, saved.URL), nil
 }
 
 var errNoLending = status.Error(codes.FailedPrecondition, "this node keeps no settings for lending models")
@@ -174,6 +206,6 @@ func fromLendingPB(l *nodepb.ModelLending) nodedb.ModelLending {
 }
 
 func lendingPB(l nodedb.ModelLending) *nodepb.ModelLending {
-	return &nodepb.ModelLending{Enabled: l.Enabled, OllamaUrl: l.URL, Only: l.Only,
+	return &nodepb.ModelLending{Enabled: l.Enabled, OllamaUrl: maskAddress(l.URL), Only: l.Only,
 		GpuLayers: int32(l.GPULayers), Threads: int32(l.Threads), Context: int32(l.Context), KeepAlive: l.KeepAlive}
 }

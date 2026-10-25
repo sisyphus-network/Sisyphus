@@ -57,18 +57,17 @@ func credentialed(u *url.URL) bool {
 // the node showed it masked, stands for itself, so that renaming or
 // switching to a profile keeps its address. A new one must have no
 // credential in it: a key goes in the API key field, which the node never
-// gives out.
+// gives out. This holds for the address of the Ollama a machine lends from
+// as for a planner's.
 func modelAddress(given string, held ...string) (string, error) {
 	for _, address := range held {
 		if address != "" && (given == address || given == maskAddress(address)) {
 			return address, nil
 		}
 	}
-	u, err := url.Parse(given)
-	if err != nil {
-		return "", status.Errorf(codes.InvalidArgument, "the model service address %q cannot be read: %v", given, err)
-	}
-	if credentialed(u) {
+	// One that cannot be read is left to the checks of whoever uses it, as
+	// it always was: it is shown masked whole.
+	if u, err := url.Parse(given); err == nil && credentialed(u) {
 		return "", status.Error(codes.InvalidArgument, "a model service address cannot carry a user name, password, query or fragment: give the service's key in the API key field instead")
 	}
 	return given, nil
