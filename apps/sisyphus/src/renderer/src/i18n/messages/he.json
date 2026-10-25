@@ -138,7 +138,7 @@
   "browserAuthTokenLabel": "אסימון API של הצומת",
   "browserAuthConnect": "חבר דפדפן",
   "browserPairCodeTab": "קוד חד־פעמי",
-  "browserPairCodeLabel": "קוד קישור בן שמונה ספרות",
+  "browserPairCodeLabel": "קוד חד־פעמי בן שמונה ספרות",
   "browserPair": "קישור הדפדפן",
   "browserTokenAlternative": "התחברות עם אסימון ה־API במקום זאת",
   "browserAccess": { "eyebrow": "ניהול גישה", "title": "מכשירים", "description": "ניהול הדפדפנים והמכשירים המקושרים לצומת הזה. אפשר ליצור קוד חד־פעמי או קישור QR כדי לקשר מכשיר נוסף.", "httpWarning": "דפדפנים במחשבים אחרים מתחברים לצומת הזה ב־HTTPS, עם תעודה שהצומת יצר לעצמו. בפעם הראשונה כל דפדפן יציג אזהרה: יש להשוות את טביעת האצבע בהגדרות ← גישה לפני האישור, ולקשר רק ברשת מהימנה.", "createCode": "יצירת קוד קישור", "scanCode": "סרקו את קוד ה־QR או הזינו את הקוד במכשיר השני.", "expiresIn": "יפוג בעוד {seconds} שנ׳", "copyCode": "העתקת קוד", "codeCopied": "קוד הקישור הועתק", "copyFailed": "לא ניתן להעתיק את קוד הקישור", "codeCreated": "נוצר קוד קישור חד־פעמי", "createFailed": "לא ניתן ליצור קוד קישור", "codeExpired": "תוקף קוד הקישור פג. יש ליצור קוד חדש.", "devicesTitle": "מכשירים מקושרים", "deviceColumn": "מכשיר", "pairedColumn": "מועד קישור", "actionsColumn": "פעולות", "noDevices": "עדיין לא קושרו מכשירים.", "revoke": "ביטול גישה", "deviceRevoked": "הגישה למכשיר בוטלה", "loadFailed": "לא ניתן לטעון מכשירים מקושרים", "revokeFailed": "לא ניתן לבטל את הגישה למכשיר" },

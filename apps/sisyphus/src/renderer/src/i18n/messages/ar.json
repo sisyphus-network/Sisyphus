@@ -138,7 +138,7 @@
   "browserAuthTokenLabel": "رمز API للعقدة",
   "browserAuthConnect": "وصّل المتصفح",
   "browserPairCodeTab": "رمز لمرة واحدة",
-  "browserPairCodeLabel": "رمز اقتران من ثمانية أرقام",
+  "browserPairCodeLabel": "رمز لمرة واحدة من ثمانية أرقام",
   "browserPair": "اقتران هذا المتصفح",
   "browserTokenAlternative": "استخدم رمز API للعقدة بدلاً من ذلك",
   "browserAccess": { "eyebrow": "إدارة الوصول", "title": "الأجهزة", "description": "إدارة المتصفحات والأجهزة المقترنة بهذه العقدة. أنشئ رمزاً لمرة واحدة أو رابط QR لاقتران جهاز آخر.", "httpWarning": "تصل المتصفحات على الأجهزة الأخرى إلى هذه العقدة عبر HTTPS، بشهادة أنشأتها العقدة لنفسها. يُظهر كل متصفح تحذيرًا في المرة الأولى: قارن البصمة في الإعدادات ← الوصول قبل القبول، ولا تُقرن إلا على شبكة موثوقة.", "createCode": "إنشاء رمز اقتران", "scanCode": "امسح QR أو أدخل الرمز على الجهاز الآخر.", "expiresIn": "تنتهي خلال {seconds} ثانية", "copyCode": "نسخ الرمز", "codeCopied": "تم نسخ رمز الاقتران", "copyFailed": "تعذر نسخ الرمز", "codeCreated": "تم إنشاء رمز اقتران لمرة واحدة", "createFailed": "تعذر إنشاء رمز الاقتران", "codeExpired": "انتهت صلاحية الرمز. أنشئ رمزاً جديداً.", "devicesTitle": "الأجهزة المقترنة", "deviceColumn": "الجهاز", "pairedColumn": "تاريخ الاقتران", "actionsColumn": "الإجراءات", "noDevices": "لا توجد أجهزة مقترنة بعد.", "revoke": "إلغاء الوصول", "deviceRevoked": "تم إلغاء الوصول إلى الجهاز", "loadFailed": "تعذر تحميل الأجهزة المقترنة", "revokeFailed": "تعذر إلغاء الوصول إلى الجهاز" },

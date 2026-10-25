@@ -138,7 +138,7 @@
   "browserAuthTokenLabel": "Token API węzła",
   "browserAuthConnect": "Połącz przeglądarkę",
   "browserPairCodeTab": "Kod jednorazowy",
-  "browserPairCodeLabel": "Ośmiocyfrowy kod parowania",
+  "browserPairCodeLabel": "Ośmiocyfrowy kod jednorazowy",
   "browserPair": "Sparuj tę przeglądarkę",
   "browserTokenAlternative": "Zamiast tego użyj tokenu API węzła",
   "browserAccess": { "eyebrow": "ZARZĄDZANIE DOSTĘPEM", "title": "Urządzenia", "description": "Zarządzaj przeglądarkami i urządzeniami połączonymi z tym węzłem. Utwórz jednorazowy kod lub link QR dla nowego urządzenia.", "httpWarning": "Przeglądarki na innych komputerach łączą się z tym węzłem przez HTTPS, z certyfikatem utworzonym przez sam węzeł. Za pierwszym razem każda przeglądarka ostrzega: porównaj odcisk w Ustawienia → Dostęp przed akceptacją i paruj tylko w zaufanej sieci.", "createCode": "Utwórz kod parowania", "scanCode": "Zeskanuj QR lub wpisz kod na drugim urządzeniu.", "expiresIn": "Wygasa za {seconds}s", "copyCode": "Kopiuj kod", "codeCopied": "Skopiowano kod", "copyFailed": "Nie udało się skopiować kodu", "codeCreated": "Utworzono jednorazowy kod parowania", "createFailed": "Nie udało się utworzyć kodu", "codeExpired": "Kod wygasł. Utwórz nowy.", "devicesTitle": "Sparowane urządzenia", "deviceColumn": "Urządzenie", "pairedColumn": "Data parowania", "actionsColumn": "Akcje", "noDevices": "Nie sparowano jeszcze żadnego urządzenia.", "revoke": "Cofnij dostęp", "deviceRevoked": "Cofnięto dostęp urządzenia", "loadFailed": "Nie udało się wczytać urządzeń", "revokeFailed": "Nie udało się cofnąć dostępu" },
