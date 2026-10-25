@@ -85,6 +85,8 @@ func reply(m proto.Message, err error) (any, error) {
 // setters gives a server with --admin the tools that change how the node is
 // set up (#650). Each changes only what it is given: the rest is kept as
 // the node has it saved, so an agent never resets a setting it left out.
+// These read-then-write updates are not atomic; a concurrent settings save
+// through another client can be overwritten.
 // Each answers with the node's reply, which says when a change waits for
 // the node to start again.
 func (s *server) setters(out *mcp.Server) {
