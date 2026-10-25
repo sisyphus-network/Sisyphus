@@ -12,6 +12,7 @@ Things to run against a pool, and a pool to run them against.
 | `container.sh` | Runs a container image on the pool, one copy for each task, and prints what each printed. |
 | `transcode.sh` | Re-encodes a video on the pool: stored, encoded in stretches by the workers, fetched. |
 | `render.sh` | Renders a picture in strips, a container task for each, and puts it back together. |
+| `images.sh` | Edits a batch of pictures on the pool: each stored, fitted to a size and saved in a format by libvips, a run of them on each worker, and fetched as one zip. |
 | `rehearsal.sh` | A pool across machines, rehearsed on one: each node in a container of its own, the two workers on networks that cannot reach each other, a client on another. It joins them, runs jobs from the client, among them one that both workers check and a private one, shows a second client kept to its own jobs and pins, makes many connections from one address, loses a worker mid-job, restarts the coordinator while a job runs, and reports what held. Needs Docker. |
 | `big-file.sh` | Makes a large text file to time jobs with. |
 | `boulder.txt` | A short sample text, the default input for `wordcount.sh`. |
@@ -114,6 +115,14 @@ The first run on a machine builds the image ffmpeg runs in, which takes about a 
 examples/local-pool.sh --containers      # in one terminal: a pool whose workers run containers
 examples/render.sh                       # in another: 8 strips of a 1200 by 800 picture
 examples/render.sh 16 2400 1600 big.pgm  # more strips, a bigger picture
+```
+
+`examples/images.sh` edits a batch of pictures: it stores each, has the pool fit them to a size and save them in a format with libvips (the `images` workload), a run of them on each worker, and fetches a zip of them all. Their metadata, such as where a photo was taken, is taken out unless `KEEP_METADATA=true`.
+
+```sh
+examples/local-pool.sh --containers                             # in one terminal
+WIDTH=1600 HEIGHT=1600 FORMAT=webp examples/images.sh *.jpg     # in another: fit within 1600 pixels, as WebP
+FORMAT=png examples/images.sh scan.tif photo.jpg -- out.zip     # each as PNG, size kept, into out.zip
 ```
 
 Each task works out which strip is its own from `SISYPHUS_TASK_INDEX` and `SISYPHUS_TASK_COUNT`, writes its rows to `/output/rows`, and logs how far it has got, which `job logs` shows live. The job's result names each strip's rows by CID, and the script fetches them in order. Swap the program and the image and the same script shape runs frames of a video, files of a dataset, or seeds of a simulation.
