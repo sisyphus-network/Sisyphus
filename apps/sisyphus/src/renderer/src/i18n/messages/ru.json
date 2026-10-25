@@ -16,7 +16,7 @@
   "browserHttpWarning": "Подключение использует незашифрованный HTTP. Устройства, наблюдающие за сетью, могут видеть коды и сеансы. Используйте только доверенную локальную сеть.",
   "browserAuthTokenLabel": "API-токен узла",
   "browserAuthConnect": "Подключить браузер",
-  "browserPairCodeTab": "Одноразовый код",
+  "browserPairCodeTab": "Код сопряжения",
   "browserPairCodeLabel": "Восьмизначный одноразовый код",
   "browserPair": "Сопрячь этот браузер",
   "browserTokenAlternative": "Вместо этого использовать API-токен узла",
