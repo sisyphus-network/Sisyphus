@@ -51,7 +51,7 @@ Anything on the machine can **read** what the node is, who it knows and who work
 | `ListJobs`, `WatchJobs` | yes | Every job on record, newest first. `WatchJobs` re-sends the whole list when any job changes, progress included. |
 | `CancelJob` | yes | Stop a job that has not finished. |
 | `WatchJobEvents` | yes | What has happened to one job, then what happens next, ending when the job does: the steps of its life and the lines its tasks log. Pass `after_seq` to pick up where you left off. |
-| `GetModelConfig` | | Which model the node plans with, and whether a key is set. Never the key. |
+| `GetModelConfig` | | Which model the node plans with, and whether a key is set. Never the key, and the address with any credential in it masked; see [the model picker](#the-model-picker). |
 | `SetModelConfig` | yes | Set it. `keep_api_key` changes the model without sending the key again. The key is kept only for the provider and address it was saved with, where an empty address is the provider's usual one: change either and the configuration is saved with no key, which `has_api_key` in the answer shows. |
 | `ListProviders` | | The kinds of model service there are: Ollama, Anthropic, and OpenAI and whatever speaks as it does. Each with its usual address, whether it wants a key, and whether its models are fetched before use. |
 | `ListModels` | for a named service | What a service offers, each model with its size and whether it can call tools. With no `service`, the configured one; with one, the service described, before anything is saved. |
@@ -165,6 +165,8 @@ Everything a picker needs comes from the node, so the app holds no list of provi
 4. **Use it.** `SetModelConfig` saves the choice. When the user later changes only the model, send `keep_api_key`; the same flag in `service` lets `ListModels` use the saved key, which the node sends only to the provider and address it was saved for.
 
 Anthropic may show as having no key set and still work: with none saved, the node uses the key Anthropic's own tools are set up with on that machine.
+
+**The address never carries a credential.** A key goes in `api_key`, which the node never gives out. `SetModelConfig`, `SaveModelProfile` and `ListModels` refuse a new address with a user name, password, query or fragment in it (`INVALID_ARGUMENT`). A node may still hold one saved before it checked. Wherever the node shows an address (`GetModelConfig`, `ListModelProfiles`, and the answers to `SetModelConfig` and `SaveModelProfile`), each of those parts reads `redacted`, as in `https://redacted@models.example/v1?api-key=redacted`, and an address it cannot read reads `redacted` whole. Send the masked address back unchanged, for instance when renaming or switching to a profile, and the node keeps the one it holds. Edit it, and it is a new address and checked as one (#718).
 
 ## Files and invitations
 
