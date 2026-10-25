@@ -35,22 +35,33 @@ func (s *localService) modelService(ctx context.Context, named *nodepb.ModelServ
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	at := &nodedb.ModelConfig{Provider: named.GetProvider(), BaseURL: named.GetBaseUrl(), APIKey: named.GetApiKey()}
-	if named.GetKeepApiKey() {
-		saved, _, err := s.cfg.Assistant.ModelConfig()
-		if err != nil {
+	saved, _, err := s.cfg.Assistant.ModelConfig()
+	if err != nil {
+		return nil, asError(err)
+	}
+	profiles, hasProfiles := s.cfg.Assistant.(interface {
+		ModelProfiles() ([]nodedb.ModelProfile, error)
+	})
+	var all []nodedb.ModelProfile
+	if hasProfiles {
+		if all, err = profiles.ModelProfiles(); err != nil {
 			return nil, asError(err)
 		}
+	}
+	held := []string{saved.BaseURL}
+	for _, profile := range all {
+		held = append(held, profile.Config.BaseURL)
+	}
+	address, err := modelAddress(named.GetBaseUrl(), held...)
+	if err != nil {
+		return nil, err
+	}
+	at := &nodedb.ModelConfig{Provider: named.GetProvider(), BaseURL: address, APIKey: named.GetApiKey()}
+	if named.GetKeepApiKey() {
 		// The saved key goes only where it was saved for.
 		if sameService(saved, *at) {
 			at.APIKey = saved.APIKey
-		} else if profiles, ok := s.cfg.Assistant.(interface {
-			ModelProfiles() ([]nodedb.ModelProfile, error)
-		}); ok {
-			all, err := profiles.ModelProfiles()
-			if err != nil {
-				return nil, asError(err)
-			}
+		} else {
 			for _, profile := range all {
 				if sameService(profile.Config, *at) {
 					at.APIKey = profile.Config.APIKey

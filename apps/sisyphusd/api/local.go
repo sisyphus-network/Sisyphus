@@ -950,7 +950,7 @@ func (s *localService) GetModelConfig(context.Context, *nodepb.GetModelConfigReq
 	if err != nil {
 		return nil, asError(err)
 	}
-	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: cfg.BaseURL, Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
+	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: maskAddress(cfg.BaseURL), Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
 }
 
 func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelConfigRequest) (*nodepb.ModelConfig, error) {
@@ -960,12 +960,16 @@ func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelC
 	if s.cfg.Assistant == nil {
 		return nil, errNoPlanner
 	}
-	cfg := nodedb.ModelConfig{Provider: req.GetProvider(), BaseURL: req.GetBaseUrl(), Model: req.GetModel(), APIKey: req.GetApiKey()}
+	current, _, err := s.cfg.Assistant.ModelConfig()
+	if err != nil {
+		return nil, asError(err)
+	}
+	address, err := modelAddress(req.GetBaseUrl(), current.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	cfg := nodedb.ModelConfig{Provider: req.GetProvider(), BaseURL: address, Model: req.GetModel(), APIKey: req.GetApiKey()}
 	if req.GetKeepApiKey() {
-		current, _, err := s.cfg.Assistant.ModelConfig()
-		if err != nil {
-			return nil, asError(err)
-		}
 		// The key is kept for the service it was given for and no other:
 		// a change of provider or address is saved without one, and the
 		// answer says so.
@@ -976,7 +980,7 @@ func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelC
 	if err := s.cfg.Assistant.SetModelConfig(cfg); err != nil {
 		return nil, asError(err)
 	}
-	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: cfg.BaseURL, Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
+	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: maskAddress(cfg.BaseURL), Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
 }
 
 func (s *localService) ListModelProfiles(ctx context.Context, _ *nodepb.ListModelProfilesRequest) (*nodepb.ListModelProfilesResponse, error) {
@@ -995,7 +999,7 @@ func (s *localService) ListModelProfiles(ctx context.Context, _ *nodepb.ListMode
 	}
 	response := &nodepb.ListModelProfilesResponse{}
 	for _, p := range items {
-		response.Profiles = append(response.Profiles, &nodepb.ModelProfile{Id: p.ID, Name: p.Name, Provider: p.Config.Provider, BaseUrl: p.Config.BaseURL, Model: p.Config.Model, HasApiKey: p.Config.APIKey != "", Active: p.Active})
+		response.Profiles = append(response.Profiles, &nodepb.ModelProfile{Id: p.ID, Name: p.Name, Provider: p.Config.Provider, BaseUrl: maskAddress(p.Config.BaseURL), Model: p.Config.Model, HasApiKey: p.Config.APIKey != "", Active: p.Active})
 	}
 	return response, nil
 }
@@ -1011,12 +1015,27 @@ func (s *localService) SaveModelProfile(ctx context.Context, req *nodepb.SaveMod
 	if !ok {
 		return nil, errNoPlanner
 	}
-	config := nodedb.ModelConfig{Provider: req.GetProvider(), BaseURL: req.GetBaseUrl(), Model: req.GetModel(), APIKey: req.GetApiKey()}
-	if req.GetKeepApiKey() {
-		all, err := profiles.ModelProfiles()
-		if err != nil {
-			return nil, asError(err)
+	all, err := profiles.ModelProfiles()
+	if err != nil {
+		return nil, asError(err)
+	}
+	// The address may be this profile's own, or the planner's when a
+	// profile is made from it, shown masked to whoever is saving.
+	var held []string
+	for _, existing := range all {
+		if existing.ID == req.GetId() {
+			held = append(held, existing.Config.BaseURL)
 		}
+	}
+	if current, _, err := s.cfg.Assistant.ModelConfig(); err == nil {
+		held = append(held, current.BaseURL)
+	}
+	address, err := modelAddress(req.GetBaseUrl(), held...)
+	if err != nil {
+		return nil, err
+	}
+	config := nodedb.ModelConfig{Provider: req.GetProvider(), BaseURL: address, Model: req.GetModel(), APIKey: req.GetApiKey()}
+	if req.GetKeepApiKey() {
 		for _, existing := range all {
 			if existing.ID == req.GetId() && sameService(existing.Config, config) {
 				config.APIKey = existing.Config.APIKey
@@ -1031,7 +1050,7 @@ func (s *localService) SaveModelProfile(ctx context.Context, req *nodepb.SaveMod
 	if err := profiles.SaveModelProfile(p); err != nil {
 		return nil, asError(err)
 	}
-	return &nodepb.ModelProfile{Id: p.ID, Name: p.Name, Provider: p.Config.Provider, BaseUrl: p.Config.BaseURL, Model: p.Config.Model, HasApiKey: p.Config.APIKey != "", Active: p.Active}, nil
+	return &nodepb.ModelProfile{Id: p.ID, Name: p.Name, Provider: p.Config.Provider, BaseUrl: maskAddress(p.Config.BaseURL), Model: p.Config.Model, HasApiKey: p.Config.APIKey != "", Active: p.Active}, nil
 }
 
 func (s *localService) DeleteModelProfile(ctx context.Context, req *nodepb.DeleteModelProfileRequest) (*nodepb.DeleteModelProfileResponse, error) {

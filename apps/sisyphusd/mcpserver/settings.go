@@ -18,8 +18,8 @@ import (
 // it holds its pool's clients to, which models it lends, where it says it
 // is, how browsers reach it, and which pool it works for (#650). Each
 // answers with the node's own reply. The API gives out no key, only
-// whether one is set, though a model service's address is shown as it was
-// saved, credentials and all if it has them (#718).
+// whether one is set, and masks any credential in a model service's
+// address (#718).
 func (s *server) settings(out *mcp.Server) {
 	seen := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	for _, t := range []struct {
