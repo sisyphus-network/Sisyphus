@@ -4,8 +4,8 @@
 // .txt and its subtitles as .srt, molecules' geometries as .xyz and their
 // table as .csv, a scan's searchable PDF as .pdf, a trajectory analysis's
 // tables and a forecast and its models' scores as .csv, a prepared Amber
-// system as .prmtop, .inpcrd and .pdb with its log as .txt, a file a
-// container wrote by its own name.
+// system as .prmtop, .inpcrd and .pdb with its log as .txt, an edited
+// picture or a file a container wrote by its own name.
 
 // What a result calls a file, and the extension that kind of file has.
 const kinds: Record<string, string> = {
