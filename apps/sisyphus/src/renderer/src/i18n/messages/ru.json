@@ -17,6 +17,7 @@
   "browserAuthTokenLabel": "API-токен узла",
   "browserAuthConnect": "Подключить браузер",
   "browserPairCodeTab": "Код сопряжения",
+  "pendingActionConfirmation": { "title": "Требуется подтверждение действия", "description": "Агент запросил необратимое действие на этом узле. Проверьте его перед выбором.", "deny": "Отклонить", "approve": "Подтвердить действие", "queued": "В очереди ещё: {count}", "loadFailed": "Не удалось загрузить ожидающие подтверждения", "resolveFailed": "Не удалось сохранить ваше решение" },
   "browserPairCodeLabel": "Восьмизначный одноразовый код",
   "browserPair": "Сопрячь этот браузер",
   "browserTokenAlternative": "Вместо этого использовать API-токен узла",

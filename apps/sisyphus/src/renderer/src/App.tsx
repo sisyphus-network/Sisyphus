@@ -24,6 +24,7 @@ import { initializeThemeMode } from '@/components/theme-mode-switch'
 import { initializeThemeStyle } from '@/components/theme-style-picker'
 import { ToasterResponsive } from '@/components/toaster-responsive'
 import { NodeConnectionState } from '@/components/node-connection-state'
+import { PendingActionApprovals } from '@/components/pending-action-approvals'
 import { HeaderTeleportProvider, HeaderTeleportSlot, useHeaderSearch } from '@/components/ui/header-teleport'
 
 const initialSnapshot: NodeSnapshot = {
@@ -96,6 +97,7 @@ function App() {
   const Router = isDesktopApp() ? HashRouter : BrowserRouter
   return <Router><HeaderTeleportProvider><HeaderSearchRouteReset /><SettingsSaveProvider messages={messages}>
     <ToasterResponsive />
+    <PendingActionApprovals messages={messages} direction={direction} enabled={snapshot.status === 'connected'} />
     <AppRoutes snapshot={snapshot} setSnapshot={setSnapshot} locale={locale} setLocale={setLocale} messages={messages} direction={direction} connectedPeers={connectedPeers} statusLabel={statusLabel} StatusIcon={StatusIcon} />
   </SettingsSaveProvider></HeaderTeleportProvider></Router>
 }

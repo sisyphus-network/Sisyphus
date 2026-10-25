@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/grpc/status"
 
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 )
 
-const noConfirmation = "this client cannot ask you to confirm destructive actions; no change was made"
+const noConfirmation = "no confirmation method is available; no change was made"
 
 const confirmationLifetime = 5 * time.Minute
 const maxPendingConfirmations = 1024
@@ -25,85 +26,96 @@ type pendingConfirmation struct {
 }
 
 func confirmDestructive(s *server, req *mcp.CallToolRequest, action string) (*mcp.CallToolResult, bool, error) {
-	if req == nil || req.Session == nil {
+	return confirmDestructiveContext(s, context.Background(), req, action)
+}
+
+func confirmDestructiveContext(s *server, ctx context.Context, req *mcp.CallToolRequest, action string) (*mcp.CallToolResult, bool, error) {
+	if req == nil || req.Session == nil || req.Params == nil {
 		return nil, false, errors.New(noConfirmation)
 	}
 	initialized := req.Session.InitializeParams()
-	if initialized == nil || initialized.Capabilities == nil || initialized.Capabilities.Elicitation == nil {
-		return nil, false, errors.New(noConfirmation)
-	}
-	if req.Params == nil {
-		return nil, false, errors.New(noConfirmation)
-	}
-	response, hasResponse := req.Params.InputResponses["confirmation"]
-	if !hasResponse {
-		nonce := make([]byte, 32)
-		entropy := s.confirmationEntropy
-		if entropy == nil {
-			entropy = rand.Reader
-		}
-		if _, err := io.ReadFull(entropy, nonce); err != nil {
-			return nil, false, errors.New(noConfirmation)
-		}
-		state := base64.RawURLEncoding.EncodeToString(nonce)
-		s.confirmationMu.Lock()
-		now := time.Now()
-		for token, pending := range s.confirmations {
-			if !pending.expires.After(now) {
-				delete(s.confirmations, token)
+	if initialized != nil && initialized.Capabilities != nil && initialized.Capabilities.Elicitation != nil {
+		response, hasResponse := req.Params.InputResponses["confirmation"]
+		if !hasResponse {
+			nonce := make([]byte, 32)
+			entropy := s.confirmationEntropy
+			if entropy == nil {
+				entropy = rand.Reader
 			}
-		}
-		if s.confirmations == nil {
-			s.confirmations = make(map[string]pendingConfirmation)
-		}
-		if len(s.confirmations) >= maxPendingConfirmations {
+			if _, err := io.ReadFull(entropy, nonce); err != nil {
+				return nil, false, errors.New(noConfirmation)
+			}
+			state := base64.RawURLEncoding.EncodeToString(nonce)
+			s.confirmationMu.Lock()
+			now := time.Now()
+			for token, pending := range s.confirmations {
+				if !pending.expires.After(now) {
+					delete(s.confirmations, token)
+				}
+			}
+			if s.confirmations == nil {
+				s.confirmations = make(map[string]pendingConfirmation)
+			}
+			if len(s.confirmations) >= maxPendingConfirmations {
+				s.confirmationMu.Unlock()
+				return nil, false, errors.New("too many destructive confirmations are already pending; no change was made")
+			}
+			s.confirmations[state] = pendingConfirmation{action: action, expires: now.Add(confirmationLifetime)}
 			s.confirmationMu.Unlock()
-			return nil, false, errors.New("too many destructive confirmations are already pending; no change was made")
-		}
-		s.confirmations[state] = pendingConfirmation{action: action, expires: now.Add(confirmationLifetime)}
-		s.confirmationMu.Unlock()
-		return &mcp.CallToolResult{
-			InputRequests: mcp.InputRequestMap{"confirmation": &mcp.ElicitParams{
-				Message: "Confirm this destructive action: " + action,
-				RequestedSchema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"confirm": map[string]any{"type": "boolean", "title": "I confirm this action"},
+			return &mcp.CallToolResult{
+				InputRequests: mcp.InputRequestMap{"confirmation": &mcp.ElicitParams{
+					Message: "Confirm this destructive action: " + action,
+					RequestedSchema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"confirm": map[string]any{"type": "boolean", "title": "I confirm this action"},
+						},
+						"required": []string{"confirm"},
 					},
-					"required": []string{"confirm"},
-				},
-			}},
-			RequestState: state,
-		}, false, nil
+				}},
+				RequestState: state,
+			}, false, nil
+		}
+		if req.Params.RequestState == "" {
+			return nil, false, errors.New("confirmation does not match this destructive action; no change was made")
+		}
+		s.confirmationMu.Lock()
+		pending, valid := s.confirmations[req.Params.RequestState]
+		if valid && pending.action == action && pending.expires.After(time.Now()) {
+			delete(s.confirmations, req.Params.RequestState)
+		} else {
+			valid = false
+		}
+		s.confirmationMu.Unlock()
+		if !valid {
+			return nil, false, errors.New("confirmation does not match this destructive action or has expired; no change was made")
+		}
+		result, ok := response.(*mcp.ElicitResult)
+		if !ok || result == nil || result.Action != "accept" {
+			return nil, false, errors.New("destructive action was not confirmed; no change was made")
+		}
+		confirmed, ok := result.Content["confirm"].(bool)
+		if !ok || !confirmed {
+			return nil, false, errors.New("destructive action was not confirmed; no change was made")
+		}
+		return nil, true, nil
 	}
-	if req.Params.RequestState == "" {
-		return nil, false, errors.New("confirmation does not match this destructive action; no change was made")
+	if s.Node == nil {
+		return nil, false, errors.New(noConfirmation)
 	}
-	s.confirmationMu.Lock()
-	pending, valid := s.confirmations[req.Params.RequestState]
-	if valid && pending.action == action && pending.expires.After(time.Now()) {
-		delete(s.confirmations, req.Params.RequestState)
-	} else {
-		valid = false
+	decision, err := s.Node.RequestActionConfirmation(s.as(ctx), &nodepb.RequestActionConfirmationRequest{Action: action})
+	if err != nil {
+		return nil, false, errors.New(status.Convert(err).Message())
 	}
-	s.confirmationMu.Unlock()
-	if !valid {
-		return nil, false, errors.New("confirmation does not match this destructive action or has expired; no change was made")
-	}
-	result, ok := response.(*mcp.ElicitResult)
-	if !ok || result == nil || result.Action != "accept" {
-		return nil, false, errors.New("destructive action was not confirmed; no change was made")
-	}
-	confirmed, ok := result.Content["confirm"].(bool)
-	if !ok || !confirmed {
-		return nil, false, errors.New("destructive action was not confirmed; no change was made")
+	if decision == nil || !decision.GetApproved() {
+		return nil, false, errors.New("the node owner did not approve this action; no change was made")
 	}
 	return nil, true, nil
 }
 
 func confirmed[In any](s *server, action func(In) string, do func(context.Context, In) (any, error)) mcp.ToolHandlerFor[In, any] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		pending, confirmed, err := confirmDestructive(s, req, action(in))
+		pending, confirmed, err := confirmDestructiveContext(s, ctx, req, action(in))
 		if err != nil {
 			return shown(nil, err)
 		}
@@ -116,7 +128,7 @@ func confirmed[In any](s *server, action func(In) string, do func(context.Contex
 
 func confirmedKeeping[In any](s *server, action func(In) string, do func(context.Context, *Main, In) (any, error)) mcp.ToolHandlerFor[In, any] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		pending, confirmed, err := confirmDestructive(s, req, action(in))
+		pending, confirmed, err := confirmDestructiveContext(s, ctx, req, action(in))
 		if err != nil {
 			return shown(nil, err)
 		}

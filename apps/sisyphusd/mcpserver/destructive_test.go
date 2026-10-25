@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	nodepb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/node/v1"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
@@ -27,6 +28,25 @@ func confirmationServerSession(t *testing.T) *mcp.ServerSession {
 		return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
 	session, err := client.Connect(ctx, ours, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { session.Close() })
+	for serverSession := range server.Sessions() {
+		return serverSession
+	}
+	t.Fatal("connected MCP server has no session")
+	return nil
+}
+
+func noElicitationServerSession(t *testing.T) *mcp.ServerSession {
+	t.Helper()
+	ours, theirs := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	go server.Run(ctx, theirs)
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil).Connect(ctx, ours, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,10 +177,25 @@ func TestDestructiveConfirmationRejectsMalformedRequestsAndResponses(t *testing.
 	}
 }
 
+func TestDestructiveConfirmationFallbackFailsClosedWhenUnavailable(t *testing.T) {
+	req := confirmationRequest(noElicitationServerSession(t))
+	if _, confirmed, err := confirmDestructiveContext(&server{}, context.Background(), req, "remove a file"); err == nil || confirmed || !strings.Contains(err.Error(), noConfirmation) {
+		t.Fatalf("missing app confirmation service = (%t, %v); want fail-closed", confirmed, err)
+	}
+	n := &destructiveNode{failing: "RequestActionConfirmation"}
+	s := &server{Config: Config{Node: n, Token: "token"}}
+	if _, confirmed, err := confirmDestructiveContext(s, context.Background(), req, "remove a file"); err == nil || confirmed || !strings.Contains(err.Error(), "node failed") {
+		t.Fatalf("failed app confirmation request = (%t, %v); want node error", confirmed, err)
+	}
+}
+
 type destructiveNode struct {
 	nodepb.NodeServiceClient
-	called  []string
-	failing string
+	called             []string
+	failing            string
+	actionConfirmation string
+	confirmationToken  string
+	approveInApp       bool
 }
 
 func (n *destructiveNode) result(name string) error {
@@ -168,6 +203,17 @@ func (n *destructiveNode) result(name string) error {
 		return errors.New("node failed")
 	}
 	return nil
+}
+
+func (n *destructiveNode) RequestActionConfirmation(ctx context.Context, req *nodepb.RequestActionConfirmationRequest, _ ...grpc.CallOption) (*nodepb.RequestActionConfirmationResponse, error) {
+	n.actionConfirmation = req.GetAction()
+	if md, ok := metadata.FromOutgoingContext(ctx); ok {
+		n.confirmationToken = strings.Join(md.Get("authorization"), "")
+	}
+	if err := n.result("RequestActionConfirmation"); err != nil {
+		return nil, err
+	}
+	return &nodepb.RequestActionConfirmationResponse{Approved: n.approveInApp}, nil
 }
 
 func (n *destructiveNode) RemoveFile(_ context.Context, req *nodepb.RemoveFileRequest, _ ...grpc.CallOption) (*nodepb.RemoveFileResponse, error) {
@@ -276,18 +322,35 @@ func TestDestructiveCallsRequireExplicitClientConfirmation(t *testing.T) {
 	}
 }
 
-func TestDestructiveCallsAreRefusedWithoutElicitationSupport(t *testing.T) {
-	n := &destructiveNode{}
-	session := destructiveAgent(t, n, "", nil, false)
-	result, err := callDestructive(t, session, "remove_file", map[string]any{"cid": "file-cid"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, noConfirmation) {
-		t.Fatalf("without elicitation the action should be refused, got %#v", result)
-	}
-	if len(n.called) != 0 {
-		t.Fatalf("unsupported client reached node: %v", n.called)
+func TestDestructiveCallsFallBackToOwnerConfirmationInApp(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		approve  bool
+		wantCall bool
+	}{
+		{name: "owner denied"},
+		{name: "owner approved", approve: true, wantCall: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := &destructiveNode{approveInApp: tc.approve}
+			session := destructiveAgent(t, n, "", nil, false)
+			result, err := callDestructive(t, session, "remove_file", map[string]any{"cid": "file-cid"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n.actionConfirmation != "stop keeping stored file file-cid; it may be deleted when the store next clears unpinned data" || n.confirmationToken != "Bearer token" {
+				t.Fatalf("desktop confirmation request = %q, token %q", n.actionConfirmation, n.confirmationToken)
+			}
+			if result.IsError != !tc.wantCall {
+				t.Fatalf("result error=%t, want error=%t: %#v", result.IsError, !tc.wantCall, result)
+			}
+			if tc.wantCall && strings.Join(n.called, ",") != "RemoveFile:file-cid" {
+				t.Fatalf("approved action calls %v", n.called)
+			}
+			if !tc.wantCall && len(n.called) != 0 {
+				t.Fatalf("denied action reached node: %v", n.called)
+			}
+		})
 	}
 }
 
