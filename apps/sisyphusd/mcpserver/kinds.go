@@ -67,10 +67,10 @@ var rpcKinds = map[string]kind{
 	"SetModelConfig":               admin,
 	"SaveModelProfile":             admin,
 	"SetModelLending":              admin,
+	"ResolveActionConfirmation":    destructive,
 	"PullModel":                    admin,
 	"CreateInvitation":             admin,
 	"JoinPool":                     admin,
-	"ResolveActionConfirmation":    destructive,
 
 	// What cannot be undone.
 	"RemoveCityTable":           destructive,
