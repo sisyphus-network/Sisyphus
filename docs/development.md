@@ -77,7 +77,7 @@ What has no automated test: the desktop app has no coverage measure, and nothing
 | `packages/stun` | Asks a STUN server the user names, by a single Binding request, which address the machine's traffic reaches it from. |
 | `apps/sisyphusd/coordinator` | Scheduling, retries, aggregation, worker connections, pinning a job's data. `verify.go` has the rules of verification by replication and of spot checks. |
 | `apps/sisyphusd/worker` | Connecting to a coordinator, running tasks, the blob cache. |
-| `apps/sisyphusd/api` | The gRPC server and the client-facing services. |
+| `apps/sisyphusd/api` | The gRPC server and client-facing services, including local-only pending-action confirmations for the desktop app. |
 | `apps/sisyphusd/access` | Which nodes have been admitted and in what role, invitations, and the check made on every call. |
 | `apps/sisyphusd/tunnel` | Carrying a TCP connection inside a gRPC stream, which is how a worker's Kubo, and its cluster peer, reach their coordinator's without a port being opened for them. |
 | `apps/sisyphusd/p2p` | The node's libp2p host. It shares the node's one port with gRPC, relays between members on a coordinator, and reaches a member by its ID. The Go counterpart of the Rust daemon's `networking` module. |
@@ -86,7 +86,7 @@ What has no automated test: the desktop app has no coverage measure, and nothing
 | `apps/sisyphusd/blobclient` | Uploading and downloading blobs, checked against their CIDs. |
 | `apps/sisyphusd/replication` | Copies of a pool's stored data on its storage followers. The coordinator's side says which followers hold each pinned blob, by rendezvous hashing, signs what it tells each to hold, fetches a blob back, and takes back what a list it signed names when it has lost its store; the follower's side holds what it is told and keeps the last signed list. Tested without a network, and in `apps/sisyphusd` with real nodes. |
 | `apps/sisyphusd/pinning` | The IPFS Pinning Service API, both ways: the service a coordinator offers with `--pinning-listen`, and the client behind `blob pin-remote`. The service is tested against a store and a Kubo that can be made to fail; the real `ipfs pin remote` commands are run against a node in `apps/sisyphusd/pinning_test.go`. |
-| `apps/sisyphusd/api` | The node APIs. Its browser-facing local API registers the generated gRPC service through Vanguard's Connect v2 registrar and serves Connect and gRPC-Web; its web tests cover the JSON wire format, streaming calls and browser authorization. |
+| `apps/sisyphusd/api` | The node APIs. Its browser-facing local API registers the generated gRPC service through Vanguard's Connect v2 registrar and serves Connect and gRPC-Web; its web tests cover the JSON wire format, streaming calls and browser authorization. Destructive-action approvals use a separate token-authorized loopback stream and are not exposed to remote web clients. |
 | `apps/sisyphusd` | The `sisyphusd` command: flags, startup, the command-line client. |
 | `apps/sisyphus` | The desktop app: Electron and React. `npm ci`, then `npm run typecheck` and `npm run build`. |
 

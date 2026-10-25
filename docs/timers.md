@@ -57,6 +57,7 @@ A wait that bounds a single call (a request's timeout, a listening window, a gra
 | `packages/runtime/chat.go` and `used.go`, `tagsWait` (3 s) | Bounds the Ollama version/model metadata lookups; failure leaves optional model-use metadata empty. |
 | `packages/runtime/container.go`, `Confined.Timeout` | Owner-configured maximum runtime for one workload; the coordinator's attempt deadline provides the corresponding assignment lifecycle bound. |
 | `mcpserver/extras.go`, `follow` | The caller-supplied wait stops following a job's live events at the requested duration, then returns its current state; the job itself continues. |
+| `api/pending_action.go`, `pendingActionLifetime` (5 min) | Bounds how long a destructive MCP request waits for the node owner to approve it in the desktop app; the local API publishes queue changes on a stream, with no polling. |
 | `packages/kubo/daemon.go` and `packages/ipfscluster/daemon.go`, `stopGrace` (10 s) | How long a subprocess has to exit after an interrupt before it is killed. |
 
 ## Remaining event-source limitation
