@@ -292,7 +292,7 @@ func TestAServerOffersOnlyTheToolsItsOwnerAllows(t *testing.T) {
 	if n := len(strings.Fields(looking)); n != 28 || strings.Contains(looking, "run_job") || strings.Contains(looking, "join_pool") {
 		t.Errorf("read-only, %d tools: %s", n, looking)
 	}
-	if n := len(strings.Fields(trusted)); n != 53 || !strings.Contains(trusted, "set_peer_trust") {
+	if n := len(strings.Fields(trusted)); n != 58 || !strings.Contains(trusted, "set_pool_limits") {
 		t.Errorf("with admin, %d tools: %s", n, trusted)
 	}
 }
