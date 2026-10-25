@@ -15,6 +15,7 @@ import { getNodeApi } from '@/lib/node-api'
 import { getJobHref } from '@/lib/job-navigation'
 import { stateName } from '@/lib/job-progress'
 import { formatNumber, parseMdResult } from '@/lib/md-result'
+import { parseImagesResult } from '@/lib/images-result'
 import { canRun, countGpuWorkers, firstSentence, initialValues, normalizeWorkloads, toParams, validate, type FieldError, type FormField, type FormValue, type FormValues, type Workload } from '@/lib/workload-form'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 import { MAX_CLIENT_FILE_UPLOAD_BYTES, fileUploadLimitLabel } from '../../../shared/file-upload-limit.ts'
@@ -73,6 +74,33 @@ function MdResultView({ job, labels }: { job: Job; labels: Labels }) {
           <td className="px-2 py-1.5">{run.platform || '—'}</td>
           <td className="px-2 py-1.5 tabular-nums">{formatNumber(run.nsPerDay, 2)}</td>
           <td dir="ltr" className="px-2 py-1.5 text-end tabular-nums">{formatNumber(run.energy, 1)}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </section>
+}
+
+// ImagesResultView shows an images result as a table of the pictures: each
+// one's name, format, size in pixels and file size, or that it was not
+// made and why. Anything that is not an images result shows nothing here.
+function ImagesResultView({ job, labels }: { job: Job; labels: Labels }) {
+  const summary = job.workload === 'images' ? parseImagesResult(job.result) : null
+  if (!summary) return null
+  const text = labels.imagesResult
+  return <section aria-label={text.tableLabel} className="space-y-3 rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)]/40 p-4">
+    <p className="text-sm text-muted-foreground">{formatMessage(text.summary, { made: summary.made, total: summary.pictures.length })}</p>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[28rem] text-sm">
+        <caption className="sr-only">{text.tableLabel}</caption>
+        <thead><tr className="text-start text-xs text-muted-foreground">{[text.picture, text.file, text.format, text.size, text.bytes].map((heading) => <th key={heading} scope="col" className="px-2 py-1.5 text-start font-medium">{heading}</th>)}</tr></thead>
+        <tbody>{summary.pictures.map((picture) => <tr key={picture.index} className="border-t border-[var(--app-line)]">
+          <th scope="row" className="px-2 py-1.5 text-start font-medium tabular-nums">{picture.index + 1}</th>
+          {picture.error ? <td colSpan={4} className="px-2 py-1.5 text-muted-foreground"><span className="font-medium text-foreground">{text.notMade}</span> · <span dir="auto">{picture.error}</span></td> : <>
+            <td className="px-2 py-1.5"><code dir="ltr">{picture.name || '—'}</code></td>
+            <td className="px-2 py-1.5 uppercase">{picture.format || '—'}</td>
+            <td dir="ltr" className="px-2 py-1.5 tabular-nums">{formatNumber(picture.width, 0)} × {formatNumber(picture.height, 0)}</td>
+            <td className="px-2 py-1.5 tabular-nums">{Number.isFinite(picture.bytes) ? prettyBytes(picture.bytes) : '—'}</td>
+          </>}
         </tr>)}</tbody>
       </table>
     </div>
@@ -422,7 +450,7 @@ export function RunPage({ messages, embedded = false, onAdvanced }: { messages: 
         </div>
         <RunStatus job={job} labels={labels} />
         <JobTracker key={shownJobId} jobId={shownJobId} messages={messages} />
-        {job && <><MdResultView job={job} labels={labels} /><JobResult key={`${shownJobId}-result`} job={job} messages={messages} open={!(job.workload === 'md' && parseMdResult(job.result))} /><JobOutputs job={job} messages={messages} /></>}
+        {job && <><MdResultView job={job} labels={labels} /><ImagesResultView job={job} labels={labels} /><JobResult key={`${shownJobId}-result`} job={job} messages={messages} open={!(job.workload === 'md' && parseMdResult(job.result)) && !(job.workload === 'images' && parseImagesResult(job.result))} /><JobOutputs job={job} messages={messages} /></>}
         <div className="flex flex-wrap gap-2 border-t border-[var(--app-line)] pt-4">
           {run && <Button type="button" className="gap-2" onClick={() => runAgain(run)}><Pencil aria-hidden="true" className="size-4" />{labels.changeAndRun}</Button>}
           <NavLink to={getJobHref(shownJobId)} className={buttonVariants({ variant: 'outline' })}>{labels.openInOperations}</NavLink>
