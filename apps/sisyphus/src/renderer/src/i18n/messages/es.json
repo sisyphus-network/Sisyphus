@@ -137,7 +137,7 @@
   "browserHttpWarning": "Esta conexión usa HTTP sin cifrar. Los dispositivos que vigilen la red podrían ver códigos y sesiones. Úsala solo en una red local de confianza.",
   "browserAuthTokenLabel": "Token API del nodo",
   "browserAuthConnect": "Conectar navegador",
-  "browserPairCodeTab": "Código de un solo uso",
+  "browserPairCodeTab": "Código de emparejamiento",
   "browserPairCodeLabel": "Código de un solo uso de ocho dígitos",
   "browserPair": "Vincular navegador",
   "browserTokenAlternative": "Usar el token API del nodo",
@@ -445,6 +445,16 @@
       "ranOn": "Dónde",
       "speed": "Velocidad (ns/día)",
       "energy": "Energía final (kJ/mol)"
+    },
+    "imagesResult": {
+      "summary": "{made} de {total} imágenes hechas",
+      "tableLabel": "Cada imagen",
+      "picture": "Imagen",
+      "file": "Archivo",
+      "format": "Formato",
+      "size": "Tamaño (píxeles)",
+      "bytes": "Tamaño del archivo",
+      "notMade": "No se hizo"
     },
     "description": "Elige qué calcular, completa unos pocos campos y el pool hace el resto.",
     "galleryLabel": "Lo que este pool puede ejecutar",

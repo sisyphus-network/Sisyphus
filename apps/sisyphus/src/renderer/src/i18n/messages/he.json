@@ -137,7 +137,7 @@
   "browserHttpWarning": "החיבור משתמש ב־HTTP לא מוצפן. מכשירים שמנטרים את הרשת עשויים לראות קודי קישור והפעלות. השתמשו רק ברשת מקומית מהימנה.",
   "browserAuthTokenLabel": "אסימון API של הצומת",
   "browserAuthConnect": "חבר דפדפן",
-  "browserPairCodeTab": "קוד חד־פעמי",
+  "browserPairCodeTab": "קוד קישור",
   "browserPairCodeLabel": "קוד חד־פעמי בן שמונה ספרות",
   "browserPair": "קישור הדפדפן",
   "browserTokenAlternative": "התחברות עם אסימון ה־API במקום זאת",
@@ -445,6 +445,16 @@
       "ranOn": "רץ על",
       "speed": "מהירות (ננו־שניות ליום)",
       "energy": "אנרגיה סופית (kJ/mol)"
+    },
+    "imagesResult": {
+      "summary": "{made} מתוך {total} תמונות נוצרו",
+      "tableLabel": "כל תמונה",
+      "picture": "תמונה",
+      "file": "קובץ",
+      "format": "תבנית",
+      "size": "גודל (פיקסלים)",
+      "bytes": "גודל הקובץ",
+      "notMade": "לא נוצרה"
     },
     "description": "בוחרים מה לחשב, ממלאים כמה שדות, והמאגר עושה את השאר.",
     "galleryLabel": "מה המאגר הזה יכול להריץ",

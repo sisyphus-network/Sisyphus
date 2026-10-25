@@ -137,7 +137,7 @@
   "browserHttpWarning": "This connection uses plain HTTP. Devices monitoring this network may see pairing codes and sessions. Use only on a trusted local network.",
   "browserAuthTokenLabel": "Node API token",
   "browserAuthConnect": "Connect browser",
-  "browserPairCodeTab": "One-time code",
+  "browserPairCodeTab": "Pairing code",
   "browserPairCodeLabel": "Eight-digit one-time code",
   "browserPair": "Pair this browser",
   "browserTokenAlternative": "Use the node API token instead",
@@ -445,6 +445,16 @@
       "ranOn": "Ran on",
       "speed": "Speed (ns/day)",
       "energy": "Final energy (kJ/mol)"
+    },
+    "imagesResult": {
+      "summary": "{made} of {total} pictures made",
+      "tableLabel": "Each picture",
+      "picture": "Picture",
+      "file": "File",
+      "format": "Format",
+      "size": "Size (pixels)",
+      "bytes": "File size",
+      "notMade": "Not made"
     },
     "description": "Choose what to compute, fill in a few fields, and the pool does the rest.",
     "galleryLabel": "What this pool can run",

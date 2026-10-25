@@ -137,7 +137,7 @@
   "browserHttpWarning": "Cette connexion utilise HTTP sans chiffrement. Les appareils qui surveillent le réseau peuvent voir les codes et sessions. Utilisez-la uniquement sur un réseau local de confiance.",
   "browserAuthTokenLabel": "Jeton API du nœud",
   "browserAuthConnect": "Connecter le navigateur",
-  "browserPairCodeTab": "Code à usage unique",
+  "browserPairCodeTab": "Code d’association",
   "browserPairCodeLabel": "Code à usage unique à huit chiffres",
   "browserPair": "Associer ce navigateur",
   "browserTokenAlternative": "Utiliser plutôt le jeton API du nœud",
@@ -445,6 +445,16 @@
       "ranOn": "Où",
       "speed": "Vitesse (ns/jour)",
       "energy": "Énergie finale (kJ/mol)"
+    },
+    "imagesResult": {
+      "summary": "{made} images faites sur {total}",
+      "tableLabel": "Chaque image",
+      "picture": "Image",
+      "file": "Fichier",
+      "format": "Format",
+      "size": "Taille (pixels)",
+      "bytes": "Taille du fichier",
+      "notMade": "Non faite"
     },
     "description": "Choisissez quoi calculer, remplissez quelques champs, et le pool fait le reste.",
     "galleryLabel": "Ce que ce pool peut exécuter",

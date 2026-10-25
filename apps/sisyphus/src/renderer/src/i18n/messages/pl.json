@@ -137,7 +137,7 @@
   "browserHttpWarning": "To połączenie używa nieszyfrowanego HTTP. Urządzenia monitorujące sieć mogą zobaczyć kody i sesje. Używaj go tylko w zaufanej sieci lokalnej.",
   "browserAuthTokenLabel": "Token API węzła",
   "browserAuthConnect": "Połącz przeglądarkę",
-  "browserPairCodeTab": "Kod jednorazowy",
+  "browserPairCodeTab": "Kod parowania",
   "browserPairCodeLabel": "Ośmiocyfrowy kod jednorazowy",
   "browserPair": "Sparuj tę przeglądarkę",
   "browserTokenAlternative": "Zamiast tego użyj tokenu API węzła",
@@ -445,6 +445,16 @@
       "ranOn": "Gdzie",
       "speed": "Szybkość (ns/dzień)",
       "energy": "Energia końcowa (kJ/mol)"
+    },
+    "imagesResult": {
+      "summary": "Gotowe obrazy: {made} z {total}",
+      "tableLabel": "Każdy obraz",
+      "picture": "Obraz",
+      "file": "Plik",
+      "format": "Format",
+      "size": "Rozmiar (piksele)",
+      "bytes": "Rozmiar pliku",
+      "notMade": "Nie utworzono"
     },
     "description": "Wybierz, co obliczyć, wypełnij kilka pól, a pula zajmie się resztą.",
     "galleryLabel": "Co ta pula może uruchomić",

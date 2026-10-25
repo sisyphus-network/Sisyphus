@@ -137,7 +137,7 @@
   "browserHttpWarning": "يستخدم هذا الاتصال HTTP غير مشفر. قد ترى الأجهزة التي تراقب الشبكة الرموز والجلسات. استخدمه على شبكة محلية موثوقة فقط.",
   "browserAuthTokenLabel": "رمز API للعقدة",
   "browserAuthConnect": "وصّل المتصفح",
-  "browserPairCodeTab": "رمز لمرة واحدة",
+  "browserPairCodeTab": "رمز الاقتران",
   "browserPairCodeLabel": "رمز لمرة واحدة من ثمانية أرقام",
   "browserPair": "اقتران هذا المتصفح",
   "browserTokenAlternative": "استخدم رمز API للعقدة بدلاً من ذلك",
@@ -445,6 +445,16 @@
       "ranOn": "عملت على",
       "speed": "السرعة (نانوثانية/يوم)",
       "energy": "الطاقة النهائية (kJ/mol)"
+    },
+    "imagesResult": {
+      "summary": "تم إنشاء {made} من {total} صورة",
+      "tableLabel": "كل صورة",
+      "picture": "الصورة",
+      "file": "الملف",
+      "format": "الصيغة",
+      "size": "الحجم (بكسل)",
+      "bytes": "حجم الملف",
+      "notMade": "لم تُنشأ"
     },
     "description": "اختر ما تريد حسابه، واملأ بضعة حقول، وتتولى المجموعة الباقي.",
     "galleryLabel": "ما يمكن لهذه المجموعة تشغيله",
