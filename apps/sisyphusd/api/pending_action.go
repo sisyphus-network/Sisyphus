@@ -67,6 +67,10 @@ func (m *pendingActionManager) request(ctx context.Context, action string) (bool
 		requestedAt: now, expiresAt: now.Add(m.lifetime), decision: make(chan bool, 1),
 	}
 	m.mu.Lock()
+	if len(m.subscribers) == 0 {
+		m.mu.Unlock()
+		return false, status.Error(codes.FailedPrecondition, "open the Sisyphus app to approve this action; no change was made")
+	}
 	if len(m.pending) >= maxPendingActions {
 		m.mu.Unlock()
 		return false, status.Error(codes.ResourceExhausted, "too many actions are already waiting for approval")

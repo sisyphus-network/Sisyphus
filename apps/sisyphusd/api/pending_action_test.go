@@ -63,6 +63,8 @@ func TestPendingActionConfirmationTravelsThroughLocalAPI(t *testing.T) {
 
 func TestPendingActionConfirmationRejectsAndExpires(t *testing.T) {
 	manager := newPendingActionManager()
+	_, unsubscribe := manager.subscribe()
+	defer unsubscribe()
 	manager.lifetime = 5 * time.Millisecond
 	decision, err := manager.request(context.Background(), "delete a file")
 	if err != nil || decision {
@@ -112,18 +114,24 @@ func TestPendingActionConfirmationRejectsAndExpires(t *testing.T) {
 
 func TestPendingActionManagerValidationCapacityAndCancellation(t *testing.T) {
 	manager := newPendingActionManager()
+	_, unsubscribeManager := manager.subscribe()
+	defer unsubscribeManager()
 	for _, action := range []string{"", strings.Repeat("x", maxPendingActionText+1), "two\nlines", "tab\tcharacter", "nul\x00byte", "bidi\u202Eoverride"} {
 		if _, err := manager.request(context.Background(), action); status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("request(%q) error = %v; want invalid argument", action, err)
 		}
 	}
 	broken := newPendingActionManager()
+	_, unsubscribeBroken := broken.subscribe()
+	defer unsubscribeBroken()
 	broken.random = strings.NewReader("")
 	if _, err := broken.request(context.Background(), "valid action"); status.Code(err) != codes.Internal {
 		t.Fatalf("random source error = %v; want internal", err)
 	}
 
 	full := newPendingActionManager()
+	_, unsubscribeFull := full.subscribe()
+	defer unsubscribeFull()
 	for i := range maxPendingActions {
 		id := strings.Repeat("a", i+1)
 		full.pending[id] = &pendingAction{id: id, action: "pending", expiresAt: time.Now().Add(time.Minute), decision: make(chan bool, 1)}
@@ -133,6 +141,8 @@ func TestPendingActionManagerValidationCapacityAndCancellation(t *testing.T) {
 	}
 
 	cancelled, cancel := context.WithCancel(context.Background())
+	_, unsubscribeCancelled := manager.subscribe()
+	defer unsubscribeCancelled()
 	finished := make(chan error, 1)
 	go func() {
 		_, err := manager.request(cancelled, "cancel this request")
@@ -151,6 +161,41 @@ func TestPendingActionManagerValidationCapacityAndCancellation(t *testing.T) {
 	}
 	if manager.cancel(&pendingAction{id: "already-removed"}); len(manager.snapshot().GetActions()) != 0 {
 		t.Fatal("cancelling a missing action changed the queue")
+	}
+}
+
+func TestPendingActionManagerRequiresAnApprovalSubscriber(t *testing.T) {
+	manager := newPendingActionManager()
+	if approved, err := manager.request(context.Background(), "remove a file"); status.Code(err) != codes.FailedPrecondition || approved {
+		t.Fatalf("request without an approval subscriber = %t, %v; want failed precondition", approved, err)
+	}
+	if state := manager.snapshot(); len(state.GetActions()) != 0 || state.GetRevision() != 0 {
+		t.Fatalf("request without a subscriber changed state: %#v", state)
+	}
+
+	changes, unsubscribe := manager.subscribe()
+	defer unsubscribe()
+	decision := make(chan bool, 1)
+	requestErr := make(chan error, 1)
+	go func() {
+		approved, err := manager.request(context.Background(), "remove a file")
+		decision <- approved
+		requestErr <- err
+	}()
+	select {
+	case <-changes:
+	case <-time.After(time.Second):
+		t.Fatal("request with an approval subscriber was not published")
+	}
+	item := manager.snapshot().GetActions()
+	if len(item) != 1 {
+		t.Fatalf("published actions = %d; want one", len(item))
+	}
+	if err := manager.resolve(item[0].GetId(), false); err != nil {
+		t.Fatal(err)
+	}
+	if approved, err := <-decision, <-requestErr; err != nil || approved {
+		t.Fatalf("denied request = %t, %v; want denied", approved, err)
 	}
 }
 
