@@ -12,6 +12,12 @@ service NodeService {
   // WatchPairedBrowsers sends the authorized device list at once and whenever
   // a browser is paired or revoked.
   rpc WatchPairedBrowsers(WatchPairedBrowsersRequest) returns (stream PairedBrowsersState);
+  // A destructive MCP request may wait here until the node's owner approves
+  // or rejects it in the desktop app. The desktop watches and resolves these
+  // requests through the local API; the web listener cannot do either.
+  rpc RequestActionConfirmation(RequestActionConfirmationRequest) returns (RequestActionConfirmationResponse);
+  rpc WatchPendingActionConfirmations(WatchPendingActionConfirmationsRequest) returns (stream PendingActionConfirmationsState);
+  rpc ResolveActionConfirmation(ResolveActionConfirmationRequest) returns (ResolveActionConfirmationResponse);
   // Location discovery is opt-in. Changes are saved by the node and take
   // effect after it restarts, whether the desktop starts it or not.
   rpc GetLocationDiscoverySettings(GetLocationDiscoverySettingsRequest) returns (LocationDiscoverySettingsState);
@@ -1083,6 +1089,35 @@ message NodeState {
 }
 
 message WatchPairedBrowsersRequest {}
+
+message RequestActionConfirmationRequest {
+  string action = 1;
+}
+
+message RequestActionConfirmationResponse {
+  bool approved = 1;
+}
+
+message WatchPendingActionConfirmationsRequest {}
+
+message PendingActionConfirmation {
+  string id = 1;
+  string action = 2;
+  int64 requested_at_unix_millis = 3;
+  int64 expires_at_unix_millis = 4;
+}
+
+message PendingActionConfirmationsState {
+  repeated PendingActionConfirmation actions = 1;
+  uint64 revision = 2;
+}
+
+message ResolveActionConfirmationRequest {
+  string id = 1;
+  bool approved = 2;
+}
+
+message ResolveActionConfirmationResponse {}
 message PairedBrowser {
   string id = 1;
   string name = 2;

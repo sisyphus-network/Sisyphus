@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	grpcpeer "google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -246,8 +248,15 @@ func normal(cfg LocalConfig) LocalConfig {
 
 type localService struct {
 	nodepb.UnimplementedNodeServiceServer
-	cfg       LocalConfig
-	lendingMu sync.RWMutex
+	cfg          LocalConfig
+	lendingMu    sync.RWMutex
+	pendingOnce  sync.Once
+	pendingQueue *pendingActionManager
+}
+
+func (s *localService) actionConfirmations() *pendingActionManager {
+	s.pendingOnce.Do(func() { s.pendingQueue = newPendingActionManager() })
+	return s.pendingQueue
 }
 
 func (s *localService) GetWebAccessConfig(ctx context.Context, _ *nodepb.GetWebAccessConfigRequest) (*nodepb.WebAccessConfig, error) {
@@ -426,6 +435,88 @@ func (s *localService) WatchPairedBrowsers(_ *nodepb.WatchPairedBrowsersRequest,
 		}
 		state = next
 	}
+}
+
+// RequestActionConfirmation holds a destructive request until the owner
+// decides in the desktop app or the request expires/cancels.
+func (s *localService) RequestActionConfirmation(ctx context.Context, req *nodepb.RequestActionConfirmationRequest) (*nodepb.RequestActionConfirmationResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if err := requireLoopbackOwner(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "an action description is required")
+	}
+	approved, err := s.actionConfirmations().request(ctx, strings.TrimSpace(req.GetAction()))
+	if err != nil {
+		return nil, err
+	}
+	return &nodepb.RequestActionConfirmationResponse{Approved: approved}, nil
+}
+
+// WatchPendingActionConfirmations sends the current queue and then each
+// change. It is local-owner-only so paired web browsers cannot approve work.
+func (s *localService) WatchPendingActionConfirmations(_ *nodepb.WatchPendingActionConfirmationsRequest, stream grpc.ServerStreamingServer[nodepb.PendingActionConfirmationsState]) error {
+	if err := s.authorize(stream.Context()); err != nil {
+		return err
+	}
+	if err := requireLoopbackOwner(stream.Context()); err != nil {
+		return err
+	}
+	manager := s.actionConfirmations()
+	changes, unsubscribe := manager.subscribe()
+	defer unsubscribe()
+	state := manager.snapshot()
+	if err := stream.Send(state); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-changes:
+			next := manager.snapshot()
+			if next.GetRevision() == state.GetRevision() {
+				continue
+			}
+			if err := stream.Send(next); err != nil {
+				return err
+			}
+			state = next
+		case <-stream.Context().Done():
+			return nil
+		}
+	}
+}
+
+// ResolveActionConfirmation records the owner's one-time decision.
+func (s *localService) ResolveActionConfirmation(ctx context.Context, req *nodepb.ResolveActionConfirmationRequest) (*nodepb.ResolveActionConfirmationResponse, error) {
+	if err := s.authorize(ctx); err != nil {
+		return nil, err
+	}
+	if err := requireLoopbackOwner(ctx); err != nil {
+		return nil, err
+	}
+	if req == nil || strings.TrimSpace(req.GetId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "a pending action ID is required")
+	}
+	if err := s.actionConfirmations().resolve(req.GetId(), req.GetApproved()); err != nil {
+		return nil, err
+	}
+	return &nodepb.ResolveActionConfirmationResponse{}, nil
+}
+
+func requireLoopbackOwner(ctx context.Context) error {
+	remote, ok := grpcpeer.FromContext(ctx)
+	if !ok || remote.Addr == nil {
+		return status.Error(codes.PermissionDenied, "pending action confirmations are available only through the local node API")
+	}
+	host, _, err := net.SplitHostPort(remote.Addr.String())
+	address, parseErr := netip.ParseAddr(host)
+	if err != nil || parseErr != nil || !address.Unmap().IsLoopback() {
+		return status.Error(codes.PermissionDenied, "pending action confirmations are available only through the local node API")
+	}
+	return nil
 }
 
 func (s *localService) pairedBrowsers() (*nodepb.PairedBrowsersState, error) {
