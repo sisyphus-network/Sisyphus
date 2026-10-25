@@ -446,6 +446,16 @@
       "speed": "Speed (ns/day)",
       "energy": "Final energy (kJ/mol)"
     },
+    "imagesResult": {
+      "summary": "{made} of {total} pictures made",
+      "tableLabel": "Each picture",
+      "picture": "Picture",
+      "file": "File",
+      "format": "Format",
+      "size": "Size (pixels)",
+      "bytes": "File size",
+      "notMade": "Not made"
+    },
     "description": "Choose what to compute, fill in a few fields, and the pool does the rest.",
     "galleryLabel": "What this pool can run",
     "loading": "Loading what this pool can run",

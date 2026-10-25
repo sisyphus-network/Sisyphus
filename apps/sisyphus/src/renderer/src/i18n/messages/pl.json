@@ -446,6 +446,16 @@
       "speed": "Szybkość (ns/dzień)",
       "energy": "Energia końcowa (kJ/mol)"
     },
+    "imagesResult": {
+      "summary": "Gotowe obrazy: {made} z {total}",
+      "tableLabel": "Każdy obraz",
+      "picture": "Obraz",
+      "file": "Plik",
+      "format": "Format",
+      "size": "Rozmiar (piksele)",
+      "bytes": "Rozmiar pliku",
+      "notMade": "Nie utworzono"
+    },
     "description": "Wybierz, co obliczyć, wypełnij kilka pól, a pula zajmie się resztą.",
     "galleryLabel": "Co ta pula może uruchomić",
     "loading": "Wczytywanie tego, co ta pula może uruchomić",
