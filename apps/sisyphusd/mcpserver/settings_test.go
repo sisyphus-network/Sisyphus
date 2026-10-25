@@ -22,7 +22,7 @@ func (n *node) GetModelLending(context.Context, *nodepb.GetModelLendingRequest, 
 }
 
 func (n *node) ListModelProfiles(context.Context, *nodepb.ListModelProfilesRequest, ...grpc.CallOption) (*nodepb.ListModelProfilesResponse, error) {
-	return &nodepb.ListModelProfilesResponse{Profiles: []*nodepb.ModelProfile{{Name: "home", Provider: "ollama", HasApiKey: true, Active: true}}}, n.fail("ListModelProfiles")
+	return &nodepb.ListModelProfilesResponse{Profiles: []*nodepb.ModelProfile{{Id: "home", Name: "home", Provider: "ollama", HasApiKey: true, Active: true}}}, n.fail("ListModelProfiles")
 }
 
 func (n *node) GetNodeLocation(context.Context, *nodepb.GetNodeLocationRequest, ...grpc.CallOption) (*nodepb.GetNodeLocationResponse, error) {
@@ -177,6 +177,59 @@ func TestALocationSharedInAnUnknownWayIsRefused(t *testing.T) {
 		_, err := serving(&node{}).setLocation(context.Background(), locationArgs{Latitude: 1, Longitude: 2, Share: share})
 		if err == nil || !strings.Contains(err.Error(), "about_1km") {
 			t.Errorf("sharing by %s: %v", share, err)
+		}
+	}
+}
+
+func (n *node) SaveModelProfile(_ context.Context, req *nodepb.SaveModelProfileRequest, _ ...grpc.CallOption) (*nodepb.ModelProfile, error) {
+	if !req.GetKeepApiKey() {
+		return nil, errDown
+	}
+	return &nodepb.ModelProfile{Id: req.GetId(), Name: req.GetName(), Provider: req.GetProvider(), BaseUrl: req.GetBaseUrl(), Model: req.GetModel(), Active: req.GetActive(), HasApiKey: req.GetId() == "home"}, n.fail("SaveModelProfile")
+}
+
+// A profile already saved keeps what the agent left out, a new one is made
+// from what it gave, and neither is ever sent a key: the saved one stays.
+func TestAModelProfileIsSavedWithOnlyWhatIsGiven(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		args         string
+		calls        []string
+		shows, hides []string
+	}{
+		{`{"id":"home","model":"qwen3:8b"}`, []string{"ListModelProfiles", "SaveModelProfile"},
+			[]string{`"name":"home"`, `"provider":"ollama"`, `"model":"qwen3:8b"`, `"active":true`, `"has_api_key":true`}, nil},
+		{`{"id":"home","active":false}`, []string{"ListModelProfiles", "SaveModelProfile"},
+			[]string{`"name":"home"`}, []string{"active"}},
+		{`{"id":"cloud","name":"cloud","provider":"anthropic","model":"claude"}`, []string{"ListModelProfiles", "SaveModelProfile"},
+			[]string{`"id":"cloud"`, `"provider":"anthropic"`}, []string{"has_api_key", "active"}},
+	} {
+		for _, failing := range append([]string{""}, c.calls...) {
+			session, _ := agentOf(t, &node{failing: failing}, Config{Admin: true})
+			result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "save_model_profile", Arguments: json.RawMessage(c.args)})
+			if err != nil {
+				t.Fatalf("%s: %v", c.args, err)
+			}
+			text := result.Content[0].(*mcp.TextContent).Text
+			if failing != "" {
+				if !result.IsError || !strings.Contains(text, "the node is down") {
+					t.Errorf("%s with %s failing: %t %s", c.args, failing, result.IsError, text)
+				}
+				continue
+			}
+			if result.IsError {
+				t.Errorf("%s: %s", c.args, text)
+			}
+			for _, want := range c.shows {
+				if !strings.Contains(text, want) {
+					t.Errorf("%s: %s, want %s", c.args, text, want)
+				}
+			}
+			for _, unwanted := range c.hides {
+				if strings.Contains(text, unwanted) {
+					t.Errorf("%s: %s, want no %s", c.args, text, unwanted)
+				}
+			}
 		}
 	}
 }

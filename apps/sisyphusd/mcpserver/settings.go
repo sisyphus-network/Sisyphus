@@ -98,6 +98,8 @@ func (s *server) setters(out *mcp.Server) {
 		Description: "Saves where the node is and how much of that other members of a pool may see: nothing, the country, the city, about a kilometre, or exactly. The share is kept as it was if not given, and is the country if none was ever set."}, doing(s, s.setLocation))
 	add(s, out, admin, &mcp.Tool{Name: "set_location_discovery",
 		Description: "Changes whether the node works out where it is by itself, from its gateway or its country, and which STUN server it asks. Only what is given changes."}, doing(s, s.setLocationDiscovery))
+	add(s, out, admin, &mcp.Tool{Name: "save_model_profile",
+		Description: "Saves one of the model services the planner can be switched between, and with active switches the planner to it. A profile already saved changes only in what is given; a new one needs a name and a provider. No key is ever given: the saved one is kept while the provider and address stay the same, and has_api_key in the answer says whether one is set. The base_url list_model_profiles shows, credentials masked, can be given back as url as it is."}, doing(s, s.saveModelProfile))
 	add(s, out, admin, &mcp.Tool{Name: "download_city_table",
 		Description: "Downloads the month's free city table from DB-IP, a few hundred megabytes, so that the node can find the city of an address and not only its country. Returns when it is installed."}, doing(s, func(ctx context.Context, _ none) (any, error) {
 		return reply(s.Node.DownloadCityTable(ctx, &nodepb.DownloadCityTableRequest{}))
@@ -200,4 +202,33 @@ func (s *server) setLocationDiscovery(ctx context.Context, args discoveryArgs) (
 	set(&settings.LocateCountry, args.LocateCountry)
 	set(&settings.StunServer, args.STUNServer)
 	return reply(s.Node.SetLocationDiscoverySettings(ctx, &nodepb.SetLocationDiscoverySettingsRequest{Settings: settings}))
+}
+
+type profileArgs struct {
+	ID       string  `json:"id" jsonschema:"the profile's ID, as list_model_profiles shows it, or a new one"`
+	Name     *string `json:"name,omitempty" jsonschema:"what the profile is called"`
+	Provider *string `json:"provider,omitempty" jsonschema:"ollama, anthropic or openai, the last also for any service that speaks as OpenAI does"`
+	URL      *string `json:"url,omitempty" jsonschema:"where the service is, if not in that provider's usual place"`
+	Model    *string `json:"model,omitempty" jsonschema:"the model the planner plans with under this profile"`
+	Active   *bool   `json:"active,omitempty" jsonschema:"whether the planner is switched to this profile"`
+}
+
+func (s *server) saveModelProfile(ctx context.Context, args profileArgs) (any, error) {
+	listed, err := s.Node.ListModelProfiles(ctx, &nodepb.ListModelProfilesRequest{})
+	if err != nil {
+		return nil, err
+	}
+	saved := &nodepb.ModelProfile{Id: args.ID}
+	for _, p := range listed.GetProfiles() {
+		if p.GetId() == args.ID {
+			saved = p
+		}
+	}
+	set(&saved.Name, args.Name)
+	set(&saved.Provider, args.Provider)
+	set(&saved.BaseUrl, args.URL)
+	set(&saved.Model, args.Model)
+	set(&saved.Active, args.Active)
+	// An agent is never given a key to pass on: the one already there stays.
+	return reply(s.Node.SaveModelProfile(ctx, &nodepb.SaveModelProfileRequest{Id: saved.GetId(), Name: saved.GetName(), Provider: saved.GetProvider(), BaseUrl: saved.GetBaseUrl(), Model: saved.GetModel(), Active: saved.GetActive(), KeepApiKey: true}))
 }

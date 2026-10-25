@@ -292,7 +292,7 @@ func TestAServerOffersOnlyTheToolsItsOwnerAllows(t *testing.T) {
 	if n := len(strings.Fields(looking)); n != 28 || strings.Contains(looking, "run_job") || strings.Contains(looking, "join_pool") {
 		t.Errorf("read-only, %d tools: %s", n, looking)
 	}
-	if n := len(strings.Fields(trusted)); n != 61 || !strings.Contains(trusted, "set_pool_limits") || !strings.Contains(trusted, "set_peer_trust") || !strings.Contains(trusted, "remove_file") || !strings.Contains(trusted, "delete_model_profile") || !strings.Contains(trusted, "leave_pool") {
+	if n := len(strings.Fields(trusted)); n != 62 || !strings.Contains(trusted, "save_model_profile") || !strings.Contains(trusted, "set_peer_trust") || !strings.Contains(trusted, "remove_file") || !strings.Contains(trusted, "delete_model_profile") || !strings.Contains(trusted, "leave_pool") {
 		t.Errorf("with admin, %d tools: %s", n, trusted)
 	}
 }
