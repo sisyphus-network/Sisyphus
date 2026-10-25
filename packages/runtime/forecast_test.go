@@ -292,8 +292,30 @@ func TestAnAutoregressionRefusesAnOrderOutOfBounds(t *testing.T) {
 		if err != nil {
 			t.Fatalf("order %d: %v", p, err)
 		}
-		if len(coef) != p+1 {
-			t.Errorf("order %d: %d coefficients, want %d", p, len(coef), p+1)
+		if len(coef) != p+1 || cap(coef) != p+1 {
+			t.Errorf("order %d: %d coefficients with room for %d, want %d", p, len(coef), cap(coef), p+1)
+		}
+	}
+}
+
+func TestAnAutoregressionRecoversTheCoefficientsOfItsSeries(t *testing.T) {
+	r := rand.New(rand.NewPCG(3, 4))
+	want := []float64{0.5, 0.6, -0.3}
+	y := make([]float64, 5000)
+	for i := range y {
+		y[i] = want[0] + r.NormFloat64()
+		if i >= 2 {
+			y[i] += want[1]*y[i-1] + want[2]*y[i-2]
+		}
+	}
+	coef, err := fitAR(y, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range want {
+		if math.Abs(coef[i]-want[i]) > 0.05 {
+			t.Errorf("got %v, want about %v", coef, want)
+			break
 		}
 	}
 }
