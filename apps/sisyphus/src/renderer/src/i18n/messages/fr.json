@@ -137,7 +137,7 @@
   "browserHttpWarning": "Cette connexion utilise HTTP sans chiffrement. Les appareils qui surveillent le réseau peuvent voir les codes et sessions. Utilisez-la uniquement sur un réseau local de confiance.",
   "browserAuthTokenLabel": "Jeton API du nœud",
   "browserAuthConnect": "Connecter le navigateur",
-  "browserPairCodeTab": "Lier avec un code",
+  "browserPairCodeTab": "Code d’association",
   "browserPairCodeLabel": "Code d’association à huit chiffres",
   "browserPair": "Associer ce navigateur",
   "browserTokenAlternative": "Utiliser plutôt le jeton API du nœud",
