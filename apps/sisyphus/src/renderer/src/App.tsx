@@ -114,7 +114,6 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
   const scrollPathRef = useRef(location.pathname)
   useLayoutEffect(() => { scrollPathRef.current = location.pathname }, [location.pathname])
   const scrollPositionsRef = useRef<Record<string, number>>(readScrollPositions())
-  const scrollWriteTimerRef = useRef<number | undefined>(undefined)
   const advanced = location.pathname !== '/'
   const compact = useBreakpoint('(max-width: 900px)')
   useLayoutEffect(() => {
@@ -129,9 +128,34 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     const savedTop = scrollPositionsRef.current[routePath] ?? 0
     let restored = false
     let latestTop = savedTop
+    let pendingRestoreTop: number | null = savedTop > 0 ? savedTop : null
     let lastUserScrollIntent = 0
     let saveTimer = 0
     let restoreFrame = 0
+    let restoreSettleTimer = 0
+    let restoreObserver: ResizeObserver | undefined
+
+    const clearPendingRestore = () => {
+      pendingRestoreTop = null
+      if (restoreSettleTimer) window.clearTimeout(restoreSettleTimer)
+      restoreSettleTimer = 0
+      restoreObserver?.disconnect()
+      restoreObserver = undefined
+    }
+    const tryRestoreSavedPosition = () => {
+      const targetTop = pendingRestoreTop
+      if (targetTop === null || lastUserScrollIntent) return
+      const maxTop = mainScroller
+        ? mainScroller.scrollHeight - mainScroller.clientHeight
+        : document.documentElement.scrollHeight - window.innerHeight
+      if (maxTop + 1 < targetTop) return
+      setTop(targetTop)
+      latestTop = getTop()
+      if (Math.abs(latestTop - targetTop) < 2) {
+        if (restoreSettleTimer) window.clearTimeout(restoreSettleTimer)
+        restoreSettleTimer = window.setTimeout(clearPendingRestore, 1500)
+      }
+    }
 
     const savePosition = () => {
       if (!restored) return
@@ -146,6 +170,10 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     }
     const onScroll = () => {
       if (!restored) return
+      if (pendingRestoreTop !== null) {
+        tryRestoreSavedPosition()
+        return
+      }
       const nextTop = getTop()
       // Focus/route changes can jump an offscreen navigation target into view. Do not
       // mistake that programmatic reset for the user's new position on this page.
@@ -156,7 +184,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
       saveTimer = window.setTimeout(savePosition, 120)
     }
     const onPageHide = () => {
-      latestTop = getTop()
+      if (pendingRestoreTop === null) latestTop = getTop()
       savePosition()
     }
     const onRouteLinkClick = (event: MouseEvent) => {
@@ -177,13 +205,34 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
         ? window.location.hash.slice(1).split(/[?#]/)[0] || '/'
         : window.location.pathname
     }
-    const markUserScrollIntent = () => { lastUserScrollIntent = performance.now() }
+    const markUserScrollIntent = () => {
+      lastUserScrollIntent = performance.now()
+      if (pendingRestoreTop !== null) {
+        clearPendingRestore()
+        latestTop = getTop()
+        scrollPositionsRef.current[routePath] = latestTop
+      }
+    }
     const onScrollKeyDown = (event: KeyboardEvent) => {
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) markUserScrollIntent()
+    }
+    const onScrollPointerDown = (event: Event) => {
+      const pointerEvent = event as PointerEvent
+      if (pointerEvent.button === 1) {
+        markUserScrollIntent()
+        return
+      }
+      const target = mainScroller ?? document.documentElement
+      if (pointerEvent.composedPath().includes(target)) markUserScrollIntent()
     }
 
     // Restore before paint so the new route never fades in at the previous
     // route's scroll offset and then visibly jumps to its own saved position.
+    if (savedTop > 0) {
+      const content = mainScroller?.querySelector<HTMLElement>('.route-transition') ?? document.documentElement
+      restoreObserver = new ResizeObserver(tryRestoreSavedPosition)
+      restoreObserver.observe(content)
+    }
     setTop(savedTop)
     latestTop = getTop()
     // Some pages focus an element after mount. That native focus scroll can
@@ -191,17 +240,22 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     if (savedTop > 0) restoreFrame = requestAnimationFrame(() => {
       restoreFrame = requestAnimationFrame(() => {
         if (lastUserScrollIntent) return
-        setTop(savedTop)
-        latestTop = getTop()
+        if (pendingRestoreTop !== null) tryRestoreSavedPosition()
+        else {
+          setTop(savedTop)
+          latestTop = getTop()
+        }
       })
     })
     // A same-shell route transition can unmount this effect after a new route
     // has already started. Save the position captured for this pathname, not
     // the new route's initial scrollTop (usually zero).
     restored = true
+    tryRestoreSavedPosition()
     scrollTarget.addEventListener('scroll', onScroll, { passive: true })
     scrollTarget.addEventListener('wheel', markUserScrollIntent, { passive: true })
     scrollTarget.addEventListener('touchstart', markUserScrollIntent, { passive: true })
+    document.addEventListener('pointerdown', onScrollPointerDown, { capture: true, passive: true })
     document.addEventListener('keydown', onScrollKeyDown)
     document.addEventListener('click', onRouteLinkClick, true)
     window.addEventListener('popstate', onHistoryNavigation)
@@ -211,10 +265,12 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     return () => {
       if (restoreFrame) cancelAnimationFrame(restoreFrame)
       if (saveTimer) window.clearTimeout(saveTimer)
+      clearPendingRestore()
       if (scrollPathRef.current === routePath) savePosition()
       scrollTarget.removeEventListener('scroll', onScroll)
       scrollTarget.removeEventListener('wheel', markUserScrollIntent)
       scrollTarget.removeEventListener('touchstart', markUserScrollIntent)
+      document.removeEventListener('pointerdown', onScrollPointerDown, true)
       document.removeEventListener('keydown', onScrollKeyDown)
       document.removeEventListener('click', onRouteLinkClick, true)
       window.removeEventListener('popstate', onHistoryNavigation)
@@ -245,18 +301,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
 
       <div className={`app-content-column flex min-h-0 min-w-0 flex-1 flex-col ${advanced ? 'app-content-column--advanced' : ''}`}>
       {advanced && <header className="app-global-header flex h-[68px] w-full shrink-0 items-center justify-between gap-3 border-b border-[var(--app-line)] px-8 max-[1000px]:px-5 max-[900px]:h-[58px] max-[900px]:px-4"><div className="flex shrink-0 items-center"><HeaderBackButton messages={messages} />{(location.pathname === '/settings/node' || location.pathname === '/settings/models') && <HeaderSearchButton messages={messages} mode={location.pathname === '/settings/models' ? 'models' : 'node'} />}</div><HeaderTeleportSlot fallback={<Breadcrumb messages={messages} direction={direction} />} />{compact && <NodeStatusBadge status={snapshot.status} label={statusLabel} icon={StatusIcon} />}</header>}
-      <main onScroll={advanced ? (event) => {
-        const pathname = location.pathname
-        const top = event.currentTarget.scrollTop
-        if (scrollWriteTimerRef.current) window.clearTimeout(scrollWriteTimerRef.current)
-        scrollWriteTimerRef.current = window.setTimeout(() => {
-          try {
-            const positions = { ...readScrollPositions(), [pathname]: top }
-            scrollPositionsRef.current = positions
-            window.localStorage.setItem(scrollPositionsStorageKey, JSON.stringify(positions))
-          } catch { /* Storage can be unavailable in restricted browser contexts. */ }
-        }, 120)
-      } : undefined} className={`app-main mx-auto min-w-0 w-full ${advanced ? 'max-w-[1440px] px-8 pb-7 max-[1000px]:px-5 max-[900px]:px-4' : 'max-w-none max-[760px]:px-0'}`}>
+      <main className={`app-main mx-auto min-w-0 w-full ${advanced ? 'max-w-[1440px] px-8 pb-7 max-[1000px]:px-5 max-[900px]:px-4' : 'max-w-none max-[760px]:px-0'}`}>
         <motion.div
           className="workspace-persistent"
           aria-hidden={advanced}
