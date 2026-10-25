@@ -12,8 +12,8 @@ import (
 const masked = "redacted"
 
 // maskAddress is a model service's address as the node shows it to the
-// app, a browser or an agent: a user name and password, a query's values
-// and a fragment are each replaced with "redacted", and the rest is left
+// app, a browser or an agent: a user name and password, the query and a
+// fragment are each replaced with "redacted", and the rest is left
 // as saved so that the address still says where the service is. An
 // address that cannot be read is replaced whole, since what is in it
 // cannot be told.
@@ -28,16 +28,10 @@ func maskAddress(address string) string {
 	if u.User != nil {
 		u.User = url.User(masked)
 	}
+	// The whole query goes, keys and all: a token can be a key with no
+	// value, as in ?sk-secret.
 	if u.RawQuery != "" {
-		values, err := url.ParseQuery(u.RawQuery)
-		if err != nil {
-			u.RawQuery = masked
-		} else {
-			for k := range values {
-				values[k] = []string{masked}
-			}
-			u.RawQuery = values.Encode()
-		}
+		u.RawQuery = masked
 	}
 	u.ForceQuery = false
 	if u.Fragment != "" || u.RawFragment != "" {
