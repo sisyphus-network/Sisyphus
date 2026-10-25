@@ -3011,6 +3011,31 @@ test('desktop Settings keeps the shell fixed and restores its own scroll positio
       return main !== null && main.scrollHeight - main.clientHeight >= top
     }, savedSettingsTop)
     assert.ok(await settingsScroller.evaluate((element) => element.scrollTop < 40), 'late content growth overrode the user’s decision to scroll while restoration was pending')
+    await settingsScroller.evaluate((element, top) => { element.scrollTop = top }, savedSettingsTop)
+    await page.waitForFunction(() => Number(JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings/access']) > 40)
+
+    await page.getByRole('complementary').getByRole('link', { name: 'Node overview', exact: true }).click()
+    await page.getByRole('heading', { name: 'Node overview', level: 1 }).waitFor()
+    const delayedSettingsContentAfterScrollbarInput = await page.addStyleTag({ content: '.app-shell--settings .route-transition { flex: 0 0 120px !important; height: 120px !important; min-height: 0 !important; overflow: hidden !important; }' })
+    await page.getByRole('complementary').getByRole('link', { name: 'Settings', exact: true }).click()
+    await page.getByRole('navigation', { name: 'Preferences' }).getByRole('link', { name: 'Settings' }).click()
+    await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: /^Access/ }).click()
+    await page.waitForFunction((top) => {
+      const main = document.querySelector<HTMLElement>('.app-shell--settings .app-main')
+      return main !== null && main.scrollHeight - main.clientHeight < top
+    }, savedSettingsTop)
+    const shortSettingsState = await main.evaluate((element) => ({ top: element.scrollTop, maxTop: element.scrollHeight - element.clientHeight, saved: Number(JSON.parse(localStorage.getItem('sisyphus-page-scroll-positions') ?? '{}')['/settings/access']) }))
+    assert.ok(shortSettingsState.maxTop < shortSettingsState.saved && shortSettingsState.saved > 40, `the scrollbar test did not reach a pending restore state: ${JSON.stringify(shortSettingsState)}`)
+    await main.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: rect.right - 2, clientY: rect.top + 100, pointerId: 1, pointerType: 'mouse' }))
+    })
+    await delayedSettingsContentAfterScrollbarInput.evaluate((style) => (style as HTMLStyleElement).remove())
+    await page.waitForFunction((top) => {
+      const main = document.querySelector<HTMLElement>('.app-shell--settings .app-main')
+      return main !== null && main.scrollHeight - main.clientHeight >= top
+    }, savedSettingsTop)
+    assert.ok(await settingsScroller.evaluate((element) => element.scrollTop < 40), 'late content growth overrode a scrollbar pointer interaction')
   } finally {
     await app.close()
     profile.remove()

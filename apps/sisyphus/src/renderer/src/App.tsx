@@ -216,6 +216,21 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     const onScrollKeyDown = (event: KeyboardEvent) => {
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) markUserScrollIntent()
     }
+    const onScrollPointerDown = (event: Event) => {
+      const pointerEvent = event as PointerEvent
+      if (pointerEvent.button === 1) {
+        markUserScrollIntent()
+        return
+      }
+      const target = mainScroller ?? document.documentElement
+      if (pointerEvent.target !== target) return
+      const rect = mainScroller?.getBoundingClientRect()
+      const left = rect?.left ?? 0
+      const right = rect?.right ?? window.innerWidth
+      const edgeDistance = Math.min(pointerEvent.clientX - left, right - pointerEvent.clientX)
+      const gutter = mainScroller ? Math.max(mainScroller.offsetWidth - mainScroller.clientWidth, 12) : 16
+      if (edgeDistance <= gutter) markUserScrollIntent()
+    }
 
     // Restore before paint so the new route never fades in at the previous
     // route's scroll offset and then visibly jumps to its own saved position.
@@ -246,6 +261,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
     scrollTarget.addEventListener('scroll', onScroll, { passive: true })
     scrollTarget.addEventListener('wheel', markUserScrollIntent, { passive: true })
     scrollTarget.addEventListener('touchstart', markUserScrollIntent, { passive: true })
+    document.addEventListener('pointerdown', onScrollPointerDown, { capture: true, passive: true })
     document.addEventListener('keydown', onScrollKeyDown)
     document.addEventListener('click', onRouteLinkClick, true)
     window.addEventListener('popstate', onHistoryNavigation)
@@ -260,6 +276,7 @@ function AppRoutes({ snapshot, setSnapshot, locale, setLocale, messages, directi
       scrollTarget.removeEventListener('scroll', onScroll)
       scrollTarget.removeEventListener('wheel', markUserScrollIntent)
       scrollTarget.removeEventListener('touchstart', markUserScrollIntent)
+      document.removeEventListener('pointerdown', onScrollPointerDown, true)
       document.removeEventListener('keydown', onScrollKeyDown)
       document.removeEventListener('click', onRouteLinkClick, true)
       window.removeEventListener('popstate', onHistoryNavigation)
