@@ -79,6 +79,18 @@ test('a prepared Amber system’s files are saved by system and kind, its log as
   assert.equal(outputFileName(job, 'bafyzip', 4, new Uint8Array()), 'abcdef01-archive.zip')
 })
 
+test('edited pictures are saved by their own names, a log as text and the archive as a zip', () => {
+  const job = { jobId: 'abcdef0123456789', result: json({ width: 1600, height: 1600, enlarge: false, format: 'same', quality: 85, keep_metadata: false, pictures: [
+    { index: 0, picture: 'bafywebp', name: 'image-000.webp', format: 'webp', width: 1600, height: 1067, bytes: 204811 },
+    { index: 1, picture: 'bafytiff', name: 'image-001.tif', format: 'tiff', width: 900, height: 1600, bytes: 501 },
+    { index: 2, error: 'libvips could not read or save the picture; its log says why', log: 'bafylog2' },
+  ], made: 2, failed: 1, files: { 'image-000.webp': 'bafywebp', 'image-001.tif': 'bafytiff' }, archive: 'bafyzip', tasks: 2 }) }
+  assert.equal(outputFileName(job, 'bafywebp', 0, new Uint8Array()), 'abcdef01-image-000.webp')
+  assert.equal(outputFileName(job, 'bafytiff', 1, new Uint8Array()), 'abcdef01-image-001.tif')
+  assert.equal(outputFileName(job, 'bafylog2', 2, new Uint8Array()), 'abcdef01-pictures-2-log.txt')
+  assert.equal(outputFileName(job, 'bafyzip', 3, new Uint8Array()), 'abcdef01-archive.zip')
+})
+
 test('many series’ forecasts and how each was forecast are saved as CSV', () => {
   const job = { jobId: 'abcdef0123456789', result: json({ series: 3, forecast: 2, failed: 1, forecast_table: 'bafyforecasts', models_table: 'bafymodels' }) }
   assert.equal(outputFileName(job, 'bafyforecasts', 0, new Uint8Array()), 'abcdef01-forecast_table.csv')
