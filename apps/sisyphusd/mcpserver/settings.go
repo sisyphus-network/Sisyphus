@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -100,10 +102,132 @@ func (s *server) setters(out *mcp.Server) {
 		Description: "Changes whether the node works out where it is by itself, from its gateway or its country, and which STUN server it asks. Only what is given changes."}, doing(s, s.setLocationDiscovery))
 	add(s, out, admin, &mcp.Tool{Name: "save_model_profile",
 		Description: "Saves one of the model services the planner can be switched between, and with active switches the planner to it. A profile already saved changes only in what is given; a new one needs a name and a provider. No key is ever given: the saved one is kept while the provider and address stay the same, and has_api_key in the answer says whether one is set. The base_url list_model_profiles shows, credentials masked, can be given back as url as it is."}, doing(s, s.saveModelProfile))
+	add(s, out, admin, &mcp.Tool{Name: "set_web_access",
+		Description: "Changes this node's HTTPS browser access: whether it is enabled, which local interface addresses it listens on, and the HTTPS origin browsers use. Read get_web_access and list_network_interfaces first. Enabling access, adding a listener address while enabled, or changing its advertised URL waits for the node owner's approval in the Sisyphus app; disabling access or removing addresses is immediate. Client-side approval hints are not trusted."}, doing(s, s.setWebAccess))
 	add(s, out, admin, &mcp.Tool{Name: "download_city_table",
 		Description: "Downloads the month's free city table from DB-IP, a few hundred megabytes, so that the node can find the city of an address and not only its country. Returns when it is installed."}, doing(s, func(ctx context.Context, _ none) (any, error) {
 		return reply(s.Node.DownloadCityTable(ctx, &nodepb.DownloadCityTableRequest{}))
 	}))
+}
+
+type webAccessArgs struct {
+	Enabled         *bool     `json:"enabled,omitempty" jsonschema:"whether remote browser access is enabled; enabling it requires owner approval"`
+	ListenAddresses *[]string `json:"listen_addresses,omitempty" jsonschema:"specific local interface IP:port addresses from list_network_interfaces; adding one while enabled requires owner approval"`
+	PublicURL       *string   `json:"public_url,omitempty" jsonschema:"the HTTPS origin browsers use, such as https://node.example.net:50052; changing it while enabled requires owner approval"`
+}
+
+func (s *server) setWebAccess(ctx context.Context, args webAccessArgs) (any, error) {
+	if args.Enabled == nil && args.ListenAddresses == nil && args.PublicURL == nil {
+		return nil, fmt.Errorf("give at least one of enabled, listen_addresses or public_url")
+	}
+	current, err := s.Node.GetWebAccessConfig(s.as(ctx), &nodepb.GetWebAccessConfigRequest{})
+	if err != nil {
+		return nil, err
+	}
+	next := &nodepb.WebAccessConfig{
+		Enabled: current.GetEnabled(), ListenAddress: current.GetListenAddress(),
+		ListenAddresses: webAccessAddresses(current), PublicUrl: current.GetPublicUrl(),
+	}
+	if args.Enabled != nil {
+		next.Enabled = *args.Enabled
+	}
+	if args.ListenAddresses != nil {
+		next.ListenAddresses = slices.Clone(*args.ListenAddresses)
+		if len(next.ListenAddresses) == 0 {
+			next.ListenAddress = ""
+		} else {
+			next.ListenAddress = next.ListenAddresses[0]
+		}
+	}
+	if args.PublicURL != nil {
+		next.PublicUrl = *args.PublicURL
+	}
+	if sameWebAccess(next, current) {
+		return reply(current, nil)
+	}
+
+	if webAccessNeedsOwnerApproval(current, next) {
+		if err := validateApprovalURL(next.GetPublicUrl()); err != nil {
+			return nil, err
+		}
+		decision, err := s.Node.RequestActionConfirmation(s.as(ctx), &nodepb.RequestActionConfirmationRequest{
+			Action: webAccessApprovalAction(next),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if decision == nil || !decision.GetApproved() {
+			return nil, fmt.Errorf("the node owner did not approve this change; no change was made")
+		}
+		// Do not apply a target that was approved against a stale baseline.
+		latest, err := s.Node.GetWebAccessConfig(s.as(ctx), &nodepb.GetWebAccessConfigRequest{})
+		if err != nil {
+			return nil, err
+		}
+		if !sameWebAccess(current, latest) {
+			return nil, fmt.Errorf("web access changed while approval was pending; read the current settings and try again")
+		}
+	}
+	return reply(s.Node.SetWebAccessConfig(s.as(ctx), webAccessRequest(next)))
+}
+
+func webAccessAddresses(config *nodepb.WebAccessConfig) []string {
+	if config == nil {
+		return nil
+	}
+	if len(config.GetListenAddresses()) > 0 {
+		return slices.Clone(config.GetListenAddresses())
+	}
+	if config.GetListenAddress() != "" {
+		return []string{config.GetListenAddress()}
+	}
+	return nil
+}
+
+func webAccessRequest(config *nodepb.WebAccessConfig) *nodepb.SetWebAccessConfigRequest {
+	request := &nodepb.SetWebAccessConfigRequest{
+		Enabled: config.GetEnabled(), PublicUrl: config.GetPublicUrl(), ListenAddresses: webAccessAddresses(config),
+	}
+	if len(request.GetListenAddresses()) > 0 {
+		request.ListenAddress = request.GetListenAddresses()[0]
+	}
+	return request
+}
+
+func sameWebAccess(first, second *nodepb.WebAccessConfig) bool {
+	return first.GetEnabled() == second.GetEnabled() && first.GetPublicUrl() == second.GetPublicUrl() && slices.Equal(webAccessAddresses(first), webAccessAddresses(second))
+}
+
+func webAccessNeedsOwnerApproval(current, next *nodepb.WebAccessConfig) bool {
+	if !next.GetEnabled() {
+		return false
+	}
+	if !current.GetEnabled() {
+		return true
+	}
+	oldAddresses := make(map[string]struct{}, len(webAccessAddresses(current)))
+	for _, address := range webAccessAddresses(current) {
+		oldAddresses[address] = struct{}{}
+	}
+	for _, address := range webAccessAddresses(next) {
+		if _, exists := oldAddresses[address]; !exists {
+			return true
+		}
+	}
+	return next.GetPublicUrl() != "" && next.GetPublicUrl() != current.GetPublicUrl()
+}
+
+func validateApprovalURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if raw == "" || err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("public_url must be an HTTPS origin without credentials, a path, a query or a fragment")
+	}
+	return nil
+}
+
+func webAccessApprovalAction(config *nodepb.WebAccessConfig) string {
+	return fmt.Sprintf("Apply remote browser access: enabled=true; HTTPS listeners=[%s]; browser URL=%s. Devices that can reach these interfaces can use this node's browser UI and API.",
+		strings.Join(webAccessAddresses(config), ", "), config.GetPublicUrl())
 }
 
 // set puts a value given into a setting, and leaves the setting as it was

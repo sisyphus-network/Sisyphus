@@ -43,6 +43,13 @@ type node struct {
 	asked *nodepb.AskRequest
 	// submitted is the job the node was last asked to run.
 	submitted *nodepb.SubmitJobRequest
+	// Web access settings and their owner-approval path.
+	webAccess                 *nodepb.WebAccessConfig
+	webAccessApproval         bool
+	webAccessAction           string
+	webAccessRequest          *nodepb.SetWebAccessConfigRequest
+	webAccessCalls            []string
+	webAccessChangeOnApproval *nodepb.WebAccessConfig
 }
 
 var errDown = status.Error(codes.Unavailable, "the node is down")

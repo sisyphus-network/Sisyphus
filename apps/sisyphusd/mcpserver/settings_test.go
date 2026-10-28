@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,7 +39,41 @@ func (n *node) GetCityTable(context.Context, *nodepb.GetCityTableRequest, ...grp
 }
 
 func (n *node) GetWebAccessConfig(context.Context, *nodepb.GetWebAccessConfigRequest, ...grpc.CallOption) (*nodepb.WebAccessConfig, error) {
-	return &nodepb.WebAccessConfig{Enabled: true, ListenAddress: "192.168.1.5:7443"}, n.fail("GetWebAccessConfig")
+	n.webAccessCalls = append(n.webAccessCalls, "get")
+	config := n.webAccess
+	if config == nil {
+		config = &nodepb.WebAccessConfig{Enabled: true, ListenAddress: "192.168.1.5:7443"}
+	}
+	return &nodepb.WebAccessConfig{
+		Enabled: config.GetEnabled(), ListenAddress: config.GetListenAddress(),
+		ListenAddresses: slices.Clone(config.GetListenAddresses()), PublicUrl: config.GetPublicUrl(),
+		CertificateFingerprint: config.GetCertificateFingerprint(), RestartRequired: config.GetRestartRequired(),
+	}, n.fail("GetWebAccessConfig")
+}
+
+func (n *node) SetWebAccessConfig(_ context.Context, req *nodepb.SetWebAccessConfigRequest, _ ...grpc.CallOption) (*nodepb.WebAccessConfig, error) {
+	n.webAccessCalls = append(n.webAccessCalls, "set")
+	n.webAccessRequest = req
+	if err := n.fail("SetWebAccessConfig"); err != nil {
+		return nil, err
+	}
+	n.webAccess = &nodepb.WebAccessConfig{
+		Enabled: req.GetEnabled(), ListenAddress: req.GetListenAddress(),
+		ListenAddresses: slices.Clone(req.GetListenAddresses()), PublicUrl: req.GetPublicUrl(),
+	}
+	return n.webAccess, nil
+}
+
+func (n *node) RequestActionConfirmation(_ context.Context, req *nodepb.RequestActionConfirmationRequest, _ ...grpc.CallOption) (*nodepb.RequestActionConfirmationResponse, error) {
+	n.webAccessCalls = append(n.webAccessCalls, "approve")
+	n.webAccessAction = req.GetAction()
+	if n.webAccessChangeOnApproval != nil {
+		n.webAccess = n.webAccessChangeOnApproval
+	}
+	if err := n.fail("RequestActionConfirmation"); err != nil {
+		return nil, err
+	}
+	return &nodepb.RequestActionConfirmationResponse{Approved: n.webAccessApproval}, nil
 }
 
 func (n *node) ListNetworkInterfaces(context.Context, *nodepb.ListNetworkInterfacesRequest, ...grpc.CallOption) (*nodepb.ListNetworkInterfacesResponse, error) {
@@ -168,6 +203,97 @@ func TestTheSettersChangeOnlyWhatTheyAreGiven(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestWebAccessExpansionsWaitForTheNodeOwner(t *testing.T) {
+	ctx := context.Background()
+	current := &nodepb.WebAccessConfig{
+		Enabled: true, ListenAddress: "192.168.1.5:7443",
+		ListenAddresses: []string{"192.168.1.5:7443"}, PublicUrl: "https://node.example.test:7443",
+	}
+	n := &node{webAccess: current, webAccessApproval: true}
+	session, _ := agentOf(t, n, Config{Admin: true})
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "set_web_access", Arguments: json.RawMessage(`{"listen_addresses":["192.168.1.5:7443","192.168.1.6:7443"]}`)})
+	if err != nil || result.IsError {
+		t.Fatalf("set_web_access = %v, %v", result, err)
+	}
+	if want := []string{"get", "approve", "get", "set"}; !slices.Equal(n.webAccessCalls, want) {
+		t.Fatalf("node calls = %v, want %v", n.webAccessCalls, want)
+	}
+	for _, want := range []string{"enabled=true", "192.168.1.5:7443", "192.168.1.6:7443", "https://node.example.test:7443", "browser UI and API"} {
+		if !strings.Contains(n.webAccessAction, want) {
+			t.Errorf("owner approval action %q does not explain %q", n.webAccessAction, want)
+		}
+	}
+	if !slices.Equal(n.webAccessRequest.GetListenAddresses(), []string{"192.168.1.5:7443", "192.168.1.6:7443"}) {
+		t.Errorf("saved listener addresses = %v", n.webAccessRequest.GetListenAddresses())
+	}
+}
+
+func TestWebAccessDisableIsImmediateAndDoesNotAskForApproval(t *testing.T) {
+	n := &node{webAccess: &nodepb.WebAccessConfig{
+		Enabled: true, ListenAddress: "192.168.1.5:7443", ListenAddresses: []string{"192.168.1.5:7443"}, PublicUrl: "https://node.example.test:7443",
+	}}
+	session, _ := agentOf(t, n, Config{Admin: true})
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_web_access", Arguments: json.RawMessage(`{"enabled":false}`)})
+	if err != nil || result.IsError {
+		t.Fatalf("disable web access = %v, %v", result, err)
+	}
+	if want := []string{"get", "set"}; !slices.Equal(n.webAccessCalls, want) {
+		t.Fatalf("node calls = %v, want %v", n.webAccessCalls, want)
+	}
+	if n.webAccessRequest.GetEnabled() {
+		t.Error("web access remains enabled")
+	}
+}
+
+func TestWebAccessRefusalAndStaleApprovalNeverChangeSettings(t *testing.T) {
+	current := &nodepb.WebAccessConfig{
+		Enabled: false, ListenAddress: "192.168.1.5:7443",
+		ListenAddresses: []string{"192.168.1.5:7443"}, PublicUrl: "https://node.example.test:7443",
+	}
+	args := json.RawMessage(`{"enabled":true}`)
+	t.Run("owner refuses", func(t *testing.T) {
+		n := &node{webAccess: current, webAccessApproval: false}
+		session, _ := agentOf(t, n, Config{Admin: true})
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_web_access", Arguments: args})
+		if err != nil || !result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "did not approve") {
+			t.Fatalf("refused change = %v, %v", result, err)
+		}
+		if slices.Contains(n.webAccessCalls, "set") {
+			t.Errorf("refused change was applied: %v", n.webAccessCalls)
+		}
+	})
+	t.Run("settings changed while awaiting approval", func(t *testing.T) {
+		changed := &nodepb.WebAccessConfig{
+			Enabled: false, ListenAddress: "192.168.1.7:7443",
+			ListenAddresses: []string{"192.168.1.7:7443"}, PublicUrl: "https://other.example.test:7443",
+		}
+		n := &node{webAccess: current, webAccessApproval: true, webAccessChangeOnApproval: changed}
+		session, _ := agentOf(t, n, Config{Admin: true})
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_web_access", Arguments: args})
+		if err != nil || !result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "changed while approval was pending") {
+			t.Fatalf("stale approval = %v, %v", result, err)
+		}
+		if slices.Contains(n.webAccessCalls, "set") {
+			t.Errorf("stale approval was applied: %v", n.webAccessCalls)
+		}
+	})
+}
+
+func TestWebAccessApprovalRejectsURLsThatCouldExposeCredentials(t *testing.T) {
+	n := &node{webAccess: &nodepb.WebAccessConfig{
+		Enabled: true, ListenAddress: "192.168.1.5:7443",
+		ListenAddresses: []string{"192.168.1.5:7443"}, PublicUrl: "https://node.example.test:7443",
+	}, webAccessApproval: true}
+	session, _ := agentOf(t, n, Config{Admin: true})
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_web_access", Arguments: json.RawMessage(`{"public_url":"https://user:secret@node.example.test:7443"}`)})
+	if err != nil || !result.IsError {
+		t.Fatalf("credential URL = %v, %v", result, err)
+	}
+	if strings.Contains(result.Content[0].(*mcp.TextContent).Text, "secret") || slices.Contains(n.webAccessCalls, "approve") || slices.Contains(n.webAccessCalls, "set") {
+		t.Errorf("invalid credential URL was exposed or applied: result=%v calls=%v", result, n.webAccessCalls)
 	}
 }
 
