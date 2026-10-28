@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -249,6 +250,7 @@ func normal(cfg LocalConfig) LocalConfig {
 type localService struct {
 	nodepb.UnimplementedNodeServiceServer
 	cfg          LocalConfig
+	chatRevision atomic.Uint64
 	lendingMu    sync.RWMutex
 	pendingOnce  sync.Once
 	pendingQueue *pendingActionManager
@@ -473,12 +475,13 @@ func sharedStateDomains(requested []nodepb.SharedStateDomain) ([]nodepb.SharedSt
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES,
 		}, nil
 	}
 	seen := make(map[nodepb.SharedStateDomain]struct{}, len(requested))
 	domains := make([]nodepb.SharedStateDomain, 0, len(requested))
 	for _, domain := range requested {
-		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS {
+		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES {
 			return nil, status.Errorf(codes.InvalidArgument, "unsupported shared-state domain %s", domain)
 		}
 		if _, ok := seen[domain]; ok {
@@ -577,6 +580,13 @@ func (s *localService) sharedStateSnapshot(ctx context.Context, domain nodepb.Sh
 			event.Error = err.Error()
 		} else {
 			event.State = &nodepb.SharedStateEvent_PoolMembers{PoolMembers: state}
+		}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES:
+		state, err := s.ListChats(ctx, &nodepb.ListChatsRequest{})
+		if err != nil {
+			event.Error = err.Error()
+		} else {
+			event.State = &nodepb.SharedStateEvent_ChatSummaries{ChatSummaries: state}
 		}
 	}
 	return event
@@ -1379,6 +1389,10 @@ func (s *localService) Ask(req *nodepb.AskRequest, stream grpc.ServerStreamingSe
 	} else {
 		chatID, err = s.cfg.Assistant.Ask(stream.Context(), req.GetChatId(), req.GetText(), report)
 	}
+	if chatID != "" {
+		s.chatRevision.Add(1)
+		s.notifySharedStateChanged()
+	}
 	if err != nil {
 		return asError(err)
 	}
@@ -1397,6 +1411,7 @@ func (s *localService) ListChats(ctx context.Context, _ *nodepb.ListChatsRequest
 		return nil, asError(err)
 	}
 	res := new(nodepb.ListChatsResponse)
+	res.Revision = s.chatRevision.Load()
 	for _, c := range chats {
 		res.Chats = append(res.Chats, &nodepb.ChatSummary{ChatId: c.ID, Title: c.Title, CreatedAtMs: c.Created.UnixMilli()})
 	}
@@ -1435,6 +1450,8 @@ func (s *localService) DeleteChat(ctx context.Context, req *nodepb.DeleteChatReq
 	if err := s.cfg.Assistant.DeleteChat(req.GetChatId()); err != nil {
 		return nil, asError(err)
 	}
+	s.chatRevision.Add(1)
+	s.notifySharedStateChanged()
 	return &nodepb.DeleteChatResponse{}, nil
 }
 

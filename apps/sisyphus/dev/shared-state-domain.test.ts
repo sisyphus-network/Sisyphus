@@ -23,6 +23,8 @@ test('shared-state domains accept grpc-js enum names and browser numeric values'
   assert.equal(sharedStateDomainCode('SHARED_STATE_DOMAIN_WEB_ACCESS'), 'webAccess')
   assert.equal(sharedStateDomainCode(12), 'poolMembers')
   assert.equal(sharedStateDomainCode('SHARED_STATE_DOMAIN_POOL_MEMBERS'), 'poolMembers')
+  assert.equal(sharedStateDomainCode(13), 'chatSummaries')
+  assert.equal(sharedStateDomainCode('SHARED_STATE_DOMAIN_CHAT_SUMMARIES'), 'chatSummaries')
   assert.equal(sharedStateDomainCode('SHARED_STATE_DOMAIN_JOINED_POOL'), 'joinedPool')
   assert.equal(sharedStateDomainCode('SHARED_STATE_DOMAIN_PEERS'), undefined)
   assert.equal(sharedStateDomainCode('unknown'), undefined)

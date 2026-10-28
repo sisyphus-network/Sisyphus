@@ -250,6 +250,69 @@ func TestWatchSharedStateStreamsPoolMembershipToIndependentClients(t *testing.T)
 	}
 }
 
+func TestWatchSharedStateStreamsChatSummariesToIndependentClients(t *testing.T) {
+	const token = "the-token"
+	assistant := &sharedChatsAssistant{}
+	client := serveLocal(t, LocalConfig{Assistant: assistant, NodeInfoChanges: NewNodeInfoChanges()})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES}}
+	ctx1, cancel1 := context.WithCancel(withToken(token))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken(token))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || event.GetChatSummaries() == nil || event.GetChatSummaries().GetRevision() != 0 || len(event.GetChatSummaries().GetChats()) != 0 {
+			t.Fatalf("initial chat-summary snapshot = %v, %v", event, err)
+		}
+	}
+	task, err := client.Ask(withToken(token), &nodepb.AskRequest{Text: "A question from another client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := task.Recv()
+	if err != nil || done.GetKind() != "done" || done.GetChatId() != "shared-chat" {
+		t.Fatalf("Ask completion = %v, %v", done, err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		chats := event.GetChatSummaries().GetChats()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || event.GetChatSummaries().GetRevision() != 1 || len(chats) != 1 || chats[0].GetChatId() != "shared-chat" {
+			t.Fatalf("chat created by Ask = %v, %v", event, err)
+		}
+	}
+	task, err = client.Ask(withToken(token), &nodepb.AskRequest{ChatId: "shared-chat", Text: "A follow-up from another client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done, err = task.Recv(); err != nil || done.GetKind() != "done" {
+		t.Fatalf("follow-up Ask completion = %v, %v", done, err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 3 || event.GetChatSummaries().GetRevision() != 2 || len(event.GetChatSummaries().GetChats()) != 1 {
+			t.Fatalf("updated existing chat event = %v, %v", event, err)
+		}
+	}
+	if _, err := client.DeleteChat(withToken(token), &nodepb.DeleteChatRequest{ChatId: "shared-chat"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 4 || event.GetSnapshot() || event.GetChatSummaries().GetRevision() != 3 || len(event.GetChatSummaries().GetChats()) != 0 {
+			t.Fatalf("deleted chat-summary event = %v, %v", event, err)
+		}
+	}
+}
+
 func peerEntry(id string, connected, trusted bool) *nodepb.Peer {
 	state := nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED
 	if connected {
@@ -660,7 +723,7 @@ func TestLocationDiscoverySnapshotUnavailable(t *testing.T) {
 
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
-	if err != nil || len(all) != 12 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS {
+	if err != nil || len(all) != 13 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS || all[12] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES {
 		t.Fatalf("default shared-state domains = %v, %v", all, err)
 	}
 	unique, err := sharedStateDomains([]nodepb.SharedStateDomain{
@@ -674,7 +737,7 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_UNSPECIFIED}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unspecified shared-state domain error = %v, want InvalidArgument", err)
 	}
-	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(13)}); status.Code(err) != codes.InvalidArgument {
+	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(14)}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown shared-state domain error = %v, want InvalidArgument", err)
 	}
 
@@ -684,10 +747,11 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store, Lending: newFileList(t), Files: newFileList(t), Store: storage.NewMemory(), PoolLimits: &memoryPoolLimits{}, LocationDiscovery: &memoryDiscovery{}, WebAccess: &webAccessControllerStub{},
 		Pool:       NewPoolAdmin(Config{Identity: newIdentity(t), Access: newList(t), Coordinator: newCoordinator(t)}),
 		JoinedPool: func() *nodepb.JoinedPool { return &nodepb.JoinedPool{CoordinatorId: "coordinator"} },
-		Assistant:  &profiledAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}, profiles: []nodedb.ModelProfile{{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}}}},
+		Assistant:  &sharedChatsAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}, profiles: []nodedb.ModelProfile{{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}}}},
 	}}
+	ownerContext := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
 	for _, domain := range all {
-		event := service.sharedStateSnapshot(withToken("the-token"), domain)
+		event := service.sharedStateSnapshot(ownerContext, domain)
 		if event.GetError() != "" || event.GetState() == nil {
 			t.Fatalf("snapshot for %s = %v; want typed state", domain, event)
 		}
@@ -2137,6 +2201,45 @@ type sharedModelStateAssistant struct {
 	mu       sync.Mutex
 	config   nodedb.ModelConfig
 	profiles map[string]nodedb.ModelProfile
+}
+
+type sharedChatsAssistant struct {
+	Assistant
+	mu       sync.Mutex
+	chats    []nodedb.Chat
+	config   nodedb.ModelConfig
+	profiles []nodedb.ModelProfile
+}
+
+func (a *sharedChatsAssistant) Chats() ([]nodedb.Chat, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]nodedb.Chat(nil), a.chats...), nil
+}
+
+func (a *sharedChatsAssistant) DeleteChat(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.chats = slices.DeleteFunc(a.chats, func(chat nodedb.Chat) bool { return chat.ID == id })
+	return nil
+}
+
+func (a *sharedChatsAssistant) Ask(_ context.Context, chatID, text string, _ func(string, planner.Event)) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if chatID == "" {
+		chatID = "shared-chat"
+		a.chats = append(a.chats, nodedb.Chat{ID: chatID, Title: text, Created: time.Now()})
+	}
+	return chatID, nil
+}
+
+func (a *sharedChatsAssistant) ModelConfig() (nodedb.ModelConfig, bool, error) {
+	return a.config, a.config.Provider != "", nil
+}
+
+func (a *sharedChatsAssistant) ModelProfiles() ([]nodedb.ModelProfile, error) {
+	return a.profiles, nil
 }
 
 func (a *sharedModelStateAssistant) ModelConfig() (nodedb.ModelConfig, bool, error) {

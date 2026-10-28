@@ -487,6 +487,7 @@ const (
 	SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY SharedStateDomain = 10
 	SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS         SharedStateDomain = 11
 	SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS       SharedStateDomain = 12
+	SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES     SharedStateDomain = 13
 )
 
 // Enum value maps for SharedStateDomain.
@@ -505,6 +506,7 @@ var (
 		10: "SHARED_STATE_DOMAIN_LOCATION_DISCOVERY",
 		11: "SHARED_STATE_DOMAIN_WEB_ACCESS",
 		12: "SHARED_STATE_DOMAIN_POOL_MEMBERS",
+		13: "SHARED_STATE_DOMAIN_CHAT_SUMMARIES",
 	}
 	SharedStateDomain_value = map[string]int32{
 		"SHARED_STATE_DOMAIN_UNSPECIFIED":        0,
@@ -520,6 +522,7 @@ var (
 		"SHARED_STATE_DOMAIN_LOCATION_DISCOVERY": 10,
 		"SHARED_STATE_DOMAIN_WEB_ACCESS":         11,
 		"SHARED_STATE_DOMAIN_POOL_MEMBERS":       12,
+		"SHARED_STATE_DOMAIN_CHAT_SUMMARIES":     13,
 	}
 )
 
@@ -5356,8 +5359,10 @@ func (*ListChatsRequest) Descriptor() ([]byte, []int) {
 }
 
 type ListChatsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Chats         []*ChatSummary         `protobuf:"bytes,1,rep,name=chats,proto3" json:"chats,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Chats []*ChatSummary         `protobuf:"bytes,1,rep,name=chats,proto3" json:"chats,omitempty"`
+	// Increases after every successful chat mutation, including messages added to an existing chat.
+	Revision      uint64 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5397,6 +5402,13 @@ func (x *ListChatsResponse) GetChats() []*ChatSummary {
 		return x.Chats
 	}
 	return nil
+}
+
+func (x *ListChatsResponse) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
 }
 
 type ChatSummary struct {
@@ -7767,6 +7779,7 @@ type SharedStateEvent struct {
 	//	*SharedStateEvent_LocationDiscovery
 	//	*SharedStateEvent_WebAccess
 	//	*SharedStateEvent_PoolMembers
+	//	*SharedStateEvent_ChatSummaries
 	State         isSharedStateEvent_State `protobuf_oneof:"state"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -7945,6 +7958,15 @@ func (x *SharedStateEvent) GetPoolMembers() *ListMembersResponse {
 	return nil
 }
 
+func (x *SharedStateEvent) GetChatSummaries() *ListChatsResponse {
+	if x != nil {
+		if x, ok := x.State.(*SharedStateEvent_ChatSummaries); ok {
+			return x.ChatSummaries
+		}
+	}
+	return nil
+}
+
 type isSharedStateEvent_State interface {
 	isSharedStateEvent_State()
 }
@@ -7997,6 +8019,10 @@ type SharedStateEvent_PoolMembers struct {
 	PoolMembers *ListMembersResponse `protobuf:"bytes,21,opt,name=pool_members,json=poolMembers,proto3,oneof"`
 }
 
+type SharedStateEvent_ChatSummaries struct {
+	ChatSummaries *ListChatsResponse `protobuf:"bytes,22,opt,name=chat_summaries,json=chatSummaries,proto3,oneof"`
+}
+
 func (*SharedStateEvent_Node) isSharedStateEvent_State() {}
 
 func (*SharedStateEvent_Peers) isSharedStateEvent_State() {}
@@ -8020,6 +8046,8 @@ func (*SharedStateEvent_LocationDiscovery) isSharedStateEvent_State() {}
 func (*SharedStateEvent_WebAccess) isSharedStateEvent_State() {}
 
 func (*SharedStateEvent_PoolMembers) isSharedStateEvent_State() {}
+
+func (*SharedStateEvent_ChatSummaries) isSharedStateEvent_State() {}
 
 type WatchPairedBrowsersRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -8907,9 +8935,10 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x04text\x18\x03 \x01(\tR\x04text\x12\x15\n" +
 	"\x06job_id\x18\x04 \x01(\tR\x05jobId\x12\x12\n" +
 	"\x04tool\x18\x05 \x01(\tR\x04tool\"\x12\n" +
-	"\x10ListChatsRequest\"H\n" +
+	"\x10ListChatsRequest\"d\n" +
 	"\x11ListChatsResponse\x123\n" +
-	"\x05chats\x18\x01 \x03(\v2\x1d.sisyphus.node.v1.ChatSummaryR\x05chats\"`\n" +
+	"\x05chats\x18\x01 \x03(\v2\x1d.sisyphus.node.v1.ChatSummaryR\x05chats\x12\x1a\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\"`\n" +
 	"\vChatSummary\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12\"\n" +
@@ -9053,7 +9082,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x05peers\x18\x02 \x03(\v2\x16.sisyphus.node.v1.PeerR\x05peers\x12\x1a\n" +
 	"\brevision\x18\x03 \x01(\x04R\brevision\"X\n" +
 	"\x17WatchSharedStateRequest\x12=\n" +
-	"\adomains\x18\x01 \x03(\x0e2#.sisyphus.node.v1.SharedStateDomainR\adomains\"\xfd\a\n" +
+	"\adomains\x18\x01 \x03(\x0e2#.sisyphus.node.v1.SharedStateDomainR\adomains\"\xcb\b\n" +
 	"\x10SharedStateEvent\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12;\n" +
 	"\x06domain\x18\x02 \x01(\x0e2#.sisyphus.node.v1.SharedStateDomainR\x06domain\x12\x1a\n" +
@@ -9074,7 +9103,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x12location_discovery\x18\x13 \x01(\v20.sisyphus.node.v1.LocationDiscoverySettingsStateH\x00R\x11locationDiscovery\x12B\n" +
 	"\n" +
 	"web_access\x18\x14 \x01(\v2!.sisyphus.node.v1.WebAccessConfigH\x00R\twebAccess\x12J\n" +
-	"\fpool_members\x18\x15 \x01(\v2%.sisyphus.node.v1.ListMembersResponseH\x00R\vpoolMembersB\a\n" +
+	"\fpool_members\x18\x15 \x01(\v2%.sisyphus.node.v1.ListMembersResponseH\x00R\vpoolMembers\x12L\n" +
+	"\x0echat_summaries\x18\x16 \x01(\v2#.sisyphus.node.v1.ListChatsResponseH\x00R\rchatSummariesB\a\n" +
 	"\x05state\"\x1c\n" +
 	"\x1aWatchPairedBrowsersRequest\":\n" +
 	" RequestActionConfirmationRequest\x12\x16\n" +
@@ -9148,7 +9178,7 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\x16LOCATION_SHARE_COUNTRY\x10\x02\x12\x17\n" +
 	"\x13LOCATION_SHARE_CITY\x10\x03\x12\x1c\n" +
 	"\x18LOCATION_SHARE_ABOUT_1KM\x10\x04\x12\x18\n" +
-	"\x14LOCATION_SHARE_EXACT\x10\x05*\xed\x03\n" +
+	"\x14LOCATION_SHARE_EXACT\x10\x05*\x95\x04\n" +
 	"\x11SharedStateDomain\x12#\n" +
 	"\x1fSHARED_STATE_DOMAIN_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18SHARED_STATE_DOMAIN_NODE\x10\x01\x12\x1d\n" +
@@ -9163,7 +9193,8 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"&SHARED_STATE_DOMAIN_LOCATION_DISCOVERY\x10\n" +
 	"\x12\"\n" +
 	"\x1eSHARED_STATE_DOMAIN_WEB_ACCESS\x10\v\x12$\n" +
-	" SHARED_STATE_DOMAIN_POOL_MEMBERS\x10\f2\xc9/\n" +
+	" SHARED_STATE_DOMAIN_POOL_MEMBERS\x10\f\x12&\n" +
+	"\"SHARED_STATE_DOMAIN_CHAT_SUMMARIES\x10\r2\xc9/\n" +
 	"\vNodeService\x12Z\n" +
 	"\vGetNodeInfo\x12$.sisyphus.node.v1.GetNodeInfoRequest\x1a%.sisyphus.node.v1.GetNodeInfoResponse\x12U\n" +
 	"\x0eWatchNodeState\x12$.sisyphus.node.v1.GetNodeInfoRequest\x1a\x1b.sisyphus.node.v1.NodeState0\x01\x12c\n" +
@@ -9465,139 +9496,140 @@ var file_sisyphus_node_v1_node_proto_depIdxs = []int32{
 	115, // 69: sisyphus.node.v1.SharedStateEvent.location_discovery:type_name -> sisyphus.node.v1.LocationDiscoverySettingsState
 	13,  // 70: sisyphus.node.v1.SharedStateEvent.web_access:type_name -> sisyphus.node.v1.WebAccessConfig
 	106, // 71: sisyphus.node.v1.SharedStateEvent.pool_members:type_name -> sisyphus.node.v1.ListMembersResponse
-	137, // 72: sisyphus.node.v1.PendingActionConfirmationsState.actions:type_name -> sisyphus.node.v1.PendingActionConfirmation
-	141, // 73: sisyphus.node.v1.PairedBrowsersState.devices:type_name -> sisyphus.node.v1.PairedBrowser
-	57,  // 74: sisyphus.node.v1.ModelProfilesState.model_config:type_name -> sisyphus.node.v1.ModelConfig
-	59,  // 75: sisyphus.node.v1.ModelProfilesState.profiles:type_name -> sisyphus.node.v1.ModelProfile
-	9,   // 76: sisyphus.node.v1.NodeService.GetNodeInfo:input_type -> sisyphus.node.v1.GetNodeInfoRequest
-	9,   // 77: sisyphus.node.v1.NodeService.WatchNodeState:input_type -> sisyphus.node.v1.GetNodeInfoRequest
-	131, // 78: sisyphus.node.v1.NodeService.WatchSharedState:input_type -> sisyphus.node.v1.WatchSharedStateRequest
-	133, // 79: sisyphus.node.v1.NodeService.WatchPairedBrowsers:input_type -> sisyphus.node.v1.WatchPairedBrowsersRequest
-	134, // 80: sisyphus.node.v1.NodeService.RequestActionConfirmation:input_type -> sisyphus.node.v1.RequestActionConfirmationRequest
-	136, // 81: sisyphus.node.v1.NodeService.WatchPendingActionConfirmations:input_type -> sisyphus.node.v1.WatchPendingActionConfirmationsRequest
-	139, // 82: sisyphus.node.v1.NodeService.ResolveActionConfirmation:input_type -> sisyphus.node.v1.ResolveActionConfirmationRequest
-	116, // 83: sisyphus.node.v1.NodeService.GetLocationDiscoverySettings:input_type -> sisyphus.node.v1.GetLocationDiscoverySettingsRequest
-	117, // 84: sisyphus.node.v1.NodeService.SetLocationDiscoverySettings:input_type -> sisyphus.node.v1.SetLocationDiscoverySettingsRequest
-	119, // 85: sisyphus.node.v1.NodeService.GetNodeLocation:input_type -> sisyphus.node.v1.GetNodeLocationRequest
-	121, // 86: sisyphus.node.v1.NodeService.SetNodeLocation:input_type -> sisyphus.node.v1.SetNodeLocationRequest
-	122, // 87: sisyphus.node.v1.NodeService.GetCityTable:input_type -> sisyphus.node.v1.GetCityTableRequest
-	123, // 88: sisyphus.node.v1.NodeService.DownloadCityTable:input_type -> sisyphus.node.v1.DownloadCityTableRequest
-	124, // 89: sisyphus.node.v1.NodeService.RemoveCityTable:input_type -> sisyphus.node.v1.RemoveCityTableRequest
-	128, // 90: sisyphus.node.v1.NodeService.GetPoolLimits:input_type -> sisyphus.node.v1.GetPoolLimitsRequest
-	129, // 91: sisyphus.node.v1.NodeService.SetPoolLimits:input_type -> sisyphus.node.v1.SetPoolLimitsRequest
-	12,  // 92: sisyphus.node.v1.NodeService.GetWebAccessConfig:input_type -> sisyphus.node.v1.GetWebAccessConfigRequest
-	14,  // 93: sisyphus.node.v1.NodeService.SetWebAccessConfig:input_type -> sisyphus.node.v1.SetWebAccessConfigRequest
-	15,  // 94: sisyphus.node.v1.NodeService.ListNetworkInterfaces:input_type -> sisyphus.node.v1.ListNetworkInterfacesRequest
-	18,  // 95: sisyphus.node.v1.NodeService.ListPeers:input_type -> sisyphus.node.v1.ListPeersRequest
-	19,  // 96: sisyphus.node.v1.NodeService.WatchPeers:input_type -> sisyphus.node.v1.WatchPeersRequest
-	20,  // 97: sisyphus.node.v1.NodeService.GetBootstrapPeers:input_type -> sisyphus.node.v1.GetBootstrapPeersRequest
-	22,  // 98: sisyphus.node.v1.NodeService.SetBootstrapPeers:input_type -> sisyphus.node.v1.SetBootstrapPeersRequest
-	24,  // 99: sisyphus.node.v1.NodeService.ConnectPeer:input_type -> sisyphus.node.v1.ConnectPeerRequest
-	26,  // 100: sisyphus.node.v1.NodeService.SetPeerComputeTrust:input_type -> sisyphus.node.v1.SetPeerComputeTrustRequest
-	28,  // 101: sisyphus.node.v1.NodeService.SetPeerComputePermissions:input_type -> sisyphus.node.v1.SetPeerComputePermissionsRequest
-	33,  // 102: sisyphus.node.v1.NodeService.ListWorkers:input_type -> sisyphus.node.v1.ListWorkersRequest
-	33,  // 103: sisyphus.node.v1.NodeService.WatchWorkers:input_type -> sisyphus.node.v1.ListWorkersRequest
-	37,  // 104: sisyphus.node.v1.NodeService.ListWorkloads:input_type -> sisyphus.node.v1.ListWorkloadsRequest
-	45,  // 105: sisyphus.node.v1.NodeService.SubmitJob:input_type -> sisyphus.node.v1.SubmitJobRequest
-	51,  // 106: sisyphus.node.v1.NodeService.GetJob:input_type -> sisyphus.node.v1.GetJobRequest
-	53,  // 107: sisyphus.node.v1.NodeService.ListJobs:input_type -> sisyphus.node.v1.ListJobsRequest
-	54,  // 108: sisyphus.node.v1.NodeService.WatchJobs:input_type -> sisyphus.node.v1.WatchJobsRequest
-	47,  // 109: sisyphus.node.v1.NodeService.CancelJob:input_type -> sisyphus.node.v1.CancelJobRequest
-	49,  // 110: sisyphus.node.v1.NodeService.WatchJobEvents:input_type -> sisyphus.node.v1.WatchJobEventsRequest
-	56,  // 111: sisyphus.node.v1.NodeService.GetModelConfig:input_type -> sisyphus.node.v1.GetModelConfigRequest
-	58,  // 112: sisyphus.node.v1.NodeService.SetModelConfig:input_type -> sisyphus.node.v1.SetModelConfigRequest
-	60,  // 113: sisyphus.node.v1.NodeService.ListModelProfiles:input_type -> sisyphus.node.v1.ListModelProfilesRequest
-	62,  // 114: sisyphus.node.v1.NodeService.SaveModelProfile:input_type -> sisyphus.node.v1.SaveModelProfileRequest
-	63,  // 115: sisyphus.node.v1.NodeService.DeleteModelProfile:input_type -> sisyphus.node.v1.DeleteModelProfileRequest
-	67,  // 116: sisyphus.node.v1.NodeService.GetModelLending:input_type -> sisyphus.node.v1.GetModelLendingRequest
-	68,  // 117: sisyphus.node.v1.NodeService.SetModelLending:input_type -> sisyphus.node.v1.SetModelLendingRequest
-	69,  // 118: sisyphus.node.v1.NodeService.InspectOllama:input_type -> sisyphus.node.v1.InspectOllamaRequest
-	71,  // 119: sisyphus.node.v1.NodeService.ListProviders:input_type -> sisyphus.node.v1.ListProvidersRequest
-	75,  // 120: sisyphus.node.v1.NodeService.ListModels:input_type -> sisyphus.node.v1.ListModelsRequest
-	78,  // 121: sisyphus.node.v1.NodeService.PullModel:input_type -> sisyphus.node.v1.PullModelRequest
-	80,  // 122: sisyphus.node.v1.NodeService.RemoveModel:input_type -> sisyphus.node.v1.RemoveModelRequest
-	82,  // 123: sisyphus.node.v1.NodeService.Ask:input_type -> sisyphus.node.v1.AskRequest
-	84,  // 124: sisyphus.node.v1.NodeService.ListChats:input_type -> sisyphus.node.v1.ListChatsRequest
-	87,  // 125: sisyphus.node.v1.NodeService.GetChat:input_type -> sisyphus.node.v1.GetChatRequest
-	91,  // 126: sisyphus.node.v1.NodeService.DeleteChat:input_type -> sisyphus.node.v1.DeleteChatRequest
-	93,  // 127: sisyphus.node.v1.NodeService.StoreFile:input_type -> sisyphus.node.v1.StoreFileRequest
-	95,  // 128: sisyphus.node.v1.NodeService.FetchFile:input_type -> sisyphus.node.v1.FetchFileRequest
-	97,  // 129: sisyphus.node.v1.NodeService.ListFiles:input_type -> sisyphus.node.v1.ListFilesRequest
-	99,  // 130: sisyphus.node.v1.NodeService.RemoveFile:input_type -> sisyphus.node.v1.RemoveFileRequest
-	103, // 131: sisyphus.node.v1.NodeService.CreateInvitation:input_type -> sisyphus.node.v1.CreateInvitationRequest
-	105, // 132: sisyphus.node.v1.NodeService.ListMembers:input_type -> sisyphus.node.v1.ListMembersRequest
-	108, // 133: sisyphus.node.v1.NodeService.RemoveMember:input_type -> sisyphus.node.v1.RemoveMemberRequest
-	112, // 134: sisyphus.node.v1.NodeService.JoinPool:input_type -> sisyphus.node.v1.JoinPoolRequest
-	110, // 135: sisyphus.node.v1.NodeService.LeavePool:input_type -> sisyphus.node.v1.LeavePoolRequest
-	101, // 136: sisyphus.node.v1.NodeService.GetJoinedPool:input_type -> sisyphus.node.v1.GetJoinedPoolRequest
-	101, // 137: sisyphus.node.v1.NodeService.WatchJoinedPool:input_type -> sisyphus.node.v1.GetJoinedPoolRequest
-	10,  // 138: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
-	130, // 139: sisyphus.node.v1.NodeService.WatchNodeState:output_type -> sisyphus.node.v1.NodeState
-	132, // 140: sisyphus.node.v1.NodeService.WatchSharedState:output_type -> sisyphus.node.v1.SharedStateEvent
-	142, // 141: sisyphus.node.v1.NodeService.WatchPairedBrowsers:output_type -> sisyphus.node.v1.PairedBrowsersState
-	135, // 142: sisyphus.node.v1.NodeService.RequestActionConfirmation:output_type -> sisyphus.node.v1.RequestActionConfirmationResponse
-	138, // 143: sisyphus.node.v1.NodeService.WatchPendingActionConfirmations:output_type -> sisyphus.node.v1.PendingActionConfirmationsState
-	140, // 144: sisyphus.node.v1.NodeService.ResolveActionConfirmation:output_type -> sisyphus.node.v1.ResolveActionConfirmationResponse
-	115, // 145: sisyphus.node.v1.NodeService.GetLocationDiscoverySettings:output_type -> sisyphus.node.v1.LocationDiscoverySettingsState
-	115, // 146: sisyphus.node.v1.NodeService.SetLocationDiscoverySettings:output_type -> sisyphus.node.v1.LocationDiscoverySettingsState
-	120, // 147: sisyphus.node.v1.NodeService.GetNodeLocation:output_type -> sisyphus.node.v1.GetNodeLocationResponse
-	120, // 148: sisyphus.node.v1.NodeService.SetNodeLocation:output_type -> sisyphus.node.v1.GetNodeLocationResponse
-	125, // 149: sisyphus.node.v1.NodeService.GetCityTable:output_type -> sisyphus.node.v1.CityTableState
-	125, // 150: sisyphus.node.v1.NodeService.DownloadCityTable:output_type -> sisyphus.node.v1.CityTableState
-	125, // 151: sisyphus.node.v1.NodeService.RemoveCityTable:output_type -> sisyphus.node.v1.CityTableState
-	127, // 152: sisyphus.node.v1.NodeService.GetPoolLimits:output_type -> sisyphus.node.v1.PoolLimitsState
-	127, // 153: sisyphus.node.v1.NodeService.SetPoolLimits:output_type -> sisyphus.node.v1.PoolLimitsState
-	13,  // 154: sisyphus.node.v1.NodeService.GetWebAccessConfig:output_type -> sisyphus.node.v1.WebAccessConfig
-	13,  // 155: sisyphus.node.v1.NodeService.SetWebAccessConfig:output_type -> sisyphus.node.v1.WebAccessConfig
-	16,  // 156: sisyphus.node.v1.NodeService.ListNetworkInterfaces:output_type -> sisyphus.node.v1.ListNetworkInterfacesResponse
-	31,  // 157: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	31,  // 158: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
-	21,  // 159: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
-	23,  // 160: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
-	25,  // 161: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
-	27,  // 162: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
-	29,  // 163: sisyphus.node.v1.NodeService.SetPeerComputePermissions:output_type -> sisyphus.node.v1.SetPeerComputePermissionsResponse
-	34,  // 164: sisyphus.node.v1.NodeService.ListWorkers:output_type -> sisyphus.node.v1.ListWorkersResponse
-	34,  // 165: sisyphus.node.v1.NodeService.WatchWorkers:output_type -> sisyphus.node.v1.ListWorkersResponse
-	38,  // 166: sisyphus.node.v1.NodeService.ListWorkloads:output_type -> sisyphus.node.v1.ListWorkloadsResponse
-	46,  // 167: sisyphus.node.v1.NodeService.SubmitJob:output_type -> sisyphus.node.v1.SubmitJobResponse
-	52,  // 168: sisyphus.node.v1.NodeService.GetJob:output_type -> sisyphus.node.v1.GetJobResponse
-	55,  // 169: sisyphus.node.v1.NodeService.ListJobs:output_type -> sisyphus.node.v1.ListJobsResponse
-	55,  // 170: sisyphus.node.v1.NodeService.WatchJobs:output_type -> sisyphus.node.v1.ListJobsResponse
-	48,  // 171: sisyphus.node.v1.NodeService.CancelJob:output_type -> sisyphus.node.v1.CancelJobResponse
-	50,  // 172: sisyphus.node.v1.NodeService.WatchJobEvents:output_type -> sisyphus.node.v1.JobEvent
-	57,  // 173: sisyphus.node.v1.NodeService.GetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
-	57,  // 174: sisyphus.node.v1.NodeService.SetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
-	61,  // 175: sisyphus.node.v1.NodeService.ListModelProfiles:output_type -> sisyphus.node.v1.ListModelProfilesResponse
-	59,  // 176: sisyphus.node.v1.NodeService.SaveModelProfile:output_type -> sisyphus.node.v1.ModelProfile
-	64,  // 177: sisyphus.node.v1.NodeService.DeleteModelProfile:output_type -> sisyphus.node.v1.DeleteModelProfileResponse
-	66,  // 178: sisyphus.node.v1.NodeService.GetModelLending:output_type -> sisyphus.node.v1.ModelLendingState
-	66,  // 179: sisyphus.node.v1.NodeService.SetModelLending:output_type -> sisyphus.node.v1.ModelLendingState
-	70,  // 180: sisyphus.node.v1.NodeService.InspectOllama:output_type -> sisyphus.node.v1.InspectOllamaResponse
-	72,  // 181: sisyphus.node.v1.NodeService.ListProviders:output_type -> sisyphus.node.v1.ListProvidersResponse
-	76,  // 182: sisyphus.node.v1.NodeService.ListModels:output_type -> sisyphus.node.v1.ListModelsResponse
-	79,  // 183: sisyphus.node.v1.NodeService.PullModel:output_type -> sisyphus.node.v1.PullModelProgress
-	81,  // 184: sisyphus.node.v1.NodeService.RemoveModel:output_type -> sisyphus.node.v1.RemoveModelResponse
-	83,  // 185: sisyphus.node.v1.NodeService.Ask:output_type -> sisyphus.node.v1.AskEvent
-	85,  // 186: sisyphus.node.v1.NodeService.ListChats:output_type -> sisyphus.node.v1.ListChatsResponse
-	88,  // 187: sisyphus.node.v1.NodeService.GetChat:output_type -> sisyphus.node.v1.GetChatResponse
-	92,  // 188: sisyphus.node.v1.NodeService.DeleteChat:output_type -> sisyphus.node.v1.DeleteChatResponse
-	94,  // 189: sisyphus.node.v1.NodeService.StoreFile:output_type -> sisyphus.node.v1.File
-	96,  // 190: sisyphus.node.v1.NodeService.FetchFile:output_type -> sisyphus.node.v1.FetchFileResponse
-	98,  // 191: sisyphus.node.v1.NodeService.ListFiles:output_type -> sisyphus.node.v1.ListFilesResponse
-	100, // 192: sisyphus.node.v1.NodeService.RemoveFile:output_type -> sisyphus.node.v1.RemoveFileResponse
-	104, // 193: sisyphus.node.v1.NodeService.CreateInvitation:output_type -> sisyphus.node.v1.CreateInvitationResponse
-	106, // 194: sisyphus.node.v1.NodeService.ListMembers:output_type -> sisyphus.node.v1.ListMembersResponse
-	109, // 195: sisyphus.node.v1.NodeService.RemoveMember:output_type -> sisyphus.node.v1.RemoveMemberResponse
-	113, // 196: sisyphus.node.v1.NodeService.JoinPool:output_type -> sisyphus.node.v1.JoinPoolResponse
-	111, // 197: sisyphus.node.v1.NodeService.LeavePool:output_type -> sisyphus.node.v1.LeavePoolResponse
-	102, // 198: sisyphus.node.v1.NodeService.GetJoinedPool:output_type -> sisyphus.node.v1.JoinedPool
-	102, // 199: sisyphus.node.v1.NodeService.WatchJoinedPool:output_type -> sisyphus.node.v1.JoinedPool
-	138, // [138:200] is the sub-list for method output_type
-	76,  // [76:138] is the sub-list for method input_type
-	76,  // [76:76] is the sub-list for extension type_name
-	76,  // [76:76] is the sub-list for extension extendee
-	0,   // [0:76] is the sub-list for field type_name
+	85,  // 72: sisyphus.node.v1.SharedStateEvent.chat_summaries:type_name -> sisyphus.node.v1.ListChatsResponse
+	137, // 73: sisyphus.node.v1.PendingActionConfirmationsState.actions:type_name -> sisyphus.node.v1.PendingActionConfirmation
+	141, // 74: sisyphus.node.v1.PairedBrowsersState.devices:type_name -> sisyphus.node.v1.PairedBrowser
+	57,  // 75: sisyphus.node.v1.ModelProfilesState.model_config:type_name -> sisyphus.node.v1.ModelConfig
+	59,  // 76: sisyphus.node.v1.ModelProfilesState.profiles:type_name -> sisyphus.node.v1.ModelProfile
+	9,   // 77: sisyphus.node.v1.NodeService.GetNodeInfo:input_type -> sisyphus.node.v1.GetNodeInfoRequest
+	9,   // 78: sisyphus.node.v1.NodeService.WatchNodeState:input_type -> sisyphus.node.v1.GetNodeInfoRequest
+	131, // 79: sisyphus.node.v1.NodeService.WatchSharedState:input_type -> sisyphus.node.v1.WatchSharedStateRequest
+	133, // 80: sisyphus.node.v1.NodeService.WatchPairedBrowsers:input_type -> sisyphus.node.v1.WatchPairedBrowsersRequest
+	134, // 81: sisyphus.node.v1.NodeService.RequestActionConfirmation:input_type -> sisyphus.node.v1.RequestActionConfirmationRequest
+	136, // 82: sisyphus.node.v1.NodeService.WatchPendingActionConfirmations:input_type -> sisyphus.node.v1.WatchPendingActionConfirmationsRequest
+	139, // 83: sisyphus.node.v1.NodeService.ResolveActionConfirmation:input_type -> sisyphus.node.v1.ResolveActionConfirmationRequest
+	116, // 84: sisyphus.node.v1.NodeService.GetLocationDiscoverySettings:input_type -> sisyphus.node.v1.GetLocationDiscoverySettingsRequest
+	117, // 85: sisyphus.node.v1.NodeService.SetLocationDiscoverySettings:input_type -> sisyphus.node.v1.SetLocationDiscoverySettingsRequest
+	119, // 86: sisyphus.node.v1.NodeService.GetNodeLocation:input_type -> sisyphus.node.v1.GetNodeLocationRequest
+	121, // 87: sisyphus.node.v1.NodeService.SetNodeLocation:input_type -> sisyphus.node.v1.SetNodeLocationRequest
+	122, // 88: sisyphus.node.v1.NodeService.GetCityTable:input_type -> sisyphus.node.v1.GetCityTableRequest
+	123, // 89: sisyphus.node.v1.NodeService.DownloadCityTable:input_type -> sisyphus.node.v1.DownloadCityTableRequest
+	124, // 90: sisyphus.node.v1.NodeService.RemoveCityTable:input_type -> sisyphus.node.v1.RemoveCityTableRequest
+	128, // 91: sisyphus.node.v1.NodeService.GetPoolLimits:input_type -> sisyphus.node.v1.GetPoolLimitsRequest
+	129, // 92: sisyphus.node.v1.NodeService.SetPoolLimits:input_type -> sisyphus.node.v1.SetPoolLimitsRequest
+	12,  // 93: sisyphus.node.v1.NodeService.GetWebAccessConfig:input_type -> sisyphus.node.v1.GetWebAccessConfigRequest
+	14,  // 94: sisyphus.node.v1.NodeService.SetWebAccessConfig:input_type -> sisyphus.node.v1.SetWebAccessConfigRequest
+	15,  // 95: sisyphus.node.v1.NodeService.ListNetworkInterfaces:input_type -> sisyphus.node.v1.ListNetworkInterfacesRequest
+	18,  // 96: sisyphus.node.v1.NodeService.ListPeers:input_type -> sisyphus.node.v1.ListPeersRequest
+	19,  // 97: sisyphus.node.v1.NodeService.WatchPeers:input_type -> sisyphus.node.v1.WatchPeersRequest
+	20,  // 98: sisyphus.node.v1.NodeService.GetBootstrapPeers:input_type -> sisyphus.node.v1.GetBootstrapPeersRequest
+	22,  // 99: sisyphus.node.v1.NodeService.SetBootstrapPeers:input_type -> sisyphus.node.v1.SetBootstrapPeersRequest
+	24,  // 100: sisyphus.node.v1.NodeService.ConnectPeer:input_type -> sisyphus.node.v1.ConnectPeerRequest
+	26,  // 101: sisyphus.node.v1.NodeService.SetPeerComputeTrust:input_type -> sisyphus.node.v1.SetPeerComputeTrustRequest
+	28,  // 102: sisyphus.node.v1.NodeService.SetPeerComputePermissions:input_type -> sisyphus.node.v1.SetPeerComputePermissionsRequest
+	33,  // 103: sisyphus.node.v1.NodeService.ListWorkers:input_type -> sisyphus.node.v1.ListWorkersRequest
+	33,  // 104: sisyphus.node.v1.NodeService.WatchWorkers:input_type -> sisyphus.node.v1.ListWorkersRequest
+	37,  // 105: sisyphus.node.v1.NodeService.ListWorkloads:input_type -> sisyphus.node.v1.ListWorkloadsRequest
+	45,  // 106: sisyphus.node.v1.NodeService.SubmitJob:input_type -> sisyphus.node.v1.SubmitJobRequest
+	51,  // 107: sisyphus.node.v1.NodeService.GetJob:input_type -> sisyphus.node.v1.GetJobRequest
+	53,  // 108: sisyphus.node.v1.NodeService.ListJobs:input_type -> sisyphus.node.v1.ListJobsRequest
+	54,  // 109: sisyphus.node.v1.NodeService.WatchJobs:input_type -> sisyphus.node.v1.WatchJobsRequest
+	47,  // 110: sisyphus.node.v1.NodeService.CancelJob:input_type -> sisyphus.node.v1.CancelJobRequest
+	49,  // 111: sisyphus.node.v1.NodeService.WatchJobEvents:input_type -> sisyphus.node.v1.WatchJobEventsRequest
+	56,  // 112: sisyphus.node.v1.NodeService.GetModelConfig:input_type -> sisyphus.node.v1.GetModelConfigRequest
+	58,  // 113: sisyphus.node.v1.NodeService.SetModelConfig:input_type -> sisyphus.node.v1.SetModelConfigRequest
+	60,  // 114: sisyphus.node.v1.NodeService.ListModelProfiles:input_type -> sisyphus.node.v1.ListModelProfilesRequest
+	62,  // 115: sisyphus.node.v1.NodeService.SaveModelProfile:input_type -> sisyphus.node.v1.SaveModelProfileRequest
+	63,  // 116: sisyphus.node.v1.NodeService.DeleteModelProfile:input_type -> sisyphus.node.v1.DeleteModelProfileRequest
+	67,  // 117: sisyphus.node.v1.NodeService.GetModelLending:input_type -> sisyphus.node.v1.GetModelLendingRequest
+	68,  // 118: sisyphus.node.v1.NodeService.SetModelLending:input_type -> sisyphus.node.v1.SetModelLendingRequest
+	69,  // 119: sisyphus.node.v1.NodeService.InspectOllama:input_type -> sisyphus.node.v1.InspectOllamaRequest
+	71,  // 120: sisyphus.node.v1.NodeService.ListProviders:input_type -> sisyphus.node.v1.ListProvidersRequest
+	75,  // 121: sisyphus.node.v1.NodeService.ListModels:input_type -> sisyphus.node.v1.ListModelsRequest
+	78,  // 122: sisyphus.node.v1.NodeService.PullModel:input_type -> sisyphus.node.v1.PullModelRequest
+	80,  // 123: sisyphus.node.v1.NodeService.RemoveModel:input_type -> sisyphus.node.v1.RemoveModelRequest
+	82,  // 124: sisyphus.node.v1.NodeService.Ask:input_type -> sisyphus.node.v1.AskRequest
+	84,  // 125: sisyphus.node.v1.NodeService.ListChats:input_type -> sisyphus.node.v1.ListChatsRequest
+	87,  // 126: sisyphus.node.v1.NodeService.GetChat:input_type -> sisyphus.node.v1.GetChatRequest
+	91,  // 127: sisyphus.node.v1.NodeService.DeleteChat:input_type -> sisyphus.node.v1.DeleteChatRequest
+	93,  // 128: sisyphus.node.v1.NodeService.StoreFile:input_type -> sisyphus.node.v1.StoreFileRequest
+	95,  // 129: sisyphus.node.v1.NodeService.FetchFile:input_type -> sisyphus.node.v1.FetchFileRequest
+	97,  // 130: sisyphus.node.v1.NodeService.ListFiles:input_type -> sisyphus.node.v1.ListFilesRequest
+	99,  // 131: sisyphus.node.v1.NodeService.RemoveFile:input_type -> sisyphus.node.v1.RemoveFileRequest
+	103, // 132: sisyphus.node.v1.NodeService.CreateInvitation:input_type -> sisyphus.node.v1.CreateInvitationRequest
+	105, // 133: sisyphus.node.v1.NodeService.ListMembers:input_type -> sisyphus.node.v1.ListMembersRequest
+	108, // 134: sisyphus.node.v1.NodeService.RemoveMember:input_type -> sisyphus.node.v1.RemoveMemberRequest
+	112, // 135: sisyphus.node.v1.NodeService.JoinPool:input_type -> sisyphus.node.v1.JoinPoolRequest
+	110, // 136: sisyphus.node.v1.NodeService.LeavePool:input_type -> sisyphus.node.v1.LeavePoolRequest
+	101, // 137: sisyphus.node.v1.NodeService.GetJoinedPool:input_type -> sisyphus.node.v1.GetJoinedPoolRequest
+	101, // 138: sisyphus.node.v1.NodeService.WatchJoinedPool:input_type -> sisyphus.node.v1.GetJoinedPoolRequest
+	10,  // 139: sisyphus.node.v1.NodeService.GetNodeInfo:output_type -> sisyphus.node.v1.GetNodeInfoResponse
+	130, // 140: sisyphus.node.v1.NodeService.WatchNodeState:output_type -> sisyphus.node.v1.NodeState
+	132, // 141: sisyphus.node.v1.NodeService.WatchSharedState:output_type -> sisyphus.node.v1.SharedStateEvent
+	142, // 142: sisyphus.node.v1.NodeService.WatchPairedBrowsers:output_type -> sisyphus.node.v1.PairedBrowsersState
+	135, // 143: sisyphus.node.v1.NodeService.RequestActionConfirmation:output_type -> sisyphus.node.v1.RequestActionConfirmationResponse
+	138, // 144: sisyphus.node.v1.NodeService.WatchPendingActionConfirmations:output_type -> sisyphus.node.v1.PendingActionConfirmationsState
+	140, // 145: sisyphus.node.v1.NodeService.ResolveActionConfirmation:output_type -> sisyphus.node.v1.ResolveActionConfirmationResponse
+	115, // 146: sisyphus.node.v1.NodeService.GetLocationDiscoverySettings:output_type -> sisyphus.node.v1.LocationDiscoverySettingsState
+	115, // 147: sisyphus.node.v1.NodeService.SetLocationDiscoverySettings:output_type -> sisyphus.node.v1.LocationDiscoverySettingsState
+	120, // 148: sisyphus.node.v1.NodeService.GetNodeLocation:output_type -> sisyphus.node.v1.GetNodeLocationResponse
+	120, // 149: sisyphus.node.v1.NodeService.SetNodeLocation:output_type -> sisyphus.node.v1.GetNodeLocationResponse
+	125, // 150: sisyphus.node.v1.NodeService.GetCityTable:output_type -> sisyphus.node.v1.CityTableState
+	125, // 151: sisyphus.node.v1.NodeService.DownloadCityTable:output_type -> sisyphus.node.v1.CityTableState
+	125, // 152: sisyphus.node.v1.NodeService.RemoveCityTable:output_type -> sisyphus.node.v1.CityTableState
+	127, // 153: sisyphus.node.v1.NodeService.GetPoolLimits:output_type -> sisyphus.node.v1.PoolLimitsState
+	127, // 154: sisyphus.node.v1.NodeService.SetPoolLimits:output_type -> sisyphus.node.v1.PoolLimitsState
+	13,  // 155: sisyphus.node.v1.NodeService.GetWebAccessConfig:output_type -> sisyphus.node.v1.WebAccessConfig
+	13,  // 156: sisyphus.node.v1.NodeService.SetWebAccessConfig:output_type -> sisyphus.node.v1.WebAccessConfig
+	16,  // 157: sisyphus.node.v1.NodeService.ListNetworkInterfaces:output_type -> sisyphus.node.v1.ListNetworkInterfacesResponse
+	31,  // 158: sisyphus.node.v1.NodeService.ListPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	31,  // 159: sisyphus.node.v1.NodeService.WatchPeers:output_type -> sisyphus.node.v1.ListPeersResponse
+	21,  // 160: sisyphus.node.v1.NodeService.GetBootstrapPeers:output_type -> sisyphus.node.v1.GetBootstrapPeersResponse
+	23,  // 161: sisyphus.node.v1.NodeService.SetBootstrapPeers:output_type -> sisyphus.node.v1.SetBootstrapPeersResponse
+	25,  // 162: sisyphus.node.v1.NodeService.ConnectPeer:output_type -> sisyphus.node.v1.ConnectPeerResponse
+	27,  // 163: sisyphus.node.v1.NodeService.SetPeerComputeTrust:output_type -> sisyphus.node.v1.SetPeerComputeTrustResponse
+	29,  // 164: sisyphus.node.v1.NodeService.SetPeerComputePermissions:output_type -> sisyphus.node.v1.SetPeerComputePermissionsResponse
+	34,  // 165: sisyphus.node.v1.NodeService.ListWorkers:output_type -> sisyphus.node.v1.ListWorkersResponse
+	34,  // 166: sisyphus.node.v1.NodeService.WatchWorkers:output_type -> sisyphus.node.v1.ListWorkersResponse
+	38,  // 167: sisyphus.node.v1.NodeService.ListWorkloads:output_type -> sisyphus.node.v1.ListWorkloadsResponse
+	46,  // 168: sisyphus.node.v1.NodeService.SubmitJob:output_type -> sisyphus.node.v1.SubmitJobResponse
+	52,  // 169: sisyphus.node.v1.NodeService.GetJob:output_type -> sisyphus.node.v1.GetJobResponse
+	55,  // 170: sisyphus.node.v1.NodeService.ListJobs:output_type -> sisyphus.node.v1.ListJobsResponse
+	55,  // 171: sisyphus.node.v1.NodeService.WatchJobs:output_type -> sisyphus.node.v1.ListJobsResponse
+	48,  // 172: sisyphus.node.v1.NodeService.CancelJob:output_type -> sisyphus.node.v1.CancelJobResponse
+	50,  // 173: sisyphus.node.v1.NodeService.WatchJobEvents:output_type -> sisyphus.node.v1.JobEvent
+	57,  // 174: sisyphus.node.v1.NodeService.GetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
+	57,  // 175: sisyphus.node.v1.NodeService.SetModelConfig:output_type -> sisyphus.node.v1.ModelConfig
+	61,  // 176: sisyphus.node.v1.NodeService.ListModelProfiles:output_type -> sisyphus.node.v1.ListModelProfilesResponse
+	59,  // 177: sisyphus.node.v1.NodeService.SaveModelProfile:output_type -> sisyphus.node.v1.ModelProfile
+	64,  // 178: sisyphus.node.v1.NodeService.DeleteModelProfile:output_type -> sisyphus.node.v1.DeleteModelProfileResponse
+	66,  // 179: sisyphus.node.v1.NodeService.GetModelLending:output_type -> sisyphus.node.v1.ModelLendingState
+	66,  // 180: sisyphus.node.v1.NodeService.SetModelLending:output_type -> sisyphus.node.v1.ModelLendingState
+	70,  // 181: sisyphus.node.v1.NodeService.InspectOllama:output_type -> sisyphus.node.v1.InspectOllamaResponse
+	72,  // 182: sisyphus.node.v1.NodeService.ListProviders:output_type -> sisyphus.node.v1.ListProvidersResponse
+	76,  // 183: sisyphus.node.v1.NodeService.ListModels:output_type -> sisyphus.node.v1.ListModelsResponse
+	79,  // 184: sisyphus.node.v1.NodeService.PullModel:output_type -> sisyphus.node.v1.PullModelProgress
+	81,  // 185: sisyphus.node.v1.NodeService.RemoveModel:output_type -> sisyphus.node.v1.RemoveModelResponse
+	83,  // 186: sisyphus.node.v1.NodeService.Ask:output_type -> sisyphus.node.v1.AskEvent
+	85,  // 187: sisyphus.node.v1.NodeService.ListChats:output_type -> sisyphus.node.v1.ListChatsResponse
+	88,  // 188: sisyphus.node.v1.NodeService.GetChat:output_type -> sisyphus.node.v1.GetChatResponse
+	92,  // 189: sisyphus.node.v1.NodeService.DeleteChat:output_type -> sisyphus.node.v1.DeleteChatResponse
+	94,  // 190: sisyphus.node.v1.NodeService.StoreFile:output_type -> sisyphus.node.v1.File
+	96,  // 191: sisyphus.node.v1.NodeService.FetchFile:output_type -> sisyphus.node.v1.FetchFileResponse
+	98,  // 192: sisyphus.node.v1.NodeService.ListFiles:output_type -> sisyphus.node.v1.ListFilesResponse
+	100, // 193: sisyphus.node.v1.NodeService.RemoveFile:output_type -> sisyphus.node.v1.RemoveFileResponse
+	104, // 194: sisyphus.node.v1.NodeService.CreateInvitation:output_type -> sisyphus.node.v1.CreateInvitationResponse
+	106, // 195: sisyphus.node.v1.NodeService.ListMembers:output_type -> sisyphus.node.v1.ListMembersResponse
+	109, // 196: sisyphus.node.v1.NodeService.RemoveMember:output_type -> sisyphus.node.v1.RemoveMemberResponse
+	113, // 197: sisyphus.node.v1.NodeService.JoinPool:output_type -> sisyphus.node.v1.JoinPoolResponse
+	111, // 198: sisyphus.node.v1.NodeService.LeavePool:output_type -> sisyphus.node.v1.LeavePoolResponse
+	102, // 199: sisyphus.node.v1.NodeService.GetJoinedPool:output_type -> sisyphus.node.v1.JoinedPool
+	102, // 200: sisyphus.node.v1.NodeService.WatchJoinedPool:output_type -> sisyphus.node.v1.JoinedPool
+	139, // [139:201] is the sub-list for method output_type
+	77,  // [77:139] is the sub-list for method input_type
+	77,  // [77:77] is the sub-list for extension type_name
+	77,  // [77:77] is the sub-list for extension extendee
+	0,   // [0:77] is the sub-list for field type_name
 }
 
 func init() { file_sisyphus_node_v1_node_proto_init() }
@@ -9620,6 +9652,7 @@ func file_sisyphus_node_v1_node_proto_init() {
 		(*SharedStateEvent_LocationDiscovery)(nil),
 		(*SharedStateEvent_WebAccess)(nil),
 		(*SharedStateEvent_PoolMembers)(nil),
+		(*SharedStateEvent_ChatSummaries)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

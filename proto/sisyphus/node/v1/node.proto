@@ -835,7 +835,11 @@ message AskEvent {
 
 message ListChatsRequest {}
 
-message ListChatsResponse { repeated ChatSummary chats = 1; }
+message ListChatsResponse {
+  repeated ChatSummary chats = 1;
+  // Advances whenever an Ask or delete may have changed chat state, including messages added to an existing chat.
+  uint64 revision = 2;
+}
 
 message ChatSummary {
   string chat_id = 1;
@@ -1106,6 +1110,7 @@ enum SharedStateDomain {
   SHARED_STATE_DOMAIN_LOCATION_DISCOVERY = 10;
   SHARED_STATE_DOMAIN_WEB_ACCESS = 11;
   SHARED_STATE_DOMAIN_POOL_MEMBERS = 12;
+  SHARED_STATE_DOMAIN_CHAT_SUMMARIES = 13;
 }
 
 message WatchSharedStateRequest {
@@ -1136,6 +1141,7 @@ message SharedStateEvent {
     LocationDiscoverySettingsState location_discovery = 19;
     WebAccessConfig web_access = 20;
     ListMembersResponse pool_members = 21;
+    ListChatsResponse chat_summaries = 22;
   }
 }
 
