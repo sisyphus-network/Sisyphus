@@ -2073,6 +2073,41 @@ func TestThePlannersCallsOnANodeWithoutOneAndOnOneThatFails(t *testing.T) {
 	}
 }
 
+func TestGetChatReturnsMessagesAndToolCalls(t *testing.T) {
+	assistant := &chatMessagesAssistant{messages: []ai.Message{
+		{Role: ai.User, Content: "question"},
+		{Role: ai.Assistant, Content: "answer", Calls: []ai.Call{{
+			Name: "lookup", Arguments: []byte(`{"q":"question"}`),
+		}}},
+	}}
+	s := &localService{cfg: LocalConfig{Token: "the-token", Assistant: assistant}}
+	req := &nodepb.GetChatRequest{ChatId: "chat-1"}
+
+	if _, err := s.GetChat(context.Background(), req); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("GetChat without the node token = %v; want permission denied", err)
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	got, err := s.GetChat(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assistant.chatID != "chat-1" {
+		t.Fatalf("Chat called with %q; want chat-1", assistant.chatID)
+	}
+	if len(got.GetMessages()) != 2 || got.GetMessages()[0].GetRole() != ai.User || got.GetMessages()[0].GetContent() != "question" {
+		t.Fatalf("chat messages = %v; want user question and assistant response", got.GetMessages())
+	}
+	answer := got.GetMessages()[1]
+	if answer.GetRole() != ai.Assistant || answer.GetContent() != "answer" || len(answer.GetCalls()) != 1 {
+		t.Fatalf("assistant message = %v; want answer with one tool call", answer)
+	}
+	call := answer.GetCalls()[0]
+	if call.GetName() != "lookup" || call.GetArguments() != `{"q":"question"}` {
+		t.Fatalf("tool call = %v; want lookup with the original arguments", call)
+	}
+}
+
 func TestListNetworkInterfacesRequiresNodeTokenAndReturnsUsableAddresses(t *testing.T) {
 	service := &localService{cfg: LocalConfig{Token: "the-token"}}
 	if _, err := service.ListNetworkInterfaces(context.Background(), &nodepb.ListNetworkInterfacesRequest{}); status.Code(err) != codes.PermissionDenied {
@@ -2209,6 +2244,17 @@ type sharedChatsAssistant struct {
 	chats    []nodedb.Chat
 	config   nodedb.ModelConfig
 	profiles []nodedb.ModelProfile
+}
+
+type chatMessagesAssistant struct {
+	Assistant
+	messages []ai.Message
+	chatID   string
+}
+
+func (a *chatMessagesAssistant) Chat(id string) ([]ai.Message, error) {
+	a.chatID = id
+	return a.messages, nil
 }
 
 func (a *sharedChatsAssistant) Chats() ([]nodedb.Chat, error) {
