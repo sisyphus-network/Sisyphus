@@ -16,6 +16,7 @@ import { ResponsiveActionDialog } from '@/components/ui/responsive-action-dialog
 import { PoolHostingOverview } from '@/components/pool-hosting-overview'
 import { offeredWorkloads } from '@/lib/worker-workloads'
 import { SharedStateDomain } from '@sisyphus/client'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
 
 type Messages = ReturnType<typeof getMessages>
 function shortId(id: string) { return id.length > 22 ? `${id.slice(0, 12)}…${id.slice(-8)}` : id }
@@ -83,15 +84,15 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
         domains: [SharedStateDomain.WORKERS, SharedStateDomain.JOINED_POOL],
       }, (event) => {
         attempt = 0
-        const domain = Number(event.domain)
-        if (domain === SharedStateDomain.WORKERS) {
+        const domain = sharedStateDomainCode(event.domain)
+        if (domain === 'workers') {
           if (event.error) {
             setWorkersState('error')
           } else {
             setWorkers(sharedStatePayload<{ workers?: typeof workers }>(event, 'workers')?.workers ?? [])
             setWorkersState('ready')
           }
-        } else if (domain === SharedStateDomain.JOINED_POOL) {
+        } else if (domain === 'joinedPool') {
           if (event.error) {
             if (/has joined no other/i.test(event.error)) {
               setJoinedPool(null)
