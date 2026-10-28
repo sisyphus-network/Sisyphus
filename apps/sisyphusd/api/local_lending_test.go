@@ -25,6 +25,14 @@ func (brokenLending) SetModelLending(nodedb.ModelLending) error {
 	return errors.New("save model lending: disk gone")
 }
 
+func TestSharedStateSnapshotReportsModelLendingReadFailure(t *testing.T) {
+	service := &localService{cfg: LocalConfig{Lending: brokenLending{}}}
+	event := service.sharedStateSnapshot(withToken("the-token"), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING)
+	if event.GetError() == "" || event.GetModelLending() != nil {
+		t.Fatalf("model-lending snapshot = %v; want an error without state", event)
+	}
+}
+
 func TestModelLendingIsSavedForTheNextStartAndSaysSo(t *testing.T) {
 	running := nodedb.ModelLending{GPULayers: -1}
 	client := serveLocal(t, LocalConfig{Lending: newFileList(t), Lent: running})
