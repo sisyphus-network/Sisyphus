@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { Download, LoaderCircle, MapPinned, ShieldCheck, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getNodeApi } from '@/lib/node-api'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { SharedStateDomain } from '@sisyphus/client'
 import { Button } from '@/components/ui/button'
 import { NodeSettingsSection } from '@/components/node-settings-section'
 import { cityEstimateFromNodeInfo, cityTableAttribution, cityTableAttributionUrl, cityTableFromProtocol, cityTableStatus, ownerPinned, placeName, type CityEstimate, type CityTableState } from '@/lib/city-table'
@@ -12,6 +14,13 @@ import { formatMessage, type getMessages } from '@/i18n/messages'
 type Messages = ReturnType<typeof getMessages>
 
 type Busy = 'download' | 'remove' | null
+type SharedCityTableEvent = {
+  domain: number | string
+  error?: string
+  snapshot?: boolean
+  state?: { case?: string; value?: unknown } | string
+  cityTable?: CityTableState
+}
 
 // CityTableSettingsCard lets the owner download DB-IP's free city table, by
 // which the node places itself near its city from its public address, and
@@ -26,8 +35,8 @@ export function CityTableSettingsCard({ messages, locale }: { messages: Messages
   const [unavailable, setUnavailable] = useState(false)
   const [busy, setBusy] = useState<Busy>(null)
 
-  // Where the table puts the node now. The node answers from the table as
-  // it is when asked, so this is asked again after each change.
+  // The node-info and city-table snapshots share the same event stream, so
+  // location updates arrive without an extra RPC per table event.
   async function readEstimate() {
     try {
       const info = await getNodeApi().call('getNodeInfo')
@@ -38,16 +47,60 @@ export function CityTableSettingsCard({ messages, locale }: { messages: Messages
 
   useEffect(() => {
     let active = true
-    void getNodeApi().call('getCityTable').then(async (result) => {
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    let fallbackRequested = false
+    const apply = async (value: unknown) => {
       if (!active) return
-      setTable(cityTableFromProtocol(result))
-      const info = await getNodeApi().call('getNodeInfo').catch(() => null)
+      setTable(cityTableFromProtocol(value))
+      setUnavailable(false)
+      setLoading(false)
+    }
+    const loadFallback = () => {
+      if (!active || fallbackRequested) return
+      fallbackRequested = true
+      void getNodeApi().call('getCityTable').then(apply).catch(() => {
+        if (active) { setUnavailable(true); setLoading(false) }
+      })
+    }
+    const disconnected = () => {
+      cancel = undefined
+      loadFallback()
+      if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+    }
+    const connect = () => {
       if (!active) return
-      setEstimate(cityEstimateFromNodeInfo(info))
-      setPinned(ownerPinned(info))
-    }).catch(() => { if (active) setUnavailable(true) })
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
+      cancel = getNodeApi().stream<SharedCityTableEvent>('watchSharedState', {
+        domains: [SharedStateDomain.CITY_TABLE, SharedStateDomain.NODE],
+      }, (event) => {
+        if (sharedStateDomainCode(event.domain) === 'node') {
+          const info = event.state && typeof event.state === 'object' && event.state.case === 'node'
+            ? (event.state.value as { info?: unknown }).info
+            : undefined
+          if (info) {
+            setEstimate(cityEstimateFromNodeInfo(info))
+            setPinned(ownerPinned(info))
+          }
+          return
+        }
+        if (sharedStateDomainCode(event.domain) !== 'cityTable') return
+        if (event.error) { loadFallback(); return }
+        const next = event.state && typeof event.state === 'object' && event.state.case === 'cityTable'
+          ? event.state.value
+          : event.cityTable
+        if (!next) return
+        fallbackRequested = false
+        if (event.snapshot) attempt = 0
+        void apply(next)
+      }, disconnected, disconnected)
+    }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
   }, [])
 
   async function change(action: Exclude<Busy, null>) {
