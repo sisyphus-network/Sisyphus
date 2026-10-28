@@ -1343,7 +1343,9 @@ test('an active conversation survives desktop and compact workspace remounts', a
   const profile = testProfile()
   const { app, page } = await launch(node, profile)
   try {
-    await wide(app, page)
+    await wide(app, page, { native: true })
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 800))
+    await page.waitForFunction(() => window.innerWidth > 900)
     await open(page, 'Node overview')
     await page.locator('.advanced-sidebar').waitFor()
     await page.locator('.advanced-sidebar__menu a[href="#/"]').click()
@@ -1359,12 +1361,15 @@ test('an active conversation survives desktop and compact workspace remounts', a
     await send.click()
     await page.getByText('The active conversation survived the layout change.').waitFor({ timeout: 30000 })
 
-    await narrow(app, page)
+    // Resize the real Electron window, not just Chromium's emulated viewport:
+    // the reported regression happened while dragging the window to its
+    // minimum width, which exercises the native resize/remount path.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 760))
     await page.locator('.workspace-shell--compact').waitFor()
     await page.getByRole('paragraph').filter({ hasText: 'Keep this conversation while resizing.' }).waitFor()
     await page.getByText('The active conversation survived the layout change.').waitFor()
 
-    await wide(app, page)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 800))
     await page.locator('.workspace-desktop-stage').waitFor()
     await page.getByRole('paragraph').filter({ hasText: 'Keep this conversation while resizing.' }).waitFor()
     await page.getByText('The active conversation survived the layout change.').waitFor()
