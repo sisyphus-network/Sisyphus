@@ -46,6 +46,7 @@ export type NodeSnapshot = {
     listenAddresses: string[]
     countryCode: string
     countrySource: string
+    cityEstimate?: unknown
   } | null
   peers: Peer[]
   revision: string

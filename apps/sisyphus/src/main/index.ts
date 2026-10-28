@@ -231,6 +231,7 @@ type NodeInfo = {
   listenAddresses: string[]
   countryCode: string
   countrySource: string
+  cityEstimate?: unknown
 }
 
 type NodeSnapshot = {

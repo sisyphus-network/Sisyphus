@@ -18,6 +18,8 @@ import { webglAvailable } from '@/lib/webgl'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
 import { locationFromProtocol, type LocationShare } from '@/lib/node-location'
 import { cityEstimateFromProtocol, nodeDetails, peerDetails, poolWorkers, renderDetailsHtml, type CityEstimate, type GlobeDetails, type WorkerFacts } from '@/lib/globe-details'
+import { SharedStateDomain } from '@sisyphus/client'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
 import { useWebgl } from '@/hooks/use-webgl'
 import { autoRotateSpeed, decodeRegionLines, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
 
@@ -762,50 +764,136 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   </div>
 }
 
-// useOwnPin returns where the owner put this node, read again whenever the
-// node's state changes or the workspace is shown again (a pin saved in
-// Settings changes nothing in the node's state), or nothing if there is no
-// pin or the node keeps none.
+// useOwnPin reads the owner-only pin from the authenticated NODE shared-state
+// stream. It uses a one-shot request only while that stream is unavailable.
 function useOwnPin(snapshot: NodeSnapshot, visible: boolean): { lat: number; lng: number; share: LocationShare } | undefined {
   const [pin, setPin] = useState<{ lat: number; lng: number; share: LocationShare }>()
   const connected = snapshot.status === 'connected'
   useEffect(() => {
-    if (!connected) return
+    if (!connected || !visible) return
     let active = true
-    void getNodeApi().call<{ location?: unknown }>('getNodeLocation').then((result) => {
-      const location = result.location ? locationFromProtocol(result.location) : null
-      if (active) setPin((current) => {
-        if (!location) return undefined
-        // The same pin read again is kept as it was, so the globe is not redrawn.
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    let fallbackRequested = false
+    const apply = (info: unknown) => {
+      if (!info || typeof info !== 'object') return
+      const ownerLocation = (info as Record<string, unknown>).ownerLocation
+      const location = ownerLocation ? locationFromProtocol(ownerLocation) : null
+      setPin((current) => {
+        if (!location) return current === undefined ? current : undefined
+        // A fresh authoritative node snapshot often carries the same pin.
+        // Keep its identity so peer updates do not redraw the globe point.
         if (current && current.lat === location.latitude && current.lng === location.longitude && current.share === location.share) return current
         return { lat: location.latitude, lng: location.longitude, share: location.share }
       })
-    }).catch(() => { if (active) setPin(undefined) })
-    return () => { active = false }
-  }, [connected, visible, snapshot.revision, snapshot.lastUpdated])
+    }
+    const fallback = () => {
+      if (!active || fallbackRequested) return
+      fallbackRequested = true
+      void getNodeApi().call<{ location?: unknown }>('getNodeLocation').then((result) => {
+        if (active) apply({ ownerLocation: result.location })
+      }).catch(() => {})
+    }
+    const reconnect = () => {
+      if (!active || retry !== undefined) return
+      cancel = undefined
+      fallback()
+      retry = window.setTimeout(() => {
+        retry = undefined
+        connect()
+      }, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+    }
+    const connect = () => {
+      if (!active) return
+      retry = undefined
+      cancel = getNodeApi().stream<WorkspaceSharedState>('watchSharedState', {
+        domains: [SharedStateDomain.NODE],
+      }, (event) => {
+        if (sharedStateDomainCode(event.domain) !== 'node') return
+        if (event.error) { fallback(); return }
+        fallbackRequested = false
+        if (event.snapshot) attempt = 0
+        apply(workspaceNodeInfo(event))
+      }, reconnect, reconnect)
+    }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
+  }, [connected, visible])
   return pin
 }
 
 type PoolWorkers = { workers: ReadonlyMap<string, WorkerFacts>; shared: ReadonlyMap<string, Place> }
 const noPoolWorkers: PoolWorkers = { workers: new Map(), shared: new Map() }
+type WorkspaceSharedState = {
+  domain: number | string
+  error?: string
+  snapshot?: boolean
+  state?: { case?: string; value?: unknown } | string
+  node?: unknown
+}
 
-// usePoolWorkers returns the workers of this node's pool by peer ID, with
-// what each says of its machine, and the places they share, read again
-// whenever the node's state changes. A node that coordinates no pool, or
-// keeps none of this, has none.
+function workspaceNodeInfo(event: WorkspaceSharedState): unknown {
+  if (event.state && typeof event.state === 'object' && event.state.case === 'node') {
+    const node = event.state.value
+    return node && typeof node === 'object' ? (node as { info?: unknown }).info : undefined
+  }
+  return event.node && typeof event.node === 'object' ? (event.node as { info?: unknown }).info : undefined
+}
+
+// usePoolWorkers reads pool workers and their shared places from WatchWorkers,
+// using a one-shot list only while that stream is unavailable. A node that
+// coordinates no pool, or keeps none of this, has none.
 function usePoolWorkers(snapshot: NodeSnapshot, visible: boolean): PoolWorkers {
   const [pool, setPool] = useState<PoolWorkers>(noPoolWorkers)
   const connected = snapshot.status === 'connected'
   useEffect(() => {
-    if (!connected) return
+    if (!connected || !visible) return
     let active = true
-    void getNodeApi().call<{ workers?: unknown }>('listWorkers').then((result) => {
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    let fallbackRequested = false
+    const apply = (workersValue: unknown) => {
+      const workers = poolWorkers(workersValue)
+      setPool({ workers, shared: sharedPlaces(workersValue) })
+    }
+    const fallback = () => {
+      if (!active || fallbackRequested) return
+      fallbackRequested = true
+      void getNodeApi().call<{ workers?: unknown }>('listWorkers').then((result) => {
+        if (active) apply(result.workers)
+      }).catch(() => { if (active) setPool(noPoolWorkers) })
+    }
+    const reconnect = () => {
+      if (!active || retry !== undefined) return
+      cancel = undefined
+      fallback()
+      retry = window.setTimeout(() => {
+        retry = undefined
+        connect()
+      }, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+    }
+    const connect = () => {
       if (!active) return
-      const workers = poolWorkers(result.workers)
-      setPool({ workers, shared: sharedPlaces(result.workers) })
-    }).catch(() => { if (active) setPool(noPoolWorkers) })
-    return () => { active = false }
-  }, [connected, visible, snapshot.revision, snapshot.lastUpdated])
+      retry = undefined
+      cancel = getNodeApi().stream<{ workers?: unknown[] }>('watchWorkers', {}, (result) => {
+        fallbackRequested = false
+        attempt = 0
+        apply(result.workers)
+      }, reconnect, reconnect)
+    }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
+  }, [connected, visible])
   return pool
 }
 
@@ -815,13 +903,9 @@ function useCityEstimate(snapshot: NodeSnapshot, visible: boolean): CityEstimate
   const [estimate, setEstimate] = useState<CityEstimate>()
   const connected = snapshot.status === 'connected'
   useEffect(() => {
-    if (!connected) return
-    let active = true
-    void getNodeApi().call<{ cityEstimate?: unknown }>('getNodeInfo').then((result) => {
-      const next = cityEstimateFromProtocol(result.cityEstimate)
-      if (active) setEstimate((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next)
-    }).catch(() => { if (active) setEstimate(undefined) })
-    return () => { active = false }
-  }, [connected, visible, snapshot.revision, snapshot.lastUpdated])
+    if (!connected || !visible) return
+    const next = cityEstimateFromProtocol(snapshot.info?.cityEstimate)
+    setEstimate((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next)
+  }, [connected, visible, snapshot.info?.cityEstimate])
   return estimate
 }

@@ -90,7 +90,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
     const [info, peerList] = await Promise.all([node.getNodeInfo({}), node.listPeers({})])
     return {
       status: 'connected', endpoint: baseUrl,
-      info: { peerId: info.peerId, daemonVersion: info.daemonVersion, listenAddresses: info.listenAddresses, countryCode: info.countryCode, countrySource: info.countrySource },
+      info: { peerId: info.peerId, daemonVersion: info.daemonVersion, listenAddresses: info.listenAddresses, countryCode: info.countryCode, countrySource: info.countrySource, cityEstimate: info.cityEstimate },
       peers: peerList.peers.map((peer) => ({
         peerId: peer.peerId, connectionState: peer.connectionState, knownAddresses: peer.knownAddresses,
         trustedForCompute: peer.trustedForCompute, worksForThisNode: peer.worksForThisNode,
@@ -201,7 +201,7 @@ function browserBridge(node: NodeServiceClient, baseUrl: string): SisyphusBridge
           applyNodeState: (latest, state) => ({
             ...latest,
             status: 'connected' as const,
-            info: { peerId: state.info!.peerId, daemonVersion: state.info!.daemonVersion, listenAddresses: state.info!.listenAddresses, countryCode: state.info!.countryCode, countrySource: state.info!.countrySource },
+            info: { peerId: state.info!.peerId, daemonVersion: state.info!.daemonVersion, listenAddresses: state.info!.listenAddresses, countryCode: state.info!.countryCode, countrySource: state.info!.countrySource, cityEstimate: state.info!.cityEstimate },
             peers: state.peers.map((peer) => ({
               peerId: peer.peerId, connectionState: peer.connectionState, knownAddresses: peer.knownAddresses,
               trustedForCompute: peer.trustedForCompute, worksForThisNode: peer.worksForThisNode,
