@@ -1102,6 +1102,7 @@ enum SharedStateDomain {
   SHARED_STATE_DOMAIN_MODEL_PROFILES = 6;
   SHARED_STATE_DOMAIN_MODEL_LENDING = 7;
   SHARED_STATE_DOMAIN_FILES = 8;
+  SHARED_STATE_DOMAIN_POOL_LIMITS = 9;
 }
 
 message WatchSharedStateRequest {
@@ -1128,6 +1129,7 @@ message SharedStateEvent {
     ModelProfilesState model_profiles = 15;
     ModelLendingState model_lending = 16;
     ListFilesResponse files = 17;
+    PoolLimitsState pool_limits = 18;
   }
 }
 
