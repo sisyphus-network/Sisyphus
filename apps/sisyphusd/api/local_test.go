@@ -553,7 +553,7 @@ func TestWatchSharedStateStreamsModelLendingToIndependentClients(t *testing.T) {
 
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
-	if err != nil || len(all) != 9 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS {
+	if err != nil || len(all) != 10 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY {
 		t.Fatalf("default shared-state domains = %v, %v", all, err)
 	}
 	unique, err := sharedStateDomains([]nodepb.SharedStateDomain{
@@ -567,14 +567,14 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_UNSPECIFIED}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unspecified shared-state domain error = %v, want InvalidArgument", err)
 	}
-	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(10)}); status.Code(err) != codes.InvalidArgument {
+	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(11)}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown shared-state domain error = %v, want InvalidArgument", err)
 	}
 
 	store := &failingBrowserAccessStore{devices: []nodedb.BrowserDevice{{ID: "device", Name: "Phone"}}}
 	service := &localService{cfg: LocalConfig{
 		NodeID: "node", Token: "the-token", Peers: func() []*nodepb.Peer { return []*nodepb.Peer{peerEntry("peer", true, true)} },
-		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store, Lending: newFileList(t), Files: newFileList(t), Store: storage.NewMemory(), PoolLimits: &memoryPoolLimits{},
+		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store, Lending: newFileList(t), Files: newFileList(t), Store: storage.NewMemory(), PoolLimits: &memoryPoolLimits{}, LocationDiscovery: &memoryDiscovery{},
 		JoinedPool: func() *nodepb.JoinedPool { return &nodepb.JoinedPool{CoordinatorId: "coordinator"} },
 		Assistant:  &profiledAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}, profiles: []nodedb.ModelProfile{{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}}}},
 	}}
