@@ -138,7 +138,7 @@
   "browserAuthTokenLabel": "Token API del nodo",
   "browserAuthConnect": "Conectar navegador",
   "browserPairCodeTab": "Código de emparejamiento",
-  "pendingActionConfirmation": { "title": "La acción requiere tu aprobación", "description": "Un agente ha solicitado una acción irreversible en este nodo. Revísala antes de decidir.", "deny": "Denegar", "approve": "Aprobar acción", "queued": "{count} más en espera", "loadFailed": "No se pudieron cargar las aprobaciones pendientes", "resolveFailed": "No se pudo guardar tu decisión" },
+  "pendingActionConfirmation": { "title": "La acción requiere tu aprobación", "description": "Un agente solicitó un cambio en este nodo. Revisa los detalles antes de decidir.", "deny": "Denegar", "approve": "Aprobar acción", "queued": "{count} más en espera", "loadFailed": "No se pudieron cargar las aprobaciones pendientes", "resolveFailed": "No se pudo guardar tu decisión" },
   "browserPairCodeLabel": "Código de un solo uso de ocho dígitos",
   "browserPair": "Vincular navegador",
   "browserTokenAlternative": "Usar el token API del nodo",

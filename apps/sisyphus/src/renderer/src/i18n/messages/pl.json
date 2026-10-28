@@ -138,7 +138,7 @@
   "browserAuthTokenLabel": "Token API węzła",
   "browserAuthConnect": "Połącz przeglądarkę",
   "browserPairCodeTab": "Kod parowania",
-  "pendingActionConfirmation": { "title": "Działanie wymaga Twojej zgody", "description": "Agent poprosił o nieodwracalne działanie na tym węźle. Sprawdź je przed podjęciem decyzji.", "deny": "Odrzuć", "approve": "Zatwierdź działanie", "queued": "Jeszcze {count} oczekuje", "loadFailed": "Nie udało się wczytać oczekujących próśb", "resolveFailed": "Nie udało się zapisać Twojej decyzji" },
+  "pendingActionConfirmation": { "title": "Działanie wymaga Twojej zgody", "description": "Agent poprosił o zmianę tego węzła. Przed podjęciem decyzji sprawdź szczegóły.", "deny": "Odrzuć", "approve": "Zatwierdź działanie", "queued": "Jeszcze {count} oczekuje", "loadFailed": "Nie udało się wczytać oczekujących próśb", "resolveFailed": "Nie udało się zapisać Twojej decyzji" },
   "browserPairCodeLabel": "Ośmiocyfrowy kod jednorazowy",
   "browserPair": "Sparuj tę przeglądarkę",
   "browserTokenAlternative": "Zamiast tego użyj tokenu API węzła",

@@ -32,8 +32,8 @@ type pendingAction struct {
 	approved    bool
 }
 
-// pendingActionManager holds one-time decisions requested by local agents and
-// broadcasts snapshots to the desktop without polling.
+// pendingActionManager holds one-time decisions requested by agents and
+// broadcasts snapshots to authenticated owner clients without polling.
 type pendingActionManager struct {
 	mu          sync.Mutex
 	pending     map[string]*pendingAction
