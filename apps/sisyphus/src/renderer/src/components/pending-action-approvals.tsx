@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Check, LoaderCircle, ShieldAlert, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ResponsiveActionDialog } from '@/components/ui/responsive-action-dialog'
-import { getNodeApi, isDesktopApp } from '@/lib/node-api'
+import { getNodeApi } from '@/lib/node-api'
 import type { getMessages } from '@/i18n/messages'
 import { toast } from 'sonner'
 
@@ -16,7 +16,7 @@ export function PendingActionApprovals({ messages, direction, enabled }: { messa
   const labels = messages.pendingActionConfirmation
 
   useEffect(() => {
-    if (!enabled || !isDesktopApp()) {
+    if (!enabled) {
       setActions([])
       return
     }

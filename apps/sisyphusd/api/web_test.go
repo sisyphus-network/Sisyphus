@@ -490,6 +490,12 @@ func TestOneTimePairingCreatesARevocableBrowserSession(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("paired browser API call: %d %s", res.StatusCode, body)
 	}
+	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/ResolveActionConfirmation", `{"id":"missing","approved":true}`, cookie, false)
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if !strings.Contains(string(body), "pending action no longer exists") {
+		t.Fatalf("paired browser did not reach the authenticated approval resolver: %d %s", res.StatusCode, body)
+	}
 	res = request(http.MethodPost, "/sisyphus.node.v1.NodeService/GetLocationDiscoverySettings", `{}`, cookie, false)
 	body, _ = io.ReadAll(res.Body)
 	res.Body.Close()

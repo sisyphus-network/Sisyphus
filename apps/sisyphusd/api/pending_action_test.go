@@ -240,34 +240,46 @@ func TestPendingActionManagerResolutionErrorsAndSubscriptions(t *testing.T) {
 	}
 }
 
-func TestPendingActionConfirmationRequiresTokenAndLoopback(t *testing.T) {
+func TestPendingActionConfirmationRequiresTokenAndAllowsRemoteOwner(t *testing.T) {
 	service := &localService{cfg: LocalConfig{Token: "the-token"}}
 	if _, err := service.RequestActionConfirmation(incomingToken("wrong-token"), &nodepb.RequestActionConfirmationRequest{Action: "remove a file"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("wrong token error = %v; want permission denied", err)
 	}
-	if _, err := service.RequestActionConfirmation(incomingToken("the-token"), &nodepb.RequestActionConfirmationRequest{Action: "remove a file"}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("unauthorized request error = %v; want permission denied", err)
-	}
-	local := peer.NewContext(incomingToken("the-token"), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}})
-	if _, err := service.RequestActionConfirmation(local, nil); status.Code(err) != codes.InvalidArgument {
+	remote := peer.NewContext(incomingToken("the-token"), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("192.0.2.8"), Port: 1234}})
+	if _, err := service.RequestActionConfirmation(remote, nil); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("nil request error = %v; want invalid argument", err)
 	}
-	if _, err := service.RequestActionConfirmation(local, &nodepb.RequestActionConfirmationRequest{}); status.Code(err) != codes.InvalidArgument {
+	if _, err := service.RequestActionConfirmation(remote, &nodepb.RequestActionConfirmationRequest{}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("empty action error = %v; want invalid argument", err)
 	}
-	unauthorized := peer.NewContext(incomingToken("the-token"), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("192.0.2.8"), Port: 1234}})
-	if _, err := service.RequestActionConfirmation(unauthorized, &nodepb.RequestActionConfirmationRequest{Action: "remove a file"}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("remote request error = %v; want permission denied", err)
+
+	manager := service.actionConfirmations()
+	_, unsubscribe := manager.subscribe()
+	defer unsubscribe()
+	result := make(chan *nodepb.RequestActionConfirmationResponse, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		response, err := service.RequestActionConfirmation(remote, &nodepb.RequestActionConfirmationRequest{Action: "enable remote access"})
+		result <- response
+		errCh <- err
+	}()
+	var action *nodepb.PendingActionConfirmation
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if actions := manager.snapshot().GetActions(); len(actions) == 1 {
+			action = actions[0]
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
-	if err := requireLoopbackOwner(context.Background()); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("missing peer error = %v; want permission denied", err)
+	if action == nil {
+		t.Fatal("remote owner's action was not published")
 	}
-	local = peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}})
-	if err := requireLoopbackOwner(local); err != nil {
-		t.Fatalf("loopback peer rejected: %v", err)
+	if _, err := service.ResolveActionConfirmation(remote, &nodepb.ResolveActionConfirmationRequest{Id: action.GetId(), Approved: true}); err != nil {
+		t.Fatalf("remote owner could not resolve action: %v", err)
 	}
-	if err := requireLoopbackOwner(peer.NewContext(context.Background(), &peer.Peer{Addr: testAddress("not an IP")})); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("invalid peer address error = %v; want permission denied", err)
+	if response, err := <-result, <-errCh; err != nil || !response.GetApproved() {
+		t.Fatalf("remote action result = %#v, %v; want approved", response, err)
 	}
 }
 
@@ -277,11 +289,19 @@ func TestPendingActionStreamAuthorizationAndCanceledStream(t *testing.T) {
 	if err := service.WatchPendingActionConfirmations(nil, stream); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("unauthorized stream error = %v; want permission denied", err)
 	}
-	remote := peer.NewContext(metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token")), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("192.0.2.8"), Port: 1234}})
-	if err := service.WatchPendingActionConfirmations(nil, &pendingActionTestStream{ctx: remote}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("remote stream error = %v; want permission denied", err)
+	ctx, cancel := context.WithCancel(peer.NewContext(metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token")), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("192.0.2.8"), Port: 1234}}))
+	stream = &pendingActionTestStream{ctx: ctx, afterSend: func(sent int) {
+		if sent == 1 {
+			cancel()
+		}
+	}}
+	if err := service.WatchPendingActionConfirmations(nil, stream); err != nil {
+		t.Fatalf("authenticated remote stream error = %v", err)
 	}
-	ctx, cancel := context.WithCancel(peer.NewContext(incomingToken("the-token"), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}}))
+	if len(stream.sent) != 1 {
+		t.Fatalf("authenticated remote stream sent %d snapshots; want the initial snapshot", len(stream.sent))
+	}
+	ctx, cancel = context.WithCancel(peer.NewContext(incomingToken("the-token"), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}}))
 	cancel()
 	stream = &pendingActionTestStream{ctx: ctx}
 	if err := service.WatchPendingActionConfirmations(nil, stream); err != nil {
@@ -296,8 +316,9 @@ func TestPendingActionStreamAuthorizationAndCanceledStream(t *testing.T) {
 	if _, err := service.ResolveActionConfirmation(peer.NewContext(incomingToken("the-token"), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}}), nil); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("nil resolution error = %v; want invalid argument", err)
 	}
-	if _, err := service.ResolveActionConfirmation(incomingToken("the-token"), &nodepb.ResolveActionConfirmationRequest{Id: "missing"}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("resolution without loopback peer error = %v; want permission denied", err)
+	remote := peer.NewContext(incomingToken("the-token"), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("192.0.2.8"), Port: 1234}})
+	if _, err := service.ResolveActionConfirmation(remote, &nodepb.ResolveActionConfirmationRequest{Id: "missing"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("authenticated remote resolution error = %v; want not found", err)
 	}
 	local := peer.NewContext(incomingToken("the-token"), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}})
 	if err := service.WatchPendingActionConfirmations(nil, &pendingActionTestStream{ctx: local, err: errors.New("send failed"), errorAt: 1}); err == nil || err.Error() != "send failed" {

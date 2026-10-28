@@ -14,7 +14,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
-	grpcpeer "google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -437,13 +436,10 @@ func (s *localService) WatchPairedBrowsers(_ *nodepb.WatchPairedBrowsersRequest,
 	}
 }
 
-// RequestActionConfirmation holds a destructive request until the owner
-// decides in the desktop app or the request expires/cancels.
+// RequestActionConfirmation holds a destructive request until an authenticated
+// owner client decides or the request expires/cancels.
 func (s *localService) RequestActionConfirmation(ctx context.Context, req *nodepb.RequestActionConfirmationRequest) (*nodepb.RequestActionConfirmationResponse, error) {
 	if err := s.authorize(ctx); err != nil {
-		return nil, err
-	}
-	if err := requireLoopbackOwner(ctx); err != nil {
 		return nil, err
 	}
 	if req == nil {
@@ -457,12 +453,10 @@ func (s *localService) RequestActionConfirmation(ctx context.Context, req *nodep
 }
 
 // WatchPendingActionConfirmations sends the current queue and then each
-// change. It is local-owner-only so paired web browsers cannot approve work.
+// change. Any authenticated owner client can receive the request, including a
+// paired remote browser.
 func (s *localService) WatchPendingActionConfirmations(_ *nodepb.WatchPendingActionConfirmationsRequest, stream grpc.ServerStreamingServer[nodepb.PendingActionConfirmationsState]) error {
 	if err := s.authorize(stream.Context()); err != nil {
-		return err
-	}
-	if err := requireLoopbackOwner(stream.Context()); err != nil {
 		return err
 	}
 	manager := s.actionConfirmations()
@@ -494,9 +488,6 @@ func (s *localService) ResolveActionConfirmation(ctx context.Context, req *nodep
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	if err := requireLoopbackOwner(ctx); err != nil {
-		return nil, err
-	}
 	if req == nil || strings.TrimSpace(req.GetId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "a pending action ID is required")
 	}
@@ -505,20 +496,6 @@ func (s *localService) ResolveActionConfirmation(ctx context.Context, req *nodep
 	}
 	return &nodepb.ResolveActionConfirmationResponse{}, nil
 }
-
-func requireLoopbackOwner(ctx context.Context) error {
-	remote, ok := grpcpeer.FromContext(ctx)
-	if !ok || remote.Addr == nil {
-		return status.Error(codes.PermissionDenied, "pending action confirmations are available only through the local node API")
-	}
-	host, _, err := net.SplitHostPort(remote.Addr.String())
-	address, parseErr := netip.ParseAddr(host)
-	if err != nil || parseErr != nil || !address.Unmap().IsLoopback() {
-		return status.Error(codes.PermissionDenied, "pending action confirmations are available only through the local node API")
-	}
-	return nil
-}
-
 func (s *localService) pairedBrowsers() (*nodepb.PairedBrowsersState, error) {
 	state := &nodepb.PairedBrowsersState{}
 	if s.cfg.BrowserAccess == nil {
