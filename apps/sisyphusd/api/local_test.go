@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"strings"
@@ -1019,7 +1020,7 @@ func TestJoinPoolNotifiesSharedStateAfterSuccess(t *testing.T) {
 
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
-	if err != nil || len(all) != 15 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS || all[12] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES || all[13] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE || all[14] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS {
+	if err != nil || len(all) != 16 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS || all[12] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES || all[13] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE || all[14] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS || all[15] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_CATALOG {
 		t.Fatalf("default shared-state domains = %v, %v", all, err)
 	}
 	unique, err := sharedStateDomains([]nodepb.SharedStateDomain{
@@ -1033,7 +1034,7 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_UNSPECIFIED}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unspecified shared-state domain error = %v, want InvalidArgument", err)
 	}
-	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(16)}); status.Code(err) != codes.InvalidArgument {
+	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(17)}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown shared-state domain error = %v, want InvalidArgument", err)
 	}
 
@@ -2396,6 +2397,94 @@ func TestFetchingOrRemovingAModelTellsTheWorker(t *testing.T) {
 	failing.RemoveModel(ctx, &nodepb.RemoveModelRequest{Model: "m"})
 	if told != 2 {
 		t.Errorf("failed calls told the worker: %d", told)
+	}
+}
+
+func TestModelCatalogRevisionChangesAfterSuccessfulPullAndRemoval(t *testing.T) {
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	service := &localService{cfg: LocalConfig{Token: "the-token", Assistant: fetching{}}}
+	readRevision := func() uint64 {
+		t.Helper()
+		event := service.sharedStateSnapshot(ctx, nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_CATALOG)
+		return event.GetModelCatalog().GetRevision()
+	}
+	if got := readRevision(); got != 0 {
+		t.Fatalf("initial catalog revision = %d, want 0", got)
+	}
+	if err := service.PullModel(&nodepb.PullModelRequest{Model: "m"}, &pullStream{ctx: ctx}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readRevision(); got != 1 {
+		t.Fatalf("revision after pull = %d, want 1", got)
+	}
+	if _, err := service.RemoveModel(ctx, &nodepb.RemoveModelRequest{Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readRevision(); got != 2 {
+		t.Fatalf("revision after removal = %d, want 2", got)
+	}
+	failed := &localService{cfg: LocalConfig{Token: "the-token", Assistant: absent{}}}
+	if err := failed.PullModel(&nodepb.PullModelRequest{Model: "m"}, &pullStream{ctx: ctx}); err == nil {
+		t.Fatal("failed pull unexpectedly succeeded")
+	}
+	if _, err := failed.RemoveModel(ctx, &nodepb.RemoveModelRequest{Model: "m"}); err == nil {
+		t.Fatal("failed removal unexpectedly succeeded")
+	}
+	if got := failed.sharedStateSnapshot(ctx, nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_CATALOG).GetModelCatalog().GetRevision(); got != 0 {
+		t.Fatalf("revision after failed operations = %d, want 0", got)
+	}
+}
+
+func TestModelCatalogRevisionIsSharedAcrossLocalServices(t *testing.T) {
+	changes := NewNodeInfoChanges()
+	first := &localService{cfg: LocalConfig{NodeInfoChanges: changes}}
+	second := &localService{cfg: LocalConfig{NodeInfoChanges: changes}}
+	first.modelCatalogChanged()
+	event := second.sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_CATALOG)
+	if got := event.GetModelCatalog().GetRevision(); got != 1 {
+		t.Fatalf("second service model-catalog revision = %d, want 1", got)
+	}
+}
+
+func TestWatchSharedStateStreamsModelCatalogChangesToIndependentClients(t *testing.T) {
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{Assistant: fetching{}, NodeInfoChanges: changes})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_CATALOG}}
+	ctx1, cancel1 := context.WithCancel(withToken("the-token"))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken("the-token"))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || event.GetModelCatalog().GetRevision() != 0 {
+			t.Fatalf("initial model-catalog snapshot = %v, %v", event, err)
+		}
+	}
+	pull, err := client.PullModel(withToken("the-token"), &nodepb.PullModelRequest{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := pull.Recv(); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatalf("model pull = %v", err)
+		}
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || event.GetModelCatalog().GetRevision() != 1 {
+			t.Fatalf("changed model-catalog event = %v, %v", event, err)
+		}
 	}
 }
 

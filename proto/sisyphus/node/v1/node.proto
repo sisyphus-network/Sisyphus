@@ -1115,6 +1115,7 @@ enum SharedStateDomain {
   SHARED_STATE_DOMAIN_CHAT_SUMMARIES = 13;
   SHARED_STATE_DOMAIN_CITY_TABLE = 14;
   SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS = 15;
+  SHARED_STATE_DOMAIN_MODEL_CATALOG = 16;
 }
 
 message WatchSharedStateRequest {
@@ -1148,6 +1149,7 @@ message SharedStateEvent {
     ListChatsResponse chat_summaries = 22;
     CityTableState city_table = 23;
     GetBootstrapPeersResponse bootstrap_peers = 24;
+    ModelCatalogState model_catalog = 25;
   }
 }
 
@@ -1196,4 +1198,10 @@ message PairedBrowsersState {
 message ModelProfilesState {
   ModelConfig model_config = 1;
   repeated ModelProfile profiles = 2;
+}
+
+// ModelCatalogState is a credential-free invalidation signal for provider
+// model lists. Clients refresh only the provider profiles they currently show.
+message ModelCatalogState {
+  uint64 revision = 1;
 }

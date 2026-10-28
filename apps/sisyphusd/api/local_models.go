@@ -110,6 +110,7 @@ func (s *localService) PullModel(req *nodepb.PullModelRequest, stream nodepb.Nod
 		return asError(err)
 	}
 	s.offersChanged()
+	s.modelCatalogChanged()
 	return nil
 }
 
@@ -126,6 +127,7 @@ func (s *localService) RemoveModel(ctx context.Context, req *nodepb.RemoveModelR
 		return nil, asError(err)
 	}
 	s.offersChanged()
+	s.modelCatalogChanged()
 	return &nodepb.RemoveModelResponse{}, nil
 }
 
