@@ -1101,6 +1101,7 @@ enum SharedStateDomain {
   SHARED_STATE_DOMAIN_JOINED_POOL = 5;
   SHARED_STATE_DOMAIN_MODEL_PROFILES = 6;
   SHARED_STATE_DOMAIN_MODEL_LENDING = 7;
+  SHARED_STATE_DOMAIN_FILES = 8;
 }
 
 message WatchSharedStateRequest {
@@ -1126,6 +1127,7 @@ message SharedStateEvent {
     JoinedPool joined_pool = 14;
     ModelProfilesState model_profiles = 15;
     ModelLendingState model_lending = 16;
+    ListFilesResponse files = 17;
   }
 }
 
