@@ -50,6 +50,8 @@ type node struct {
 	webAccessRequest          *nodepb.SetWebAccessConfigRequest
 	webAccessCalls            []string
 	webAccessChangeOnApproval *nodepb.WebAccessConfig
+	webAccessGetCount         int
+	webAccessFailGetAt        int
 }
 
 var errDown = status.Error(codes.Unavailable, "the node is down")

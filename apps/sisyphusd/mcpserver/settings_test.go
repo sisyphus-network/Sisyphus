@@ -40,15 +40,20 @@ func (n *node) GetCityTable(context.Context, *nodepb.GetCityTableRequest, ...grp
 
 func (n *node) GetWebAccessConfig(context.Context, *nodepb.GetWebAccessConfigRequest, ...grpc.CallOption) (*nodepb.WebAccessConfig, error) {
 	n.webAccessCalls = append(n.webAccessCalls, "get")
+	n.webAccessGetCount++
 	config := n.webAccess
 	if config == nil {
 		config = &nodepb.WebAccessConfig{Enabled: true, ListenAddress: "192.168.1.5:7443"}
 	}
-	return &nodepb.WebAccessConfig{
+	response := &nodepb.WebAccessConfig{
 		Enabled: config.GetEnabled(), ListenAddress: config.GetListenAddress(),
 		ListenAddresses: slices.Clone(config.GetListenAddresses()), PublicUrl: config.GetPublicUrl(),
 		CertificateFingerprint: config.GetCertificateFingerprint(), RestartRequired: config.GetRestartRequired(),
-	}, n.fail("GetWebAccessConfig")
+	}
+	if n.webAccessFailGetAt == n.webAccessGetCount {
+		return nil, errDown
+	}
+	return response, n.fail("GetWebAccessConfig")
 }
 
 func (n *node) SetWebAccessConfig(_ context.Context, req *nodepb.SetWebAccessConfigRequest, _ ...grpc.CallOption) (*nodepb.WebAccessConfig, error) {
@@ -294,6 +299,97 @@ func TestWebAccessApprovalRejectsURLsThatCouldExposeCredentials(t *testing.T) {
 	}
 	if strings.Contains(result.Content[0].(*mcp.TextContent).Text, "secret") || slices.Contains(n.webAccessCalls, "approve") || slices.Contains(n.webAccessCalls, "set") {
 		t.Errorf("invalid credential URL was exposed or applied: result=%v calls=%v", result, n.webAccessCalls)
+	}
+}
+
+func TestWebAccessToolRejectsMissingArgsAndReportsNodeErrors(t *testing.T) {
+	t.Run("missing arguments", func(t *testing.T) {
+		n := &node{}
+		session, _ := agentOf(t, n, Config{Admin: true})
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_web_access", Arguments: json.RawMessage(`{}`)})
+		if err != nil || !result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "give at least one") {
+			t.Fatalf("missing arguments = %v, %v", result, err)
+		}
+		if len(n.webAccessCalls) != 0 {
+			t.Fatalf("missing arguments called the node: %v", n.webAccessCalls)
+		}
+	})
+
+	t.Run("initial read fails", func(t *testing.T) {
+		n := &node{failing: "GetWebAccessConfig"}
+		session, _ := agentOf(t, n, Config{Admin: true})
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_web_access", Arguments: json.RawMessage(`{"enabled":false}`)})
+		if err != nil || !result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "the node is down") {
+			t.Fatalf("initial read failure = %v, %v", result, err)
+		}
+	})
+
+	t.Run("owner confirmation request fails", func(t *testing.T) {
+		n := &node{webAccess: &nodepb.WebAccessConfig{ListenAddress: "192.168.1.5:7443", PublicUrl: "https://node.example.test:7443"}, failing: "RequestActionConfirmation"}
+		session, _ := agentOf(t, n, Config{Admin: true})
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_web_access", Arguments: json.RawMessage(`{"enabled":true}`)})
+		if err != nil || !result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "the node is down") {
+			t.Fatalf("confirmation failure = %v, %v", result, err)
+		}
+		if slices.Contains(n.webAccessCalls, "set") {
+			t.Fatalf("confirmation failure still changed settings: %v", n.webAccessCalls)
+		}
+	})
+
+	t.Run("post-approval read fails", func(t *testing.T) {
+		n := &node{
+			webAccess:          &nodepb.WebAccessConfig{ListenAddress: "192.168.1.5:7443", PublicUrl: "https://node.example.test:7443"},
+			webAccessApproval:  true,
+			webAccessFailGetAt: 2,
+		}
+		session, _ := agentOf(t, n, Config{Admin: true})
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "set_web_access", Arguments: json.RawMessage(`{"enabled":true}`)})
+		if err != nil || !result.IsError || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "the node is down") {
+			t.Fatalf("post-approval read failure = %v, %v", result, err)
+		}
+		if slices.Contains(n.webAccessCalls, "set") {
+			t.Fatalf("post-approval read failure still changed settings: %v", n.webAccessCalls)
+		}
+	})
+}
+
+func TestWebAccessUnchangedSettingsAreNotWritten(t *testing.T) {
+	n := &node{}
+	session, _ := agentOf(t, n, Config{Admin: true})
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "set_web_access", Arguments: json.RawMessage(`{"listen_addresses":["192.168.1.5:7443"]}`),
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("unchanged settings = %v, %v", result, err)
+	}
+	if want := []string{"get"}; !slices.Equal(n.webAccessCalls, want) {
+		t.Fatalf("unchanged settings node calls = %v, want %v", n.webAccessCalls, want)
+	}
+}
+
+func TestWebAccessEmptyListenerListIsPassedThrough(t *testing.T) {
+	n := &node{}
+	session, _ := agentOf(t, n, Config{Admin: true})
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "set_web_access", Arguments: json.RawMessage(`{"listen_addresses":[]}`),
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("empty listener list = %v, %v", result, err)
+	}
+	if n.webAccessRequest.GetListenAddress() != "" || len(n.webAccessRequest.GetListenAddresses()) != 0 {
+		t.Fatalf("empty listener list became %#v", n.webAccessRequest)
+	}
+}
+
+func TestWebAccessAddressesHandlesNilSingularAndEmptyConfigs(t *testing.T) {
+	if got := webAccessAddresses(nil); got != nil {
+		t.Errorf("nil config addresses = %v, want nil", got)
+	}
+	if got := webAccessAddresses(&nodepb.WebAccessConfig{ListenAddress: "192.168.1.5:7443"}); !slices.Equal(got, []string{"192.168.1.5:7443"}) {
+		t.Errorf("singular listener address = %v", got)
+	}
+	if got := webAccessAddresses(&nodepb.WebAccessConfig{}); got != nil {
+		t.Errorf("empty config addresses = %v, want nil", got)
 	}
 }
 
