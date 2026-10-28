@@ -80,7 +80,7 @@ export type NodeRpcMethod =
   | 'listFiles' | 'removeFile'
   | 'createInvitation' | 'listMembers' | 'removeMember' | 'joinPool' | 'resolveActionConfirmation'
 
-export type NodeStreamMethod = 'watchJobs' | 'watchJobEvents' | 'watchPairedBrowsers' | 'watchPendingActionConfirmations' | 'watchWorkers' | 'watchJoinedPool' | 'ask' | 'pullModel'
+export type NodeStreamMethod = 'watchJobs' | 'watchJobEvents' | 'watchPairedBrowsers' | 'watchPendingActionConfirmations' | 'watchWorkers' | 'watchJoinedPool' | 'watchSharedState' | 'ask' | 'pullModel'
 
 const api = {
   getSnapshot: (): Promise<NodeSnapshot> => ipcRenderer.invoke('node:get-snapshot'),

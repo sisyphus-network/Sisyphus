@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	NodeService_GetNodeInfo_FullMethodName                     = "/sisyphus.node.v1.NodeService/GetNodeInfo"
 	NodeService_WatchNodeState_FullMethodName                  = "/sisyphus.node.v1.NodeService/WatchNodeState"
+	NodeService_WatchSharedState_FullMethodName                = "/sisyphus.node.v1.NodeService/WatchSharedState"
 	NodeService_WatchPairedBrowsers_FullMethodName             = "/sisyphus.node.v1.NodeService/WatchPairedBrowsers"
 	NodeService_RequestActionConfirmation_FullMethodName       = "/sisyphus.node.v1.NodeService/RequestActionConfirmation"
 	NodeService_WatchPendingActionConfirmations_FullMethodName = "/sisyphus.node.v1.NodeService/WatchPendingActionConfirmations"
@@ -90,6 +91,10 @@ type NodeServiceClient interface {
 	// WatchNodeState sends a complete node-and-peer snapshot at once and
 	// again whenever node details or peers change.
 	WatchNodeState(ctx context.Context, in *GetNodeInfoRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NodeState], error)
+	// WatchSharedState sends one initial snapshot per requested domain, then
+	// complete domain snapshots whenever shared node state changes. Reconnect
+	// starts a new stream with a fresh baseline.
+	WatchSharedState(ctx context.Context, in *WatchSharedStateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SharedStateEvent], error)
 	// WatchPairedBrowsers sends the authorized device list at once and whenever
 	// a browser is paired or revoked.
 	WatchPairedBrowsers(ctx context.Context, in *WatchPairedBrowsersRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PairedBrowsersState], error)
@@ -289,9 +294,28 @@ func (c *nodeServiceClient) WatchNodeState(ctx context.Context, in *GetNodeInfoR
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchNodeStateClient = grpc.ServerStreamingClient[NodeState]
 
+func (c *nodeServiceClient) WatchSharedState(ctx context.Context, in *WatchSharedStateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SharedStateEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[1], NodeService_WatchSharedState_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchSharedStateRequest, SharedStateEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchSharedStateClient = grpc.ServerStreamingClient[SharedStateEvent]
+
 func (c *nodeServiceClient) WatchPairedBrowsers(ctx context.Context, in *WatchPairedBrowsersRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PairedBrowsersState], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[1], NodeService_WatchPairedBrowsers_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[2], NodeService_WatchPairedBrowsers_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +344,7 @@ func (c *nodeServiceClient) RequestActionConfirmation(ctx context.Context, in *R
 
 func (c *nodeServiceClient) WatchPendingActionConfirmations(ctx context.Context, in *WatchPendingActionConfirmationsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PendingActionConfirmationsState], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[2], NodeService_WatchPendingActionConfirmations_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[3], NodeService_WatchPendingActionConfirmations_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -479,7 +503,7 @@ func (c *nodeServiceClient) ListPeers(ctx context.Context, in *ListPeersRequest,
 
 func (c *nodeServiceClient) WatchPeers(ctx context.Context, in *WatchPeersRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListPeersResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[3], NodeService_WatchPeers_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[4], NodeService_WatchPeers_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -558,7 +582,7 @@ func (c *nodeServiceClient) ListWorkers(ctx context.Context, in *ListWorkersRequ
 
 func (c *nodeServiceClient) WatchWorkers(ctx context.Context, in *ListWorkersRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListWorkersResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[4], NodeService_WatchWorkers_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[5], NodeService_WatchWorkers_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -617,7 +641,7 @@ func (c *nodeServiceClient) ListJobs(ctx context.Context, in *ListJobsRequest, o
 
 func (c *nodeServiceClient) WatchJobs(ctx context.Context, in *WatchJobsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListJobsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[5], NodeService_WatchJobs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[6], NodeService_WatchJobs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -646,7 +670,7 @@ func (c *nodeServiceClient) CancelJob(ctx context.Context, in *CancelJobRequest,
 
 func (c *nodeServiceClient) WatchJobEvents(ctx context.Context, in *WatchJobEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JobEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[6], NodeService_WatchJobEvents_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[7], NodeService_WatchJobEvents_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -765,7 +789,7 @@ func (c *nodeServiceClient) ListModels(ctx context.Context, in *ListModelsReques
 
 func (c *nodeServiceClient) PullModel(ctx context.Context, in *PullModelRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PullModelProgress], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[7], NodeService_PullModel_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[8], NodeService_PullModel_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -794,7 +818,7 @@ func (c *nodeServiceClient) RemoveModel(ctx context.Context, in *RemoveModelRequ
 
 func (c *nodeServiceClient) Ask(ctx context.Context, in *AskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[8], NodeService_Ask_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[9], NodeService_Ask_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -843,7 +867,7 @@ func (c *nodeServiceClient) DeleteChat(ctx context.Context, in *DeleteChatReques
 
 func (c *nodeServiceClient) StoreFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[StoreFileRequest, File], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[9], NodeService_StoreFile_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[10], NodeService_StoreFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -856,7 +880,7 @@ type NodeService_StoreFileClient = grpc.ClientStreamingClient[StoreFileRequest, 
 
 func (c *nodeServiceClient) FetchFile(ctx context.Context, in *FetchFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FetchFileResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[10], NodeService_FetchFile_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[11], NodeService_FetchFile_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -955,7 +979,7 @@ func (c *nodeServiceClient) GetJoinedPool(ctx context.Context, in *GetJoinedPool
 
 func (c *nodeServiceClient) WatchJoinedPool(ctx context.Context, in *GetJoinedPoolRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[JoinedPool], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[11], NodeService_WatchJoinedPool_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[12], NodeService_WatchJoinedPool_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -980,6 +1004,10 @@ type NodeServiceServer interface {
 	// WatchNodeState sends a complete node-and-peer snapshot at once and
 	// again whenever node details or peers change.
 	WatchNodeState(*GetNodeInfoRequest, grpc.ServerStreamingServer[NodeState]) error
+	// WatchSharedState sends one initial snapshot per requested domain, then
+	// complete domain snapshots whenever shared node state changes. Reconnect
+	// starts a new stream with a fresh baseline.
+	WatchSharedState(*WatchSharedStateRequest, grpc.ServerStreamingServer[SharedStateEvent]) error
 	// WatchPairedBrowsers sends the authorized device list at once and whenever
 	// a browser is paired or revoked.
 	WatchPairedBrowsers(*WatchPairedBrowsersRequest, grpc.ServerStreamingServer[PairedBrowsersState]) error
@@ -1155,6 +1183,9 @@ func (UnimplementedNodeServiceServer) GetNodeInfo(context.Context, *GetNodeInfoR
 }
 func (UnimplementedNodeServiceServer) WatchNodeState(*GetNodeInfoRequest, grpc.ServerStreamingServer[NodeState]) error {
 	return status.Error(codes.Unimplemented, "method WatchNodeState not implemented")
+}
+func (UnimplementedNodeServiceServer) WatchSharedState(*WatchSharedStateRequest, grpc.ServerStreamingServer[SharedStateEvent]) error {
+	return status.Error(codes.Unimplemented, "method WatchSharedState not implemented")
 }
 func (UnimplementedNodeServiceServer) WatchPairedBrowsers(*WatchPairedBrowsersRequest, grpc.ServerStreamingServer[PairedBrowsersState]) error {
 	return status.Error(codes.Unimplemented, "method WatchPairedBrowsers not implemented")
@@ -1382,6 +1413,17 @@ func _NodeService_WatchNodeState_Handler(srv interface{}, stream grpc.ServerStre
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type NodeService_WatchNodeStateServer = grpc.ServerStreamingServer[NodeState]
+
+func _NodeService_WatchSharedState_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchSharedStateRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServiceServer).WatchSharedState(m, &grpc.GenericServerStream[WatchSharedStateRequest, SharedStateEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type NodeService_WatchSharedStateServer = grpc.ServerStreamingServer[SharedStateEvent]
 
 func _NodeService_WatchPairedBrowsers_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(WatchPairedBrowsersRequest)
@@ -2572,6 +2614,11 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "WatchNodeState",
 			Handler:       _NodeService_WatchNodeState_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "WatchSharedState",
+			Handler:       _NodeService_WatchSharedState_Handler,
 			ServerStreams: true,
 		},
 		{

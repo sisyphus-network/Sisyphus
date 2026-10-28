@@ -14,6 +14,7 @@ var rpcKinds = map[string]kind{
 	// The node, its peers and its settings, as they stand.
 	"GetNodeInfo":                     reads,
 	"WatchNodeState":                  reads,
+	"WatchSharedState":                reads,
 	"WatchPairedBrowsers":             reads,
 	"WatchPendingActionConfirmations": reads,
 	"GetLocationDiscoverySettings":    reads,
