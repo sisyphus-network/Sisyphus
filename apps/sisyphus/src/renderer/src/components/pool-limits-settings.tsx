@@ -5,6 +5,8 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { Boxes, CircleAlert, Gauge, HardDrive, ListChecks, LoaderCircle, Save, Timer, Upload } from 'lucide-react'
 import type { PoolLimits, PoolLimitsState } from '../../../preload'
 import { getNodeApi } from '@/lib/node-api'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { SharedStateDomain } from '@sisyphus/client'
 import { Button } from '@/components/ui/button'
 import { NodeSettingsSection } from '@/components/node-settings-section'
 import { FloatingLabelInput } from '@/components/ui/floating-label-input'
@@ -28,6 +30,13 @@ type Form = {
   uploadUnit: ByteUnit
 }
 type Field = 'jobs' | 'tasks' | 'timeout' | 'store' | 'upload'
+type SharedPoolLimitsEvent = {
+  domain: number | string
+  error?: string
+  snapshot?: boolean
+  state?: { case?: string; value?: PoolLimitsState } | string
+  poolLimits?: PoolLimitsState
+}
 
 function formFromLimits(limits: PoolLimits): Form {
   const timeout = durationForForm(limits.maxTaskTimeoutSeconds)
@@ -78,33 +87,67 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
   const [form, setForm] = useState<Form>(() => formFromLimits(noPoolLimits))
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const hasLoadedSettings = useRef(false)
+  const stateRef = useRef(state)
+  const formRef = useRef(form)
+  stateRef.current = state
+  formRef.current = form
 
   useEffect(() => {
     let active = true
     const api = getNodeApi()
-    const refresh = () => {
-      void api.getPoolLimits().then((result) => {
-        if (!active) return
-        setState(result)
-        if (!hasLoadedSettings.current) {
-          hasLoadedSettings.current = true
-          setForm(formFromLimits(result.saved))
-        }
-      }).catch((error) => {
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    let fallbackRequested = false
+    const apply = (next: PoolLimitsState) => {
+      if (!active) return
+      const previous = stateRef.current
+      const draft = parseForm(formRef.current).limits
+      const unchanged = !previous || (draft !== undefined && samePoolLimits(draft, previous.saved))
+      stateRef.current = next
+      setState(next)
+      if (unchanged) {
+        const nextForm = formFromLimits(next.saved)
+        formRef.current = nextForm
+        setForm(nextForm)
+      }
+      setLoading(false)
+    }
+    const loadFallback = () => {
+      if (!active || fallbackRequested) return
+      fallbackRequested = true
+      void api.getPoolLimits().then(apply).catch((error) => {
         if (active) toast.error(labels.loadFailed, { description: daemonErrorMessage(error) })
       }).finally(() => { if (active) setLoading(false) })
     }
-    let wasConnected: boolean | undefined
-    const unsubscribe = api.onSnapshot((snapshot) => {
-      const connected = snapshot.status === 'connected'
-      if (connected !== wasConnected) {
-        wasConnected = connected
-        refresh()
-      }
-    })
-    refresh()
-    return () => { active = false; unsubscribe() }
+    const reconnect = () => {
+      cancel = undefined
+      loadFallback()
+      if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+    }
+    const connect = () => {
+      if (!active) return
+      cancel = getNodeApi().stream<SharedPoolLimitsEvent>('watchSharedState', {
+        domains: [SharedStateDomain.POOL_LIMITS],
+      }, (event) => {
+        if (sharedStateDomainCode(event.domain) !== 'poolLimits') return
+        attempt = 0
+        if (event.error) {
+          loadFallback()
+          return
+        }
+        const next = event.state && typeof event.state === 'object' && event.state.case === 'poolLimits'
+          ? event.state.value
+          : event.poolLimits
+        if (next) apply(next)
+      }, reconnect, reconnect)
+    }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
   }, [labels.loadFailed])
 
   const parsed = parseForm(form)
@@ -124,8 +167,11 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
     setSaving(true)
     try {
       const next = await getNodeApi().savePoolLimits(parsed.limits)
+      stateRef.current = next
+      const nextForm = formFromLimits(next.saved)
+      formRef.current = nextForm
       setState(next)
-      setForm(formFromLimits(next.saved))
+      setForm(nextForm)
       toast.success(labels.saved)
     } catch (error) {
       toast.error(labels.saveFailed, { description: daemonErrorMessage(error) })
@@ -176,7 +222,7 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
         {row('upload', Upload, labels.uploadTitle, labels.uploadDescription, { value: form.uploadUnit, options: Object.keys(byteUnits), onChange: (value) => setForm((current) => ({ ...current, uploadUnit: value as ByteUnit })) })}
         {state?.configurable && <div className="mt-3 flex flex-col-reverse justify-between gap-3 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:items-center">
           <p role="status" className="text-xs leading-relaxed text-muted-foreground">{restartNeeded ? (state.managed ? labels.restartRequired : labels.restartDaemonRequired) : (state.managed ? labels.restartHint : labels.restartDaemonHint)}</p>
-          <div className="flex flex-wrap gap-2">{restartNeeded && state.managed && <RestartNodeButton messages={messages} />}<SettingsSaveAction onRevert={() => { if (state) setForm(formFromLimits(state.saved)) }} dirty={dirty} changeCount={changeCount} disabled={!dirty || saving || !valid} onSave={save}><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</SettingsSaveAction></div>
+          <div className="flex flex-wrap gap-2">{restartNeeded && state.managed && <RestartNodeButton messages={messages} />}<SettingsSaveAction onRevert={() => { if (state) { const nextForm = formFromLimits(state.saved); formRef.current = nextForm; setForm(nextForm) } }} dirty={dirty} changeCount={changeCount} disabled={!dirty || saving || !valid} onSave={save}><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</SettingsSaveAction></div>
         </div>}
       </>}
   </NodeSettingsSection>

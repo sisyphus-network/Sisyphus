@@ -30,6 +30,10 @@ func (s *localService) GetPoolLimits(ctx context.Context, _ *nodepb.GetPoolLimit
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
+	return s.poolLimitsSnapshot()
+}
+
+func (s *localService) poolLimitsSnapshot() (*nodepb.PoolLimitsState, error) {
 	if s.cfg.PoolLimits == nil {
 		return nil, status.Error(codes.FailedPrecondition, "pool limits are unavailable")
 	}
@@ -60,6 +64,7 @@ func (s *localService) SetPoolLimits(ctx context.Context, req *nodepb.SetPoolLim
 	if err := s.cfg.PoolLimits.SetPoolLimits(limits); err != nil {
 		return nil, asError(err)
 	}
+	s.notifySharedStateChanged()
 	return poolLimitsState(limits, s.cfg.PoolLimitsRunning, true, s.cfg.RunsCoordinator), nil
 }
 
