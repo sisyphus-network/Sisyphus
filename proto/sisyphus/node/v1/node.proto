@@ -1114,6 +1114,7 @@ enum SharedStateDomain {
   SHARED_STATE_DOMAIN_POOL_MEMBERS = 12;
   SHARED_STATE_DOMAIN_CHAT_SUMMARIES = 13;
   SHARED_STATE_DOMAIN_CITY_TABLE = 14;
+  SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS = 15;
 }
 
 message WatchSharedStateRequest {
@@ -1146,6 +1147,7 @@ message SharedStateEvent {
     ListMembersResponse pool_members = 21;
     ListChatsResponse chat_summaries = 22;
     CityTableState city_table = 23;
+    GetBootstrapPeersResponse bootstrap_peers = 24;
   }
 }
 
