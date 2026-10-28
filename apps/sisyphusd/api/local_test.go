@@ -418,9 +418,88 @@ func TestWatchSharedStateSendsBaselinesUpdatesAndRequiresToken(t *testing.T) {
 	}
 }
 
+func TestWatchSharedStateStreamsModelProfilesToIndependentClientsWithoutSecrets(t *testing.T) {
+	const token = "the-token"
+	const profileID = "shared-profile"
+	assistant := &sharedModelStateAssistant{
+		config: nodedb.ModelConfig{Provider: "openai", BaseURL: "https://api.example.test/v1", Model: "gpt-4.1", APIKey: "planner-private-key"},
+		profiles: map[string]nodedb.ModelProfile{
+			profileID: {ID: profileID, Name: "Shared", Config: nodedb.ModelConfig{Provider: "openai", BaseURL: "https://api.example.test/v1", Model: "gpt-4.1-mini", APIKey: "profile-private-key"}, Active: true},
+		},
+	}
+	client := serveLocal(t, LocalConfig{Token: token, Assistant: assistant, NodeInfoChanges: NewNodeInfoChanges()})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES}}
+	ctx1, cancel1 := context.WithCancel(withToken(token))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken(token))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		readModelState := func(revision uint64, model string, profileCount int) {
+			t.Helper()
+			event, err := watcher.Recv()
+			state := event.GetModelProfiles()
+			if err != nil || event.GetRevision() != revision || event.GetDomain() != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || event.GetError() != "" || state == nil {
+				t.Fatalf("model-profile event at revision %d = %v, %v", revision, event, err)
+			}
+			if state.GetModelConfig().GetModel() != model || !state.GetModelConfig().GetHasApiKey() || len(state.GetProfiles()) != profileCount {
+				t.Fatalf("model-profile state at revision %d = %v", revision, state)
+			}
+			wire, err := proto.Marshal(event)
+			if err != nil || strings.Contains(string(wire), "private-key") {
+				t.Fatalf("model-profile event leaked credentials: %x, %v", wire, err)
+			}
+		}
+		readModelState(1, "gpt-4.1", 1)
+	}
+
+	if _, err := client.SetModelConfig(withToken(token), &nodepb.SetModelConfigRequest{
+		Provider: "openai", BaseUrl: "https://api.example.test/v1", Model: "gpt-4.1-nano", KeepApiKey: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 2 || event.GetModelProfiles().GetModelConfig().GetModel() != "gpt-4.1-nano" || !event.GetModelProfiles().GetModelConfig().GetHasApiKey() {
+			t.Fatalf("updated selected-model event = %v, %v", event, err)
+		}
+	}
+
+	if _, err := client.SaveModelProfile(withToken(token), &nodepb.SaveModelProfileRequest{
+		Id: profileID, Name: "Renamed", Provider: "openai", BaseUrl: "https://api.example.test/v1", Model: "gpt-4.1-mini", KeepApiKey: true, Active: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		profiles := event.GetModelProfiles().GetProfiles()
+		if err != nil || event.GetRevision() != 3 || len(profiles) != 1 || profiles[0].GetName() != "Renamed" || !profiles[0].GetHasApiKey() {
+			t.Fatalf("updated saved-profile event = %v, %v", event, err)
+		}
+	}
+
+	if _, err := client.DeleteModelProfile(withToken(token), &nodepb.DeleteModelProfileRequest{Id: profileID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 4 || len(event.GetModelProfiles().GetProfiles()) != 0 {
+			t.Fatalf("deleted saved-profile event = %v, %v", event, err)
+		}
+	}
+}
+
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
-	if err != nil || len(all) != 5 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL {
+	if err != nil || len(all) != 6 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES {
 		t.Fatalf("default shared-state domains = %v, %v", all, err)
 	}
 	unique, err := sharedStateDomains([]nodepb.SharedStateDomain{
@@ -434,12 +513,16 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_UNSPECIFIED}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unspecified shared-state domain error = %v, want InvalidArgument", err)
 	}
+	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(7)}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("unknown shared-state domain error = %v, want InvalidArgument", err)
+	}
 
 	store := &failingBrowserAccessStore{devices: []nodedb.BrowserDevice{{ID: "device", Name: "Phone"}}}
 	service := &localService{cfg: LocalConfig{
 		NodeID: "node", Token: "the-token", Peers: func() []*nodepb.Peer { return []*nodepb.Peer{peerEntry("peer", true, true)} },
 		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store,
 		JoinedPool: func() *nodepb.JoinedPool { return &nodepb.JoinedPool{CoordinatorId: "coordinator"} },
+		Assistant:  &profiledAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}, profiles: []nodedb.ModelProfile{{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}}}},
 	}}
 	for _, domain := range all {
 		event := service.sharedStateSnapshot(withToken("the-token"), domain)
@@ -459,6 +542,14 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	noJoinedPool := (&localService{}).sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL)
 	if noJoinedPool.GetJoinedPool() == nil {
 		t.Fatalf("standalone joined-pool snapshot = %v; want an empty typed state", noJoinedPool)
+	}
+	failedModelConfig := (&localService{cfg: LocalConfig{Assistant: &profiledAssistant{configErr: errAbsent}}}).sharedStateSnapshot(withToken("the-token"), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES)
+	if failedModelConfig.GetError() == "" || failedModelConfig.GetState() != nil {
+		t.Fatalf("failed model-config snapshot = %v; want per-domain error", failedModelConfig)
+	}
+	failedProfiles := (&localService{cfg: LocalConfig{Assistant: &profiledAssistant{config: nodedb.ModelConfig{Provider: "ollama"}, profilesErr: errAbsent}}}).sharedStateSnapshot(withToken("the-token"), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES)
+	if failedProfiles.GetError() == "" || failedProfiles.GetState() != nil {
+		t.Fatalf("failed model-profile snapshot = %v; want per-domain error", failedProfiles)
 	}
 }
 
@@ -1865,6 +1956,51 @@ type profiledAssistant struct {
 	deleteErr   error
 	saved       nodedb.ModelProfile
 	deleted     string
+}
+
+type sharedModelStateAssistant struct {
+	Assistant
+	mu       sync.Mutex
+	config   nodedb.ModelConfig
+	profiles map[string]nodedb.ModelProfile
+}
+
+func (a *sharedModelStateAssistant) ModelConfig() (nodedb.ModelConfig, bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.config, a.config.Provider != "", nil
+}
+
+func (a *sharedModelStateAssistant) SetModelConfig(config nodedb.ModelConfig) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.config = config
+	return nil
+}
+
+func (a *sharedModelStateAssistant) ModelProfiles() ([]nodedb.ModelProfile, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	profiles := make([]nodedb.ModelProfile, 0, len(a.profiles))
+	for _, profile := range a.profiles {
+		profiles = append(profiles, profile)
+	}
+	slices.SortFunc(profiles, func(left, right nodedb.ModelProfile) int { return strings.Compare(left.ID, right.ID) })
+	return profiles, nil
+}
+
+func (a *sharedModelStateAssistant) SaveModelProfile(profile nodedb.ModelProfile) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.profiles[profile.ID] = profile
+	return nil
+}
+
+func (a *sharedModelStateAssistant) DeleteModelProfile(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.profiles, id)
+	return nil
 }
 
 func (a *profiledAssistant) ModelConfig() (nodedb.ModelConfig, bool, error) {

@@ -460,12 +460,13 @@ func sharedStateDomains(requested []nodepb.SharedStateDomain) ([]nodepb.SharedSt
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WORKERS,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_PAIRED_BROWSERS,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES,
 		}, nil
 	}
 	seen := make(map[nodepb.SharedStateDomain]struct{}, len(requested))
 	domains := make([]nodepb.SharedStateDomain, 0, len(requested))
 	for _, domain := range requested {
-		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL {
+		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES {
 			return nil, status.Errorf(codes.InvalidArgument, "unsupported shared-state domain %s", domain)
 		}
 		if _, ok := seen[domain]; ok {
@@ -508,6 +509,21 @@ func (s *localService) sharedStateSnapshot(ctx context.Context, domain nodepb.Sh
 			state = s.cfg.JoinedPool()
 		}
 		event.State = &nodepb.SharedStateEvent_JoinedPool{JoinedPool: state}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES:
+		config, err := s.modelConfigSnapshot()
+		if err != nil {
+			event.Error = err.Error()
+			break
+		}
+		profiles, err := s.modelProfilesSnapshot()
+		if err != nil {
+			event.Error = err.Error()
+			break
+		}
+		event.State = &nodepb.SharedStateEvent_ModelProfiles{ModelProfiles: &nodepb.ModelProfilesState{
+			ModelConfig: config,
+			Profiles:    profiles.GetProfiles(),
+		}}
 	}
 	return event
 }
@@ -676,8 +692,9 @@ func watchWithChanges[T proto.Message](ctx context.Context, changes <-chan struc
 	}
 }
 
-// NodeInfoChanges broadcasts coalesced node-info changes to independent
-// subscribers, so one local or remote client cannot consume another's event.
+// NodeInfoChanges broadcasts coalesced node and shared-state changes to
+// independent subscribers, so one local or remote client cannot consume
+// another's event.
 type NodeInfoChanges struct {
 	mu          sync.Mutex
 	subscribers map[chan struct{}]struct{}
@@ -1135,6 +1152,10 @@ func asError(err error) error {
 // GetModelConfig says which model the node plans with, and whether a key
 // is set for its service, but not the key.
 func (s *localService) GetModelConfig(context.Context, *nodepb.GetModelConfigRequest) (*nodepb.ModelConfig, error) {
+	return s.modelConfigSnapshot()
+}
+
+func (s *localService) modelConfigSnapshot() (*nodepb.ModelConfig, error) {
 	if s.cfg.Assistant == nil {
 		return nil, errNoPlanner
 	}
@@ -1172,6 +1193,7 @@ func (s *localService) SetModelConfig(ctx context.Context, req *nodepb.SetModelC
 	if err := s.cfg.Assistant.SetModelConfig(cfg); err != nil {
 		return nil, asError(err)
 	}
+	s.notifySharedStateChanged()
 	return &nodepb.ModelConfig{Provider: cfg.Provider, BaseUrl: maskAddress(cfg.BaseURL), Model: cfg.Model, HasApiKey: cfg.APIKey != ""}, nil
 }
 
@@ -1179,6 +1201,10 @@ func (s *localService) ListModelProfiles(ctx context.Context, _ *nodepb.ListMode
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
+	return s.modelProfilesSnapshot()
+}
+
+func (s *localService) modelProfilesSnapshot() (*nodepb.ListModelProfilesResponse, error) {
 	profiles, ok := s.cfg.Assistant.(interface {
 		ModelProfiles() ([]nodedb.ModelProfile, error)
 	})
@@ -1242,6 +1268,7 @@ func (s *localService) SaveModelProfile(ctx context.Context, req *nodepb.SaveMod
 	if err := profiles.SaveModelProfile(p); err != nil {
 		return nil, asError(err)
 	}
+	s.notifySharedStateChanged()
 	return &nodepb.ModelProfile{Id: p.ID, Name: p.Name, Provider: p.Config.Provider, BaseUrl: maskAddress(p.Config.BaseURL), Model: p.Config.Model, HasApiKey: p.Config.APIKey != "", Active: p.Active}, nil
 }
 
@@ -1256,7 +1283,14 @@ func (s *localService) DeleteModelProfile(ctx context.Context, req *nodepb.Delet
 	if err := profiles.DeleteModelProfile(req.GetId()); err != nil {
 		return nil, asError(err)
 	}
+	s.notifySharedStateChanged()
 	return &nodepb.DeleteModelProfileResponse{}, nil
+}
+
+func (s *localService) notifySharedStateChanged() {
+	if s.cfg.NodeInfoChanges != nil {
+		s.cfg.NodeInfoChanges.Notify()
+	}
 }
 
 // Ask puts a question to the planner and sends what it does as it does it.
