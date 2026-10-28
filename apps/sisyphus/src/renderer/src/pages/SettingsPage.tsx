@@ -15,6 +15,7 @@ import { FloatingLabelInput } from '@/components/ui/floating-label-input'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getNodeApi, isDesktopApp } from '@/lib/node-api'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
 import { toast } from 'sonner'
 import { PageHeading } from '@/components/ui/page-layout'
 import { missingProviderKey } from '@/lib/provider-key'
@@ -31,11 +32,29 @@ import { ResponsiveActionDialog } from '@/components/ui/responsive-action-dialog
 import ollamaIcon from '@/assets/provider-icons/ollama.svg?url'
 import anthropicIcon from '@/assets/provider-icons/anthropic.svg?url'
 import openaiIcon from '@/assets/provider-icons/openai.svg?url'
+import { SharedStateDomain } from '@sisyphus/client'
 
 type Messages = ReturnType<typeof getMessages>
 type SettingsCategory = 'general' | 'node' | 'access' | 'models'
 type ProfileConnectivityStatus = 'checking' | 'connected' | 'error'
 type ModelProfile = { id: string; name: string; provider: string; baseUrl: string; model: string; hasApiKey: boolean; active: boolean; previewStatus?: ProfileConnectivityStatus; previewProviderName?: string }
+type SharedModelConfig = { provider?: string; baseUrl?: string; model?: string; hasApiKey?: boolean }
+type SharedModelProfilesEvent = {
+  domain: number | string
+  error?: string
+  snapshot?: boolean
+  state?: { case?: string; value?: { modelConfig?: SharedModelConfig; profiles?: ModelProfile[] } } | string
+  modelProfiles?: { modelConfig?: SharedModelConfig; profiles?: ModelProfile[] }
+}
+
+function sameModelProfiles(left: ModelProfile[], right: ModelProfile[]) {
+  return left.length === right.length && left.every((profile, index) => {
+    const next = right[index]
+    return profile.id === next.id && profile.name === next.name && profile.provider === next.provider &&
+      profile.baseUrl === next.baseUrl && profile.model === next.model && profile.hasApiKey === next.hasApiKey &&
+      profile.active === next.active
+  })
+}
 
 const devPreviewProfiles: ModelProfile[] = [
   { id: 'dev-preview-ollama-local', name: 'Ollama Local', provider: 'ollama', previewProviderName: 'Ollama', baseUrl: 'http://127.0.0.1:11434', model: 'llama3.1:8b', hasApiKey: false, active: true, previewStatus: 'connected' },
@@ -73,6 +92,9 @@ export const SettingsPage = memo(function SettingsPage({ locale, setLocale, mess
   const [profileConnectivity, setProfileConnectivity] = useState<Record<string, { status: ProfileConnectivityStatus; modelCount?: number }>>({})
   const profileConnectivitySequence = useRef(0)
   const [profileOpen, setProfileOpen] = useState(false)
+  const profileOpenRef = useRef(profileOpen)
+  profileOpenRef.current = profileOpen
+  const latestSharedModelConfig = useRef<SharedModelConfig | null>(null)
   const [compactViewport, setCompactViewport] = useState(false)
   const [profileStep, setProfileStep] = useState(0)
   const [profileNavigationDirection, setProfileNavigationDirection] = useState<1 | -1>(1)
@@ -132,25 +154,77 @@ export const SettingsPage = memo(function SettingsPage({ locale, setLocale, mess
   useEffect(() => {
     if (activeCategory !== 'models') return
     let active = true
-    Promise.all([
-      getNodeApi().call<{ providers?: typeof providers }>('listProviders'),
-      getNodeApi().call<{ provider?: string; baseUrl?: string; model?: string; hasApiKey?: boolean }>('getModelConfig'),
-      getNodeApi().call<{ profiles?: typeof profiles }>('listModelProfiles'),
-    ]).then(([providerResult, config, profileResult]) => {
-      if (!active) return
-      const nextProviders = providerResult.providers ?? []
-      setProviders(nextProviders)
-      const selectedProvider = nextProviders.find((item) => item.id === config.provider) ?? nextProviders[0]
+    let providerOptions: typeof providers = []
+    let latestConfig: SharedModelConfig | undefined
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    const applyConfig = (config: SharedModelConfig) => {
+      if (profileOpenRef.current) return
+      const selectedProvider = providerOptions.find((item) => item.id === config.provider) ?? providerOptions[0]
       setProvider(config.provider || selectedProvider?.id || '')
       setBaseUrl(config.baseUrl || selectedProvider?.defaultUrl || '')
       setModel(config.model ?? '')
       setHasApiKey(Boolean(config.hasApiKey))
       setSavedService({ provider: config.provider ?? '', baseUrl: config.baseUrl ?? '' })
-      setProfiles(profileResult.profiles ?? [])
+    }
+    const reconnect = () => {
+      if (!active) return
+      cancel = getNodeApi().stream<SharedModelProfilesEvent>('watchSharedState', {
+        domains: [SharedStateDomain.MODEL_PROFILES],
+      }, (event) => {
+        if (sharedStateDomainCode(event.domain) !== 'modelProfiles') return
+        if (!event.snapshot) attempt = 0
+        if (event.error) {
+          setProfilesLoaded(true)
+          return
+        }
+        const state = event.state && typeof event.state === 'object' && event.state.case === 'modelProfiles'
+          ? event.state.value
+          : event.modelProfiles
+        if (!state) return
+        const nextProfiles = state.profiles ?? []
+        setProfiles((current) => sameModelProfiles(current, nextProfiles) ? current : nextProfiles)
+        if (state.modelConfig) {
+          latestConfig = state.modelConfig
+          latestSharedModelConfig.current = state.modelConfig
+          applyConfig(state.modelConfig)
+        }
+        setProfilesLoaded(true)
+      }, () => {
+        cancel = undefined
+        if (!active) return
+        retry = window.setTimeout(reconnect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+      }, () => {
+        cancel = undefined
+        if (!active) return
+        retry = window.setTimeout(reconnect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+      })
+    }
+    getNodeApi().call<{ providers?: typeof providers }>('listProviders').then((result) => {
+      if (!active) return
+      providerOptions = result.providers ?? []
+      setProviders(providerOptions)
+      if (latestConfig) applyConfig(latestConfig)
     }).catch(() => { /* The local daemon may not be running yet. */ })
-      .finally(() => { if (active) setProfilesLoaded(true) })
-    return () => { active = false }
+    reconnect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
   }, [activeCategory])
+
+  useEffect(() => {
+    const config = latestSharedModelConfig.current
+    if (profileOpen || !config) return
+    const selectedProvider = providers.find((item) => item.id === config.provider) ?? providers[0]
+    setProvider(config.provider || selectedProvider?.id || '')
+    setBaseUrl(config.baseUrl || selectedProvider?.defaultUrl || '')
+    setModel(config.model ?? '')
+    setHasApiKey(Boolean(config.hasApiKey))
+    setSavedService({ provider: config.provider ?? '', baseUrl: config.baseUrl ?? '' })
+  }, [profileOpen, providers])
 
   useEffect(() => {
     const sequence = ++profileConnectivitySequence.current
