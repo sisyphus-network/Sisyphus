@@ -153,6 +153,7 @@ func (s *localService) keep(ctx context.Context, name string, private, attachmen
 	if err := s.addFile(file); err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
+	s.notifySharedStateChanged()
 	return localFile(file), nil
 }
 
@@ -299,6 +300,7 @@ func (s *localService) RemoveFile(ctx context.Context, req *nodepb.RemoveFileReq
 		}
 		return nil, status.Errorf(code, "stop keeping file: %v", err)
 	}
+	s.notifySharedStateChanged()
 	return &nodepb.RemoveFileResponse{}, nil
 }
 

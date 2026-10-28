@@ -75,6 +75,53 @@ func storeFile(ctx context.Context, client nodepb.NodeServiceClient, name string
 	return stream.CloseAndRecv()
 }
 
+func TestWatchSharedStateStreamsFileCatalogueToIndependentClients(t *testing.T) {
+	const token = "the-token"
+	store, files, changes := storage.NewMemory(), newFileList(t), NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{Token: token, Store: store, Files: files, NodeInfoChanges: changes})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES}}
+	ctx1, cancel1 := context.WithCancel(withToken(token))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken(token))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || event.GetFiles() == nil || len(event.GetFiles().GetFiles()) != 0 {
+			t.Fatalf("initial file snapshot = %v, %v", event, err)
+		}
+	}
+
+	file, err := storeFile(withToken(token), client, "shared.txt", "contents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		listed := event.GetFiles().GetFiles()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || len(listed) != 1 || listed[0].GetCid() != file.GetCid() {
+			t.Fatalf("added-file event = %v, %v", event, err)
+		}
+	}
+	if _, err := client.RemoveFile(withToken(token), &nodepb.RemoveFileRequest{Cid: file.GetCid()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 3 || len(event.GetFiles().GetFiles()) != 0 {
+			t.Fatalf("removed-file event = %v, %v", event, err)
+		}
+	}
+}
+
 // notStored is the CID of something no store in these tests holds.
 func notStored(t *testing.T) string {
 	t.Helper()

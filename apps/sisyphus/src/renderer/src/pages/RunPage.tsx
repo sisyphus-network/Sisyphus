@@ -12,6 +12,7 @@ import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { JobTracker } from '@/components/assistant/job-tracker'
 import { JobOutputs, JobResult, prettyBytes } from '@/components/job-result-view'
 import { getNodeApi } from '@/lib/node-api'
+import { useSharedFiles, type StoredFile } from '@/lib/use-shared-files'
 import { getJobHref } from '@/lib/job-navigation'
 import { stateName } from '@/lib/job-progress'
 import { formatNumber, parseMdResult } from '@/lib/md-result'
@@ -23,7 +24,6 @@ import { MAX_CLIENT_FILE_UPLOAD_BYTES, fileUploadLimitLabel } from '../../../sha
 type Messages = ReturnType<typeof getMessages>
 type Labels = Messages['runPage']
 type Job = { jobId: string; workload: string; state: string | number; error?: string; result?: Uint8Array; outputBlobs?: string[]; tasks?: { state: string | number }[] }
-type StoredFile = { cid: string; name: string; sizeBytes: string | number; private: boolean }
 type FileInfo = { name: string; size: number }
 type Run = { jobId: string; workload: string; values: FormValues; files: Record<string, FileInfo>; startedAt: number }
 
@@ -279,7 +279,7 @@ export function RunPage({ messages, embedded = false, onAdvanced }: { messages: 
   const [gpuWorkersState, setGpuWorkersState] = useState<'loading' | 'ready' | 'unavailable'>('loading')
   const [loadError, setLoadError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [files, setFiles] = useState<StoredFile[]>([])
+  const files = useSharedFiles()
   const [drafts, setDrafts] = useState<Record<string, FormValues>>({})
   const [fileInfo, setFileInfo] = useState<Record<string, Record<string, FileInfo>>>({})
   const [review, setReview] = useState(false)
@@ -306,12 +306,6 @@ export function RunPage({ messages, embedded = false, onAdvanced }: { messages: 
       setLoadError('')
     } catch (error) { if (!quiet && sequence === workloadLoadSequence.current) setLoadError(error instanceof Error ? error.message : String(error)) }
     finally { if (sequence === workloadLoadSequence.current) setLoading(false) }
-  }, [])
-  const loadFiles = useCallback(async () => {
-    try {
-      const result = await getNodeApi().call<{ files?: StoredFile[] }>('listFiles')
-      setFiles((result.files ?? []).map((file) => ({ cid: file.cid ?? '', name: file.name || file.cid || '', sizeBytes: file.sizeBytes ?? 0, private: file.private ?? false })))
-    } catch { /* The stored files are only a shortcut; a drop still works. */ }
   }, [])
   // The worker stream sends its baseline and live worker changes; while it
   // is healthy there is no need to poll for workload availability.
@@ -351,7 +345,6 @@ export function RunPage({ messages, embedded = false, onAdvanced }: { messages: 
       cancel?.()
     }
   }, [load])
-  useEffect(() => { if (selected) void loadFiles() }, [selected, loadFiles])
   useEffect(() => getNodeApi().stream<{ jobs?: Job[] }>('watchJobs', {}, (result) => {
     const mine = new Set([...sessionRuns.map((run) => run.jobId), shownRef.current])
     const next: Record<string, Job> = {}
