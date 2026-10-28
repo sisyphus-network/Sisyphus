@@ -9,6 +9,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { toast } from 'sonner'
 import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { getNodeApi } from '@/lib/node-api'
+import { SharedStateDomain } from '@sisyphus/client'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
 import { useSharedFiles, type StoredFile } from '@/lib/use-shared-files'
 import { type getMessages } from '@/i18n/messages'
 import { addSubmittedJob, getSelectedJobId, includeLinkedJob } from '@/lib/job-navigation'
@@ -28,6 +30,14 @@ type Messages = ReturnType<typeof getMessages>
 type Job = { jobId: string; workload: string; mode: string | number; state: string | number; progress: number; error: string; private?: boolean; outputBlobs?: string[]; tasks: { index: number; state: string | number; workerName: string; error: string }[]; result: Uint8Array; createdAtMs: string | number }
 type Member = { peerId: string; role: string | number; joinedAtMs: string | number }
 type PoolWorker = { peerId: string; loadedModels?: { name: string; onCardPercent: number }[] }
+type OperationsSharedState = {
+  domain: number | string
+  error?: string
+  snapshot?: boolean
+  state?: { case?: string; value?: { members?: Member[]; workers?: PoolWorker[] } } | string
+  poolMembers?: { members?: Member[] }
+  workers?: { workers?: PoolWorker[] }
+}
 
 function normalizeJobs(jobs: Job[] = []): Job[] {
   return jobs.map((job) => ({
@@ -151,14 +161,8 @@ export function OperationsPage({ messages }: { messages: Messages }) {
   async function refresh() {
     const api = getNodeApi()
     const jobsSnapshotToken = jobsSnapshot.current.begin()
-    const results = await Promise.allSettled([
-      api.call<{ jobs?: Job[] }>('listJobs'),
-      api.call<{ members?: Member[] }>('listMembers'),
-      api.call<{ workers?: PoolWorker[] }>('listWorkers'),
-    ])
-    if (results[1].status === 'fulfilled') setMembers(results[1].value.members ?? [])
-    if (results[2].status === 'fulfilled') setWorkers(results[2].value.workers ?? [])
-    if (results[0].status === 'fulfilled' && jobsSnapshot.current.accept(jobsSnapshotToken)) setJobs(normalizeJobs(results[0].value.jobs))
+    const result = await api.call<{ jobs?: Job[] }>('listJobs').then((value) => value, () => undefined)
+    if (result && jobsSnapshot.current.accept(jobsSnapshotToken)) setJobs(normalizeJobs(result.jobs))
   }
   useEffect(() => {
     void refresh()
@@ -166,7 +170,52 @@ export function OperationsPage({ messages }: { messages: Messages }) {
       jobsSnapshot.current.changed()
       setJobs(normalizeJobs(result.jobs))
     }, () => {})
-    return stop
+    let active = true
+    let stopShared: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    let receivedMembers = false
+    let receivedWorkers = false
+    const loadFallback = () => {
+      if (!active || (receivedMembers && receivedWorkers)) return
+      void Promise.allSettled([
+        getNodeApi().call<{ members?: Member[] }>('listMembers'),
+        getNodeApi().call<{ workers?: PoolWorker[] }>('listWorkers'),
+      ]).then(([membersResult, workersResult]) => {
+        if (!active) return
+        if (membersResult.status === 'fulfilled' && !receivedMembers) setMembers(membersResult.value.members ?? [])
+        if (workersResult.status === 'fulfilled' && !receivedWorkers) setWorkers(workersResult.value.workers ?? [])
+      })
+    }
+    const reconnect = () => {
+      stopShared = undefined
+      loadFallback()
+      if (active) retry = window.setTimeout(connectShared, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+    }
+    const connectShared = () => {
+      if (!active) return
+      stopShared = getNodeApi().stream<OperationsSharedState>('watchSharedState', {
+        domains: [SharedStateDomain.POOL_MEMBERS, SharedStateDomain.WORKERS],
+      }, (event) => {
+        const domain = sharedStateDomainCode(event.domain)
+        const state = event.state && typeof event.state === 'object' ? event.state.value : undefined
+        if (domain === 'poolMembers') {
+          receivedMembers = true
+          setMembers(event.error ? [] : state?.members ?? event.poolMembers?.members ?? [])
+        } else if (domain === 'workers') {
+          receivedWorkers = true
+          setWorkers(event.error ? [] : state?.workers ?? event.workers?.workers ?? [])
+        }
+        if (event.snapshot && receivedMembers && receivedWorkers) attempt = 0
+      }, reconnect, reconnect)
+    }
+    connectShared()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      stopShared?.()
+      stop()
+    }
   }, [])
 
   async function submitJob(event: FormEvent) {

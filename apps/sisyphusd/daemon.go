@@ -716,7 +716,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		if sidecar != nil {
 			held.OnPublish(func(record *names.Record) { carryName(ctx, sidecar, record, log) })
 		}
-		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, WorkFor: takes, Names: held, Replication: replicated}
+		config := api.Config{Identity: ident, Access: admitted, Coordinator: coord, Store: store, MaxStoreBytes: *maxStore, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, WorkFor: takes, Names: held, Replication: replicated, MembersChanged: sharedStateChanges.Notify}
 		if swarm != nil {
 			config.Swarm = swarm
 			coord.AnnounceSwarm(swarm.Fingerprint())

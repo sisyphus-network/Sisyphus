@@ -1105,6 +1105,7 @@ enum SharedStateDomain {
   SHARED_STATE_DOMAIN_POOL_LIMITS = 9;
   SHARED_STATE_DOMAIN_LOCATION_DISCOVERY = 10;
   SHARED_STATE_DOMAIN_WEB_ACCESS = 11;
+  SHARED_STATE_DOMAIN_POOL_MEMBERS = 12;
 }
 
 message WatchSharedStateRequest {
@@ -1134,6 +1135,7 @@ message SharedStateEvent {
     PoolLimitsState pool_limits = 18;
     LocationDiscoverySettingsState location_discovery = 19;
     WebAccessConfig web_access = 20;
+    ListMembersResponse pool_members = 21;
   }
 }
 

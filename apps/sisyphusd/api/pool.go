@@ -42,6 +42,8 @@ type poolService struct {
 	// pins is what the pool's store keeps for its clients, or nil if this
 	// node keeps no store.
 	pins ClientPins
+	// membersChanged wakes local clients after the authoritative membership changes.
+	membersChanged func()
 }
 
 // ClientPins is the part of a store that keeps pins for a pool's clients.
@@ -158,7 +160,14 @@ func (s *poolService) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinRe
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "admit node: %v", err)
 	}
+	s.notifyMembersChanged()
 	return &pb.JoinResponse{Role: fromRole[role]}, nil
+}
+
+func (s *poolService) notifyMembersChanged() {
+	if s.membersChanged != nil {
+		s.membersChanged()
+	}
 }
 
 func (s *poolService) Relays(context.Context, *pb.RelaysRequest) (*pb.RelaysResponse, error) {
@@ -272,6 +281,7 @@ func (s *poolService) Leave(ctx context.Context, _ *pb.LeaveRequest) (*pb.LeaveR
 	if !removed {
 		return &pb.LeaveResponse{}, nil
 	}
+	s.notifyMembersChanged()
 	s.coordinator.Remove(id)
 	// The node has left. The key it holds to the pool's private network is
 	// the pool's to change, not its to wait for: a change that fails is
@@ -301,6 +311,7 @@ func (s *poolService) removeMember(ctx context.Context, nodeID string) error {
 	if !removed {
 		return status.Errorf(codes.NotFound, "node %s is not a member", nodeID)
 	}
+	s.notifyMembersChanged()
 	// Being off the list stops it connecting again; this ends the
 	// connection it has now.
 	s.coordinator.Remove(nodeID)
