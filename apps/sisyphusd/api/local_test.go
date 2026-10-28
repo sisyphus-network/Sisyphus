@@ -605,6 +605,10 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if failedProfiles.GetError() == "" || failedProfiles.GetState() != nil {
 		t.Fatalf("failed model-profile snapshot = %v; want per-domain error", failedProfiles)
 	}
+	failedFiles := (&localService{cfg: LocalConfig{Store: storage.NewMemory(), Files: brokenFiles{}}}).sharedStateSnapshot(withToken("the-token"), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES)
+	if failedFiles.GetError() == "" || failedFiles.GetState() != nil {
+		t.Fatalf("failed file-catalogue snapshot = %v; want per-domain error", failedFiles)
+	}
 }
 
 type sharedStateTestStream struct {
