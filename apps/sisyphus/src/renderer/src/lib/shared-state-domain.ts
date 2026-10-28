@@ -1,6 +1,6 @@
 // grpc-js with proto-loader's `enums: String` option returns the protobuf
 // enum name, while browser Connect clients return the numeric enum value.
-export type SharedStateKind = 'workers' | 'joinedPool' | 'modelProfiles' | 'modelLending' | 'files' | 'poolLimits' | 'locationDiscovery'
+export type SharedStateKind = 'workers' | 'joinedPool' | 'modelProfiles' | 'modelLending' | 'files' | 'poolLimits' | 'locationDiscovery' | 'webAccess'
 
 export function sharedStateDomainCode(domain: number | string): SharedStateKind | undefined {
   switch (domain) {
@@ -18,6 +18,8 @@ export function sharedStateDomainCode(domain: number | string): SharedStateKind 
     case 'SHARED_STATE_DOMAIN_POOL_LIMITS': return 'poolLimits'
     case 10:
     case 'SHARED_STATE_DOMAIN_LOCATION_DISCOVERY': return 'locationDiscovery'
+    case 11:
+    case 'SHARED_STATE_DOMAIN_WEB_ACCESS': return 'webAccess'
     default: return undefined
   }
 }
