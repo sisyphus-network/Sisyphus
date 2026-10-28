@@ -49,25 +49,44 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
     let cancel: (() => void) | undefined
     let retry: number | undefined
     let attempt = 0
+    let receivedStreamState = false
     let fallbackRequested = false
+    let preferStreamSnapshot = true
+    let managementMetadata: Pick<LocationDiscoveryState, 'managed' | 'configurable'> | undefined
     const apply = (next: LocationDiscoveryState) => {
       if (!active) return
       const previous = stateRef.current
       const unchanged = !previous || countSettingChanges(normalizedSettings(formRef.current), normalizedSettings(previous.saved)) === 0
-      stateRef.current = next
-      setState(next)
+      const resolved = managementMetadata
+        ? { ...next, ...managementMetadata }
+        : { ...next, managed: false, configurable: false }
+      stateRef.current = resolved
+      setState(resolved)
       if (unchanged) {
-        formRef.current = next.saved
-        setForm(next.saved)
+        formRef.current = resolved.saved
+        setForm(resolved.saved)
       }
-      setLoading(false)
+      if (managementMetadata) setLoading(false)
     }
-    const loadFallback = () => {
-      if (!active || fallbackRequested) return
+    const loadFallback = (preserveStreamSnapshot = false) => {
+      if (!active) return
+      if (fallbackRequested) {
+        if (!preserveStreamSnapshot) preferStreamSnapshot = false
+        return
+      }
       fallbackRequested = true
-      void api.getLocationDiscoverySettings().then(apply).catch((error) => {
+      preferStreamSnapshot = preserveStreamSnapshot
+      void api.getLocationDiscoverySettings().then((current) => {
+        if (!active) return
+        managementMetadata = { managed: current.managed, configurable: current.configurable }
+        const latest = stateRef.current
+        apply(preferStreamSnapshot && receivedStreamState && latest ? latest : current)
+      }).catch((error) => {
         if (active) toast.error(labels.loadFailed, { description: error instanceof Error ? error.message : String(error) })
-      }).finally(() => { if (active) setLoading(false) })
+      }).finally(() => {
+        fallbackRequested = false
+        if (active) setLoading(false)
+      })
     }
     const disconnected = () => {
       cancel = undefined
@@ -88,10 +107,16 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
         const next = event.state && typeof event.state === 'object' && event.state.case === 'locationDiscovery'
           ? event.state.value
           : event.locationDiscovery
-        if (next) apply(next)
+        if (next) {
+          receivedStreamState = true
+          apply(next)
+        }
       }, disconnected, disconnected)
     }
+    // The stream owns daemon settings; this one-shot read supplies Electron-only
+    // management metadata that is intentionally absent from the protocol.
     connect()
+    loadFallback(true)
     return () => {
       active = false
       if (retry !== undefined) window.clearTimeout(retry)
