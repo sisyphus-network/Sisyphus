@@ -170,11 +170,14 @@ test('location discovery controls configure an independently managed daemon and 
     await page.getByRole('button', { name: 'Location discovery', exact: true }).waitFor()
     const gateway = page.getByRole('switch', { name: 'Ask my gateway' })
     const country = page.getByRole('switch', { name: 'Use ipapi.co as a last resort' })
-    await gateway.waitFor()
+    // Wait for the live daemon snapshot and Electron management metadata;
+    // rendering the stream first intentionally leaves controls disabled.
+    await waitForEnabled(gateway)
+    await waitForEnabled(country)
     assert.equal(await gateway.isDisabled(), false)
     assert.equal(await country.isDisabled(), false)
     const stun = page.getByRole('textbox', { name: 'Ask a STUN server' })
-    assert.equal(await stun.isDisabled(), false)
+    await waitForEnabled(stun)
     await country.click()
     await stun.fill('stun.example.org:3478')
     const save = settingsSave(page)
