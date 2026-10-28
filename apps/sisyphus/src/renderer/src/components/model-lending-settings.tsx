@@ -2,7 +2,7 @@ import { countSettingChanges } from '@/lib/settings-save'
 import { SettingsSaveAction } from '@/components/ui/settings-save-dock'
 import { SettingsIcon } from '@/components/ui/settings-icon'
 import { SettingsSectionSkeleton } from '@/components/ui/settings-section-skeleton'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, CircleAlert, Cpu, Globe2, Gpu, Layers3, LoaderCircle, RefreshCw, ServerCog, Share2, Timer } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,8 @@ import { FloatingLabelInput } from '@/components/ui/floating-label-input'
 import { LiquidSwitch } from '@/components/ui/liquid-switch'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { getNodeApi } from '@/lib/node-api'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { SharedStateDomain } from '@sisyphus/client'
 import { toast } from 'sonner'
 import { RestartNodeButton } from '@/components/restart-node-button'
 import type { getMessages } from '@/i18n/messages'
@@ -21,6 +23,13 @@ type Lending = { enabled: boolean; ollamaUrl: string; only: string[]; gpuLayers:
 type LendingState = { saved?: Lending; running?: Lending; restartNeeded?: boolean; setByFlags?: boolean }
 type LoadedModel = { name: string; onCardPercent: number }
 const emptyLending: Lending = { enabled: false, ollamaUrl: 'http://127.0.0.1:11434', only: [], gpuLayers: -1, threads: 0, context: 0, keepAlive: '' }
+type SharedLendingEvent = {
+  domain: number | string
+  error?: string
+  snapshot?: boolean
+  state?: { case?: string; value?: LendingState } | string
+  modelLending?: LendingState
+}
 
 // withDefaults fills in what the node leaves out of lending never set up: it
 // says an empty address, which would blank the field, so the local Ollama's
@@ -29,6 +38,10 @@ function withDefaults(saved?: Partial<Lending>): Lending {
   const lending = { ...emptyLending, ...saved }
   if (!lending.ollamaUrl?.trim()) lending.ollamaUrl = emptyLending.ollamaUrl
   return lending
+}
+
+function canonicalLending(value: Lending) {
+  return { ...value, only: JSON.stringify([...new Set(value.only)].sort()) }
 }
 
 export function ModelLendingSettings({ messages, embedded = false }: { messages: Messages; embedded?: boolean }) {
@@ -43,24 +56,74 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
   const [saving, setSaving] = useState(false)
   const [supported, setSupported] = useState(true)
   const [loads, setLoads] = useState(0)
+  const stateRef = useRef(state)
+  stateRef.current = state
 
   useEffect(() => {
     let active = true
-    void getNodeApi().call<LendingState>('getModelLending').then((result) => {
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    const loadFallback = async () => {
+      if (!active || stateRef.current) return
+      try {
+        const result = await getNodeApi().call<LendingState>('getModelLending')
+        if (!active) return
+        stateRef.current = result
+        setState(result)
+        setForm(withDefaults(result.saved))
+        setSupported(true)
+        if (result.saved?.enabled) void inspect(result.saved.ollamaUrl, false)
+      } catch {
+        if (active) setSupported(false)
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    const disconnected = () => {
+      cancel = undefined
+      void loadFallback()
+      if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+    }
+    const connect = () => {
       if (!active) return
-      const saved = withDefaults(result.saved)
-      setState(result)
-      setForm(saved)
-      setSupported(true)
-      // Lending that is on says at once what its Ollama has, without being asked.
-      if (saved.enabled) void inspect(saved.ollamaUrl)
-    }).catch(() => { if (active) setSupported(false) }).finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
+      cancel = getNodeApi().stream<SharedLendingEvent>('watchSharedState', {
+        domains: [SharedStateDomain.MODEL_LENDING],
+      }, (event) => {
+        if (sharedStateDomainCode(event.domain) !== 'modelLending') return
+        if (!event.snapshot) attempt = 0
+        if (event.error) {
+          setSupported(false)
+          setLoading(false)
+          return
+        }
+        const next = event.state && typeof event.state === 'object' && event.state.case === 'modelLending'
+          ? event.state.value
+          : event.modelLending
+        if (!next) return
+        const previous = stateRef.current
+        const saved = withDefaults(next.saved)
+        setState(next)
+        stateRef.current = next
+        setForm((current) => previous && countSettingChanges(canonicalLending(current), canonicalLending(withDefaults(previous.saved))) > 0
+          ? current
+          : saved)
+        setSupported(true)
+        setLoading(false)
+        if (saved.enabled) void inspect(saved.ollamaUrl, false)
+        else { setAvailable([]); setLoaded([]); setVersion('') }
+      }, disconnected, disconnected)
+    }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
   }, [loads])
 
   const selected = useMemo(() => new Set(form.only), [form.only])
-  const canonical = (value: Lending) => ({ ...value, only: JSON.stringify([...new Set(value.only)].sort()) })
-  const changeCount = state ? countSettingChanges(canonical(form), canonical(withDefaults(state.saved))) : 0
+  const changeCount = state ? countSettingChanges(canonicalLending(form), canonicalLending(withDefaults(state.saved))) : 0
   const dirty = changeCount > 0
   const remoteEndpoint = useMemo(() => {
     try {
@@ -73,7 +136,7 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
   }, [form.ollamaUrl])
   function change<K extends keyof Lending>(key: K, value: Lending[K]) { setForm((current) => ({ ...current, [key]: value })) }
 
-  async function inspect(url = form.ollamaUrl) {
+  async function inspect(url = form.ollamaUrl, notify = true) {
     setInspecting(true)
     try {
       const result = await getNodeApi().call<{ version?: string; error?: string; models?: string[]; loaded?: LoadedModel[] }>('inspectOllama', { url, only: [] })
@@ -83,7 +146,7 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
       setVersion(result.version ?? '')
     } catch (error) {
       setAvailable([]); setLoaded([]); setVersion('')
-      toast.error(labels.inspectFailed, { description: error instanceof Error ? error.message : String(error) })
+      if (notify) toast.error(labels.inspectFailed, { description: error instanceof Error ? error.message : String(error) })
     } finally { setInspecting(false) }
   }
 
@@ -102,6 +165,7 @@ export function ModelLendingSettings({ messages, embedded = false }: { messages:
       const result = await getNodeApi().call<LendingState>('setModelLending', { lending: form })
       const saved = withDefaults(result.saved)
       setState(result)
+      stateRef.current = result
       setForm(saved)
       toast.success(labels.lendingSaved)
       // Saved without checking first: check now, so a wrong address shows
