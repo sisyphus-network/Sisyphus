@@ -166,6 +166,45 @@ func TestWebAccessRPCAuthorizationAvailabilityAndFallbacks(t *testing.T) {
 	}
 }
 
+func TestWatchSharedStateStreamsWebAccessToIndependentClients(t *testing.T) {
+	controller := &webAccessControllerStub{config: nodedb.WebAccessConfig{ListenAddress: "127.0.0.1:50052"}, fingerprint: "fingerprint"}
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{WebAccess: controller, NodeInfoChanges: changes})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS}}
+	ctx1, cancel1 := context.WithCancel(withToken("the-token"))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken("the-token"))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		state := event.GetWebAccess()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || state == nil || state.GetListenAddress() != "127.0.0.1:50052" || state.GetCertificateFingerprint() != "fingerprint" {
+			t.Fatalf("initial web-access snapshot = %v, %v", event, err)
+		}
+	}
+	if _, err := client.SetWebAccessConfig(withToken("the-token"), &nodepb.SetWebAccessConfigRequest{
+		Enabled: true, ListenAddresses: []string{"0.0.0.0:50052"}, PublicUrl: "https://node.example.test:50052",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		state := event.GetWebAccess()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || state == nil || !state.GetEnabled() || state.GetListenAddress() != "0.0.0.0:50052" || state.GetPublicUrl() != "https://node.example.test:50052" {
+			t.Fatalf("updated web-access event = %v, %v", event, err)
+		}
+	}
+}
+
 func peerEntry(id string, connected, trusted bool) *nodepb.Peer {
 	state := nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED
 	if connected {
@@ -560,7 +599,7 @@ func TestLocationDiscoverySnapshotUnavailable(t *testing.T) {
 
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
-	if err != nil || len(all) != 10 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY {
+	if err != nil || len(all) != 11 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS {
 		t.Fatalf("default shared-state domains = %v, %v", all, err)
 	}
 	unique, err := sharedStateDomains([]nodepb.SharedStateDomain{
@@ -574,14 +613,14 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_UNSPECIFIED}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unspecified shared-state domain error = %v, want InvalidArgument", err)
 	}
-	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(11)}); status.Code(err) != codes.InvalidArgument {
+	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(12)}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown shared-state domain error = %v, want InvalidArgument", err)
 	}
 
 	store := &failingBrowserAccessStore{devices: []nodedb.BrowserDevice{{ID: "device", Name: "Phone"}}}
 	service := &localService{cfg: LocalConfig{
 		NodeID: "node", Token: "the-token", Peers: func() []*nodepb.Peer { return []*nodepb.Peer{peerEntry("peer", true, true)} },
-		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store, Lending: newFileList(t), Files: newFileList(t), Store: storage.NewMemory(), PoolLimits: &memoryPoolLimits{}, LocationDiscovery: &memoryDiscovery{},
+		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store, Lending: newFileList(t), Files: newFileList(t), Store: storage.NewMemory(), PoolLimits: &memoryPoolLimits{}, LocationDiscovery: &memoryDiscovery{}, WebAccess: &webAccessControllerStub{},
 		JoinedPool: func() *nodepb.JoinedPool { return &nodepb.JoinedPool{CoordinatorId: "coordinator"} },
 		Assistant:  &profiledAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}, profiles: []nodedb.ModelProfile{{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}}}},
 	}}
