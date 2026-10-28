@@ -1099,6 +1099,7 @@ enum SharedStateDomain {
   SHARED_STATE_DOMAIN_WORKERS = 3;
   SHARED_STATE_DOMAIN_PAIRED_BROWSERS = 4;
   SHARED_STATE_DOMAIN_JOINED_POOL = 5;
+  SHARED_STATE_DOMAIN_MODEL_PROFILES = 6;
 }
 
 message WatchSharedStateRequest {
@@ -1122,6 +1123,7 @@ message SharedStateEvent {
     ListWorkersResponse workers = 12;
     PairedBrowsersState paired_browsers = 13;
     JoinedPool joined_pool = 14;
+    ModelProfilesState model_profiles = 15;
   }
 }
 
@@ -1163,4 +1165,11 @@ message PairedBrowser {
 message PairedBrowsersState {
   repeated PairedBrowser devices = 1;
   uint64 revision = 2;
+}
+
+// ModelProfilesState contains the planner's selected model and saved
+// provider profiles. The existing response types omit provider credentials.
+message ModelProfilesState {
+  ModelConfig model_config = 1;
+  repeated ModelProfile profiles = 2;
 }
