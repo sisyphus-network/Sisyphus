@@ -158,14 +158,26 @@ export function OperationsPage({ messages }: { messages: Messages }) {
     return () => cancelAnimationFrame(frame)
   }, [selectedJobId, hasSelectedJob])
 
-  async function refresh() {
+  async function refreshJobs() {
     const api = getNodeApi()
     const jobsSnapshotToken = jobsSnapshot.current.begin()
     const result = await api.call<{ jobs?: Job[] }>('listJobs').then((value) => value, () => undefined)
     if (result && jobsSnapshot.current.accept(jobsSnapshotToken)) setJobs(normalizeJobs(result.jobs))
   }
+  async function refresh() {
+    const api = getNodeApi()
+    const jobsSnapshotToken = jobsSnapshot.current.begin()
+    const [jobsResult, membersResult, workersResult] = await Promise.allSettled([
+      api.call<{ jobs?: Job[] }>('listJobs'),
+      api.call<{ members?: Member[] }>('listMembers'),
+      api.call<{ workers?: PoolWorker[] }>('listWorkers'),
+    ])
+    if (jobsResult.status === 'fulfilled' && jobsSnapshot.current.accept(jobsSnapshotToken)) setJobs(normalizeJobs(jobsResult.value.jobs))
+    if (membersResult.status === 'fulfilled') setMembers(membersResult.value.members ?? [])
+    if (workersResult.status === 'fulfilled') setWorkers(workersResult.value.workers ?? [])
+  }
   useEffect(() => {
-    void refresh()
+    void refreshJobs()
     const stop = getNodeApi().stream<{ jobs?: Job[] }>('watchJobs', {}, (result) => {
       jobsSnapshot.current.changed()
       setJobs(normalizeJobs(result.jobs))
@@ -176,8 +188,10 @@ export function OperationsPage({ messages }: { messages: Messages }) {
     let attempt = 0
     let receivedMembers = false
     let receivedWorkers = false
+    let fallbackRequested = false
     const loadFallback = () => {
-      if (!active || (receivedMembers && receivedWorkers)) return
+      if (!active || fallbackRequested) return
+      fallbackRequested = true
       void Promise.allSettled([
         getNodeApi().call<{ members?: Member[] }>('listMembers'),
         getNodeApi().call<{ workers?: PoolWorker[] }>('listWorkers'),
@@ -188,17 +202,20 @@ export function OperationsPage({ messages }: { messages: Messages }) {
       })
     }
     const reconnect = () => {
+      if (!active || retry !== undefined) return
       stopShared = undefined
       loadFallback()
-      if (active) retry = window.setTimeout(connectShared, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+      retry = window.setTimeout(connectShared, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
     }
     const connectShared = () => {
       if (!active) return
+      retry = undefined
       stopShared = getNodeApi().stream<OperationsSharedState>('watchSharedState', {
         domains: [SharedStateDomain.POOL_MEMBERS, SharedStateDomain.WORKERS],
       }, (event) => {
         const domain = sharedStateDomainCode(event.domain)
         const state = event.state && typeof event.state === 'object' ? event.state.value : undefined
+        if (!event.error) fallbackRequested = false
         if (domain === 'poolMembers') {
           receivedMembers = true
           setMembers(event.error ? [] : state?.members ?? event.poolMembers?.members ?? [])
