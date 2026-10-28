@@ -497,9 +497,62 @@ func TestWatchSharedStateStreamsModelProfilesToIndependentClientsWithoutSecrets(
 	}
 }
 
+func TestWatchSharedStateStreamsModelLendingToIndependentClients(t *testing.T) {
+	const token = "the-token"
+	store := newFileList(t)
+	if err := store.SetModelLending(nodedb.ModelLending{URL: "http://user:private@127.0.0.1:11434", GPULayers: -1}); err != nil {
+		t.Fatal(err)
+	}
+	client := serveLocal(t, LocalConfig{Token: token, Lending: store, NodeInfoChanges: NewNodeInfoChanges()})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING}}
+	ctx1, cancel1 := context.WithCancel(withToken(token))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken(token))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		state := event.GetModelLending()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || event.GetError() != "" || state == nil {
+			t.Fatalf("initial model-lending snapshot = %v, %v", event, err)
+		}
+		if state.GetSaved().GetOllamaUrl() != "http://redacted@127.0.0.1:11434" || state.GetSaved().GetGpuLayers() != -1 {
+			t.Fatalf("initial model-lending state = %v", state)
+		}
+		wire, err := proto.Marshal(event)
+		if err != nil || strings.Contains(string(wire), "private") {
+			t.Fatalf("model-lending event leaked URL credentials: %x, %v", wire, err)
+		}
+	}
+
+	if _, err := client.SetModelLending(withToken(token), &nodepb.SetModelLendingRequest{Lending: &nodepb.ModelLending{
+		Enabled: true, OllamaUrl: "http://127.0.0.1:11434", Only: []string{"llama3.1"}, Threads: 4, Context: 4096,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		state := event.GetModelLending()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || event.GetError() != "" || state == nil {
+			t.Fatalf("updated model-lending event = %v, %v", event, err)
+		}
+		if !state.GetSaved().GetEnabled() || !state.GetRestartNeeded() || strings.Join(state.GetSaved().GetOnly(), ",") != "llama3.1" {
+			t.Fatalf("updated model-lending state = %v", state)
+		}
+	}
+}
+
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
-	if err != nil || len(all) != 6 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES {
+	if err != nil || len(all) != 7 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING {
 		t.Fatalf("default shared-state domains = %v, %v", all, err)
 	}
 	unique, err := sharedStateDomains([]nodepb.SharedStateDomain{
@@ -513,14 +566,14 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_UNSPECIFIED}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unspecified shared-state domain error = %v, want InvalidArgument", err)
 	}
-	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(7)}); status.Code(err) != codes.InvalidArgument {
+	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(8)}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown shared-state domain error = %v, want InvalidArgument", err)
 	}
 
 	store := &failingBrowserAccessStore{devices: []nodedb.BrowserDevice{{ID: "device", Name: "Phone"}}}
 	service := &localService{cfg: LocalConfig{
 		NodeID: "node", Token: "the-token", Peers: func() []*nodepb.Peer { return []*nodepb.Peer{peerEntry("peer", true, true)} },
-		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store,
+		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store, Lending: newFileList(t),
 		JoinedPool: func() *nodepb.JoinedPool { return &nodepb.JoinedPool{CoordinatorId: "coordinator"} },
 		Assistant:  &profiledAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}, profiles: []nodedb.ModelProfile{{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}}}},
 	}}

@@ -461,12 +461,13 @@ func sharedStateDomains(requested []nodepb.SharedStateDomain) ([]nodepb.SharedSt
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_PAIRED_BROWSERS,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING,
 		}, nil
 	}
 	seen := make(map[nodepb.SharedStateDomain]struct{}, len(requested))
 	domains := make([]nodepb.SharedStateDomain, 0, len(requested))
 	for _, domain := range requested {
-		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES {
+		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING {
 			return nil, status.Errorf(codes.InvalidArgument, "unsupported shared-state domain %s", domain)
 		}
 		if _, ok := seen[domain]; ok {
@@ -524,6 +525,13 @@ func (s *localService) sharedStateSnapshot(ctx context.Context, domain nodepb.Sh
 			ModelConfig: config,
 			Profiles:    profiles.GetProfiles(),
 		}}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING:
+		state, err := s.modelLendingSnapshot()
+		if err != nil {
+			event.Error = err.Error()
+		} else {
+			event.State = &nodepb.SharedStateEvent_ModelLending{ModelLending: state}
+		}
 	}
 	return event
 }

@@ -32,6 +32,10 @@ func (s *localService) GetModelLending(ctx context.Context, _ *nodepb.GetModelLe
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
+	return s.modelLendingSnapshot()
+}
+
+func (s *localService) modelLendingSnapshot() (*nodepb.ModelLendingState, error) {
 	if s.cfg.Lending == nil {
 		return nil, errNoLending
 	}
@@ -83,6 +87,7 @@ func (s *localService) SetModelLending(ctx context.Context, req *nodepb.SetModel
 	}
 	s.lendingMu.Unlock()
 	s.offersChanged()
+	s.notifySharedStateChanged()
 	return s.lendingState(l), nil
 }
 
