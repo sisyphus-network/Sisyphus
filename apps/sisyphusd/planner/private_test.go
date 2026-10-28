@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/sisyphus-network/Sisyphus/packages/ai"
@@ -42,6 +44,63 @@ func TestPrivateAttachmentPolicyOverridesModelAndDoesNotLeakAcrossRuns(t *testin
 	}
 	if len(pool.submitted[1].Key) != 0 {
 		t.Fatal("policy leaked to unrelated conversation")
+	}
+}
+
+func TestPlannerCanForecastAnAttachedPrivateSeries(t *testing.T) {
+	const cid = "bafybeigdyrzt5sfp7udm7hu76uhy6v4nl2i3u6jz7f3k2q4p5m6n7o8p9q"
+	question := "Forecast this series 30 days ahead.\n\n[Sisyphus attachments]\n- \"sales.csv\" | cid:" + cid + " | image:false | private:true"
+	model := &scripted{replies: []ai.Message{
+		calling("forecast", "run_job", fmt.Sprintf(`{"workload":"forecast","params":{"input":%q,"horizon":30}}`, cid)),
+		{Content: "The forecast is available from the completed job."},
+	}}
+	pool := &office{result: `{"forecast":[{"step":1,"value":12.5}],"best":{"model":"theta"}}`}
+	var key sealed.Key
+	key[0] = 42
+	p := &Planner{
+		Model: model, ModelName: "test-model", Pool: pool,
+		Workloads:  []Workload{{Name: "forecast", Description: "Forecasts a time series from a stored CSV file."}},
+		SealingKey: func() (sealed.Key, error) { return key, nil },
+	}
+
+	said, err := p.Run(context.Background(), []ai.Message{{Role: ai.User, Content: question}}, func(Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(said) != 3 || said[len(said)-1].Content != "The forecast is available from the completed job." {
+		t.Fatalf("planner answer/history: %+v", said)
+	}
+	if said[1].Role != ai.ToolRole || !strings.Contains(said[1].Content, `"forecast":[{"step":1,"value":12.5}]`) {
+		t.Fatalf("planner did not receive the forecast result: %+v", said[1])
+	}
+	var sawResult bool
+	for _, message := range model.asked[1].Messages {
+		if message.Role == ai.ToolRole && strings.Contains(message.Content, `"forecast":[{"step":1,"value":12.5}]`) {
+			sawResult = true
+		}
+	}
+	if !sawResult {
+		t.Fatal("forecast result was not returned to the planner model")
+	}
+	if !strings.Contains(model.asked[0].Messages[0].Content, "- forecast: Forecasts a time series from a stored CSV file.") ||
+		model.asked[0].Messages[1].Content != question {
+		t.Fatalf("planner did not receive the advertised workload and attached-file reference: %+v", model.asked[0].Messages)
+	}
+	if len(pool.submitted) != 1 || pool.submitted[0].GetWorkload() != "forecast" {
+		t.Fatalf("planner submitted jobs: %+v", pool.submitted)
+	}
+	var params struct {
+		Input   string `json:"input"`
+		Horizon int    `json:"horizon"`
+	}
+	if err := json.Unmarshal(pool.submitted[0].GetParams(), &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.Input != cid || params.Horizon != 30 {
+		t.Errorf("forecast parameters = %+v", params)
+	}
+	if len(pool.submitted[0].GetKey()) != len(key) || pool.submitted[0].GetKey()[0] != key[0] {
+		t.Error("the private attachment was not submitted as a sealed job")
 	}
 }
 
