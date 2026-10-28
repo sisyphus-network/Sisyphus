@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from 'react'
 import { CircleAlert, Globe2, LoaderCircle, LocateFixed, Radar, Router, Save } from 'lucide-react'
 import type { LocationDiscoverySettings, LocationDiscoveryState } from '../../../preload'
 import { getNodeApi } from '@/lib/node-api'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { SharedStateDomain } from '@sisyphus/client'
 import { LiquidSwitch } from '@/components/ui/liquid-switch'
 import { Button } from '@/components/ui/button'
 import { NodeSettingsSection } from '@/components/node-settings-section'
@@ -17,6 +19,18 @@ import type { getMessages } from '@/i18n/messages'
 
 type Messages = ReturnType<typeof getMessages>
 const disabledSettings: LocationDiscoverySettings = { locateGateway: false, locateCountry: false, stunServer: '' }
+type SharedLocationDiscoveryEvent = {
+  domain: number | string
+  error?: string
+  snapshot?: boolean
+  state?: { case?: string; value?: LocationDiscoveryState } | string
+  locationDiscovery?: LocationDiscoveryState
+}
+
+function normalizedSettings(settings: LocationDiscoverySettings): LocationDiscoverySettings {
+  try { return { ...settings, stunServer: normalizeStunServer(settings.stunServer) } }
+  catch { return settings }
+}
 
 export function LocationDiscoverySettingsCard({ messages }: { messages: Messages }) {
   const labels = messages.locationDiscoverySettings
@@ -24,48 +38,83 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
   const [form, setForm] = useState<LocationDiscoverySettings>(disabledSettings)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const hasLoadedSettings = useRef(false)
+  const stateRef = useRef(state)
+  const formRef = useRef(form)
+  stateRef.current = state
+  formRef.current = form
 
   useEffect(() => {
     let active = true
     const api = getNodeApi()
-    const refresh = () => {
-      void api.getLocationDiscoverySettings().then((result) => {
-        if (!active) return
-        setState(result)
-        if (!hasLoadedSettings.current) {
-          hasLoadedSettings.current = true
-          setForm(result.saved)
-        }
-      }).catch((error) => {
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    let fallbackRequested = false
+    const apply = (next: LocationDiscoveryState) => {
+      if (!active) return
+      const previous = stateRef.current
+      const unchanged = !previous || countSettingChanges(normalizedSettings(formRef.current), normalizedSettings(previous.saved)) === 0
+      stateRef.current = next
+      setState(next)
+      if (unchanged) {
+        formRef.current = next.saved
+        setForm(next.saved)
+      }
+      setLoading(false)
+    }
+    const loadFallback = () => {
+      if (!active || fallbackRequested) return
+      fallbackRequested = true
+      void api.getLocationDiscoverySettings().then(apply).catch((error) => {
         if (active) toast.error(labels.loadFailed, { description: error instanceof Error ? error.message : String(error) })
       }).finally(() => { if (active) setLoading(false) })
     }
-    let wasConnected: boolean | undefined
-    const unsubscribe = api.onSnapshot((snapshot) => {
-      const connected = snapshot.status === 'connected'
-      if (connected !== wasConnected) {
-        wasConnected = connected
-        refresh()
-      }
-    })
-    refresh()
-    return () => { active = false; unsubscribe() }
+    const disconnected = () => {
+      cancel = undefined
+      loadFallback()
+      if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+    }
+    const connect = () => {
+      if (!active) return
+      cancel = getNodeApi().stream<SharedLocationDiscoveryEvent>('watchSharedState', {
+        domains: [SharedStateDomain.LOCATION_DISCOVERY],
+      }, (event) => {
+        if (sharedStateDomainCode(event.domain) !== 'locationDiscovery') return
+        if (!event.snapshot) attempt = 0
+        if (event.error) {
+          loadFallback()
+          return
+        }
+        const next = event.state && typeof event.state === 'object' && event.state.case === 'locationDiscovery'
+          ? event.state.value
+          : event.locationDiscovery
+        if (next) apply(next)
+      }, disconnected, disconnected)
+    }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
   }, [labels.loadFailed])
 
-  const normalizedStun = (value: string) => { try { return normalizeStunServer(value) } catch { return value } }
-  const changeCount = state ? countSettingChanges({ ...form, stunServer: normalizedStun(form.stunServer) }, { ...state.saved, stunServer: normalizedStun(state.saved.stunServer) }) : 0
+  const changeCount = state ? countSettingChanges(normalizedSettings(form), normalizedSettings(state.saved)) : 0
   const dirty = changeCount > 0
   const restartNeeded = state?.restartNeeded === true
   const stunServerValid = (() => { try { normalizeStunServer(form.stunServer); return true } catch { return false } })()
   function change(key: 'locateGateway' | 'locateCountry', value: boolean) {
-    setForm((current) => ({ ...current, [key]: value }))
+    const next = { ...formRef.current, [key]: value }
+    formRef.current = next
+    setForm(next)
   }
   async function save() {
     if (!state?.configurable || !dirty || !stunServerValid) return
     setSaving(true)
     try {
       const next = await getNodeApi().saveLocationDiscoverySettings(form)
+      stateRef.current = next
+      formRef.current = next.saved
       setState(next)
       setForm(next.saved)
       toast.success(labels.saved)
@@ -97,11 +146,11 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
             <SettingsIcon icon={LocateFixed} />
             <div className="min-w-0"><label htmlFor="location-stun-server" className="text-sm font-medium">{labels.stunTitle}</label><p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">{labels.stunDescription}</p></div>
           </div>
-          <FloatingLabelInput label={labels.stunTitle} icon={<SettingsIcon icon={LocateFixed} compact />} containerClassName="w-full sm:max-w-sm" id="location-stun-server" dir="ltr" autoComplete="off" spellCheck={false} maxLength={260} value={form.stunServer} disabled={loading || !state?.configurable} onChange={(event) => setForm((current) => ({ ...current, stunServer: event.target.value }))} placeholder={labels.stunPlaceholder} aria-label={labels.stunTitle} errorMessage={!stunServerValid ? labels.stunInvalid : undefined} className="font-mono" />
+          <FloatingLabelInput label={labels.stunTitle} icon={<SettingsIcon icon={LocateFixed} compact />} containerClassName="w-full sm:max-w-sm" id="location-stun-server" dir="ltr" autoComplete="off" spellCheck={false} maxLength={260} value={form.stunServer} disabled={loading || !state?.configurable} onChange={(event) => { const next = { ...formRef.current, stunServer: event.target.value }; formRef.current = next; setForm(next) }} placeholder={labels.stunPlaceholder} aria-label={labels.stunTitle} errorMessage={!stunServerValid ? labels.stunInvalid : undefined} className="font-mono" />
         </div>
         {state?.configurable && <div className="mt-3 flex flex-col-reverse justify-between gap-3 border-t border-[var(--app-line)] pt-4 sm:flex-row sm:items-center">
           <p role="status" className="text-xs leading-relaxed text-muted-foreground">{restartNeeded ? (state.managed ? labels.restartRequired : labels.restartDaemonRequired) : (state.managed ? labels.restartHint : labels.restartDaemonHint)}</p>
-          <div className="flex flex-wrap gap-2">{restartNeeded && state.managed && <RestartNodeButton messages={messages} />}<SettingsSaveAction onRevert={() => { if (state) setForm(state.saved) }} dirty={dirty} changeCount={changeCount} disabled={!dirty || saving || !stunServerValid} onSave={save}><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</SettingsSaveAction></div>
+          <div className="flex flex-wrap gap-2">{restartNeeded && state.managed && <RestartNodeButton messages={messages} />}<SettingsSaveAction onRevert={() => { if (state) { formRef.current = state.saved; setForm(state.saved) } }} dirty={dirty} changeCount={changeCount} disabled={!dirty || saving || !stunServerValid} onSave={save}><Save className="size-4" />{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{labels.save}</SettingsSaveAction></div>
         </div>}
       </>}
   </NodeSettingsSection>

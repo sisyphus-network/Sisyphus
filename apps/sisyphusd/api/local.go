@@ -464,12 +464,13 @@ func sharedStateDomains(requested []nodepb.SharedStateDomain) ([]nodepb.SharedSt
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY,
 		}, nil
 	}
 	seen := make(map[nodepb.SharedStateDomain]struct{}, len(requested))
 	domains := make([]nodepb.SharedStateDomain, 0, len(requested))
 	for _, domain := range requested {
-		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS {
+		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY {
 			return nil, status.Errorf(codes.InvalidArgument, "unsupported shared-state domain %s", domain)
 		}
 		if _, ok := seen[domain]; ok {
@@ -547,6 +548,13 @@ func (s *localService) sharedStateSnapshot(ctx context.Context, domain nodepb.Sh
 			event.Error = err.Error()
 		} else {
 			event.State = &nodepb.SharedStateEvent_PoolLimits{PoolLimits: state}
+		}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY:
+		state, err := s.locationDiscoverySnapshot()
+		if err != nil {
+			event.Error = err.Error()
+		} else {
+			event.State = &nodepb.SharedStateEvent_LocationDiscovery{LocationDiscovery: state}
 		}
 	}
 	return event

@@ -58,6 +58,47 @@ func TestLocationDiscoverySettingsAreAuthorizedAndPersisted(t *testing.T) {
 	}
 }
 
+func TestWatchSharedStateStreamsLocationDiscoveryToIndependentClients(t *testing.T) {
+	running := nodedb.LocationDiscovery{LocateCountry: true}
+	store := &memoryDiscovery{settings: running, set: true}
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{LocationDiscovery: store, LocationDiscoveryRunning: running, GatewayDiscoverySupported: true, NodeInfoChanges: changes})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY}}
+	ctx1, cancel1 := context.WithCancel(withToken("the-token"))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken("the-token"))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		state := event.GetLocationDiscovery()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || state == nil || !state.GetSaved().GetLocateCountry() {
+			t.Fatalf("initial location-discovery snapshot = %v, %v", event, err)
+		}
+	}
+	requestToSet := &nodepb.SetLocationDiscoverySettingsRequest{Settings: &nodepb.LocationDiscoverySettings{
+		LocateGateway: true, StunServer: "stun.example.org:3478",
+	}}
+	if _, err := client.SetLocationDiscoverySettings(withToken("the-token"), requestToSet); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		state := event.GetLocationDiscovery()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || state == nil || !state.GetSaved().GetLocateGateway() || state.GetSaved().GetStunServer() != "stun.example.org:3478" || !state.GetRestartNeeded() {
+			t.Fatalf("updated location-discovery event = %v, %v", event, err)
+		}
+	}
+}
+
 func TestLocationDiscoverySettingsValidateAndReportUnavailableStores(t *testing.T) {
 	ctx := withToken("the-token")
 	without := serveLocal(t, LocalConfig{})
