@@ -371,10 +371,3 @@ func (s *pendingActionTestStream) Send(state *nodepb.PendingActionConfirmationsS
 	}
 	return nil
 }
-
-type fixedAddress string
-
-func (a fixedAddress) Network() string { return "tcp" }
-func (a fixedAddress) String() string  { return string(a) }
-
-func testAddress(address string) net.Addr { return fixedAddress(address) }
