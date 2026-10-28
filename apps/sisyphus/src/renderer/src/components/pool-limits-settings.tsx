@@ -98,6 +98,7 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
     let cancel: (() => void) | undefined
     let retry: number | undefined
     let attempt = 0
+    let receivedStreamState = false
     let fallbackRequested = false
     const apply = (next: PoolLimitsState) => {
       if (!active) return
@@ -117,6 +118,7 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
       if (!active || fallbackRequested) return
       fallbackRequested = true
       void api.getPoolLimits().then(apply).catch((error) => {
+        fallbackRequested = false
         if (active) toast.error(labels.loadFailed, { description: daemonErrorMessage(error) })
       }).finally(() => { if (active) setLoading(false) })
     }
@@ -139,9 +141,25 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
         const next = event.state && typeof event.state === 'object' && event.state.case === 'poolLimits'
           ? event.state.value
           : event.poolLimits
-        if (next) apply(next)
+        if (next) {
+          receivedStreamState = true
+          apply({ ...next, managed: stateRef.current?.managed ?? false, configurable: true })
+        }
       }, reconnect, reconnect)
     }
+    // The stream is authoritative for pool limits; this one-shot read also
+    // supplies Electron-only management metadata omitted from the protocol.
+    fallbackRequested = true
+    void api.getPoolLimits().then((initial) => {
+      if (!active) return
+      const latest = stateRef.current
+      apply(receivedStreamState && latest
+        ? { ...latest, managed: initial.managed, configurable: initial.configurable }
+        : initial)
+    }).catch((error) => {
+      fallbackRequested = false
+      if (active) toast.error(labels.loadFailed, { description: daemonErrorMessage(error) })
+    }).finally(() => { if (active && !receivedStreamState) setLoading(false) })
     connect()
     return () => {
       active = false

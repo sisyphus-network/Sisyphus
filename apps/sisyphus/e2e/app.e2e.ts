@@ -56,6 +56,13 @@ async function openSettingsCategory(page: Page, category: string) {
 
 function settingsSave(page: Page): Locator { return page.getByRole('button', { name: /^Save changes/ }) }
 
+async function waitForEnabled(locator: Locator): Promise<void> {
+  await locator.waitFor({ state: 'visible' })
+  const element = await locator.elementHandle()
+  assert.ok(element, 'the settings control should be present')
+  await element.waitForElementState('enabled')
+}
+
 async function openOperationsSection(page: Page, name: string): Promise<void> {
   const trigger = page.getByRole('button', { name: new RegExp(`^${name}\\b`) })
   await trigger.waitFor()
@@ -163,11 +170,15 @@ test('location discovery controls configure an independently managed daemon and 
     await page.getByRole('button', { name: 'Location discovery', exact: true }).waitFor()
     const gateway = page.getByRole('switch', { name: 'Ask my gateway' })
     const country = page.getByRole('switch', { name: 'Use ipapi.co as a last resort' })
-    await gateway.waitFor()
+    // Settings arrive in the shared-state stream after the page renders. Wait
+    // for the authoritative snapshot instead of racing the initial loading
+    // state and mistaking its intentionally disabled controls for a failure.
+    await waitForEnabled(gateway)
+    await waitForEnabled(country)
     assert.equal(await gateway.isDisabled(), false)
     assert.equal(await country.isDisabled(), false)
     const stun = page.getByRole('textbox', { name: 'Ask a STUN server' })
-    assert.equal(await stun.isDisabled(), false)
+    await waitForEnabled(stun)
     await country.click()
     await stun.fill('stun.example.org:3478')
     const save = settingsSave(page)
@@ -496,7 +507,11 @@ test('pool limits configure an independently managed daemon and persist across r
     const timeout = page.getByRole('textbox', { name: 'Longest task run' })
     const store = page.getByRole('textbox', { name: 'Storage per member' })
     const upload = page.getByRole('textbox', { name: 'Upload per task attempt' })
-    await jobs.waitFor()
+    await waitForEnabled(jobs)
+    await waitForEnabled(tasks)
+    await waitForEnabled(timeout)
+    await waitForEnabled(store)
+    await waitForEnabled(upload)
     for (const field of [jobs, tasks, timeout, store, upload]) {
       assert.equal(await field.isDisabled(), false)
       assert.equal(await field.inputValue(), '')
@@ -2155,6 +2170,7 @@ test('Settings pickers open in full view, above every card and inside the window
           ? page.locator('#settings-theme-style')
         : page.getByRole('button', { name, exact: true })
       await trigger.waitFor({ timeout: 30000 })
+      await waitForEnabled(trigger)
       await trigger.scrollIntoViewIfNeeded()
       await trigger.click()
       const menu = page.getByRole('dialog', { name: menuName, exact: true })

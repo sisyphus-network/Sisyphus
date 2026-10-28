@@ -49,6 +49,7 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
     let cancel: (() => void) | undefined
     let retry: number | undefined
     let attempt = 0
+    let receivedStreamState = false
     let fallbackRequested = false
     const apply = (next: LocationDiscoveryState) => {
       if (!active) return
@@ -66,6 +67,7 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
       if (!active || fallbackRequested) return
       fallbackRequested = true
       void api.getLocationDiscoverySettings().then(apply).catch((error) => {
+        fallbackRequested = false
         if (active) toast.error(labels.loadFailed, { description: error instanceof Error ? error.message : String(error) })
       }).finally(() => { if (active) setLoading(false) })
     }
@@ -88,9 +90,25 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
         const next = event.state && typeof event.state === 'object' && event.state.case === 'locationDiscovery'
           ? event.state.value
           : event.locationDiscovery
-        if (next) apply(next)
+        if (next) {
+          receivedStreamState = true
+          apply({ ...next, managed: stateRef.current?.managed ?? false, configurable: true })
+        }
       }, disconnected, disconnected)
     }
+    // The stream carries daemon-owned settings; this one-shot read supplies
+    // Electron-only management metadata that is intentionally not in protocol.
+    fallbackRequested = true
+    void api.getLocationDiscoverySettings().then((initial) => {
+      if (!active) return
+      const latest = stateRef.current
+      apply(receivedStreamState && latest
+        ? { ...latest, managed: initial.managed, configurable: initial.configurable }
+        : initial)
+    }).catch((error) => {
+      fallbackRequested = false
+      if (active) toast.error(labels.loadFailed, { description: error instanceof Error ? error.message : String(error) })
+    }).finally(() => { if (active && !receivedStreamState) setLoading(false) })
     connect()
     return () => {
       active = false
