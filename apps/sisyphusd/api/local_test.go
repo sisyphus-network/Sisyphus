@@ -1000,6 +1000,10 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if failedChatSummaries.GetError() == "" || failedChatSummaries.GetState() != nil {
 		t.Fatalf("failed chat-summary snapshot = %v; want per-domain error", failedChatSummaries)
 	}
+	failedBootstrapPeers := (&localService{cfg: LocalConfig{Book: &book{err: errors.New("bootstrap peer book unavailable")}}}).sharedStateSnapshot(ownerContext, nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS)
+	if failedBootstrapPeers.GetError() == "" || failedBootstrapPeers.GetState() != nil {
+		t.Fatalf("failed bootstrap-peer snapshot = %v; want per-domain error", failedBootstrapPeers)
+	}
 }
 
 func TestSharedStateSnapshotsReportUnavailableDomains(t *testing.T) {
