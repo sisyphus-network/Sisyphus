@@ -609,6 +609,10 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if failedFiles.GetError() == "" || failedFiles.GetState() != nil {
 		t.Fatalf("failed file-catalogue snapshot = %v; want per-domain error", failedFiles)
 	}
+	failedPoolLimits := (&localService{cfg: LocalConfig{PoolLimits: &memoryPoolLimits{err: errors.New("pool limits unavailable")}}}).sharedStateSnapshot(withToken("the-token"), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS)
+	if failedPoolLimits.GetError() == "" || failedPoolLimits.GetState() != nil {
+		t.Fatalf("failed pool-limits snapshot = %v; want per-domain error", failedPoolLimits)
+	}
 }
 
 type sharedStateTestStream struct {
