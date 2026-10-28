@@ -70,6 +70,44 @@ func TestPoolLimitsAreAuthorizedAndPersisted(t *testing.T) {
 	}
 }
 
+func TestWatchSharedStateStreamsPoolLimitsToIndependentClients(t *testing.T) {
+	running := nodedb.PoolLimits{MaxJobsPerClient: 5, MaxTaskTimeout: time.Hour}
+	store := &memoryPoolLimits{limits: running}
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{PoolLimits: store, PoolLimitsRunning: running, RunsCoordinator: true, NodeInfoChanges: changes})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS}}
+	ctx1, cancel1 := context.WithCancel(withToken("the-token"))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken("the-token"))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		state := event.GetPoolLimits()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || state == nil || !state.GetCoordinator() || state.GetSaved().GetMaxJobsPerClient() != 5 {
+			t.Fatalf("initial pool-limits snapshot = %v, %v", event, err)
+		}
+	}
+	if _, err := client.SetPoolLimits(withToken("the-token"), &nodepb.SetPoolLimitsRequest{Limits: &nodepb.PoolLimits{MaxJobsPerClient: 2, MaxTaskTimeoutSeconds: 600}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		state := event.GetPoolLimits()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || state == nil || state.GetSaved().GetMaxJobsPerClient() != 2 || state.GetRunning().GetMaxJobsPerClient() != 5 || !state.GetRestartNeeded() {
+			t.Fatalf("updated pool-limits event = %v, %v", event, err)
+		}
+	}
+}
+
 // A node without the coordinator role says so, and still keeps limits for
 // when it has one.
 func TestPoolLimitsSayWhenTheNodeIsNoCoordinator(t *testing.T) {
