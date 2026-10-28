@@ -61,6 +61,44 @@ func TestPoolServiceReportsAListThatCannotBeSaved(t *testing.T) {
 	}
 }
 
+func TestSetWorkForNotifiesAfterSuccessfulChange(t *testing.T) {
+	const peerID = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	workFor := &poolWorkFor{}
+	changes := 0
+	service := &poolService{workFor: workFor, membersChanged: func() { changes++ }}
+	if _, err := service.SetWorkFor(context.Background(), &pb.SetWorkForRequest{NodeId: peerID, Willing: true}); err != nil {
+		t.Fatal(err)
+	}
+	if changes != 1 || !slices.Equal(workFor.List(), []string{peerID}) {
+		t.Fatalf("after a successful change, willing=%q and notifications=%d", workFor.List(), changes)
+	}
+	workFor.err = errList
+	if _, err := service.SetWorkFor(context.Background(), &pb.SetWorkForRequest{NodeId: peerID, Willing: false}); status.Code(err) != codes.Internal {
+		t.Fatalf("a failed change = %v, want Internal", err)
+	}
+	if changes != 1 || !slices.Equal(workFor.List(), []string{peerID}) {
+		t.Fatalf("a failed change altered state or notified: willing=%q notifications=%d", workFor.List(), changes)
+	}
+}
+
+type poolWorkFor struct {
+	ids []string
+	err error
+}
+
+func (work *poolWorkFor) Set(id string, willing bool) error {
+	if work.err != nil {
+		return work.err
+	}
+	work.ids = slices.DeleteFunc(work.ids, func(other string) bool { return other == id })
+	if willing {
+		work.ids = append(work.ids, id)
+	}
+	return nil
+}
+
+func (work *poolWorkFor) List() []string { return slices.Clone(work.ids) }
+
 func TestInvitationsCarryTheNodesIDAndLastAsLongAsAsked(t *testing.T) {
 	list := newList(t)
 	service := &poolService{id: "owner-id", access: list}
