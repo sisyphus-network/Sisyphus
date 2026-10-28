@@ -9,6 +9,10 @@ service NodeService {
   // WatchNodeState sends a complete node-and-peer snapshot at once and
   // again whenever node details or peers change.
   rpc WatchNodeState(GetNodeInfoRequest) returns (stream NodeState);
+  // WatchSharedState sends one initial snapshot per requested domain, then
+  // complete domain snapshots whenever shared node state changes. Reconnect
+  // starts a new stream with a fresh baseline.
+  rpc WatchSharedState(WatchSharedStateRequest) returns (stream SharedStateEvent);
   // WatchPairedBrowsers sends the authorized device list at once and whenever
   // a browser is paired or revoked.
   rpc WatchPairedBrowsers(WatchPairedBrowsersRequest) returns (stream PairedBrowsersState);
@@ -1086,6 +1090,39 @@ message NodeState {
   GetNodeInfoResponse info = 1;
   repeated Peer peers = 2;
   uint64 revision = 3;
+}
+
+enum SharedStateDomain {
+  SHARED_STATE_DOMAIN_UNSPECIFIED = 0;
+  SHARED_STATE_DOMAIN_NODE = 1;
+  SHARED_STATE_DOMAIN_PEERS = 2;
+  SHARED_STATE_DOMAIN_WORKERS = 3;
+  SHARED_STATE_DOMAIN_PAIRED_BROWSERS = 4;
+  SHARED_STATE_DOMAIN_JOINED_POOL = 5;
+}
+
+message WatchSharedStateRequest {
+  // Empty requests every domain supported by this daemon. Repeated values are
+  // harmless and are treated as one subscription.
+  repeated SharedStateDomain domains = 1;
+}
+
+message SharedStateEvent {
+  // Increases for each event on this stream. A reconnect starts with a new
+  // authoritative baseline and a new revision sequence.
+  uint64 revision = 1;
+  SharedStateDomain domain = 2;
+  bool snapshot = 3;
+  // A domain can temporarily be unavailable (for example, workers on a node
+  // that coordinates no pool) without terminating other domain subscriptions.
+  string error = 4;
+  oneof state {
+    NodeState node = 10;
+    ListPeersResponse peers = 11;
+    ListWorkersResponse workers = 12;
+    PairedBrowsersState paired_browsers = 13;
+    JoinedPool joined_pool = 14;
+  }
 }
 
 message WatchPairedBrowsersRequest {}

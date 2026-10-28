@@ -313,7 +313,11 @@ func runDaemon(ctx context.Context, args []string) error {
 	stopped := make(chan error, 2)
 
 	// local is what the desktop client on this machine is told and may do.
-	local := api.LocalConfig{NodeID: ident.ID(), Version: version, Workloads: workloads, NodeInfoChanges: api.NewNodeInfoChanges(), BrowserDeviceChanges: api.NewNodeInfoChanges()}
+	sharedStateChanges := api.NewNodeInfoChanges()
+	local := api.LocalConfig{
+		NodeID: ident.ID(), Version: version, Workloads: workloads,
+		NodeInfoChanges: sharedStateChanges, BrowserDeviceChanges: sharedStateChanges, JoinedPoolChanges: sharedStateChanges,
+	}
 
 	// coordinatorID is the ID of the node this one's worker answers to: the
 	// node itself, or for a worker-only node the coordinator it joined.
@@ -971,7 +975,6 @@ func runDaemon(ctx context.Context, args []string) error {
 			// A worker's pool, as far as it knows, is its coordinator.
 			coordinatorAddr := *join
 			local.JoinedPool = func() *nodepb.JoinedPool { return joinedPool(w.JoinedPool(), coordinatorAddr) }
-			local.JoinedPoolChanges = api.NewNodeInfoChanges()
 			jobs := newPoolJobs(ctx, pb.NewNodeServiceClient(poolConn), db, w.JoinedPool, local.NodeInfoChanges.Notify)
 			local.Jobs = jobs
 			// Its user's files go to that pool too, kept there for this

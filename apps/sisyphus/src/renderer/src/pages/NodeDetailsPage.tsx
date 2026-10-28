@@ -15,6 +15,7 @@ import { displayDaemonVersion } from '@/lib/daemon-version'
 import { ResponsiveActionDialog } from '@/components/ui/responsive-action-dialog'
 import { PoolHostingOverview } from '@/components/pool-hosting-overview'
 import { offeredWorkloads } from '@/lib/worker-workloads'
+import { SharedStateDomain } from '@sisyphus/client'
 
 type Messages = ReturnType<typeof getMessages>
 function shortId(id: string) { return id.length > 22 ? `${id.slice(0, 12)}…${id.slice(-8)}` : id }
@@ -34,6 +35,20 @@ function formatBytes(value: string | number) {
   return `${(bytes / 1024 ** power).toFixed(power ? 1 : 0)} ${units[power]}`
 }
 
+type SharedStatePacket = {
+  domain: number | string
+  error?: string
+  state?: { case?: string; value?: unknown } | string
+  workers?: unknown
+  joinedPool?: JoinedPool
+}
+
+function sharedStatePayload<T>(event: SharedStatePacket, key: 'workers' | 'joinedPool'): T | undefined {
+  if (event.state && typeof event.state === 'object' && event.state.case === key) return event.state.value as T
+  const direct = event[key]
+  return direct === undefined ? undefined : direct as T
+}
+
 export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot; messages: Messages }) {
   const [refreshing, setRefreshing] = useState(false)
   const [peerAddress, setPeerAddress] = useState('')
@@ -49,80 +64,69 @@ export function NodeDetailsPage({ snapshot, messages }: { snapshot: NodeSnapshot
   const connectedPeers = useMemo(() => snapshot.peers.filter(peerIsConnected).length, [snapshot.peers])
   const statusLabel = snapshot.status === 'connected' ? messages.connected : snapshot.status === 'connecting' ? messages.connecting : messages.offline
   useEffect(() => {
-    if (snapshot.status !== 'connected') { setWorkers([]); return }
+    if (snapshot.status !== 'connected') {
+      setWorkers([])
+      setWorkersState('loading')
+      setJoinedPool(null)
+      setJoinedPoolState('loading')
+      return
+    }
     let active = true
     let cancel: (() => void) | undefined
     let retry: number | undefined
     let attempt = 0
     setWorkersState('loading')
+    setJoinedPoolState('loading')
     const connect = () => {
       if (!active) return
-      cancel = getNodeApi().stream<{ workers?: typeof workers }>('watchWorkers', {}, (result) => {
+      cancel = getNodeApi().stream<SharedStatePacket>('watchSharedState', {
+        domains: [SharedStateDomain.WORKERS, SharedStateDomain.JOINED_POOL],
+      }, (event) => {
         attempt = 0
-        setWorkers(result.workers ?? [])
-        setWorkersState('ready')
-      }, () => {
+        const domain = Number(event.domain)
+        if (domain === SharedStateDomain.WORKERS) {
+          if (event.error) {
+            setWorkersState('error')
+          } else {
+            setWorkers(sharedStatePayload<{ workers?: typeof workers }>(event, 'workers')?.workers ?? [])
+            setWorkersState('ready')
+          }
+        } else if (domain === SharedStateDomain.JOINED_POOL) {
+          if (event.error) {
+            if (/has joined no other/i.test(event.error)) {
+              setJoinedPool(null)
+              setJoinedPoolState('none')
+            } else {
+              setJoinedPoolState('unavailable')
+            }
+          } else {
+            const pool = sharedStatePayload<JoinedPool>(event, 'joinedPool')
+            if (!pool || (!pool.coordinatorId && !pool.coordinatorName && !pool.address)) {
+              setJoinedPool(null)
+              setJoinedPoolState('none')
+            } else {
+              setJoinedPool(pool)
+              setJoinedPoolState('ready')
+            }
+          }
+        }
+      }, (error) => {
         cancel = undefined
         if (active) {
           setWorkersState('error')
-          retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
-        }
-      }, () => {
-        cancel = undefined
-        if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
-      })
-    }
-    connect()
-    return () => {
-      active = false
-      if (retry !== undefined) window.clearTimeout(retry)
-      cancel?.()
-    }
-  }, [snapshot.status, snapshot.endpoint])
-  useEffect(() => {
-    if (snapshot.status !== 'connected') { setJoinedPoolState((current) => current === 'ready' ? 'unavailable' : current); return }
-    let active = true
-    let cancel: (() => void) | undefined
-    let retry: number | undefined
-    let attempt = 0
-    const connect = () => {
-      if (!active) return
-      cancel = getNodeApi().stream<JoinedPool>('watchJoinedPool', {}, (event) => {
-        attempt = 0
-        setJoinedPool(event)
-        setJoinedPoolState('ready')
-      }, (error, code) => {
-        cancel = undefined
-        if (active) {
-          if (code === 9 || /has joined no other/i.test(error)) { setJoinedPool(null); setJoinedPoolState('none'); return }
           setJoinedPoolState('unavailable')
           retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
         }
       }, () => {
         cancel = undefined
-        if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        if (active) {
+          setWorkersState('error')
+          setJoinedPoolState('unavailable')
+          retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+        }
       })
     }
-    // Fetch the baseline before subscribing. WatchJoinedPool sends the current
-    // state as its first event too, closing the gap without allowing an older
-    // fetch response to overwrite a newer stream update.
-    void getNodeApi().call<JoinedPool>('getJoinedPool').then((initial) => {
-      if (!active) return
-      setJoinedPool(initial)
-      setJoinedPoolState('ready')
-      connect()
-    }).catch((error: unknown) => {
-      if (!active) return
-      // A coordinating node has joined no other pool; don't render a false
-      // error card for the normal standalone-node case.
-      if (/has joined no other/i.test(error instanceof Error ? error.message : String(error))) {
-        setJoinedPool(null)
-        setJoinedPoolState('none')
-        return
-      }
-      setJoinedPoolState('unavailable')
-      connect()
-    })
+    connect()
     return () => { active = false; if (retry !== undefined) window.clearTimeout(retry); cancel?.() }
   }, [snapshot.status, snapshot.endpoint])
   // Leaving has the pool let go of what it kept for this node; the node then

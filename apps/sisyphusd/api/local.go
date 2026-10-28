@@ -385,8 +385,9 @@ func (s *localService) nodeInfo(ctx context.Context) *nodepb.GetNodeInfoResponse
 	return info
 }
 
-// WatchNodeState streams complete node-and-peer snapshots, triggered by node
-// discovery and peer events, with a slow reconciliation check as a safeguard.
+// WatchNodeState streams complete node-and-peer snapshots when their sources
+// notify a change. It does not poll; callers that need several shared domains
+// can use WatchSharedState.
 func (s *localService) WatchNodeState(_ *nodepb.GetNodeInfoRequest, stream grpc.ServerStreamingServer[nodepb.NodeState]) error {
 	var changes <-chan struct{}
 	var unsubscribe func()
@@ -395,6 +396,129 @@ func (s *localService) WatchNodeState(_ *nodepb.GetNodeInfoRequest, stream grpc.
 		defer unsubscribe()
 	}
 	return watchNodeState(stream.Context(), changes, func() *nodepb.NodeState { return s.nodeState(stream.Context()) }, stream.Send)
+}
+
+// WatchSharedState streams typed, authoritative snapshots for shared domains.
+// The token is required because some domains contain owner-only state. Changes
+// are coalesced by the notifier; each wake reads the latest committed state,
+// so a slow subscriber cannot miss the final value. A reconnect starts with a
+// fresh baseline rather than replaying an unbounded event log.
+func (s *localService) WatchSharedState(req *nodepb.WatchSharedStateRequest, stream grpc.ServerStreamingServer[nodepb.SharedStateEvent]) error {
+	if err := s.authorize(stream.Context()); err != nil {
+		return err
+	}
+	domains, err := sharedStateDomains(req.GetDomains())
+	if err != nil {
+		return err
+	}
+	var changes <-chan struct{}
+	var unsubscribe func()
+	if s.cfg.NodeInfoChanges != nil {
+		changes, unsubscribe = s.cfg.NodeInfoChanges.subscribe()
+		defer unsubscribe()
+	}
+
+	last := make(map[nodepb.SharedStateDomain]*nodepb.SharedStateEvent, len(domains))
+	var revision uint64
+	sendCurrent := func(domain nodepb.SharedStateDomain, snapshot bool) error {
+		current := s.sharedStateSnapshot(stream.Context(), domain)
+		if previous, ok := last[domain]; ok && sharedStateEqual(previous, current) {
+			return nil
+		}
+		revision++
+		current.Revision = revision
+		current.Snapshot = snapshot
+		if err := stream.Send(current); err != nil {
+			return err
+		}
+		last[domain] = proto.Clone(current).(*nodepb.SharedStateEvent)
+		return nil
+	}
+	for _, domain := range domains {
+		if err := sendCurrent(domain, true); err != nil {
+			return err
+		}
+	}
+	for {
+		select {
+		case <-changes:
+			for _, domain := range domains {
+				if err := sendCurrent(domain, false); err != nil {
+					return err
+				}
+			}
+		case <-stream.Context().Done():
+			return nil
+		}
+	}
+}
+
+func sharedStateDomains(requested []nodepb.SharedStateDomain) ([]nodepb.SharedStateDomain, error) {
+	if len(requested) == 0 {
+		return []nodepb.SharedStateDomain{
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_PEERS,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WORKERS,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_PAIRED_BROWSERS,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL,
+		}, nil
+	}
+	seen := make(map[nodepb.SharedStateDomain]struct{}, len(requested))
+	domains := make([]nodepb.SharedStateDomain, 0, len(requested))
+	for _, domain := range requested {
+		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL {
+			return nil, status.Errorf(codes.InvalidArgument, "unsupported shared-state domain %s", domain)
+		}
+		if _, ok := seen[domain]; ok {
+			continue
+		}
+		seen[domain] = struct{}{}
+		domains = append(domains, domain)
+	}
+	sort.Slice(domains, func(i, j int) bool { return domains[i] < domains[j] })
+	return domains, nil
+}
+
+func (s *localService) sharedStateSnapshot(ctx context.Context, domain nodepb.SharedStateDomain) *nodepb.SharedStateEvent {
+	event := &nodepb.SharedStateEvent{Domain: domain}
+	switch domain {
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE:
+		event.State = &nodepb.SharedStateEvent_Node{Node: s.nodeState(ctx)}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_PEERS:
+		var peers []*nodepb.Peer
+		if s.cfg.Peers != nil {
+			peers = s.cfg.Peers()
+		}
+		event.State = &nodepb.SharedStateEvent_Peers{Peers: &nodepb.ListPeersResponse{Peers: peers}}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WORKERS:
+		if err := s.jobsAvailable(); err != nil {
+			event.Error = err.Error()
+		} else {
+			event.State = &nodepb.SharedStateEvent_Workers{Workers: s.workerList(true)}
+		}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_PAIRED_BROWSERS:
+		state, err := s.pairedBrowsers()
+		if err != nil {
+			event.Error = err.Error()
+		} else {
+			event.State = &nodepb.SharedStateEvent_PairedBrowsers{PairedBrowsers: state}
+		}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL:
+		state := &nodepb.JoinedPool{}
+		if s.cfg.JoinedPool != nil {
+			state = s.cfg.JoinedPool()
+		}
+		event.State = &nodepb.SharedStateEvent_JoinedPool{JoinedPool: state}
+	}
+	return event
+}
+
+func sharedStateEqual(left, right *nodepb.SharedStateEvent) bool {
+	left = proto.Clone(left).(*nodepb.SharedStateEvent)
+	right = proto.Clone(right).(*nodepb.SharedStateEvent)
+	left.Revision, right.Revision = 0, 0
+	left.Snapshot, right.Snapshot = false, false
+	return proto.Equal(left, right)
 }
 
 // WatchPairedBrowsers streams the authorized paired-device list on changes.
