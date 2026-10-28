@@ -1100,6 +1100,7 @@ enum SharedStateDomain {
   SHARED_STATE_DOMAIN_PAIRED_BROWSERS = 4;
   SHARED_STATE_DOMAIN_JOINED_POOL = 5;
   SHARED_STATE_DOMAIN_MODEL_PROFILES = 6;
+  SHARED_STATE_DOMAIN_MODEL_LENDING = 7;
 }
 
 message WatchSharedStateRequest {
@@ -1124,6 +1125,7 @@ message SharedStateEvent {
     PairedBrowsersState paired_browsers = 13;
     JoinedPool joined_pool = 14;
     ModelProfilesState model_profiles = 15;
+    ModelLendingState model_lending = 16;
   }
 }
 
