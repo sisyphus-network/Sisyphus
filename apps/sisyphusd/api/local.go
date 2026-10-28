@@ -1200,6 +1200,7 @@ func (s *localService) permit(ctx context.Context, id string, gives, takes bool)
 			return status.Errorf(codes.Internal, "%v", err)
 		}
 	}
+	s.notifySharedStateChanged()
 	return nil
 }
 

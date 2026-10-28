@@ -315,6 +315,68 @@ func TestWatchSharedStateStreamsChatSummariesToIndependentClients(t *testing.T) 
 	}
 }
 
+func TestPeerPermissionChangesNotifySharedPeerWatchers(t *testing.T) {
+	const peerID = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	changes := NewNodeInfoChanges()
+	workFor := &sharedWorkFor{peerID: peerID}
+	peers := func() []*nodepb.Peer {
+		takesWork := slices.Contains(workFor.List(), peerID)
+		return []*nodepb.Peer{{PeerId: peerID, ThisNodeWorksFor: takesWork, TakesWork: takesWork}}
+	}
+	client := serveLocal(t, LocalConfig{NodeInfoChanges: changes, WorkFor: workFor, Peers: peers})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_PEERS}}
+	ctx1, cancel1 := context.WithCancel(withToken("the-token"))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken("the-token"))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range []nodepb.NodeService_WatchSharedStateClient{first, second} {
+		if event, err := watcher.Recv(); err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || event.GetPeers().GetPeers()[0].GetThisNodeWorksFor() {
+			t.Fatalf("initial peer snapshot = %v, %v", event, err)
+		}
+	}
+	if _, err := client.SetPeerComputePermissions(withToken("the-token"), &nodepb.SetPeerComputePermissionsRequest{PeerId: peerID, TakesWork: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range []nodepb.NodeService_WatchSharedStateClient{first, second} {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || len(event.GetPeers().GetPeers()) != 1 || !event.GetPeers().GetPeers()[0].GetThisNodeWorksFor() {
+			t.Fatalf("peer permission update = %v, %v", event, err)
+		}
+	}
+}
+
+type sharedWorkFor struct {
+	mu     sync.Mutex
+	peerID string
+	active bool
+}
+
+func (work *sharedWorkFor) Set(id string, willing bool) error {
+	work.mu.Lock()
+	defer work.mu.Unlock()
+	if id == work.peerID {
+		work.active = willing
+	}
+	return nil
+}
+
+func (work *sharedWorkFor) List() []string {
+	work.mu.Lock()
+	defer work.mu.Unlock()
+	if !work.active {
+		return nil
+	}
+	return []string{work.peerID}
+}
+
 func peerEntry(id string, connected, trusted bool) *nodepb.Peer {
 	state := nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED
 	if connected {
