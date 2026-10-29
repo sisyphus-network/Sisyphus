@@ -4,7 +4,7 @@ import { Check, Copy, Eye, MessageSquare, Minus, Plus, X } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import Globe, { type GlobeMethods } from 'react-globe.gl'
-import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial, LineSegments, MeshBasicMaterial, NormalBlending, Points as ThreePoints, PointsMaterial, type BufferAttribute, type Mesh, type PerspectiveCamera } from 'three'
+import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial, LineSegments, MOUSE, MeshBasicMaterial, NormalBlending, Points as ThreePoints, PointsMaterial, TOUCH, type BufferAttribute, type Mesh, type PerspectiveCamera } from 'three'
 import type { NodeSnapshot } from '../../../preload'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 import centroidsGeoJson from 'world-countries-centroids/dist/countries.geojson?raw'
@@ -67,6 +67,7 @@ const countryCentroids = new Map<string, { lat: number; lng: number }>(
 const ownPointId = 'this-node'
 type GlobePoint = { id: string; lat: number; lng: number; label: string; color: string }
 const mapMorph = { value: 0 }
+const flatMapScale = { value: 0 }
 
 function mercatorLatitude(latitude: number) {
   const radians = Math.max(-85, Math.min(85, latitude)) * Math.PI / 180
@@ -75,7 +76,7 @@ function mercatorLatitude(latitude: number) {
 
 function flatMapPoint(lat: number, lng: number, center: { lat: number; lng: number }, radius: number): [number, number, number] {
   const delta = ((lng - center.lng + 540) % 360) - 180
-  const scale = radius * 0.52
+  const scale = flatMapScale.value || radius * 0.52
   return [delta * Math.PI / 180 * scale, (mercatorLatitude(lat) - mercatorLatitude(center.lat)) * scale, radius * 0.008]
 }
 
@@ -93,6 +94,20 @@ function addFlatPositionAttribute(geometry: BufferGeometry, center: { lat: numbe
     const lat = Math.asin(Math.max(-1, Math.min(1, y / length))) * 180 / Math.PI
     const lng = Math.atan2(worldX, worldZ) * 180 / Math.PI
     flat.set(flatMapPoint(lat, lng, center, radius), index * 3)
+  }
+  // A great-circle edge that crosses the projection's antimeridian would
+  // otherwise become a long, straight scar across the local map. Polygon
+  // outlines are non-indexed before reaching this function, so each segment
+  // can safely collapse just its own two endpoints at that seam.
+  const scale = flatMapScale.value || radius * 0.52
+  for (let index = 0; index + 1 < positions.count; index += 2) {
+    const first = index * 3
+    const second = (index + 1) * 3
+    if (Math.abs(flat[first] - flat[second]) > Math.PI * scale) {
+      flat[second] = flat[first]
+      flat[second + 1] = flat[first + 1]
+      flat[second + 2] = flat[first + 2]
+    }
   }
   geometry.setAttribute('flatPosition', new Float32BufferAttribute(flat, 3))
 }
@@ -336,6 +351,11 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     if (!globe) return
     const scene = globe.scene()
     const radius = globe.getGlobeRadius()
+    // Keep the geographic zoom the user has reached on the globe. A roughly
+    // 90-degree local window fills the viewport instead of resetting to a
+    // tiny, whole-world map.
+    const cameraDistance = globe.camera().position.distanceTo(globe.controls().target)
+    flatMapScale.value = cameraDistance * 0.62
     scene.traverse((object) => {
       const mesh = object as Mesh
       const parentType = (mesh.parent as { __globeObjType?: string } | null)?.__globeObjType
@@ -346,6 +366,11 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       }
       const line = object as LineSegments
       if (line.isLineSegments && (parentType === 'polygon' || line.geometry.type === 'GeoJsonGeometry')) {
+        if (line.geometry.index) {
+          const indexedGeometry = line.geometry
+          line.geometry = indexedGeometry.toNonIndexed()
+          indexedGeometry.dispose()
+        }
         addFlatPositionAttribute(line.geometry, center, radius)
         for (const material of Array.isArray(line.material) ? line.material : [line.material]) {
           if (material instanceof LineBasicMaterial && material.userData.facing !== true) {
@@ -404,6 +429,10 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     controls.enableZoom = false
     controls.enablePan = false
     controls.enableRotate = false
+    controls.mouseButtons.LEFT = MOUSE.ROTATE
+    controls.mouseButtons.RIGHT = MOUSE.PAN
+    controls.touches.ONE = TOUCH.ROTATE
+    controls.touches.TWO = TOUCH.DOLLY_PAN
     controls.target.set(0, 0, 0)
     globe.pointOfView({ lat: center.lat, lng: center.lng, altitude: limits.fit * 0.96 / globe.getGlobeRadius() - 1 }, reduceMotion ? 0 : 680)
     const scene = globe.scene()
@@ -443,7 +472,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     if (mapSuppressedRef.current && distance > limits.fit * 0.94) mapSuppressedRef.current = false
     if (!mapCenterRef.current && localMapThresholdReached(distance, limits.fit) && !mapSuppressedRef.current) {
       const view = globe.pointOfView()
-      mapCenterRef.current = locationRef.current ?? { lat: view.lat, lng: view.lng }
+      // The local map must be centered on the point currently under the
+      // camera, not always on this node's saved location.
+      mapCenterRef.current = { lat: view.lat, lng: view.lng }
       mapInteractiveRef.current = true
       setMapCenter(mapCenterRef.current)
       prepareFlatMap(mapCenterRef.current)
@@ -453,7 +484,10 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       controls.enableRotate = false
       controls.autoRotate = false
       const radius = globe.getGlobeRadius()
-      globe.pointOfView({ lat: 0, lng: 0, altitude: 1.45 }, reduceMotion ? 0 : 760)
+      const altitude = Math.max(0.01, globe.camera().position.distanceTo(controls.target) / radius - 1)
+      // Turn the camera toward the map plane, but keep its current distance:
+      // the morph must continue from the user's current zoom, not reset it.
+      globe.pointOfView({ lat: 0, lng: 0, altitude }, reduceMotion ? 0 : 760)
       animateMorph(1, () => {
         globe.scene().traverse((object) => {
           const type = (object as { __globeObjType?: string }).__globeObjType
@@ -464,6 +498,10 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
         controls.enableZoom = true
         controls.enablePan = true
         controls.enableRotate = false
+        controls.mouseButtons.LEFT = MOUSE.PAN
+        controls.mouseButtons.RIGHT = MOUSE.PAN
+        controls.touches.ONE = TOUCH.PAN
+        controls.touches.TWO = TOUCH.DOLLY_PAN
         globe.resumeAnimation()
       })
     } else if (mapCenterRef.current && distance > globe.getGlobeRadius() * 4.8) {
