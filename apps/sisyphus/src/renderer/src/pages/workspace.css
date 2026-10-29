@@ -340,11 +340,6 @@
 .network-globe-stage { position: absolute; top: 50%; left: 50%; translate: -50% -50%; max-width: none; max-height: none; aspect-ratio: 1; overflow: visible; }
 .network-globe-stage > div { width: 100% !important; height: 100% !important; outline: none; }
 .network-globe-stage canvas { display: block; max-width: 100%; max-height: 100%; }
-.network-local-map { position: absolute; z-index: 1; inset: 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--app-accent) 24%, var(--app-line)); border-radius: 16px; opacity: 1; pointer-events: auto; cursor: grab; touch-action: none; animation: network-local-map-enter 160ms cubic-bezier(.2,.8,.2,1) both; }
-.network-local-map[data-interactive="true"]:active { cursor: grabbing; }
-.network-local-map__canvas { display: block; transform-origin: center; will-change: transform; }
-@keyframes network-local-map-enter { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: scale(1); } }
-@media (prefers-reduced-motion: reduce) { .network-local-map { animation-duration: 0.01ms; } }
 
 .network-map-caption { position: absolute; z-index: 3; inset-inline: 12px; bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--app-line); border-radius: 10px; background: color-mix(in srgb, var(--app-card) 88%, transparent); padding: 9px 10px; color: var(--app-muted); font-size: 9px; backdrop-filter: blur(12px); }
 .network-map-caption b { color: var(--app-ink); font-family: ui-monospace, monospace; font-size: 10px; font-weight: 600; }
