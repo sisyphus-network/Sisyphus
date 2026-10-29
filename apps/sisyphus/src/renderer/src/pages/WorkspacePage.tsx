@@ -4,7 +4,7 @@ import { Check, Copy, Eye, MessageSquare, Minus, Plus, X } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import Globe, { type GlobeMethods } from 'react-globe.gl'
-import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial, LineSegments, MeshBasicMaterial, NormalBlending, Points as ThreePoints, PointsMaterial, type BufferAttribute, type Mesh, type PerspectiveCamera } from 'three'
+import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial, LineSegments, MeshBasicMaterial, NormalBlending, Points as ThreePoints, PointsMaterial, Vector3, type BufferAttribute, type Mesh, type PerspectiveCamera } from 'three'
 import type { NodeSnapshot } from '../../../preload'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 import centroidsGeoJson from 'world-countries-centroids/dist/countries.geojson?raw'
@@ -21,7 +21,7 @@ import { cityEstimateFromProtocol, nodeDetails, peerDetails, poolWorkers, render
 import { SharedStateDomain } from '@sisyphus/client'
 import { sharedStateDomainCode } from '@/lib/shared-state-domain'
 import { useWebgl } from '@/hooks/use-webgl'
-import { autoRotateSpeed, decodeRegionLines, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
+import { autoRotateSpeed, decodeRegionLines, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, nearestMapPoint, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
 
 type Messages = ReturnType<typeof getMessages>
 function connected(peer: NodeSnapshot['peers'][number]) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
@@ -75,7 +75,7 @@ function flatMapPoint(lat: number, lng: number, center: { lat: number; lng: numb
   return [delta * Math.PI / 180 * scale, (mercatorLatitude(lat) - mercatorLatitude(center.lat)) * scale, radius * 0.008]
 }
 
-function addFlatPositionAttribute(geometry: BufferGeometry, center: { lat: number; lng: number }, radius: number, sourceYRotation = 0) {
+function addFlatPositionAttribute(geometry: BufferGeometry, center: { lat: number; lng: number }, radius: number, sourceYRotation = 0, collapseSeams = true) {
   const positions = geometry.getAttribute('position') as BufferAttribute | undefined
   if (!positions) return
   const flat = new Float32Array(positions.count * 3)
@@ -95,7 +95,7 @@ function addFlatPositionAttribute(geometry: BufferGeometry, center: { lat: numbe
   // outlines are non-indexed before reaching this function, so each segment
   // can safely collapse just its own two endpoints at that seam.
   const scale = flatMapScale.value || radius * 0.52
-  for (let index = 0; index + 1 < positions.count; index += 2) {
+  for (let index = 0; collapseSeams && index + 1 < positions.count; index += 2) {
     const first = index * 3
     const second = (index + 1) * 3
     if (Math.abs(flat[first] - flat[second]) > Math.PI * scale) {
@@ -117,7 +117,7 @@ function applyMorphShader(material: MeshBasicMaterial) {
       .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = mix(position, flatPosition, mapMorph);')
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float mapMorph;')
-      .replace('#include <opaque_fragment>', 'diffuseColor.a *= 1.0 - mapMorph;\n#include <opaque_fragment>')
+      .replace('#include <opaque_fragment>', 'diffuseColor.a *= 1.0 - smoothstep(0.15, 0.85, mapMorph);\n#include <opaque_fragment>')
   }
   material.customProgramCacheKey = () => 'sisyphus-flat-map-surface'
   material.needsUpdate = true
@@ -188,6 +188,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const mapCenterRef = useRef<{ lat: number; lng: number } | undefined>(undefined)
   const locationRef = useRef<{ lat: number; lng: number } | undefined>(undefined)
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>()
+  const [mapLayout, setMapLayout] = useState(false)
+  const [mapSurfaceHidden, setMapSurfaceHidden] = useState(false)
+  const [mapHover, setMapHover] = useState<{ id: string; x: number; y: number }>()
   const [regionLines, setRegionLines] = useState<Array<Array<[number, number]>>>()
   const regionLinesRef = useRef<Array<Array<[number, number]>> | undefined>(undefined)
   const currentPointsRef = useRef<GlobePoint[]>([])
@@ -195,7 +198,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const globeSurfaceRef = useRef<Mesh | undefined>(undefined)
   const mapPointsRef = useRef<ThreePoints | undefined>(undefined)
   const mapInteractiveRef = useRef(false)
-  const mapPointersRef = useRef(new Map<number, { x: number; y: number }>())
+  const mapPointersRef = useRef(new Map<number, { x: number; y: number; startX: number; startY: number; moved: boolean; pointId?: string }>())
   const mapInteractive = Boolean(mapCenter)
   const mapSuppressedRef = useRef(false)
   // Button steps still under way. The buttons take their last state only when
@@ -335,9 +338,12 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       const eased = progress * progress * (3 - 2 * progress)
       mapMorph.value = from + (target - from) * eased
       onFrame?.(eased)
+      const backShare = Math.max(0, Math.min(1, (mapMorph.value - 0.7) / 0.3))
+      countryBackShare.value = backShare
+      regionBackShare.value = backShare
       const surface = globeSurfaceRef.current
       if (surface) surface.rotation.y = -Math.PI / 2 * (1 - mapMorph.value)
-      if (mapPointsRef.current?.material instanceof PointsMaterial) mapPointsRef.current.material.opacity = mapMorph.value
+      if (mapPointsRef.current?.material instanceof PointsMaterial) mapPointsRef.current.material.opacity = Math.max(0, (mapMorph.value - 0.7) / 0.3)
       if (progress < 1) morphFrameRef.current = window.requestAnimationFrame(animate)
       else {
         morphFrameRef.current = undefined
@@ -360,7 +366,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       const mesh = object as Mesh
       const parentType = (mesh.parent as { __globeObjType?: string } | null)?.__globeObjType
       if (mesh.isMesh && parentType === 'globe' && mesh.geometry) {
-        addFlatPositionAttribute(mesh.geometry, center, radius, -Math.PI / 2)
+        addFlatPositionAttribute(mesh.geometry, center, radius, -Math.PI / 2, false)
         globeSurfaceRef.current = mesh
         mesh.rotation.y = -Math.PI / 2
       }
@@ -396,8 +402,13 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const geometry = new BufferGeometry()
     geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
     geometry.setAttribute('color', new Float32BufferAttribute(colors, 3))
-    const material = new PointsMaterial({ size: 7, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0 })
+    const material = new PointsMaterial({ size: 10, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0, depthWrite: false })
+    material.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (distance(gl_PointCoord, vec2(0.5)) > 0.5) discard;')
+    }
+    material.customProgramCacheKey = () => 'sisyphus-map-points'
     const pointsLayer = new ThreePoints(geometry, material)
+    pointsLayer.frustumCulled = false
     pointsLayer.renderOrder = 5
     scene.add(pointsLayer)
     mapPointsRef.current = pointsLayer
@@ -435,6 +446,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     mapInteractiveRef.current = false
     mapCenterRef.current = undefined
     setMapCenter(undefined)
+    setMapHover(undefined)
+    setMapSurfaceHidden(false)
     countryBackShare.value = 0.3
     regionBackShare.value = 0
     const controls = globe.controls()
@@ -444,12 +457,14 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     controls.enableRotate = false
     controls.target.set(0, 0, 0)
     const scene = globe.scene()
-    scene.traverse((object) => {
-      if ((object as { __globeObjType?: string }).__globeObjType === 'atmosphere') object.visible = true
-    })
+    if (globeSurfaceRef.current) {
+      globeSurfaceRef.current.visible = true
+      if (globeSurfaceRef.current.parent) globeSurfaceRef.current.parent.visible = true
+    }
     animateMorph(0, () => {
       scene.traverse((object) => {
-        if ((object as { __globeObjType?: string }).__globeObjType === 'points' || (object as { __globeObjType?: string }).__globeObjType === 'rings') object.visible = true
+        const type = (object as { __globeObjType?: string }).__globeObjType
+        if (type === 'atmosphere' || type === 'point' || type === 'points' || type === 'ring') object.visible = true
         const line = object as LineSegments
         if (line.isLineSegments && typeof line.userData.mapOriginalFrustumCulled === 'boolean') {
           line.frustumCulled = line.userData.mapOriginalFrustumCulled
@@ -465,6 +480,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
         regionsRef.current.visible = false
         regionsRef.current.frustumCulled = true
       }
+      setMapLayout(false)
       controls.enabled = true
       controls.enableZoom = true
       controls.enablePan = false
@@ -480,6 +496,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const zoomMap = useCallback((factor: number, clientX?: number, clientY?: number) => {
     const globe = globeRef.current
     if (!globe || !mapInteractiveRef.current || mapMorph.value < 0.999) return
+    setMapHover(undefined)
     const camera = globe.camera() as PerspectiveCamera
     const radius = globe.getGlobeRadius()
     const planeZ = radius * 0.008
@@ -521,6 +538,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       mapCenterRef.current = { lat: view.lat, lng: view.lng }
       mapInteractiveRef.current = true
       setMapCenter(mapCenterRef.current)
+      // Cancel any in-flight button zoom before starting a single coordinated
+      // camera/geometry transition. Keep the exact view that triggered it.
+      globe.pointOfView(view, 0)
       prepareFlatMap(mapCenterRef.current)
       const controls = globe.controls()
       controls.enableZoom = false
@@ -528,29 +548,32 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       controls.enableRotate = false
       controls.autoRotate = false
       const radius = globe.getGlobeRadius()
-      const altitude = Math.max(0.01, globe.camera().position.distanceTo(controls.target) / radius - 1)
-      // Turn the camera toward the map plane, but keep its current distance:
-      // the morph must continue from the user's current zoom, not reset it.
-      globe.pointOfView({ lat: 0, lng: 0, altitude }, reduceMotion ? 0 : 760)
+      const camera = globe.camera() as PerspectiveCamera
+      const startPosition = camera.position.clone()
+      const startOrientation = camera.quaternion.clone()
+      const destinationCamera = camera.clone()
+      destinationCamera.position.set(0, 0, Math.max(radius * 1.01, startPosition.length()))
+      destinationCamera.lookAt(0, 0, 0)
+      controls.enabled = false
+      globe.scene().traverse((object) => {
+        const type = (object as { __globeObjType?: string }).__globeObjType
+        if (type === 'atmosphere' || type === 'point' || type === 'points' || type === 'ring') object.visible = false
+      })
       animateMorph(1, () => {
-        // globe.gl's control-change listener always resets its target to the
-        // globe centre. Stop those controls entirely while the camera is a map.
-        globe.pointOfView({ lat: 0, lng: 0, altitude }, 0)
-        controls.enabled = false
-        const camera = globe.camera() as PerspectiveCamera
-        camera.lookAt(0, 0, 0)
+        if (globeSurfaceRef.current) globeSurfaceRef.current.visible = false
+        setMapSurfaceHidden(true)
+        setMapLayout(true)
         countryBackShare.value = 1
         regionBackShare.value = 1
-        globe.scene().traverse((object) => {
-          const type = (object as { __globeObjType?: string }).__globeObjType
-          if (type === 'atmosphere' || type === 'points' || type === 'rings') object.visible = false
-        })
         controls.minDistance = radius * 1.25
         controls.maxDistance = radius * 5.5
         controls.enableZoom = false
         controls.enablePan = false
         controls.enableRotate = false
         globe.resumeAnimation()
+      }, (progress) => {
+        camera.position.lerpVectors(startPosition, destinationCamera.position, progress)
+        camera.quaternion.slerpQuaternions(startOrientation, destinationCamera.quaternion, progress)
       })
     } else if (mapCenterRef.current && distance > globe.getGlobeRadius() * 4.8) {
       exitLocalMap()
@@ -558,19 +581,51 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const displayZoom = { ...next, percent: Math.round(next.percent / 5) * 5 }
     setZoom((current) => current && current.canZoomIn === displayZoom.canZoomIn && current.canZoomOut === displayZoom.canZoomOut && current.regions === displayZoom.regions && current.percent === displayZoom.percent ? current : displayZoom)
   }, [active, animateMorph, exitLocalMap, prepareFlatMap, reduceMotion, rotationPaused])
+  const findMapPoint = useCallback((clientX: number, clientY: number) => {
+    const globe = globeRef.current
+    const center = mapCenterRef.current
+    const container = containerRef.current
+    if (!globe || !center || !container || !mapInteractiveRef.current || mapMorph.value < 0.999) return undefined
+    const camera = globe.camera() as PerspectiveCamera
+    const rect = globe.renderer().domElement.getBoundingClientRect()
+    const containerRect = container.getBoundingClientRect()
+    camera.updateMatrixWorld()
+    const candidates: Array<{ id: string; x: number; y: number }> = []
+    const projected = new Vector3()
+    for (const point of currentPointsRef.current) {
+      projected.fromArray(flatMapPoint(point.lat, point.lng, center, globe.getGlobeRadius())).project(camera)
+      if (projected.z < -1 || projected.z > 1) continue
+      const x = rect.left + (projected.x + 1) * rect.width / 2
+      const y = rect.top + (1 - projected.y) * rect.height / 2
+      candidates.push({ id: point.id, x: x - containerRect.left, y: y - containerRect.top })
+    }
+    return nearestMapPoint(candidates, clientX - containerRect.left, clientY - containerRect.top)
+  }, [])
   const startMapPan = useCallback((event: PointerEvent) => {
     if (!mapInteractiveRef.current || mapMorph.value < 0.999 || (event.pointerType === 'mouse' && event.button !== 0)) return
     if (mapPointersRef.current.size >= 2) return
-    mapPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (mapPointersRef.current.size) for (const pointer of mapPointersRef.current.values()) pointer.moved = true
+    const pointId = findMapPoint(event.clientX, event.clientY)?.id
+    mapPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: mapPointersRef.current.size > 0, pointId })
+    setMapHover(undefined)
     containerRef.current?.setAttribute('data-map-dragging', 'true')
     ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
     event.preventDefault()
-  }, [])
+  }, [findMapPoint])
   const moveMapPan = useCallback((event: PointerEvent) => {
     const pointers = mapPointersRef.current
     const drag = pointers.get(event.pointerId)
     const globe = globeRef.current
-    if (!drag || !globe || !mapInteractiveRef.current) return
+    if (!globe || !mapInteractiveRef.current) return
+    if (!drag) {
+      if (event.pointerType !== 'touch') {
+        const point = findMapPoint(event.clientX, event.clientY)
+        setMapHover((current) => current?.id === point?.id && current?.x === point?.x && current?.y === point?.y ? current : point)
+      }
+      return
+    }
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) drag.moved = true
+    if (!drag.moved) return
     const canvas = event.currentTarget as HTMLCanvasElement
     const height = canvas.getBoundingClientRect().height
     if (height < 1) return
@@ -593,13 +648,15 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       if (nextDistance > 0) zoomMap(previousDistance / nextDistance, (drag.x + other.x) / 2, (drag.y + other.y) / 2)
     }
     event.preventDefault()
-  }, [zoomMap])
+  }, [findMapPoint, zoomMap])
   const endMapPan = useCallback((event: PointerEvent) => {
+    const drag = mapPointersRef.current.get(event.pointerId)
+    if (event.type === 'pointerup' && drag && !drag.moved && drag.pointId && findMapPoint(event.clientX, event.clientY)?.id === drag.pointId) onPickPoint(drag.pointId)
     if (!mapPointersRef.current.delete(event.pointerId)) return
     if (mapPointersRef.current.size === 0) containerRef.current?.removeAttribute('data-map-dragging')
     const canvas = event.currentTarget as HTMLCanvasElement
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
-  }, [])
+  }, [findMapPoint, onPickPoint])
   useEffect(() => {
     if (!mapInteractive) return
     const canvas = globeRef.current?.renderer().domElement
@@ -609,6 +666,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     canvas.addEventListener('pointerup', endMapPan)
     canvas.addEventListener('pointercancel', endMapPan)
     canvas.addEventListener('lostpointercapture', endMapPan)
+    const onLeave = () => { if (mapPointersRef.current.size === 0) setMapHover(undefined) }
+    canvas.addEventListener('pointerleave', onLeave)
     const onWheel = (event: WheelEvent) => {
       if (!mapInteractiveRef.current || mapMorph.value < 0.999) return
       event.preventDefault()
@@ -622,6 +681,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       canvas.removeEventListener('pointerup', endMapPan)
       canvas.removeEventListener('pointercancel', endMapPan)
       canvas.removeEventListener('lostpointercapture', endMapPan)
+      canvas.removeEventListener('pointerleave', onLeave)
       canvas.removeEventListener('wheel', onWheel)
       containerRef.current?.removeAttribute('data-map-dragging')
       mapPointersRef.current.clear()
@@ -697,7 +757,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       if (rotationPaused && now - lastMeasureAt < 32) return
       lastMeasureAt = now
       const rect = container.getBoundingClientRect()
-      const nextSize = mapInteractive
+      const nextSize = mapLayout
         ? { width: Math.floor(Math.min(rect.width, window.innerWidth)), height: Math.floor(Math.min(rect.height, window.innerHeight)) }
         : (() => {
             const diameter = Math.floor(Math.min(rect.width, rect.height, window.innerWidth, window.innerHeight) * 0.9)
@@ -722,7 +782,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       observer.disconnect()
       window.removeEventListener('resize', updateSize)
     }
-  }, [mapInteractive, rotationPaused, suspendResize])
+  }, [mapLayout, rotationPaused, suspendResize])
   useEffect(() => {
     if (size.width > 0 && size.height > 0) fitCameraToViewport()
   }, [fitCameraToViewport, size.width, size.height])
@@ -768,6 +828,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const known: GlobePoint[] = stablePeerLocations.map((peer) => ({ id: peer.peerId, lat: peer.lat, lng: peer.lng, label: peer.peerId, color: theme.accent }))
     return [...own, ...known]
   }, [location, nodeLabel, stablePeerLocations, theme.accent])
+  const globePoints = useMemo(() => mapInteractive || mapLayout ? [] : points, [mapInteractive, mapLayout, points])
   currentPointsRef.current = points
   useEffect(() => {
     const layer = mapPointsRef.current
@@ -789,6 +850,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const pointLabel = useCallback((point: object) => pointCard((point as GlobePoint).id), [pointCard])
   const pickPoint = useCallback((point: object) => onPickPoint((point as GlobePoint).id), [onPickPoint])
   const rings = useMemo(() => location ? [{ ...location, maxRadius: 5, propagationSpeed: 2, repeatPeriod: 1200 }] : [], [location])
+  const visibleRings = useMemo(() => mapInteractive || mapLayout ? [] : rings, [mapInteractive, mapLayout, rings])
   const polygonCapColor = useCallback(() => 'rgba(0,0,0,0)', [])
   const polygonSideColor = useCallback(() => 'rgba(0,0,0,0)', [])
   const polygonStrokeColor = useCallback(() => {
@@ -803,18 +865,18 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const rendererConfig = useMemo(() => ({ alpha: true, antialias: true, powerPreference: 'low-power' as const }), [])
   const ringMaxRadius = useCallback(() => 5, [])
   return <>
-  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-active={active} data-rotation-paused={rotationPaused} data-zoom={zoom?.percent} data-zoom-step={zoomStepCount} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && (wantRegions || mapInteractive) ? 'shown' : 'hidden'} data-local-map={mapInteractive}>
+  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-active={active} data-rotation-paused={rotationPaused} data-zoom={zoom?.percent} data-zoom-step={zoomStepCount} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && (wantRegions || mapInteractive) ? 'shown' : 'hidden'} data-local-map={mapInteractive} data-map-hover={Boolean(mapHover)}>
     {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
       <Globe
       ref={globeRef}
       width={size.width}
       height={size.height}
       backgroundColor="rgba(0,0,0,0)"
-      showGlobe
+      showGlobe={!mapSurfaceHidden}
       globeMaterial={hologramMaterial}
       showGraticules={false}
       globeCurvatureResolution={6}
-      showAtmosphere
+      showAtmosphere={!mapInteractive && !mapLayout}
       atmosphereColor={theme.accent}
       atmosphereAltitude={theme.dark ? 0.1 : 0.075}
       rendererConfig={rendererConfig}
@@ -823,7 +885,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       polygonSideColor={polygonSideColor}
       polygonStrokeColor={polygonStrokeColor}
       polygonAltitude={0.006}
-      pointsData={points}
+      pointsData={globePoints}
       pointLat="lat"
       pointLng="lng"
       pointColor="color"
@@ -832,14 +894,14 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       pointsTransitionDuration={0}
       pointLabel={pointLabel}
       onPointClick={pickPoint}
-      ringsData={rings}
+      ringsData={visibleRings}
       ringLat="lat"
       ringLng="lng"
       ringColor={ringColor}
       ringMaxRadius={ringMaxRadius}
       ringPropagationSpeed="propagationSpeed"
       ringRepeatPeriod="repeatPeriod"
-      enablePointerInteraction={active && points.length > 0}
+      enablePointerInteraction={active && !mapInteractive && !mapLayout && points.length > 0}
       customLayerData={regionLayer}
       customThreeObject={regionObject}
       onZoom={handleZoom}
@@ -850,6 +912,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       animateIn
       />
     </div>}
+    {mapHover && <div className="map-point-tooltip" aria-hidden="true" style={{ left: Math.min(Math.max(12, mapHover.x + 16), Math.max(12, (containerRef.current?.clientWidth ?? 300) - 300)), top: Math.min(Math.max(12, mapHover.y + 16), Math.max(12, (containerRef.current?.clientHeight ?? 420) - 420)) }} dangerouslySetInnerHTML={{ __html: pointCard(mapHover.id) }} />}
   </div>
   {/* A point on a WebGL globe cannot take the keyboard's focus, so each is
       also a button here, out of sight until it is focused. */}

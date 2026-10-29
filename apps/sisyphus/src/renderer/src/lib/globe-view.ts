@@ -65,6 +65,19 @@ export function mapZoomAnchorShift(distance: number, nextDistance: number, fov: 
   return { x: cursorX * share, y: -cursorY * share }
 }
 
+export function nearestMapPoint<T extends { x: number; y: number }>(points: readonly T[], x: number, y: number, radius = 16): T | undefined {
+  let nearest: T | undefined
+  let shortest = radius * radius
+  for (const point of points) {
+    const distance = (point.x - x) ** 2 + (point.y - y) ** 2
+    if (distance <= shortest) {
+      shortest = distance
+      nearest = point
+    }
+  }
+  return nearest
+}
+
 // The regional map only needs boundaries near its centre. Keep the scan cheap,
 // then simplify retained lines before handing them to the SVG path generator.
 export function nearbyRegionLines(lines: Array<Array<[number, number]>>, center: { lat: number; lng: number }, radiusDegrees = 78): Array<Array<[number, number]>> {

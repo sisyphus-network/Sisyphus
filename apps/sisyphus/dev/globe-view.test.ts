@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, statSync } from 'node:fs'
 import test from 'node:test'
-import { autoRotateSpeed, clampDistance, decodeRegionLines, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, nearbyRegionLines, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
+import { autoRotateSpeed, clampDistance, decodeRegionLines, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, nearestMapPoint, nearbyRegionLines, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
 
 const radius = 100
 const fit = 255
@@ -67,6 +67,13 @@ test('returning from a panned map points the globe at the panned location', () =
   assert.ok(Math.abs(center.lng + 170) < 1e-9)
   const farWest = mapLocationAtOffset({ lat: 0, lng: 0 }, -scale * 5 * Math.PI, 0, scale)
   assert.ok(Math.abs(farWest.lng + 180) < 1e-9)
+})
+
+test('map hover and click choose the closest point within the touch target', () => {
+  const points = [{ id: 'node', x: 100, y: 100 }, { id: 'peer', x: 110, y: 100 }]
+  assert.equal(nearestMapPoint(points, 109, 101)?.id, 'peer')
+  assert.equal(nearestMapPoint(points, 85, 100)?.id, 'node')
+  assert.equal(nearestMapPoint(points, 70, 100), undefined)
 })
 
 test('the local map keeps nearby region lines and simplifies them before drawing', () => {
