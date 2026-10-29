@@ -383,5 +383,6 @@
 /* Keep the globe round while it is a globe. Once it morphs into a map, let
    the full rectangular pane become the map viewport so panning feels natural. */
 .network-globe-canvas[data-zoomed="true"]:not([data-local-map="true"]) .network-globe-stage canvas { clip-path: circle(50%); }
-.network-globe-canvas[data-local-map="true"] .network-globe-stage canvas { clip-path: none; touch-action: none; cursor: grab; }
-.network-globe-canvas[data-local-map="true"] .network-globe-stage canvas:active { cursor: grabbing; }
+.network-globe-canvas[data-local-map="true"] .network-globe-stage canvas { clip-path: none; touch-action: none; user-select: none; cursor: grab; }
+.network-globe-canvas[data-local-map="true"] .network-globe-stage canvas:active,
+.network-globe-canvas[data-map-dragging="true"] .network-globe-stage canvas { cursor: grabbing; }

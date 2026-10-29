@@ -4,7 +4,7 @@ import { Check, Copy, Eye, MessageSquare, Minus, Plus, X } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import Globe, { type GlobeMethods } from 'react-globe.gl'
-import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial, LineSegments, MOUSE, MeshBasicMaterial, NormalBlending, Points as ThreePoints, PointsMaterial, TOUCH, type BufferAttribute, type Mesh, type PerspectiveCamera } from 'three'
+import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial, LineSegments, MeshBasicMaterial, NormalBlending, Points as ThreePoints, PointsMaterial, type BufferAttribute, type Mesh, type PerspectiveCamera } from 'three'
 import type { NodeSnapshot } from '../../../preload'
 import { formatMessage, type getMessages } from '@/i18n/messages'
 import centroidsGeoJson from 'world-countries-centroids/dist/countries.geojson?raw'
@@ -200,6 +200,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const globeSurfaceRef = useRef<Mesh | undefined>(undefined)
   const mapPointsRef = useRef<ThreePoints | undefined>(undefined)
   const mapInteractiveRef = useRef(false)
+  const mapPointerRef = useRef<{ pointerId: number; x: number; y: number } | undefined>(undefined)
   const mapInteractive = Boolean(mapCenter)
   const mapSuppressedRef = useRef(false)
   // Button steps still under way. The buttons take their last state only when
@@ -317,12 +318,15 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     controls.maxDistance = mapInteractiveRef.current ? radius * 5.5 : limits.max
     controls.enableZoom = !mapInteractiveRef.current || mapMorph.value >= 0.999
     controls.enableRotate = !mapInteractiveRef.current && mapMorph.value <= 0.001
-    controls.enablePan = mapInteractiveRef.current && mapMorph.value >= 0.999
+    // Map drags use a screen-aligned XY translation below; OrbitControls pan
+    // moves in camera space and makes the flat map drift in depth.
+    controls.enablePan = false
     controls.autoRotate = !reduceMotion && active && !mapCenterRef.current && mapMorph.value <= 0.001
-    controls.autoRotateSpeed = autoRotateSpeed(camera.position.length(), radius, limits)
+    const cameraDistance = camera.position.distanceTo(controls.target)
+    controls.autoRotateSpeed = autoRotateSpeed(cameraDistance, radius, limits)
     controls.enableDamping = true
     controls.update()
-    const next = zoomState(camera.position.length(), limits)
+    const next = zoomState(cameraDistance, limits)
     const displayZoom = { ...next, percent: Math.round(next.percent / 5) * 5 }
     setZoom((current) => current && current.canZoomIn === displayZoom.canZoomIn && current.canZoomOut === displayZoom.canZoomOut && current.regions === displayZoom.regions && current.percent === displayZoom.percent ? current : displayZoom)
   }, [active, reduceMotion])
@@ -429,10 +433,6 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     controls.enableZoom = false
     controls.enablePan = false
     controls.enableRotate = false
-    controls.mouseButtons.LEFT = MOUSE.ROTATE
-    controls.mouseButtons.RIGHT = MOUSE.PAN
-    controls.touches.ONE = TOUCH.ROTATE
-    controls.touches.TWO = TOUCH.DOLLY_PAN
     controls.target.set(0, 0, 0)
     globe.pointOfView({ lat: center.lat, lng: center.lng, altitude: limits.fit * 0.96 / globe.getGlobeRadius() - 1 }, reduceMotion ? 0 : 680)
     const scene = globe.scene()
@@ -496,12 +496,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
         controls.minDistance = radius * 1.25
         controls.maxDistance = radius * 5.5
         controls.enableZoom = true
-        controls.enablePan = true
+        controls.enablePan = false
         controls.enableRotate = false
-        controls.mouseButtons.LEFT = MOUSE.PAN
-        controls.mouseButtons.RIGHT = MOUSE.PAN
-        controls.touches.ONE = TOUCH.PAN
-        controls.touches.TWO = TOUCH.DOLLY_PAN
         globe.resumeAnimation()
       })
     } else if (mapCenterRef.current && distance > globe.getGlobeRadius() * 4.8) {
@@ -510,6 +506,61 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const displayZoom = { ...next, percent: Math.round(next.percent / 5) * 5 }
     setZoom((current) => current && current.canZoomIn === displayZoom.canZoomIn && current.canZoomOut === displayZoom.canZoomOut && current.regions === displayZoom.regions && current.percent === displayZoom.percent ? current : displayZoom)
   }, [active, animateMorph, exitLocalMap, prepareFlatMap, reduceMotion, rotationPaused])
+  const startMapPan = useCallback((event: PointerEvent) => {
+    if (!mapInteractiveRef.current || mapMorph.value < 0.999 || event.button !== 0) return
+    if (event.target instanceof Element && event.target.closest('button, [role="button"], .float-tooltip-kap')) return
+    mapPointerRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
+    containerRef.current?.setAttribute('data-map-dragging', 'true')
+    ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }, [])
+  const moveMapPan = useCallback((event: PointerEvent) => {
+    const drag = mapPointerRef.current
+    const globe = globeRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !globe) return
+    const canvas = event.currentTarget as HTMLCanvasElement
+    const height = canvas.getBoundingClientRect().height
+    if (height < 1) return
+    const camera = globe.camera() as PerspectiveCamera
+    const controls = globe.controls()
+    const distance = camera.position.distanceTo(controls.target)
+    const worldPerPixel = 2 * distance * Math.tan(camera.fov * Math.PI / 360) / height
+    const deltaX = (event.clientX - drag.x) * worldPerPixel
+    const deltaY = (event.clientY - drag.y) * worldPerPixel
+    drag.x = event.clientX
+    drag.y = event.clientY
+    // A map is a plane: translate only in XY and preserve depth/orientation.
+    camera.position.x -= deltaX
+    camera.position.y += deltaY
+    controls.target.x -= deltaX
+    controls.target.y += deltaY
+    controls.update()
+    event.preventDefault()
+  }, [])
+  const endMapPan = useCallback((event: PointerEvent) => {
+    if (mapPointerRef.current?.pointerId !== event.pointerId) return
+    mapPointerRef.current = undefined
+    containerRef.current?.removeAttribute('data-map-dragging')
+    const canvas = event.currentTarget as HTMLCanvasElement
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+  }, [])
+  useEffect(() => {
+    if (!mapInteractive) return
+    const canvas = globeRef.current?.renderer().domElement
+    if (!canvas) return
+    canvas.addEventListener('pointerdown', startMapPan)
+    canvas.addEventListener('pointermove', moveMapPan)
+    canvas.addEventListener('pointerup', endMapPan)
+    canvas.addEventListener('pointercancel', endMapPan)
+    return () => {
+      canvas.removeEventListener('pointerdown', startMapPan)
+      canvas.removeEventListener('pointermove', moveMapPan)
+      canvas.removeEventListener('pointerup', endMapPan)
+      canvas.removeEventListener('pointercancel', endMapPan)
+      containerRef.current?.removeAttribute('data-map-dragging')
+      mapPointerRef.current = undefined
+    }
+  }, [endMapPan, mapInteractive, moveMapPan, startMapPan])
   const zoomBy = useCallback((direction: 'in' | 'out') => {
     const globe = globeRef.current
     const limits = limitsRef.current
