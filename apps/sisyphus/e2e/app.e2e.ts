@@ -1235,6 +1235,54 @@ test('the topology canvas stays fitted through live window resizes', async (t) =
   }
 })
 
+test('the topology pane animates around a centered globe without resizing its canvas mid-transition', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the topology canvas no WebGL')
+    }
+    await wide(app, page, { native: true })
+    const handle = page.getByRole('separator', { name: 'Resize topology panel' })
+    const slot = page.locator('.workspace-topology-slot')
+    const canvas = slot.locator('canvas')
+    await canvas.waitFor()
+
+    for (let transition = 0; transition < 2; transition++) {
+      const before = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
+      await handle.focus()
+      await page.keyboard.press('Enter')
+      await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-transitioning') === 'true')
+      await page.waitForTimeout(100)
+      const during = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
+      assert.deepEqual(during, before, 'the WebGL drawing buffer resized during the pane animation')
+      await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-transitioning') === 'false')
+
+      if (transition === 0) {
+        await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
+      }
+    }
+
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const centered = await page.evaluate(() => {
+      const pane = document.querySelector('.workspace-network')?.getBoundingClientRect()
+      const stage = document.querySelector('.network-globe-stage')?.getBoundingClientRect()
+      const canvas = document.querySelector('.network-globe-stage canvas')?.getBoundingClientRect()
+      if (!pane || !stage || !canvas) return false
+      const centeredInPane = Math.abs((stage.left + stage.width / 2) - (pane.left + pane.width / 2)) <= 2
+        && Math.abs((stage.top + stage.height / 2) - (pane.top + pane.height / 2)) <= 2
+      const centeredInStage = Math.abs((canvas.left + canvas.width / 2) - (stage.left + stage.width / 2)) <= 2
+        && Math.abs((canvas.top + canvas.height / 2) - (stage.top + stage.height / 2)) <= 2
+      return centeredInPane && centeredInStage
+    })
+    assert.ok(centered, 'the globe canvas is not centered inside the expanded pane')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
 test('the workspace switches layouts live across tablet and desktop widths', async (t) => {
   const profile = testProfile()
   const { app, page } = await launch(node, profile)

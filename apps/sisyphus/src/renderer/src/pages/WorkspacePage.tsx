@@ -118,7 +118,7 @@ function loadRegionLines() {
   return regionLinesData
 }
 
-const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active, pointNames, pointsLabel, pointButtonLabel, pointCard, onPickPoint, zoomLabels }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean; pointNames: ReadonlyMap<string, string>; pointsLabel: string; pointButtonLabel: string; pointCard: (id: string) => string; onPickPoint: (id: string, from?: HTMLElement) => void; zoomLabels: { group: string; in: string; out: string } }) {
+const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active, suspendResize = false, pointNames, pointsLabel, pointButtonLabel, pointCard, onPickPoint, zoomLabels }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean; suspendResize?: boolean; pointNames: ReadonlyMap<string, string>; pointsLabel: string; pointButtonLabel: string; pointCard: (id: string) => string; onPickPoint: (id: string, from?: HTMLElement) => void; zoomLabels: { group: string; in: string; out: string } }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -275,6 +275,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     regionMaterial.dispose()
   }, [regionMaterial])
   useEffect(() => {
+    if (suspendResize) return
     const container = containerRef.current
     if (!container) return
     let frame = 0
@@ -300,7 +301,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       observer.disconnect()
       window.removeEventListener('resize', updateSize)
     }
-  }, [])
+  }, [suspendResize])
   useEffect(() => {
     fitCameraToViewport()
   }, [fitCameraToViewport, size.width, size.height])
@@ -493,9 +494,23 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     return savedRatio > 0.05 && savedRatio < 0.8 ? savedRatio : 0.52
   })
   const [topologyResizing, setTopologyResizing] = useState(false)
+  const [topologyTransitioning, setTopologyTransitioning] = useState(false)
+  const topologyTransitionTimer = useRef<number | undefined>(undefined)
   const [desktopStageWidth, setDesktopStageWidth] = useState(() => window.innerWidth)
   const topologyDragRef = useRef<{ pointerId: number; startX: number; startY: number; startWidth: number; startRatio: number; startOpen: boolean; dragging: boolean } | null>(null)
   const topologyLastTapRef = useRef<{ at: number; x: number; y: number } | null>(null)
+  const setTopologyOpenWithMotion = (open: boolean | ((current: boolean) => boolean)) => {
+    setTopologyTransitioning(true)
+    if (topologyTransitionTimer.current !== undefined) window.clearTimeout(topologyTransitionTimer.current)
+    setTopologyOpen(open)
+    topologyTransitionTimer.current = window.setTimeout(() => {
+      topologyTransitionTimer.current = undefined
+      setTopologyTransitioning(false)
+    }, reduceMotion ? 0 : 440)
+  }
+  useEffect(() => () => {
+    if (topologyTransitionTimer.current !== undefined) window.clearTimeout(topologyTransitionTimer.current)
+  }, [])
   const [globeReady, setGlobeReady] = useState(false)
   useEffect(() => {
     if (compact || historyResizing || topologyResizing) return
@@ -638,7 +653,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
       drag.startX = event.clientX
       drag.startWidth = 0
       drag.startOpen = false
-      setTopologyOpen(false)
+      setTopologyOpenWithMotion(false)
       setTopologyResizing(false)
       return
     }
@@ -668,7 +683,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
       const previousTap = topologyLastTapRef.current
       const isDoubleTap = previousTap && Date.now() - previousTap.at < 450 && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y) < 12
       topologyLastTapRef.current = isDoubleTap ? null : { at: Date.now(), x: event.clientX, y: event.clientY }
-      if (isDoubleTap) setTopologyOpen((open) => !open)
+      if (isDoubleTap) setTopologyOpenWithMotion((open) => !open)
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
       return
     }
@@ -681,7 +696,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   }
   const keyTopologyResize = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {
-      setTopologyOpen((open) => !open)
+      setTopologyOpenWithMotion((open) => !open)
       event.preventDefault()
       return
     }
@@ -689,7 +704,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     const shrinkKey = direction === 'rtl' ? 'ArrowLeft' : 'ArrowRight'
     if (!topologyOpen && event.key === growKey) {
       setTopologyRatio(Math.min(topologyMaxWidth / Math.max(1, panelAreaWidth), Math.max(topologyMinimumWidth / Math.max(1, panelAreaWidth), 0.52)))
-      setTopologyOpen(true)
+      setTopologyOpenWithMotion(true)
     } else if (event.key === growKey) setTopologyRatio(stepPanelWidth(topologyWidth, panelAreaWidth * 0.02, topologyMinimumWidth, topologyMaxWidth) / Math.max(1, panelAreaWidth))
     else if (event.key === shrinkKey) setTopologyRatio(stepPanelWidth(topologyWidth, -panelAreaWidth * 0.02, topologyMinimumWidth, topologyMaxWidth) / Math.max(1, panelAreaWidth))
     else return
@@ -733,7 +748,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const countryPosition = countryCode ? countryCentroids.get(countryCode) : undefined
   const countryLabel = countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry
   const networkPane = <section className="workspace-network workspace-glass liquid-glass-menu relative flex h-full min-h-0 items-center justify-center overflow-hidden rounded-[22px]">
-          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} shared={shared} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={globeActive} pointNames={pointNames} pointsLabel={messages.globeDetails.points} pointButtonLabel={messages.globeDetails.pointButton} pointCard={pointCard} onPickPoint={pickPoint} zoomLabels={zoomLabels} />}</div>
+          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} shared={shared} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={globeActive} suspendResize={!compact && topologyTransitioning && !topologyResizing} pointNames={pointNames} pointsLabel={messages.globeDetails.points} pointButtonLabel={messages.globeDetails.pointButton} pointCard={pointCard} onPickPoint={pickPoint} zoomLabels={zoomLabels} />}</div>
           {globeActive && pinnedDetails && <GlobeCard details={pinnedDetails} html={renderCard(pinnedDetails, true)} labels={messages.globeDetails} onClose={closePinned} />}
           <div className="absolute inset-x-5 top-5 z-[2] flex items-center justify-between gap-3 text-[10px]">
             <div className="rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-muted-foreground shadow-sm backdrop-blur"><span className="font-mono text-foreground">{connectedPeers.length}</span> {messages.connectedPeers.toLowerCase()}</div>
@@ -747,7 +762,12 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     <motion.div aria-hidden={compact && mobileView !== 'chat'} className="workspace-chat-desktop-pane workspace-mobile-pane" data-active={!compact || mobileView === 'chat'} initial={false} animate={reduceMotion ? undefined : { opacity: !compact || mobileView === 'chat' ? 1 : 0, x: compact && mobileView !== 'chat' ? -24 : 0 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: compact ? mobileView === 'chat' ? 2 : 1 : undefined, pointerEvents: compact && mobileView !== 'chat' ? 'none' : 'auto' }}>{chatPane}</motion.div>
     {topologyAvailable && <>
     <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeTopology} aria-valuemin={0} aria-valuemax={Math.round(topologyMaxWidth)} aria-valuenow={Math.round(topologyWidth)} onPointerDown={startTopologyResize} onPointerMove={moveTopologyResize} onPointerUp={finishTopologyResize} onPointerCancel={finishTopologyResize} onKeyDown={keyTopologyResize} className="workspace-topology-resize-handle"><span /></button>
-    <motion.div data-open={compact ? mobileView === 'network' : topologyOpen} data-active={!compact || mobileView === 'network'} data-resizing={topologyResizing} aria-hidden={compact ? mobileView !== 'network' : !topologyOpen} initial={false} animate={reduceMotion ? undefined : { opacity: !compact || mobileView === 'network' ? 1 : 0, x: compact && mobileView !== 'network' ? 24 : 0 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ flexBasis: compact ? '100%' : topologyWidth, zIndex: compact ? mobileView === 'network' ? 2 : 1 : undefined, pointerEvents: compact && mobileView !== 'network' ? 'none' : 'auto' }} className="workspace-topology-slot workspace-mobile-pane">{networkPane}</motion.div>
+    <motion.div data-open={compact ? mobileView === 'network' : topologyOpen} data-active={!compact || mobileView === 'network'} data-resizing={topologyResizing} data-transitioning={topologyTransitioning} aria-hidden={compact ? mobileView !== 'network' : !topologyOpen} initial={false} animate={reduceMotion ? undefined : { opacity: !compact || mobileView === 'network' ? 1 : 0, x: compact && mobileView !== 'network' ? 24 : 0 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ flexBasis: compact ? '100%' : topologyWidth, zIndex: compact ? mobileView === 'network' ? 2 : 1 : undefined, pointerEvents: compact && mobileView !== 'network' ? 'none' : 'auto' }} className="workspace-topology-slot workspace-mobile-pane" onTransitionEnd={(event) => {
+      if (event.target !== event.currentTarget || event.propertyName !== 'flex-basis' || !topologyTransitioning) return
+      if (topologyTransitionTimer.current !== undefined) window.clearTimeout(topologyTransitionTimer.current)
+      topologyTransitionTimer.current = undefined
+      setTopologyTransitioning(false)
+    }}>{networkPane}</motion.div>
     </>}
     </div>
     {compact && visible && paneItems.length > 1 && createPortal(<nav className="workspace-mobile-dock" aria-label={messages.workspace}><LiquidGlassDock items={paneItems} label={messages.workspace} onNavigate={(id) => setMobileView(id as 'chat' | 'network')} /></nav>, document.body)}
