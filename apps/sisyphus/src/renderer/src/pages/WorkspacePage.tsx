@@ -202,13 +202,13 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     controls.minDistance = limits.min
     controls.maxDistance = limits.max
     controls.enableZoom = true
-    controls.autoRotate = !reduceMotion && active && !rotationPaused
+    controls.autoRotate = !reduceMotion && active
     controls.autoRotateSpeed = autoRotateSpeed(camera.position.length(), radius, limits)
     controls.enableDamping = true
     controls.update()
     const next = zoomState(camera.position.length(), limits)
     setZoom((current) => current && current.canZoomIn === next.canZoomIn && current.canZoomOut === next.canZoomOut && current.regions === next.regions && current.percent === next.percent ? current : next)
-  }, [active, reduceMotion, rotationPaused])
+  }, [active, reduceMotion])
   // Whenever the camera moves in or out, by wheel, pinch or button.
   const handleZoom = useCallback(() => {
     const globe = globeRef.current
@@ -279,7 +279,11 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const container = containerRef.current
     if (!container) return
     let frame = 0
+    let lastMeasureAt = 0
     const measureAndCommit = () => {
+      const now = performance.now()
+      if (rotationPaused && now - lastMeasureAt < 32) return
+      lastMeasureAt = now
       const rect = container.getBoundingClientRect()
       const diameter = Math.floor(Math.min(rect.width, rect.height, window.innerWidth, window.innerHeight) * 0.9)
       if (diameter < 1) return
@@ -301,10 +305,16 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       observer.disconnect()
       window.removeEventListener('resize', updateSize)
     }
-  }, [suspendResize])
+  }, [rotationPaused, suspendResize])
   useEffect(() => {
-    fitCameraToViewport()
-  }, [fitCameraToViewport, size.width, size.height])
+    if (size.width > 0 && size.height > 0) fitCameraToViewport()
+  }, [fitCameraToViewport, size.width > 0])
+
+  useEffect(() => {
+    const globe = globeRef.current
+    if (!globe) return
+    globe.controls().autoRotate = !reduceMotion && active && !rotationPaused
+  }, [active, reduceMotion, rotationPaused])
 
   useEffect(() => {
     const globe = globeRef.current
