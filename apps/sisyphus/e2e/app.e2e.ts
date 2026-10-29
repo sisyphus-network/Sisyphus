@@ -1054,7 +1054,10 @@ test('resizing the topology pane pauses and resumes the globe smoothly', async (
     await page.mouse.down()
     await page.mouse.move(x + growToward * 120, y, { steps: 8 })
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-resizing') === 'true')
-    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot .network-globe-canvas')?.getAttribute('data-active') === 'false')
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('.workspace-topology-slot .network-globe-canvas')
+      return canvas?.getAttribute('data-active') === 'true' && canvas.getAttribute('data-rotation-paused') === 'true'
+    })
 
     const easedDuration = await slot.evaluate((element) => getComputedStyle(element).transitionDuration)
     assert.match(easedDuration, /0\.11s/, 'the pane should use a short easing transition while tracking the drag')
@@ -1062,7 +1065,7 @@ test('resizing the topology pane pauses and resumes the globe smoothly', async (
     const resizedBox = await slot.boundingBox()
     const dragBuffer = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
     assert.ok(resizedBox && resizedBox.width > paneBox.width + 40, 'the pane did not follow the drag')
-    assert.deepEqual(dragBuffer, initialBuffer, 'the drawing buffer resized before the drag finished')
+    assert.notDeepEqual(dragBuffer, initialBuffer, 'the drawing buffer did not follow the pane while the pointer was held')
     const centeredDuringDrag = await page.evaluate(() => {
       const visual = document.querySelector('.network-visual')?.getBoundingClientRect()
       const stage = document.querySelector('.network-globe-stage')?.getBoundingClientRect()
@@ -1078,7 +1081,11 @@ test('resizing the topology pane pauses and resumes the globe smoothly', async (
     assert.ok(centeredDuringDrag, 'the globe stage or canvas drifted away from the pane center during the drag')
 
     await page.mouse.up()
-    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-resizing') === 'false' && document.querySelector('.workspace-topology-slot .network-globe-canvas')?.getAttribute('data-active') === 'true')
+    await page.waitForFunction(() => {
+      const slot = document.querySelector('.workspace-topology-slot')
+      const canvas = document.querySelector('.workspace-topology-slot .network-globe-canvas')
+      return slot?.getAttribute('data-resizing') === 'false' && canvas?.getAttribute('data-active') === 'true' && canvas.getAttribute('data-rotation-paused') === 'false'
+    })
     await page.waitForFunction(([width, height]) => {
       const element = document.querySelector<HTMLCanvasElement>('.workspace-topology-slot .network-globe-canvas canvas')
       return element && (element.width !== width || element.height !== height)
