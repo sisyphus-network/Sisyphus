@@ -113,7 +113,8 @@ function regionLineMaterial() {
   return material
 }
 let regionLinesData: Promise<Array<Array<[number, number]>>> | undefined
-// The region lines are some 0.9 MB, so they are read only when first wanted.
+// Cache the decoded region lines so the local map can be drawn without parsing
+// its data during the globe-to-map handoff.
 function loadRegionLines() {
   regionLinesData ??= import('../data/admin1-lines.json?raw').then(({ default: raw }) => decodeRegionLines(JSON.parse(raw)))
   return regionLinesData
@@ -121,23 +122,10 @@ function loadRegionLines() {
 
 type LocalMapControls = { zoomBy: (direction: 'in' | 'out') => void }
 function LocalMapOverlay({ center, width, height, lines, points, interactive, label, onControlsReady, onExit }: { center: { lat: number; lng: number }; width: number; height: number; lines: Array<Array<[number, number]>>; points: GlobePoint[]; interactive: boolean; label: string; onControlsReady: (controls: LocalMapControls | undefined) => void; onExit: () => void }) {
-  const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
-  const viewRef = useRef(view)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const viewRef = useRef({ scale: 1, x: 0, y: 0 })
   const dragRef = useRef<{ pointerId: number; x: number; y: number; viewX: number; viewY: number } | undefined>(undefined)
-  const updateView = useCallback((next: typeof view | ((current: typeof view) => typeof view)) => {
-    const updated = typeof next === 'function' ? next(viewRef.current) : next
-    viewRef.current = updated
-    setView(updated)
-  }, [])
-  const zoomBy = useCallback((direction: 'in' | 'out') => {
-    const nextScale = viewRef.current.scale * (direction === 'in' ? 1.35 : 1 / 1.35)
-    if (direction === 'out' && nextScale < 1.04) { onExit(); return }
-    updateView((current) => ({ ...current, scale: Math.max(1, Math.min(12, nextScale)) }))
-  }, [onExit, updateView])
-  useEffect(() => {
-    onControlsReady(interactive ? { zoomBy } : undefined)
-    return () => onControlsReady(undefined)
-  }, [interactive, onControlsReady, zoomBy])
+  const frameRef = useRef<number | undefined>(undefined)
   const localLines = useMemo(() => nearbyRegionLines(lines, center), [center.lat, center.lng, lines])
   const localCountries = useMemo(() => countryBoundaries.filter((feature) => {
     const code = String(feature.properties.ISO_A2_EH ?? feature.properties.ISO_A2 ?? '')
@@ -150,24 +138,86 @@ function LocalMapOverlay({ center, width, height, lines, points, interactive, la
     const cosine = Math.sin(lat1) * Math.sin(lat2) + Math.cos(lat1) * Math.cos(lat2) * Math.cos(deltaLng)
     return cosine >= Math.cos(88 * radians)
   }), [center.lat, center.lng])
-  const paths = useMemo(() => {
+  const applyTransform = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const { scale, x, y } = viewRef.current
+    canvas.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`
+  }, [])
+  const scheduleTransform = useCallback(() => {
+    if (frameRef.current !== undefined) return
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = undefined
+      applyTransform()
+    })
+  }, [applyTransform])
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const context = canvas?.getContext('2d', { alpha: false })
+    if (!canvas || !context || width < 1 || height < 1) return
+    const ratio = Math.min(2, window.devicePixelRatio || 1)
+    canvas.width = Math.round(width * ratio)
+    canvas.height = Math.round(height * ratio)
+    canvas.style.width = `${width}px`
+    canvas.style.height = `${height}px`
+    context.setTransform(ratio, 0, 0, ratio, 0, 0)
+    const style = getComputedStyle(canvas)
     const projection = geoMercator()
       .center([center.lng, center.lat])
       .scale(width / (110 * Math.PI / 180))
       .translate([width / 2, height / 2])
-    const path = geoPath(projection).digits(1)
-    const countries = path({ type: 'FeatureCollection', features: localCountries } as unknown as GeoPermissibleObjects) ?? ''
-    const regions = localLines.length
-      ? path({ type: 'MultiLineString', coordinates: localLines.map((line) => line.map(([lat, lng]) => [lng, lat])) } as GeoPermissibleObjects) ?? ''
-      : ''
-    const graticule = path(geoGraticule10()) ?? ''
-    const visiblePoints = points.flatMap((point) => {
+    const path = geoPath(projection, context)
+    context.fillStyle = style.getPropertyValue('--app-card').trim() || '#fff'
+    context.fillRect(0, 0, width, height)
+    context.beginPath()
+    path(geoGraticule10())
+    context.strokeStyle = style.getPropertyValue('--app-accent').trim() || '#568cff'
+    context.globalAlpha = 0.1
+    context.lineWidth = 0.7
+    context.stroke()
+    context.beginPath()
+    path({ type: 'FeatureCollection', features: localCountries } as unknown as GeoPermissibleObjects)
+    context.strokeStyle = style.getPropertyValue('--app-muted').trim() || '#78808f'
+    context.globalAlpha = 0.68
+    context.lineWidth = 1.15
+    context.stroke()
+    if (localLines.length) {
+      context.beginPath()
+      path({ type: 'MultiLineString', coordinates: localLines.map((line) => line.map(([lat, lng]) => [lng, lat])) } as GeoPermissibleObjects)
+      context.strokeStyle = style.getPropertyValue('--app-accent').trim() || '#568cff'
+      context.globalAlpha = 0.82
+      context.lineWidth = 1.1
+      context.stroke()
+    }
+    for (const point of points) {
       const position = projection([point.lng, point.lat])
-      return position ? [{ ...point, x: position[0], y: position[1] }] : []
-    })
-    return { countries, regions, graticule, points: visiblePoints }
-  }, [center.lat, center.lng, height, localCountries, localLines, points, width])
-  const onWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
+      if (!position || position[0] < 0 || position[0] > width || position[1] < 0 || position[1] > height) continue
+      context.beginPath()
+      context.arc(position[0], position[1], point.id === ownPointId ? 5 : 3.8, 0, Math.PI * 2)
+      context.fillStyle = point.color
+      context.globalAlpha = 1
+      context.fill()
+      context.strokeStyle = style.getPropertyValue('--app-card').trim() || '#fff'
+      context.lineWidth = 1.5
+      context.stroke()
+    }
+    context.globalAlpha = 1
+    applyTransform()
+  }, [applyTransform, center.lat, center.lng, height, localCountries, localLines, points, width])
+  useEffect(() => () => {
+    if (frameRef.current !== undefined) window.cancelAnimationFrame(frameRef.current)
+  }, [])
+  const zoomBy = useCallback((direction: 'in' | 'out') => {
+    const nextScale = viewRef.current.scale * (direction === 'in' ? 1.35 : 1 / 1.35)
+    if (direction === 'out' && nextScale < 1.04) { onExit(); return }
+    viewRef.current = { ...viewRef.current, scale: Math.max(1, Math.min(12, nextScale)) }
+    scheduleTransform()
+  }, [onExit, scheduleTransform])
+  useEffect(() => {
+    onControlsReady(interactive ? { zoomBy } : undefined)
+    return () => onControlsReady(undefined)
+  }, [interactive, onControlsReady, zoomBy])
+  const onWheel = (event: ReactWheelEvent<HTMLCanvasElement>) => {
     event.preventDefault()
     event.stopPropagation()
     const current = viewRef.current
@@ -176,20 +226,22 @@ function LocalMapOverlay({ center, width, height, lines, points, interactive, la
     const rect = event.currentTarget.getBoundingClientRect()
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
-    updateView({ scale, x: x - (x - current.x) * scale / current.scale, y: y - (y - current.y) * scale / current.scale })
+    viewRef.current = { scale, x: x - (x - width / 2 - current.x) * scale / current.scale - width / 2, y: y - (y - height / 2 - current.y) * scale / current.scale - height / 2 }
+    scheduleTransform()
   }
   return <div className="network-local-map" role="application" aria-label={label} tabIndex={interactive ? 0 : -1} data-interactive={interactive} onKeyDown={(event) => {
     const delta = 48
-    if (event.key === 'ArrowLeft') updateView((current) => ({ ...current, x: current.x + delta }))
-    else if (event.key === 'ArrowRight') updateView((current) => ({ ...current, x: current.x - delta }))
-    else if (event.key === 'ArrowUp') updateView((current) => ({ ...current, y: current.y + delta }))
-    else if (event.key === 'ArrowDown') updateView((current) => ({ ...current, y: current.y - delta }))
+    if (event.key === 'ArrowLeft') viewRef.current.x += delta
+    else if (event.key === 'ArrowRight') viewRef.current.x -= delta
+    else if (event.key === 'ArrowUp') viewRef.current.y += delta
+    else if (event.key === 'ArrowDown') viewRef.current.y -= delta
     else if (event.key === '+' || event.key === '=') zoomBy('in')
     else if (event.key === '-') zoomBy('out')
     else return
+    scheduleTransform()
     event.preventDefault()
   }}>
-    <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} onWheel={onWheel}
+    <canvas ref={canvasRef} className="network-local-map__canvas" width={width} height={height} onWheel={onWheel}
       onPointerDown={(event) => {
         if (!interactive || event.button !== 0) return
         event.currentTarget.setPointerCapture(event.pointerId)
@@ -198,18 +250,12 @@ function LocalMapOverlay({ center, width, height, lines, points, interactive, la
       onPointerMove={(event) => {
         const drag = dragRef.current
         if (!interactive || !drag || drag.pointerId !== event.pointerId) return
-        updateView((current) => ({ ...current, x: drag.viewX + event.clientX - drag.x, y: drag.viewY + event.clientY - drag.y }))
+        viewRef.current.x = drag.viewX + event.clientX - drag.x
+        viewRef.current.y = drag.viewY + event.clientY - drag.y
+        scheduleTransform()
       }}
       onPointerUp={(event) => { if (dragRef.current?.pointerId === event.pointerId) dragRef.current = undefined }}
-      onPointerCancel={() => { dragRef.current = undefined }}>
-      <rect className="network-local-map__surface" width={width} height={height} />
-      <g transform={`translate(${view.x + width / 2 * (1 - view.scale)} ${view.y + height / 2 * (1 - view.scale)}) scale(${view.scale})`}>
-        <path className="network-local-map__graticule" d={paths.graticule} />
-        <path className="network-local-map__countries" d={paths.countries} />
-        {paths.regions && <path className="network-local-map__regions" d={paths.regions} />}
-        {paths.points.map((point) => <circle key={point.id} className="network-local-map__point" cx={point.x} cy={point.y} r={point.id === ownPointId ? 5 : 3.8} style={{ fill: point.color }} />)}
-      </g>
-    </svg>
+      onPointerCancel={() => { dragRef.current = undefined }} />
   </div>
 }
 
@@ -224,8 +270,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const mapCenterRef = useRef<{ lat: number; lng: number } | undefined>(undefined)
   const locationRef = useRef<{ lat: number; lng: number } | undefined>(undefined)
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>()
-  const [mapLines, setMapLines] = useState<Array<Array<[number, number]>>>([])
   const [mapViewport, setMapViewport] = useState({ width: 0, height: 0 })
+  const [regionLines, setRegionLines] = useState<Array<Array<[number, number]>>>()
   const mapInteractiveRef = useRef(false)
   const mapInteractive = Boolean(mapCenter)
   const mapSuppressedRef = useRef(false)
@@ -291,6 +337,28 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     })
     if (scene) countryFacingRef.current = countryLinesFacing(scene)
   }, [hologramMaterial, theme])
+  useEffect(() => {
+    if (!active || regionLines) return
+    let cancelled = false
+    let idleHandle: number | undefined
+    let timeoutHandle: number | undefined
+    const load = () => {
+      void loadRegionLines().then((lines) => {
+        if (!cancelled) setRegionLines(lines)
+      }).catch(() => {})
+    }
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number
+      cancelIdleCallback?: (handle: number) => void
+    }
+    if (idleWindow.requestIdleCallback) idleHandle = idleWindow.requestIdleCallback(load, { timeout: 1200 })
+    else timeoutHandle = window.setTimeout(load, 250)
+    return () => {
+      cancelled = true
+      if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle)
+      if (timeoutHandle !== undefined) window.clearTimeout(timeoutHandle)
+    }
+  }, [active, regionLines])
   useEffect(() => {
     applyHologramStyle()
   }, [applyHologramStyle])
@@ -397,23 +465,16 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   }, [handleZoom, reduceMotion])
   const wantRegions = Boolean(zoom?.regions)
   useEffect(() => {
-    if (!wantRegions || regionsRef.current) return
-    let current = true
-    void loadRegionLines().then((lines) => {
-      const globe = globeRef.current
-      if (!current) return
-      setMapLines(lines)
-      if (!globe || regionsRef.current) return
-      const geometry = new BufferGeometry()
-      geometry.setAttribute('position', new Float32BufferAttribute(regionSegments(lines, (lat, lng) => globe.getCoords(lat, lng, 0.0065)), 3))
-      const regions = new LineSegments(geometry, regionMaterial)
-      regions.renderOrder = 1
-      regionsRef.current = regions
-      // Drawn as the globe's own custom layer, so it turns with the globe.
-      setRegionsLoaded(true)
-    }).catch(() => {})
-    return () => { current = false }
-  }, [wantRegions, regionMaterial])
+    if (!wantRegions || !regionLines || mapInteractiveRef.current || regionsRef.current) return
+    const globe = globeRef.current
+    if (!globe || regionsRef.current) return
+    const geometry = new BufferGeometry()
+    geometry.setAttribute('position', new Float32BufferAttribute(regionSegments(regionLines, (lat, lng) => globe.getCoords(lat, lng, 0.0065)), 3))
+    const regions = new LineSegments(geometry, regionMaterial)
+    regions.renderOrder = 1
+    regionsRef.current = regions
+    setRegionsLoaded(true)
+  }, [wantRegions, regionLines, regionMaterial, mapInteractive])
   useEffect(() => {
     if (regionsRef.current) regionsRef.current.visible = wantRegions
   }, [wantRegions, regionsLoaded])
@@ -530,7 +591,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const ringMaxRadius = useCallback(() => 5, [])
   return <>
   <div ref={containerRef} className="network-globe-canvas" role={mapInteractive ? undefined : 'img'} aria-label={mapInteractive ? undefined : location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-active={active} data-rotation-paused={rotationPaused} data-zoom={zoom?.percent} data-zoom-step={zoomStepCount} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && wantRegions ? 'shown' : 'hidden'} data-local-map={mapInteractive}>
-    {mapCenter && mapViewport.width > 0 && mapViewport.height > 0 && <LocalMapOverlay center={mapCenter} width={mapViewport.width} height={mapViewport.height} lines={mapLines} points={points} interactive label={`${nodeLabel} · ${countryLabel}`} onControlsReady={setLocalMapControls} onExit={exitLocalMap} />}
+    {mapCenter && mapViewport.width > 0 && mapViewport.height > 0 && <LocalMapOverlay center={mapCenter} width={mapViewport.width} height={mapViewport.height} lines={regionLines ?? []} points={points} interactive label={`${nodeLabel} · ${countryLabel}`} onControlsReady={setLocalMapControls} onExit={exitLocalMap} />}
     {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height, visibility: mapInteractive ? 'hidden' : 'visible' }}>
       <Globe
       ref={globeRef}

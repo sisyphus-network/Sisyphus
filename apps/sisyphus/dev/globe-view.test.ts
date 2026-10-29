@@ -42,9 +42,10 @@ test('region lines are wanted only once the globe is brought in past its fit', (
   assert.equal(zoomState(fit / 2, limits).percent, 200)
 })
 
-test('the local map activates only after one deliberate close-zoom threshold', () => {
-  assert.equal(localMapThresholdReached(fit * 0.67, fit), false)
-  assert.equal(localMapThresholdReached(fit * 0.66, fit), true)
+test('the local map activates at the first detailed-region zoom threshold', () => {
+  assert.equal(localMapThresholdReached(fit * 0.851, fit), false)
+  assert.equal(localMapThresholdReached(fit * 0.85, fit), false)
+  assert.equal(localMapThresholdReached(fit * 0.849, fit), true)
   assert.equal(localMapThresholdReached(fit * 0.5, fit), true)
 })
 

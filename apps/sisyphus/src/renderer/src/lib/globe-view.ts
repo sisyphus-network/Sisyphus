@@ -35,10 +35,10 @@ export function zoomState(distance: number, limits: ZoomLimits): ZoomState {
   }
 }
 
-// Switch into the local map at one deliberate zoom threshold, not during the
-// whole zoom gesture. The slight margin gives the map a clear close-up state.
+// Switch to the local map at the same threshold where detailed region lines
+// first appear, so the globe never has to render both heavy views together.
 export function localMapThresholdReached(distance: number, fit: number): boolean {
-  return distance <= fit * 0.66
+  return distance < fit * 0.85
 }
 
 // The regional map only needs boundaries near its centre. Keep the scan cheap,
