@@ -1059,8 +1059,8 @@ test('resizing the topology pane pauses and resumes the globe smoothly', async (
       return canvas?.getAttribute('data-active') === 'true' && canvas.getAttribute('data-rotation-paused') === 'true'
     })
 
-    const easedDuration = await slot.evaluate((element) => getComputedStyle(element).transitionDuration)
-    assert.match(easedDuration, /0\.11s/, 'the pane should use a short easing transition while tracking the drag')
+    const dragTransition = await slot.evaluate((element) => getComputedStyle(element).transitionDuration)
+    assert.match(dragTransition, /0s/, 'the pane should track the pointer directly without lagging transitions')
     await page.waitForTimeout(150)
     const resizedBox = await slot.boundingBox()
     const dragBuffer = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
