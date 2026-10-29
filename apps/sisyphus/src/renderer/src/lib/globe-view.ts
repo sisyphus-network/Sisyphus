@@ -44,6 +44,30 @@ export function localMapProgress(distance: number, fit: number): number {
   return t * t * (3 - 2 * t)
 }
 
+// The regional map only needs boundaries near its centre. Keep the scan cheap,
+// then simplify retained lines before handing them to the SVG path generator.
+export function nearbyRegionLines(lines: Array<Array<[number, number]>>, center: { lat: number; lng: number }, radiusDegrees = 78): Array<Array<[number, number]>> {
+  const radians = Math.PI / 180
+  const centerLat = center.lat * radians
+  const centerLng = center.lng * radians
+  const minCosine = Math.cos(radiusDegrees * radians)
+  const local: Array<Array<[number, number]>> = []
+  for (const line of lines) {
+    let near = false
+    for (let index = 0; index < line.length; index += 4) {
+      const [lat, lng] = line[index]
+      const pointLat = lat * radians
+      const deltaLng = (lng * radians) - centerLng
+      const cosine = Math.sin(centerLat) * Math.sin(pointLat) + Math.cos(centerLat) * Math.cos(pointLat) * Math.cos(deltaLng)
+      if (cosine >= minCosine) { near = true; break }
+    }
+    if (!near) continue
+    const simplified = line.filter((_, index) => index % 3 === 0 || index === line.length - 1)
+    if (simplified.length > 1) local.push(simplified)
+  }
+  return local
+}
+
 // How fast the globe turns by itself, slower as it is brought in, so the
 // ground does not race past.
 export function autoRotateSpeed(distance: number, radius: number, limits: ZoomLimits): number {
