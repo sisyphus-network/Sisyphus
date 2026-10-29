@@ -993,18 +993,20 @@ test('a collapsed workspace panel reopens by dragging its visible handle', async
     await handle.waitFor()
     const slot = page.locator('.workspace-topology-slot')
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const direction = await page.locator('html').getAttribute('dir')
+    const towardChat = direction === 'rtl' ? -1 : 1
     const box = await handle.boundingBox()
     assert.ok(box)
     // Pull toward chat beyond the closing threshold. Pointer capture must keep
     // the same drag alive even though the handle/panel geometry changes.
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
     await page.mouse.down()
-    await page.mouse.move(box.x + box.width / 2 + 430, box.y + box.height / 2, { steps: 12 })
+    await page.mouse.move(box.x + box.width / 2 + towardChat * 430, box.y + box.height / 2, { steps: 12 })
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
     const closedHandle = await handle.boundingBox()
     assert.ok(closedHandle, 'the collapsed resize handle disappeared')
     // Keep holding the original pointer and drag back across the handle to reopen.
-    await page.mouse.move(closedHandle.x + closedHandle.width / 2 - 220, closedHandle.y + closedHandle.height / 2, { steps: 10 })
+    await page.mouse.move(closedHandle.x + closedHandle.width / 2 - towardChat * 220, closedHandle.y + closedHandle.height / 2, { steps: 10 })
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
     await page.mouse.up()
     await page.waitForTimeout(400)
@@ -1017,6 +1019,70 @@ test('a collapsed workspace panel reopens by dragging its visible handle', async
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
     await handle.press('Enter')
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('resizing the topology pane pauses and resumes the globe smoothly', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the topology canvas no WebGL')
+    }
+    await wide(app, page)
+    const handle = page.getByRole('separator', { name: 'Resize topology panel' })
+    const slot = page.locator('.workspace-topology-slot')
+    const canvas = slot.locator('.network-globe-canvas canvas')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    await canvas.waitFor()
+    await page.waitForTimeout(450)
+
+    const direction = await page.locator('html').getAttribute('dir')
+    const growToward = direction === 'rtl' ? 1 : -1
+    const handleBox = await handle.boundingBox()
+    const paneBox = await slot.boundingBox()
+    const initialBuffer = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
+    assert.ok(handleBox && paneBox && initialBuffer.width > 0 && initialBuffer.height > 0)
+
+    const x = handleBox.x + handleBox.width / 2
+    const y = handleBox.y + handleBox.height / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + growToward * 120, y, { steps: 8 })
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-resizing') === 'true')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot .network-globe-canvas')?.getAttribute('data-active') === 'false')
+
+    const easedDuration = await slot.evaluate((element) => getComputedStyle(element).transitionDuration)
+    assert.match(easedDuration, /0\.11s/, 'the pane should use a short easing transition while tracking the drag')
+    await page.waitForTimeout(150)
+    const resizedBox = await slot.boundingBox()
+    const dragBuffer = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
+    assert.ok(resizedBox && resizedBox.width > paneBox.width + 40, 'the pane did not follow the drag')
+    assert.deepEqual(dragBuffer, initialBuffer, 'the drawing buffer resized before the drag finished')
+    const centeredDuringDrag = await page.evaluate(() => {
+      const visual = document.querySelector('.network-visual')?.getBoundingClientRect()
+      const stage = document.querySelector('.network-globe-stage')?.getBoundingClientRect()
+      const canvas = document.querySelector('.network-globe-stage canvas')?.getBoundingClientRect()
+      if (!visual || !stage || !canvas) return false
+      const visualCenterX = visual.left + visual.width / 2
+      const visualCenterY = visual.top + visual.height / 2
+      return Math.abs(stage.left + stage.width / 2 - visualCenterX) <= 2
+        && Math.abs(stage.top + stage.height / 2 - visualCenterY) <= 2
+        && Math.abs(canvas.left + canvas.width / 2 - visualCenterX) <= 2
+        && Math.abs(canvas.top + canvas.height / 2 - visualCenterY) <= 2
+    })
+    assert.ok(centeredDuringDrag, 'the globe stage or canvas drifted away from the pane center during the drag')
+
+    await page.mouse.up()
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-resizing') === 'false' && document.querySelector('.workspace-topology-slot .network-globe-canvas')?.getAttribute('data-active') === 'true')
+    await page.waitForFunction(([width, height]) => {
+      const element = document.querySelector<HTMLCanvasElement>('.workspace-topology-slot .network-globe-canvas canvas')
+      return element && (element.width !== width || element.height !== height)
+    }, [initialBuffer.width, initialBuffer.height])
   } finally {
     await app.close()
     profile.remove()
