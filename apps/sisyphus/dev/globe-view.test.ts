@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, statSync } from 'node:fs'
 import test from 'node:test'
-import { autoRotateSpeed, clampDistance, decodeRegionLines, localMapProgress, nearbyRegionLines, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
+import { autoRotateSpeed, clampDistance, decodeRegionLines, localMapThresholdReached, nearbyRegionLines, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
 
 const radius = 100
 const fit = 255
@@ -42,14 +42,10 @@ test('region lines are wanted only once the globe is brought in past its fit', (
   assert.equal(zoomState(fit / 2, limits).percent, 200)
 })
 
-test('the local map unfolds smoothly between the globe and a close regional view', () => {
-  assert.equal(localMapProgress(fit, fit), 0)
-  assert.equal(localMapProgress(fit * 0.88, fit), 0)
-  assert.ok(localMapProgress(fit * 0.8, fit) > 0)
-  assert.equal(localMapProgress(fit * 0.64, fit), 1)
-  assert.equal(localMapProgress(fit * 0.5, fit), 1)
-  const samples = [0.88, 0.82, 0.76, 0.70, 0.64].map((share) => localMapProgress(fit * share, fit))
-  assert.ok(samples.every((value, index) => index === 0 || value >= samples[index - 1]))
+test('the local map activates only after one deliberate close-zoom threshold', () => {
+  assert.equal(localMapThresholdReached(fit * 0.67, fit), false)
+  assert.equal(localMapThresholdReached(fit * 0.66, fit), true)
+  assert.equal(localMapThresholdReached(fit * 0.5, fit), true)
 })
 
 test('the local map keeps nearby region lines and simplifies them before drawing', () => {

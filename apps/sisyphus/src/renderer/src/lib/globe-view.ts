@@ -35,13 +35,10 @@ export function zoomState(distance: number, limits: ZoomLimits): ZoomState {
   }
 }
 
-// Begin unfolding after regional lines are already visible; ease to a local
-// azimuthal map as the camera approaches the surface.
-export function localMapProgress(distance: number, fit: number): number {
-  const start = fit * 0.88
-  const end = fit * 0.64
-  const t = Math.min(1, Math.max(0, (start - distance) / (start - end)))
-  return t * t * (3 - 2 * t)
+// Switch into the local map at one deliberate zoom threshold, not during the
+// whole zoom gesture. The slight margin gives the map a clear close-up state.
+export function localMapThresholdReached(distance: number, fit: number): boolean {
+  return distance <= fit * 0.66
 }
 
 // The regional map only needs boundaries near its centre. Keep the scan cheap,

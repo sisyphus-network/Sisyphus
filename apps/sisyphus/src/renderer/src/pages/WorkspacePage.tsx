@@ -22,7 +22,7 @@ import { cityEstimateFromProtocol, nodeDetails, peerDetails, poolWorkers, render
 import { SharedStateDomain } from '@sisyphus/client'
 import { sharedStateDomainCode } from '@/lib/shared-state-domain'
 import { useWebgl } from '@/hooks/use-webgl'
-import { autoRotateSpeed, decodeRegionLines, localMapProgress, nearbyRegionLines, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
+import { autoRotateSpeed, decodeRegionLines, localMapThresholdReached, nearbyRegionLines, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
 
 type Messages = ReturnType<typeof getMessages>
 function connected(peer: NodeSnapshot['peers'][number]) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
@@ -120,7 +120,7 @@ function loadRegionLines() {
 }
 
 type LocalMapControls = { zoomBy: (direction: 'in' | 'out') => void }
-function LocalMapOverlay({ center, width, height, lines, points, interactive, onControlsReady, onExit }: { center: { lat: number; lng: number }; width: number; height: number; lines: Array<Array<[number, number]>>; points: GlobePoint[]; interactive: boolean; onControlsReady: (controls: LocalMapControls | undefined) => void; onExit: () => void }) {
+function LocalMapOverlay({ center, width, height, lines, points, interactive, label, onControlsReady, onExit }: { center: { lat: number; lng: number }; width: number; height: number; lines: Array<Array<[number, number]>>; points: GlobePoint[]; interactive: boolean; label: string; onControlsReady: (controls: LocalMapControls | undefined) => void; onExit: () => void }) {
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
   const viewRef = useRef(view)
   const dragRef = useRef<{ pointerId: number; x: number; y: number; viewX: number; viewY: number } | undefined>(undefined)
@@ -178,7 +178,17 @@ function LocalMapOverlay({ center, width, height, lines, points, interactive, on
     const y = event.clientY - rect.top
     updateView({ scale, x: x - (x - current.x) * scale / current.scale, y: y - (y - current.y) * scale / current.scale })
   }
-  return <div className="network-local-map" aria-hidden={!interactive} data-interactive={interactive}>
+  return <div className="network-local-map" role="application" aria-label={label} tabIndex={interactive ? 0 : -1} data-interactive={interactive} onKeyDown={(event) => {
+    const delta = 48
+    if (event.key === 'ArrowLeft') updateView((current) => ({ ...current, x: current.x + delta }))
+    else if (event.key === 'ArrowRight') updateView((current) => ({ ...current, x: current.x - delta }))
+    else if (event.key === 'ArrowUp') updateView((current) => ({ ...current, y: current.y + delta }))
+    else if (event.key === 'ArrowDown') updateView((current) => ({ ...current, y: current.y - delta }))
+    else if (event.key === '+' || event.key === '=') zoomBy('in')
+    else if (event.key === '-') zoomBy('out')
+    else return
+    event.preventDefault()
+  }}>
     <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} onWheel={onWheel}
       onPointerDown={(event) => {
         if (!interactive || event.button !== 0) return
@@ -216,8 +226,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>()
   const [mapLines, setMapLines] = useState<Array<Array<[number, number]>>>([])
   const [mapViewport, setMapViewport] = useState({ width: 0, height: 0 })
-  const [mapInteractive, setMapInteractive] = useState(false)
   const mapInteractiveRef = useRef(false)
+  const mapInteractive = Boolean(mapCenter)
   const mapSuppressedRef = useRef(false)
   const mapControlsRef = useRef<LocalMapControls | undefined>(undefined)
   // Button steps still under way. The buttons take their last state only when
@@ -320,9 +330,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const center = mapCenterRef.current ?? globe.pointOfView()
     mapSuppressedRef.current = true
     mapInteractiveRef.current = false
-    setMapInteractive(false)
     mapCenterRef.current = undefined
     setMapCenter(undefined)
+    globe.resumeAnimation()
     globe.controls().enableZoom = true
     globe.controls().enableRotate = true
     globe.controls().autoRotate = !reduceMotion && active && !rotationPaused
@@ -341,29 +351,24 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     globe.controls().autoRotateSpeed = autoRotateSpeed(distance, globe.getGlobeRadius(), limits)
     const next = zoomState(distance, limits)
     countryBackShare.value = next.regions ? 0 : 0.3
-    const progress = localMapProgress(distance, limits.fit)
     if (mapSuppressedRef.current && distance > limits.fit * 0.94) mapSuppressedRef.current = false
-    if (!mapCenterRef.current && progress > 0 && !mapSuppressedRef.current) {
+    if (!mapCenterRef.current && localMapThresholdReached(distance, limits.fit) && !mapSuppressedRef.current) {
       const view = globe.pointOfView()
       mapCenterRef.current = locationRef.current ?? { lat: view.lat, lng: view.lng }
+      mapInteractiveRef.current = true
       setMapCenter(mapCenterRef.current)
       globe.controls().autoRotate = false
       globe.controls().enableRotate = false
+      globe.controls().enableZoom = false
+      globe.pauseAnimation()
     } else if (mapCenterRef.current && distance > limits.fit * 0.91) {
       mapCenterRef.current = undefined
       setMapCenter(undefined)
       globe.controls().autoRotate = !reduceMotion && active && !rotationPaused
       globe.controls().enableRotate = true
-    }
-    if (mapCenterRef.current && progress >= 0.995 && !mapInteractiveRef.current) {
-      mapInteractiveRef.current = true
-      setMapInteractive(true)
-      globe.controls().enableZoom = false
-    }
-    const container = containerRef.current
-    if (container) {
-      container.style.setProperty('--local-map-progress', String(progress))
-      container.style.setProperty('--local-map-inset', `${(1 - progress) * 49}%`)
+      globe.controls().enableZoom = true
+      mapInteractiveRef.current = false
+      globe.resumeAnimation()
     }
     const displayZoom = { ...next, percent: Math.round(next.percent / 5) * 5 }
     setZoom((current) => current && current.canZoomIn === displayZoom.canZoomIn && current.canZoomOut === displayZoom.canZoomOut && current.regions === displayZoom.regions && current.percent === displayZoom.percent ? current : displayZoom)
@@ -524,9 +529,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const rendererConfig = useMemo(() => ({ alpha: true, antialias: true, powerPreference: 'low-power' as const }), [])
   const ringMaxRadius = useCallback(() => 5, [])
   return <>
-  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-active={active} data-rotation-paused={rotationPaused} data-zoom={zoom?.percent} data-zoom-step={zoomStepCount} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && wantRegions ? 'shown' : 'hidden'}>
-    {mapCenter && mapViewport.width > 0 && mapViewport.height > 0 && <LocalMapOverlay center={mapCenter} width={mapViewport.width} height={mapViewport.height} lines={mapLines} points={points} interactive={mapInteractive} onControlsReady={setLocalMapControls} onExit={exitLocalMap} />}
-    {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
+  <div ref={containerRef} className="network-globe-canvas" role={mapInteractive ? undefined : 'img'} aria-label={mapInteractive ? undefined : location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-active={active} data-rotation-paused={rotationPaused} data-zoom={zoom?.percent} data-zoom-step={zoomStepCount} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && wantRegions ? 'shown' : 'hidden'} data-local-map={mapInteractive}>
+    {mapCenter && mapViewport.width > 0 && mapViewport.height > 0 && <LocalMapOverlay center={mapCenter} width={mapViewport.width} height={mapViewport.height} lines={mapLines} points={points} interactive label={`${nodeLabel} · ${countryLabel}`} onControlsReady={setLocalMapControls} onExit={exitLocalMap} />}
+    {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height, visibility: mapInteractive ? 'hidden' : 'visible' }}>
       <Globe
       ref={globeRef}
       width={size.width}
