@@ -311,6 +311,12 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   }, [fitCameraToViewport, size.width > 0])
 
   useEffect(() => {
+    if (size.width === 0 || size.height === 0) return
+    const renderer = globeRef.current?.renderer()
+    if (renderer && renderer.getPixelRatio() < 2) renderer.setPixelRatio(2)
+  }, [size.width > 0])
+
+  useEffect(() => {
     const globe = globeRef.current
     if (!globe) return
     globe.controls().autoRotate = !reduceMotion && active && !rotationPaused
