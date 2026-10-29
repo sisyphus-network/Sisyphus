@@ -380,6 +380,8 @@
 .globe-zoom button:hover:not(:disabled) { background: color-mix(in srgb, var(--app-accent) 10%, transparent); color: var(--app-ink); }
 .globe-zoom button:focus-visible { outline: 2px solid var(--app-accent); outline-offset: -2px; }
 .globe-zoom button:disabled { opacity: 0.4; cursor: default; }
-/* Brought in past its fit, the globe is seen through a round window rather
-   than cut off at its square stage. */
-.network-globe-canvas[data-zoomed="true"] .network-globe-stage canvas { clip-path: circle(50%); }
+/* Keep the globe round while it is a globe. Once it morphs into a map, let
+   the full rectangular pane become the map viewport so panning feels natural. */
+.network-globe-canvas[data-zoomed="true"]:not([data-local-map="true"]) .network-globe-stage canvas { clip-path: circle(50%); }
+.network-globe-canvas[data-local-map="true"] .network-globe-stage canvas { clip-path: none; touch-action: none; cursor: grab; }
+.network-globe-canvas[data-local-map="true"] .network-globe-stage canvas:active { cursor: grabbing; }

@@ -585,9 +585,14 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       if (rotationPaused && now - lastMeasureAt < 32) return
       lastMeasureAt = now
       const rect = container.getBoundingClientRect()
-      const diameter = Math.floor(Math.min(rect.width, rect.height, window.innerWidth, window.innerHeight) * 0.9)
-      if (diameter < 1) return
-      setSize((current) => current.width === diameter && current.height === diameter ? current : { width: diameter, height: diameter })
+      const nextSize = mapInteractive
+        ? { width: Math.floor(Math.min(rect.width, window.innerWidth)), height: Math.floor(Math.min(rect.height, window.innerHeight)) }
+        : (() => {
+            const diameter = Math.floor(Math.min(rect.width, rect.height, window.innerWidth, window.innerHeight) * 0.9)
+            return { width: diameter, height: diameter }
+          })()
+      if (nextSize.width < 1 || nextSize.height < 1) return
+      setSize((current) => current.width === nextSize.width && current.height === nextSize.height ? current : nextSize)
     }
     const updateSize = () => {
       if (frame) return
@@ -605,10 +610,10 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       observer.disconnect()
       window.removeEventListener('resize', updateSize)
     }
-  }, [rotationPaused, suspendResize])
+  }, [mapInteractive, rotationPaused, suspendResize])
   useEffect(() => {
     if (size.width > 0 && size.height > 0) fitCameraToViewport()
-  }, [fitCameraToViewport, size.width > 0])
+  }, [fitCameraToViewport, size.width, size.height])
 
   useEffect(() => {
     if (size.width === 0 || size.height === 0) return
