@@ -851,8 +851,11 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const pickPoint = useCallback((point: object) => onPickPoint((point as GlobePoint).id), [onPickPoint])
   const rings = useMemo(() => location ? [{ ...location, maxRadius: 5, propagationSpeed: 2, repeatPeriod: 1200 }] : [], [location])
   const visibleRings = useMemo(() => mapInteractive || mapLayout ? [] : rings, [mapInteractive, mapLayout, rings])
-  const polygonCapColor = useCallback(() => 'rgba(0,0,0,0)', [])
-  const polygonSideColor = useCallback(() => 'rgba(0,0,0,0)', [])
+  // An alpha-zero color still asks three-globe to build spherical polygon
+  // faces with depth writing enabled. Those invisible faces occlude the flat
+  // map and its markers, so use an empty color to omit the faces altogether.
+  const polygonCapColor = useCallback(() => '', [])
+  const polygonSideColor = useCallback(() => '', [])
   const polygonStrokeColor = useCallback(() => {
     const { r, g, b } = new Color(theme.accent)
     const opacity = theme.dark ? countryLineOpacity.dark : countryLineOpacity.light
