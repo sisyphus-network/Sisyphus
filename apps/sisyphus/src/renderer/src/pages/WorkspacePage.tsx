@@ -21,7 +21,7 @@ import { cityEstimateFromProtocol, nodeDetails, peerDetails, poolWorkers, render
 import { SharedStateDomain } from '@sisyphus/client'
 import { sharedStateDomainCode } from '@/lib/shared-state-domain'
 import { useWebgl } from '@/hooks/use-webgl'
-import { autoRotateSpeed, decodeRegionLines, localMapThresholdReached, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
+import { autoRotateSpeed, decodeRegionLines, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
 
 type Messages = ReturnType<typeof getMessages>
 function connected(peer: NodeSnapshot['peers'][number]) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
@@ -68,11 +68,6 @@ const ownPointId = 'this-node'
 type GlobePoint = { id: string; lat: number; lng: number; label: string; color: string }
 const mapMorph = { value: 0 }
 const flatMapScale = { value: 0 }
-
-function mercatorLatitude(latitude: number) {
-  const radians = Math.max(-85, Math.min(85, latitude)) * Math.PI / 180
-  return Math.log(Math.tan(Math.PI / 4 + radians / 2))
-}
 
 function flatMapPoint(lat: number, lng: number, center: { lat: number; lng: number }, radius: number): [number, number, number] {
   const delta = ((lng - center.lng + 540) % 360) - 180
@@ -200,7 +195,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const globeSurfaceRef = useRef<Mesh | undefined>(undefined)
   const mapPointsRef = useRef<ThreePoints | undefined>(undefined)
   const mapInteractiveRef = useRef(false)
-  const mapPointerRef = useRef<{ pointerId: number; x: number; y: number } | undefined>(undefined)
+  const mapPointersRef = useRef(new Map<number, { x: number; y: number }>())
   const mapInteractive = Boolean(mapCenter)
   const mapSuppressedRef = useRef(false)
   // Button steps still under way. The buttons take their last state only when
@@ -322,15 +317,15 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     // moves in camera space and makes the flat map drift in depth.
     controls.enablePan = false
     controls.autoRotate = !reduceMotion && active && !mapCenterRef.current && mapMorph.value <= 0.001
-    const cameraDistance = camera.position.distanceTo(controls.target)
+    const cameraDistance = mapInteractiveRef.current && !controls.enabled ? camera.position.z : camera.position.distanceTo(controls.target)
     controls.autoRotateSpeed = autoRotateSpeed(cameraDistance, radius, limits)
     controls.enableDamping = true
-    controls.update()
+    if (controls.enabled) controls.update()
     const next = zoomState(cameraDistance, limits)
     const displayZoom = { ...next, percent: Math.round(next.percent / 5) * 5 }
     setZoom((current) => current && current.canZoomIn === displayZoom.canZoomIn && current.canZoomOut === displayZoom.canZoomOut && current.regions === displayZoom.regions && current.percent === displayZoom.percent ? current : displayZoom)
   }, [active, reduceMotion])
-  const animateMorph = useCallback((target: number, onComplete?: () => void) => {
+  const animateMorph = useCallback((target: number, onComplete?: () => void, onFrame?: (progress: number) => void) => {
     if (morphFrameRef.current !== undefined) window.cancelAnimationFrame(morphFrameRef.current)
     const from = mapMorph.value
     const duration = reduceMotion ? 0 : 760
@@ -339,6 +334,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       const progress = duration === 0 ? 1 : Math.min(1, (now - startedAt) / duration)
       const eased = progress * progress * (3 - 2 * progress)
       mapMorph.value = from + (target - from) * eased
+      onFrame?.(eased)
       const surface = globeSurfaceRef.current
       if (surface) surface.rotation.y = -Math.PI / 2 * (1 - mapMorph.value)
       if (mapPointsRef.current?.material instanceof PointsMaterial) mapPointsRef.current.material.opacity = mapMorph.value
@@ -376,6 +372,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
           indexedGeometry.dispose()
         }
         addFlatPositionAttribute(line.geometry, center, radius)
+        line.userData.mapOriginalFrustumCulled = line.frustumCulled
+        line.frustumCulled = false
         for (const material of Array.isArray(line.material) ? line.material : [line.material]) {
           if (material instanceof LineBasicMaterial && material.userData.facing !== true) {
             drawFacing(material, parentType === 'polygon' ? countryBackShare : regionBackShare)
@@ -415,6 +413,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
         setRegionsLoaded(true)
       }
       addFlatPositionAttribute(regions.geometry, center, radius)
+      regions.frustumCulled = false
       regions.visible = true
     }
   }, [regionMaterial])
@@ -422,7 +421,16 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const globe = globeRef.current
     const limits = limitsRef.current
     if (!globe || !limits || !mapCenterRef.current) return
-    const center = mapCenterRef.current
+    const mapOrigin = mapCenterRef.current
+    const camera = globe.camera() as PerspectiveCamera
+    const scale = flatMapScale.value || globe.getGlobeRadius() * 0.52
+    const center = mapLocationAtOffset(mapOrigin, camera.position.x, camera.position.y, scale)
+    const destination = globe.getCoords(center.lat, center.lng, limits.fit * 0.96 / globe.getGlobeRadius() - 1)
+    const startPosition = camera.position.clone()
+    const startOrientation = camera.quaternion.clone()
+    const destinationCamera = camera.clone()
+    destinationCamera.position.set(destination.x, destination.y, destination.z)
+    destinationCamera.lookAt(0, 0, 0)
     mapSuppressedRef.current = true
     mapInteractiveRef.current = false
     mapCenterRef.current = undefined
@@ -430,11 +438,11 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     countryBackShare.value = 0.3
     regionBackShare.value = 0
     const controls = globe.controls()
+    controls.enabled = false
     controls.enableZoom = false
     controls.enablePan = false
     controls.enableRotate = false
     controls.target.set(0, 0, 0)
-    globe.pointOfView({ lat: center.lat, lng: center.lng, altitude: limits.fit * 0.96 / globe.getGlobeRadius() - 1 }, reduceMotion ? 0 : 680)
     const scene = globe.scene()
     scene.traverse((object) => {
       if ((object as { __globeObjType?: string }).__globeObjType === 'atmosphere') object.visible = true
@@ -442,20 +450,56 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     animateMorph(0, () => {
       scene.traverse((object) => {
         if ((object as { __globeObjType?: string }).__globeObjType === 'points' || (object as { __globeObjType?: string }).__globeObjType === 'rings') object.visible = true
+        const line = object as LineSegments
+        if (line.isLineSegments && typeof line.userData.mapOriginalFrustumCulled === 'boolean') {
+          line.frustumCulled = line.userData.mapOriginalFrustumCulled
+          delete line.userData.mapOriginalFrustumCulled
+        }
       })
       const pointsLayer = mapPointsRef.current
       pointsLayer?.removeFromParent()
       pointsLayer?.geometry.dispose()
       if (pointsLayer?.material instanceof PointsMaterial) pointsLayer.material.dispose()
       mapPointsRef.current = undefined
-      if (regionsRef.current) regionsRef.current.visible = false
+      if (regionsRef.current) {
+        regionsRef.current.visible = false
+        regionsRef.current.frustumCulled = true
+      }
+      controls.enabled = true
       controls.enableZoom = true
       controls.enablePan = false
       controls.enableRotate = true
       controls.autoRotate = !reduceMotion && active && !rotationPaused
+      controls.update()
       globe.resumeAnimation()
+    }, (progress) => {
+      camera.position.lerpVectors(startPosition, destinationCamera.position, progress)
+      camera.quaternion.slerpQuaternions(startOrientation, destinationCamera.quaternion, progress)
     })
   }, [active, animateMorph, reduceMotion, rotationPaused])
+  const zoomMap = useCallback((factor: number, clientX?: number, clientY?: number) => {
+    const globe = globeRef.current
+    if (!globe || !mapInteractiveRef.current || mapMorph.value < 0.999) return
+    const camera = globe.camera() as PerspectiveCamera
+    const radius = globe.getGlobeRadius()
+    const planeZ = radius * 0.008
+    const distance = Math.max(0.01, camera.position.z - planeZ)
+    const requested = distance * factor
+    if (requested > radius * 4.8) {
+      exitLocalMap()
+      return
+    }
+    const next = Math.max(radius * 0.25, requested)
+    if (clientX !== undefined && clientY !== undefined) {
+      const rect = globe.renderer().domElement.getBoundingClientRect()
+      if (rect.height > 0) {
+        const shift = mapZoomAnchorShift(distance, next, camera.fov, rect.height, clientX - (rect.left + rect.width / 2), clientY - (rect.top + rect.height / 2))
+        camera.position.x += shift.x
+        camera.position.y += shift.y
+      }
+    }
+    camera.position.z = planeZ + next
+  }, [exitLocalMap])
   // Whenever the camera moves in or out, by wheel, pinch or button.
   const handleZoom = useCallback(() => {
     const globe = globeRef.current
@@ -489,13 +533,21 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       // the morph must continue from the user's current zoom, not reset it.
       globe.pointOfView({ lat: 0, lng: 0, altitude }, reduceMotion ? 0 : 760)
       animateMorph(1, () => {
+        // globe.gl's control-change listener always resets its target to the
+        // globe centre. Stop those controls entirely while the camera is a map.
+        globe.pointOfView({ lat: 0, lng: 0, altitude }, 0)
+        controls.enabled = false
+        const camera = globe.camera() as PerspectiveCamera
+        camera.lookAt(0, 0, 0)
+        countryBackShare.value = 1
+        regionBackShare.value = 1
         globe.scene().traverse((object) => {
           const type = (object as { __globeObjType?: string }).__globeObjType
           if (type === 'atmosphere' || type === 'points' || type === 'rings') object.visible = false
         })
         controls.minDistance = radius * 1.25
         controls.maxDistance = radius * 5.5
-        controls.enableZoom = true
+        controls.enableZoom = false
         controls.enablePan = false
         controls.enableRotate = false
         globe.resumeAnimation()
@@ -507,40 +559,44 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     setZoom((current) => current && current.canZoomIn === displayZoom.canZoomIn && current.canZoomOut === displayZoom.canZoomOut && current.regions === displayZoom.regions && current.percent === displayZoom.percent ? current : displayZoom)
   }, [active, animateMorph, exitLocalMap, prepareFlatMap, reduceMotion, rotationPaused])
   const startMapPan = useCallback((event: PointerEvent) => {
-    if (!mapInteractiveRef.current || mapMorph.value < 0.999 || event.button !== 0) return
-    if (event.target instanceof Element && event.target.closest('button, [role="button"], .float-tooltip-kap')) return
-    mapPointerRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
+    if (!mapInteractiveRef.current || mapMorph.value < 0.999 || (event.pointerType === 'mouse' && event.button !== 0)) return
+    if (mapPointersRef.current.size >= 2) return
+    mapPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     containerRef.current?.setAttribute('data-map-dragging', 'true')
     ;(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId)
     event.preventDefault()
   }, [])
   const moveMapPan = useCallback((event: PointerEvent) => {
-    const drag = mapPointerRef.current
+    const pointers = mapPointersRef.current
+    const drag = pointers.get(event.pointerId)
     const globe = globeRef.current
-    if (!drag || drag.pointerId !== event.pointerId || !globe) return
+    if (!drag || !globe || !mapInteractiveRef.current) return
     const canvas = event.currentTarget as HTMLCanvasElement
     const height = canvas.getBoundingClientRect().height
     if (height < 1) return
     const camera = globe.camera() as PerspectiveCamera
-    const controls = globe.controls()
-    const distance = camera.position.distanceTo(controls.target)
-    const worldPerPixel = 2 * distance * Math.tan(camera.fov * Math.PI / 360) / height
-    const deltaX = (event.clientX - drag.x) * worldPerPixel
-    const deltaY = (event.clientY - drag.y) * worldPerPixel
+    const distance = Math.max(0.01, camera.position.z - globe.getGlobeRadius() * 0.008)
+    const worldPerPixel = mapUnitsPerPixel(distance, camera.fov, height)
+    const other = [...pointers.entries()].find(([id]) => id !== event.pointerId)?.[1]
+    const previousDistance = other ? Math.hypot(drag.x - other.x, drag.y - other.y) : 0
+    const divisor = other ? 2 : 1
+    const deltaX = (event.clientX - drag.x) * worldPerPixel / divisor
+    const deltaY = (event.clientY - drag.y) * worldPerPixel / divisor
     drag.x = event.clientX
     drag.y = event.clientY
-    // A map is a plane: translate only in XY and preserve depth/orientation.
+    // OrbitControls is disabled here: neither panning nor zooming can reset
+    // the map camera's position or turn it back toward the globe's centre.
     camera.position.x -= deltaX
     camera.position.y += deltaY
-    controls.target.x -= deltaX
-    controls.target.y += deltaY
-    controls.update()
+    if (other && previousDistance > 0) {
+      const nextDistance = Math.hypot(drag.x - other.x, drag.y - other.y)
+      if (nextDistance > 0) zoomMap(previousDistance / nextDistance, (drag.x + other.x) / 2, (drag.y + other.y) / 2)
+    }
     event.preventDefault()
-  }, [])
+  }, [zoomMap])
   const endMapPan = useCallback((event: PointerEvent) => {
-    if (mapPointerRef.current?.pointerId !== event.pointerId) return
-    mapPointerRef.current = undefined
-    containerRef.current?.removeAttribute('data-map-dragging')
+    if (!mapPointersRef.current.delete(event.pointerId)) return
+    if (mapPointersRef.current.size === 0) containerRef.current?.removeAttribute('data-map-dragging')
     const canvas = event.currentTarget as HTMLCanvasElement
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
   }, [])
@@ -552,29 +608,31 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     canvas.addEventListener('pointermove', moveMapPan)
     canvas.addEventListener('pointerup', endMapPan)
     canvas.addEventListener('pointercancel', endMapPan)
+    canvas.addEventListener('lostpointercapture', endMapPan)
+    const onWheel = (event: WheelEvent) => {
+      if (!mapInteractiveRef.current || mapMorph.value < 0.999) return
+      event.preventDefault()
+      const delta = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? canvas.clientHeight : 1)
+      zoomMap(Math.exp(Math.max(-1, Math.min(1, delta * 0.0015))), event.clientX, event.clientY)
+    }
+    canvas.addEventListener('wheel', onWheel, { passive: false })
     return () => {
       canvas.removeEventListener('pointerdown', startMapPan)
       canvas.removeEventListener('pointermove', moveMapPan)
       canvas.removeEventListener('pointerup', endMapPan)
       canvas.removeEventListener('pointercancel', endMapPan)
+      canvas.removeEventListener('lostpointercapture', endMapPan)
+      canvas.removeEventListener('wheel', onWheel)
       containerRef.current?.removeAttribute('data-map-dragging')
-      mapPointerRef.current = undefined
+      mapPointersRef.current.clear()
     }
-  }, [endMapPan, mapInteractive, moveMapPan, startMapPan])
+  }, [endMapPan, mapInteractive, moveMapPan, startMapPan, zoomMap])
   const zoomBy = useCallback((direction: 'in' | 'out') => {
     const globe = globeRef.current
     const limits = limitsRef.current
     if (!globe || !limits) return
     if (mapInteractiveRef.current) {
-      const controls = globe.controls()
-      const camera = globe.camera()
-      const offset = camera.position.clone().sub(controls.target)
-      const distance = offset.length()
-      const nextDistance = distance * (direction === 'in' ? 0.78 : 1.28)
-      if (direction === 'out' && nextDistance > globe.getGlobeRadius() * 4.8) { exitLocalMap(); return }
-      offset.setLength(Math.max(globe.getGlobeRadius() * 1.25, Math.min(globe.getGlobeRadius() * 4.8, nextDistance)))
-      camera.position.copy(controls.target).add(offset)
-      controls.update()
+      zoomMap(direction === 'in' ? 0.78 : 1.28)
       return
     }
     if (zoomAnimationRef.current) return
@@ -594,7 +652,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       stepsRef.current--
       if (stepsRef.current === 0) setStepping(false)
     }, duration + 40)
-  }, [exitLocalMap, handleZoom, reduceMotion])
+  }, [handleZoom, reduceMotion, zoomMap])
   const wantRegions = Boolean(zoom?.regions)
   useEffect(() => {
     if (!regionLines || regionsRef.current) return
@@ -604,7 +662,10 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     geometry.setAttribute('position', new Float32BufferAttribute(regionSegments(regionLines, (lat, lng) => globe.getCoords(lat, lng, 0.0065)), 3))
     const regions = new LineSegments(geometry, regionMaterial)
     regions.renderOrder = 1
-    if (mapInteractiveRef.current && mapCenterRef.current) addFlatPositionAttribute(geometry, mapCenterRef.current, globe.getGlobeRadius())
+    if (mapInteractiveRef.current && mapCenterRef.current) {
+      addFlatPositionAttribute(geometry, mapCenterRef.current, globe.getGlobeRadius())
+      regions.frustumCulled = false
+    }
     regions.visible = mapInteractiveRef.current || wantRegions
     regionsRef.current = regions
     setRegionsLoaded(true)

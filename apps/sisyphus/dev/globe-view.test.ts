@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, statSync } from 'node:fs'
 import test from 'node:test'
-import { autoRotateSpeed, clampDistance, decodeRegionLines, localMapThresholdReached, nearbyRegionLines, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
+import { autoRotateSpeed, clampDistance, decodeRegionLines, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, nearbyRegionLines, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
 
 const radius = 100
 const fit = 255
@@ -47,6 +47,26 @@ test('the local map activates at the first detailed-region zoom threshold', () =
   assert.equal(localMapThresholdReached(fit * 0.85, fit), false)
   assert.equal(localMapThresholdReached(fit * 0.849, fit), true)
   assert.equal(localMapThresholdReached(fit * 0.5, fit), true)
+})
+
+test('zooming the map keeps the location under the cursor fixed', () => {
+  const oldDistance = 200
+  const newDistance = 100
+  const cursor = { x: 140, y: -80 }
+  const oldUnits = mapUnitsPerPixel(oldDistance, 45, 800)
+  const newUnits = mapUnitsPerPixel(newDistance, 45, 800)
+  const shift = mapZoomAnchorShift(oldDistance, newDistance, 45, 800, cursor.x, cursor.y)
+  assert.ok(Math.abs(shift.x + cursor.x * newUnits - cursor.x * oldUnits) < 1e-9)
+  assert.ok(Math.abs(shift.y - cursor.y * newUnits + cursor.y * oldUnits) < 1e-9)
+})
+
+test('returning from a panned map points the globe at the panned location', () => {
+  const scale = 100
+  const center = mapLocationAtOffset({ lat: 0, lng: 170 }, scale * Math.PI / 9, scale * mercatorLatitude(30), scale)
+  assert.ok(Math.abs(center.lat - 30) < 1e-9)
+  assert.ok(Math.abs(center.lng + 170) < 1e-9)
+  const farWest = mapLocationAtOffset({ lat: 0, lng: 0 }, -scale * 5 * Math.PI, 0, scale)
+  assert.ok(Math.abs(farWest.lng + 180) < 1e-9)
 })
 
 test('the local map keeps nearby region lines and simplifies them before drawing', () => {

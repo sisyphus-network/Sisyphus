@@ -41,6 +41,30 @@ export function localMapThresholdReached(distance: number, fit: number): boolean
   return distance < fit * 0.85
 }
 
+export function mercatorLatitude(latitude: number): number {
+  const radians = Math.max(-85, Math.min(85, latitude)) * Math.PI / 180
+  return Math.log(Math.tan(Math.PI / 4 + radians / 2))
+}
+
+// Convert the centre of a panned map back into the place the globe should face.
+export function mapLocationAtOffset(center: { lat: number; lng: number }, x: number, y: number, scale: number): { lat: number; lng: number } {
+  const longitude = center.lng + x / scale * 180 / Math.PI
+  const lng = ((longitude + 180) % 360 + 360) % 360 - 180
+  const mercatorY = mercatorLatitude(center.lat) + y / scale
+  const lat = Math.max(-85, Math.min(85, (2 * Math.atan(Math.exp(mercatorY)) - Math.PI / 2) * 180 / Math.PI))
+  return { lat, lng }
+}
+
+export function mapUnitsPerPixel(distance: number, fov: number, height: number): number {
+  return 2 * distance * Math.tan(fov * Math.PI / 360) / height
+}
+
+// Keep the geographic point under the cursor stationary while changing zoom.
+export function mapZoomAnchorShift(distance: number, nextDistance: number, fov: number, height: number, cursorX: number, cursorY: number): { x: number; y: number } {
+  const share = mapUnitsPerPixel(distance, fov, height) * (1 - nextDistance / distance)
+  return { x: cursorX * share, y: -cursorY * share }
+}
+
 // The regional map only needs boundaries near its centre. Keep the scan cheap,
 // then simplify retained lines before handing them to the SVG path generator.
 export function nearbyRegionLines(lines: Array<Array<[number, number]>>, center: { lat: number; lng: number }, radiusDegrees = 78): Array<Array<[number, number]>> {
