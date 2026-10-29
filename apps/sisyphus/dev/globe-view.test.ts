@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, statSync } from 'node:fs'
 import test from 'node:test'
-import { autoRotateSpeed, clampDistance, decodeRegionLines, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
+import { autoRotateSpeed, clampDistance, decodeRegionLines, localMapProgress, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
 
 const radius = 100
 const fit = 255
@@ -40,6 +40,16 @@ test('region lines are wanted only once the globe is brought in past its fit', (
   assert.equal(zoomState(fit * 0.8, limits).regions, true)
   assert.equal(zoomState(fit, limits).percent, 100)
   assert.equal(zoomState(fit / 2, limits).percent, 200)
+})
+
+test('the local map unfolds smoothly between the globe and a close regional view', () => {
+  assert.equal(localMapProgress(fit, fit), 0)
+  assert.equal(localMapProgress(fit * 0.88, fit), 0)
+  assert.ok(localMapProgress(fit * 0.8, fit) > 0)
+  assert.equal(localMapProgress(fit * 0.64, fit), 1)
+  assert.equal(localMapProgress(fit * 0.5, fit), 1)
+  const samples = [0.88, 0.82, 0.76, 0.70, 0.64].map((share) => localMapProgress(fit * share, fit))
+  assert.ok(samples.every((value, index) => index === 0 || value >= samples[index - 1]))
 })
 
 test('the globe turns more slowly as it is brought in', () => {

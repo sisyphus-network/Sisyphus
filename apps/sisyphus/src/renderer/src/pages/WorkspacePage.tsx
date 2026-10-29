@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, Copy, Eye, MessageSquare, Minus, Plus, X } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import Globe, { type GlobeMethods } from 'react-globe.gl'
+import { geoAzimuthalEquidistant, geoPath, type GeoPermissibleObjects } from 'd3-geo'
 import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial, LineSegments, MeshBasicMaterial, NormalBlending, type PerspectiveCamera } from 'three'
 import type { NodeSnapshot } from '../../../preload'
 import { formatMessage, type getMessages } from '@/i18n/messages'
@@ -21,7 +22,7 @@ import { cityEstimateFromProtocol, nodeDetails, peerDetails, poolWorkers, render
 import { SharedStateDomain } from '@sisyphus/client'
 import { sharedStateDomainCode } from '@/lib/shared-state-domain'
 import { useWebgl } from '@/hooks/use-webgl'
-import { autoRotateSpeed, decodeRegionLines, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
+import { autoRotateSpeed, decodeRegionLines, localMapProgress, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
 
 type Messages = ReturnType<typeof getMessages>
 function connected(peer: NodeSnapshot['peers'][number]) { return peer.connectionState === 2 || (typeof peer.connectionState === 'string' && peer.connectionState.endsWith('_CONNECTED')) }
@@ -118,6 +119,36 @@ function loadRegionLines() {
   return regionLinesData
 }
 
+function LocalMapOverlay({ center, size, lines, points, zoomPercent }: { center: { lat: number; lng: number }; size: number; lines: Array<Array<[number, number]>>; points: GlobePoint[]; zoomPercent: number }) {
+  const paths = useMemo(() => {
+    const projection = geoAzimuthalEquidistant()
+      .rotate([-center.lng, -center.lat])
+      .clipAngle(76)
+      .scale(size / (2 * 76 * Math.PI / 180))
+      .translate([size / 2, size / 2])
+    const path = geoPath(projection).digits(1)
+    const countries = path({ type: 'FeatureCollection', features: countryBoundaries } as unknown as GeoPermissibleObjects) ?? ''
+    const regions = lines.length
+      ? path({ type: 'MultiLineString', coordinates: lines.map((line) => line.map(([lat, lng]) => [lng, lat])) } as GeoPermissibleObjects) ?? ''
+      : ''
+    const visiblePoints = points.flatMap((point) => {
+      const position = projection([point.lng, point.lat])
+      return position ? [{ ...point, x: position[0], y: position[1] }] : []
+    })
+    return { countries, regions, points: visiblePoints }
+  }, [center.lat, center.lng, lines, points, size])
+  const scale = Math.max(1, Math.min(1.45, zoomPercent / 114))
+  return <div className="network-local-map" aria-hidden="true" style={{ width: size, height: size, '--local-map-scale': scale } as CSSProperties}>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <circle className="network-local-map__surface" cx={size / 2} cy={size / 2} r={size / 2 - 1} />
+      <circle className="network-local-map__graticule" cx={size / 2} cy={size / 2} r={size * 0.32} />
+      <path className="network-local-map__countries" d={paths.countries} />
+      {paths.regions && <path className="network-local-map__regions" d={paths.regions} />}
+      {paths.points.map((point) => <circle key={point.id} className="network-local-map__point" cx={point.x} cy={point.y} r={point.id === ownPointId ? 4.5 : 3.2} style={{ fill: point.color }} />)}
+    </svg>
+  </div>
+}
+
 const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active, rotationPaused = false, suspendResize = false, pointNames, pointsLabel, pointButtonLabel, pointCard, onPickPoint, zoomLabels }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean; rotationPaused?: boolean; suspendResize?: boolean; pointNames: ReadonlyMap<string, string>; pointsLabel: string; pointButtonLabel: string; pointCard: (id: string) => string; onPickPoint: (id: string, from?: HTMLElement) => void; zoomLabels: { group: string; in: string; out: string } }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
@@ -126,6 +157,10 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const limitsRef = useRef<ZoomLimits | undefined>(undefined)
   const countryFacingRef = useRef(false)
   const [zoom, setZoom] = useState<ZoomState>()
+  const mapCenterRef = useRef<{ lat: number; lng: number } | undefined>(undefined)
+  const locationRef = useRef<{ lat: number; lng: number } | undefined>(undefined)
+  const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>()
+  const [mapLines, setMapLines] = useState<Array<Array<[number, number]>>>([])
   // Button steps still under way. The buttons take their last state only when
   // a step ends, so the globe says while any is under way, for whoever has to
   // wait for that state, such as the end-to-end tests.
@@ -207,7 +242,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     controls.minDistance = limits.min
     controls.maxDistance = limits.max
     controls.enableZoom = true
-    controls.autoRotate = !reduceMotion && active
+    controls.enableRotate = !mapCenterRef.current
+    controls.autoRotate = !reduceMotion && active && !mapCenterRef.current
     controls.autoRotateSpeed = autoRotateSpeed(camera.position.length(), radius, limits)
     controls.enableDamping = true
     controls.update()
@@ -226,8 +262,27 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     globe.controls().autoRotateSpeed = autoRotateSpeed(distance, globe.getGlobeRadius(), limits)
     const next = zoomState(distance, limits)
     countryBackShare.value = next.regions ? 0 : 0.3
+    const progress = localMapProgress(distance, limits.fit)
+    if (!mapCenterRef.current && progress > 0) {
+      const view = globe.pointOfView()
+      mapCenterRef.current = locationRef.current ?? { lat: view.lat, lng: view.lng }
+      setMapCenter(mapCenterRef.current)
+      globe.controls().autoRotate = false
+      globe.controls().enableRotate = false
+    } else if (mapCenterRef.current && distance > limits.fit * 0.91) {
+      mapCenterRef.current = undefined
+      setMapCenter(undefined)
+      globe.controls().autoRotate = !reduceMotion && active && !rotationPaused
+      globe.controls().enableRotate = true
+    }
+    const container = containerRef.current
+    if (container) {
+      container.style.setProperty('--local-map-progress', String(progress))
+      container.style.setProperty('--local-map-inset', `${(1 - progress) * 49}%`)
+      container.style.setProperty('--local-map-scale', String(Math.max(1, Math.min(1.45, limits.fit * 0.88 / distance))))
+    }
     setZoom((current) => current && current.canZoomIn === next.canZoomIn && current.canZoomOut === next.canZoomOut && current.regions === next.regions && current.percent === next.percent ? current : next)
-  }, [])
+  }, [active, reduceMotion, rotationPaused])
   const zoomBy = useCallback((direction: 'in' | 'out') => {
     const globe = globeRef.current
     const limits = limitsRef.current
@@ -255,7 +310,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     let current = true
     void loadRegionLines().then((lines) => {
       const globe = globeRef.current
-      if (!current || !globe || regionsRef.current) return
+      if (!current) return
+      setMapLines(lines)
+      if (!globe || regionsRef.current) return
       const geometry = new BufferGeometry()
       geometry.setAttribute('position', new Float32BufferAttribute(regionSegments(lines, (lat, lng) => globe.getCoords(lat, lng, 0.0065)), 3))
       const regions = new LineSegments(geometry, regionMaterial)
@@ -327,8 +384,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   useEffect(() => {
     const globe = globeRef.current
     if (!globe) return
-    globe.controls().autoRotate = !reduceMotion && active && !rotationPaused
-  }, [active, reduceMotion, rotationPaused])
+    globe.controls().autoRotate = !reduceMotion && active && !rotationPaused && !mapCenterRef.current
+  }, [active, reduceMotion, rotationPaused, mapCenter])
 
   useEffect(() => {
     const globe = globeRef.current
@@ -350,6 +407,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   // The owner's pin, if there is one, places this node better than its country can.
   const centroid = countryCode ? countryCentroids.get(countryCode.toUpperCase()) : undefined
   const location = useMemo(() => pin ? { lat: pin.lat, lng: pin.lng } : centroid, [pin?.lat, pin?.lng, centroid])
+  locationRef.current = location
   const peerLocations = locatePeers(peers, countryCentroids, shared)
   const locationsKey = peerLocationsKey(peerLocations)
   const stablePeerLocations = useMemo(() => peerLocations, [locationsKey])
@@ -378,6 +436,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const ringMaxRadius = useCallback(() => 5, [])
   return <>
   <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-active={active} data-rotation-paused={rotationPaused} data-zoom={zoom?.percent} data-zoom-step={zoomStepCount} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && wantRegions ? 'shown' : 'hidden'}>
+    {mapCenter && size.width > 0 && <LocalMapOverlay center={mapCenter} size={size.width} lines={mapLines} points={points} zoomPercent={zoom?.percent ?? 100} />}
     {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
       <Globe
       ref={globeRef}

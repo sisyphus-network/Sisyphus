@@ -340,6 +340,13 @@
 .network-globe-stage { position: absolute; top: 50%; left: 50%; translate: -50% -50%; max-width: none; max-height: none; aspect-ratio: 1; overflow: visible; }
 .network-globe-stage > div { width: 100% !important; height: 100% !important; outline: none; }
 .network-globe-stage canvas { display: block; max-width: 100%; max-height: 100%; }
+.network-local-map { position: absolute; z-index: 1; top: 50%; left: 50%; translate: -50% -50%; overflow: hidden; border-radius: 50%; clip-path: inset(var(--local-map-inset, 49%) 0 round 50%); opacity: var(--local-map-progress, 0); transform: scale(var(--local-map-scale, 1)); transform-origin: center; pointer-events: none; will-change: clip-path, opacity, transform; }
+.network-local-map svg { display: block; overflow: visible; }
+.network-local-map__surface { fill: color-mix(in srgb, var(--app-card) 92%, var(--app-accent) 8%); stroke: color-mix(in srgb, var(--app-accent) 22%, var(--app-line)); stroke-width: 1; }
+.network-local-map__graticule { fill: none; stroke: color-mix(in srgb, var(--app-accent) 9%, transparent); stroke-width: 0.65; stroke-dasharray: 2 5; }
+.network-local-map__countries { fill: none; stroke: color-mix(in srgb, var(--app-muted) 40%, transparent); stroke-width: 0.7; vector-effect: non-scaling-stroke; }
+.network-local-map__regions { fill: none; stroke: color-mix(in srgb, var(--app-accent) 48%, var(--app-line)); stroke-width: 0.65; vector-effect: non-scaling-stroke; }
+.network-local-map__point { stroke: var(--app-card); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 
 .network-map-caption { position: absolute; z-index: 3; inset-inline: 12px; bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--app-line); border-radius: 10px; background: color-mix(in srgb, var(--app-card) 88%, transparent); padding: 9px 10px; color: var(--app-muted); font-size: 9px; backdrop-filter: blur(12px); }
 .network-map-caption b { color: var(--app-ink); font-family: ui-monospace, monospace; font-size: 10px; font-weight: 600; }

@@ -35,6 +35,15 @@ export function zoomState(distance: number, limits: ZoomLimits): ZoomState {
   }
 }
 
+// Begin unfolding after regional lines are already visible; ease to a local
+// azimuthal map as the camera approaches the surface.
+export function localMapProgress(distance: number, fit: number): number {
+  const start = fit * 0.88
+  const end = fit * 0.64
+  const t = Math.min(1, Math.max(0, (start - distance) / (start - end)))
+  return t * t * (3 - 2 * t)
+}
+
 // How fast the globe turns by itself, slower as it is brought in, so the
 // ground does not race past.
 export function autoRotateSpeed(distance: number, radius: number, limits: ZoomLimits): number {
