@@ -130,8 +130,13 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   // a step ends, so the globe says while any is under way, for whoever has to
   // wait for that state, such as the end-to-end tests.
   const stepsRef = useRef(0)
+  const zoomAnimationRef = useRef(false)
+  const zoomAnimationTimer = useRef<number | undefined>(undefined)
   const [stepping, setStepping] = useState(false)
   const [zoomStepCount, setZoomStepCount] = useState(0)
+  useEffect(() => () => {
+    if (zoomAnimationTimer.current !== undefined) window.clearTimeout(zoomAnimationTimer.current)
+  }, [])
   const regionsRef = useRef<LineSegments | null>(null)
   const regionMaterial = useMemo(regionLineMaterial, [])
   const [regionsLoaded, setRegionsLoaded] = useState(false)
@@ -226,17 +231,20 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const zoomBy = useCallback((direction: 'in' | 'out') => {
     const globe = globeRef.current
     const limits = limitsRef.current
-    if (!globe || !limits) return
+    if (!globe || !limits || zoomAnimationRef.current) return
     const radius = globe.getGlobeRadius()
     const view = globe.pointOfView()
     const distance = zoomStep(radius * (1 + view.altitude), direction, radius, limits)
     const duration = reduceMotion ? 0 : 320
+    zoomAnimationRef.current = true
     globe.pointOfView({ lat: view.lat, lng: view.lng, altitude: distance / radius - 1 }, duration)
     stepsRef.current++
     setZoomStepCount((step) => step + 1)
     setStepping(true)
-    window.setTimeout(() => {
+    zoomAnimationTimer.current = window.setTimeout(() => {
+      zoomAnimationTimer.current = undefined
       handleZoom()
+      zoomAnimationRef.current = false
       stepsRef.current--
       if (stepsRef.current === 0) setStepping(false)
     }, duration + 40)
@@ -425,8 +433,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   {/* The wheel and a pinch zoom too; these are for the keyboard, and for a
       touch screen or a mouse with no wheel. */}
   {active && webglAvailable() && zoom && <div className="globe-zoom" role="group" aria-label={zoomLabels.group}>
-    <button type="button" aria-label={zoomLabels.in} title={zoomLabels.in} disabled={!zoom.canZoomIn} onClick={() => zoomBy('in')}><Plus size={15} strokeWidth={1.9} aria-hidden /></button>
-    <button type="button" aria-label={zoomLabels.out} title={zoomLabels.out} disabled={!zoom.canZoomOut} onClick={() => zoomBy('out')}><Minus size={15} strokeWidth={1.9} aria-hidden /></button>
+    <button type="button" aria-label={zoomLabels.in} title={zoomLabels.in} disabled={!zoom.canZoomIn || stepping} onClick={() => zoomBy('in')}><Plus size={15} strokeWidth={1.9} aria-hidden /></button>
+    <button type="button" aria-label={zoomLabels.out} title={zoomLabels.out} disabled={!zoom.canZoomOut || stepping} onClick={() => zoomBy('out')}><Minus size={15} strokeWidth={1.9} aria-hidden /></button>
   </div>}
   </>
 })
