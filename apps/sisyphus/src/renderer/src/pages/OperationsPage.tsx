@@ -9,6 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { toast } from 'sonner'
 import { EmptyState, PageHeading } from '@/components/ui/page-layout'
 import { getNodeApi } from '@/lib/node-api'
+import { useSharedFiles, type StoredFile } from '@/lib/use-shared-files'
 import { type getMessages } from '@/i18n/messages'
 import { addSubmittedJob, getSelectedJobId, includeLinkedJob } from '@/lib/job-navigation'
 import { createJobSnapshotGate } from '@/lib/job-snapshot'
@@ -25,7 +26,6 @@ import { RunPage } from '@/pages/RunPage'
 
 type Messages = ReturnType<typeof getMessages>
 type Job = { jobId: string; workload: string; mode: string | number; state: string | number; progress: number; error: string; private?: boolean; outputBlobs?: string[]; tasks: { index: number; state: string | number; workerName: string; error: string }[]; result: Uint8Array; createdAtMs: string | number }
-type StoredFile = { cid: string; name: string; sizeBytes: string | number; private: boolean; storedAtMs: string | number }
 type Member = { peerId: string; role: string | number; joinedAtMs: string | number }
 type PoolWorker = { peerId: string; loadedModels?: { name: string; onCardPercent: number }[] }
 
@@ -90,7 +90,7 @@ export function OperationsPage({ messages }: { messages: Messages }) {
   const [jobs, setJobs] = useState<Job[]>([])
   const jobsSnapshot = useRef(createJobSnapshotGate())
   const [timelineJobId, setTimelineJobId] = useState('')
-  const [files, setFiles] = useState<StoredFile[]>([])
+  const files = useSharedFiles()
   const [members, setMembers] = useState<Member[]>([])
   const [workers, setWorkers] = useState<PoolWorker[]>([])
   const [workload, setWorkload] = useState('primes')
@@ -153,13 +153,11 @@ export function OperationsPage({ messages }: { messages: Messages }) {
     const jobsSnapshotToken = jobsSnapshot.current.begin()
     const results = await Promise.allSettled([
       api.call<{ jobs?: Job[] }>('listJobs'),
-      api.call<{ files?: StoredFile[] }>('listFiles'),
       api.call<{ members?: Member[] }>('listMembers'),
       api.call<{ workers?: PoolWorker[] }>('listWorkers'),
     ])
-    if (results[1].status === 'fulfilled') setFiles((results[1].value.files ?? []).map((file) => ({ cid: file.cid ?? '', name: file.name || file.cid || '', sizeBytes: file.sizeBytes ?? 0, private: file.private ?? false, storedAtMs: file.storedAtMs ?? 0 })))
-    if (results[2].status === 'fulfilled') setMembers(results[2].value.members ?? [])
-    if (results[3].status === 'fulfilled') setWorkers(results[3].value.workers ?? [])
+    if (results[1].status === 'fulfilled') setMembers(results[1].value.members ?? [])
+    if (results[2].status === 'fulfilled') setWorkers(results[2].value.workers ?? [])
     if (results[0].status === 'fulfilled' && jobsSnapshot.current.accept(jobsSnapshotToken)) setJobs(normalizeJobs(results[0].value.jobs))
   }
   useEffect(() => {
@@ -192,7 +190,7 @@ export function OperationsPage({ messages }: { messages: Messages }) {
     try { await getNodeApi().call('cancelJob', { jobId }); await refresh() } catch (error) { toast.error(labels.cancelFailed, { description: error instanceof Error ? error.message : String(error) }) }
   }
   async function removeStoredFile(cid: string) {
-    try { await getNodeApi().call('removeFile', { cid }); await refresh() } catch (error) { toast.error(labels.removeFileFailed, { description: error instanceof Error ? error.message : String(error) }) }
+    try { await getNodeApi().call('removeFile', { cid }) } catch (error) { toast.error(labels.removeFileFailed, { description: error instanceof Error ? error.message : String(error) }) }
   }
   async function uploadFile(file?: File) {
     if (!file) return
@@ -200,7 +198,6 @@ export function OperationsPage({ messages }: { messages: Messages }) {
     setBusy(true)
     try {
       const result = await getNodeApi().storeFile({ name: file.name, data: new Uint8Array(await file.arrayBuffer()), private: privateFile }) as unknown as StoredFile
-      setFiles((current) => [result, ...current.filter((item) => item.cid !== result.cid)])
       toast.success(labels.fileStored, { description: result.cid })
     } catch (error) { toast.error(labels.storeFailed, { description: error instanceof Error ? error.message : String(error) }); throw error }
     finally { setBusy(false) }
