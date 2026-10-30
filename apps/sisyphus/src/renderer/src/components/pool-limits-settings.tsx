@@ -100,27 +100,45 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
     let attempt = 0
     let receivedStreamState = false
     let fallbackRequested = false
+    let retryAfterFallback = false
+    let managementMetadata: Pick<PoolLimitsState, 'managed' | 'configurable'> | undefined
     const apply = (next: PoolLimitsState) => {
       if (!active) return
+      const resolved = managementMetadata ? { ...next, ...managementMetadata } : next
       const previous = stateRef.current
       const draft = parseForm(formRef.current).limits
       const unchanged = !previous || (draft !== undefined && samePoolLimits(draft, previous.saved))
-      stateRef.current = next
-      setState(next)
+      stateRef.current = resolved
+      setState(resolved)
       if (unchanged) {
-        const nextForm = formFromLimits(next.saved)
+        const nextForm = formFromLimits(resolved.saved)
         formRef.current = nextForm
         setForm(nextForm)
       }
       setLoading(false)
     }
-    const loadFallback = () => {
-      if (!active || fallbackRequested) return
+    const loadFallback = (reportFailure = false) => {
+      if (!active || managementMetadata) return
+      if (fallbackRequested) {
+        retryAfterFallback = true
+        return
+      }
       fallbackRequested = true
-      void api.getPoolLimits().then(apply).catch((error) => {
+      void api.getPoolLimits().then((current) => {
+        if (!active) return
+        managementMetadata = { managed: current.managed, configurable: current.configurable }
+        const latest = stateRef.current
+        apply(receivedStreamState && latest ? { ...latest, ...managementMetadata } : current)
+      }).catch((error) => {
+        if (active && reportFailure) toast.error(labels.loadFailed, { description: daemonErrorMessage(error) })
+      }).finally(() => {
         fallbackRequested = false
-        if (active) toast.error(labels.loadFailed, { description: daemonErrorMessage(error) })
-      }).finally(() => { if (active) setLoading(false) })
+        if (active) setLoading(false)
+        if (active && retryAfterFallback && !managementMetadata) {
+          retryAfterFallback = false
+          loadFallback()
+        }
+      })
     }
     const reconnect = () => {
       cancel = undefined
@@ -145,27 +163,21 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
           receivedStreamState = true
           apply({
             ...next,
-            managed: stateRef.current?.managed ?? false,
+            managed: managementMetadata?.managed ?? stateRef.current?.managed ?? false,
             // The protocol stream omits Electron-only management metadata.
             // Keep controls disabled until the one-shot metadata read lands.
-            configurable: stateRef.current?.configurable ?? false,
+            configurable: managementMetadata?.configurable ?? stateRef.current?.configurable ?? false,
           })
+          // The stream omits Electron-only management metadata. Retry a
+          // failed startup read when a healthy snapshot proves the daemon is
+          // ready, without polling or repeating failure toasts.
+          if (!managementMetadata) loadFallback()
         }
       }, reconnect, reconnect)
     }
     // The stream is authoritative for pool limits; this one-shot read also
     // supplies Electron-only management metadata omitted from the protocol.
-    fallbackRequested = true
-    void api.getPoolLimits().then((initial) => {
-      if (!active) return
-      const latest = stateRef.current
-      apply(receivedStreamState && latest
-        ? { ...latest, managed: initial.managed, configurable: initial.configurable }
-        : initial)
-    }).catch((error) => {
-      fallbackRequested = false
-      if (active) toast.error(labels.loadFailed, { description: daemonErrorMessage(error) })
-    }).finally(() => { if (active && !receivedStreamState) setLoading(false) })
+    loadFallback(true)
     connect()
     return () => {
       active = false
