@@ -6,7 +6,7 @@ import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 
 type Peer = { peerId: string; connectionState: number | string; knownAddresses: string[] }
-type NodeInfo = { peerId: string; daemonVersion: string; listenAddresses: string[]; countryCode: string; countrySource: string }
+type NodeInfo = { peerId: string; daemonVersion: string; listenAddresses: string[]; countryCode: string; countrySource: string; cityEstimate?: unknown }
 type Snapshot = {
   status: 'connecting' | 'connected' | 'disconnected'
   endpoint: string
