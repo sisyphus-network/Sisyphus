@@ -23,7 +23,7 @@ import { cityEstimateFromProtocol, nodeDetails, peerDetails, poolWorkers, render
 import { SharedStateDomain } from '@sisyphus/client'
 import { sharedStateDomainCode } from '@/lib/shared-state-domain'
 import { useWebgl } from '@/hooks/use-webgl'
-import { autoRotateSpeed, clampMapCenter, decodeRegionLines, globeFitDistance, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, nearestMapPoint, projectionLineOpacity, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
+import { autoRotateSpeed, clampDistance, clampMapCenter, decodeRegionLines, globeFitDistance, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, nearestMapPoint, projectionLineOpacity, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
 import { createOrbitCameraTransition, unindexGlobeGeometry } from '@/lib/globe-geometry'
 
 type Messages = ReturnType<typeof getMessages>
@@ -549,7 +549,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       regions.visible = true
     }
   }, [regionMaterial])
-  const exitLocalMap = useCallback(() => {
+  const exitLocalMap = useCallback((targetDistance?: number) => {
     const globe = globeRef.current
     const limits = limitsRef.current
     if (!globe || !limits || !mapCenterRef.current || transitioningRef.current) return
@@ -560,7 +560,13 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const camera = globe.camera() as PerspectiveCamera
     const scale = flatMapScale.value || globe.getGlobeRadius() * 0.52
     const center = mapLocationAtOffset(mapOrigin, camera.position.x, camera.position.y, scale)
-    const destination = globe.getCoords(center.lat, center.lng, limits.fit * 0.96 / globe.getGlobeRadius() - 1)
+    const radius = globe.getGlobeRadius()
+    // Preserve the zoom the user reached on the flat map. Returning at a
+    // fixed fit distance made zooming out jump back in as the projection
+    // changed from the map camera to the globe camera.
+    const mapDistance = Math.max(0.01, camera.position.z - radius * 0.008)
+    const destinationDistance = clampDistance(targetDistance ?? mapDistance, limits)
+    const destination = globe.getCoords(center.lat, center.lng, destinationDistance / radius - 1)
     const startPosition = camera.position.clone()
     const startOrientation = camera.quaternion.clone()
     const destinationCamera = camera.clone()
@@ -650,7 +656,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const sameWheelGesture = wheelGestureRef.current.transitioned && performance.now() - wheelGestureRef.current.at < 250
     const maxDistance = mapMaxDistanceRef.current || radius * 4.8
     if (requested > maxDistance && !sameWheelGesture) {
-      exitLocalMap()
+      exitLocalMap(requested)
       return
     }
     const next = Math.min(maxDistance, Math.max(radius * 0.25, requested))
