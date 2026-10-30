@@ -56,6 +56,13 @@ async function openSettingsCategory(page: Page, category: string) {
 
 function settingsSave(page: Page): Locator { return page.getByRole('button', { name: /^Save changes/ }) }
 
+async function waitForEnabled(locator: Locator): Promise<void> {
+  await locator.waitFor({ state: 'visible' })
+  const element = await locator.elementHandle()
+  assert.ok(element, 'the settings control should be present')
+  await element.waitForElementState('enabled')
+}
+
 async function openOperationsSection(page: Page, name: string): Promise<void> {
   const trigger = page.getByRole('button', { name: new RegExp(`^${name}\\b`) })
   await trigger.waitFor()
@@ -496,7 +503,11 @@ test('pool limits configure an independently managed daemon and persist across r
     const timeout = page.getByRole('textbox', { name: 'Longest task run' })
     const store = page.getByRole('textbox', { name: 'Storage per member' })
     const upload = page.getByRole('textbox', { name: 'Upload per task attempt' })
-    await jobs.waitFor()
+    await waitForEnabled(jobs)
+    await waitForEnabled(tasks)
+    await waitForEnabled(timeout)
+    await waitForEnabled(store)
+    await waitForEnabled(upload)
     for (const field of [jobs, tasks, timeout, store, upload]) {
       assert.equal(await field.isDisabled(), false)
       assert.equal(await field.inputValue(), '')
@@ -2155,6 +2166,7 @@ test('Settings pickers open in full view, above every card and inside the window
           ? page.locator('#settings-theme-style')
         : page.getByRole('button', { name, exact: true })
       await trigger.waitFor({ timeout: 30000 })
+      await waitForEnabled(trigger)
       await trigger.scrollIntoViewIfNeeded()
       await trigger.click()
       const menu = page.getByRole('dialog', { name: menuName, exact: true })
