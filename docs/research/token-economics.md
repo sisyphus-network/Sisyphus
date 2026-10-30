@@ -75,6 +75,8 @@ Keep weighting separate from that immutable event. A versioned policy, keyed by 
 
 This does not yet implement accounting in every durable job record. That remains an implementation task, and any change to the job record or protocol needs its own compatibility and privacy review.
 
+The accounting view (`sisyphusd accounting`, `GetAccounting`; see [the daemon's README](../../apps/sisyphusd/README.md#accounting)) counts accepted tasks this way, by machine and by workload, over a span of time. It works them out from the jobs, as their records are, so the job record is unchanged and holds no parameter hash. A task several workers agreed on is credited to each of them; one the coordinator's audit caught is credited to none. It applies no weighting.
+
 ## Collateral and slashing
 
 From the verification note: a stake only works if it can be taken faster than it can be withdrawn, and if taking it needs proof and not an accusation. Decisions:

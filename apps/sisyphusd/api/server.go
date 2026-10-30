@@ -17,6 +17,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/access"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/coordinator"
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/replication"
+	"github.com/sisyphus-network/Sisyphus/packages/accounting"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
@@ -196,6 +197,23 @@ func (s *nodeService) GetJobRecord(ctx context.Context, req *pb.GetJobRecordRequ
 		return nil, err
 	}
 	return s.coordinator.Record(ctx, req.GetJobId(), req.GetVerify(), req.GetKey())
+}
+
+// GetAccounting totals the jobs that ended in a range. A client is one of
+// several and is told of its own jobs only, as it is of each job.
+func (s *nodeService) GetAccounting(ctx context.Context, req *pb.GetAccountingRequest) (*pb.Accounting, error) {
+	var r accounting.Range
+	if req.GetFrom() != nil {
+		r.From = req.GetFrom().AsTime()
+	}
+	if req.GetTo() != nil {
+		r.To = req.GetTo().AsTime()
+	}
+	if !r.From.IsZero() && !r.To.IsZero() && !r.From.Before(r.To) {
+		return nil, status.Errorf(codes.InvalidArgument, "the range ends at %s, which is not after it starts, at %s", r.To.Format(time.RFC3339), r.From.Format(time.RFC3339))
+	}
+	client, _ := guest(ctx, s.owner)
+	return s.coordinator.Accounting(r, client), nil
 }
 
 func (s *nodeService) ListNodes(context.Context, *pb.ListNodesRequest) (*pb.ListNodesResponse, error) {

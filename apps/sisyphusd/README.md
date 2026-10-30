@@ -912,6 +912,52 @@ In place of each value left out, the record of a private job holds a **commitmen
 - **`--key-file` checks them.** It takes the job's key, the file `job submit --key-file` was given, or the node's `private.key` for a job made private in the desktop app. It verifies the record, then sends the key to the coordinator, which works each commitment out again from the parameters, result, outputs and errors it holds and says of each whether it `matches` or `does not match`. The coordinator uses the key for that and does not keep it. The command fails if any does not match. That happens when the key is not the job's, in which case none match, or when a value has changed since the job ended. It says nothing against the record itself, which was verified first.
 - **A record with no commitments has nothing to check**, and `--key-file` says so: the record of a job that is not private, or of a private job that ended before commitments were made, whose record is as it was.
 
+## Accounting
+
+`sisyphusd accounting` totals what each machine did and what was done of each workload, over the jobs that ended in a span of time.
+
+```sh
+bin/sisyphusd accounting                          # every job the coordinator still holds
+bin/sisyphusd accounting --last 24h               # or 7d, 30d, 90m: up to now, or up to --to
+bin/sisyphusd accounting --from 2026-10-01 --to 2026-11-01   # a date is the start of that day here; a time is RFC 3339
+bin/sisyphusd accounting --last 30d --csv > machines.csv
+bin/sisyphusd accounting --last 30d --csv --by workload > workloads.csv
+```
+
+It prints how many jobs ended, then a table by machine and one by workload. `--by machine` or `--by workload` prints only one. `--csv` writes one table as CSV for a spreadsheet, the machines unless `--by workload` says otherwise, with the same columns as the table printed.
+
+The unit is the **accepted task**: a task the coordinator took a result for, counted by the basis it took it on ([token economics](../../docs/research/token-economics.md#a-candidate-accounting-event)). Each basis is something the coordinator saw for itself, never a worker's word:
+
+| Basis | The coordinator took the result because |
+| --- | --- |
+| `agreement` | Two or more workers returned the same result: the task was [verified](#verifying-results). |
+| `audit` | It [ran the task again itself](#checked-by-the-coordinator-itself) and got the same result. |
+| `unchecked` | One worker's result was taken as it came: the job asked for no check, a [spot check](#spot-checks) passed the task over, or the audit could not be run. |
+| `caught` | It ran the task again, got another result, and took its own. No worker is credited with the task. |
+
+| Machine column | What it counts |
+| --- | --- |
+| `machine`, `node_id` | The name the machine gave itself last, and its node ID. |
+| `jobs` | The jobs it was handed a task of. |
+| `attempts`, `failed_attempts` | How many times it was handed a task, and how many of those it failed. |
+| `accepted` | The tasks accepted with its result: `agreement`, `audit` and `unchecked` together. A task several machines agreed on counts for each of them. |
+| `caught` | The tasks of its that an audit took another result for. |
+| `outvoted` | Results it returned for a verified task that the task was not accepted with. |
+
+| Workload column | What it counts |
+| --- | --- |
+| `jobs`, `succeeded`, `failed`, `cancelled` | Its jobs that ended in the span, and how. |
+| `tasks`, `attempts`, `failed_attempts` | The tasks of those jobs, and the attempts at them. The tasks of a [job made of jobs](#jobs-made-of-jobs) are not counted, since the coordinator carried them out; the jobs that were its steps count their own. |
+| `accepted` and the bases | Its accepted tasks, each counted once. |
+| `machines` | The machines handed a task of it. |
+| `wall_seconds` | The time from each job's submission to its end, added up, on the coordinator's clock and queueing included. It says how long the pool took, not how hard any machine worked. |
+
+- **Every figure is one the jobs' records hold.** The totals are worked out from the jobs, as their [records](#a-jobs-record) are, so each can be checked against the records it came from. The record is not changed for this and holds nothing more.
+- **No weights, prices or measured time.** An accepted task of one workload is not worth one of another, and the totals do not pretend it is: a weighting is a separate, versioned policy to apply to these counts afterwards. How long a machine spent on a task is not counted, since only the worker could say, and nothing checks what it says.
+- **Only the jobs the coordinator still holds.** A job is forgotten `--keep-jobs` after it ends (30 days unless told otherwise), so a span that reaches back further finds no more than that. A job counts in the span it ended in, and one that has not ended counts nowhere yet.
+- **A client is told of its own jobs.** Asked by a node admitted as a client, the totals cover the jobs it submitted, and the machines that worked on them. Asked from the coordinator's own machine, they cover every job.
+- **Mining time and its power cost are not counted yet.** They are to go beside the other figures for each machine (#776); the columns are listed once for the table and the CSV, in `accounting_cli.go`, and the figures for a machine in `packages/accounting`.
+
 ## Restarting a coordinator
 
 A coordinator keeps its jobs in `node.db`, a SQLite database in its data directory, so stopping it loses nothing:
@@ -1499,6 +1545,7 @@ The result:
 | `packages/protocol` | Go code generated from `proto/`. Do not edit by hand. |
 | `packages/job-model` | Job and task state machines. No I/O. |
 | `packages/jobrecord` | A finished job as linked data: building the record and reading it back. |
+| `packages/accounting` | Accepted tasks, and the totals by machine and by workload over a span of time. No I/O. |
 | `packages/runtime` | The `Workload` interface and built-in workloads. |
 | `packages/storage` | Content-addressed blob store with IPFS-compatible CIDs. |
 | `packages/kubo` | Running a Kubo daemon beside the node, and calling it. |

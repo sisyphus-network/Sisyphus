@@ -24,6 +24,7 @@ const usage = `Usage:
   sisyphusd job cancel <job-id>    stop a job that has not finished
   sisyphusd job record <job-id>    print a finished job's record, its history as linked data (--verify to check it against the job, and --key-file to check a private job's commitments)
   sisyphusd nodes                  list the workers connected to a coordinator
+  sisyphusd accounting             total what each machine did and what each workload took, over jobs that ended in a span (--last 24h|7d|30d, --from, --to; --csv for a spreadsheet)
   sisyphusd blob put <file>        store a file on a node and print its CID
   sisyphusd blob get <cid>         fetch a blob, checking it against its CID
   sisyphusd blob stat <cid>        show a blob's size
@@ -109,6 +110,8 @@ func run(ctx context.Context, args []string) error {
 		return errors.New(`expected job submit, get, logs, cancel or record`)
 	case "nodes":
 		return listNodes(ctx, args[1:])
+	case "accounting":
+		return accountingCommand(ctx, args[1:])
 	case "blob":
 		return blobCommand(ctx, args[1:])
 	case "name":

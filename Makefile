@@ -1,7 +1,7 @@
 PROTO_FILES := $(wildcard proto/sisyphus/v1/*.proto) $(wildcard proto/sisyphus/node/v1/*.proto)
 # STATICCHECK is the version of staticcheck that make lint and CI run.
 STATICCHECK := 2026.2.2
-COVERED := ./apps/...,./packages/ai/...,./packages/geo/...,./packages/hardware/...,./packages/identity/...,./packages/ipfscluster/...,./packages/job-model/...,./packages/jobrecord/...,./packages/kubo/...,./packages/names/...,./packages/natpmp/...,./packages/nodedb/...,./packages/runtime/...,./packages/s3/...,./packages/sealed/...,./packages/storage/...,./packages/stun/...
+COVERED := ./apps/...,./packages/accounting/...,./packages/ai/...,./packages/geo/...,./packages/hardware/...,./packages/identity/...,./packages/ipfscluster/...,./packages/job-model/...,./packages/jobrecord/...,./packages/kubo/...,./packages/names/...,./packages/natpmp/...,./packages/nodedb/...,./packages/runtime/...,./packages/s3/...,./packages/sealed/...,./packages/storage/...,./packages/stun/...
 
 .PHONY: build test cover cover-main cover-realimages cover-check demo proto tools fmt lint
 

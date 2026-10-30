@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package sisyphus.v1;
 
+import "google/protobuf/timestamp.proto";
 import "sisyphus/v1/types.proto";
 
 option go_package = "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1;sisyphusv1";
@@ -25,6 +26,91 @@ service NodeService {
   // GetJobRecord returns the record of a job that is over, read from the
   // coordinator's store.
   rpc GetJobRecord(GetJobRecordRequest) returns (JobRecord);
+  // GetAccounting totals what each machine did and what was done of each
+  // workload, over the jobs that ended in a span of time and that the
+  // coordinator still holds. A client admitted to the pool is told of its
+  // own jobs only.
+  rpc GetAccounting(GetAccountingRequest) returns (Accounting);
+}
+
+message GetAccountingRequest {
+  // Count the jobs that ended at or after from, and before to. Either may
+  // be left out, for no bound on that side.
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+}
+
+// Accounting is the totals over a span of time. Its unit is the accepted
+// task: a task the coordinator took a result for, and the basis it took it
+// on, which the coordinator saw for itself. Every figure is one the jobs'
+// records also hold. See packages/accounting.
+message Accounting {
+  // The span counted, as asked for.
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+  // How many jobs ended in it.
+  uint32 jobs = 3;
+  // By accepted tasks, most first.
+  repeated MachineTotals machines = 4;
+  // By name.
+  repeated WorkloadTotals workloads = 5;
+}
+
+// AcceptedTasks counts accepted tasks by the basis they were accepted on.
+message AcceptedTasks {
+  // Two or more workers returned the same result.
+  uint32 agreement = 1;
+  // The coordinator ran the task again itself and got the same result.
+  uint32 audit = 2;
+  // One worker's result was taken without a check.
+  uint32 unchecked = 3;
+  // The coordinator ran the task again, got another result and took its
+  // own. For a machine: tasks of its that this happened to.
+  uint32 caught = 4;
+}
+
+// MachineTotals is what one machine did. Figures that do not come from
+// jobs, such as time spent mining and its estimated power cost (#776), are
+// to be added here beside those that do.
+message MachineTotals {
+  string node_id = 1;
+  // The name it gave itself last.
+  string name = 2;
+  // How many jobs it was handed a task of.
+  uint32 jobs = 3;
+  // How many times it was handed a task, and how many of those it failed.
+  uint32 attempts = 4;
+  uint32 failed_attempts = 5;
+  // The tasks accepted with its result. A task several machines agreed on
+  // counts for each of them.
+  AcceptedTasks accepted = 6;
+  // Results it returned for a verified task that the task was not
+  // accepted with.
+  uint32 outvoted = 7;
+}
+
+// WorkloadTotals is what was done of one workload.
+message WorkloadTotals {
+  string workload = 1;
+  // How many of its jobs ended, and how.
+  uint32 jobs = 2;
+  uint32 succeeded = 3;
+  uint32 failed = 4;
+  uint32 cancelled = 5;
+  // How many tasks those jobs had, how many times one was handed to a
+  // worker, and how many of those failed. A job whose tasks are other jobs
+  // counts none: those jobs count their own.
+  uint32 tasks = 6;
+  uint32 attempts = 7;
+  uint32 failed_attempts = 8;
+  // Its accepted tasks, each counted once.
+  AcceptedTasks accepted = 9;
+  // How many machines were handed a task of it.
+  uint32 machines = 10;
+  // The sum over its jobs of the time from submission to end, on the
+  // coordinator's clock, queueing included. It is not the time any machine
+  // spent working.
+  uint64 wall_seconds = 11;
 }
 
 message GetJobRecordRequest {
