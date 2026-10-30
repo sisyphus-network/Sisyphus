@@ -903,6 +903,45 @@ func (s *sharedStateTestStream) Send(event *nodepb.SharedStateEvent) error {
 	return nil
 }
 
+func TestWatchSharedStateDomainErrorDoesNotEndOtherSubscriptions(t *testing.T) {
+	ctx, cancel := context.WithCancel(incomingToken("the-token"))
+	defer cancel()
+	changes := NewNodeInfoChanges()
+	var peers []*nodepb.Peer
+	stream := &sharedStateTestStream{ctx: ctx, afterSend: func(sent int) {
+		if sent == 2 {
+			peers = []*nodepb.Peer{peerEntry("peer-after-error", true, true)}
+			changes.Notify()
+		}
+		if sent == 3 {
+			cancel()
+		}
+	}}
+	service := &localService{cfg: LocalConfig{
+		Token: "the-token", NodeInfoChanges: changes,
+		Peers: func() []*nodepb.Peer { return peers },
+	}}
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{
+		nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE,
+		nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS,
+	}}
+	if err := service.WatchSharedState(request, stream); err != nil {
+		t.Fatal(err)
+	}
+	if len(stream.sent) != 3 {
+		t.Fatalf("shared-state events = %v; want NODE baseline, pool-limits error, and NODE update", stream.sent)
+	}
+	if first := stream.sent[0]; first.GetDomain() != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || !first.GetSnapshot() || first.GetRevision() != 1 || first.GetError() != "" {
+		t.Fatalf("initial NODE event = %v", first)
+	}
+	if failed := stream.sent[1]; failed.GetDomain() != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || !failed.GetSnapshot() || failed.GetRevision() != 2 || failed.GetError() == "" || failed.GetState() != nil {
+		t.Fatalf("unavailable pool-limits event = %v; want a domain error", failed)
+	}
+	if update := stream.sent[2]; update.GetDomain() != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || update.GetSnapshot() || update.GetRevision() != 3 || update.GetError() != "" || len(update.GetNode().GetPeers()) != 1 || update.GetNode().GetPeers()[0].GetPeerId() != "peer-after-error" {
+		t.Fatalf("NODE update after domain error = %v", update)
+	}
+}
+
 func TestWatchSharedStateStopsOnSendFailureOrCancellation(t *testing.T) {
 	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE}}
 	sendFailure := errors.New("shared state send failed")
