@@ -790,6 +790,10 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if unavailablePoolMembers.GetError() == "" || unavailablePoolMembers.GetState() != nil {
 		t.Fatalf("unavailable pool-members snapshot = %v; want per-domain error", unavailablePoolMembers)
 	}
+	unavailableChatSummaries := (&localService{}).sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES)
+	if unavailableChatSummaries.GetError() == "" || unavailableChatSummaries.GetState() != nil {
+		t.Fatalf("unavailable chat-summaries snapshot = %v; want per-domain error", unavailableChatSummaries)
+	}
 	failedModelConfig := (&localService{cfg: LocalConfig{Assistant: &profiledAssistant{configErr: errAbsent}}}).sharedStateSnapshot(withToken("the-token"), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES)
 	if failedModelConfig.GetError() == "" || failedModelConfig.GetState() != nil {
 		t.Fatalf("failed model-config snapshot = %v; want per-domain error", failedModelConfig)
