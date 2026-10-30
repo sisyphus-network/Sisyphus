@@ -23,6 +23,7 @@ require (
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multihash v0.2.3
 	go.uber.org/fx v1.24.0
+	golang.org/x/sys v0.48.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.60.1
@@ -161,7 +162,6 @@ require (
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260908163034-4bcc4b2ee518 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

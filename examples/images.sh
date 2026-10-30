@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Edits a batch of pictures on the pool: each is stored, a run of them goes
-# to each worker, libvips fits them to a size and saves them in a format,
-# and a zip of them all is fetched.
+# to each worker, Real-ESRGAN upscales them if asked, libvips fits them to
+# a size and saves them in a format, and a zip of them all is fetched.
 #
 #   examples/images.sh <picture>... [-- output.zip]
 #
@@ -15,6 +15,14 @@
 # (1 to 100, default 85), KEEP_METADATA (true to keep EXIF and the like;
 # by default it is taken out) and TASKS (default: left to the pool) may be
 # set in the environment.
+#
+# UPSCALE (2, 3 or 4) has Real-ESRGAN make each picture that many times
+# bigger first, then fits and saves it as above; MODEL picks its network:
+# realesrgan-x4plus (the default, for photos), realesrgan-x4plus-anime
+# (for drawings) or realesr-animevideov3 (small and fast, for frames of
+# anime). GPU=true runs it on a worker's graphics card; without one it
+# runs on a worker whose processor has AVX2, and is far slower. Upscaled
+# pictures keep no metadata, so KEEP_METADATA cannot be set with UPSCALE.
 set -euo pipefail
 
 pictures=()
@@ -48,8 +56,10 @@ for picture in "${pictures[@]}"; do
 	inputs=${inputs:+$inputs,}\"$cid\"
 done
 
-params="{\"inputs\":[$inputs],\"width\":${WIDTH:-0},\"height\":${HEIGHT:-0},\"format\":\"${FORMAT:-same}\",\"quality\":${QUALITY:-85},\"keep_metadata\":${KEEP_METADATA:-false},\"tasks\":${TASKS:-0}}"
-echo "editing ${#pictures[@]} pictures on the pool"
+params="{\"inputs\":[$inputs],\"width\":${WIDTH:-0},\"height\":${HEIGHT:-0},\"format\":\"${FORMAT:-same}\",\"quality\":${QUALITY:-85},\"keep_metadata\":${KEEP_METADATA:-false},\"upscale\":${UPSCALE:-0},\"model\":\"${MODEL:-}\",\"gpu\":${GPU:-false},\"tasks\":${TASKS:-0}}"
+upscaled=
+if [ "${UPSCALE:-0}" != 0 ]; then upscaled=", upscaled by $UPSCALE"; fi
+echo "editing ${#pictures[@]} pictures on the pool$upscaled"
 out=$(node job submit --workload images --params "$params")
 echo "$out" | sed -n 's/^job \([0-9a-f]*\) succeeded in \(.*\)/  job \1 took \2/p'
 result=$(echo "$out" | tail -n 1)

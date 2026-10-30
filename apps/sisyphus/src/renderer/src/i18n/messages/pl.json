@@ -510,7 +510,7 @@
       "forecast": { "title": "Prognozuj szereg", "description": "Dopasowuje modele wygładzania, autoregresyjne i proste do szeregu czasowego, sprawdza każdy na jego niedawnej przeszłości w całej puli i prognozuje medianą najlepszych rodzajów modeli, z przedziałami." },
       "traj": { "title": "Analizuj trajektorie", "description": "Wyznacza RMSD, promień bezwładności, odległości, wiązania wodorowe, strukturę drugorzędową lub RMSF wzdłuż trajektorii dynamiki molekularnej za pomocą cpptraj, partiami klatek w całej puli." },
       "prep": { "title": "Przygotuj układy Amber", "description": "Umieszcza każde białko lub kwas nukleinowy w pudełku wody z jonami za pomocą tleap z AmberTools, partiami plików PDB w całej puli, gotowe do symulacji jako topologia i współrzędne Amber." },
-      "images": { "title": "Edytuj obrazy", "description": "Dopasowuje partię obrazów do rozmiaru, zapisuje je jako JPEG, PNG, WebP, TIFF lub GIF i usuwa ich metadane za pomocą libvips, partiami obrazów w całej puli." },
+      "images": { "title": "Edytuj obrazy", "description": "Dopasowuje partię obrazów do rozmiaru, zapisuje je jako JPEG, PNG, WebP, TIFF lub GIF i usuwa ich metadane za pomocą libvips, na życzenie najpierw powiększając je za pomocą Real-ESRGAN, partiami obrazów w całej puli." },
       "md": { "title": "Symuluj cząsteczkę", "description": "Uruchamia dynamikę molekularną jako repliki w całej puli." }
     }
   },
