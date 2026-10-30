@@ -165,16 +165,9 @@ export function OperationsPage({ messages }: { messages: Messages }) {
     if (result && jobsSnapshot.current.accept(jobsSnapshotToken)) setJobs(normalizeJobs(result.jobs))
   }
   async function refresh() {
-    const api = getNodeApi()
-    const jobsSnapshotToken = jobsSnapshot.current.begin()
-    const [jobsResult, membersResult, workersResult] = await Promise.allSettled([
-      api.call<{ jobs?: Job[] }>('listJobs'),
-      api.call<{ members?: Member[] }>('listMembers'),
-      api.call<{ workers?: PoolWorker[] }>('listWorkers'),
-    ])
-    if (jobsResult.status === 'fulfilled' && jobsSnapshot.current.accept(jobsSnapshotToken)) setJobs(normalizeJobs(jobsResult.value.jobs))
-    if (membersResult.status === 'fulfilled') setMembers(membersResult.value.members ?? [])
-    if (workersResult.status === 'fulfilled') setWorkers(workersResult.value.workers ?? [])
+    // Membership and workers are owned by the live stream (and its guarded
+    // fallback). A concurrent one-shot refresh could overwrite newer events.
+    await refreshJobs()
   }
   useEffect(() => {
     void refreshJobs()
