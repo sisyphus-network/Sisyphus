@@ -253,7 +253,9 @@ func TestWatchSharedStateStreamsPoolMembershipToIndependentClients(t *testing.T)
 func TestWatchSharedStateStreamsChatSummariesToIndependentClients(t *testing.T) {
 	const token = "the-token"
 	assistant := &sharedChatsAssistant{}
-	client := serveLocal(t, LocalConfig{Assistant: assistant, NodeInfoChanges: NewNodeInfoChanges()})
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{Assistant: assistant, NodeInfoChanges: changes})
+	otherClient := serveLocal(t, LocalConfig{Assistant: assistant, NodeInfoChanges: changes})
 	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES}}
 	ctx1, cancel1 := context.WithCancel(withToken(token))
 	defer cancel1()
@@ -263,7 +265,7 @@ func TestWatchSharedStateStreamsChatSummariesToIndependentClients(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := client.WatchSharedState(ctx2, request)
+	second, err := otherClient.WatchSharedState(ctx2, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +287,7 @@ func TestWatchSharedStateStreamsChatSummariesToIndependentClients(t *testing.T) 
 	for _, watcher := range watchers {
 		event, err := watcher.Recv()
 		chats := event.GetChatSummaries().GetChats()
-		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || event.GetChatSummaries().GetRevision() != 1 || len(chats) != 1 || chats[0].GetChatId() != "shared-chat" {
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || event.GetChatSummaries().GetRevision() != 1 || len(chats) != 1 || chats[0].GetChatId() != "shared-chat" || chats[0].GetRevision() != 1 {
 			t.Fatalf("chat created by Ask = %v, %v", event, err)
 		}
 	}
@@ -298,7 +300,7 @@ func TestWatchSharedStateStreamsChatSummariesToIndependentClients(t *testing.T) 
 	}
 	for _, watcher := range watchers {
 		event, err := watcher.Recv()
-		if err != nil || event.GetRevision() != 3 || event.GetChatSummaries().GetRevision() != 2 || len(event.GetChatSummaries().GetChats()) != 1 {
+		if err != nil || event.GetRevision() != 3 || event.GetChatSummaries().GetRevision() != 2 || len(event.GetChatSummaries().GetChats()) != 1 || event.GetChatSummaries().GetChats()[0].GetRevision() != 2 {
 			t.Fatalf("updated existing chat event = %v, %v", event, err)
 		}
 	}
@@ -718,6 +720,21 @@ func TestLocationDiscoverySnapshotUnavailable(t *testing.T) {
 	event := (&localService{}).sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY)
 	if event.GetError() == "" || event.GetState() != nil {
 		t.Fatalf("unavailable location discovery snapshot = %v; want error without state", event)
+	}
+}
+
+func TestChatRevisionSharedAcrossLocalServices(t *testing.T) {
+	changes := NewNodeInfoChanges()
+	first := &localService{cfg: LocalConfig{NodeInfoChanges: changes}}
+	second := &localService{cfg: LocalConfig{NodeInfoChanges: changes}}
+	first.chatRevisionCounter().Add(1)
+	if got := second.chatRevisionCounter().Load(); got != 1 {
+		t.Fatalf("second service revision = %d, want 1", got)
+	}
+	standalone := &localService{}
+	standalone.chatRevisionCounter().Add(1)
+	if got := standalone.chatRevisionCounter().Load(); got != 1 {
+		t.Fatalf("standalone revision = %d, want 1", got)
 	}
 }
 
@@ -2276,6 +2293,11 @@ func (a *sharedChatsAssistant) Ask(_ context.Context, chatID, text string, _ fun
 	if chatID == "" {
 		chatID = "shared-chat"
 		a.chats = append(a.chats, nodedb.Chat{ID: chatID, Title: text, Created: time.Now()})
+	}
+	for i := range a.chats {
+		if a.chats[i].ID == chatID {
+			a.chats[i].Revision++
+		}
 	}
 	return chatID, nil
 }

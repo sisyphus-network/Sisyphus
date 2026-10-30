@@ -760,8 +760,9 @@ func watchWithChanges[T proto.Message](ctx context.Context, changes <-chan struc
 // independent subscribers, so one local or remote client cannot consume
 // another's event.
 type NodeInfoChanges struct {
-	mu          sync.Mutex
-	subscribers map[chan struct{}]struct{}
+	mu           sync.Mutex
+	subscribers  map[chan struct{}]struct{}
+	chatRevision atomic.Uint64
 }
 
 func NewNodeInfoChanges() *NodeInfoChanges {
@@ -1359,6 +1360,15 @@ func (s *localService) notifySharedStateChanged() {
 	}
 }
 
+// Both API servers receive the same broadcaster. Keep the revision there so
+// a change through one server is visible in snapshots served by the other.
+func (s *localService) chatRevisionCounter() *atomic.Uint64 {
+	if s.cfg.NodeInfoChanges != nil {
+		return &s.cfg.NodeInfoChanges.chatRevision
+	}
+	return &s.chatRevision
+}
+
 // Ask puts a question to the planner and sends what it does as it does it.
 // It spends the pool's time and perhaps a service's credit, and what is
 // said is the owner's business, so it needs the token, as do the calls that
@@ -1390,7 +1400,7 @@ func (s *localService) Ask(req *nodepb.AskRequest, stream grpc.ServerStreamingSe
 		chatID, err = s.cfg.Assistant.Ask(stream.Context(), req.GetChatId(), req.GetText(), report)
 	}
 	if chatID != "" {
-		s.chatRevision.Add(1)
+		s.chatRevisionCounter().Add(1)
 		s.notifySharedStateChanged()
 	}
 	if err != nil {
@@ -1411,9 +1421,9 @@ func (s *localService) ListChats(ctx context.Context, _ *nodepb.ListChatsRequest
 		return nil, asError(err)
 	}
 	res := new(nodepb.ListChatsResponse)
-	res.Revision = s.chatRevision.Load()
+	res.Revision = s.chatRevisionCounter().Load()
 	for _, c := range chats {
-		res.Chats = append(res.Chats, &nodepb.ChatSummary{ChatId: c.ID, Title: c.Title, CreatedAtMs: c.Created.UnixMilli()})
+		res.Chats = append(res.Chats, &nodepb.ChatSummary{ChatId: c.ID, Title: c.Title, CreatedAtMs: c.Created.UnixMilli(), Revision: uint64(c.Revision)})
 	}
 	return res, nil
 }
@@ -1450,7 +1460,7 @@ func (s *localService) DeleteChat(ctx context.Context, req *nodepb.DeleteChatReq
 	if err := s.cfg.Assistant.DeleteChat(req.GetChatId()); err != nil {
 		return nil, asError(err)
 	}
-	s.chatRevision.Add(1)
+	s.chatRevisionCounter().Add(1)
 	s.notifySharedStateChanged()
 	return &nodepb.DeleteChatResponse{}, nil
 }

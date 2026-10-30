@@ -846,6 +846,8 @@ message ChatSummary {
   // The start of its first question.
   string title = 2;
   int64 created_at_ms = 3;
+  // Last persisted message sequence for this conversation.
+  uint64 revision = 4;
 }
 
 message GetChatRequest { string chat_id = 1; }

@@ -21,13 +21,14 @@ import ShinyText from '@/components/ui/shiny-text'
 import { getNodeApi } from '@/lib/node-api'
 import { SharedStateDomain } from '@sisyphus/client'
 import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { chatRevisionChange } from '@/lib/chat-summary-revisions'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { type getMessages } from '@/i18n/messages'
 import { formatMessage } from '@/i18n/messages'
 import { MAX_CLIENT_FILE_UPLOAD_BYTES, fileUploadLimitLabel } from '../../../../shared/file-upload-limit.ts'
 
 type Messages = ReturnType<typeof getMessages>
-type ChatSummary = { chatId: string; title: string; createdAtMs: string | number }
+type ChatSummary = { chatId: string; title: string; createdAtMs: string | number; revision?: string | number | bigint }
 type AskEvent = { chatId: string; kind: string; text: string; jobId?: string; tool?: string }
 type SharedChatsEvent = {
   domain: number | string
@@ -113,12 +114,15 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   const composerRef = useRef<HTMLDivElement>(null)
   const previewUrls = useRef(new Set<string>())
   const requestRef = useRef(0)
+  const refreshRequestRef = useRef(0)
   const streamCancel = useRef<(() => void) | null>(null)
   const assistantId = useRef('')
   const stickToBottom = useRef(true)
   const isBusy = asking || busy
   const chatIdRef = useRef(chatId)
   const isBusyRef = useRef(isBusy)
+  const chatRevisionsRef = useRef(new Map<string, string>())
+  const pendingChatRefreshRef = useRef<string | null>(null)
   chatIdRef.current = chatId
   isBusyRef.current = isBusy
 
@@ -159,11 +163,18 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
         if (!nextChats) return
         fallbackRequested = false
         if (event.snapshot) attempt = 0
-        setChats(nextChats)
         const selectedId = chatIdRef.current
-        if (!selectedId) return
-        if (!nextChats.some((chat) => chat.chatId === selectedId)) void openChat('')
-        else if (!isBusyRef.current) void openChat(selectedId)
+        const change = chatRevisionChange(chatRevisionsRef.current, nextChats, selectedId)
+        chatRevisionsRef.current = change.revisions
+        setChats(nextChats)
+        if (change.action === 'close') void openChat('')
+        else if (change.action === 'refresh' || (selectedId && pendingChatRefreshRef.current === selectedId)) {
+          if (isBusyRef.current) pendingChatRefreshRef.current = selectedId
+          else {
+            pendingChatRefreshRef.current = null
+            void refreshOpenChat(selectedId)
+          }
+        }
       }, reconnect, reconnect)
     }
     connect()
@@ -173,6 +184,12 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
       cancel?.()
     }
   }, [snapshot.status])
+  useEffect(() => {
+    if (isBusy) return
+    const pending = pendingChatRefreshRef.current
+    pendingChatRefreshRef.current = null
+    if (pending && pending === chatIdRef.current) void refreshOpenChat(pending)
+  }, [isBusy])
   // Workspace can switch between its desktop and compact layouts. If that
   // remounts this view, restore the selected conversation from its owner.
   useEffect(() => {
@@ -211,7 +228,9 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   }, [items])
 
   async function openChat(id: string) {
+    pendingChatRefreshRef.current = null
     const requestId = ++requestRef.current
+    ++refreshRequestRef.current
     streamCancel.current?.()
     streamCancel.current = null
     setAsking(false)
@@ -231,13 +250,28 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
     } finally { if (requestId === requestRef.current) setConversationLoading(false) }
   }
 
+  async function refreshOpenChat(id: string) {
+    const requestId = ++refreshRequestRef.current
+    try {
+      const result = await getNodeApi().call<{ messages?: StoredChatMessage[] }>('getChat', { chatId: id })
+      if (requestId === refreshRequestRef.current && chatIdRef.current === id) {
+        if (isBusyRef.current) pendingChatRefreshRef.current = id
+        else setItems(loadMessages(result.messages ?? []))
+      }
+    } catch {
+      // Keep the refresh pending so a later stream event, including a
+      // reconnect snapshot with the same revision, can retry it.
+      if (requestId === refreshRequestRef.current && chatIdRef.current === id) pendingChatRefreshRef.current = id
+    }
+  }
+
   async function deleteChat(id: string) {
     if (deletingChat) return
     setDeletingChat(true)
     try {
       await getNodeApi().call('deleteChat', { chatId: id })
       setChats((current) => current.filter((chat) => chat.chatId !== id))
-      if (chatIdRef.current === id) { ++requestRef.current; streamCancel.current?.(); streamCancel.current = null; setAsking(false); setChatId(''); chatIdRef.current = ''; onActiveChatChange?.(''); setItems([]) }
+      if (chatIdRef.current === id) { ++requestRef.current; ++refreshRequestRef.current; streamCancel.current?.(); streamCancel.current = null; setAsking(false); setChatId(''); chatIdRef.current = ''; onActiveChatChange?.(''); setItems([]) }
       toast.success(messages.conversationDeleted)
       setDeleteTarget(null)
     } catch (error) { toast.error(messages.deleteConversationFailed, { description: error instanceof Error ? error.message : String(error) }) }
@@ -320,7 +354,6 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
           setAsking(false)
           isBusyRef.current = false
           streamCancel.current = null
-          if (event.chatId) void openChat(event.chatId)
         }
       }, (error, code) => {
         setAsking(false)
