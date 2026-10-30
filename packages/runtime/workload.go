@@ -109,6 +109,61 @@ func Compare(w Workload, a, b []byte) (same bool, why string) {
 	return false, ""
 }
 
+// Origin is what the coordinator knows of where an output of a task was
+// computed, from its own record of the worker that ran the attempt: what
+// that worker said of its machine when it joined, or, for a result the
+// coordinator computed itself to audit one, its own machine. It is never
+// read from the output, which the worker writes. An empty field is unknown.
+type Origin struct {
+	// CPUModel is the processor's name, as the hardware package finds it.
+	CPUModel string
+}
+
+// SameCPU reports whether two outputs are known to have been computed on
+// the same kind of processor: both processors are known, and have the same
+// name.
+func SameCPU(a, b Origin) bool {
+	return a.CPUModel != "" && a.CPUModel == b.CPUModel
+}
+
+// The tiers a Tiered workload compares within, for workloads whose honest
+// results agree more closely on one kind of processor than across kinds.
+const (
+	// TierSameCPU: both outputs were computed on the same kind of
+	// processor, and are held to the workload's tighter tolerance.
+	TierSameCPU = "same-cpu"
+	// TierCrossCPU: they were not, or it is not known that they were, and
+	// they are held to the tolerance that allows for different processors.
+	TierCrossCPU = "cross-cpu"
+)
+
+// Tiered is a Comparing workload whose tolerance depends on where its two
+// outputs were computed: work that gives the same bits on one kind of
+// processor, and agrees only to some precision across kinds. The
+// coordinator compares its outputs with CompareFrom, giving each output's
+// Origin, and records the tier the comparison was made in. Compare, which
+// knows nothing of where the outputs came from, must hold them to the
+// loosest tier.
+type Tiered interface {
+	Comparing
+	// CompareFrom is Compare for outputs whose origins are known as far as
+	// the coordinator knows them. It says, as well, which tier it compared
+	// them in, whether or not they were the same. It must be symmetric, as
+	// Compare is.
+	CompareFrom(a []byte, aFrom Origin, b []byte, bFrom Origin) (same bool, tier, why string)
+}
+
+// CompareFrom is Compare for outputs whose origins are known: by the
+// workload's own CompareFrom, if it is Tiered, which says which tier it
+// compared them in; and otherwise as Compare compares them, in no tier.
+func CompareFrom(w Workload, a []byte, aFrom Origin, b []byte, bFrom Origin) (same bool, tier, why string) {
+	if t, ok := w.(Tiered); ok {
+		return t.CompareFrom(a, aFrom, b, bFrom)
+	}
+	same, why = Compare(w, a, b)
+	return same, "", why
+}
+
 // Checkable reports whether a workload's tasks can be checked by comparing
 // two runs' results, as verify and audit_share do: it gives the same result
 // every time, or it compares its results itself.

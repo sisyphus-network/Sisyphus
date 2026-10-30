@@ -824,8 +824,105 @@ func TestQchemOutputsAreComparedWithinTolerances(t *testing.T) {
 		t.Error("qchem's tasks cannot be checked")
 	}
 	// Dipoles that are not three numbers on either side are not compared.
-	if why := compareDipoles("0.1 0.2", "0.1 0.2", [3][3]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}); !strings.Contains(why, "not three numbers") {
+	if why := compareDipoles("0.1 0.2", "0.1 0.2", [3][3]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}, qchemCrossCPU.dipole); !strings.Contains(why, "not three numbers") {
 		t.Errorf("two dipoles of two numbers: %q", why)
+	}
+}
+
+// Two runs are held to the tight tolerances only when the coordinator knows
+// both ran on the same kind of processor, and to those across processors
+// otherwise. A difference as small as processors make passes either tier;
+// one that would pass across processors fails on one kind of processor;
+// and one too large for either fails both.
+func TestQchemPicksItsToleranceByWhereBothRunsWereComputed(t *testing.T) {
+	summary := func(energy, gap, wave, h string) []byte {
+		return mustJSON(qchemSummary{Method: "gfn2", Job: "ohess", Structures: []qchemTaskStructure{{
+			Index: 0, Title: "water", Energy: energy, Gap: gap, FreeEnergy: "-5.053410931218", Dipole: "-0.000 0.000 0.857",
+			Frequencies: [][]string{{"1539.43", "106.40141"}, {wave, "4.24533"}, {"3651.85", "14.86032"}},
+			Converged:   true, Geometry: true,
+			Atoms: []string{"O 0.00000000000000 0.00000000000000 0.39058584476042", "H 0.00000000000000 " + h + " -0.19529292238021", "H 0.00000000000000 -0.78389616530418 -0.19529292238021"},
+		}}})
+	}
+	original := summary("-5.070544440612", "14.464530812342", "3644.31", "0.78389616530418")
+	xeon, epyc := Origin{CPUModel: "Intel(R) Xeon(R) CPU E5-2670 0 @ 2.60GHz"}, Origin{CPUModel: "AMD EPYC 7763 64-Core Processor"}
+	unknown := Origin{}
+	differences := []struct {
+		name  string
+		other []byte
+		// Whether it is the same within each tier, and what it says
+		// where it is not, in the tight tier.
+		sameCPU, crossCPU bool
+		why               string
+	}{
+		{"byte for byte", original, true, true, ""},
+		{"in the last digits, as processors differ", summary("-5.070544440613", "14.464530862342", "3644.31", "0.78389616730418"), true, true, ""},
+		{"an energy 1e-7 apart", summary("-5.070544540612", "14.464530812342", "3644.31", "0.78389616530418"), false, true, "the energy is -5.070544440612 in one and -5.070544540612 in the other, 1e-07 apart, more than 1e-08"},
+		{"a gap 1e-5 apart", summary("-5.070544440612", "14.464540812342", "3644.31", "0.78389616530418"), false, true, "more than 1e-06"},
+		{"a frequency 0.5 apart", summary("-5.070544440612", "14.464530812342", "3644.81", "0.78389616530418"), false, true, "mode 2 is"},
+		{"an atom 1e-4 apart", summary("-5.070544440612", "14.464530812342", "3644.31", "0.78399616530418"), false, true, "more than 1e-05"},
+		{"an energy 1e-5 apart", summary("-5.070534440612", "14.464530812342", "3644.31", "0.78389616530418"), false, false, "the energy is"},
+	}
+	for _, from := range []struct {
+		name      string
+		a, b      Origin
+		tier      string
+		sameTight bool
+	}{
+		{"the same processor", xeon, xeon, TierSameCPU, true},
+		{"different processors", xeon, epyc, TierCrossCPU, false},
+		{"one processor unknown", xeon, unknown, TierCrossCPU, false},
+		{"the other unknown", unknown, epyc, TierCrossCPU, false},
+		{"both unknown", unknown, unknown, TierCrossCPU, false},
+	} {
+		for _, d := range differences {
+			same, tier, why := Qchem{}.CompareFrom(original, from.a, d.other, from.b)
+			back, tierBack, whyBack := Qchem{}.CompareFrom(d.other, from.b, original, from.a)
+			if same != back || tier != tierBack || why != whyBack {
+				t.Errorf("%s, %s: one way %t %s %q, the other %t %s %q", from.name, d.name, same, tier, why, back, tierBack, whyBack)
+			}
+			want := d.crossCPU
+			if from.sameTight {
+				want = d.sameCPU
+			}
+			if tier != from.tier || same != want {
+				t.Errorf("%s, %s: %t in tier %s (%q), want %t in tier %s", from.name, d.name, same, tier, why, want, from.tier)
+			}
+			if from.sameTight && !strings.Contains(why, d.why) {
+				t.Errorf("%s, %s: %q, want %q", from.name, d.name, why, d.why)
+			}
+			// Compare, which knows nothing of where they ran, holds them
+			// to the tolerances across processors.
+			if plain, _ := (Qchem{}).Compare(original, d.other); plain != d.crossCPU {
+				t.Errorf("%s: Compare says %t", d.name, plain)
+			}
+		}
+	}
+	// A workload with no tiers is compared as Compare compares it, in none.
+	if same, tier, why := CompareFrom(within{}, []byte("ab"), xeon, []byte("abcd"), xeon); same || tier != "" || why != "their lengths differ by more than one" {
+		t.Errorf("a workload without tiers: %t %q %q", same, tier, why)
+	}
+	if same, tier, _ := CompareFrom(Primes{}, []byte("x"), xeon, []byte("x"), xeon); !same || tier != "" {
+		t.Errorf("a workload compared by its bytes: %t %q", same, tier)
+	}
+	if same, tier, _ := CompareFrom(Qchem{}, original, xeon, original, xeon); !same || tier != TierSameCPU {
+		t.Errorf("qchem through CompareFrom: %t %q", same, tier)
+	}
+}
+
+func TestProcessorsAreTheSameOnlyWhenBothAreKnownAndAlike(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want bool
+	}{
+		{"Xeon", "Xeon", true},
+		{"Xeon", "EPYC", false},
+		{"Xeon", "", false},
+		{"", "Xeon", false},
+		{"", "", false},
+	} {
+		if got := SameCPU(Origin{CPUModel: tt.a}, Origin{CPUModel: tt.b}); got != tt.want {
+			t.Errorf("SameCPU(%q, %q) = %t, want %t", tt.a, tt.b, got, tt.want)
+		}
 	}
 }
 

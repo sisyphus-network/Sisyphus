@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -208,5 +210,144 @@ func TestWorkThatVariesAndDoesNotCompareItsResultsIsStillNotChecked(t *testing.T
 	}
 	if _, err := p.client.SubmitJob(p.ctx, &pb.SubmitJobRequest{Spec: &pb.JobSpec{Workload: "numeric", AuditShare: 0.5}}); err != nil {
 		t.Errorf("numeric with audit_share: %v", err)
+	}
+}
+
+// tiered is numeric with two tiers, as qchem has: honest results agree to
+// twelve decimals on one kind of processor, and to eight across kinds. An
+// output is the number, and may go on to claim a processor, which a worker
+// could write whatever it likes into and the comparison must not believe.
+// It notes every pair of origins it is given.
+type tiered struct {
+	numeric
+	seen *originLog
+}
+
+type originLog struct {
+	mu   sync.Mutex
+	seen [][2]runtime.Origin
+}
+
+func (l *originLog) all() [][2]runtime.Origin {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.seen)
+}
+
+func (tiered) Name() string { return "tiered" }
+
+func (t tiered) CompareFrom(a []byte, aFrom runtime.Origin, b []byte, bFrom runtime.Origin) (bool, string, string) {
+	t.seen.mu.Lock()
+	t.seen.seen = append(t.seen.seen, [2]runtime.Origin{aFrom, bFrom})
+	t.seen.mu.Unlock()
+	tier, within := runtime.TierCrossCPU, 1e-8
+	if runtime.SameCPU(aFrom, bFrom) {
+		tier, within = runtime.TierSameCPU, 1e-12
+	}
+	x, errA := strconv.ParseFloat(strings.Fields(string(a) + " ")[0], 64)
+	y, errB := strconv.ParseFloat(strings.Fields(string(b) + " ")[0], 64)
+	if errA != nil || errB != nil {
+		return false, tier, "one of them is not a number"
+	}
+	if d := math.Abs(x - y); d > within {
+		return false, tier, fmt.Sprintf("the values differ by %.3g, more than %g", d, within)
+	}
+	return true, tier, ""
+}
+
+// helloOn is hello from a worker that says its machine has this processor.
+func helloOn(name string, slots uint32, cpu string, workloads ...string) *pb.WorkerMessage {
+	msg := hello(name, slots, workloads...)
+	msg.GetHello().GetCapabilities().CpuModel = cpu
+	return msg
+}
+
+// Which tier a verified task is held to follows from the processors the
+// coordinator recorded for the two workers when they joined, never from
+// what their outputs claim: both outputs here claim the same processor.
+func TestAVerifiedTaskIsHeldToTheTierOfTheProcessorsItsWorkersJoinedWith(t *testing.T) {
+	const xeon, epyc = "Intel(R) Xeon(R) CPU E5-2670 0 @ 2.60GHz", "AMD EPYC 7763 64-Core Processor"
+	for _, tt := range []struct {
+		name       string
+		cpus       [2]string
+		returned   [2]string
+		succeeded  bool
+		tier, said string
+	}{
+		{"the same processor, the same bits", [2]string{xeon, xeon}, [2]string{"1.000000000000 " + xeon, "1.000000000000 " + xeon}, true, runtime.TierSameCPU, "alpha, beta returned the same result (compared in the same-cpu tier)"},
+		{"the same processor, digits apart", [2]string{xeon, xeon}, [2]string{"1.000000000000 " + xeon, "1.000000000100 " + xeon}, false, runtime.TierSameCPU, "(the values differ by 1e-10, more than 1e-12)"},
+		{"different processors", [2]string{xeon, epyc}, [2]string{"1.000000000000 " + xeon, "1.000000000100 " + xeon}, true, runtime.TierCrossCPU, "alpha, beta returned the same result (compared in the cross-cpu tier)"},
+		{"one processor unknown", [2]string{xeon, ""}, [2]string{"1.000000000000 " + xeon, "1.000000000100 " + xeon}, true, runtime.TierCrossCPU, "(compared in the cross-cpu tier)"},
+		{"both unknown", [2]string{"", ""}, [2]string{"1.000000000000 " + xeon, "1.000000000100 " + xeon}, true, runtime.TierCrossCPU, "(compared in the cross-cpu tier)"},
+		{"different processors, too far apart for either tier", [2]string{xeon, epyc}, [2]string{"1.000000000000", "1.0001"}, false, runtime.TierCrossCPU, "more than 1e-08"},
+	} {
+		seen := new(originLog)
+		p := startPool(t, runtime.NewRegistry(tiered{seen: seen}))
+		alpha := p.connectRaw(helloOn("alpha", 2, tt.cpus[0], "tiered"))
+		alpha.welcome()
+		beta := p.connectRaw(helloOn("beta", 1, tt.cpus[1], "tiered"))
+		beta.welcome()
+		id := p.submit(&pb.JobSpec{Workload: "tiered", MaxTasks: 1, Verify: 2}).GetJobId()
+		alpha.returns(alpha.assignment(), tt.returned[0])
+		beta.returns(beta.assignment(), tt.returned[1])
+		done := p.wait(id)
+		if succeeded := done.GetState() == pb.JobState_JOB_STATE_SUCCEEDED; succeeded != tt.succeeded {
+			t.Errorf("%s: the job %v %s", tt.name, done.GetState(), done.GetError())
+		}
+		if told := story(p.events(id, 0)) + "\n" + done.GetError(); !strings.Contains(told, tt.said) {
+			t.Errorf("%s: the job's events lack %q:\n%s", tt.name, tt.said, told)
+		}
+		// Every comparison was given the processors the workers joined
+		// with, in one order or the other.
+		origins := seen.all()
+		if len(origins) == 0 {
+			t.Fatalf("%s: never compared", tt.name)
+		}
+		for _, o := range origins {
+			got := []string{o[0].CPUModel, o[1].CPUModel}
+			slices.Sort(got)
+			want := []string{tt.cpus[0], tt.cpus[1]}
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s: compared as from %q, want %q", tt.name, got, want)
+			}
+		}
+	}
+}
+
+// An audit compares the worker's result, as from the processor it joined
+// with, with the coordinator's own, as from the coordinator's processor.
+func TestAnAuditIsHeldToTheTierOfTheWorkersAndTheCoordinatorsProcessors(t *testing.T) {
+	for _, tt := range []struct {
+		name, cpu, returned string
+		matched             bool
+		said                string
+	}{
+		{"the coordinator's processor, the same bits", poolCPU, computed, true, audited + " (compared in the same-cpu tier)"},
+		{"the coordinator's processor, digits apart", poolCPU, "1.000000000100", false, "(the values differ by 1e-10, more than 1e-12)"},
+		{"another processor, digits apart", "Another CPU", "1.000000000100", true, audited + " (compared in the cross-cpu tier)"},
+		{"an unknown processor that claims the coordinator's", "", "1.000000000100 " + poolCPU, true, audited + " (compared in the cross-cpu tier)"},
+	} {
+		seen := new(originLog)
+		p := startPool(t, runtime.NewRegistry(tiered{seen: seen}))
+		w := p.connectRaw(helloOn("only", 1, tt.cpu, "tiered"))
+		w.welcome()
+		id := p.submit(&pb.JobSpec{Workload: "tiered", MaxTasks: 1, AuditShare: 1}).GetJobId()
+		w.returns(w.assignment(), tt.returned)
+		done := p.wait(id)
+		told := story(p.events(id, 0))
+		if done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || !strings.Contains(told, tt.said) || strings.Contains(told, "task-disagreed") == tt.matched {
+			t.Errorf("%s: the job %v, its events:\n%s", tt.name, done.GetState(), told)
+		}
+		// Once to settle it, and again to say why where they differ.
+		origins := seen.all()
+		if len(origins) == 0 {
+			t.Errorf("%s: never compared", tt.name)
+		}
+		for _, o := range origins {
+			if o[0].CPUModel != poolCPU || o[1].CPUModel != tt.cpu {
+				t.Errorf("%s: compared as from %v", tt.name, origins)
+			}
+		}
 	}
 }

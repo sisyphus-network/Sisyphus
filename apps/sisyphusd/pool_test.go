@@ -46,6 +46,10 @@ var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 // testRetain is how long test coordinators keep a finished job's blobs.
 const testRetain = 24 * time.Hour
 
+// poolCPU is the processor the test pool's coordinator says it runs the
+// tasks it audits on.
+const poolCPU = "Coordinating CPU @ 3.0GHz"
+
 type pool struct {
 	t         *testing.T
 	ctx       context.Context
@@ -191,7 +195,7 @@ func startPoolAs(t *testing.T, workloads *runtime.Registry, wrap func(*storage.S
 	standings, _ := journal.(coordinator.Standings)
 	coord := coordinator.New(coordinator.Config{
 		DistinctAddresses: workersAt != nil, AddressOf: workersAt, SourceOf: workersFrom,
-		ID: ident.ID(), Workloads: workloads, Audits: workloads, Store: wrap(store), ClientOf: api.ClientOf, MaxStoreBytesPerClient: clientShare, MaxUploadBytesPerAttempt: attemptAllowance, Journal: journal, Standings: standings, Retain: testRetain,
+		ID: ident.ID(), Workloads: workloads, Audits: workloads, CPUModel: poolCPU, Store: wrap(store), ClientOf: api.ClientOf, MaxStoreBytesPerClient: clientShare, MaxUploadBytesPerAttempt: attemptAllowance, Journal: journal, Standings: standings, Retain: testRetain,
 		Log: slog.New(slog.NewTextHandler(logs, nil)),
 	})
 	if _, err := coord.Recover(); err != nil {

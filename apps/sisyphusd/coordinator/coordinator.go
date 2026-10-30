@@ -132,7 +132,12 @@ type Config struct {
 	// Audits is the workloads this node can run itself, and so can audit:
 	// run a task again to check what a worker returned for it. Nil is none.
 	Audits *runtime.Registry
-	Store  Store
+	// CPUModel is this node's processor, which it runs those tasks on, as
+	// the hardware package finds it; empty if unknown. A workload whose
+	// tolerance depends on the processor compares its own result with a
+	// worker's by it.
+	CPUModel string
+	Store    Store
 	// ClientOf names the client a pin owner other than a job holds pins
 	// for, or nothing for one that holds them for none. It is how Stored
 	// counts a client's own pins.
@@ -209,6 +214,7 @@ type Coordinator struct {
 	sign      func([]byte) []byte
 	workloads *runtime.Registry
 	audits    *runtime.Registry
+	cpuModel  string
 	// distinct is whether a verified task's copies must go to workers at
 	// different addresses, addressOf how a caller's is told, and addresses
 	// where each worker that has connected was when it last did.
@@ -387,6 +393,11 @@ type assignment struct {
 	// with several workers at once, each of them a different attempt.
 	attempt int
 	started time.Time
+	// cpuModel is the processor of the worker it was handed to, as the
+	// coordinator knew that worker then: what it said of its machine when
+	// it joined. A result of the attempt is compared as coming from that
+	// processor, whatever the result itself says.
+	cpuModel string
 }
 
 func New(cfg Config) *Coordinator {
@@ -404,6 +415,7 @@ func New(cfg Config) *Coordinator {
 		sign:           cfg.Sign,
 		workloads:      cfg.Workloads,
 		audits:         cfg.Audits,
+		cpuModel:       cfg.CPUModel,
 		distinct:       cfg.DistinctAddresses,
 		hardened:       cfg.HardenedContainers,
 		perClient:      cfg.MaxJobsPerClient,
@@ -2178,6 +2190,7 @@ func (c *Coordinator) runningBySubmitterLocked() map[string]int {
 func (c *Coordinator) handLocked(w *worker, a assignment) {
 	c.recordLocked(a.job, eventTaskStarted, a.task.Index, w.name, fmt.Sprintf("attempt %d", a.attempt))
 	c.log.Info("task given", "task", a.task.ID, "worker", w.name, "attempt", a.attempt)
+	a.cpuModel = w.capabilities.GetCpuModel()
 	w.running[a.task.ID] = a
 	c.notifyExpiryChangedLocked()
 	c.uploadMu.Lock()

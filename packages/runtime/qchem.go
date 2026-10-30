@@ -462,34 +462,70 @@ func (h *heldBlobs) left(ctx context.Context, out ContainerOutput, name string, 
 // results are compared within a tolerance, by Compare.
 func (Qchem) Varies() bool { return true }
 
-// The tolerances Compare holds two runs of a task to. Measured on one
-// machine with MKL's code paths for SSE4.2, AVX and its own compatible
-// arithmetic, which differ from one another as processors do, the same
-// butane optimisation and frequencies differed by 1e-12 hartree in the
-// energy, 1e-10 in the free energy, 5e-8 eV in the gap and 2e-9 ångström
-// in a coordinate, not at all in a frequency as xtb prints it, and 2e-5
-// km/mol in an intensity. The tolerances are far wider than that, for
-// processors that differ more and optimisations that end a little apart,
-// and far narrower than any difference that would matter to a chemist: a
-// millionth of a hartree is 0.0006 kcal/mol.
-const (
-	qchemEnergyTolerance    = 1e-6 // hartree, for the energy and free energy
-	qchemGapTolerance       = 1e-3 // eV
-	qchemDipoleTolerance    = 1e-3 // atomic units, each component
-	qchemRMSDTolerance      = 1e-3 // ångström, the geometries aligned
-	qchemWaveTolerance      = 1.0  // cm⁻¹
-	qchemIntensityTolerance = 0.01 // km/mol, and as much again a percent
+// qchemTolerances are how far apart two runs of a task may be and still be
+// the same result.
+type qchemTolerances struct {
+	energy    float64 // hartree, for the energy and free energy
+	gap       float64 // eV
+	dipole    float64 // atomic units, each component
+	rmsd      float64 // ångström, the geometries aligned
+	wave      float64 // cm⁻¹
+	intensity float64 // km/mol, and as much again a percent
+}
+
+// The tolerances Compare holds two runs of a task to, in two tiers.
+//
+// Across processors: measured on one machine with MKL's code paths for
+// SSE4.2, AVX and its own compatible arithmetic, which differ from one
+// another as processors do, the same butane optimisation and frequencies
+// differed by 1e-12 hartree in the energy, 1e-10 in the free energy, 5e-8
+// eV in the gap and 2e-9 ångström in a coordinate, not at all in a
+// frequency as xtb prints it, and 2e-5 km/mol in an intensity. The
+// tolerances are far wider than that, for processors that differ more and
+// optimisations that end a little apart, and far narrower than any
+// difference that would matter to a chemist: a millionth of a hartree is
+// 0.0006 kcal/mol.
+//
+// On one kind of processor: xtb runs on one thread with MKL's arithmetic
+// pinned, and gives the same bits run after run however a job is split, so
+// two honest runs there are byte-identical. The tolerances are a hundred
+// times tighter in energy and a thousand in the gap, ten in frequency and a
+// hundred in geometry, which leaves a dishonest worker far less room, and
+// are still wider than every difference measured across code paths above.
+var (
+	qchemCrossCPU = qchemTolerances{energy: 1e-6, gap: 1e-3, dipole: 1e-3, rmsd: 1e-3, wave: 1.0, intensity: 0.01}
+	qchemSameCPU  = qchemTolerances{energy: 1e-8, gap: 1e-6, dipole: 1e-5, rmsd: 1e-5, wave: 0.1, intensity: 0.001}
 )
 
 // Compare says whether two outputs of one task are the same result, to
-// within the tolerances above: the same structures, each with the same
+// within the tolerances across processors, since it does not know where
+// they were computed; see CompareFrom.
+func (Qchem) Compare(a, b []byte) (bool, string) {
+	return compareQchem(a, b, qchemCrossCPU)
+}
+
+// CompareFrom compares two outputs of one task within the tolerances for
+// one kind of processor when the coordinator knows both were computed on
+// the same kind, and within those across processors otherwise: when they
+// were computed on different kinds, or either kind is unknown.
+func (Qchem) CompareFrom(a []byte, aFrom Origin, b []byte, bFrom Origin) (bool, string, string) {
+	tier, within := TierCrossCPU, qchemCrossCPU
+	if SameCPU(aFrom, bFrom) {
+		tier, within = TierSameCPU, qchemSameCPU
+	}
+	same, why := compareQchem(a, b, within)
+	return same, tier, why
+}
+
+// compareQchem says whether two outputs of one task are the same result,
+// to within the given tolerances: the same structures, each with the same
 // title, status and outcome, its numbers within their tolerances, its
-// optimised geometry within qchemRMSDTolerance of the other once the two
+// optimised geometry within the RMSD tolerance of the other once the two
 // are laid over each other, which honest optimisations that drift apart
 // as a whole do not hold against them, and its frequencies, in order,
 // each within its tolerance. The outputs are taken in the order of their
 // bytes, so that which is given first never changes the answer.
-func (Qchem) Compare(a, b []byte) (bool, string) {
+func compareQchem(a, b []byte, within qchemTolerances) (bool, string) {
 	if bytes.Compare(a, b) > 0 {
 		a, b = b, a
 	}
@@ -504,7 +540,7 @@ func (Qchem) Compare(a, b []byte) (bool, string) {
 		return false, fmt.Sprintf("one computed %d structures, the other %d", len(x.Structures), len(y.Structures))
 	}
 	for i := range x.Structures {
-		if why := compareStructures(x.Structures[i], y.Structures[i]); why != "" {
+		if why := compareStructures(x.Structures[i], y.Structures[i], within); why != "" {
 			return false, fmt.Sprintf("structure %d: %s", x.Structures[i].Index, why)
 		}
 	}
@@ -513,7 +549,7 @@ func (Qchem) Compare(a, b []byte) (bool, string) {
 
 // compareStructures says how what two runs said of one structure differs
 // by more than the tolerances, or nothing where it does not.
-func compareStructures(x, y qchemTaskStructure) string {
+func compareStructures(x, y qchemTaskStructure, within qchemTolerances) string {
 	switch {
 	case x.Index != y.Index || x.Title != y.Title:
 		return "they are not the same structure"
@@ -525,29 +561,29 @@ func compareStructures(x, y qchemTaskStructure) string {
 		x, y      string
 		tolerance float64
 	}{
-		{"energy", x.Energy, y.Energy, qchemEnergyTolerance},
-		{"free energy", x.FreeEnergy, y.FreeEnergy, qchemEnergyTolerance},
-		{"gap", x.Gap, y.Gap, qchemGapTolerance},
+		{"energy", x.Energy, y.Energy, within.energy},
+		{"free energy", x.FreeEnergy, y.FreeEnergy, within.energy},
+		{"gap", x.Gap, y.Gap, within.gap},
 	} {
 		if why := qchemWithin(n.what, n.x, n.y, n.tolerance); why != "" {
 			return why
 		}
 	}
-	if why := compareFrequencies(x.Frequencies, y.Frequencies); why != "" {
+	if why := compareFrequencies(x.Frequencies, y.Frequencies, within); why != "" {
 		return why
 	}
-	turn, why := compareGeometries(x.Atoms, y.Atoms)
+	turn, why := compareGeometries(x.Atoms, y.Atoms, within.rmsd)
 	if why != "" {
 		return why
 	}
-	return compareDipoles(x.Dipole, y.Dipole, turn)
+	return compareDipoles(x.Dipole, y.Dipole, turn, within.dipole)
 }
 
-// compareDipoles compares two runs' dipoles, each component within
-// qchemDipoleTolerance, once the first is turned as its geometry turns to
+// compareDipoles compares two runs' dipoles, each component within the
+// tolerance, once the first is turned as its geometry turns to
 // lie over the other's: a dipole turns with its molecule, so two runs whose
 // optimisations end turned apart give the same dipole in different axes.
-func compareDipoles(x, y string, turn [3][3]float64) string {
+func compareDipoles(x, y string, turn [3][3]float64, tolerance float64) string {
 	dx, dy := strings.Fields(x), strings.Fields(y)
 	switch {
 	case len(dx) != len(dy):
@@ -568,8 +604,8 @@ func compareDipoles(x, y string, turn [3][3]float64) string {
 	}
 	for i := range 3 {
 		turned := turn[i][0]*a[0] + turn[i][1]*a[1] + turn[i][2]*a[2]
-		if gap := math.Abs(turned - b[i]); !(gap <= qchemDipoleTolerance) {
-			return fmt.Sprintf("the dipole is %q in one and %q in the other, %.3g apart in one direction once the geometries are laid over each other, more than %g", x, y, gap, qchemDipoleTolerance)
+		if gap := math.Abs(turned - b[i]); !(gap <= tolerance) {
+			return fmt.Sprintf("the dipole is %q in one and %q in the other, %.3g apart in one direction once the geometries are laid over each other, more than %g", x, y, gap, tolerance)
 		}
 	}
 	return ""
@@ -599,7 +635,7 @@ func qchemWithin(what, x, y string, tolerance float64) string {
 // compareFrequencies compares two runs' frequencies, each a wave number
 // and an intensity, in order of wave number, where near-degenerate modes
 // may come in either order.
-func compareFrequencies(x, y [][]string) string {
+func compareFrequencies(x, y [][]string, within qchemTolerances) string {
 	if len(x) != len(y) {
 		return fmt.Sprintf("one gave %d frequencies, the other %d", len(x), len(y))
 	}
@@ -622,7 +658,7 @@ func compareFrequencies(x, y [][]string) string {
 	}
 	for i := range a {
 		wave, intensity := math.Abs(a[i][0]-b[i][0]), math.Abs(a[i][1]-b[i][1])
-		if wave > qchemWaveTolerance || intensity > qchemIntensityTolerance*(1+math.Max(math.Abs(a[i][1]), math.Abs(b[i][1]))) {
+		if wave > within.wave || intensity > within.intensity*(1+math.Max(math.Abs(a[i][1]), math.Abs(b[i][1]))) {
 			return fmt.Sprintf("mode %d is %g cm-1 at %g km/mol in one and %g cm-1 at %g km/mol in the other", i+1, a[i][0], a[i][1], b[i][0], b[i][1])
 		}
 	}
@@ -631,10 +667,10 @@ func compareFrequencies(x, y [][]string) string {
 
 // compareGeometries compares two runs' optimised geometries: the same
 // elements in the same order, and the atoms, once the geometries are laid
-// over each other as closely as they go, at most qchemRMSDTolerance apart
-// in root mean square. It gives the turn that lays the first over the
+// over each other as closely as they go, at most the tolerance apart in
+// root mean square. It gives the turn that lays the first over the
 // second, which is no turn where there are no geometries.
-func compareGeometries(x, y []string) ([3][3]float64, string) {
+func compareGeometries(x, y []string, tolerance float64) ([3][3]float64, string) {
 	none := [3][3]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}
 	if len(x) != len(y) {
 		return none, fmt.Sprintf("one gave a geometry of %d atoms, the other of %d", len(x), len(y))
@@ -658,8 +694,8 @@ func compareGeometries(x, y []string) ([3][3]float64, string) {
 		}
 	}
 	rmsd, turn := alignment(p, q)
-	if !(rmsd <= qchemRMSDTolerance) {
-		return none, fmt.Sprintf("the geometries are %.3g ångström apart in root mean square, laid over each other, more than %g", rmsd, qchemRMSDTolerance)
+	if !(rmsd <= tolerance) {
+		return none, fmt.Sprintf("the geometries are %.3g ångström apart in root mean square, laid over each other, more than %g", rmsd, tolerance)
 	}
 	return turn, ""
 }
