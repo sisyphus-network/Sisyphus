@@ -551,6 +551,13 @@ func TestWatchSharedStateStreamsModelLendingToIndependentClients(t *testing.T) {
 	}
 }
 
+func TestLocationDiscoverySnapshotUnavailable(t *testing.T) {
+	event := (&localService{}).sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY)
+	if event.GetError() == "" || event.GetState() != nil {
+		t.Fatalf("unavailable location-discovery snapshot = %v; want an error without state", event)
+	}
+}
+
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
 	if err != nil || len(all) != 10 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY {

@@ -51,7 +51,7 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
     let attempt = 0
     let receivedStreamState = false
     let fallbackRequested = false
-    let preferStreamSnapshot = true
+    let retryAfterFallback = false
     let managementMetadata: Pick<LocationDiscoveryState, 'managed' | 'configurable'> | undefined
     const apply = (next: LocationDiscoveryState) => {
       if (!active) return
@@ -68,29 +68,32 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
       }
       if (managementMetadata) setLoading(false)
     }
-    const loadFallback = (preserveStreamSnapshot = false) => {
-      if (!active) return
+    const loadFallback = (preserveStreamSnapshot = false, reportFailure = true) => {
+      if (!active || managementMetadata) return
       if (fallbackRequested) {
-        if (!preserveStreamSnapshot) preferStreamSnapshot = false
+        if (preserveStreamSnapshot) retryAfterFallback = true
         return
       }
       fallbackRequested = true
-      preferStreamSnapshot = preserveStreamSnapshot
       void api.getLocationDiscoverySettings().then((current) => {
         if (!active) return
         managementMetadata = { managed: current.managed, configurable: current.configurable }
         const latest = stateRef.current
-        apply(preferStreamSnapshot && receivedStreamState && latest ? latest : current)
+        apply(preserveStreamSnapshot && receivedStreamState && latest ? latest : current)
       }).catch((error) => {
-        if (active) toast.error(labels.loadFailed, { description: error instanceof Error ? error.message : String(error) })
+        if (active && reportFailure) toast.error(labels.loadFailed, { description: error instanceof Error ? error.message : String(error) })
       }).finally(() => {
         fallbackRequested = false
         if (active) setLoading(false)
+        if (active && retryAfterFallback && !managementMetadata) {
+          retryAfterFallback = false
+          loadFallback(true, false)
+        }
       })
     }
     const disconnected = () => {
       cancel = undefined
-      loadFallback()
+      loadFallback(true, false)
       if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
     }
     const connect = () => {
@@ -101,7 +104,7 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
         if (sharedStateDomainCode(event.domain) !== 'locationDiscovery') return
         if (!event.snapshot) attempt = 0
         if (event.error) {
-          loadFallback()
+          loadFallback(false, false)
           return
         }
         const next = event.state && typeof event.state === 'object' && event.state.case === 'locationDiscovery'
@@ -110,6 +113,10 @@ export function LocationDiscoverySettingsCard({ messages }: { messages: Messages
         if (next) {
           receivedStreamState = true
           apply(next)
+          // The stream omits Electron-only capability metadata. If the first
+          // management read raced daemon startup and failed, a live snapshot
+          // is the event that lets us safely retry it without polling.
+          if (!managementMetadata) loadFallback(true, false)
         }
       }, disconnected, disconnected)
     }
