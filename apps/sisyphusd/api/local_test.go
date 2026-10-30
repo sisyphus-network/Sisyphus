@@ -697,13 +697,14 @@ func TestWatchSharedStateReconnectStartsWithLatestBaseline(t *testing.T) {
 		nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_PEERS,
 	}}
 
-	firstCtx, cancelFirst := context.WithCancel(withToken("the-token"))
+	firstBase, cancelFirst := context.WithTimeout(withToken("the-token"), 5*time.Second)
+	firstCtx := firstBase
 	defer cancelFirst()
 	first, err := client.WatchSharedState(firstCtx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondCtx, cancelSecond := context.WithCancel(withToken("the-token"))
+	secondCtx, cancelSecond := context.WithTimeout(withToken("the-token"), 5*time.Second)
 	second, err := client.WatchSharedState(secondCtx, request)
 	if err != nil {
 		t.Fatal(err)
@@ -724,10 +725,13 @@ func TestWatchSharedStateReconnectStartsWithLatestBaseline(t *testing.T) {
 	mu.Unlock()
 	changes.Notify()
 	for _, watcher := range []nodepb.NodeService_WatchSharedStateClient{first, second} {
-		for range 2 {
-			if _, err := watcher.Recv(); err != nil {
-				t.Fatalf("live update: %v", err)
-			}
+		nodeUpdate, err := watcher.Recv()
+		if err != nil || nodeUpdate.GetRevision() != 3 || nodeUpdate.GetSnapshot() || nodeUpdate.GetNode().GetInfo().GetCountryCode() != "US" {
+			t.Fatalf("US live node update = %v, %v", nodeUpdate, err)
+		}
+		peerUpdate, err := watcher.Recv()
+		if err != nil || peerUpdate.GetRevision() != 4 || peerUpdate.GetSnapshot() || len(peerUpdate.GetPeers().GetPeers()) != 2 {
+			t.Fatalf("two-peer live update = %v, %v", peerUpdate, err)
 		}
 	}
 
@@ -744,13 +748,16 @@ func TestWatchSharedStateReconnectStartsWithLatestBaseline(t *testing.T) {
 	peers = append(peers, peerEntry("12D3KooWc", true, true))
 	mu.Unlock()
 	changes.Notify()
-	for range 2 {
-		if _, err := first.Recv(); err != nil {
-			t.Fatalf("live update while second client is disconnected: %v", err)
-		}
+	nodeUpdate, err := first.Recv()
+	if err != nil || nodeUpdate.GetRevision() != 5 || nodeUpdate.GetSnapshot() || nodeUpdate.GetNode().GetInfo().GetCountryCode() != "DE" {
+		t.Fatalf("DE live node update = %v, %v", nodeUpdate, err)
+	}
+	peerUpdate, err := first.Recv()
+	if err != nil || peerUpdate.GetRevision() != 6 || peerUpdate.GetSnapshot() || len(peerUpdate.GetPeers().GetPeers()) != 3 {
+		t.Fatalf("three-peer live update = %v, %v", peerUpdate, err)
 	}
 
-	reconnectedCtx, cancelReconnected := context.WithCancel(withToken("the-token"))
+	reconnectedCtx, cancelReconnected := context.WithTimeout(withToken("the-token"), 5*time.Second)
 	defer cancelReconnected()
 	reconnected, err := client.WatchSharedState(reconnectedCtx, request)
 	if err != nil {
