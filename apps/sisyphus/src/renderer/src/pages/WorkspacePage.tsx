@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, Copy, Eye, MessageSquare, Minus, Plus, X } from 'lucide-react'
+import { Check, Copy, Eye, Maximize2, MessageSquare, Minimize2, Minus, Plus, X } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Drawer } from 'vaul'
@@ -226,10 +226,12 @@ function loadRegionLines() {
   return regionLinesData
 }
 
-const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active, rotationPaused = false, detailsOpen = false, suspendResize = false, pointNames, pointsLabel, pointButtonLabel, onPickPoint, onPickCluster, zoomLabels }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean; rotationPaused?: boolean; detailsOpen?: boolean; suspendResize?: boolean; pointNames: ReadonlyMap<string, string>; pointsLabel: string; pointButtonLabel: string; onPickPoint: (id: string, from?: HTMLElement) => void; onPickCluster: (ids: string[], from?: HTMLElement) => void; zoomLabels: { group: string; in: string; out: string } }) {
+type GlobeAnchor = HTMLElement | { x: number; y: number }
+const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peers, nodeLabel, countryLabel, reduceMotion, active, rotationPaused = false, detailsOpen = false, suspendResize = false, pointNames, pointsLabel, pointButtonLabel, onPickPoint, onPickCluster, zoomLabels }: { countryCode?: string; pin?: { lat: number; lng: number }; shared?: ReadonlyMap<string, Place>; peers: NodeSnapshot['peers']; nodeLabel: string; countryLabel: string; reduceMotion: boolean; active: boolean; rotationPaused?: boolean; detailsOpen?: boolean; suspendResize?: boolean; pointNames: ReadonlyMap<string, string>; pointsLabel: string; pointButtonLabel: string; onPickPoint: (id: string, from?: GlobeAnchor) => void; onPickCluster: (ids: string[], from?: GlobeAnchor) => void; zoomLabels: { group: string; in: string; out: string } }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const [size, setSize] = useState({ width: 0, height: 0 })
+  const sizeRef = useRef(size)
   const [theme, setTheme] = useState<HologramTheme>(readHologramTheme)
   const limitsRef = useRef<ZoomLimits | undefined>(undefined)
   const fittingViewportRef = useRef(false)
@@ -245,7 +247,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const [regionLines, setRegionLines] = useState<Array<Array<[number, number]>>>()
   const regionLinesRef = useRef<Array<Array<[number, number]>> | undefined>(undefined)
   const currentPointsRef = useRef<GlobePoint[]>([])
-  const selectPoint = useCallback((id: string, from?: HTMLElement) => {
+  const selectPoint = useCallback((id: string, from?: GlobeAnchor) => {
     const point = currentPointsRef.current.find((item) => item.id === id)
     if (point && point.members.length > 1) onPickCluster(point.members, from)
     else onPickPoint(id, from)
@@ -369,8 +371,10 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     // that transient aspect ratio would move the camera far off the globe.
     if (!globe || !active || suspendResize) return
     const camera = globe.camera() as PerspectiveCamera
-    const bounds = containerRef.current?.getBoundingClientRect()
-    if (!bounds || bounds.width < 1 || bounds.height < 1) return
+    // Fit against the dimensions committed to the canvas, not a newer layout
+    // measurement that the renderer has not received yet.
+    const bounds = sizeRef.current
+    if (bounds.width < 1 || bounds.height < 1) return
     const aspect = bounds.width / bounds.height
     const safeDistance = globeFitDistance(globe.getGlobeRadius(), camera.fov, aspect)
     const controls = globe.controls()
@@ -404,6 +408,12 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const displayZoom = { ...next, percent: Math.round(next.percent / 5) * 5 }
     setZoom((current) => current && current.canZoomIn === displayZoom.canZoomIn && current.canZoomOut === displayZoom.canZoomOut && current.regions === displayZoom.regions && current.percent === displayZoom.percent ? current : displayZoom)
   }, [active, detailsOpen, reduceMotion, rotationPaused, suspendResize])
+  const fitCameraRef = useRef(fitCameraToViewport)
+  const hologramStyleRef = useRef(applyHologramStyle)
+  useLayoutEffect(() => {
+    fitCameraRef.current = fitCameraToViewport
+    hologramStyleRef.current = applyHologramStyle
+  }, [fitCameraToViewport, applyHologramStyle])
   const animateMorph = useCallback((target: number, onComplete?: () => void, onFrame?: (progress: number) => void) => {
     if (morphFrameRef.current !== undefined) window.cancelAnimationFrame(morphFrameRef.current)
     const from = mapMorph.value
@@ -782,7 +792,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   }, [findMapPoint, zoomMap])
   const endMapPan = useCallback((event: PointerEvent) => {
     const drag = mapPointersRef.current.get(event.pointerId)
-    if (event.type === 'pointerup' && drag && !drag.moved && drag.pointId && findMapPoint(event.clientX, event.clientY)?.id === drag.pointId) selectPoint(drag.pointId)
+    if (event.type === 'pointerup' && drag && !drag.moved && drag.pointId && findMapPoint(event.clientX, event.clientY)?.id === drag.pointId) selectPoint(drag.pointId, { x: event.clientX, y: event.clientY })
     if (!mapPointersRef.current.delete(event.pointerId)) return
     if (mapPointersRef.current.size === 0) containerRef.current?.removeAttribute('data-map-dragging')
     const canvas = event.currentTarget as HTMLCanvasElement
@@ -882,11 +892,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const container = containerRef.current
     if (!container) return
     let frame = 0
-    let lastMeasureAt = 0
     const measureAndCommit = () => {
-      const now = performance.now()
-      if (rotationPaused && now - lastMeasureAt < 32) return
-      lastMeasureAt = now
       const rect = container.getBoundingClientRect()
       const nextSize = { width: Math.floor(Math.min(rect.width, window.innerWidth)), height: Math.floor(Math.min(rect.height, window.innerHeight)) }
       if (nextSize.width < 1 || nextSize.height < 1) return
@@ -908,10 +914,11 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       observer.disconnect()
       window.removeEventListener('resize', updateSize)
     }
-  }, [rotationPaused, suspendResize])
-  useEffect(() => {
+  }, [suspendResize])
+  useLayoutEffect(() => {
+    sizeRef.current = size
     if (size.width > 0 && size.height > 0) fitCameraToViewport()
-  }, [fitCameraToViewport, size.width, size.height])
+  }, [fitCameraToViewport, size])
 
   useEffect(() => {
     if (size.width === 0 || size.height === 0) return
@@ -935,12 +942,12 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     // The canvas and scene remain mounted while hidden. Re-apply the accent
     // after the browser has laid the workspace out again, preserving camera state.
     const frame = window.requestAnimationFrame(() => {
-      fitCameraToViewport()
-      applyHologramStyle()
+      fitCameraRef.current()
+      hologramStyleRef.current()
       globe.renderer().render(globe.scene(), globe.camera())
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [active, applyHologramStyle, fitCameraToViewport])
+  }, [active, size.width > 0])
 
   // The owner's pin, if there is one, places this node better than its country can.
   const centroid = countryCode ? countryCentroids.get(countryCode.toUpperCase()) : undefined
@@ -1047,7 +1054,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   }, [mapHover?.id, mapInteractive, points, reduceMotion])
   // The card is read when the pointer reaches a point, so it says what is
   // known then, not when the point was drawn.
-  const pickPoint = useCallback((point: object) => selectPoint((point as GlobePoint).id), [selectPoint])
+  const pickPoint = useCallback((point: object, event: MouseEvent) => selectPoint((point as GlobePoint).id, { x: event.clientX, y: event.clientY }), [selectPoint])
   // An alpha-zero color still asks three-globe to build spherical polygon
   // faces with depth writing enabled. Those invisible faces occlude the flat
   // map and its markers, so use an empty color to omit the faces altogether.
@@ -1115,12 +1122,43 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   </>
 })
 
+function useGlobeCardPlacement(anchor: GlobeAnchor | null | undefined, enabled: boolean) {
+  const ref = useRef<HTMLElement>(null)
+  const [placement, setPlacement] = useState<{ top: number; left: number; origin: string }>()
+  useLayoutEffect(() => {
+    const card = ref.current
+    const pane = card?.closest('.workspace-network') as HTMLElement | null
+    if (!enabled || !anchor || !card || !pane) return
+    const update = () => {
+      const bounds = pane.getBoundingClientRect()
+      const source = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : undefined
+      const x = source ? source.left + source.width / 2 : (anchor as { x: number }).x
+      const y = source ? source.top + source.height / 2 : (anchor as { y: number }).y
+      const width = card.offsetWidth
+      const height = card.offsetHeight
+      if (!width || !height) return
+      const inset = 12
+      const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(Math.max(min, max), value))
+      const preferredLeft = x - width - 16
+      const left = clamp(preferredLeft >= bounds.left + inset ? preferredLeft : x + 16, bounds.left + inset, bounds.right - width - inset)
+      const top = clamp(y + 16, bounds.top + inset, bounds.bottom - height - inset)
+      setPlacement({ left: left - bounds.left, top: top - bounds.top, origin: `${x - left}px ${y - top}px` })
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(pane)
+    observer.observe(card)
+    return () => observer.disconnect()
+  }, [anchor, enabled])
+  return { ref, placement }
+}
+
 // GlobeCard is a point's card kept open: what its hover card says, with its
 // peer ID to copy, until it is closed with its button or Escape.
-function GlobeCard({ details, html, labels, nodeLabel, onClose, drawer = false, nested = false, anchor, reduceMotion = false }: { details: GlobeDetails; html: string; labels: Messages['globeDetails']; nodeLabel: string; onClose: () => void; drawer?: boolean; nested?: boolean; anchor?: HTMLElement | null; reduceMotion?: boolean }) {
+function GlobeCard({ details, html, labels, nodeLabel, onClose, drawer = false, nested = false, anchor, pointAnchor, reduceMotion = false }: { details: GlobeDetails; html: string; labels: Messages['globeDetails']; nodeLabel: string; onClose: () => void; drawer?: boolean; nested?: boolean; anchor?: HTMLElement | null; pointAnchor?: GlobeAnchor | null; reduceMotion?: boolean }) {
   const [copied, setCopied] = useState(false)
   const [placement, setPlacement] = useState<{ top: number; left: number; origin: string }>()
-  const cardRef = useRef<HTMLElement>(null)
+  const { ref: cardRef, placement: pointPlacement } = useGlobeCardPlacement(pointAnchor, !drawer && !nested)
   useLayoutEffect(() => {
     const card = cardRef.current
     if (!nested || drawer || !anchor?.isConnected || !card || !card.parentElement) return
@@ -1168,7 +1206,7 @@ function GlobeCard({ details, html, labels, nodeLabel, onClose, drawer = false, 
   }, [drawer, onClose])
   const kindLabel = details.kind === 'node' ? labels.thisNode : details.kind === 'worker' ? labels.worker : nodeLabel
   const title = details.worker?.name || kindLabel
-  return <motion.section ref={cardRef} tabIndex={drawer ? undefined : -1} role={drawer ? undefined : 'dialog'} aria-label={drawer ? undefined : formatMessage(labels.pointButton, { name: title })} className={drawer ? 'globe-card-pinned globe-card-pinned--drawer' : `globe-card-pinned liquid-glass-menu${nested ? ' globe-card-pinned--nested' : ''}`} style={nested && !drawer && placement ? { insetInlineStart: 'auto', insetBlockEnd: 'auto', top: placement.top, left: placement.left, transformOrigin: placement.origin } : undefined} initial={drawer || reduceMotion ? false : nested ? { opacity: 0, scale: 0.2 } : { opacity: 0, y: 14, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={drawer || reduceMotion ? { opacity: 0, transition: { duration: 0 } } : nested ? { opacity: 0, scale: 0.2 } : { opacity: 0, y: 9, scale: 0.97 }} transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.22, 1, 0.36, 1] }}>
+  return <motion.section ref={cardRef} tabIndex={drawer ? undefined : -1} role={drawer ? undefined : 'dialog'} aria-label={drawer ? undefined : formatMessage(labels.pointButton, { name: title })} className={drawer ? 'globe-card-pinned globe-card-pinned--drawer' : `globe-card-pinned liquid-glass-menu${nested ? ' globe-card-pinned--nested' : ''}`} style={!drawer && (nested ? placement : pointPlacement) ? { insetInlineStart: 'auto', insetInlineEnd: 'auto', insetBlockEnd: 'auto', top: (nested ? placement : pointPlacement)!.top, left: (nested ? placement : pointPlacement)!.left, transformOrigin: (nested ? placement : pointPlacement)!.origin } : undefined} initial={drawer || reduceMotion ? false : nested ? { opacity: 0, scale: 0.2 } : { opacity: 0, scale: 0.92 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={drawer || reduceMotion ? { opacity: 0, transition: { duration: 0 } } : nested ? { opacity: 0, scale: 0.2 } : { opacity: 0, scale: 0.96 }} transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.22, 1, 0.36, 1] }}>
     <div className="globe-card-pinned__actions">
       <button type="button" aria-label={copied ? labels.copied : labels.copyPeerId} title={copied ? labels.copied : labels.copyPeerId} onClick={() => { void navigator.clipboard.writeText(details.peerId).then(() => setCopied(true), () => {}) }}>{copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}</button>
       {!drawer && <button type="button" aria-label={labels.close} title={labels.close} onClick={onClose}><X size={14} aria-hidden /></button>}
@@ -1178,8 +1216,8 @@ function GlobeCard({ details, html, labels, nodeLabel, onClose, drawer = false, 
   </motion.section>
 }
 
-function GlobeClusterCard({ ids, names, labels, title, flag, onChoose, onClose, drawer = false, childOpen = false, children, reduceMotion = false }: { ids: string[]; names: ReadonlyMap<string, string>; labels: Messages['globeDetails']; title: string; flag: string; onChoose: (id: string, from: HTMLElement) => void; onClose: () => void; drawer?: boolean; childOpen?: boolean; children?: ReactNode; reduceMotion?: boolean }) {
-  const ref = useRef<HTMLElement>(null)
+function GlobeClusterCard({ ids, names, labels, title, flag, onChoose, onClose, drawer = false, childOpen = false, children, pointAnchor, reduceMotion = false }: { ids: string[]; names: ReadonlyMap<string, string>; labels: Messages['globeDetails']; title: string; flag: string; onChoose: (id: string, from: HTMLElement) => void; onClose: () => void; drawer?: boolean; childOpen?: boolean; children?: ReactNode; pointAnchor?: GlobeAnchor | null; reduceMotion?: boolean }) {
+  const { ref, placement } = useGlobeCardPlacement(pointAnchor, !drawer)
   useEffect(() => { if (!drawer) ref.current?.focus() }, [drawer])
   useEffect(() => {
     if (drawer || childOpen) return
@@ -1187,7 +1225,7 @@ function GlobeClusterCard({ ids, names, labels, title, flag, onChoose, onClose, 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [childOpen, drawer, onClose])
-  return <motion.section ref={ref} tabIndex={drawer ? undefined : -1} role={drawer ? undefined : 'dialog'} aria-label={drawer ? undefined : title} className={drawer ? 'globe-card-pinned globe-card-pinned--drawer' : `globe-card-pinned liquid-glass-menu${children ? ' globe-card-pinned--parent' : ''}`} initial={drawer || reduceMotion ? false : { opacity: 0, y: 14, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: childOpen && !drawer && !reduceMotion ? 0.96 : 1 }} exit={{ opacity: 0, y: reduceMotion ? 0 : 9, scale: reduceMotion ? 1 : 0.97 }} transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.22, 1, 0.36, 1] }}>
+  return <motion.section ref={ref} tabIndex={drawer ? undefined : -1} role={drawer ? undefined : 'dialog'} aria-label={drawer ? undefined : title} className={drawer ? 'globe-card-pinned globe-card-pinned--drawer' : `globe-card-pinned liquid-glass-menu${children ? ' globe-card-pinned--parent' : ''}`} style={!drawer && placement ? { insetInlineStart: 'auto', insetInlineEnd: 'auto', insetBlockEnd: 'auto', top: placement.top, left: placement.left, transformOrigin: placement.origin } : undefined} initial={drawer || reduceMotion ? false : { opacity: 0, scale: 0.92 }} animate={{ opacity: 1, y: 0, scale: childOpen && !drawer && !reduceMotion ? 0.96 : 1 }} exit={{ opacity: 0, scale: reduceMotion ? 1 : 0.97 }} transition={{ duration: reduceMotion ? 0 : 0.24, ease: [0.22, 1, 0.36, 1] }}>
     <div inert={childOpen} className="globe-cluster-surface" data-child-open={childOpen}>
     {!drawer && <div className="globe-card-pinned__actions"><button type="button" aria-label={labels.close} title={labels.close} onClick={onClose}><X size={14} aria-hidden /></button></div>}
     <div className="globe-card__title globe-cluster-title">{flag && <CountryFlag code={flag} size={18} className="globe-cluster-flag" />}{title} <span>{ids.length}</span></div>
@@ -1243,6 +1281,19 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     return savedRatio > 0.05 && savedRatio < 0.8 ? savedRatio : 0.52
   })
   const [topologyResizing, setTopologyResizing] = useState(false)
+  const [peersExpanded, setPeersExpanded] = useState(false)
+  const [peersExpandAnimating, setPeersExpandAnimating] = useState(false)
+  const peersExpandTimer = useRef<number | undefined>(undefined)
+  const togglePeersExpanded = useCallback(() => {
+    setPeersExpanded((current) => !current)
+    setPeersExpandAnimating(true)
+    if (peersExpandTimer.current !== undefined) window.clearTimeout(peersExpandTimer.current)
+    peersExpandTimer.current = window.setTimeout(() => {
+      peersExpandTimer.current = undefined
+      setPeersExpandAnimating(false)
+    }, reduceMotion ? 0 : 400)
+  }, [reduceMotion])
+  useEffect(() => () => { if (peersExpandTimer.current !== undefined) window.clearTimeout(peersExpandTimer.current) }, [])
   const [topologyTransitioning, setTopologyTransitioning] = useState(false)
   const topologyTransitionTimer = useRef<number | undefined>(undefined)
   const [desktopStageWidth, setDesktopStageWidth] = useState(() => window.innerWidth)
@@ -1289,7 +1340,16 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     ...(topologyAvailable ? [{ id: 'network', label: messages.networkMap, href: '#network', icon: <Eye size={20} strokeWidth={1.8} />, active: mobileView === 'network' }] : []),
   ]
   // A view that is selected and then found not to be there gives way to the chat.
-  useEffect(() => { if (!topologyAvailable && mobileView === 'network') setMobileView('chat') }, [topologyAvailable, mobileView])
+  useEffect(() => {
+    if (!topologyAvailable) {
+      if (mobileView === 'network') setMobileView('chat')
+      setPeersExpanded(false)
+    } else if (compact && peersExpanded && mobileView !== 'network') {
+      // Keep the restore control reachable if the window crosses the mobile
+      // breakpoint while the desktop peers pane is expanded.
+      setMobileView('network')
+    }
+  }, [compact, mobileView, peersExpanded, topologyAvailable])
   const connectedPeers = snapshot.peers.filter(connected)
   const historyMinimumWidth = 280
   const minimumContentWidth = 280
@@ -1300,7 +1360,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const panelAreaWidth = Math.max(0, desktopStageWidth - (historyOpen ? visibleHistoryWidth : 0) - fixedHandleWidth)
   const topologyMaxWidth = Math.max(0, Math.min(panelAreaWidth * 0.7, panelAreaWidth - minimumContentWidth))
   const topologyMinimumWidth = Math.min(280, topologyMaxWidth)
-  const topologyWidth = topologyAvailable && topologyOpen ? Math.min(panelAreaWidth * topologyRatio, topologyMaxWidth) : 0
+  const topologyWidth = topologyAvailable && topologyOpen ? peersExpanded ? desktopStageWidth : Math.min(panelAreaWidth * topologyRatio, topologyMaxWidth) : 0
   const startHistoryResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -1482,10 +1542,11 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const renderCard = useCallback((item: GlobeDetails, pinned: boolean) => renderDetailsHtml(item, messages.globeDetails, { direction, locale: document.documentElement.lang || 'en', pinned, includeTitle: false }), [messages.globeDetails, direction])
   const [pinnedPoint, setPinnedPoint] = useState<string>()
   const [pinnedCluster, setPinnedCluster] = useState<string[]>()
+  const [pointAnchor, setPointAnchor] = useState<GlobeAnchor | null>(null)
   const pinnedFromRef = useRef<HTMLElement | null>(null)
   const clusterMemberFromRef = useRef<HTMLElement | null>(null)
-  const pickPoint = useCallback((id: string, from?: HTMLElement) => { pinnedFromRef.current = from ?? null; setPinnedCluster(undefined); setPinnedPoint(id) }, [])
-  const pickCluster = useCallback((ids: string[], from?: HTMLElement) => { pinnedFromRef.current = from ?? null; setPinnedPoint(undefined); setPinnedCluster(ids) }, [])
+  const pickPoint = useCallback((id: string, from?: GlobeAnchor) => { pinnedFromRef.current = from instanceof HTMLElement ? from : null; setPointAnchor(from ?? null); setPinnedCluster(undefined); setPinnedPoint(id) }, [])
+  const pickCluster = useCallback((ids: string[], from?: GlobeAnchor) => { pinnedFromRef.current = from instanceof HTMLElement ? from : null; setPointAnchor(from ?? null); setPinnedPoint(undefined); setPinnedCluster(ids) }, [])
   const chooseClusterMember = useCallback((id: string, from: HTMLElement) => { clusterMemberFromRef.current = from; setPinnedPoint(id) }, [])
   const closeDetails = useCallback(() => {
     if (!pinnedCluster) { setPinnedPoint(undefined); const from = pinnedFromRef.current; pinnedFromRef.current = null; if (from?.isConnected) from.focus(); return }
@@ -1504,6 +1565,16 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     if (from?.isConnected) from.focus()
   }, [])
   const pinnedDetails = pinnedPoint ? details.get(pinnedPoint) : undefined
+  useEffect(() => {
+    if (!peersExpanded || pinnedDetails || pinnedCluster) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || (event.target as Element | null)?.closest?.('[role="dialog"]')) return
+      event.preventDefault()
+      togglePeersExpanded()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [peersExpanded, pinnedCluster, pinnedDetails, togglePeersExpanded])
   const clusterCountries = pinnedCluster?.map((id) => details.get(id)?.countryCode?.toUpperCase()) ?? []
   const clusterCountry = clusterCountries.length && clusterCountries.every((country) => country === clusterCountries[0]) ? clusterCountries[0] : undefined
   const clusterFlag = hasCountryFlag(clusterCountry) ? clusterCountry : undefined
@@ -1522,7 +1593,8 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
   const countryPosition = countryCode ? countryCentroids.get(countryCode) : undefined
   const countryLabel = countrySource === 'pool' ? messages.geoCountryAsSeenByPool : messages.geoCountry
   const networkPane = <section className="workspace-network workspace-glass liquid-glass-menu relative flex h-full min-h-0 items-center justify-center overflow-hidden rounded-[22px]">
-          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} shared={shared} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={globeActive} rotationPaused={topologyResizing} detailsOpen={Boolean(pinnedDetails || pinnedCluster)} suspendResize={!compact && topologyTransitioning} pointNames={pointNames} pointsLabel={messages.globeDetails.points} pointButtonLabel={messages.globeDetails.pointButton} onPickPoint={pickPoint} onPickCluster={pickCluster} zoomLabels={zoomLabels} />}</div>
+          <div className="network-visual absolute inset-0 overflow-hidden">{globeReady && <NetworkGlobe countryCode={countryCode} pin={pin} shared={shared} peers={snapshot.peers} nodeLabel={messages.thisNode} countryLabel={countryCode ? `${countryLabel}: ${countryCode} · ${messages.countryEstimateDisclaimer}` : messages.thisNode} reduceMotion={Boolean(reduceMotion)} active={globeActive} rotationPaused={topologyResizing || peersExpandAnimating} detailsOpen={Boolean(pinnedDetails || pinnedCluster)} suspendResize={!compact && topologyTransitioning} pointNames={pointNames} pointsLabel={messages.globeDetails.points} pointButtonLabel={messages.globeDetails.pointButton} onPickPoint={pickPoint} onPickCluster={pickCluster} zoomLabels={zoomLabels} />}</div>
+          {globeActive && <button type="button" className="globe-expand" aria-label={peersExpanded ? messages.restorePeersPane : messages.expandPeersPane} title={peersExpanded ? messages.restorePeersPane : messages.expandPeersPane} aria-pressed={peersExpanded} onClick={togglePeersExpanded}>{peersExpanded ? <Minimize2 size={16} aria-hidden /> : <Maximize2 size={16} aria-hidden />}</button>}
           {phone ? <Drawer.Root open={Boolean(globeActive && (pinnedDetails || pinnedCluster))} onOpenChange={(open) => { if (!open) closePinned() }} direction="bottom" shouldScaleBackground={false}>
             <Drawer.Portal>
               <Drawer.Overlay className="globe-details-overlay fixed inset-0 z-50 bg-black/25 backdrop-blur-sm" />
@@ -1543,22 +1615,22 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
                 </GlobeClusterCard> : drawerDetails && <GlobeCard drawer details={drawerDetails} html={renderCard(drawerDetails, true)} labels={messages.globeDetails} nodeLabel={messages.node} onClose={closePinned} />}
               </Drawer.Content>
             </Drawer.Portal>
-          </Drawer.Root> : <AnimatePresence initial={false}>{globeActive && pinnedCluster ? <GlobeClusterCard key="cluster" ids={pinnedCluster} names={pointNames} labels={messages.globeDetails} title={clusterTitle} flag={displayedClusterFlag} onChoose={chooseClusterMember} onClose={closePinned} childOpen={Boolean(pinnedDetails)} reduceMotion={Boolean(reduceMotion)}>
+          </Drawer.Root> : <AnimatePresence initial={false}>{globeActive && pinnedCluster ? <GlobeClusterCard key="cluster" pointAnchor={pointAnchor} ids={pinnedCluster} names={pointNames} labels={messages.globeDetails} title={clusterTitle} flag={displayedClusterFlag} onChoose={chooseClusterMember} onClose={closePinned} childOpen={Boolean(pinnedDetails)} reduceMotion={Boolean(reduceMotion)}>
             <AnimatePresence initial={false}>{pinnedDetails && <GlobeCard key={pinnedDetails.peerId} nested anchor={clusterMemberFromRef.current} details={pinnedDetails} html={renderCard(pinnedDetails, true)} labels={messages.globeDetails} nodeLabel={messages.node} onClose={closeDetails} reduceMotion={Boolean(reduceMotion)} />}</AnimatePresence>
-          </GlobeClusterCard> : globeActive && pinnedDetails ? <GlobeCard key={pinnedDetails.peerId} details={pinnedDetails} html={renderCard(pinnedDetails, true)} labels={messages.globeDetails} nodeLabel={messages.node} onClose={closePinned} reduceMotion={Boolean(reduceMotion)} /> : null}</AnimatePresence>}
+          </GlobeClusterCard> : globeActive && pinnedDetails ? <GlobeCard key={pinnedDetails.peerId} pointAnchor={pointAnchor} details={pinnedDetails} html={renderCard(pinnedDetails, true)} labels={messages.globeDetails} nodeLabel={messages.node} onClose={closePinned} reduceMotion={Boolean(reduceMotion)} /> : null}</AnimatePresence>}
           <div className="absolute inset-x-5 top-5 z-[2] flex items-center justify-between gap-3 text-[10px]">
             <div className="rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-muted-foreground shadow-sm backdrop-blur"><span className="font-mono text-foreground">{connectedPeers.length}</span> {messages.connectedPeers.toLowerCase()}</div>
             <div className="max-w-[62%] rounded-lg border border-[var(--app-line)] bg-[var(--app-card)]/85 px-3 py-2 text-end text-muted-foreground shadow-sm backdrop-blur"><span className="me-1.5 inline-block size-1.5 rounded-full bg-[var(--app-accent)] align-middle" />{messages.thisNode}{hasCountryFlag(countryCode) && <><span aria-hidden="true"> · </span><CountryFlag code={countryCode} size={14} className="inline-flex shrink-0 align-middle" /></>}{countryPosition ? <span className="ms-1.5">{countryCode}</span> : null}{!countryCode && !pin && isDesktopApp() ? <Link to="/settings/node" className="ms-1.5 text-[var(--app-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--app-accent)]">· {messages.unplacedLink}</Link> : null}</div>
           </div>
           {import.meta.env.DEV && <div className="globe-preview-indicator">DEV · 10 preview peers</div>}
     </section>
-  return <div className={`workspace-shell ${compact ? 'workspace-shell--compact' : ''}`}>
-    <div ref={desktopStageRef} className={`workspace-desktop-stage ${compact ? 'workspace-mobile-stage' : ''}`}>
-    <div data-open={historyOpen} data-resizing={historyResizing} aria-hidden={!historyOpen} style={{ flexBasis: historyOpen ? visibleHistoryWidth : 0 }} className="workspace-history-slot"><div ref={setHistoryPanelHost} className="workspace-history-host" /></div>
-    <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeHistory} aria-valuemin={0} aria-valuemax={Math.round(historyMaxWidth)} aria-valuenow={Math.round(visibleHistoryWidth)} onPointerDown={startHistoryResize} onPointerMove={moveHistoryResize} onPointerUp={finishHistoryResize} onPointerCancel={finishHistoryResize} onKeyDown={keyHistoryResize} className="workspace-history-resize-handle" />
-    <motion.div aria-hidden={compact && mobileView !== 'chat'} className="workspace-chat-desktop-pane workspace-mobile-pane" data-active={!compact || mobileView === 'chat'} initial={false} animate={reduceMotion ? undefined : { opacity: !compact || mobileView === 'chat' ? 1 : 0, x: compact && mobileView !== 'chat' ? -24 : 0 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: compact ? mobileView === 'chat' ? 2 : 1 : undefined, pointerEvents: compact && mobileView !== 'chat' ? 'none' : 'auto' }}>{chatPane}</motion.div>
+  return <div className={`workspace-shell ${compact ? 'workspace-shell--compact' : ''}${peersExpanded ? ' workspace-shell--peers-expanded' : ''}`}>
+    <div ref={desktopStageRef} data-peers-expanded={!compact && peersExpanded} className={`workspace-desktop-stage ${compact ? 'workspace-mobile-stage' : ''}`}>
+    <div data-open={historyOpen} data-resizing={historyResizing} aria-hidden={!historyOpen || (!compact && peersExpanded)} inert={!compact && peersExpanded} style={{ flexBasis: historyOpen && (!peersExpanded || compact) ? visibleHistoryWidth : 0 }} className="workspace-history-slot"><div ref={setHistoryPanelHost} className="workspace-history-host" /></div>
+    <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeHistory} aria-valuemin={0} aria-valuemax={Math.round(historyMaxWidth)} aria-valuenow={Math.round(visibleHistoryWidth)} disabled={!compact && peersExpanded} tabIndex={!compact && peersExpanded ? -1 : undefined} onPointerDown={startHistoryResize} onPointerMove={moveHistoryResize} onPointerUp={finishHistoryResize} onPointerCancel={finishHistoryResize} onKeyDown={keyHistoryResize} className="workspace-history-resize-handle" />
+    <motion.div aria-hidden={compact ? mobileView !== 'chat' : peersExpanded} inert={!compact && peersExpanded} className="workspace-chat-desktop-pane workspace-mobile-pane" data-active={!compact || mobileView === 'chat'} initial={false} animate={reduceMotion ? undefined : { opacity: !compact || mobileView === 'chat' ? 1 : 0, x: compact && mobileView !== 'chat' ? -24 : 0 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: compact ? mobileView === 'chat' ? 2 : 1 : undefined, pointerEvents: compact && mobileView !== 'chat' || !compact && peersExpanded ? 'none' : 'auto' }}>{chatPane}</motion.div>
     {topologyAvailable && <>
-    <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeTopology} aria-valuemin={0} aria-valuemax={Math.round(topologyMaxWidth)} aria-valuenow={Math.round(topologyWidth)} onPointerDown={startTopologyResize} onPointerMove={moveTopologyResize} onPointerUp={finishTopologyResize} onPointerCancel={finishTopologyResize} onKeyDown={keyTopologyResize} className="workspace-topology-resize-handle"><span /></button>
+    <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeTopology} aria-valuemin={0} aria-valuemax={Math.round(topologyMaxWidth)} aria-valuenow={Math.round(topologyWidth)} disabled={!compact && peersExpanded} tabIndex={!compact && peersExpanded ? -1 : undefined} onPointerDown={startTopologyResize} onPointerMove={moveTopologyResize} onPointerUp={finishTopologyResize} onPointerCancel={finishTopologyResize} onKeyDown={keyTopologyResize} className="workspace-topology-resize-handle"><span /></button>
     <motion.div data-open={compact ? mobileView === 'network' : topologyOpen} data-active={!compact || mobileView === 'network'} data-resizing={topologyResizing} data-transitioning={topologyTransitioning} aria-hidden={compact ? mobileView !== 'network' : !topologyOpen} initial={false} animate={reduceMotion ? undefined : { opacity: !compact || mobileView === 'network' ? 1 : 0, x: compact && mobileView !== 'network' ? 24 : 0 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ flexBasis: compact ? '100%' : topologyWidth, zIndex: compact ? mobileView === 'network' ? 2 : 1 : undefined, pointerEvents: compact && mobileView !== 'network' ? 'none' : 'auto' }} className="workspace-topology-slot workspace-mobile-pane" onTransitionEnd={(event) => {
       if (event.target !== event.currentTarget || event.propertyName !== 'flex-basis' || !topologyTransitioning) return
       if (topologyTransitionTimer.current !== undefined) window.clearTimeout(topologyTransitionTimer.current)
@@ -1567,7 +1639,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     }}>{networkPane}</motion.div>
     </>}
     </div>
-    {compact && visible && paneItems.length > 1 && createPortal(<nav className="workspace-mobile-dock" aria-label={messages.workspace}><LiquidGlassDock items={paneItems} label={messages.workspace} onNavigate={(id) => setMobileView(id as 'chat' | 'network')} /></nav>, document.body)}
+    {compact && visible && paneItems.length > 1 && createPortal(<AnimatePresence initial={false}>{!peersExpanded && <motion.nav key="workspace-dock" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.96 }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: reduceMotion ? 0 : 0.2 }} className="workspace-mobile-dock" aria-label={messages.workspace}><LiquidGlassDock items={paneItems} label={messages.workspace} onNavigate={(id) => setMobileView(id as 'chat' | 'network')} /></motion.nav>}</AnimatePresence>, document.body)}
   </div>
 }
 

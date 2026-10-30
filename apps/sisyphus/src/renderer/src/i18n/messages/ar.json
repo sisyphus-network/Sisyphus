@@ -589,6 +589,8 @@
   "closeHistory": "إغلاق سجل المحادثات",
   "resizeHistory": "تغيير عرض لوحة سجل المحادثات",
   "resizeTopology": "تغيير عرض لوحة طوبولوجيا الشبكة",
+  "expandPeersPane": "توسيع لوحة النظراء",
+  "restorePeersPane": "استعادة تخطيط مساحة العمل",
   "newConversation": "محادثة جديدة",
   "conversation": "محادثة",
   "deleteConversation": "حذف المحادثة",

@@ -589,6 +589,8 @@
   "closeHistory": "Close conversation history",
   "resizeHistory": "Resize conversation history panel",
   "resizeTopology": "Resize topology panel",
+  "expandPeersPane": "Expand peers panel",
+  "restorePeersPane": "Restore workspace layout",
   "newConversation": "New conversation",
   "conversation": "Conversation",
   "deleteConversation": "Delete conversation",

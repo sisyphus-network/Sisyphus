@@ -589,6 +589,8 @@
   "closeHistory": "סגירת היסטוריית השיחות",
   "resizeHistory": "שינוי רוחב חלונית היסטוריית השיחות",
   "resizeTopology": "שינוי רוחב חלונית הטופולוגיה",
+  "expandPeersPane": "הרחבת חלונית העמיתים",
+  "restorePeersPane": "שחזור פריסת סביבת העבודה",
   "newConversation": "שיחה חדשה",
   "conversation": "שיחה",
   "deleteConversation": "מחיקת שיחה",

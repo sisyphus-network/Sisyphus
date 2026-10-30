@@ -41,12 +41,14 @@ export function LiquidGlassDock({
       frame = requestAnimationFrame(() => {
         const option = dock.querySelectorAll<HTMLElement>(".liquid-dock__option")[visualIndex];
         if (!option) return;
-        const dockBounds = dock.getBoundingClientRect();
-        const optionBounds = option.getBoundingClientRect();
+        // The dock can be entering with a scale transform. Viewport bounds
+        // include that transform, but the pill's CSS offsets are in layout
+        // pixels; mixing the two leaves it misaligned after the animation.
+        const optionWidth = option.offsetWidth;
         // Keep the selected glass pill visually substantial as the dock gains
         // items, while centering it on the actual option and staying in bounds.
-        const width = optionBounds.width + (items.length > 4 ? 8 : 0);
-        const centeredRight = dockBounds.right - optionBounds.right - (width - optionBounds.width) / 2;
+        const width = optionWidth + (items.length > 4 ? 8 : 0);
+        const centeredRight = dock.clientWidth - option.offsetLeft - optionWidth - (width - optionWidth) / 2;
         active.style.setProperty("--liquid-width", `${width}px`);
         active.style.setProperty("--liquid-offset", `${centeredRight}px`);
       });

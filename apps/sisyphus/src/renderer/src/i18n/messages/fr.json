@@ -589,6 +589,8 @@
   "closeHistory": "Fermer l’historique des conversations",
   "resizeHistory": "Redimensionner le panneau d’historique",
   "resizeTopology": "Redimensionner le panneau de topologie",
+  "expandPeersPane": "Agrandir le panneau des pairs",
+  "restorePeersPane": "Rétablir la disposition de l’espace de travail",
   "newConversation": "Nouvelle conversation",
   "conversation": "Conversation",
   "deleteConversation": "Supprimer la conversation",

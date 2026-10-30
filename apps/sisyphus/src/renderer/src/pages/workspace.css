@@ -29,7 +29,7 @@
 .workspace-history-resize-handle:focus-visible::before,
 .workspace-history-resize-handle:active::before { height: 46px; background: var(--app-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-accent) 14%, transparent); }
 .workspace-history-resize-handle:focus-visible { outline: none; }
-.workspace-chat-desktop-pane { box-sizing: border-box; flex: 1 1 0; width: 0; min-width: 280px; min-height: 0; padding: 6px; }
+.workspace-chat-desktop-pane { box-sizing: border-box; flex: 1 1 0; width: 0; min-width: 280px; min-height: 0; padding: 6px; overflow: hidden; transition: min-width 360ms cubic-bezier(.22, 1, .36, 1), padding 360ms cubic-bezier(.22, 1, .36, 1), opacity 220ms ease, transform 360ms cubic-bezier(.22, 1, .36, 1); }
 .workspace-topology-slot { box-sizing: border-box; flex: 0 0 0; min-width: 0; min-height: 0; overflow: hidden; padding: 0; transition: flex-basis 360ms cubic-bezier(0.22, 1, 0.36, 1), padding 360ms cubic-bezier(0.22, 1, 0.36, 1); }
 .workspace-topology-slot[data-open="true"] { padding: 6px; }
 .workspace-topology-slot[data-resizing="true"] { transition: none; }
@@ -46,6 +46,13 @@
 .workspace-topology-resize-handle:hover > span, .workspace-topology-resize-handle:focus-visible > span, .workspace-topology-resize-handle:active > span { height: 46px; background: var(--app-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-accent) 12%, transparent); }
 .workspace-topology-resize-handle[data-resizing="true"] > span { height: 46px; background: var(--app-accent); box-shadow: 0 0 0 5px color-mix(in srgb, var(--app-accent) 16%, transparent), 0 0 20px color-mix(in srgb, var(--app-accent) 38%, transparent); }
 .workspace-topology-resize-handle:focus-visible { outline: none; }
+.workspace-history-resize-handle, .workspace-topology-resize-handle { transition: width 360ms cubic-bezier(.22, 1, .36, 1), flex-basis 360ms cubic-bezier(.22, 1, .36, 1), opacity 200ms ease, transform 360ms cubic-bezier(.22, 1, .36, 1); }
+.workspace-desktop-stage[data-peers-expanded="true"] .workspace-chat-desktop-pane { min-width: 0; padding: 0; opacity: 0; transform: scale(.98); pointer-events: none; }
+.workspace-desktop-stage[data-peers-expanded="true"] .workspace-history-resize-handle,
+.workspace-desktop-stage[data-peers-expanded="true"] .workspace-topology-resize-handle { width: 0; flex-basis: 0; opacity: 0; transform: scale(.75); pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .workspace-chat-desktop-pane, .workspace-history-resize-handle, .workspace-topology-resize-handle { transition-duration: 0.01ms; }
+}
 .workspace-glass { isolation: isolate; overflow: hidden; }
 .workspace-chat { z-index: 2; }
 .workspace-chat-surface { min-height: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
@@ -57,6 +64,7 @@
 }
 @media (max-width: 900px) {
   .workspace-shell--compact { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 0 0 96px; transition: padding-bottom 280ms cubic-bezier(0.22, 1, 0.36, 1); }
+  .workspace-shell--compact.workspace-shell--peers-expanded { padding-bottom: 0; }
   .workspace-mobile-stage { position: relative; flex: 1 1 auto; width: 100%; min-height: 0; overflow: hidden; isolation: isolate; }
   .workspace-mobile-pane { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; overflow: hidden; border-radius: 22px; will-change: transform, opacity; backface-visibility: hidden; }
   .workspace-shell--compact .workspace-desktop-stage { display: block; flex: 1 1 auto; min-height: 0; }
@@ -404,6 +412,9 @@
 .globe-zoom button:hover:not(:disabled) { background: color-mix(in srgb, var(--app-accent) 10%, transparent); color: var(--app-ink); }
 .globe-zoom button:focus-visible { outline: 2px solid var(--app-accent); outline-offset: -2px; }
 .globe-zoom button:disabled { opacity: 0.4; cursor: default; }
+.globe-expand { position: absolute; inset-block-end: 94px; inset-inline-end: 16px; z-index: 3; display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid color-mix(in srgb, var(--app-line) 80%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--app-card) 62%, transparent); color: var(--app-muted); -webkit-backdrop-filter: blur(12px) saturate(150%); backdrop-filter: blur(12px) saturate(150%); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-card) 30%, transparent), 0 6px 16px color-mix(in srgb, #000 16%, transparent); cursor: pointer; transition: color 160ms ease, background-color 160ms ease; }
+.globe-expand:hover { background: color-mix(in srgb, var(--app-accent) 10%, var(--app-card)); color: var(--app-ink); }
+.globe-expand:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
 /* Keep the globe round while it is a globe. Once it morphs into a map, let
    the full rectangular pane become the map viewport so panning feels natural. */
 .network-globe-canvas[data-local-map="true"] .network-globe-stage canvas { clip-path: none; touch-action: none; user-select: none; cursor: grab; }

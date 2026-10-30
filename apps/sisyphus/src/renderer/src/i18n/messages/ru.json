@@ -589,6 +589,8 @@
   "closeHistory": "Закрыть историю бесед",
   "resizeHistory": "Изменить ширину панели истории бесед",
   "resizeTopology": "Изменить ширину панели топологии",
+  "expandPeersPane": "Развернуть панель пиров",
+  "restorePeersPane": "Восстановить расположение панелей",
   "newConversation": "Новая беседа",
   "conversation": "Беседа",
   "deleteConversation": "Удалить беседу",

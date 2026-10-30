@@ -589,6 +589,8 @@
   "closeHistory": "Zamknij historię rozmów",
   "resizeHistory": "Zmień szerokość panelu historii rozmów",
   "resizeTopology": "Zmień szerokość panelu topologii",
+  "expandPeersPane": "Powiększ panel peerów",
+  "restorePeersPane": "Przywróć układ obszaru roboczego",
   "newConversation": "Nowa rozmowa",
   "conversation": "Rozmowa",
   "deleteConversation": "Usuń rozmowę",
