@@ -819,10 +819,14 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
     assert.equal(await zoomIn.isEnabled(), true)
 
     // Out as far as it goes, from the keyboard: the region lines go.
-    await zoomOut.focus()
     for (let presses = 0; presses < 30; presses++) {
       const before = await zoom()
-      if (!await step(zoomOut, () => page.keyboard.press('Enter'))) break
+      // The button is disabled during each animation step, which can blur it.
+      // Restore focus before each key press so every iteration tests Enter.
+      if (!await step(zoomOut, async () => {
+        await zoomOut.focus()
+        await page.keyboard.press('Enter')
+      })) break
       assert.ok(await zoom() <= before, 'zooming out brought the globe in')
     }
     assert.equal(await zoomOut.isEnabled(), false, 'zooming out did not reach its limit')
