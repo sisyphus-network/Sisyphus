@@ -133,7 +133,7 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
         domains: [SharedStateDomain.POOL_LIMITS],
       }, (event) => {
         if (sharedStateDomainCode(event.domain) !== 'poolLimits') return
-        attempt = 0
+        if (!event.snapshot) attempt = 0
         if (event.error) {
           loadFallback()
           return
@@ -143,7 +143,13 @@ export function PoolLimitsSettingsCard({ messages }: { messages: Messages }) {
           : event.poolLimits
         if (next) {
           receivedStreamState = true
-          apply({ ...next, managed: stateRef.current?.managed ?? false, configurable: true })
+          apply({
+            ...next,
+            managed: stateRef.current?.managed ?? false,
+            // The protocol stream omits Electron-only management metadata.
+            // Keep controls disabled until the one-shot metadata read lands.
+            configurable: stateRef.current?.configurable ?? false,
+          })
         }
       }, reconnect, reconnect)
     }
