@@ -258,14 +258,14 @@ function bytes(value: number, locale: string): string {
 
 const coordinates = (place: Place) => `${Number(place.lat.toFixed(5))}, ${Number(place.lng.toFixed(5))}`
 
-export type RenderOptions = { direction: 'ltr' | 'rtl'; locale: string; maxAddresses?: number; pinned?: boolean }
+export type RenderOptions = { direction: 'ltr' | 'rtl'; locale: string; maxAddresses?: number; pinned?: boolean; includeTitle?: boolean }
 
 // renderDetailsHtml writes the card. Text in the app's language follows its
 // direction; peer IDs, addresses and coordinates are always left to right,
 // isolated so that a right-to-left card does not reorder their parts, and
 // names the owner of a machine chose are isolated in whichever direction
 // they are written.
-export function renderDetailsHtml(details: GlobeDetails, labels: GlobeDetailLabels, { direction, locale, maxAddresses = 6, pinned = false }: RenderOptions): string {
+export function renderDetailsHtml(details: GlobeDetails, labels: GlobeDetailLabels, { direction, locale, maxAddresses = 6, pinned = false, includeTitle = true }: RenderOptions): string {
   const rows: string[] = []
   const row = (label: string, value: string) => { if (value) rows.push(`<dt>${escapeHtml(label)}</dt><dd>${value}</dd>`) }
   const ltr = (value: string) => `<bdi dir="ltr">${escapeHtml(value)}</bdi>`
@@ -323,7 +323,7 @@ export function renderDetailsHtml(details: GlobeDetails, labels: GlobeDetailLabe
   }
 
   return `<div class="globe-card" dir="${direction === 'rtl' ? 'rtl' : 'ltr'}">`
-    + `<div class="globe-card__title">${title}</div>`
+    + (includeTitle ? `<div class="globe-card__title">${title}</div>` : '')
     + `<dl class="globe-card__rows">${rows.join('')}</dl>`
     + (pinned ? '' : `<div class="globe-card__hint">${escapeHtml(labels.clickToPin)}</div>`)
     + '</div>'

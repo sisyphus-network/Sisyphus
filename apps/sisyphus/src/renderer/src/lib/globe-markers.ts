@@ -2,6 +2,22 @@ export type PeerCountry = { peerId: string; countryCode?: string }
 export type Place = { lat: number; lng: number }
 export type PeerLocation = { peerId: string; countryCode?: string; lat: number; lng: number; shared?: boolean }
 
+export function peerMarkerStrength(count: number): number {
+  return 1 + Math.min(0.65, Math.log2(Math.max(1, count)) * 0.18)
+}
+
+// Only group truly coincident locations: nearby shared pins must stay accurate.
+export function groupCoincidentPoints<T extends { id: string; lat: number; lng: number }>(points: readonly T[]): Array<T & { members: string[] }> {
+  const groups = new Map<string, T & { members: string[] }>()
+  for (const point of points) {
+    const key = `${point.lat === 0 ? 0 : point.lat},${point.lng === 0 ? 0 : point.lng}`
+    const group = groups.get(key)
+    if (group) group.members.push(point.id)
+    else groups.set(key, { ...point, members: [point.id] })
+  }
+  return [...groups.values()]
+}
+
 // locatePeers places each peer on the globe: where its owner lets the pool
 // see it is, if it shares a place, or else in the middle of its country.
 // A pool member that shares a place is placed even when this node knows

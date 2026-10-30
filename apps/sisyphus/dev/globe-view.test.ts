@@ -1,11 +1,117 @@
 import assert from 'node:assert/strict'
 import { readFileSync, statSync } from 'node:fs'
 import test from 'node:test'
-import { autoRotateSpeed, clampDistance, decodeRegionLines, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, nearestMapPoint, nearbyRegionLines, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
+import { BufferGeometry, Float32BufferAttribute, PerspectiveCamera, Quaternion, Vector3 } from 'three'
+import { createOrbitCameraTransition, interpolateOrbitPosition, unindexGlobeGeometry } from '../src/renderer/src/lib/globe-geometry.ts'
+import { groupCoincidentPoints, peerMarkerStrength } from '../src/renderer/src/lib/globe-markers.ts'
+import { autoRotateSpeed, clampDistance, clampMapCenter, decodeRegionLines, globeFitDistance, localMapThresholdReached, mapLocationAtOffset, mapUnitsPerPixel, mapZoomAnchorShift, mercatorLatitude, nearestMapPoint, nearbyRegionLines, projectionLineOpacity, regionSegments, zoomLimits, zoomState, zoomStep } from '../src/renderer/src/lib/globe-view.ts'
 
 const radius = 100
 const fit = 255
 const limits = zoomLimits(radius, fit)
+
+test('camera position and orientation stay aligned through southern and opposite-hemisphere transitions', () => {
+  for (const start of [new Vector3(80, -220, -90), new Vector3(0, 0, -250)]) {
+    const end = new Vector3(0, 0, 300)
+    const camera = new PerspectiveCamera()
+    camera.position.copy(start)
+    camera.lookAt(0, 0, 0)
+    const startOrientation = camera.quaternion.clone()
+    camera.position.copy(end)
+    camera.lookAt(0, 0, 0)
+    const endOrientation = camera.quaternion.clone()
+    const move = createOrbitCameraTransition(start, end, startOrientation, endOrientation)
+    const position = new Vector3()
+    const orientation = new Quaternion()
+    for (let index = 0; index <= 100; index++) {
+      move(index / 100, position, orientation)
+      const forward = new Vector3(0, 0, -1).applyQuaternion(orientation)
+      assert.ok(forward.dot(position.clone().negate().normalize()) > 0.999999)
+    }
+    assert.ok(position.distanceTo(end) < 1e-8)
+    assert.ok(Math.abs(orientation.dot(endOrientation)) > 0.999999)
+  }
+})
+
+test('camera transition goes around the globe even between opposite hemispheres', () => {
+  const from = new Vector3(0, 0, -250)
+  const to = new Vector3(0, 0, 300)
+  const result = new Vector3()
+  for (let i = 0; i <= 100; i++) {
+    const progress = i / 100
+    interpolateOrbitPosition(from, to, progress, result)
+    assert.ok(Math.abs(result.length() - (250 + 50 * progress)) < 1e-8)
+  }
+  assert.ok(interpolateOrbitPosition(from, to, 0, result).distanceTo(from) < 1e-8)
+  assert.ok(interpolateOrbitPosition(from, to, 1, result).distanceTo(to) < 1e-8)
+})
+
+test('peer marker strength grows gradually and remains bounded', () => {
+  assert.equal(peerMarkerStrength(1), 1)
+  assert.ok(peerMarkerStrength(2) > 1)
+  assert.ok(peerMarkerStrength(4) > peerMarkerStrength(2))
+  assert.equal(peerMarkerStrength(1000), 1.65)
+})
+
+test('only coincident peers are grouped, without changing their locations', () => {
+  const groups = groupCoincidentPoints([{ id: 'a', lat: 30, lng: 35 }, { id: 'b', lat: 30, lng: 35 }, { id: 'c', lat: 30.001, lng: 35 }])
+  assert.deepEqual(groups.map(({ id, lat, lng, members }) => ({ id, lat, lng, members })), [
+    { id: 'a', lat: 30, lng: 35, members: ['a', 'b'] },
+    { id: 'c', lat: 30.001, lng: 35, members: ['c'] },
+  ])
+})
+
+test('map panning stays inside the projected world for narrow and oversized viewports', () => {
+  const scale = 100
+  const halfWidth = 30
+  const halfHeight = 20
+  const upper = clampMapCenter(1e6, 1e6, 30, scale, halfWidth, halfHeight)
+  assert.ok(Math.abs(upper.x - (Math.PI * scale - halfWidth)) < 1e-9)
+  assert.ok(Math.abs(upper.y - ((mercatorLatitude(85) - mercatorLatitude(30)) * scale - halfHeight)) < 1e-9)
+  const lower = clampMapCenter(-1e6, -1e6, 30, scale, halfWidth, halfHeight)
+  assert.ok(Math.abs(lower.x - (-Math.PI * scale + halfWidth)) < 1e-9)
+  assert.ok(Math.abs(lower.y - ((mercatorLatitude(-85) - mercatorLatitude(30)) * scale + halfHeight)) < 1e-9)
+  assert.deepEqual(clampMapCenter(5, 10, 0, scale, halfWidth, halfHeight), { x: 5, y: 10 })
+  const oversized = clampMapCenter(1e6, 1e6, 30, scale, 10000, 10000)
+  assert.equal(oversized.x, 0)
+  assert.ok(Math.abs(oversized.y + mercatorLatitude(30) * scale) < 1e-9)
+})
+
+test('unindexing country outlines preserves the metadata used by globe layer updates', () => {
+  const coordinates = [[[0, 0], [1, 0], [1, 1], [0, 0]]]
+  const geometry = new BufferGeometry() as BufferGeometry & { parameters: unknown }
+  geometry.setAttribute('position', new Float32BufferAttribute([0, 0, 0, 1, 0, 0, 1, 1, 0], 3))
+  geometry.setIndex([0, 1, 1, 2])
+  geometry.parameters = { geoJson: { coordinates }, resolution: 5 }
+  const unindexed = unindexGlobeGeometry(geometry) as BufferGeometry & { parameters: typeof geometry.parameters }
+  assert.equal(unindexed.index, null)
+  assert.equal(unindexed.getAttribute('position').count, 4)
+  assert.equal(unindexed.parameters, geometry.parameters)
+  geometry.dispose()
+  unindexed.dispose()
+})
+
+test('projection outlines remain visible and soften symmetrically through the transition', () => {
+  assert.equal(projectionLineOpacity(0), 1)
+  assert.equal(projectionLineOpacity(0.5), 0.7)
+  assert.equal(projectionLineOpacity(1), 1)
+  for (let index = 0; index <= 100; index++) {
+    const progress = index / 100
+    const opacity = projectionLineOpacity(progress)
+    assert.ok(opacity >= 0.7 && opacity <= 1)
+    assert.ok(Math.abs(opacity - projectionLineOpacity(1 - progress)) < 1e-12)
+  }
+})
+
+test('full-pane globe fit preserves the relative map threshold across aspect ratios', () => {
+  const squareFit = globeFitDistance(radius, 45)
+  for (const aspect of [0.25, 0.5, 1, 2]) {
+    const viewportFit = globeFitDistance(radius, 45, aspect)
+    if (aspect < 1) assert.ok(viewportFit > squareFit)
+    assert.equal(localMapThresholdReached(viewportFit * 0.9, viewportFit), false)
+    assert.equal(localMapThresholdReached(viewportFit * 0.8, viewportFit), true)
+  }
+})
 
 test('the globe zooms between a quarter of its radius above the surface and half its fitted size', () => {
   assert.deepEqual(limits, { min: 125, max: 510, fit: 255 })

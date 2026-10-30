@@ -340,6 +340,7 @@
 .network-globe-stage { position: absolute; top: 50%; left: 50%; translate: -50% -50%; max-width: none; max-height: none; aspect-ratio: 1; overflow: visible; }
 .network-globe-stage > div { width: 100% !important; height: 100% !important; outline: none; }
 .network-globe-stage canvas { display: block; max-width: 100%; max-height: 100%; }
+.globe-preview-indicator { position: absolute; z-index: 2; inset-block-start: 57px; inset-inline-start: 20px; color: var(--app-muted); font-size: 10px; pointer-events: none; }
 
 .network-map-caption { position: absolute; z-index: 3; inset-inline: 12px; bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--app-line); border-radius: 10px; background: color-mix(in srgb, var(--app-card) 88%, transparent); padding: 9px 10px; color: var(--app-muted); font-size: 9px; backdrop-filter: blur(12px); }
 .network-map-caption b { color: var(--app-ink); font-family: ui-monospace, monospace; font-size: 10px; font-weight: 600; }
@@ -352,6 +353,7 @@
 .network-globe-stage .float-tooltip-kap .globe-card,
 .map-point-tooltip .globe-card { border: 1px solid color-mix(in srgb, var(--app-accent) 26%, var(--app-line)); border-radius: 14px; background-color: color-mix(in srgb, var(--app-card) 78%, transparent); -webkit-backdrop-filter: blur(14px) saturate(150%); backdrop-filter: blur(14px) saturate(150%); padding: 10px 12px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-card) 30%, transparent), 0 10px 26px color-mix(in srgb, #000 24%, transparent); }
 .map-point-tooltip { position: absolute; z-index: 4; max-width: min(280px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: hidden; pointer-events: none; }
+.network-globe-canvas[data-map-hover="true"] canvas { cursor: pointer; }
 .globe-card__title { margin-bottom: 6px; font-size: 12px; font-weight: 600; letter-spacing: -0.01em; }
 .globe-card__kind { color: var(--app-muted); font-weight: 400; }
 .globe-card__rows { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 10px; margin: 0; }
@@ -362,14 +364,34 @@
 .globe-card__id { color: var(--app-accent); user-select: all; }
 .globe-card__more, .globe-card__note, .globe-card__hint { display: block; color: var(--app-muted); }
 .globe-card__hint { margin-top: 7px; border-top: 1px solid var(--app-line); padding-top: 6px; font-size: 10px; }
-.globe-card-pinned { position: absolute; inset-block-end: 16px; inset-inline-start: 16px; z-index: 3; width: min(400px, calc(100% - 32px)); max-height: calc(100% - 92px); overflow: auto; border-radius: 16px; padding: 10px 12px 12px; outline: none; }
+.globe-card-pinned { position: absolute; inset-block-end: 16px; inset-inline-start: 16px; z-index: 3; width: min(400px, calc(100% - 32px)); max-height: calc(100% - 92px); overflow: auto; border: 1px solid color-mix(in srgb, var(--app-accent) 18%, var(--app-line)); border-radius: 20px; padding: 20px; background: color-mix(in srgb, var(--app-card) 90%, transparent); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); box-shadow: 0 12px 36px color-mix(in srgb, #000 12%, transparent); outline: none; }
+.globe-card-pinned--drawer { position: relative; inset: auto; width: 100%; max-height: none; min-height: 0; flex: 1 1 auto; border: 0; border-radius: 0; padding: 20px 20px max(20px, env(safe-area-inset-bottom)); background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.globe-card-pinned--parent { overflow: visible; }
+.globe-card-pinned--parent .globe-cluster-list { max-height: min(55dvh, 420px); overflow: auto; }
+.globe-card-pinned--nested { inset-block-end: 0; inset-inline-start: 12px; z-index: 5; width: calc(100% - 12px); max-height: min(70dvh, 500px); }
+.globe-cluster-surface { transition: opacity 200ms ease; }
+.globe-cluster-surface[data-child-open="true"] { opacity: .55; }
+@media (prefers-reduced-motion: reduce) { .globe-details-drawer, .globe-details-overlay { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
 .globe-card-pinned:focus-visible { box-shadow: 0 0 0 2px var(--app-accent); }
 .globe-card-pinned .globe-card { user-select: text; }
-.globe-card-pinned__actions { position: absolute; inset-block-start: 8px; inset-inline-end: 8px; display: flex; gap: 4px; }
-.globe-card-pinned .globe-card__title { min-height: 26px; padding-inline-end: 150px; }
-.globe-card-pinned__actions button { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; border: 1px solid var(--app-line); border-radius: 8px; background: color-mix(in srgb, var(--app-card) 70%, transparent); padding: 0 7px; color: var(--app-muted); font-size: 10.5px; cursor: pointer; }
+.globe-card-pinned__actions { position: absolute; inset-block-start: 14px; inset-inline-end: 14px; display: flex; gap: 6px; }
+.globe-card-pinned .globe-card__title { min-height: 36px; margin-bottom: 12px; padding-inline-end: 82px; font-size: 15px; }
+.globe-detail-title { display: flex; align-items: flex-start; gap: 8px; color: var(--app-ink); font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.globe-detail-flag { display: inline-flex; flex: none; align-items: center; justify-content: center; margin-block-start: 2px; }
+.globe-card-pinned--drawer .globe-detail-title { padding-inline-end: 44px; }
+.globe-card-pinned--drawer .globe-cluster-title { padding-inline-end: 0; }
+.globe-card-pinned .globe-card__rows { grid-template-columns: minmax(72px, auto) minmax(0, 1fr); gap: 0 16px; font-size: 12px; }
+.globe-card-pinned .globe-card__rows dt, .globe-card-pinned .globe-card__rows dd { padding-block: 9px; border-top: 1px solid color-mix(in srgb, var(--app-line) 65%, transparent); }
+.globe-card-pinned__actions button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px solid var(--app-line); border-radius: 50%; background: color-mix(in srgb, var(--app-card) 70%, transparent); color: var(--app-muted); cursor: pointer; }
 .globe-card-pinned__actions button:hover { border-color: color-mix(in srgb, var(--app-accent) 40%, var(--app-line)); color: var(--app-ink); }
 .globe-card-pinned__actions button:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 1px; }
+.globe-cluster-title { min-height: 36px; padding-inline-end: 44px; font-size: 15px; }
+.globe-cluster-title > span { display: inline-grid; min-width: 22px; height: 22px; margin-inline-start: 6px; place-items: center; border-radius: 999px; background: color-mix(in srgb, var(--app-accent) 12%, transparent); color: var(--app-accent); font-size: 11px; }
+.globe-cluster-title .globe-cluster-flag { display: inline-flex; min-width: 0; margin-inline: 0 7px; vertical-align: middle; border-radius: 0; background: none; }
+.globe-cluster-list { display: grid; gap: 4px; margin: 8px 0 0; padding: 0; list-style: none; }
+.globe-cluster-list button { display: flex; width: 100%; align-items: center; gap: 10px; border: 0; border-radius: 10px; padding: 10px; background: transparent; color: var(--app-ink); text-align: start; overflow-wrap: anywhere; cursor: pointer; }
+.globe-cluster-list button:hover, .globe-cluster-list button:focus-visible { background: color-mix(in srgb, var(--app-accent) 10%, transparent); outline: none; }
+.globe-cluster-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--app-accent); }
 /* Each point as a button, for the keyboard: out of sight until focused. */
 .globe-point-list { position: absolute; inset-block-end: 16px; inset-inline-end: 62px; z-index: 3; }
 .globe-point-list ul { margin: 0; padding: 0; list-style: none; }
@@ -384,7 +406,6 @@
 .globe-zoom button:disabled { opacity: 0.4; cursor: default; }
 /* Keep the globe round while it is a globe. Once it morphs into a map, let
    the full rectangular pane become the map viewport so panning feels natural. */
-.network-globe-canvas[data-zoomed="true"]:not([data-local-map="true"]) .network-globe-stage canvas { clip-path: circle(50%); }
 .network-globe-canvas[data-local-map="true"] .network-globe-stage canvas { clip-path: none; touch-action: none; user-select: none; cursor: grab; }
 .network-globe-canvas[data-map-hover="true"] .network-globe-stage canvas { cursor: pointer; }
 .network-globe-canvas[data-local-map="true"] .network-globe-stage canvas:active,
