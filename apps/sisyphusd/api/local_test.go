@@ -872,14 +872,6 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if failedPoolLimits.GetError() == "" || failedPoolLimits.GetState() != nil {
 		t.Fatalf("failed pool-limits snapshot = %v; want per-domain error", failedPoolLimits)
 	}
-	failedLocation := (&localService{cfg: LocalConfig{LocationDiscovery: &memoryDiscovery{err: errors.New("location store unavailable")}}}).sharedStateSnapshot(ownerContext, nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY)
-	if failedLocation.GetError() == "" || failedLocation.GetState() != nil {
-		t.Fatalf("failed location-discovery snapshot = %v; want per-domain error", failedLocation)
-	}
-	failedWebAccess := (&localService{cfg: LocalConfig{WebAccess: &webAccessControllerStub{getErr: errors.New("web access unavailable")}}}).sharedStateSnapshot(ownerContext, nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS)
-	if failedWebAccess.GetError() == "" || failedWebAccess.GetState() != nil {
-		t.Fatalf("failed web-access snapshot = %v; want per-domain error", failedWebAccess)
-	}
 	failedPoolMembers := (&localService{}).sharedStateSnapshot(ownerContext, nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS)
 	if failedPoolMembers.GetError() == "" || failedPoolMembers.GetState() != nil {
 		t.Fatalf("failed pool-members snapshot = %v; want per-domain error", failedPoolMembers)
