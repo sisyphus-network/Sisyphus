@@ -242,7 +242,15 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   const locationRef = useRef<{ lat: number; lng: number } | undefined>(undefined)
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>()
   const [mapLayout, setMapLayout] = useState(false)
+  // Keep the globe's drawing viewport square. The local map uses the whole
+  // pane, and switches to that aspect once the globe-to-map morph begins.
+  const viewportSize = useMemo(() => {
+    if (mapLayout) return size
+    const side = Math.min(size.width, size.height)
+    return { width: side, height: side }
+  }, [mapLayout, size])
   const [mapSurfaceHidden, setMapSurfaceHidden] = useState(false)
+  const [morphing, setMorphing] = useState(false)
   const [mapHover, setMapHover] = useState<{ id: string; x: number; y: number }>()
   const [regionLines, setRegionLines] = useState<Array<Array<[number, number]>>>()
   const regionLinesRef = useRef<Array<Array<[number, number]>> | undefined>(undefined)
@@ -546,6 +554,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const limits = limitsRef.current
     if (!globe || !limits || !mapCenterRef.current || transitioningRef.current) return
     transitioningRef.current = true
+    setMorphing(true)
     if (performance.now() - wheelGestureRef.current.at < 250) wheelGestureRef.current.transitioned = true
     const mapOrigin = mapCenterRef.current
     const camera = globe.camera() as PerspectiveCamera
@@ -600,17 +609,35 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
       }
       setMapLayout(false)
       transitioningRef.current = false
+      setMorphing(false)
       controls.enabled = true
       controls.enableZoom = true
       controls.enablePan = false
       controls.enableRotate = true
       controls.autoRotate = !reduceMotion && active && !rotationPaused && !detailsOpen
       controls.update()
+      const next = zoomState(camera.position.distanceTo(controls.target), limits)
+      const displayZoom = { ...next, percent: Math.round(next.percent / 5) * 5 }
+      setZoom(displayZoom)
       globe.resumeAnimation()
     }, (progress) => {
       moveCamera(progress, camera.position, camera.quaternion)
     })
   }, [active, animateMorph, detailsOpen, reduceMotion, rotationPaused])
+  const updateMapZoomState = useCallback((distance: number, radius: number) => {
+    const limits = limitsRef.current
+    if (!limits) return
+    const next = zoomState(distance, limits)
+    const displayZoom: ZoomState = {
+      ...next,
+      canZoomIn: distance > radius * 0.252,
+      // Zooming out past the local map's bound returns to the globe.
+      canZoomOut: true,
+      regions: true,
+      percent: Math.round((limits.fit / distance * 100) / 5) * 5,
+    }
+    setZoom((current) => current && current.canZoomIn === displayZoom.canZoomIn && current.canZoomOut === displayZoom.canZoomOut && current.regions === displayZoom.regions && current.percent === displayZoom.percent ? current : displayZoom)
+  }, [])
   const zoomMap = useCallback((factor: number, clientX?: number, clientY?: number) => {
     const globe = globeRef.current
     if (!globe || !mapInteractiveRef.current || mapMorph.value < 0.999) return
@@ -637,7 +664,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     }
     camera.position.z = planeZ + next
     if (mapCenterRef.current) constrainMapCamera(globe, mapCenterRef.current)
-  }, [exitLocalMap])
+    updateMapZoomState(next, radius)
+  }, [exitLocalMap, updateMapZoomState])
   // Whenever the camera moves in or out, by wheel, pinch or button.
   const handleZoom = useCallback(() => {
     const globe = globeRef.current
@@ -655,6 +683,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     const sameWheelGesture = wheelGestureRef.current.transitioned && performance.now() - wheelGestureRef.current.at < 250
     if (!mapCenterRef.current && localMapThresholdReached(distance, limits.fit) && !mapSuppressedRef.current && !sameWheelGesture) {
       transitioningRef.current = true
+      setMorphing(true)
       if (performance.now() - wheelGestureRef.current.at < 250) wheelGestureRef.current.transitioned = true
       const view = globe.pointOfView()
       // The local map must be centered on the point currently under the
@@ -685,10 +714,10 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
         const type = (object as { __globeObjType?: string }).__globeObjType
         if (type === 'atmosphere' || type === 'point' || type === 'points' || type === 'object' || type === 'ring') object.visible = false
       })
+      setMapLayout(true)
       animateMorph(1, () => {
         if (globeSurfaceRef.current) globeSurfaceRef.current.visible = false
         setMapSurfaceHidden(true)
-        setMapLayout(true)
         countryBackShare.value = 1
         regionBackShare.value = 1
         controls.minDistance = radius * 1.25
@@ -697,6 +726,7 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
         controls.enablePan = false
         controls.enableRotate = false
         transitioningRef.current = false
+        setMorphing(false)
         if (mapCenterRef.current) constrainMapCamera(globe, mapCenterRef.current)
         globe.resumeAnimation()
       }, (progress) => {
@@ -916,9 +946,9 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
     }
   }, [suspendResize])
   useLayoutEffect(() => {
-    sizeRef.current = size
-    if (size.width > 0 && size.height > 0) fitCameraToViewport()
-  }, [fitCameraToViewport, size])
+    sizeRef.current = viewportSize
+    if (viewportSize.width > 0 && viewportSize.height > 0) fitCameraToViewport()
+  }, [fitCameraToViewport, viewportSize])
 
   useEffect(() => {
     if (size.width === 0 || size.height === 0) return
@@ -1067,13 +1097,15 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   }, [theme.accent, theme.dark])
   const rendererConfig = useMemo(() => ({ alpha: true, antialias: true, powerPreference: 'low-power' as const }), [])
   const markerPointerFilter = useCallback((object: unknown) => (object as { __globeObjType?: string }).__globeObjType === 'object', [])
+  const canZoomIn = mapInteractive ? mapSurfaceHidden && zoom?.canZoomIn : zoom?.canZoomIn
+  const canZoomOut = mapInteractive ? mapSurfaceHidden : zoom?.canZoomOut
   return <>
-  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-active={active} data-rotation-paused={rotationPaused} data-zoom={zoom?.percent} data-zoom-step={zoomStepCount} data-zooming={stepping} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && (wantRegions || mapInteractive) ? 'shown' : 'hidden'} data-local-map={mapInteractive} data-map-hover={Boolean(mapHover)}>
-    {webglAvailable() && size.width > 0 && size.height > 0 && <div className="network-globe-stage" style={{ width: size.width, height: size.height }}>
+  <div ref={containerRef} className="network-globe-canvas" role="img" aria-label={location ? `${nodeLabel} · ${countryLabel}` : nodeLabel} data-active={active} data-rotation-paused={rotationPaused} data-zoom={zoom?.percent} data-zoom-step={zoomStepCount} data-zooming={stepping} data-morphing={morphing} data-zoomed={Boolean(zoom && zoom.percent > 100)} data-regions={regionsLoaded && (wantRegions || mapInteractive) ? 'shown' : 'hidden'} data-local-map={mapInteractive} data-map-hover={Boolean(mapHover)}>
+    {webglAvailable() && viewportSize.width > 0 && viewportSize.height > 0 && <div className="network-globe-stage" style={{ width: viewportSize.width, height: viewportSize.height }}>
       <Globe
       ref={globeRef}
-      width={size.width}
-      height={size.height}
+      width={viewportSize.width}
+      height={viewportSize.height}
       backgroundColor="rgba(0,0,0,0)"
       showGlobe={!mapSurfaceHidden}
       globeMaterial={hologramMaterial}
@@ -1116,8 +1148,8 @@ const NetworkGlobe = memo(function NetworkGlobe({ countryCode, pin, shared, peer
   {/* The wheel and a pinch zoom too; these are for the keyboard, and for a
       touch screen or a mouse with no wheel. */}
   {active && webglAvailable() && zoom && <div className="globe-zoom" role="group" aria-label={zoomLabels.group}>
-    <button type="button" aria-label={zoomLabels.in} title={zoomLabels.in} disabled={(!mapInteractive && !zoom.canZoomIn) || stepping} onClick={() => zoomBy('in')}><Plus size={15} strokeWidth={1.9} aria-hidden /></button>
-    <button type="button" aria-label={zoomLabels.out} title={zoomLabels.out} disabled={(!mapInteractive && !zoom.canZoomOut) || stepping} onClick={() => zoomBy('out')}><Minus size={15} strokeWidth={1.9} aria-hidden /></button>
+    <button type="button" aria-label={zoomLabels.in} title={zoomLabels.in} disabled={!canZoomIn || morphing || stepping} onClick={() => zoomBy('in')}><Plus size={15} strokeWidth={1.9} aria-hidden /></button>
+    <button type="button" aria-label={zoomLabels.out} title={zoomLabels.out} disabled={!canZoomOut || morphing || stepping} onClick={() => zoomBy('out')}><Minus size={15} strokeWidth={1.9} aria-hidden /></button>
   </div>}
   </>
 })

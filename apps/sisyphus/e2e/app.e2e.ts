@@ -748,8 +748,20 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
       await until('the zoom step to end', async () => await globe.getAttribute('data-zooming') === 'false')
     }
     const step = async (button: typeof zoomIn, activate: () => Promise<unknown>) => {
+      if (await globe.getAttribute('data-morphing') === 'true') {
+        await until('the globe/map transition to finish', async () => await globe.getAttribute('data-morphing') === 'false')
+      }
       const previous = await zoomStep()
       if (!await button.isEnabled()) return false
+      if (await globe.getAttribute('data-local-map') === 'true') {
+        const previousZoom = await zoom()
+        await activate()
+        // Map zooms use the pane camera directly instead of the globe's
+        // pointOfView animation counter. Zooming out past its bound returns
+        // to the globe, where the displayed zoom is refreshed at transition end.
+        await until('the local map zoom to change', async () => await zoom() !== previousZoom)
+        return true
+      }
       try {
         await activate()
       } catch (error) {
@@ -758,8 +770,12 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
         if (!await button.isEnabled() && await globe.getAttribute('data-zooming') === 'false' && await zoomStep() === previous) return false
         throw error
       }
-      await until('a zoom step to start or the limit to be reached', async () =>
-        await zoomStep() > previous || (!await button.isEnabled() && await globe.getAttribute('data-zooming') === 'false'))
+      await until('a zoom step or map transition to start, or the limit to be reached', async () =>
+        await zoomStep() > previous || await globe.getAttribute('data-morphing') === 'true' || (!await button.isEnabled() && await globe.getAttribute('data-zooming') === 'false'))
+      if (await globe.getAttribute('data-morphing') === 'true') {
+        await until('the globe/map transition to finish', async () => await globe.getAttribute('data-morphing') === 'false')
+        return true
+      }
       if (await zoomStep() === previous) return false
       await stepped(previous)
       return true
