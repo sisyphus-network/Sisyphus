@@ -27,6 +27,10 @@ func (s *localService) GetLocationDiscoverySettings(ctx context.Context, _ *node
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
+	return s.locationDiscoverySnapshot()
+}
+
+func (s *localService) locationDiscoverySnapshot() (*nodepb.LocationDiscoverySettingsState, error) {
 	if s.cfg.LocationDiscovery == nil {
 		return nil, status.Error(codes.FailedPrecondition, "location discovery settings are unavailable")
 	}
@@ -69,6 +73,7 @@ func (s *localService) SetLocationDiscoverySettings(ctx context.Context, req *no
 	if err := s.cfg.LocationDiscovery.SetLocationDiscovery(settings); err != nil {
 		return nil, asError(err)
 	}
+	s.notifySharedStateChanged()
 	return locationDiscoveryState(settings, s.cfg.LocationDiscoveryRunning, s.cfg.GatewayDiscoverySupported, true), nil
 }
 
