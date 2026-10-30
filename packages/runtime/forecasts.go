@@ -124,7 +124,7 @@ type ForecastsResult struct {
 func (Forecasts) Name() string { return "forecasts" }
 
 func (Forecasts) Describe() string {
-	return `Forecasts many time series at once, each as forecast forecasts one: every candidate model backtested on the series' own past and the median of the best kinds chosen, with ranges. The series are shared out across the pool, a run of them to each task. Parameters: {"input": "<CID of a CSV file with a line for each value: the series' name first, the value last, and its time between if given>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, or timesfm-200m, the pretrained TimesFM model, which "all" does not include}. Result: {"series", "forecast", "failed", "forecast_table": "<CID of every forecast as CSV: id,step,value,lo80,hi80,lo95,hi95>", "models_table": "<CID of how each series was forecast as CSV>"}.`
+	return `Forecasts many time series at once, each as forecast forecasts one: every candidate model backtested on the series' own past and the median of the best kinds chosen, with ranges. The series are shared out across the pool, a run of them to each task. Parameters: {"input": "<CID of a CSV file with a line for each value: the series' name first, the value last, and its time between if given>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, as well as damped, Holt's smoothing with a damped trend, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, or timesfm-200m, the pretrained TimesFM model, which "all" does not include}. Result: {"series", "forecast", "failed", "forecast_table": "<CID of every forecast as CSV: id,step,value,lo80,hi80,lo95,hi95>", "models_table": "<CID of how each series was forecast as CSV>"}.`
 }
 
 func (f Forecasts) Form() []Field {
@@ -164,7 +164,7 @@ func (f Forecasts) Split(ctx context.Context, blobs Blobs, params []byte, parts 
 		// Each series then carries its candidates' backtests: a forecast,
 		// an error at each step and up to a window's residuals at each, for
 		// each kind's best and each family's model.
-		perTask = max(1, maxForecastsStepsPerTask/(one.Horizon*(len(forecastKinds)+len(familyKinds()))*(2+autoFolds)))
+		perTask = max(1, maxForecastsStepsPerTask/(one.Horizon*(len(goKinds())+len(familyKinds()))*(2+autoFolds)))
 	}
 	n := min(len(panel), max(parts, 1, (len(panel)+perTask-1)/perTask))
 	n = min(n, MaxTasks)
@@ -185,7 +185,7 @@ func (f Forecasts) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 		return nil, fmt.Errorf("forecasts payload: horizon %d, season %d or folds %d out of range", task.Horizon, task.Season, task.Folds)
 	}
 	for _, kind := range task.Kinds {
-		if !slices.Contains(forecastKinds, kind) && !slices.Contains(familyKinds(), kind) {
+		if !slices.Contains(goKinds(), kind) && !slices.Contains(familyKinds(), kind) {
 			return nil, fmt.Errorf("forecasts payload: no such kind of model as %q", kind)
 		}
 	}
