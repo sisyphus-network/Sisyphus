@@ -705,6 +705,10 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if noJoinedPool.GetJoinedPool() == nil {
 		t.Fatalf("standalone joined-pool snapshot = %v; want an empty typed state", noJoinedPool)
 	}
+	unavailablePoolMembers := (&localService{}).sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS)
+	if unavailablePoolMembers.GetError() == "" || unavailablePoolMembers.GetState() != nil {
+		t.Fatalf("unavailable pool-members snapshot = %v; want per-domain error", unavailablePoolMembers)
+	}
 	failedModelConfig := (&localService{cfg: LocalConfig{Assistant: &profiledAssistant{configErr: errAbsent}}}).sharedStateSnapshot(withToken("the-token"), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES)
 	if failedModelConfig.GetError() == "" || failedModelConfig.GetState() != nil {
 		t.Fatalf("failed model-config snapshot = %v; want per-domain error", failedModelConfig)
