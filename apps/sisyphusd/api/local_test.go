@@ -590,10 +590,26 @@ func TestWatchSharedStateStreamsModelLendingToIndependentClients(t *testing.T) {
 	}
 }
 
+func TestWebAccessSnapshotUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config LocalConfig
+	}{
+		{name: "read failure", config: LocalConfig{WebAccess: &webAccessControllerStub{getErr: errors.New("settings unavailable")}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := (&localService{cfg: tc.config}).sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS)
+			if event.GetError() == "" || event.GetState() != nil {
+				t.Fatalf("unavailable web access snapshot = %v; want error without state", event)
+			}
+		})
+	}
+}
+
 func TestLocationDiscoverySnapshotUnavailable(t *testing.T) {
 	event := (&localService{}).sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY)
 	if event.GetError() == "" || event.GetState() != nil {
-		t.Fatalf("unavailable location-discovery snapshot = %v; want an error without state", event)
+		t.Fatalf("unavailable location discovery snapshot = %v; want error without state", event)
 	}
 }
 

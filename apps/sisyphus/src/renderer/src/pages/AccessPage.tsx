@@ -15,6 +15,7 @@ import { useDialogValue } from '@/hooks/use-dialog-value'
 import { NetworkInterfacePicker, type NetworkInterfaceAddress } from '@/components/network-interface-picker'
 import { getNodeApi } from '@/lib/node-api'
 import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { accessDraftIsDirty } from '@/lib/access-draft'
 import { SharedStateDomain } from '@sisyphus/client'
 import { formatRelativeDate } from '@/lib/relative-date'
 import { toast } from 'sonner'
@@ -60,6 +61,13 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
   const [customBrowserAddress, setCustomBrowserAddress] = useState(false)
   const [now, setNow] = useState(Date.now())
   accessConfigRef.current = accessConfig
+  const savedDraftAddresses = accessConfig.listenAddresses?.length ? accessConfig.listenAddresses : (accessConfig.listenAddress ? [accessConfig.listenAddress] : [])
+  const currentDraftAddresses = isValidPort(listenPort) ? listenHosts.map((host) => formatListenAddress(host, listenPort)) : []
+  const savedCustomUrl = accessConfig.publicUrl.trim() && normalizeBrowserAddress(accessConfig.publicUrl) !== normalizeBrowserAddress(deriveBrowserAddress(savedDraftAddresses)) ? accessConfig.publicUrl : ''
+  accessDraftDirtyRef.current = accessDraftIsDirty(
+    { enabled: draftEnabled, addresses: currentDraftAddresses, publicUrl: normalizeBrowserAddress(customBrowserAddress ? publicUrl.trim() : ''), validPort: isValidPort(listenPort) },
+    { enabled: accessConfig.enabled, addresses: savedDraftAddresses, publicUrl: normalizeBrowserAddress(savedCustomUrl) },
+  )
   const reducedMotion = useReducedMotion()
   const access = messages.browserAccess
   const accessUi = messages.accessUi
@@ -119,6 +127,7 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
       if (!active || fallbackRequested) return
       fallbackRequested = true
       void api.call<WebAccessConfig>('getWebAccessConfig').then(receiveAccessConfig).catch((error) => {
+        fallbackRequested = false
         if (active) toast.error(labels.configLoadFailed, { description: error instanceof Error ? error.message : String(error) })
       }).finally(() => { if (active) setInitialAccessLoaded(true) })
     }
