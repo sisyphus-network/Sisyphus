@@ -11,14 +11,17 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sisyphus-network/Sisyphus/packages/storage"
+	"golang.org/x/sys/cpu"
 )
 
 // Heads of each format a picture is taken in, enough to be told by.
@@ -52,9 +55,12 @@ func TestAnImagesJobIsAContainerJobWithTheImageAndScriptFixed(t *testing.T) {
 	}
 	// Unless said otherwise: each in its own format and size, at quality
 	// 85, with its metadata taken out.
-	want := map[string]string{"FORMAT": "same", "WIDTH": "0", "HEIGHT": "0", "ENLARGE": "false", "QUALITY": "85", "KEEP": "false", "SIZE": "10000000x10000000>", "PICTURES": "5"}
+	want := map[string]string{"FORMAT": "same", "WIDTH": "0", "HEIGHT": "0", "ENLARGE": "false", "QUALITY": "85", "KEEP": "false", "SIZE": "10000000x10000000>", "PICTURES": "5", "UPSCALE": "0", "MODEL": "", "GPU": "false"}
 	if !equalEnv(first.Env, want) {
 		t.Errorf("its settings: %v", first.Env)
+	}
+	if first.GPUs != 0 || (Images{}).GPUsNeeded([]byte(`{`+inputs+`}`)) != 0 || (Images{}).Needs([]byte(`{`+inputs+`}`)) != nil {
+		t.Errorf("a job that does not upscale asks for %d graphics cards, or for %v", first.GPUs, (Images{}).Needs([]byte(`{`+inputs+`}`)))
 	}
 	// Each task is given only its own run of pictures, named by what each
 	// is.
@@ -69,6 +75,16 @@ func TestAnImagesJobIsAContainerJobWithTheImageAndScriptFixed(t *testing.T) {
 		`{` + inputs + `,"width":800,"height":600,"format":"webp","quality":70,"keep_metadata":true,"tasks":5}`: {"SIZE": "800x600>", "FORMAT": "webp", "QUALITY": "70", "KEEP": "true"},
 		`{` + inputs + `,"width":1024}`:                {"SIZE": "1024x>"},
 		`{` + inputs + `,"height":300,"enlarge":true}`: {"SIZE": "x300", "ENLARGE": "true"},
+		// Upscaling: the model upscales by 4 itself, and is made smaller
+		// again for 2 or 3, unless it has a network for each.
+		`{` + inputs + `,"upscale":4}`:                                   {"UPSCALE": "4", "MODEL": "realesrgan-x4plus", "NATIVE": "4", "SHRINK": "1", "MOST_SIDE": "16384", "GPU": "false"},
+		`{` + inputs + `,"upscale":2,"model":"realesrgan-x4plus-anime"}`: {"UPSCALE": "2", "MODEL": "realesrgan-x4plus-anime", "NATIVE": "4", "SHRINK": "0.5"},
+		`{` + inputs + `,"upscale":3,"width":1000,"format":"jpeg"}`:      {"UPSCALE": "3", "NATIVE": "4", "SHRINK": "0.75", "SIZE": "1000x>", "FORMAT": "jpeg"},
+		`{` + inputs + `,"upscale":3,"model":"realesr-animevideov3"}`:    {"UPSCALE": "3", "NATIVE": "3", "SHRINK": "1"},
+		`{` + inputs + `,"upscale":2,"model":"realesr-animevideov3"}`:    {"UPSCALE": "2", "NATIVE": "2", "SHRINK": "1"},
+		`{` + inputs + `,"upscale":4,"gpu":true}`:                        {"GPU": "true", "NVIDIA_DRIVER_CAPABILITIES": "compute,utility,graphics"},
+		// A model is checked but not used where there is no upscaling.
+		`{` + inputs + `,"model":"realesr-animevideov3"}`: {"UPSCALE": "0", "MODEL": ""},
 	} {
 		payloads, err := Images{}.Split(ctx, store, []byte(params), 8)
 		if err != nil {
@@ -122,6 +138,14 @@ func TestAnImagesJobIsAContainerJobWithTheImageAndScriptFixed(t *testing.T) {
 		`{` + inputs + `,"tasks":10001}`:                           "tasks is 10001",
 		`{` + inputs + `,"width":16384,"height":1,"quality":1}`:    "",
 		`{` + inputs + `,"format":"gif","enlarge":true,"width":1}`: "",
+		`{` + inputs + `,"upscale":1}`:                             "upscale is 1, and must be 2, 3 or 4, or 0 to leave the pictures as big as they are",
+		`{` + inputs + `,"upscale":8}`:                             "upscale is 8",
+		`{` + inputs + `,"upscale":-2}`:                            "upscale is -2",
+		`{` + inputs + `,"upscale":4,"model":"esrgan"}`:            `model is "esrgan", and must be one of realesrgan-x4plus, realesrgan-x4plus-anime, realesr-animevideov3`,
+		`{` + inputs + `,"model":"realesrgan-x2plus"}`:             `model is "realesrgan-x2plus"`,
+		`{` + inputs + `,"gpu":true}`:                              "a model or a graphics card is asked for with no upscale to use it for",
+		`{` + inputs + `,"upscale":2,"keep_metadata":true}`:        "keep_metadata cannot be had with upscale: Real-ESRGAN keeps none of a picture's metadata",
+		`{` + inputs + `,"upscale":2,"model":"realesrgan-x4plus","gpu":true,"width":800,"enlarge":true,"format":"webp"}`: "",
 	} {
 		_, err := (Images{}).Split(ctx, store, []byte(params), 2)
 		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
@@ -175,8 +199,29 @@ func TestOnlyPicturesOfTheFormatsTakenAreEdited(t *testing.T) {
 			t.Errorf("%+v is %q, want %q", settings, got, want)
 		}
 	}
-	if _, err := imagesSettingsOf("same", "ten", "0", "maybe", "85", "false"); err == nil || !strings.Contains(err.Error(), "settings are not numbers and yes or no") {
-		t.Errorf("settings that are not numbers: %v", err)
+	for _, values := range []map[string]string{
+		{"FORMAT": "same", "WIDTH": "ten", "HEIGHT": "0", "ENLARGE": "maybe", "QUALITY": "85", "KEEP": "false"},
+		{"FORMAT": "same", "WIDTH": "0", "HEIGHT": "0", "ENLARGE": "false", "QUALITY": "85", "KEEP": "false", "UPSCALE": "two"},
+		{"FORMAT": "same", "WIDTH": "0", "HEIGHT": "0", "ENLARGE": "false", "QUALITY": "85", "KEEP": "false", "UPSCALE": "2", "MODEL": "realesrgan-x4plus", "GPU": "$(id)"},
+	} {
+		if _, err := imagesSettingsOf(values); err == nil || !strings.Contains(err.Error(), "settings are not numbers and yes or no") {
+			t.Errorf("settings that are not numbers: %v", err)
+		}
+	}
+	// Settings from before upscaling was offered ask for none.
+	if s, err := imagesSettingsOf(map[string]string{"FORMAT": "png", "WIDTH": "0", "HEIGHT": "0", "ENLARGE": "false", "QUALITY": "85", "KEEP": "true"}); err != nil || s.Upscale != 0 || s.Model != "" || s.GPU {
+		t.Errorf("settings without upscaling: %+v, %v", s, err)
+	}
+	for settings, want := range map[imagesSettings][2]int{
+		{Upscale: 2, Model: "realesrgan-x4plus"}:               {4, 0},
+		{Upscale: 4, Model: "realesrgan-x4plus"}:               {4, 0},
+		{Upscale: 3, Model: "realesr-animevideov3"}:            {3, 0},
+		{Upscale: 4, Model: "realesr-animevideov3"}:            {4, 0},
+		{Upscale: 2, Model: "realesr-animevideov3", GPU: true}: {2, 1},
+	} {
+		if settings.native() != want[0] || settings.gpus() != want[1] {
+			t.Errorf("%+v upscales by %d itself on %d cards, want %v", settings, settings.native(), settings.gpus(), want)
+		}
 	}
 }
 
@@ -605,5 +650,276 @@ func TestRealPicturesAreEdited(t *testing.T) {
 	split, _ := run(`{`+both+`,"width":120,"height":120,"enlarge":true,"keep_metadata":true,"tasks":2}`, 2)
 	if split.Pictures[0].Picture != kept.Pictures[0].Picture || split.Pictures[1].Picture != kept.Pictures[1].Picture {
 		t.Errorf("shared out in two, the pictures differ: %+v and %+v", split.Pictures, kept.Pictures)
+	}
+}
+
+// A job that upscales runs in its own image, built only where it is asked
+// for, on a graphics card only where the job asks for one, and is given
+// to a worker whose processor can upscale where it asks for none.
+func TestUpscalingRunsInItsOwnImage(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+	picture := storedCID(t, store, pictureHeads["jpeg"])
+	split := func(params string) containerTask {
+		t.Helper()
+		payloads, err := Images{}.Split(ctx, store, []byte(`{"inputs":["`+picture+`","`+picture+`"],`+params+`}`), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return trajTaskOf(payloads[0])
+	}
+	onProcessor, onCard := split(`"upscale":2`), split(`"upscale":4,"model":"realesr-animevideov3","gpu":true`)
+	if onProcessor.Image != ImagesUpscaleImage || !strings.HasPrefix(ImagesUpscaleImage, "sisyphus-images-upscale:") || onProcessor.GPUs != 0 || onCard.Image != ImagesUpscaleImage || onCard.GPUs != 1 {
+		t.Errorf("upscaling tasks: %+v and %+v", onProcessor, onCard)
+	}
+	if !strings.Contains(imagesScript, "realesrgan-ncnn-vulkan") || !strings.Contains(imagesUpscaleDockerfile, "mesa-vulkan-drivers") || !strings.Contains(imagesUpscaleDockerfile, "sha256sum -c") {
+		t.Error("the script or the image does not upscale with Real-ESRGAN through lavapipe")
+	}
+	for params, want := range map[string]struct {
+		gpus  int
+		needs []string
+	}{
+		`{"upscale":2}`:                {0, []string{ImagesUpscaleLabel}},
+		`{"upscale":4,"gpu":true}`:     {1, []string{ImagesUpscaleGPULabel}},
+		`{"gpu":true}`:                 {0, nil},
+		`{"upscale":3,"model":"none"}`: {0, []string{ImagesUpscaleLabel}},
+		`not json`:                     {0, nil},
+	} {
+		if gpus, needs := (Images{}).GPUsNeeded([]byte(params)), (Images{}).Needs([]byte(params)); gpus != want.gpus || !slices.Equal(needs, want.needs) {
+			t.Errorf("%s needs %d cards and %v, want %+v", params, gpus, needs, want)
+		}
+	}
+	// An x86-64 processor with AVX2 has F16C, which lavapipe needs.
+	if got := (Images{}).Offers(ctx); slices.Contains(got, ImagesUpscaleLabel) != cpu.X86.HasAVX2 || slices.Contains(got, ImagesUpscaleGPULabel) != (goruntime.GOARCH == "amd64") {
+		t.Errorf("this machine, %s with AVX2 %v, offers %v", goruntime.GOARCH, cpu.X86.HasAVX2, got)
+	}
+	defer func(processor, card func() bool) { upscalesOnProcessor, upscalesOnCard = processor, card }(upscalesOnProcessor, upscalesOnCard)
+	for _, c := range []struct {
+		processor, card bool
+		want            []string
+	}{
+		{true, true, []string{ImagesUpscaleLabel, ImagesUpscaleGPULabel}},
+		{false, true, []string{ImagesUpscaleGPULabel}},
+		{true, false, []string{ImagesUpscaleLabel}},
+		{false, false, nil}, // arm64, with or without a card
+	} {
+		upscalesOnProcessor = func() bool { return c.processor }
+		upscalesOnCard = func() bool { return c.card }
+		if got := (Images{}).Offers(ctx); !slices.Equal(got, c.want) {
+			t.Errorf("a worker that can upscale on its processor %v, on a card %v, offers %v", c.processor, c.card, got)
+		}
+		got := WithContainers().Offers(ctx)
+		if slices.Contains(got, ImagesUpscaleLabel) != c.processor || slices.Contains(got, ImagesUpscaleGPULabel) != c.card {
+			t.Errorf("a worker that runs containers, that can upscale on its processor %v, on a card %v, offers %v", c.processor, c.card, got)
+		}
+	}
+
+	var ran []string
+	var recipe string
+	lacks := &pretend{do: func(args []string, _, _ io.Writer) (int, error) {
+		switch args[0] {
+		case "image":
+			return 1, nil
+		case "build":
+			text, _ := os.ReadFile(filepath.Join(args[len(args)-1], "Dockerfile"))
+			recipe = string(text)
+			return 0, nil
+		}
+		ran = args
+		os.WriteFile(filepath.Join(volume(args, "/output"), "summary.json"), []byte(`{}`), 0o644)
+		return 0, nil
+	}}
+	said := new(heard)
+	if _, err := (Images{Engine: lacks.engine}).Execute(WithReporter(ctx, said), store, mustJSON(onCard)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(lacks.asked[0], " ") != "image inspect "+ImagesUpscaleImage || strings.Join(lacks.asked[1][:3], " ") != "build --tag "+ImagesUpscaleImage || recipe != imagesUpscaleDockerfile {
+		t.Errorf("with the upscaling image missing, the engine was asked %v", lacks.asked)
+	}
+	if !strings.Contains(strings.Join(said.lines, "\n"), "building the image upscaling pictures runs in") {
+		t.Errorf("the task's log: %q", said.lines)
+	}
+	if !slices.Contains(ran, "--gpus") || !slices.Contains(ran, "UPSCALE=4") || !slices.Contains(ran, "MODEL=realesr-animevideov3") || !slices.Contains(ran, "NATIVE=4") ||
+		!slices.Contains(ran, "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics") || ran[len(ran)-4] != ImagesUpscaleImage {
+		t.Errorf("the task ran %q", ran)
+	}
+	ran = nil
+	if _, err := (Images{Engine: lacks.engine}).Execute(ctx, store, mustJSON(onProcessor)); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(ran, "--gpus") || !slices.Contains(ran, "SHRINK=0.5") || !slices.Contains(ran, "MOST_SIDE=16384") || slices.Contains(ran, "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics") {
+		t.Errorf("the task on the processor ran %q", ran)
+	}
+
+	// The worker runs the image of the settings it checks, and a card only
+	// for a job that upscales on one, whatever the payload says.
+	tampered := func(task containerTask, change func(*containerTask)) []byte {
+		copied := task
+		copied.Env = maps.Clone(task.Env)
+		change(&copied)
+		return mustJSON(copied)
+	}
+	ran = nil
+	if _, err := (Images{Engine: lacks.engine}).Execute(ctx, store, tampered(onProcessor, func(c *containerTask) { c.GPUs = 4 })); err != nil || slices.Contains(ran, "--gpus") {
+		t.Errorf("a payload that asks for cards of its own ran %q: %v", ran, err)
+	}
+	for name, tt := range map[string]struct {
+		task   containerTask
+		change func(*containerTask)
+		want   string
+	}{
+		"upscaling in the editing image": {onProcessor, func(c *containerTask) { c.Image = ImagesImage }, `"` + ImagesImage + `" is not the image pictures are edited in`},
+		"editing in the upscaling image": {onProcessor, func(c *containerTask) { c.Env["UPSCALE"] = "0"; c.Env["MODEL"] = "" }, `"` + ImagesUpscaleImage + `" is not the image`},
+		"a model with no upscaling":      {onProcessor, func(c *containerTask) { c.Env["UPSCALE"] = "0" }, "a model or a graphics card is asked for with no upscale"},
+		"a model not on the menu":        {onProcessor, func(c *containerTask) { c.Env["MODEL"] = "../../etc/passwd" }, `model is "../../etc/passwd"`},
+		"a factor not on the menu":       {onCard, func(c *containerTask) { c.Env["UPSCALE"] = "16" }, "upscale is 16"},
+		"a factor with a command":        {onCard, func(c *containerTask) { c.Env["UPSCALE"] = "2; id" }, "settings are not numbers"},
+		"metadata kept":                  {onCard, func(c *containerTask) { c.Env["KEEP"] = "true" }, "keep_metadata cannot be had with upscale"},
+	} {
+		if _, err := (Images{Engine: lacks.engine}).Execute(ctx, store, tampered(tt.task, tt.change)); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: %v, want an error containing %q", name, err, tt.want)
+		}
+	}
+}
+
+// Upscaled pictures are put together as any others, with the upscaling the
+// tasks say, which must be the same for every task.
+func TestUpscaledPicturesArePutTogether(t *testing.T) {
+	store := storage.NewMemory()
+	ctx := context.Background()
+	upscaled := func(first, pictures int, reports ...imagesReport) imagesSummary {
+		s := imagesSummaryOf(first, pictures, reports...)
+		s.Width, s.Height, s.Upscale, s.Model, s.GPU = "0", "0", "4", "realesrgan-x4plus", "true"
+		return s
+	}
+	outputs := [][]byte{
+		imagesTask(t, store, 0, upscaled(0, 2, imagesReportOf(0, "webp", 3200, 2400))),
+		imagesTask(t, store, 1, upscaled(1, 2, imagesReport{Index: 1, Failed: true})),
+	}
+	raw, err := Images{}.Aggregate(ctx, store, outputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result ImagesResult
+	json.Unmarshal(raw, &result)
+	if result.Upscale != 4 || result.Model != "realesrgan-x4plus" || !result.GPU || result.Made != 1 || result.Pictures[0].Width != 3200 ||
+		result.Pictures[1].Error != "the picture could not be upscaled, read or saved; its log says why" {
+		t.Errorf("result: %+v", result)
+	}
+	if !strings.Contains(string(raw), `"upscale":4,"model":"realesrgan-x4plus","gpu":true`) {
+		t.Errorf("the result as JSON: %s", raw)
+	}
+
+	other := upscaled(1, 2, imagesReportOf(1, "webp", 1, 1))
+	other.Upscale = "2"
+	broken := upscaled(1, 2, imagesReportOf(1, "webp", 1, 1))
+	broken.Model = "esrgan"
+	legacy := imagesSummaryOf(1, 2, imagesReportOf(1, "webp", 1, 1))
+	legacy.Width, legacy.Height = "0", "0"
+	for name, tt := range map[string]struct {
+		outputs [][]byte
+		want    string
+	}{
+		"tasks that upscale differently":    {[][]byte{outputs[0], imagesTask(t, store, 1, other)}, `task 1 edited 2 pictures as webp to 0x0 (enlarge false, quality 85, keep false, upscale 2, model "realesrgan-x4plus", gpu true), and task 0 2 as webp to 0x0 (enlarge false, quality 85, keep false, upscale 4`},
+		"a later task of no job's settings": {[][]byte{outputs[0], imagesTask(t, store, 1, broken)}, `task 1 edited 2 pictures`},
+		"a task that did not upscale":       {[][]byte{outputs[0], imagesTask(t, store, 1, legacy)}, `upscale , model "", gpu ), and task 0`},
+		"a first task of no job's settings": {[][]byte{imagesTask(t, store, 0, func() imagesSummary { s := upscaled(0, 1, imagesReportOf(0, "webp", 1, 1)); s.Keep = "true"; return s }())}, "with settings no job asks for: keep_metadata cannot be had with upscale"},
+	} {
+		if _, err := (Images{}).Aggregate(ctx, store, tt.outputs); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: %v, want an error containing %q", name, err, tt.want)
+		}
+	}
+}
+
+// Real pictures upscaled with Real-ESRGAN in real containers, through
+// lavapipe on the processor: a photo taken on its side is turned upright
+// and upscaled twice over by the photo model, which upscales by 4 and is
+// made smaller again, and a drawing three times by the network that has a
+// factor of 3, then fitted to the box; a picture too big to upscale, and a
+// broken one, are listed as not made, with why.
+func TestRealPicturesAreUpscaled(t *testing.T) {
+	requireRealImages(t)
+	requireDocker(t)
+	if !upscalesOnProcessor() {
+		t.Skip("lavapipe cannot run Real-ESRGAN on a processor without F16C, which this one, without AVX2, may lack")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	// The image is built here if this machine has not got it, which takes
+	// the network and a few minutes.
+	if err := haveImage(ctx, docker, ImagesUpscaleImage, imagesUpscaleDockerfile, "upscaling pictures"); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.NewMemory()
+	put := func(content []byte) string {
+		t.Helper()
+		c, err := store.Put(ctx, bytes.NewReader(content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.String()
+	}
+	drawing := image.NewNRGBA(image.Rect(0, 0, 20, 10))
+	for x := range 20 {
+		for y := range 10 {
+			drawing.Set(x, y, color.NRGBA{uint8(x * 12), 40, uint8(y * 25), uint8(255 - x*5)})
+		}
+	}
+	var encoded, wide bytes.Buffer
+	png.Encode(&encoded, drawing)
+	png.Encode(&wide, image.NewGray(image.Rect(0, 0, imagesMostSide/4+1, 1)))
+	inputs := []string{put(photo(t, 32, 24)), put(encoded.Bytes()), put(wide.Bytes()), put([]byte("\xff\xd8\xff\xe0 the rest is not a JPEG"))}
+
+	w := Images{Confined: Confinement{ReadOnly: true}}
+	run := func(params string, parts int) (ImagesResult, string) {
+		t.Helper()
+		payloads, err := w.Split(ctx, store, []byte(params), parts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outputs := make([][]byte, len(payloads))
+		said := new(heard)
+		started := time.Now()
+		for i, payload := range payloads {
+			if outputs[i], err = w.Execute(WithReporter(ctx, said), store, payload); err != nil {
+				t.Fatalf("task %d: %v\n%s", i, err, strings.Join(said.lines, "\n"))
+			}
+		}
+		log := strings.Join(said.lines, "\n")
+		t.Logf("%s upscaled in %s:\n%s", params, time.Since(started).Round(time.Millisecond), log)
+		raw, err := w.Aggregate(ctx, store, outputs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result ImagesResult
+		json.Unmarshal(raw, &result)
+		t.Logf("result: %+v", result)
+		return result, log
+	}
+
+	all := `"inputs":["` + strings.Join(inputs, `","`) + `"]`
+	result, log := run(`{`+all+`,"upscale":2,"format":"webp","tasks":2}`, 2)
+	if result.Upscale != 2 || result.Model != "realesrgan-x4plus" || result.Made != 2 || result.Failed != 2 || len(result.Pictures) != 4 {
+		t.Fatalf("result: %+v", result)
+	}
+	upright, drawn, wideOne, broken := result.Pictures[0], result.Pictures[1], result.Pictures[2], result.Pictures[3]
+	// Turned a quarter, the 32 by 24 photo stands 24 by 32, and twice over
+	// is 48 by 64.
+	if upright.Name != "image-000.webp" || upright.Width != 48 || upright.Height != 64 || drawn.Width != 40 || drawn.Height != 20 {
+		t.Errorf("the upscaled pictures: %+v and %+v", upright, drawn)
+	}
+	if edited := []byte(readBlob(t, store, upright.Picture)); pictureKind(edited) != "webp" || bytes.Contains(edited, []byte("SisyphusPhone")) {
+		t.Errorf("the photo kept its metadata, or is no WebP: %q", edited[:min(len(edited), 64)])
+	}
+	if !strings.Contains(readBlob(t, store, wideOne.Log), "4097 by 1 pixels is too big to upscale by 4: a side may come to at most 16384 pixels") ||
+		!strings.Contains(wideOne.Error, "could not be upscaled") || broken.Error == "" || !strings.Contains(log, "Real-ESRGAN found the Vulkan devices: llvmpipe") {
+		t.Errorf("the pictures not made: %+v and %+v, with the log\n%s", wideOne, broken, readBlob(t, store, wideOne.Log))
+	}
+
+	// The drawing three times over with the network that does 3 itself,
+	// kept as a PNG, and fitted within 50 pixels wide.
+	fitted, _ := run(`{"input":"`+inputs[1]+`","upscale":3,"model":"realesr-animevideov3","width":50}`, 1)
+	if fitted.Made != 1 || fitted.Pictures[0].Name != "image-000.png" || fitted.Pictures[0].Width != 50 || fitted.Pictures[0].Height != 25 {
+		t.Errorf("the drawing upscaled 3 times and fitted: %+v", fitted.Pictures)
 	}
 }

@@ -12,7 +12,7 @@ Things to run against a pool, and a pool to run them against.
 | `container.sh` | Runs a container image on the pool, one copy for each task, and prints what each printed. |
 | `transcode.sh` | Re-encodes a video on the pool: stored, encoded in stretches by the workers, fetched. |
 | `render.sh` | Renders a picture in strips, a container task for each, and puts it back together. |
-| `images.sh` | Edits a batch of pictures on the pool: each stored, fitted to a size and saved in a format by libvips, a run of them on each worker, and fetched as one zip. |
+| `images.sh` | Edits a batch of pictures on the pool: each stored, upscaled by Real-ESRGAN if asked, fitted to a size and saved in a format by libvips, a run of them on each worker, and fetched as one zip. |
 | `rehearsal.sh` | A pool across machines, rehearsed on one: each node in a container of its own, the two workers on networks that cannot reach each other, a client on another. It joins them, runs jobs from the client, among them one that both workers check and a private one, shows a second client kept to its own jobs and pins, makes many connections from one address, loses a worker mid-job, restarts the coordinator while a job runs, and reports what held. Needs Docker. |
 | `big-file.sh` | Makes a large text file to time jobs with. |
 | `boulder.txt` | A short sample text, the default input for `wordcount.sh`. |
@@ -117,12 +117,13 @@ examples/render.sh                       # in another: 8 strips of a 1200 by 800
 examples/render.sh 16 2400 1600 big.pgm  # more strips, a bigger picture
 ```
 
-`examples/images.sh` edits up to 256 pictures: it stores each, has the pool fit them to a size and save them in a format with libvips (the `images` workload), a run of them on each worker, and fetches a zip of them all. It checks the count and that every file exists before storing any of them. Their metadata, such as where a photo was taken, is taken out unless `KEEP_METADATA=true`.
+`examples/images.sh` edits up to 256 pictures: it stores each, has the pool fit them to a size and save them in a format with libvips (the `images` workload), a run of them on each worker, and fetches a zip of them all. It checks the count and that every file exists before storing any of them. Their metadata, such as where a photo was taken, is taken out unless `KEEP_METADATA=true`. `UPSCALE=2`, `3` or `4` has Real-ESRGAN make each that many times bigger first, with `MODEL=realesrgan-x4plus` (the default, for photos), `realesrgan-x4plus-anime` (for drawings) or `realesr-animevideov3` (fast, for frames of anime), and `GPU=true` runs it on a worker's graphics card; without one it runs, much more slowly, on a worker whose processor has AVX2. Upscaled pictures keep no metadata.
 
 ```sh
 examples/local-pool.sh --containers                             # in one terminal
 WIDTH=1600 HEIGHT=1600 FORMAT=webp examples/images.sh *.jpg     # in another: fit within 1600 pixels, as WebP
 FORMAT=png examples/images.sh scan.tif photo.jpg -- out.zip     # each as PNG, size kept, into out.zip
+UPSCALE=4 WIDTH=3000 FORMAT=webp GPU=true examples/images.sh *.jpg  # 4 times bigger on a card, then within 3000 pixels
 ```
 
 Each task works out which strip is its own from `SISYPHUS_TASK_INDEX` and `SISYPHUS_TASK_COUNT`, writes its rows to `/output/rows`, and logs how far it has got, which `job logs` shows live. The job's result names each strip's rows by CID, and the script fetches them in order. Swap the program and the image and the same script shape runs frames of a video, files of a dataset, or seeds of a simulation.
