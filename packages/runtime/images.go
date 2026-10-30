@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	goruntime "runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -366,9 +367,20 @@ var ImagesUpscaleImage = func() string {
 // processor is given only to workers that say so.
 const ImagesUpscaleLabel = "images-upscale-cpu"
 
+// ImagesUpscaleGPULabel is what a worker that can upscale pictures on a
+// graphics card is labelled. Real-ESRGAN's release is built for x86-64
+// only, and its image stops building anywhere else, so an arm64 worker
+// with a card (a Jetson, say) must not be given the task; the card itself
+// is asked for through GPUsNeeded.
+const ImagesUpscaleGPULabel = "images-upscale-gpu"
+
 // upscalesOnProcessor says whether this machine's processor can upscale
 // pictures through lavapipe.
 var upscalesOnProcessor = func() bool { return cpu.X86.HasAVX2 }
+
+// upscalesOnCard says whether Real-ESRGAN's release runs on this machine
+// at all, which a job that upscales on a graphics card needs.
+var upscalesOnCard = func() bool { return goruntime.GOARCH == "amd64" }
 
 // imagesScript is what each task runs. The pictures are
 // /input/image-<i>.<kind>, numbered from 000, of which the task takes the
@@ -610,22 +622,30 @@ func (Images) GPUsNeeded(params []byte) int {
 	return 1
 }
 
-// Needs says that a job that upscales on the processor needs a worker
-// whose processor can.
+// Needs says that a job that upscales needs a worker that can: on the
+// processor, one whose processor can; on a card, one Real-ESRGAN runs on.
 func (Images) Needs(params []byte) []string {
 	var p ImagesParams
-	if json.Unmarshal(params, &p) != nil || p.Upscale == 0 || p.GPU {
+	if json.Unmarshal(params, &p) != nil || p.Upscale == 0 {
 		return nil
+	}
+	if p.GPU {
+		return []string{ImagesUpscaleGPULabel}
 	}
 	return []string{ImagesUpscaleLabel}
 }
 
-// Offers is upscaling on the processor, where this machine's can.
+// Offers is upscaling on the processor, where this machine's can, and on
+// a card, where Real-ESRGAN runs at all.
 func (Images) Offers(context.Context) []string {
-	if !upscalesOnProcessor() {
-		return nil
+	var offers []string
+	if upscalesOnProcessor() {
+		offers = append(offers, ImagesUpscaleLabel)
 	}
-	return []string{ImagesUpscaleLabel}
+	if upscalesOnCard() {
+		offers = append(offers, ImagesUpscaleGPULabel)
+	}
+	return offers
 }
 
 // imagesName is what picture i's files are called, before their ending.

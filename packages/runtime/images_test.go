@@ -14,6 +14,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -679,7 +680,7 @@ func TestUpscalingRunsInItsOwnImage(t *testing.T) {
 		needs []string
 	}{
 		`{"upscale":2}`:                {0, []string{ImagesUpscaleLabel}},
-		`{"upscale":4,"gpu":true}`:     {1, nil},
+		`{"upscale":4,"gpu":true}`:     {1, []string{ImagesUpscaleGPULabel}},
 		`{"gpu":true}`:                 {0, nil},
 		`{"upscale":3,"model":"none"}`: {0, []string{ImagesUpscaleLabel}},
 		`not json`:                     {0, nil},
@@ -689,17 +690,27 @@ func TestUpscalingRunsInItsOwnImage(t *testing.T) {
 		}
 	}
 	// An x86-64 processor with AVX2 has F16C, which lavapipe needs.
-	if got := (Images{}).Offers(ctx); slices.Contains(got, ImagesUpscaleLabel) != cpu.X86.HasAVX2 {
-		t.Errorf("this machine, with AVX2 %v, offers %v", cpu.X86.HasAVX2, got)
+	if got := (Images{}).Offers(ctx); slices.Contains(got, ImagesUpscaleLabel) != cpu.X86.HasAVX2 || slices.Contains(got, ImagesUpscaleGPULabel) != (goruntime.GOARCH == "amd64") {
+		t.Errorf("this machine, %s with AVX2 %v, offers %v", goruntime.GOARCH, cpu.X86.HasAVX2, got)
 	}
-	defer func(was func() bool) { upscalesOnProcessor = was }(upscalesOnProcessor)
-	for can, want := range map[bool][]string{true: {ImagesUpscaleLabel}, false: nil} {
-		upscalesOnProcessor = func() bool { return can }
-		if got := (Images{}).Offers(ctx); !slices.Equal(got, want) {
-			t.Errorf("a worker whose processor can upscale, %v, offers %v", can, got)
+	defer func(processor, card func() bool) { upscalesOnProcessor, upscalesOnCard = processor, card }(upscalesOnProcessor, upscalesOnCard)
+	for _, c := range []struct {
+		processor, card bool
+		want            []string
+	}{
+		{true, true, []string{ImagesUpscaleLabel, ImagesUpscaleGPULabel}},
+		{false, true, []string{ImagesUpscaleGPULabel}},
+		{true, false, []string{ImagesUpscaleLabel}},
+		{false, false, nil}, // arm64, with or without a card
+	} {
+		upscalesOnProcessor = func() bool { return c.processor }
+		upscalesOnCard = func() bool { return c.card }
+		if got := (Images{}).Offers(ctx); !slices.Equal(got, c.want) {
+			t.Errorf("a worker that can upscale on its processor %v, on a card %v, offers %v", c.processor, c.card, got)
 		}
-		if got := WithContainers().Offers(ctx); slices.Contains(got, ImagesUpscaleLabel) != can {
-			t.Errorf("a worker that runs containers, whose processor can upscale, %v, offers %v", can, got)
+		got := WithContainers().Offers(ctx)
+		if slices.Contains(got, ImagesUpscaleLabel) != c.processor || slices.Contains(got, ImagesUpscaleGPULabel) != c.card {
+			t.Errorf("a worker that runs containers, that can upscale on its processor %v, on a card %v, offers %v", c.processor, c.card, got)
 		}
 	}
 
