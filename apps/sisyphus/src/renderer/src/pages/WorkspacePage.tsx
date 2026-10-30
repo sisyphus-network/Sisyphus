@@ -835,6 +835,7 @@ type WorkspaceSharedState = {
   snapshot?: boolean
   state?: { case?: string; value?: unknown } | string
   node?: unknown
+  workers?: unknown
 }
 
 function workspaceNodeInfo(event: WorkspaceSharedState): unknown {
@@ -845,9 +846,9 @@ function workspaceNodeInfo(event: WorkspaceSharedState): unknown {
   return event.node && typeof event.node === 'object' ? (event.node as { info?: unknown }).info : undefined
 }
 
-// usePoolWorkers reads pool workers and their shared places from WatchWorkers,
-// using a one-shot list only while that stream is unavailable. A node that
-// coordinates no pool, or keeps none of this, has none.
+// usePoolWorkers reads worker state from the shared event stream. A node that
+// cannot serve workers reports that domain as unavailable without closing the
+// stream, so a later pool join can update the globe without reconnect polling.
 function usePoolWorkers(snapshot: NodeSnapshot, visible: boolean): PoolWorkers {
   const [pool, setPool] = useState<PoolWorkers>(noPoolWorkers)
   const connected = snapshot.status === 'connected'
@@ -858,6 +859,7 @@ function usePoolWorkers(snapshot: NodeSnapshot, visible: boolean): PoolWorkers {
     let retry: number | undefined
     let attempt = 0
     let fallbackRequested = false
+    let receivedStreamState = false
     const apply = (workersValue: unknown) => {
       const workers = poolWorkers(workersValue)
       setPool({ workers, shared: sharedPlaces(workersValue) })
@@ -866,8 +868,8 @@ function usePoolWorkers(snapshot: NodeSnapshot, visible: boolean): PoolWorkers {
       if (!active || fallbackRequested) return
       fallbackRequested = true
       void getNodeApi().call<{ workers?: unknown }>('listWorkers').then((result) => {
-        if (active) apply(result.workers)
-      }).catch(() => { if (active) setPool(noPoolWorkers) })
+        if (active && !receivedStreamState) apply(result.workers)
+      }).catch(() => { if (active && !receivedStreamState) setPool(noPoolWorkers) })
     }
     const reconnect = () => {
       if (!active || retry !== undefined) return
@@ -881,10 +883,22 @@ function usePoolWorkers(snapshot: NodeSnapshot, visible: boolean): PoolWorkers {
     const connect = () => {
       if (!active) return
       retry = undefined
-      cancel = getNodeApi().stream<{ workers?: unknown[] }>('watchWorkers', {}, (result) => {
+      cancel = getNodeApi().stream<WorkspaceSharedState>('watchSharedState', {
+        domains: [SharedStateDomain.WORKERS],
+      }, (event) => {
+        if (sharedStateDomainCode(event.domain) !== 'workers') return
+        if (event.error) {
+          setPool(noPoolWorkers)
+          return
+        }
+        const workers = event.state && typeof event.state === 'object' && event.state.case === 'workers'
+          ? event.state.value
+          : event.workers
+        if (workers === undefined) return
+        receivedStreamState = true
         fallbackRequested = false
-        attempt = 0
-        apply(result.workers)
+        if (!event.snapshot) attempt = 0
+        apply(workers)
       }, reconnect, reconnect)
     }
     connect()
