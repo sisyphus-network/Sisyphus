@@ -20,6 +20,7 @@ import { locationFromProtocol, type LocationShare } from '@/lib/node-location'
 import { cityEstimateFromProtocol, nodeDetails, peerDetails, poolWorkers, renderDetailsHtml, type CityEstimate, type GlobeDetails, type WorkerFacts } from '@/lib/globe-details'
 import { SharedStateDomain } from '@sisyphus/client'
 import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { nodeInfoFromSharedStateEvent } from '@/lib/node-shared-state'
 import { useWebgl } from '@/hooks/use-webgl'
 import { autoRotateSpeed, decodeRegionLines, regionSegments, zoomLimits, zoomState, zoomStep, type ZoomLimits, type ZoomState } from '@/lib/globe-view'
 
@@ -814,7 +815,7 @@ function useOwnPin(snapshot: NodeSnapshot, visible: boolean): { lat: number; lng
         if (event.error) { fallback(); return }
         fallbackRequested = false
         if (event.snapshot) attempt = 0
-        apply(workspaceNodeInfo(event))
+        apply(nodeInfoFromSharedStateEvent(event))
       }, reconnect, reconnect)
     }
     connect()
@@ -836,14 +837,6 @@ type WorkspaceSharedState = {
   state?: { case?: string; value?: unknown } | string
   node?: unknown
   workers?: unknown
-}
-
-function workspaceNodeInfo(event: WorkspaceSharedState): unknown {
-  if (event.state && typeof event.state === 'object' && event.state.case === 'node') {
-    const node = event.state.value
-    return node && typeof node === 'object' ? (node as { info?: unknown }).info : undefined
-  }
-  return event.node && typeof event.node === 'object' ? (event.node as { info?: unknown }).info : undefined
 }
 
 // usePoolWorkers reads worker state from the shared event stream. A node that

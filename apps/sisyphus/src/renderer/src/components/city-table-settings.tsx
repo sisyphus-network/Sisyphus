@@ -5,6 +5,7 @@ import { Download, LoaderCircle, MapPinned, ShieldCheck, RefreshCw, Trash2 } fro
 import { toast } from 'sonner'
 import { getNodeApi } from '@/lib/node-api'
 import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { nodeInfoFromSharedStateEvent } from '@/lib/node-shared-state'
 import { SharedStateDomain } from '@sisyphus/client'
 import { Button } from '@/components/ui/button'
 import { NodeSettingsSection } from '@/components/node-settings-section'
@@ -19,6 +20,7 @@ type SharedCityTableEvent = {
   error?: string
   snapshot?: boolean
   state?: { case?: string; value?: unknown } | string
+  node?: unknown
   cityTable?: CityTableState
 }
 
@@ -75,9 +77,7 @@ export function CityTableSettingsCard({ messages, locale }: { messages: Messages
         domains: [SharedStateDomain.CITY_TABLE, SharedStateDomain.NODE],
       }, (event) => {
         if (sharedStateDomainCode(event.domain) === 'node') {
-          const info = event.state && typeof event.state === 'object' && event.state.case === 'node'
-            ? (event.state.value as { info?: unknown }).info
-            : undefined
+          const info = nodeInfoFromSharedStateEvent(event)
           if (info) {
             setEstimate(cityEstimateFromNodeInfo(info))
             setPinned(ownerPinned(info))
