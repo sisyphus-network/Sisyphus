@@ -135,7 +135,29 @@ const (
 	// TierCrossCPU: they were not, or it is not known that they were, and
 	// they are held to the tolerance that allows for different processors.
 	TierCrossCPU = "cross-cpu"
+	// TierMixed: a task settled by three or more results was held to both,
+	// some of them compared with the result taken in one tier and some in
+	// the other.
+	TierMixed = TierCrossCPU + "+" + TierSameCPU
 )
+
+// SettledTier is the tier a task was settled in, from the tiers the result
+// it was given was compared in with each other result that settled it: one
+// of TierSameCPU, TierCrossCPU and TierMixed, or nothing where none was
+// compared in a tier. Those four are the only values a task's tier takes.
+func SettledTier(tiers ...string) string {
+	settled := ""
+	for _, tier := range tiers {
+		switch {
+		case tier == "":
+		case settled == "":
+			settled = tier
+		case settled != tier:
+			return TierMixed
+		}
+	}
+	return settled
+}
 
 // Tiered is a Comparing workload whose tolerance depends on where its two
 // outputs were computed: work that gives the same bits on one kind of

@@ -315,6 +315,28 @@ func TestAVerifiedTaskIsHeldToTheTierOfTheProcessorsItsWorkersJoinedWith(t *test
 	}
 }
 
+// Three workers that settle a task, two on one processor and one on
+// another, settle it in both tiers, which is said as runtime.TierMixed.
+func TestATaskSettledInBothTiersIsSaidToBeMixed(t *testing.T) {
+	const xeon, epyc = "Intel(R) Xeon(R) CPU E5-2670 0 @ 2.60GHz", "AMD EPYC 7763 64-Core Processor"
+	p := startPool(t, runtime.NewRegistry(tiered{seen: new(originLog)}))
+	var crew []*rawWorker
+	for i, w := range []struct{ name, cpu string }{{"alpha", xeon}, {"beta", xeon}, {"gamma", epyc}} {
+		raw := p.connectRaw(helloOn(w.name, uint32(3-i), w.cpu, "tiered"))
+		raw.welcome()
+		crew = append(crew, raw)
+	}
+	id := p.submit(&pb.JobSpec{Workload: "tiered", MaxTasks: 1, Verify: 3}).GetJobId()
+	for i, returned := range []string{"1.000000000000", "1.000000000000", "1.000000000100"} {
+		crew[i].returns(crew[i].assignment(), returned)
+	}
+	done := p.wait(id)
+	want := "alpha, beta, gamma returned the same result (compared in the " + runtime.TierMixed + " tier)"
+	if told := story(p.events(id, 0)); done.GetState() != pb.JobState_JOB_STATE_SUCCEEDED || !strings.Contains(told, want) {
+		t.Errorf("the job %v, its events lack %q:\n%s", done.GetState(), want, told)
+	}
+}
+
 // An audit compares the worker's result, as from the processor it joined
 // with, with the coordinator's own, as from the coordinator's processor.
 func TestAnAuditIsHeldToTheTierOfTheWorkersAndTheCoordinatorsProcessors(t *testing.T) {

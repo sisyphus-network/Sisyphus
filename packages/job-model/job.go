@@ -79,7 +79,8 @@ type Task struct {
 	Audit string
 	// Tier is the tier of its workload's tolerances that the results which
 	// settled the task were held to, for a workload whose tolerance depends
-	// on where results were computed (runtime.TierSameCPU or TierCrossCPU):
+	// on where results were computed (runtime.TierSameCPU, TierCrossCPU or
+	// TierMixed; see runtime.SettledTier):
 	// by the workers that verified it, or by the coordinator's own result
 	// where an audit matched. Empty for a task settled by no comparison, or
 	// by one in no tier.

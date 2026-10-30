@@ -926,6 +926,29 @@ func TestProcessorsAreTheSameOnlyWhenBothAreKnownAndAlike(t *testing.T) {
 	}
 }
 
+// A task's tier is one of a fixed set, which a ledger can match on.
+func TestATaskIsSettledInOneOfAFixedSetOfTiers(t *testing.T) {
+	if TierMixed != "cross-cpu+same-cpu" {
+		t.Errorf("TierMixed is %q", TierMixed)
+	}
+	for _, tt := range []struct {
+		tiers []string
+		want  string
+	}{
+		{nil, ""},
+		{[]string{""}, ""},
+		{[]string{TierSameCPU}, TierSameCPU},
+		{[]string{TierCrossCPU, TierCrossCPU}, TierCrossCPU},
+		{[]string{"", TierSameCPU}, TierSameCPU},
+		{[]string{TierSameCPU, TierCrossCPU}, TierMixed},
+		{[]string{TierCrossCPU, TierSameCPU, TierSameCPU}, TierMixed},
+	} {
+		if got := SettledTier(tt.tiers...); got != tt.want {
+			t.Errorf("SettledTier(%q) = %q, want %q", tt.tiers, got, tt.want)
+		}
+	}
+}
+
 func first[A, B any](a A, _ B) A { return a }
 
 // Laid over each other, a geometry and the same turned and moved are no

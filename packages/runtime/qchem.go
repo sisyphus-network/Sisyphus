@@ -492,6 +492,7 @@ type qchemTolerances struct {
 // times tighter in energy and a thousand in the gap, ten in frequency and a
 // hundred in geometry, which leaves a dishonest worker far less room, and
 // are still wider than every difference measured across code paths above.
+// The dipole's spread was not measured there; its bound is the geometry's.
 var (
 	qchemCrossCPU = qchemTolerances{energy: 1e-6, gap: 1e-3, dipole: 1e-3, rmsd: 1e-3, wave: 1.0, intensity: 0.01}
 	qchemSameCPU  = qchemTolerances{energy: 1e-8, gap: 1e-6, dipole: 1e-5, rmsd: 1e-5, wave: 0.1, intensity: 0.001}

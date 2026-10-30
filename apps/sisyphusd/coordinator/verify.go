@@ -237,6 +237,7 @@ func (c *Coordinator) returnedLocked(w *worker, a assignment, output []byte, sto
 
 	switch {
 	case task.State == jobmodel.Succeeded:
+		job.NoteTier(task, runtime.SettledTier(task.Tiers(sides[0])...))
 		said := names(sides[0]) + " returned the same result" + inTier(task.Tier)
 		for _, other := range sides[1:] {
 			said += "; " + names(other) + " returned another" + because(task, sides[0][0], other[0])

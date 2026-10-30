@@ -54,31 +54,35 @@ func returningOn(j *Job, task *Task, cpus []string, outputs ...string) (allDone 
 }
 
 // A workload whose tolerance depends on where its results were computed is
-// told each result's processor, as the coordinator knew it, and the task
-// records the tier that settled it.
-func TestTheTierThatSettledATaskIsRecorded(t *testing.T) {
+// told each result's processor, as the coordinator knew it, and Tiers says
+// which tier the result taken was compared with each other that settled it.
+func TestTheTiersThatSettledATaskAreSaid(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		verify   int
 		cpus     []string
 		returned []string
 		output   string // the task's, if it succeeded
-		tier     string
+		tiers    []string
 	}{
-		{"the same processor", 2, []string{"xeon", "xeon"}, []string{"10", "11"}, "10", "tight"},
-		{"the same processor, too far apart for it", 2, []string{"xeon", "xeon", "xeon"}, []string{"10", "15", "11"}, "10", "tight"},
-		{"different processors", 2, []string{"xeon", "epyc"}, []string{"10", "15"}, "10", "loose"},
-		{"one processor unknown", 2, []string{"xeon", ""}, []string{"10", "15"}, "10", "loose"},
-		{"both unknown", 2, []string{"", ""}, []string{"10", "15"}, "10", "loose"},
-		{"both tiers among three", 3, []string{"xeon", "xeon", "epyc"}, []string{"10", "10", "12"}, "10", "loose+tight"},
-		{"not settled", 2, []string{"xeon", "xeon"}, []string{"10", "15"}, "", ""},
+		{"the same processor", 2, []string{"xeon", "xeon"}, []string{"10", "11"}, "10", []string{"tight"}},
+		{"the same processor, too far apart for it", 2, []string{"xeon", "xeon", "xeon"}, []string{"10", "15", "11"}, "10", []string{"tight"}},
+		{"different processors", 2, []string{"xeon", "epyc"}, []string{"10", "15"}, "10", []string{"loose"}},
+		{"one processor unknown", 2, []string{"xeon", ""}, []string{"10", "15"}, "10", []string{"loose"}},
+		{"both unknown", 2, []string{"", ""}, []string{"10", "15"}, "10", []string{"loose"}},
+		{"both tiers among three", 3, []string{"xeon", "xeon", "epyc"}, []string{"10", "10", "12"}, "10", []string{"tight", "loose"}},
+		{"not settled", 2, []string{"xeon", "xeon"}, []string{"10", "15"}, "", nil},
 	} {
 		j := verified(1, tt.verify)
 		j.CompareBy(tiered)
 		task := j.Tasks[0]
 		returningOn(j, task, tt.cpus, tt.returned...)
-		if string(task.Output) != tt.output || task.Tier != tt.tier {
-			t.Errorf("%s: output %q in tier %q, want %q in %q", tt.name, task.Output, task.Tier, tt.output, tt.tier)
+		var tiers []string
+		if agreed := task.Agreed(); agreed != nil {
+			tiers = task.Tiers(agreed)
+		}
+		if string(task.Output) != tt.output || !reflect.DeepEqual(tiers, tt.tiers) {
+			t.Errorf("%s: output %q in tiers %q, want %q in %q", tt.name, task.Output, tiers, tt.output, tt.tiers)
 		}
 		for i, r := range task.Results {
 			if r.CPUModel != tt.cpus[i] {
@@ -88,13 +92,13 @@ func TestTheTierThatSettledATaskIsRecorded(t *testing.T) {
 	}
 
 	// Results compared byte for byte, or by a workload with one tolerance,
-	// are settled in no tier.
+	// are compared in no tier.
 	for _, compare := range []Comparer{nil, withinOne} {
 		j := verified(1, 2)
 		j.CompareBy(compare)
 		returningOn(j, j.Tasks[0], []string{"xeon", "xeon"}, "10", "10")
-		if task := j.Tasks[0]; task.State != Succeeded || task.Tier != "" {
-			t.Errorf("a task settled in no tier: %v %q", task.State, task.Tier)
+		if task := j.Tasks[0]; task.State != Succeeded || !reflect.DeepEqual(task.Tiers(task.Agreed()), []string{""}) || task.Tier != "" {
+			t.Errorf("a task settled in no tier: %v %q %q", task.State, task.Tiers(task.Agreed()), task.Tier)
 		}
 	}
 

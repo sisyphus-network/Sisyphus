@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -93,22 +92,16 @@ func (t *Task) Compare(a, b Result) (same bool, tier, why string) {
 	return t.compare(a, b)
 }
 
-// settledTier is the tier of the workload's tolerances that the results of
-// a side were held to: the tier the first of them, the result a task it
-// settles is given, was compared with each of the others in. Where those
-// comparisons were made in different tiers, which takes three or more
-// results, it is each tier, once, in sorted order and joined by "+": the
-// side was held to each of them, and to the loosest at least. Nothing for
-// a side whose results were compared in no tier.
-func (t *Task) settledTier(side []Result) string {
+// Tiers returns the tiers of its workload's tolerances that the results of
+// a side were compared in: the tier the first of them, the result a task it
+// settles is given, was compared with each of the others in, in order.
+func (t *Task) Tiers(side []Result) []string {
 	var tiers []string
 	for _, other := range side[1:] {
-		if _, tier, _ := t.Compare(side[0], other); tier != "" {
-			tiers = append(tiers, tier)
-		}
+		_, tier, _ := t.Compare(side[0], other)
+		tiers = append(tiers, tier)
 	}
-	slices.Sort(tiers)
-	return strings.Join(slices.Compact(tiers), "+")
+	return tiers
 }
 
 // Digest is a name for what a result holds, by which results that differ
@@ -379,10 +372,10 @@ func (j *Job) ReportCopy(t *Task, progress float64) {
 // ReturnCopy takes in what the copy handed out as the given attempt
 // returned: its output, and the blobs it stored. If enough results are now
 // the same the task has succeeded, with that result as its output and the
-// first worker to return it as its worker, and with the tier of its
-// workload's tolerances they were held to as its Tier. ReturnCopy reports
-// whether every task is then done, meaning the job is ready to be
-// aggregated.
+// first worker to return it as its worker. Which tier of its workload's
+// tolerances they were held to is the coordinator's to note (NoteTier), from
+// Tiers. ReturnCopy reports whether every task is then done, meaning the job
+// is ready to be aggregated.
 func (j *Job) ReturnCopy(t *Task, attempt int, output []byte, blobs []string) (allDone bool) {
 	return j.ReturnCopyOn(t, attempt, "", output, blobs)
 }
@@ -406,7 +399,6 @@ func (j *Job) ReturnCopyOn(t *Task, attempt int, cpuModel string, output []byte,
 	}
 	t.State, t.Progress, t.Output, t.Err = Succeeded, 1, agreed[0].Output, ""
 	t.NodeID, t.NodeName = agreed[0].NodeID, agreed[0].NodeName
-	t.Tier = t.settledTier(agreed)
 	j.noteOutvoted(t)
 	for _, other := range j.Tasks {
 		if other.State != Succeeded {
