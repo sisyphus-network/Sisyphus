@@ -14,12 +14,22 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { useDialogValue } from '@/hooks/use-dialog-value'
 import { NetworkInterfacePicker, type NetworkInterfaceAddress } from '@/components/network-interface-picker'
 import { getNodeApi } from '@/lib/node-api'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { accessDraftIsDirty } from '@/lib/access-draft'
+import { SharedStateDomain } from '@sisyphus/client'
 import { formatRelativeDate } from '@/lib/relative-date'
 import { toast } from 'sonner'
 import type { PairedBrowser } from '@sisyphus/client'
 
 type Messages = ReturnType<typeof getMessages>
 type WebAccessConfig = { enabled: boolean; listenAddress: string; listenAddresses: string[]; publicUrl: string; certificateFingerprint: string; restartRequired: boolean }
+type SharedWebAccessEvent = {
+  domain: number | string
+  error?: string
+  snapshot?: boolean
+  state?: { case?: string; value?: WebAccessConfig } | string
+  webAccess?: WebAccessConfig
+}
 
 export function AccessPage({ messages, showHeading = true }: { messages: Messages; showHeading?: boolean }) {
   const [devices, setDevices] = useState<PairedBrowser[]>([])
@@ -38,6 +48,9 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
   const [initialDevicesLoaded, setInitialDevicesLoaded] = useState(false)
   const [initialInterfacesLoaded, setInitialInterfacesLoaded] = useState(false)
   const [accessConfig, setAccessConfig] = useState<WebAccessConfig>({ enabled: false, listenAddress: '', listenAddresses: [], publicUrl: '', certificateFingerprint: '', restartRequired: false })
+  const accessConfigRef = useRef(accessConfig)
+  const accessConfigLoadedRef = useRef(false)
+  const accessDraftDirtyRef = useRef(false)
   const [draftEnabled, setDraftEnabled] = useState(false)
   const [networkInterfaces, setNetworkInterfaces] = useState<NetworkInterfaceAddress[]>([])
   const [loadingInterfaces, setLoadingInterfaces] = useState(false)
@@ -47,6 +60,14 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
   const [publicUrl, setPublicUrl] = useState('')
   const [customBrowserAddress, setCustomBrowserAddress] = useState(false)
   const [now, setNow] = useState(Date.now())
+  accessConfigRef.current = accessConfig
+  const savedDraftAddresses = accessConfig.listenAddresses?.length ? accessConfig.listenAddresses : (accessConfig.listenAddress ? [accessConfig.listenAddress] : [])
+  const currentDraftAddresses = isValidPort(listenPort) ? listenHosts.map((host) => formatListenAddress(host, listenPort)) : []
+  const savedCustomUrl = accessConfig.publicUrl.trim() && normalizeBrowserAddress(accessConfig.publicUrl) !== normalizeBrowserAddress(deriveBrowserAddress(savedDraftAddresses)) ? accessConfig.publicUrl : ''
+  accessDraftDirtyRef.current = accessDraftIsDirty(
+    { enabled: draftEnabled, addresses: currentDraftAddresses, publicUrl: normalizeBrowserAddress(customBrowserAddress ? publicUrl.trim() : ''), validPort: isValidPort(listenPort) },
+    { enabled: accessConfig.enabled, addresses: savedDraftAddresses, publicUrl: normalizeBrowserAddress(savedCustomUrl) },
+  )
   const reducedMotion = useReducedMotion()
   const access = messages.browserAccess
   const accessUi = messages.accessUi
@@ -55,6 +76,7 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
   const { displayedValue: displayedRevokeTarget, onAfterClose: afterRevokeDialogClose } = useDialogValue(revokeTarget)
 
   const updateListenHosts = useCallback<Dispatch<SetStateAction<string[]>>>((update) => {
+    accessDraftDirtyRef.current = true
     const next = typeof update === 'function' ? update(listenHostsRef.current) : update
     listenHostsRef.current = next
     setListenHosts(next)
@@ -66,29 +88,78 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
     setListenHosts(hosts)
   }, [])
 
+  const syncAccessConfig = useCallback((config: WebAccessConfig) => {
+    accessConfigRef.current = config
+    setAccessConfig(config)
+    const savedAddresses = config.listenAddresses?.length ? config.listenAddresses : (config.listenAddress ? [config.listenAddress] : [])
+    if (!accessSettingsInitialized.current) {
+      setAccessSettingsOpen(!(config.enabled || savedAddresses.length > 0 || config.publicUrl.trim().length > 0))
+      accessSettingsInitialized.current = true
+    }
+    setDraftEnabled(config.enabled)
+    const parsedAddresses = savedAddresses.map(splitListenAddress)
+    replaceListenHosts(savedAddresses)
+    setListenPort(parsedAddresses[0]?.port || '50052')
+    setPublicUrl(config.publicUrl)
+    const derivedAddress = deriveBrowserAddress(savedAddresses)
+    setCustomBrowserAddress(Boolean(config.publicUrl.trim() && normalizeBrowserAddress(config.publicUrl) !== normalizeBrowserAddress(derivedAddress)))
+    accessDraftDirtyRef.current = false
+  }, [replaceListenHosts])
+
+  const receiveAccessConfig = useCallback((config: WebAccessConfig) => {
+    if (!accessConfigLoadedRef.current || !accessDraftDirtyRef.current) syncAccessConfig(config)
+    else {
+      accessConfigRef.current = config
+      setAccessConfig(config)
+    }
+    accessConfigLoadedRef.current = true
+    setInitialAccessLoaded(true)
+  }, [syncAccessConfig])
+
   useEffect(() => {
     let active = true
-    void getNodeApi().call<WebAccessConfig>('getWebAccessConfig').then((config) => {
+    const api = getNodeApi()
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    let fallbackRequested = false
+    const loadFallback = () => {
+      if (!active || fallbackRequested) return
+      fallbackRequested = true
+      void api.call<WebAccessConfig>('getWebAccessConfig').then(receiveAccessConfig).catch((error) => {
+        fallbackRequested = false
+        if (active) toast.error(labels.configLoadFailed, { description: error instanceof Error ? error.message : String(error) })
+      }).finally(() => { if (active) setInitialAccessLoaded(true) })
+    }
+    const disconnected = () => {
+      cancel = undefined
+      loadFallback()
+      if (active) retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+    }
+    const connect = () => {
       if (!active) return
-      setAccessConfig(config)
-      if (!accessSettingsInitialized.current) {
-        const savedAddresses = config.listenAddresses?.length ? config.listenAddresses : (config.listenAddress ? [config.listenAddress] : [])
-        setAccessSettingsOpen(!(config.enabled || savedAddresses.length > 0 || config.publicUrl.trim().length > 0))
-        accessSettingsInitialized.current = true
-      }
-      setDraftEnabled(config.enabled)
-      const addressList = config.listenAddresses?.length ? config.listenAddresses : (config.listenAddress ? [config.listenAddress] : [])
-      const parsedAddresses = addressList.map(splitListenAddress)
-      replaceListenHosts(addressList)
-      setListenPort(parsedAddresses[0]?.port || '50052')
-      setPublicUrl(config.publicUrl)
-      const derivedAddress = deriveBrowserAddress(addressList)
-      setCustomBrowserAddress(Boolean(config.publicUrl.trim() && normalizeBrowserAddress(config.publicUrl) !== normalizeBrowserAddress(derivedAddress)))
-    }).catch((error) => {
-      if (active) toast.error(labels.configLoadFailed, { description: error instanceof Error ? error.message : String(error) })
-    }).finally(() => { if (active) setInitialAccessLoaded(true) })
-    return () => { active = false }
-  }, [labels.configLoadFailed, replaceListenHosts])
+      cancel = getNodeApi().stream<SharedWebAccessEvent>('watchSharedState', {
+        domains: [SharedStateDomain.WEB_ACCESS],
+      }, (event) => {
+        if (sharedStateDomainCode(event.domain) !== 'webAccess') return
+        if (!event.snapshot) attempt = 0
+        if (event.error) {
+          loadFallback()
+          return
+        }
+        const config = event.state && typeof event.state === 'object' && event.state.case === 'webAccess'
+          ? event.state.value
+          : event.webAccess
+        if (config) receiveAccessConfig(config)
+      }, disconnected, disconnected)
+    }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
+  }, [labels.configLoadFailed, receiveAccessConfig])
 
   const loadNetworkInterfaces = useCallback(async () => {
     setLoadingInterfaces(true)
@@ -188,13 +259,7 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
         listenAddresses,
         publicUrl: customBrowserAddress ? publicUrl.trim() : '',
       })
-      setAccessConfig(config)
-      setDraftEnabled(config.enabled)
-      const addressList = config.listenAddresses?.length ? config.listenAddresses : (config.listenAddress ? [config.listenAddress] : [])
-      replaceListenHosts(addressList)
-      const parsedAddresses = addressList.map(splitListenAddress)
-      setListenPort(parsedAddresses[0]?.port || '50052')
-      setPublicUrl(config.publicUrl)
+      syncAccessConfig(config)
       setInvitation(null)
       if (stateChanged) await loadNetworkInterfaces()
       toast.success(labels.saved)
@@ -263,7 +328,7 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
                 </span> : draftEnabled ? labels.enabled : labels.disabled}
               </motion.span>
             </div>
-            <LiquidSwitch checked={draftEnabled} disabled={savingAccess} label={labels.exposureTitle} onChange={setDraftEnabled} />
+            <LiquidSwitch checked={draftEnabled} disabled={savingAccess} label={labels.exposureTitle} onChange={(value) => { accessDraftDirtyRef.current = true; setDraftEnabled(value) }} />
           </div>
           <motion.div
             aria-hidden={!accessConfig.enabled}
@@ -315,9 +380,9 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
               onChange={updateListenHosts}
               disabled={accessConfig.enabled}
             />
-            <FloatingLabelInput containerClassName="w-full" disabled={accessConfig.enabled} label={interfaceLabels.port} icon={<Cable className="size-[18px]" />} type="number" min="1" max="65535" dir="ltr" uiDirection="ltr" inputMode="numeric" value={listenPort} onChange={(event) => setListenPort(event.target.value)} placeholder="50052" />
+            <FloatingLabelInput containerClassName="w-full" disabled={accessConfig.enabled} label={interfaceLabels.port} icon={<Cable className="size-[18px]" />} type="number" min="1" max="65535" dir="ltr" uiDirection="ltr" inputMode="numeric" value={listenPort} onChange={(event) => { accessDraftDirtyRef.current = true; setListenPort(event.target.value) }} placeholder="50052" />
             <div className="flex min-w-0 items-center gap-3">
-              {customBrowserAddress ? <FloatingLabelInput containerClassName="min-w-0 flex-1" disabled={accessConfig.enabled} label={labels.publicUrl} icon={<Link2 className="size-[18px]" />} dir="ltr" uiDirection="ltr" autoCapitalize="off" spellCheck={false} value={publicUrl} onChange={(event) => setPublicUrl(event.target.value)} placeholder="https://node.example.net:50052" /> : <div role="textbox" aria-readonly="true" aria-label={labels.publicUrl} aria-description={derivedBrowserAddress} dir={document.documentElement.dir} className="relative flex h-14 min-w-0 flex-1 items-center gap-3 rounded-2xl border border-[var(--app-accent)]/25 bg-[var(--app-accent)]/[0.07] px-4 text-start">
+              {customBrowserAddress ? <FloatingLabelInput containerClassName="min-w-0 flex-1" disabled={accessConfig.enabled} label={labels.publicUrl} icon={<Link2 className="size-[18px]" />} dir="ltr" uiDirection="ltr" autoCapitalize="off" spellCheck={false} value={publicUrl} onChange={(event) => { accessDraftDirtyRef.current = true; setPublicUrl(event.target.value) }} placeholder="https://node.example.net:50052" /> : <div role="textbox" aria-readonly="true" aria-label={labels.publicUrl} aria-description={derivedBrowserAddress} dir={document.documentElement.dir} className="relative flex h-14 min-w-0 flex-1 items-center gap-3 rounded-2xl border border-[var(--app-accent)]/25 bg-[var(--app-accent)]/[0.07] px-4 text-start">
                 <Link2 aria-hidden="true" className="size-[18px] shrink-0 text-[var(--app-muted)]" />
                 <span className="absolute start-12 top-0 -translate-y-1/2 bg-[var(--app-card)] px-1.5 text-[11px] text-[var(--app-muted)]">{labels.publicUrl}</span>
                 <span className="min-w-0"><span className="flex min-w-0 items-center gap-1 truncate text-sm font-medium text-[var(--app-ink)]"><span>{accessUi.sameAs}</span><bdi dir="auto" className="truncate">{primaryInterface?.name || labels.listenAddress}</bdi></span><span dir="ltr" className="block truncate text-start font-mono text-[10px] leading-4 text-[var(--app-muted)]">{derivedBrowserAddress || '—'}</span></span>
@@ -325,6 +390,7 @@ export function AccessPage({ messages, showHeading = true }: { messages: Message
               <div className="flex shrink-0 items-center gap-2">
                 <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--app-muted)]"><ArrowUpRight aria-hidden="true" className="size-3.5" />{accessUi.override}</span>
                 <LiquidSwitch checked={customBrowserAddress} disabled={accessConfig.enabled || savingAccess} label={labels.publicUrl} onChange={(checked) => {
+                  accessDraftDirtyRef.current = true
                   if (checked && !customBrowserAddress) setPublicUrl(derivedBrowserAddress)
                   setCustomBrowserAddress(checked)
                 }} />
