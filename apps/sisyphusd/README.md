@@ -559,6 +559,24 @@ bin/sisyphusd job submit --min-memory-mb 8192 --gpus 1 ...       # a job that ne
 - **What is found, and where.** Processor and memory are read from `/proc` on Linux, asked of `sysctl` on macOS and of PowerShell on Windows. Where none of those answers they are left unknown, and such a worker is given no job that asks for memory unless its owner says how much to offer. Graphics cards are found wherever NVIDIA's `nvidia-smi` is installed; other makes are not looked for.
 - **A requirement is a count, not a choice.** A task that asks for a graphics card is sent to a machine with one. Which card it then uses, and keeping two tasks off the same one, is the workload's business for now.
 
+### Which workloads a machine takes
+
+An owner chooses which workloads their machine takes, not only how much of it to offer (#774):
+
+```sh
+bin/sisyphusd run --deny-workloads containers ...                 # everything but container work
+bin/sisyphusd run --allow-workloads primes,wordcount,models ...   # only these, and the model workloads
+bin/sisyphusd run --allow-workloads models --deny-workloads embed ...
+```
+
+- **Names and groups.** Each flag takes workload names (`primes`, `transcode`, `chat`...) and groups, separated by commas. The groups are `default`, every workload but the opt-in ones; `containers`, those that run in containers (`container`, `transcode`, `md`, `render`, `transcribe`, `qchem`, `ocr`, `traj`, `prep`, `images`); and `models`, those that ask the worker's model server (`chat`, `prompts`, `embed`). `forecast` and `forecasts` are in neither: they run in the daemon, and use the Chronos-Bolt and TimesFM images only on a worker with `--containers`, so denying `containers` does not stop those; deny `forecast` and `forecasts` by name for that.
+- **Deny wins.** A workload is taken if it or one of its groups is allowed, and neither it nor any of its groups is denied. `--allow-workloads` left empty allows `default`, so a node started without either flag takes what it always has.
+- **Opt-in workloads.** A workload can be marked opt-in, for work that costs its owner more than the machine's time, such as mining (#776) in power, heat and noise. It is not in `default`, so a worker takes it only when its owner names it, or a group of its own, in `--allow-workloads` (`--allow-workloads default,mining`). No workload is opt-in yet.
+- **Checked at startup.** A name that is neither a workload nor a group the daemon knows stops the node from starting, so that a misspelt denial does not leave the machine taking what its owner meant to refuse. The flags are for the worker role; a coordinator-only node refuses them.
+- **Allowing does not add.** `--allow-workloads transcode` on a node without `--containers`, or `models` without `--models-from`, takes nothing more: the node still runs only what it was started able to run.
+- **The pool is told only what is taken.** The worker names only the workloads it takes in its Hello, and only the labels they offer, so `sisyphusd nodes` and the desktop's Operations page show that set and the coordinator never assigns anything else. A coordinator that does anyway has the task refused: the attempt fails with "this worker's owner does not let it take ... tasks", as for a task needing a label the worker lacks, and the worker's standing is not touched. A node that is its own worker audits only what it takes.
+- **Not yet.** The set is fixed until the node restarts. Choosing it from the desktop, with a checkbox per workload and group and no restart, and per-workload limits such as hours per day, are to come (#774).
+
 ## The planner
 
 A node that coordinates a pool can be asked questions in plain words. A language model decides what needs computing, has the pool compute it, reads the result, and answers.

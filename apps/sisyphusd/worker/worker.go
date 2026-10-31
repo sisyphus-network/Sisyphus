@@ -64,6 +64,10 @@ type Worker struct {
 	Limit     *Slots
 	Pool      string
 	Workloads *runtime.Registry
+	// Accepts is which of Workloads the node's owner lets it take. The
+	// worker tells its coordinator of only those, and refuses a task of any
+	// other. The zero value takes all but the opt-in ones.
+	Accepts runtime.Acceptance
 	// Blobs is the stored data this node's tasks can read and write.
 	Blobs runtime.Blobs
 	// Hardware is what the machine has that its owner offers to the pool.
@@ -455,6 +459,13 @@ func (w *Worker) execute(ctx context.Context, a *pb.TaskAssignment) (result *pb.
 		fail(err)
 		return result
 	}
+	// The worker never offered a workload its owner refuses, so only a
+	// coordinator that ignored what it was told hands it one: refused, not
+	// run.
+	if !w.Accepts.Accepts(workload) {
+		fail(fmt.Sprintf("this worker's owner does not let it take %s tasks", a.GetWorkload()))
+		return result
+	}
 	// The coordinator may be anyone's: a task it gives this worker for
 	// having something the worker does not have is refused, not run.
 	if lacks := w.lacking(a.GetNeeds()); lacks != "" {
@@ -534,7 +545,7 @@ func (w *Worker) capabilities() *pb.NodeCapabilities {
 		Arch:      goruntime.GOARCH,
 		CpuCores:  uint32(goruntime.NumCPU()),
 		TaskSlots: uint32(w.Slots),
-		Workloads: w.Workloads.Names(),
+		Workloads: w.accepted().Names(),
 
 		CpuModel: w.Hardware.CPUModel, MemoryBytes: w.Hardware.MemoryBytes,
 		Labels: w.labels(),
@@ -659,8 +670,11 @@ func (w *Worker) storeOffered(labels []string) {
 func (w *Worker) labels() []string { return w.labelsWithin(context.Background()) }
 
 func (w *Worker) labelsWithin(ctx context.Context) []string {
-	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.Workloads.Offers(ctx)...)
+	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.accepted().Offers(ctx)...)
 }
+
+// accepted is those of the worker's workloads its owner lets it take.
+func (w *Worker) accepted() *runtime.Registry { return w.Workloads.Accepted(w.Accepts) }
 
 // offersWait is the longest the worker waits for its workloads to say what
 // they offer, when asked on an event, before it gives up until the next.

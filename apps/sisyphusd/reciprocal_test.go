@@ -615,7 +615,13 @@ func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {
 	// The owner shares where the node is; at first, nothing of it.
 	var shared atomic.Bool
 	location := func() (float64, float64, bool) { return 52.4, 4.9, shared.Load() }
-	guests := &guestWork{ident: ident, dataDir: dataDir, template: &worker.Worker{Name: "guest", Slots: 2, Workloads: p.workloads, Log: quiet, Location: location}}
+	// What the owner lets the node take holds for the nodes it works for
+	// too.
+	accepts, err := runtime.Accept(p.workloads, nil, []string{"forecasts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guests := &guestWork{ident: ident, dataDir: dataDir, template: &worker.Worker{Name: "guest", Slots: 2, Workloads: p.workloads, Accepts: accepts, Log: quiet, Location: location}}
 
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -638,6 +644,13 @@ func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {
 		listed, err := p.client.ListNodes(p.ctx, &pb.ListNodesRequest{})
 		return err == nil && len(listed.GetNodes()) == 1 && listed.GetNodes()[0].GetSharedLocation().GetLatitude() == 52.4
 	})
+	listed, err := p.client.ListNodes(p.ctx, &pb.ListNodesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := listed.GetNodes()[0].GetCapabilities().GetWorkloads(); !slices.Equal(got, []string{"forecast", "primes", "wordcount"}) {
+		t.Errorf("the guest worker offers %v, want all but forecasts", got)
+	}
 	// What its tasks fetch is kept apart, under the other node's name.
 	input := p.upload(sampleText())
 	p.wordcountOn(input, 2)
