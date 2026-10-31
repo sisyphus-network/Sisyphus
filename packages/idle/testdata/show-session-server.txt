@@ -1,0 +1,15 @@
+Name=builder
+TTY=pts/11
+Class=user
+Type=tty
+State=active
+IdleHint=no
+IdleSinceHint=0
+
+Name=ada
+TTY=pts/0
+Class=user
+Type=tty
+State=active
+IdleHint=yes
+IdleSinceHint=1793429700000000

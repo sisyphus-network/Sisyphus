@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
+	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +86,7 @@ func TestAPausedNodeTakesNoTasks(t *testing.T) {
 // it was last used, says so as it starts and takes nothing.
 func TestANodeThatCannotTellWhetherItIsIdleWarnsAndTakesNothing(t *testing.T) {
 	was := idleDetector
-	idleDetector = func() idle.Detector { return idle.Unknown{} }
+	idleDetector = func([]string) idle.Detector { return idle.Unknown{} }
 	t.Cleanup(func() { idleDetector = was })
 	logs := captureLogs(t)
 	addr := freeAddr(t)
@@ -102,7 +105,10 @@ func TestWhenANodeSharesMustMakeSense(t *testing.T) {
 		want string
 	}{
 		{[]string{"--share", "sometimes"}, `--share: "sometimes" is not a way to share: give always, idle or paused`},
-		{[]string{"--role", "coordinator", "--share", "idle"}, "--share and --idle-after say when a worker takes tasks, and need the worker role"},
+		{[]string{"--role", "coordinator", "--share", "idle"}, "--share, --idle-after and --idle-users say when a worker takes tasks, and need the worker role"},
+		{[]string{"--role", "coordinator", "--idle-users", "lior"}, "need the worker role"},
+		{[]string{"--idle-users", "lior"}, "--idle-users is whose use of the machine counts with --share idle, and needs it"},
+		{[]string{"--share", "paused", "--idle-users", "lior"}, "needs it"},
 		{[]string{"--role", "coordinator", "--share", "paused"}, "need the worker role"},
 		{[]string{"--role", "coordinator", "--idle-after", "10m"}, "need the worker role"},
 		{[]string{"--idle-after", "10m"}, "--idle-after is how long the machine must go unused with --share idle, and needs it"},
@@ -114,9 +120,65 @@ func TestWhenANodeSharesMustMakeSense(t *testing.T) {
 			t.Errorf("%v: %v, want %q", tc.args, err, tc.want)
 		}
 	}
-	// Always, said or not, on a coordinator-only node changes nothing.
-	if _, err := sharingFrom(flag.NewFlagSet("run", flag.ContinueOnError), "always", time.Minute, false); err != nil {
-		t.Errorf("--share always on a coordinator-only node: %v", err)
+}
+
+// --share always on a coordinator-only node is no mistake, but changes
+// nothing, which the node says once as it starts; not given, it says
+// nothing of it.
+func TestSharingAlwaysOnACoordinatorOnlyNodeIsSaidToChangeNothing(t *testing.T) {
+	const said = "--share always has no effect on a coordinator-only node, which runs no worker"
+	for _, tc := range []struct {
+		args []string
+		want int
+	}{
+		{args: []string{"--share", "always"}, want: 1},
+		{args: nil, want: 0},
+	} {
+		var logs bytes.Buffer
+		fs := flag.NewFlagSet("run", flag.ContinueOnError)
+		share := fs.String("share", "always", "")
+		if err := fs.Parse(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		sharing, err := sharingFrom(fs, *share, time.Minute, nil, false, slog.New(slog.NewTextHandler(&logs, nil)))
+		if sharing != nil || err != nil {
+			t.Errorf("%v: %v, %v", tc.args, sharing, err)
+		}
+		if got := strings.Count(logs.String(), said); got != tc.want {
+			t.Errorf("%v: said %d times that it changes nothing:\n%s", tc.args, got, logs.String())
+		}
+	}
+	// And a whole coordinator-only node started so says it.
+	logs := captureLogs(t)
+	addr := freeAddr(t)
+	startDaemon(t, "--listen", addr, "--role", "coordinator", "--share", "always")
+	waitForOutput(t, "no workers connected", "nodes", "--addr", addr)
+	if !strings.Contains(logs.String(), said) {
+		t.Errorf("no %q in:\n%s", said, logs.String())
+	}
+}
+
+// --idle-users is passed to the detector, and where the detector cannot
+// tell one account from another the node says the list changes nothing.
+func TestIdleUsersAreWhoseSessionsCount(t *testing.T) {
+	wasDetector, wasByUser := idleDetector, byUser
+	t.Cleanup(func() { idleDetector, byUser = wasDetector, wasByUser })
+	var counted []string
+	idleDetector = func(users []string) idle.Detector { counted = users; return idle.Unknown{} }
+	for _, tc := range []struct {
+		byUser bool
+		warned bool
+	}{{byUser: true}, {byUser: false, warned: true}} {
+		byUser = tc.byUser
+		var logs bytes.Buffer
+		fs := flag.NewFlagSet("run", flag.ContinueOnError)
+		sharing, err := sharingFrom(fs, "idle", time.Minute, []string{"lior", "austin"}, true, slog.New(slog.NewTextHandler(&logs, nil)))
+		if err != nil || sharing == nil || !slices.Equal(counted, []string{"lior", "austin"}) {
+			t.Errorf("by user %v: %v, %v, counting %v", tc.byUser, sharing, err, counted)
+		}
+		if warned := strings.Contains(logs.String(), "--idle-users changes nothing on this system") && strings.Contains(logs.String(), "users=lior,austin"); warned != tc.warned {
+			t.Errorf("by user %v: warned %v:\n%s", tc.byUser, warned, logs.String())
+		}
 	}
 }
 

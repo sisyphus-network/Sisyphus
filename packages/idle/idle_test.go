@@ -126,6 +126,35 @@ func TestLogindSaysHowLongTheLeastIdleSessionHasBeenIdle(t *testing.T) {
 	}
 }
 
+// Given the accounts whose sessions count, the others are passed over: a
+// server whose automation account keeps a tmux attached on a remote
+// terminal, which logind says is in use, is idle for as long as its owner's
+// own session is.
+func TestLogindCountsOnlyTheSessionsOfTheAccountsGiven(t *testing.T) {
+	now := time.UnixMicro(1793430300000000)
+	p := &programs{answers: map[string][]byte{
+		"loginctl list-sessions": []byte("201 1001 builder - pts/11 active no -\n202 1000 ada - pts/0 active yes 10min ago\n"),
+		"loginctl show-session":  fixture(t, "show-session-server.txt"),
+	}}
+	for _, tc := range []struct {
+		users []string
+		since time.Duration
+	}{
+		{users: nil, since: 0},
+		{users: []string{"ada"}, since: 10 * time.Minute},
+		{users: []string{"ada", "builder"}, since: 0},
+		{users: []string{"lior"}, since: Forever},
+	} {
+		since, known := logind{run: p.run, now: func() time.Time { return now }, users: tc.users}.Idle(context.Background())
+		if !known || since != tc.since {
+			t.Errorf("counting %v: idle for %v (known %v), want %v", tc.users, since, known, tc.since)
+		}
+	}
+	if !slices.Contains(p.asked[1], "--property=Name") {
+		t.Errorf("asked %v", p.asked[1])
+	}
+}
+
 func TestLogindWithNobodyLoggedInIsIdleForever(t *testing.T) {
 	p := &programs{answers: map[string][]byte{"loginctl list-sessions": []byte("\n")}}
 	if since, known := (logind{run: p.run, now: time.Now}).Idle(context.Background()); !known || since != Forever {
@@ -173,7 +202,7 @@ func TestSessionsIdle(t *testing.T) {
 		{name: "blank lines either side", shown: "\n\n" + desktop("no", "0") + "\n\n", since: 0, known: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			since, known := sessionsIdle([]byte(tc.shown), now)
+			since, known := sessionsIdle([]byte(tc.shown), now, nil)
 			if known != tc.known || known && since != tc.since {
 				t.Errorf("idle for %v (known %v), want %v (known %v)", since, known, tc.since, tc.known)
 			}
@@ -231,7 +260,7 @@ func TestAMachineIsOnBatteryWhileItsBatteryDischarges(t *testing.T) {
 // The system's own detector and battery answer, whatever they say: in a
 // container, or with nobody logged in, they may not know.
 func TestTheSystemsOwnAnswer(t *testing.T) {
-	since, known := System().Idle(context.Background())
+	since, known := System(nil).Idle(context.Background())
 	if known && since < 0 {
 		t.Errorf("idle for %v", since)
 	}

@@ -41,8 +41,13 @@ func (lastInput) Idle(context.Context) (time.Duration, bool) {
 }
 
 // System returns the Detector of the system the node runs on: on Windows,
-// GetLastInputInfo.
-func System() Detector { return lastInput{} }
+// GetLastInputInfo, which tells of the session the node runs in only, so
+// users changes nothing.
+func System(users []string) Detector { return lastInput{} }
+
+// ByUser is whether System tells the sessions of one account from those
+// of another, and so whether the users given it change anything.
+const ByUser = false
 
 // RunsOnBattery reports whether the machine runs on battery now. On
 // Windows that is not yet told, and taken not to be.

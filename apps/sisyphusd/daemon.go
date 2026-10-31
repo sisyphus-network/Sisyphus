@@ -107,6 +107,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	denyWorkloads := fs.String("deny-workloads", "", "worker role: workloads and groups, named as for --allow-workloads, that this machine never takes, even if allowed there")
 	share := fs.String("share", "always", "worker role: when this machine takes new tasks: always; idle, only once nobody has used its keyboard or mouse for --idle-after and while it is not running on battery; or paused, never. In idle mode, tasks running when someone comes back to the machine finish, with a low share of the processor if they run in containers. Where the machine cannot tell when it was last used, idle takes no tasks")
 	idleAfter := fs.Duration("idle-after", 5*time.Minute, "worker role, with --share idle: how long nobody must have used the machine before it takes new tasks")
+	idleUsers := fs.String("idle-users", "", "worker role, with --share idle, on Linux: the accounts, separated by commas, whose sessions count as someone using the machine; the sessions of others, such as an automation account's tmux left attached on a terminal, are passed over. Empty counts everyone's. On macOS and Windows what counts is input at the machine itself, whoever's, and this changes nothing")
 	containers := fs.Bool("containers", false, "worker role: run container images for the pool's jobs, with Docker. This lets whoever may submit jobs to the pool run what they like on this machine")
 	maxMemory := fs.Uint64("offer-memory-mb", 0, "worker role: tell the pool this node has no more than this much memory, in mebibytes; 0 offers all it has")
 	maxGPUs := fs.Int("offer-gpus", -1, "worker role: tell the pool this node has no more than this many graphics cards; -1 offers all it has")
@@ -305,7 +306,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("--allow-workloads, --deny-workloads: %w", err)
 	}
-	sharing, err := sharingFrom(fs, *share, *idleAfter, isWorker)
+	sharing, err := sharingFrom(fs, *share, *idleAfter, listOf(*idleUsers), isWorker, log)
 	if err != nil {
 		return err
 	}
@@ -2549,32 +2550,42 @@ type garbageCollectionOptions struct {
 }
 
 // idleDetector and onBattery are what a node started with --share idle asks
-// of whether its owner is using it. Tests put fakes in their place.
+// of whether its owner is using it, and byUser whether the detector tells
+// one account's sessions from another's. Tests put fakes in their place.
 var (
 	idleDetector = idle.System
 	onBattery    = idle.RunsOnBattery
+	byUser       = idle.ByUser
 )
 
-// sharingFrom is when a worker's owner lets it take new tasks, as --share
-// and --idle-after say: nil for always.
-func sharingFrom(fs *flag.FlagSet, share string, after time.Duration, isWorker bool) (*idle.Policy, error) {
+// sharingFrom is when a worker's owner lets it take new tasks, as --share,
+// --idle-after and --idle-users say: nil for always.
+func sharingFrom(fs *flag.FlagSet, share string, after time.Duration, users []string, isWorker bool, log *slog.Logger) (*idle.Policy, error) {
 	mode, err := idle.ParseMode(share)
 	if err != nil {
 		return nil, fmt.Errorf("--share: %w", err)
 	}
-	given := false
-	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "idle-after" })
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	switch {
-	case (mode != idle.Always || given) && !isWorker:
-		return nil, errors.New("--share and --idle-after say when a worker takes tasks, and need the worker role")
-	case given && mode != idle.WhenIdle:
+	case (mode != idle.Always || given["idle-after"] || len(users) > 0) && !isWorker:
+		return nil, errors.New("--share, --idle-after and --idle-users say when a worker takes tasks, and need the worker role")
+	case given["idle-after"] && mode != idle.WhenIdle:
 		return nil, errors.New("--idle-after is how long the machine must go unused with --share idle, and needs it")
+	case len(users) > 0 && mode != idle.WhenIdle:
+		return nil, errors.New("--idle-users is whose use of the machine counts with --share idle, and needs it")
 	case after <= 0:
 		return nil, errors.New("--idle-after must be more than 0")
 	case mode == idle.Always:
+		if given["share"] && !isWorker {
+			log.Info("--share always has no effect on a coordinator-only node, which runs no worker")
+		}
 		return nil, nil
 	}
-	return &idle.Policy{Mode: mode, After: after, Detector: idleDetector(), OnBattery: onBattery}, nil
+	if len(users) > 0 && !byUser {
+		log.Warn("--idle-users changes nothing on this system: what counts here is input at the machine itself, whoever's it is", "users", strings.Join(users, ","))
+	}
+	return &idle.Policy{Mode: mode, After: after, Detector: idleDetector(users), OnBattery: onBattery}, nil
 }
 
 func garbageCollectionOptionsFrom(fs *flag.FlagSet, interval time.Duration) garbageCollectionOptions {

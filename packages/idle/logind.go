@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,10 @@ type logind struct {
 	// run runs a program and returns what it printed; now is the time.
 	run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	now func() time.Time
+	// users, if not empty, are the accounts whose sessions count: those
+	// of any other, such as a server's automation account with a tmux
+	// attached on a terminal, are passed over.
+	users []string
 }
 
 // Idle is how long the least idle of the users' sessions has been idle:
@@ -39,11 +44,11 @@ func (l logind) Idle(ctx context.Context) (time.Duration, bool) {
 		return Forever, true
 	}
 	shown, err := l.run(ctx, "loginctl", append([]string{"show-session",
-		"--property=Class", "--property=State", "--property=Type", "--property=TTY", "--property=IdleHint", "--property=IdleSinceHint"}, ids...)...)
+		"--property=Name", "--property=Class", "--property=State", "--property=Type", "--property=TTY", "--property=IdleHint", "--property=IdleSinceHint"}, ids...)...)
 	if err != nil {
 		return 0, false
 	}
-	return sessionsIdle(shown, l.now())
+	return sessionsIdle(shown, l.now(), l.users)
 }
 
 // sessionsIdle reads what `loginctl show-session` says of sessions: for
@@ -51,9 +56,9 @@ func (l logind) Idle(ctx context.Context) (time.Duration, bool) {
 // sessions. Only those of someone at a screen or a terminal count: of class
 // user, or a kind of it such as user-early, and not a login screen's; with a
 // display or a terminal, and not a command run over SSH or by a timer,
-// which logind always says is in use; and not one left closing when its
-// user logged out.
-func sessionsIdle(shown []byte, now time.Time) (time.Duration, bool) {
+// which logind always says is in use; not one left closing when its user
+// logged out; and, if users are given, of one of them by account name.
+func sessionsIdle(shown []byte, now time.Time, users []string) (time.Duration, bool) {
 	least, known := Forever, true
 	session := map[string]string{}
 	end := func() {
@@ -62,6 +67,9 @@ func sessionsIdle(shown []byte, now time.Time) (time.Duration, bool) {
 			return
 		}
 		if class := session["Class"]; class != "user" && !strings.HasPrefix(class, "user-") || session["State"] == "closing" {
+			return
+		}
+		if len(users) > 0 && !slices.Contains(users, session["Name"]) {
 			return
 		}
 		switch session["Type"] {
