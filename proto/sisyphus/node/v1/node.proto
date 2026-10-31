@@ -398,6 +398,8 @@ message Worker {
   // the precision its owner chose. Absent if the owner shares only the
   // country, or nothing, or has given no location.
   SharedLocation shared_location = 21;
+  // Its other accelerators: NPUs, Edge TPUs and FPGAs.
+  repeated WorkerAccelerator accelerators = 22;
 }
 
 // SharedLocation is a place in degrees, north and east positive, as much of
@@ -469,6 +471,17 @@ enum WorkloadFieldKind {
 message WorkerGpu {
   string name = 1;
   uint64 memory_bytes = 2;
+}
+
+// An accelerator a worker has besides its processor and graphics cards.
+// What is not known of it is empty or zero.
+message WorkerAccelerator {
+  // "npu", "edgetpu" or "fpga".
+  string kind = 1;
+  string vendor = 2;
+  string model = 3;
+  string driver = 4;
+  uint64 memory_bytes = 5;
 }
 
 message LoadedModel {

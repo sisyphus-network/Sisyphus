@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -246,5 +248,47 @@ func TestAJobThatOnlyAsksForCardsTakesEverySlotOfAMachineWithThem(t *testing.T) 
 		if task.GetNodeName() != "laptop" {
 			t.Errorf("a task of a job that asks for a card ran on %s", task.GetNodeName())
 		}
+	}
+}
+
+func TestAWorkerSaysWhatAcceleratorsItHas(t *testing.T) {
+	p := startPool(t, runtime.Builtin())
+	npu := hardware.Accelerator{Kind: hardware.KindNPU, Vendor: "Intel", Model: "Intel NPU (Meteor Lake)", Driver: "intel_vpu"}
+	tpu := hardware.Accelerator{Kind: hardware.KindEdgeTPU, Vendor: "Google", Model: "Coral USB Accelerator"}
+	p.startMachine("laptop", 2, hardware.Info{Accelerators: []hardware.Accelerator{npu, tpu}})
+	p.startWorker("plain", 2)
+	p.waitForWorkers(2)
+	for _, node := range p.coord.Nodes() {
+		c := node.GetCapabilities()
+		switch node.GetName() {
+		case "laptop":
+			got := c.GetAccelerators()
+			if len(got) != 2 || got[0].GetKind() != "npu" || got[0].GetVendor() != "Intel" || got[0].GetModel() != npu.Model || got[0].GetDriver() != "intel_vpu" || got[1].GetKind() != "edgetpu" {
+				t.Errorf("the laptop's accelerators are known as %v", got)
+			}
+			for _, label := range []string{"npu", "npu-intel", "edgetpu", "edgetpu-google"} {
+				if !slices.Contains(c.GetLabels(), label) {
+					t.Errorf("the laptop's labels %v lack %s", c.GetLabels(), label)
+				}
+			}
+		case "plain":
+			if len(c.GetAccelerators()) != 0 || slices.Contains(c.GetLabels(), "npu") {
+				t.Errorf("a worker with no accelerators is known as %v", c)
+			}
+		}
+	}
+	// `sisyphusd nodes` says what each has, below its table.
+	listed, err := p.client.ListNodes(p.ctx, &pb.ListNodesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	stdout = &out
+	t.Cleanup(func() { stdout = os.Stdout })
+	if err := printNodes(listed.GetNodes()); err != nil {
+		t.Fatal(err)
+	}
+	if said := out.String(); !strings.Contains(said, "\nlaptop: accelerators: npu Intel NPU (Meteor Lake) [intel_vpu]; edgetpu Google Coral USB Accelerator\n") || strings.Contains(said, "plain: accelerators") {
+		t.Errorf("nodes says:\n%s", said)
 	}
 }

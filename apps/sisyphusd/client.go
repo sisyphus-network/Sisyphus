@@ -15,6 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	"github.com/sisyphus-network/Sisyphus/packages/jobrecord"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
@@ -391,7 +392,13 @@ func listNodes(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(listed.GetNodes()) == 0 {
+	return printNodes(listed.GetNodes())
+}
+
+// printNodes prints a table of the pool's nodes, and below it what else is
+// known of them, a line for each thing.
+func printNodes(nodes []*pb.NodeInfo) error {
+	if len(nodes) == 0 {
 		fmt.Fprintln(stdout, "no workers connected")
 		return nil
 	}
@@ -400,7 +407,7 @@ func listNodes(ctx context.Context, args []string) error {
 	// What verified tasks have shown of the nodes they have shown anything
 	// of, one to a line below the table.
 	var standings []string
-	for _, node := range listed.GetNodes() {
+	for _, node := range nodes {
 		c := node.GetCapabilities()
 		if serving := servingOf(node.GetName(), c.GetLabels()); serving != "" {
 			standings = append(standings, serving)
@@ -413,6 +420,9 @@ func listNodes(ctx context.Context, args []string) error {
 		}
 		if place := placeOf(node); place != "" {
 			standings = append(standings, place)
+		}
+		if has := acceleratorsOf(node); has != "" {
+			standings = append(standings, has)
 		}
 		// What a node that relays has carried between other members.
 		relayed := "-"
@@ -488,6 +498,19 @@ func standingOf(node *pb.NodeInfo) string {
 		said += fmt.Sprintf("; on probation, %d more to agree", owed)
 	}
 	return said
+}
+
+// acceleratorsOf says what NPUs, Edge TPUs and FPGAs a node has, or
+// nothing of a node that has none.
+func acceleratorsOf(node *pb.NodeInfo) string {
+	var has []string
+	for _, a := range node.GetCapabilities().GetAccelerators() {
+		has = append(has, hardware.Accelerator{Kind: a.GetKind(), Vendor: a.GetVendor(), Model: a.GetModel(), Driver: a.GetDriver()}.String())
+	}
+	if len(has) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s: accelerators: %s", cmp.Or(node.GetName(), node.GetNodeId()), strings.Join(has, "; "))
 }
 
 // placeOf says where a node's owner lets the pool see it is, as rounded as

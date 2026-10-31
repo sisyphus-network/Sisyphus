@@ -1679,7 +1679,8 @@ func TestTheLocalAPIListsThePoolsWorkers(t *testing.T) {
 		{NodeId: "12D3KooWa", Name: "rig", RunningTasks: 3, RelayAddresses: []string{"/ip4/10.0.0.5/tcp/7701/p2p/12D3KooWa"}, RelayedConnections: 4, RelayedBytes: 5 << 20,
 			VerifiedAgreed: 12, VerifiedOutvoted: 1, Probation: 7,
 			Capabilities: &pb.NodeCapabilities{Hostname: "rig.local", Os: "linux", Arch: "amd64", CpuCores: 32, TaskSlots: 8, Workloads: []string{"primes"},
-				CpuModel: "a big one", MemoryBytes: 256 << 30, Gpus: []*pb.Gpu{{Name: "RTX 4090", MemoryBytes: 24 << 30}}}},
+				CpuModel: "a big one", MemoryBytes: 256 << 30, Gpus: []*pb.Gpu{{Name: "RTX 4090", MemoryBytes: 24 << 30}},
+				Accelerators: []*pb.Accelerator{{Kind: "fpga", Vendor: "Xilinx", Model: "Alveo U50", Driver: "xocl", MemoryBytes: 8 << 30}}}},
 		{NodeId: "12D3KooWb", Name: "laptop", Capabilities: &pb.NodeCapabilities{TaskSlots: 2}},
 	}}
 	listed, err := startOffice(t, pool).ListWorkers(context.Background(), &nodepb.ListWorkersRequest{})
@@ -1694,6 +1695,9 @@ func TestTheLocalAPIListsThePoolsWorkers(t *testing.T) {
 	}
 	if rig.GetCpuModel() != "a big one" || rig.GetMemoryBytes() != 256<<30 || len(rig.GetGpus()) != 1 || rig.GetGpus()[0].GetName() != "RTX 4090" || rig.GetGpus()[0].GetMemoryBytes() != 24<<30 {
 		t.Errorf("the rig's hardware is listed as %v", rig)
+	}
+	if !proto.Equal(&nodepb.Worker{Accelerators: rig.GetAccelerators()}, &nodepb.Worker{Accelerators: []*nodepb.WorkerAccelerator{{Kind: "fpga", Vendor: "Xilinx", Model: "Alveo U50", Driver: "xocl", MemoryBytes: 8 << 30}}}) || laptop.GetAccelerators() != nil {
+		t.Errorf("the accelerators are listed as %v and %v", rig.GetAccelerators(), laptop.GetAccelerators())
 	}
 	if laptop.GetRelays() || laptop.GetTaskSlots() != 2 {
 		t.Errorf("the laptop is listed as %v", laptop)

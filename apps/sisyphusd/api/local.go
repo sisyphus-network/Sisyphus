@@ -860,6 +860,7 @@ func (s *localService) workerList(places bool) *nodepb.ListWorkersResponse {
 			LoadedModels:   localLoaded(c.GetLabels()),
 			VerifiedAgreed: node.GetVerifiedAgreed(), VerifiedOutvoted: node.GetVerifiedOutvoted(), Probation: node.GetProbation(),
 			SharedLocation: place,
+			Accelerators:   localAccelerators(c.GetAccelerators()),
 		})
 	}
 	return res
@@ -1023,6 +1024,14 @@ func localGPUs(gpus []*pb.Gpu) []*nodepb.WorkerGpu {
 	var out []*nodepb.WorkerGpu
 	for _, gpu := range gpus {
 		out = append(out, &nodepb.WorkerGpu{Name: gpu.GetName(), MemoryBytes: gpu.GetMemoryBytes()})
+	}
+	return out
+}
+
+func localAccelerators(accelerators []*pb.Accelerator) []*nodepb.WorkerAccelerator {
+	var out []*nodepb.WorkerAccelerator
+	for _, a := range accelerators {
+		out = append(out, &nodepb.WorkerAccelerator{Kind: a.GetKind(), Vendor: a.GetVendor(), Model: a.GetModel(), Driver: a.GetDriver(), MemoryBytes: a.GetMemoryBytes()})
 	}
 	return out
 }

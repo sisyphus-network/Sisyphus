@@ -1,0 +1,2 @@
+DRIVER=qaic
+PCI_ID=17CB:A100
