@@ -43,8 +43,9 @@ type SharedModelProfilesEvent = {
   domain: number | string
   error?: string
   snapshot?: boolean
-  state?: { case?: string; value?: { modelConfig?: SharedModelConfig; profiles?: ModelProfile[] } } | string
+  state?: { case?: string; value?: { modelConfig?: SharedModelConfig; profiles?: ModelProfile[]; revision?: number | string } } | string
   modelProfiles?: { modelConfig?: SharedModelConfig; profiles?: ModelProfile[] }
+  modelCatalog?: { revision?: number | string }
 }
 
 function sameModelProfiles(left: ModelProfile[], right: ModelProfile[]) {
@@ -90,10 +91,13 @@ export const SettingsPage = memo(function SettingsPage({ locale, setLocale, mess
   const [profileSearchUsed, setProfileSearchUsed] = useState(false)
   const [profilesLoaded, setProfilesLoaded] = useState(false)
   const [profileConnectivity, setProfileConnectivity] = useState<Record<string, { status: ProfileConnectivityStatus; modelCount?: number }>>({})
+  const [modelCatalogRevision, setModelCatalogRevision] = useState(0)
+  const refreshModelsRef = useRef<((showToast?: boolean) => Promise<void>) | null>(null)
   const profileConnectivitySequence = useRef(0)
   const [profileOpen, setProfileOpen] = useState(false)
   const profileOpenRef = useRef(profileOpen)
   profileOpenRef.current = profileOpen
+  const currentStepRef = useRef('profile')
   const latestSharedModelConfig = useRef<SharedModelConfig | null>(null)
   const [compactViewport, setCompactViewport] = useState(false)
   const [profileStep, setProfileStep] = useState(0)
@@ -137,6 +141,7 @@ export const SettingsPage = memo(function SettingsPage({ locale, setLocale, mess
   ]
   const finalProfileStep = profileSteps.length - 1
   const currentStep = profileSteps[Math.min(profileStep, finalProfileStep)]?.id
+  currentStepRef.current = currentStep ?? 'profile'
   // The node keeps a key for one service: the provider and address it was
   // saved with. Pointed anywhere else, this page must neither claim a key
   // is saved nor ask the node to reuse it.
@@ -171,9 +176,22 @@ export const SettingsPage = memo(function SettingsPage({ locale, setLocale, mess
     const reconnect = () => {
       if (!active) return
       cancel = getNodeApi().stream<SharedModelProfilesEvent>('watchSharedState', {
-        domains: [SharedStateDomain.MODEL_PROFILES],
+        domains: [SharedStateDomain.MODEL_PROFILES, SharedStateDomain.MODEL_CATALOG],
       }, (event) => {
-        if (sharedStateDomainCode(event.domain) !== 'modelProfiles') return
+        const domain = sharedStateDomainCode(event.domain)
+        if (domain === 'modelCatalog') {
+          if (event.error) return
+          const state = event.state && typeof event.state === 'object' && event.state.case === 'modelCatalog'
+            ? event.state.value
+            : event.modelCatalog
+          if (!state) return
+          const revision = Number(state.revision ?? 0)
+          setModelCatalogRevision((current) => current === revision ? current : revision)
+          if (profileOpenRef.current && currentStepRef.current === 'connection') void refreshModelsRef.current?.(false)
+          if (event.snapshot) attempt = 0
+          return
+        }
+        if (domain !== 'modelProfiles') return
         if (!event.snapshot) attempt = 0
         if (event.error) {
           setProfilesLoaded(true)
@@ -242,7 +260,7 @@ export const SettingsPage = memo(function SettingsPage({ locale, setLocale, mess
       if (profileConnectivitySequence.current === sequence) setProfileConnectivity(Object.fromEntries(results))
     })
     return () => { if (profileConnectivitySequence.current === sequence) profileConnectivitySequence.current++ }
-  }, [activeCategory, profiles])
+  }, [activeCategory, modelCatalogRevision, profiles])
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)')
@@ -351,6 +369,7 @@ export const SettingsPage = memo(function SettingsPage({ locale, setLocale, mess
       if (requestSequence === modelLoadSequence.current) setLoadingModels(false)
     }
   }, [apiKey, baseUrl, keyMissing, keepApiKey, labels.listFailed, provider])
+  refreshModelsRef.current = refreshModels
 
   useEffect(() => {
     if (!profileOpen) {

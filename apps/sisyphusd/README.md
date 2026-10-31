@@ -1025,6 +1025,8 @@ The database also records every attempt at every task: which node, and how it we
 
 `127.0.0.1:50051` is where the desktop app looks. The address must be a loopback one: the local API has no TLS, and is for programs on this machine only.
 
+The `MODEL_CATALOG` shared-state domain carries only an invalidation revision, not model data or credentials. Electron and paired-browser API services share that revision; clients refresh through the authenticated model-list call when it changes. Every new stream begins with an authoritative snapshot, so the revision does not need a persisted boot epoch.
+
 What it shows, in this daemon's terms:
 
 Country markers ignore addresses inside this machine's directly connected interface networks, even when an address block is globally allocated. A LAN-only address cannot reliably place a peer on the world map.

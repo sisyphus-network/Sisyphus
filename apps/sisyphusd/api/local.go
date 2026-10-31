@@ -249,11 +249,12 @@ func normal(cfg LocalConfig) LocalConfig {
 
 type localService struct {
 	nodepb.UnimplementedNodeServiceServer
-	cfg          LocalConfig
-	chatRevision atomic.Uint64
-	lendingMu    sync.RWMutex
-	pendingOnce  sync.Once
-	pendingQueue *pendingActionManager
+	cfg                  LocalConfig
+	chatRevision         atomic.Uint64
+	modelCatalogRevision atomic.Uint64
+	lendingMu            sync.RWMutex
+	pendingOnce          sync.Once
+	pendingQueue         *pendingActionManager
 }
 
 func (s *localService) actionConfirmations() *pendingActionManager {
@@ -478,12 +479,13 @@ func sharedStateDomains(requested []nodepb.SharedStateDomain) ([]nodepb.SharedSt
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_CATALOG,
 		}, nil
 	}
 	seen := make(map[nodepb.SharedStateDomain]struct{}, len(requested))
 	domains := make([]nodepb.SharedStateDomain, 0, len(requested))
 	for _, domain := range requested {
-		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS {
+		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_CATALOG {
 			return nil, status.Errorf(codes.InvalidArgument, "unsupported shared-state domain %s", domain)
 		}
 		if _, ok := seen[domain]; ok {
@@ -604,8 +606,22 @@ func (s *localService) sharedStateSnapshot(ctx context.Context, domain nodepb.Sh
 		} else {
 			event.State = &nodepb.SharedStateEvent_BootstrapPeers{BootstrapPeers: state}
 		}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_CATALOG:
+		event.State = &nodepb.SharedStateEvent_ModelCatalog{ModelCatalog: &nodepb.ModelCatalogState{Revision: s.modelCatalogRevisionCounter().Load()}}
 	}
 	return event
+}
+
+func (s *localService) modelCatalogChanged() {
+	s.modelCatalogRevisionCounter().Add(1)
+	s.notifySharedStateChanged()
+}
+
+func (s *localService) modelCatalogRevisionCounter() *atomic.Uint64 {
+	if s.cfg.NodeInfoChanges != nil {
+		return &s.cfg.NodeInfoChanges.modelCatalogRevision
+	}
+	return &s.modelCatalogRevision
 }
 
 func sharedStateEqual(left, right *nodepb.SharedStateEvent) bool {
@@ -776,9 +792,10 @@ func watchWithChanges[T proto.Message](ctx context.Context, changes <-chan struc
 // independent subscribers, so one local or remote client cannot consume
 // another's event.
 type NodeInfoChanges struct {
-	mu           sync.Mutex
-	subscribers  map[chan struct{}]struct{}
-	chatRevision atomic.Uint64
+	mu                   sync.Mutex
+	subscribers          map[chan struct{}]struct{}
+	chatRevision         atomic.Uint64
+	modelCatalogRevision atomic.Uint64
 }
 
 func NewNodeInfoChanges() *NodeInfoChanges {

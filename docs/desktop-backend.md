@@ -76,6 +76,8 @@ Location discovery preferences are stored by the daemon and apply after restart.
 
 The shared-state stream carries the daemon-owned location-discovery state, not Electron's local `managed`/`configurable` metadata. The settings view combines the initial local API response with later stream updates, preserving that metadata while treating the streamed saved and running values as authoritative. Controls stay disabled until the local management metadata is available.
 
+Provider model catalog changes are streamed as a credential-free `MODEL_CATALOG` revision. A successful model pull or removal increments that revision and emits a shared-state event; clients refresh the provider catalogs they currently display instead of polling or broadcasting provider URLs and credentials.
+
 Pool limits follow the same rules. An explicitly supplied `--max-jobs-per-client`, `--max-tasks-per-client`, `--max-task-timeout`, `--max-store-bytes-per-client` or `--max-upload-bytes-per-attempt` (including `=0`) overrides that limit; an omitted flag uses the saved value, then its default of no limit. `GetPoolLimits` reports both, with `restart_needed` showing when they differ, which stays so while a flag overrides a saved limit. `coordinator` is false on a node without the coordinator role, where the limits apply to no one. The desktop's **Settings → This node → Pool limits** card manages them through these calls, for the daemon it started, for a separately managed daemon reached with its endpoint and token, and from a paired browser.
 
 ## What a peer tells you
