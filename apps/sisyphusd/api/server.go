@@ -51,6 +51,8 @@ type Config struct {
 	// Replication has the node's storage followers keep copies of what is
 	// in Store. Without it nothing is asked of them.
 	Replication *replication.Manager
+	// MembersChanged publishes a new pool-members snapshot after membership changes.
+	MembersChanged func()
 }
 
 // NewServer returns a gRPC server for a node running the coordinator role:
@@ -88,7 +90,7 @@ func NewServer(cfg Config, opts ...grpc.ServerOption) *grpc.Server {
 		stored:       func(ctx context.Context) (map[string]uint64, error) { return cfg.Coordinator.Stored(), nil },
 	})
 	pb.RegisterPoolServiceServer(srv, &poolService{
-		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, cluster: cfg.Cluster, workFor: cfg.WorkFor, pins: clientPinsOf(cfg.Store),
+		id: cfg.Identity.ID(), access: cfg.Access, coordinator: cfg.Coordinator, swarm: cfg.Swarm, cluster: cfg.Cluster, workFor: cfg.WorkFor, pins: clientPinsOf(cfg.Store), membersChanged: cfg.MembersChanged,
 	})
 	pb.RegisterNameServiceServer(srv, &nameService{names: cfg.Names})
 	tunnels := &tunnelService{}
