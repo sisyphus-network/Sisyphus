@@ -674,6 +674,103 @@ func TestWatchSharedStateSendsBaselinesUpdatesAndRequiresToken(t *testing.T) {
 	}
 }
 
+func TestWatchSharedStateReconnectStartsWithLatestBaseline(t *testing.T) {
+	var mu sync.Mutex
+	country := "IL"
+	peers := []*nodepb.Peer{peerEntry("12D3KooWa", true, true)}
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{
+		Token: "the-token", NodeInfoChanges: changes,
+		Peers: func() []*nodepb.Peer {
+			mu.Lock()
+			defer mu.Unlock()
+			return peers
+		},
+		Country: func() (string, string) {
+			mu.Lock()
+			defer mu.Unlock()
+			return country, ""
+		},
+	})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{
+		nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE,
+		nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_PEERS,
+	}}
+
+	firstBase, cancelFirst := context.WithTimeout(withToken("the-token"), 5*time.Second)
+	firstCtx := firstBase
+	defer cancelFirst()
+	first, err := client.WatchSharedState(firstCtx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCtx, cancelSecond := context.WithTimeout(withToken("the-token"), 5*time.Second)
+	second, err := client.WatchSharedState(secondCtx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancelSecond()
+	for _, watcher := range []nodepb.NodeService_WatchSharedStateClient{first, second} {
+		if event, err := watcher.Recv(); err != nil || !event.GetSnapshot() || event.GetNode().GetInfo().GetCountryCode() != "IL" {
+			t.Fatalf("initial node snapshot = %v, %v", event, err)
+		}
+		if event, err := watcher.Recv(); err != nil || !event.GetSnapshot() || len(event.GetPeers().GetPeers()) != 1 {
+			t.Fatalf("initial peer snapshot = %v, %v", event, err)
+		}
+	}
+
+	mu.Lock()
+	country = "US"
+	peers = append(peers, peerEntry("12D3KooWb", true, true))
+	mu.Unlock()
+	changes.Notify()
+	for _, watcher := range []nodepb.NodeService_WatchSharedStateClient{first, second} {
+		nodeUpdate, err := watcher.Recv()
+		if err != nil || nodeUpdate.GetRevision() != 3 || nodeUpdate.GetSnapshot() || nodeUpdate.GetNode().GetInfo().GetCountryCode() != "US" {
+			t.Fatalf("US live node update = %v, %v", nodeUpdate, err)
+		}
+		peerUpdate, err := watcher.Recv()
+		if err != nil || peerUpdate.GetRevision() != 4 || peerUpdate.GetSnapshot() || len(peerUpdate.GetPeers().GetPeers()) != 2 {
+			t.Fatalf("two-peer live update = %v, %v", peerUpdate, err)
+		}
+	}
+
+	cancelSecond()
+	if _, err := second.Recv(); status.Code(err) != codes.Canceled {
+		t.Fatalf("disconnected client's stream = %v, want canceled", err)
+	}
+
+	// The first client remains live while the second misses this server-side
+	// change. Re-subscribing must establish the current state, not resume from
+	// the stale snapshot that the disconnected stream last saw.
+	mu.Lock()
+	country = "DE"
+	peers = append(peers, peerEntry("12D3KooWc", true, true))
+	mu.Unlock()
+	changes.Notify()
+	nodeUpdate, err := first.Recv()
+	if err != nil || nodeUpdate.GetRevision() != 5 || nodeUpdate.GetSnapshot() || nodeUpdate.GetNode().GetInfo().GetCountryCode() != "DE" {
+		t.Fatalf("DE live node update = %v, %v", nodeUpdate, err)
+	}
+	peerUpdate, err := first.Recv()
+	if err != nil || peerUpdate.GetRevision() != 6 || peerUpdate.GetSnapshot() || len(peerUpdate.GetPeers().GetPeers()) != 3 {
+		t.Fatalf("three-peer live update = %v, %v", peerUpdate, err)
+	}
+
+	reconnectedCtx, cancelReconnected := context.WithTimeout(withToken("the-token"), 5*time.Second)
+	defer cancelReconnected()
+	reconnected, err := client.WatchSharedState(reconnectedCtx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event, err := reconnected.Recv(); err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || event.GetNode().GetInfo().GetCountryCode() != "DE" {
+		t.Fatalf("reconnected node baseline = %v, %v", event, err)
+	}
+	if event, err := reconnected.Recv(); err != nil || event.GetRevision() != 2 || !event.GetSnapshot() || len(event.GetPeers().GetPeers()) != 3 {
+		t.Fatalf("reconnected peer baseline = %v, %v", event, err)
+	}
+}
+
 func TestWatchSharedStateStreamsModelProfilesToIndependentClientsWithoutSecrets(t *testing.T) {
 	const token = "the-token"
 	const profileID = "shared-profile"
