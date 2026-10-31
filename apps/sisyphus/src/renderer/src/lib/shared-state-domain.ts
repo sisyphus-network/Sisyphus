@@ -30,8 +30,6 @@ export function sharedStateDomainCode(domain: number | string): SharedStateKind 
     case 'SHARED_STATE_DOMAIN_CITY_TABLE': return 'cityTable'
     case 15:
     case 'SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS': return 'bootstrapPeers'
-    case 15:
-    case 'SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS': return 'bootstrapPeers'
     default: return undefined
   }
 }
