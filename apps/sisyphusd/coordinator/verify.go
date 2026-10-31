@@ -32,6 +32,16 @@ import (
 //     workload's Compare says their outputs are. Where it says they are
 //     not, what it says of why is in the job's events, beside the workers
 //     that returned them.
+//   - A workload whose tolerance depends on where its results were
+//     computed (runtime.Tiered) is told, with each output, the processor
+//     of the worker that returned it, from what that worker said of its
+//     machine when it joined, as this coordinator recorded it when it
+//     handed out the attempt: never from the output, which the worker
+//     writes. A worker that claimed another processor than its own would
+//     only be held to a tighter tolerance, or to the one for different
+//     processors that every result is held to without the claim. The tier
+//     the results that settled a task were compared in is the task's Tier,
+//     and the events say it.
 //   - Results compared that way need not fall into sides of their own
 //     accord: a may be within the workload's tolerance of b, and b of c,
 //     without a being within it of c. So a side is drawn around one result,
@@ -220,14 +230,15 @@ func (c *Coordinator) returnedLocked(w *worker, a assignment, output []byte, sto
 	job, task := a.job, a.task
 	// The blobs in order and each once, however the worker listed them.
 	blobs := slices.Compact(slices.Sorted(slices.Values(stored)))
-	allDone = job.ReturnCopy(task, a.attempt, output, blobs)
+	allDone = job.ReturnCopyOn(task, a.attempt, a.cpuModel, output, blobs)
 	sides := task.Sides()
 	returned := jobmodel.Result{Output: output, Blobs: blobs}
 	c.recordLocked(job, eventTaskResult, task.Index, w.name, "result "+short(returned))
 
 	switch {
 	case task.State == jobmodel.Succeeded:
-		said := names(sides[0]) + " returned the same result"
+		job.NoteTier(task, runtime.SettledTier(task.Tiers(sides[0])...))
+		said := names(sides[0]) + " returned the same result" + inTier(task.Tier)
 		for _, other := range sides[1:] {
 			said += "; " + names(other) + " returned another" + because(task, sides[0][0], other[0])
 		}
@@ -422,14 +433,27 @@ func because(task *jobmodel.Task, settled, other jobmodel.Result) string {
 	return ""
 }
 
+// inTier says, in parentheses, which tier of its workload's tolerances
+// results were compared in, or nothing where they were compared in none.
+func inTier(tier string) string {
+	if tier == "" {
+		return ""
+	}
+	return " (compared in the " + tier + " tier)"
+}
+
 // comparer is how the results of a workload's tasks are compared, for
-// verify and audit_share alike: by runtime.Compare, for a workload that
-// compares its results itself, and otherwise byte for byte, which is nil.
+// verify and audit_share alike: by runtime.CompareFrom, for a workload that
+// compares its results itself, each result from the processor this
+// coordinator recorded for the worker that returned it, and otherwise byte
+// for byte, which is nil.
 func comparer(workload runtime.Workload) jobmodel.Comparer {
 	if _, compares := workload.(runtime.Comparing); !compares {
 		return nil
 	}
-	return func(a, b []byte) (bool, string) { return runtime.Compare(workload, a, b) }
+	return func(a, b jobmodel.Result) (bool, string, string) {
+		return runtime.CompareFrom(workload, a.Output, runtime.Origin{CPUModel: a.CPUModel}, b.Output, runtime.Origin{CPUModel: b.CPUModel})
+	}
 }
 
 // Audits. A job may ask that a share of its tasks be checked by the
@@ -488,8 +512,9 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 		return
 	}
 	sorted := func(blobs []string) []string { return slices.Compact(slices.Sorted(slices.Values(blobs))) }
-	theirs := jobmodel.Result{Output: output, Blobs: sorted(stored)}
-	mine := jobmodel.Result{Output: own, Blobs: sorted(touched.Written())}
+	theirs := jobmodel.Result{Output: output, Blobs: sorted(stored), CPUModel: a.cpuModel}
+	mine := jobmodel.Result{Output: own, Blobs: sorted(touched.Written()), CPUModel: c.cpuModel}
+	same, tier, _ := task.Compare(mine, theirs)
 	who := cmp.Or(nodeName, nodeID)
 	standing := c.standing[nodeID]
 	standing.NodeID = nodeID
@@ -500,10 +525,11 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 		// stands as it would have with no audit.
 		job.NoteAudit(task, jobmodel.AuditInconclusive)
 		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, fmt.Sprintf("the coordinator could not run the task itself to check it (%v), so the result is taken unchecked", err))
-	case sameAudited(task, mine, theirs):
+	case same:
 		standing.Agree()
 		job.NoteAudit(task, jobmodel.AuditMatched)
-		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, "the coordinator ran the task itself and got the same result")
+		job.NoteTier(task, tier)
+		c.recordLocked(job, eventTaskSucceeded, task.Index, nodeName, "the coordinator ran the task itself and got the same result"+inTier(tier))
 	default:
 		standing.Outvote()
 		job.NoteAudit(task, jobmodel.AuditCaught)
@@ -527,12 +553,4 @@ func (c *Coordinator) audit(nodeID, nodeName string, a assignment, output []byte
 	c.settleLocked(job)
 	c.notifyLocked(job)
 	c.scheduleLocked()
-}
-
-// sameAudited reports whether what the coordinator got by running a task
-// itself is the same result as what its worker returned, compared as the
-// task's results are compared when workers check each other.
-func sameAudited(task *jobmodel.Task, mine, theirs jobmodel.Result) bool {
-	same, _ := task.Same(mine, theirs)
-	return same
 }

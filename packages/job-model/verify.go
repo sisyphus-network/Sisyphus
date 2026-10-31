@@ -34,6 +34,11 @@ type Result struct {
 	Output   []byte
 	// Blobs are the CIDs of the blobs the attempt stored, in order.
 	Blobs []string
+	// CPUModel is the processor of the worker that returned it, as the
+	// coordinator knew that worker when it handed out the attempt: what the
+	// worker said of its machine when it joined, never anything read from
+	// the output. Empty if unknown.
+	CPUModel string
 }
 
 // same reports whether two results are the same: the same output, byte for
@@ -42,12 +47,16 @@ func (r Result) same(other Result) bool {
 	return bytes.Equal(r.Output, other.Output) && slices.Equal(r.Blobs, other.Blobs)
 }
 
-// Comparer reports whether two outputs of one task are the same result, and
-// if they are not, why: it is a workload's own comparison, for work whose
-// honest results agree only to some precision. It is symmetric and holds
-// for an output compared with itself, but need not be transitive: a is
-// within a tolerance of b, and b of c, without a being within it of c.
-type Comparer func(a, b []byte) (same bool, why string)
+// Comparer reports whether the outputs of two results of one task are the
+// same result, and if they are not, why: it is a workload's own comparison,
+// for work whose honest results agree only to some precision. It is given
+// the whole results, so that it may hold them to a tolerance that depends
+// on where they were computed, and says which tier of its tolerances it
+// compared them in, or nothing for a workload that has one. It is
+// symmetric and holds for an output compared with itself, but need not be
+// transitive: a is within a tolerance of b, and b of c, without a being
+// within it of c. Blobs are not its to compare; see Task.Same.
+type Comparer func(a, b Result) (same bool, tier, why string)
 
 // CompareBy has the results of the job's tasks compared by compare instead
 // of byte for byte; nil goes back to bytes. Like Needs, it follows from the
@@ -65,13 +74,34 @@ func (j *Job) CompareBy(compare Comparer) {
 // Otherwise they are the same only if their outputs are the same bytes and
 // they stored the same blobs, and why is empty.
 func (t *Task) Same(a, b Result) (same bool, why string) {
+	same, _, why = t.Compare(a, b)
+	return same, why
+}
+
+// Compare is Same, and says as well which tier of its tolerances the task's
+// workload compared the two results in: nothing for results compared byte
+// for byte, for a workload with one tolerance, or for results that stored
+// different blobs, which the workload is not asked about.
+func (t *Task) Compare(a, b Result) (same bool, tier, why string) {
 	switch {
 	case t.compare == nil:
-		return a.same(b), ""
+		return a.same(b), "", ""
 	case !slices.Equal(a.Blobs, b.Blobs):
-		return false, "they stored different blobs"
+		return false, "", "they stored different blobs"
 	}
-	return t.compare(a.Output, b.Output)
+	return t.compare(a, b)
+}
+
+// Tiers returns the tiers of its workload's tolerances that the results of
+// a side were compared in: the tier the first of them, the result a task it
+// settles is given, was compared with each of the others in, in order.
+func (t *Task) Tiers(side []Result) []string {
+	var tiers []string
+	for _, other := range side[1:] {
+		_, tier, _ := t.Compare(side[0], other)
+		tiers = append(tiers, tier)
+	}
+	return tiers
 }
 
 // Digest is a name for what a result holds, by which results that differ
@@ -153,7 +183,7 @@ func (j *Job) Recheck(nodeID string) []*Task {
 		}
 		t.Verify = j.Verify
 		if t.State == Succeeded {
-			t.Output = nil
+			t.Output, t.Tier = nil, ""
 			t.rest()
 		}
 		t.Progress = float64(t.lead()) / float64(t.Verify)
@@ -342,14 +372,23 @@ func (j *Job) ReportCopy(t *Task, progress float64) {
 // ReturnCopy takes in what the copy handed out as the given attempt
 // returned: its output, and the blobs it stored. If enough results are now
 // the same the task has succeeded, with that result as its output and the
-// first worker to return it as its worker. ReturnCopy reports whether every
-// task is then done, meaning the job is ready to be aggregated.
+// first worker to return it as its worker. Which tier of its workload's
+// tolerances they were held to is the coordinator's to note (NoteTier), from
+// Tiers. ReturnCopy reports whether every task is then done, meaning the job
+// is ready to be aggregated.
 func (j *Job) ReturnCopy(t *Task, attempt int, output []byte, blobs []string) (allDone bool) {
+	return j.ReturnCopyOn(t, attempt, "", output, blobs)
+}
+
+// ReturnCopyOn is ReturnCopy for a copy whose worker the coordinator knew
+// to run on the named processor when it handed the copy out; see
+// Result.CPUModel.
+func (j *Job) ReturnCopyOn(t *Task, attempt int, cpuModel string, output []byte, blobs []string) (allDone bool) {
 	run := &t.History[attempt-1]
 	run.State, run.Err = Succeeded, ""
 	// In the order of their attempts, which is how they are loaded again.
 	at, _ := slices.BinarySearchFunc(t.Results, attempt, func(r Result, n int) int { return r.Attempt - n })
-	t.Results = slices.Insert(t.Results, at, Result{TaskIndex: t.Index, Attempt: attempt, NodeID: run.NodeID, NodeName: run.NodeName, Output: output, Blobs: blobs})
+	t.Results = slices.Insert(t.Results, at, Result{TaskIndex: t.Index, Attempt: attempt, NodeID: run.NodeID, NodeName: run.NodeName, Output: output, Blobs: blobs, CPUModel: cpuModel})
 	j.mark(t)
 
 	agreed := t.Sides()[0]

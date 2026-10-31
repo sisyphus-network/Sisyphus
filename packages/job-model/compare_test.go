@@ -10,16 +10,110 @@ import (
 // withinOne compares outputs that are whole numbers, as the same if they
 // are no more than one apart. Like any tolerance it is not transitive: 0
 // is the same as 1 and 1 as 2, but 0 is not the same as 2.
-func withinOne(a, b []byte) (bool, string) {
-	x, errA := strconv.Atoi(string(a))
-	y, errB := strconv.Atoi(string(b))
+func withinOne(a, b Result) (bool, string, string) {
+	x, errA := strconv.Atoi(string(a.Output))
+	y, errB := strconv.Atoi(string(b.Output))
 	switch {
 	case errA != nil || errB != nil:
-		return false, "not a number"
+		return false, "", "not a number"
 	case x-y > 1 || y-x > 1:
-		return false, fmt.Sprintf("%d and %d are more than one apart", x, y)
+		return false, "", fmt.Sprintf("%d and %d are more than one apart", x, y)
 	}
-	return true, ""
+	return true, "", ""
+}
+
+// tiered compares as withinOne does for results whose processors are
+// known and alike, in the tier "tight", and otherwise within ten, in the
+// tier "loose". It reads only each result's CPUModel, never its output, to
+// pick the tier.
+func tiered(a, b Result) (bool, string, string) {
+	tier, within := "loose", 10
+	if a.CPUModel != "" && a.CPUModel == b.CPUModel {
+		tier, within = "tight", 1
+	}
+	x, errA := strconv.Atoi(string(a.Output))
+	y, errB := strconv.Atoi(string(b.Output))
+	switch {
+	case errA != nil || errB != nil:
+		return false, tier, "not a number"
+	case x-y > within || y-x > within:
+		return false, tier, fmt.Sprintf("%d and %d are more than %d apart", x, y, within)
+	}
+	return true, tier, ""
+}
+
+// returningOn has workers on these processors return these outputs for a
+// task, in turn, and reports whether the last made the job ready to be
+// combined.
+func returningOn(j *Job, task *Task, cpus []string, outputs ...string) (allDone bool) {
+	for n, output := range outputs {
+		node := fmt.Sprintf("node-%d", n)
+		allDone = j.ReturnCopyOn(task, j.StartCopy(task, node, node, now), cpus[n], []byte(output), nil)
+	}
+	return allDone
+}
+
+// A workload whose tolerance depends on where its results were computed is
+// told each result's processor, as the coordinator knew it, and Tiers says
+// which tier the result taken was compared with each other that settled it.
+func TestTheTiersThatSettledATaskAreSaid(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		verify   int
+		cpus     []string
+		returned []string
+		output   string // the task's, if it succeeded
+		tiers    []string
+	}{
+		{"the same processor", 2, []string{"xeon", "xeon"}, []string{"10", "11"}, "10", []string{"tight"}},
+		{"the same processor, too far apart for it", 2, []string{"xeon", "xeon", "xeon"}, []string{"10", "15", "11"}, "10", []string{"tight"}},
+		{"different processors", 2, []string{"xeon", "epyc"}, []string{"10", "15"}, "10", []string{"loose"}},
+		{"one processor unknown", 2, []string{"xeon", ""}, []string{"10", "15"}, "10", []string{"loose"}},
+		{"both unknown", 2, []string{"", ""}, []string{"10", "15"}, "10", []string{"loose"}},
+		{"both tiers among three", 3, []string{"xeon", "xeon", "epyc"}, []string{"10", "10", "12"}, "10", []string{"tight", "loose"}},
+		{"not settled", 2, []string{"xeon", "xeon"}, []string{"10", "15"}, "", nil},
+	} {
+		j := verified(1, tt.verify)
+		j.CompareBy(tiered)
+		task := j.Tasks[0]
+		returningOn(j, task, tt.cpus, tt.returned...)
+		var tiers []string
+		if agreed := task.Agreed(); agreed != nil {
+			tiers = task.Tiers(agreed)
+		}
+		if string(task.Output) != tt.output || !reflect.DeepEqual(tiers, tt.tiers) {
+			t.Errorf("%s: output %q in tiers %q, want %q in %q", tt.name, task.Output, tiers, tt.output, tt.tiers)
+		}
+		for i, r := range task.Results {
+			if r.CPUModel != tt.cpus[i] {
+				t.Errorf("%s: result %d from processor %q, want %q", tt.name, i, r.CPUModel, tt.cpus[i])
+			}
+		}
+	}
+
+	// Results compared byte for byte, or by a workload with one tolerance,
+	// are compared in no tier.
+	for _, compare := range []Comparer{nil, withinOne} {
+		j := verified(1, 2)
+		j.CompareBy(compare)
+		returningOn(j, j.Tasks[0], []string{"xeon", "xeon"}, "10", "10")
+		if task := j.Tasks[0]; task.State != Succeeded || !reflect.DeepEqual(task.Tiers(task.Agreed()), []string{""}) || task.Tier != "" {
+			t.Errorf("a task settled in no tier: %v %q %q", task.State, task.Tiers(task.Agreed()), task.Tier)
+		}
+	}
+
+	// A task settled and then verified after all no longer has a tier.
+	j := verified(1, 2)
+	j.Tasks[0].Verify = 1
+	j.CompareBy(tiered)
+	returningOn(j, j.Tasks[0], []string{"xeon"}, "10")
+	j.NoteTier(j.Tasks[0], "tight")
+	if again := j.Recheck("node-0"); len(again) != 1 || j.Tasks[0].Tier != "" || j.Tasks[0].Output != nil {
+		t.Errorf("a task verified after all: %v %q %q", again, j.Tasks[0].Tier, j.Tasks[0].Output)
+	}
+	if len(j.Unsaved().Tasks) == 0 {
+		t.Error("the task is not to be saved")
+	}
 }
 
 // returning has workers return these outputs for a task, in turn, and

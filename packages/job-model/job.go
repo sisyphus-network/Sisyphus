@@ -77,6 +77,14 @@ type Task struct {
 	// to check the worker's result: AuditMatched, AuditCaught or
 	// AuditInconclusive, or empty for a task that was not audited.
 	Audit string
+	// Tier is the tier of its workload's tolerances that the results which
+	// settled the task were held to, for a workload whose tolerance depends
+	// on where results were computed (runtime.TierSameCPU, TierCrossCPU or
+	// TierMixed; see runtime.SettledTier):
+	// by the workers that verified it, or by the coordinator's own result
+	// where an audit matched. Empty for a task settled by no comparison, or
+	// by one in no tier.
+	Tier string
 	// Progress is how far along the current attempt says it is, from 0 to
 	// 1, and StartedAt when that attempt was handed out. Neither is kept
 	// across a restart: an attempt in progress then is lost anyway.
@@ -238,6 +246,13 @@ const (
 func (j *Job) NoteAudit(t *Task, outcome string) {
 	t.Audit = outcome
 	j.touch(t)
+}
+
+// NoteTier records the tier of its workload's tolerances that settled a
+// task; see Task.Tier.
+func (j *Job) NoteTier(t *Task, tier string) {
+	t.Tier = tier
+	j.mark(t)
 }
 
 // Succeed records a task's output and reports whether every task is now done,

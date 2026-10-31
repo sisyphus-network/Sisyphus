@@ -309,6 +309,13 @@ func runDaemon(ctx context.Context, args []string) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// What the machine has, for a worker to tell its pool, and for a
+	// coordinator that is its own worker to compare the results it gets
+	// itself by.
+	var machine hardware.Info
+	if isWorker {
+		machine = hardware.Detect(ctx)
+	}
 	// Each role reports once when it stops; the first to stop ends the node.
 	stopped := make(chan error, 2)
 
@@ -634,7 +641,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		pruneChanges := make(chan struct{}, 1)
 		coord = coordinator.New(coordinator.Config{
 			Name: *name, RolesOf: func(id string) []pb.Role { return rolesInPool(admitted, id) },
-			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: poolLimits.MaxJobsPerClient, MaxTasksPerClient: poolLimits.MaxTasksPerClient, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, MaxUploadBytesPerAttempt: poolLimits.MaxUploadBytesPerAttempt, MaxTaskTimeout: poolLimits.MaxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
+			ID: ident.ID(), Sign: ident.Sign, Workloads: workloads, Audits: audits, CPUModel: machine.CPUModel, DistinctAddresses: *distinctAddresses, HardenedContainers: *hardenedContainers, MaxJobsPerClient: poolLimits.MaxJobsPerClient, MaxTasksPerClient: poolLimits.MaxTasksPerClient, MaxStoreBytesPerClient: poolLimits.MaxStoreBytesPerClient, MaxUploadBytesPerAttempt: poolLimits.MaxUploadBytesPerAttempt, MaxTaskTimeout: poolLimits.MaxTaskTimeout, Store: kept, ClientOf: api.ClientOf, Journal: db, Standings: db, Retain: *retain, KeepJobs: *keepJobs, Log: log,
 			WorkersChanged: local.NodeInfoChanges.Notify,
 			JobsChanged:    local.NodeInfoChanges.Notify,
 			PruneChanged: func() {
@@ -897,7 +904,7 @@ func runDaemon(ctx context.Context, args []string) error {
 			Slots: *slots, Workloads: runsAs(*name, runs), Blobs: blobs, Log: log,
 			ServeAddress: *advertise,
 			// What the machine has, as far as its owner offers it.
-			Hardware:          hardware.Detect(ctx).Offer(*maxMemory<<20, *maxGPUs),
+			Hardware:          machine.Offer(*maxMemory<<20, *maxGPUs),
 			HeartbeatInterval: workerHeartbeat,
 			// As much of where the node is as its owner shares.
 			Location: sharedLocation(db),

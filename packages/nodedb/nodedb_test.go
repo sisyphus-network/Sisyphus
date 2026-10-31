@@ -525,7 +525,7 @@ func loosen(t *testing.T, db *DB, table, columns string) {
 func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 	const (
 		jobColumns  = "seq, job_id, workload, params, mode, max_tasks, state, result, error, sealing_key, created_at_ns, finished_at_ns, task_timeout_ns, min_memory_bytes, min_gpus, parent_job_id, step, submitter_id, record_cid, private, verify, verify_share, audit_share"
-		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error, verify, audit"
+		taskColumns = "job_id DEFAULT 'j1', task_index, payload, state, attempt, failures, node_id, node_name, output, error, verify, audit, tier"
 		usedColumns = "used_server, used_version, used_model, used_digest, used_quantization, used_options"
 	)
 	for _, tt := range []struct {
@@ -537,7 +537,7 @@ func TestDamagedRowsAreReportedNotGuessedAt(t *testing.T) {
 		{"job_commitments", "job_id DEFAULT 'j1', name, commitment", "load job commitments"},
 		// A row for the one task there is, with nothing else in it.
 		{"task_attempts", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, state, error, " + usedColumns, "load attempts"},
-		{"task_results", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, output, blobs", "load task results"},
+		{"task_results", "job_id DEFAULT 'j1', task_index DEFAULT 0, attempt, node_id, node_name, output, blobs, cpu_model", "load task results"},
 	} {
 		db, _ := newDB(t)
 		save(t, db, jobmodel.New("j1", "primes", nil, jobmodel.Distributed, 1, [][]byte{nil}, submitted))
@@ -641,6 +641,8 @@ func TestAnUnfinishedPrivateJobFromBeforePrivacyWasKeptIsKnownForPrivate(t *test
 	// Put the database back as it was before the migration that added the
 	// column, and so before those that came after it, and open it again.
 	for _, statement := range []string{
+		`ALTER TABLE tasks DROP COLUMN tier`,
+		`ALTER TABLE task_results DROP COLUMN cpu_model`,
 		`DROP TABLE owner_location`,
 		`DROP TABLE file_pool_scopes`,
 		`DROP TABLE pool_file_holds`,
