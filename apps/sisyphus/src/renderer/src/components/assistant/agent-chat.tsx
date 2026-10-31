@@ -19,14 +19,24 @@ import { supportsChatFileReferences } from '@/lib/node-capabilities'
 import { loadMessages, type Activity, type AttachedFile, type ChatItem, type StoredChatMessage } from '@/lib/chat-history'
 import ShinyText from '@/components/ui/shiny-text'
 import { getNodeApi } from '@/lib/node-api'
+import { SharedStateDomain } from '@sisyphus/client'
+import { sharedStateDomainCode } from '@/lib/shared-state-domain'
+import { chatRevisionChange } from '@/lib/chat-summary-revisions'
 import { useBreakpoint } from '@/hooks/use-breakpoint'
 import { type getMessages } from '@/i18n/messages'
 import { formatMessage } from '@/i18n/messages'
 import { MAX_CLIENT_FILE_UPLOAD_BYTES, fileUploadLimitLabel } from '../../../../shared/file-upload-limit.ts'
 
 type Messages = ReturnType<typeof getMessages>
-type ChatSummary = { chatId: string; title: string; createdAtMs: string | number }
+type ChatSummary = { chatId: string; title: string; createdAtMs: string | number; revision?: string | number | bigint }
 type AskEvent = { chatId: string; kind: string; text: string; jobId?: string; tool?: string }
+type SharedChatsEvent = {
+  domain: number | string
+  error?: string
+  snapshot?: boolean
+  state?: { case?: string; value?: { chats?: ChatSummary[] } } | string
+  chatSummaries?: { chats?: ChatSummary[] }
+}
 
 function newId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` }
 function findLast<T>(items: T[], predicate: (item: T) => boolean) {
@@ -104,10 +114,17 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   const composerRef = useRef<HTMLDivElement>(null)
   const previewUrls = useRef(new Set<string>())
   const requestRef = useRef(0)
+  const refreshRequestRef = useRef(0)
   const streamCancel = useRef<(() => void) | null>(null)
   const assistantId = useRef('')
   const stickToBottom = useRef(true)
   const isBusy = asking || busy
+  const chatIdRef = useRef(chatId)
+  const isBusyRef = useRef(isBusy)
+  const chatRevisionsRef = useRef(new Map<string, string>())
+  const pendingChatRefreshRef = useRef<string | null>(null)
+  chatIdRef.current = chatId
+  isBusyRef.current = isBusy
 
   async function refreshChats() {
     try {
@@ -117,8 +134,62 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   }
 
   useEffect(() => {
-    if (snapshot.status === 'connected') void refreshChats()
+    if (snapshot.status !== 'connected') return
+    let active = true
+    let cancel: (() => void) | undefined
+    let retry: number | undefined
+    let attempt = 0
+    let fallbackRequested = false
+    const loadFallback = () => {
+      if (!active || fallbackRequested) return
+      fallbackRequested = true
+      void refreshChats()
+    }
+    const reconnect = () => {
+      if (!active || retry !== undefined) return
+      cancel = undefined
+      loadFallback()
+      retry = window.setTimeout(connect, Math.min(30_000, 500 * (2 ** Math.min(attempt++, 6))))
+    }
+    const connect = () => {
+      if (!active) return
+      retry = undefined
+      cancel = getNodeApi().stream<SharedChatsEvent>('watchSharedState', {
+        domains: [SharedStateDomain.CHAT_SUMMARIES],
+      }, (event) => {
+        if (sharedStateDomainCode(event.domain) !== 'chatSummaries' || event.error) return
+        const state = event.state && typeof event.state === 'object' ? event.state.value : undefined
+        const nextChats = state?.chats ?? event.chatSummaries?.chats
+        if (!nextChats) return
+        fallbackRequested = false
+        if (event.snapshot) attempt = 0
+        const selectedId = chatIdRef.current
+        const change = chatRevisionChange(chatRevisionsRef.current, nextChats, selectedId)
+        chatRevisionsRef.current = change.revisions
+        setChats(nextChats)
+        if (change.action === 'close') void openChat('')
+        else if (change.action === 'refresh' || (selectedId && pendingChatRefreshRef.current === selectedId)) {
+          if (isBusyRef.current) pendingChatRefreshRef.current = selectedId
+          else {
+            pendingChatRefreshRef.current = null
+            void refreshOpenChat(selectedId)
+          }
+        }
+      }, reconnect, reconnect)
+    }
+    connect()
+    return () => {
+      active = false
+      if (retry !== undefined) window.clearTimeout(retry)
+      cancel?.()
+    }
   }, [snapshot.status])
+  useEffect(() => {
+    if (isBusy) return
+    const pending = pendingChatRefreshRef.current
+    pendingChatRefreshRef.current = null
+    if (pending && pending === chatIdRef.current) void refreshOpenChat(pending)
+  }, [isBusy])
   // Workspace can switch between its desktop and compact layouts. If that
   // remounts this view, restore the selected conversation from its owner.
   useEffect(() => {
@@ -157,11 +228,14 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
   }, [items])
 
   async function openChat(id: string) {
+    pendingChatRefreshRef.current = null
     const requestId = ++requestRef.current
+    ++refreshRequestRef.current
     streamCancel.current?.()
     streamCancel.current = null
     setAsking(false)
     setChatId(id)
+    chatIdRef.current = id
     onActiveChatChange?.(id)
     setConversationLoading(Boolean(id))
     if (!id) { setItems([]); setConversationLoading(false); stickToBottom.current = true; return }
@@ -176,13 +250,28 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
     } finally { if (requestId === requestRef.current) setConversationLoading(false) }
   }
 
+  async function refreshOpenChat(id: string) {
+    const requestId = ++refreshRequestRef.current
+    try {
+      const result = await getNodeApi().call<{ messages?: StoredChatMessage[] }>('getChat', { chatId: id })
+      if (requestId === refreshRequestRef.current && chatIdRef.current === id) {
+        if (isBusyRef.current) pendingChatRefreshRef.current = id
+        else setItems(loadMessages(result.messages ?? []))
+      }
+    } catch {
+      // Keep the refresh pending so a later stream event, including a
+      // reconnect snapshot with the same revision, can retry it.
+      if (requestId === refreshRequestRef.current && chatIdRef.current === id) pendingChatRefreshRef.current = id
+    }
+  }
+
   async function deleteChat(id: string) {
     if (deletingChat) return
     setDeletingChat(true)
     try {
       await getNodeApi().call('deleteChat', { chatId: id })
       setChats((current) => current.filter((chat) => chat.chatId !== id))
-      if (chatId === id) { ++requestRef.current; streamCancel.current?.(); streamCancel.current = null; setAsking(false); setChatId(''); onActiveChatChange?.(''); setItems([]) }
+      if (chatIdRef.current === id) { ++requestRef.current; ++refreshRequestRef.current; streamCancel.current?.(); streamCancel.current = null; setAsking(false); setChatId(''); chatIdRef.current = ''; onActiveChatChange?.(''); setItems([]) }
       toast.success(messages.conversationDeleted)
       setDeleteTarget(null)
     } catch (error) { toast.error(messages.deleteConversationFailed, { description: error instanceof Error ? error.message : String(error) }) }
@@ -246,7 +335,7 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
         text: fullText,
         attachmentCids: storedAttachments.map((attachment) => attachment.cid),
       }, (event) => {
-        if (event.chatId && !chatId) { setChatId(event.chatId); onActiveChatChange?.(event.chatId) }
+        if (event.chatId && !chatIdRef.current) { setChatId(event.chatId); chatIdRef.current = event.chatId; onActiveChatChange?.(event.chatId) }
         if (event.kind === 'text') updateAssistant(answerId, (item) => ({ ...item, content: item.content + event.text }))
         if (event.kind === 'call') updateAssistant(answerId, (item) => ({ ...item, activities: [...(item.activities ?? []), { id: newId(), tool: event.tool || messages.agentActionUnknown, arguments: event.text, state: 'working' }] }))
         if (event.kind === 'job') updateAssistant(answerId, (item) => {
@@ -263,8 +352,8 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
         })
         if (event.kind === 'done') {
           setAsking(false)
+          isBusyRef.current = false
           streamCancel.current = null
-          void refreshChats()
         }
       }, (error, code) => {
         setAsking(false)

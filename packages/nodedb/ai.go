@@ -93,6 +93,8 @@ func (db *DB) SetModelConfig(cfg ModelConfig) error {
 type Chat struct {
 	ID, Title string
 	Created   time.Time
+	// Revision is the last persisted message sequence for this conversation.
+	Revision int64
 }
 
 // Chats lists the conversations on record, newest first.
@@ -101,13 +103,15 @@ func (db *DB) Chats() ([]Chat, error) {
 	err := db.read(func(rows *sql.Rows) error {
 		var c Chat
 		var created int64
-		if err := rows.Scan(&c.ID, &c.Title, &created); err != nil {
+		if err := rows.Scan(&c.ID, &c.Title, &created, &c.Revision); err != nil {
 			return err
 		}
 		c.Created = moment(created)
 		chats = append(chats, c)
 		return nil
-	}, `SELECT chat_id, title, created_at_ns FROM chats ORDER BY created_at_ns DESC, chat_id`)
+	}, `SELECT c.chat_id, c.title, c.created_at_ns,
+		COALESCE((SELECT MAX(m.seq) FROM chat_messages m WHERE m.chat_id = c.chat_id), 0)
+		FROM chats c ORDER BY c.created_at_ns DESC, c.chat_id`)
 	if err != nil {
 		return nil, fmt.Errorf("load chats: %w", err)
 	}

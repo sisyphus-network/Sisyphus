@@ -99,7 +99,7 @@ func TestModelProfilesKeepMultipleServicesAndOnlyOneActive(t *testing.T) {
 func TestChatsAndWhatWasSaidInThem(t *testing.T) {
 	db, file := newDB(t)
 	at := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
-	for _, c := range []Chat{{"older", "Primes below a million", at}, {"newer", "Word counts", at.Add(time.Hour)}} {
+	for _, c := range []Chat{{ID: "older", Title: "Primes below a million", Created: at}, {ID: "newer", Title: "Word counts", Created: at.Add(time.Hour)}} {
 		if err := db.CreateChat(c); err != nil {
 			t.Fatal(err)
 		}
@@ -119,6 +119,9 @@ func TestChatsAndWhatWasSaidInThem(t *testing.T) {
 	if err != nil || len(chats) != 2 || chats[0].ID != "newer" || chats[1].Title != "Primes below a million" || !chats[1].Created.Equal(at) {
 		t.Errorf("chats, newest first: %+v, %v", chats, err)
 	}
+	if len(chats) == 2 && (chats[0].Revision != 1 || chats[1].Revision != 3) {
+		t.Errorf("chat revisions = %d, %d; want 1, 3", chats[0].Revision, chats[1].Revision)
+	}
 	said, err := db.ChatMessages("older")
 	if err != nil || !reflect.DeepEqual(said, []string{`{"role":"user"}`, `{"role":"assistant"}`, `{"role":"tool"}`}) {
 		t.Errorf("what was said, in order: %v, %v", said, err)
@@ -137,7 +140,7 @@ func TestChatsAndWhatWasSaidInThem(t *testing.T) {
 	if err := db.AppendChatMessages("older", []string{`{}`}, at); err == nil || !strings.Contains(err.Error(), "save chat messages") {
 		t.Errorf("saying something in a deleted chat: %v", err)
 	}
-	if err := db.CreateChat(Chat{"newer", "again", at}); err == nil || !strings.Contains(err.Error(), "save chat") {
+	if err := db.CreateChat(Chat{ID: "newer", Title: "again", Created: at}); err == nil || !strings.Contains(err.Error(), "save chat") {
 		t.Errorf("starting a chat twice: %v", err)
 	}
 }

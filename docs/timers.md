@@ -72,6 +72,8 @@ Other completed migrations include relay placement via events and deadlines ([#4
 
 These are UI lifecycle, retry, or feedback waits; none is a steady-state node snapshot poll. Node/peer state uses an initial fetch followed by the shared stream. The workspace reads the public city estimate from the node snapshot, the owner-only pin from the authenticated shared `NODE` stream, and worker metadata from the shared `WORKERS` domain; a peer update does not trigger extra `GetNodeInfo` or `ListWorkers` calls. A one-shot `GetNodeLocation` fallback is used only if the shared stream is unavailable, and a fresh baseline is fetched after reconnect.
 
+Chat summaries use the same shared-state stream: the daemon publishes IDs, titles, creation times and per-chat revisions, never message contents. A changed list refreshes the summaries, and only a known selected chat with a changed revision reloads its messages. Updates to other chats do not blank the current conversation or move its scroll position; no steady-state chat-list or conversation polling is used.
+
 | Where | What it waits for | Kind | Interval | Why it is a timer |
 | --- | --- | --- | --- | --- |
 | `apps/sisyphus/src/main/index.ts`, `scheduleReconnect` | A failed daemon connection or state stream | Retry | Exponential, 1 s to 15 s; reset after `getNodeInfo` succeeds | Restarts the Electron connection and obtains a fresh node baseline. |

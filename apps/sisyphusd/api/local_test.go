@@ -250,6 +250,71 @@ func TestWatchSharedStateStreamsPoolMembershipToIndependentClients(t *testing.T)
 	}
 }
 
+func TestWatchSharedStateStreamsChatSummariesToIndependentClients(t *testing.T) {
+	const token = "the-token"
+	assistant := &sharedChatsAssistant{}
+	changes := NewNodeInfoChanges()
+	client := serveLocal(t, LocalConfig{Assistant: assistant, NodeInfoChanges: changes})
+	otherClient := serveLocal(t, LocalConfig{Assistant: assistant, NodeInfoChanges: changes})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES}}
+	ctx1, cancel1 := context.WithCancel(withToken(token))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken(token))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := otherClient.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || event.GetChatSummaries() == nil || event.GetChatSummaries().GetRevision() != 0 || len(event.GetChatSummaries().GetChats()) != 0 {
+			t.Fatalf("initial chat-summary snapshot = %v, %v", event, err)
+		}
+	}
+	task, err := client.Ask(withToken(token), &nodepb.AskRequest{Text: "A question from another client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := task.Recv()
+	if err != nil || done.GetKind() != "done" || done.GetChatId() != "shared-chat" {
+		t.Fatalf("Ask completion = %v, %v", done, err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		chats := event.GetChatSummaries().GetChats()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || event.GetChatSummaries().GetRevision() != 1 || len(chats) != 1 || chats[0].GetChatId() != "shared-chat" || chats[0].GetRevision() != 1 {
+			t.Fatalf("chat created by Ask = %v, %v", event, err)
+		}
+	}
+	task, err = client.Ask(withToken(token), &nodepb.AskRequest{ChatId: "shared-chat", Text: "A follow-up from another client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done, err = task.Recv(); err != nil || done.GetKind() != "done" {
+		t.Fatalf("follow-up Ask completion = %v, %v", done, err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 3 || event.GetChatSummaries().GetRevision() != 2 || len(event.GetChatSummaries().GetChats()) != 1 || event.GetChatSummaries().GetChats()[0].GetRevision() != 2 {
+			t.Fatalf("updated existing chat event = %v, %v", event, err)
+		}
+	}
+	if _, err := client.DeleteChat(withToken(token), &nodepb.DeleteChatRequest{ChatId: "shared-chat"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 4 || event.GetSnapshot() || event.GetChatSummaries().GetRevision() != 3 || len(event.GetChatSummaries().GetChats()) != 0 {
+			t.Fatalf("deleted chat-summary event = %v, %v", event, err)
+		}
+	}
+}
+
 func peerEntry(id string, connected, trusted bool) *nodepb.Peer {
 	state := nodepb.PeerConnectionState_PEER_CONNECTION_STATE_DISCONNECTED
 	if connected {
@@ -658,9 +723,24 @@ func TestLocationDiscoverySnapshotUnavailable(t *testing.T) {
 	}
 }
 
+func TestChatRevisionSharedAcrossLocalServices(t *testing.T) {
+	changes := NewNodeInfoChanges()
+	first := &localService{cfg: LocalConfig{NodeInfoChanges: changes}}
+	second := &localService{cfg: LocalConfig{NodeInfoChanges: changes}}
+	first.chatRevisionCounter().Add(1)
+	if got := second.chatRevisionCounter().Load(); got != 1 {
+		t.Fatalf("second service revision = %d, want 1", got)
+	}
+	standalone := &localService{}
+	standalone.chatRevisionCounter().Add(1)
+	if got := standalone.chatRevisionCounter().Load(); got != 1 {
+		t.Fatalf("standalone revision = %d, want 1", got)
+	}
+}
+
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
-	if err != nil || len(all) != 12 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS {
+	if err != nil || len(all) != 13 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS || all[12] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES {
 		t.Fatalf("default shared-state domains = %v, %v", all, err)
 	}
 	unique, err := sharedStateDomains([]nodepb.SharedStateDomain{
@@ -674,7 +754,7 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_UNSPECIFIED}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unspecified shared-state domain error = %v, want InvalidArgument", err)
 	}
-	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(13)}); status.Code(err) != codes.InvalidArgument {
+	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(14)}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown shared-state domain error = %v, want InvalidArgument", err)
 	}
 
@@ -684,10 +764,11 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store, Lending: newFileList(t), Files: newFileList(t), Store: storage.NewMemory(), PoolLimits: &memoryPoolLimits{}, LocationDiscovery: &memoryDiscovery{}, WebAccess: &webAccessControllerStub{},
 		Pool:       NewPoolAdmin(Config{Identity: newIdentity(t), Access: newList(t), Coordinator: newCoordinator(t)}),
 		JoinedPool: func() *nodepb.JoinedPool { return &nodepb.JoinedPool{CoordinatorId: "coordinator"} },
-		Assistant:  &profiledAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}, profiles: []nodedb.ModelProfile{{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}}}},
+		Assistant:  &sharedChatsAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}, profiles: []nodedb.ModelProfile{{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}}}},
 	}}
+	ownerContext := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
 	for _, domain := range all {
-		event := service.sharedStateSnapshot(withToken("the-token"), domain)
+		event := service.sharedStateSnapshot(ownerContext, domain)
 		if event.GetError() != "" || event.GetState() == nil {
 			t.Fatalf("snapshot for %s = %v; want typed state", domain, event)
 		}
@@ -708,6 +789,10 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	unavailablePoolMembers := (&localService{}).sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS)
 	if unavailablePoolMembers.GetError() == "" || unavailablePoolMembers.GetState() != nil {
 		t.Fatalf("unavailable pool-members snapshot = %v; want per-domain error", unavailablePoolMembers)
+	}
+	unavailableChatSummaries := (&localService{}).sharedStateSnapshot(context.Background(), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES)
+	if unavailableChatSummaries.GetError() == "" || unavailableChatSummaries.GetState() != nil {
+		t.Fatalf("unavailable chat-summaries snapshot = %v; want per-domain error", unavailableChatSummaries)
 	}
 	failedModelConfig := (&localService{cfg: LocalConfig{Assistant: &profiledAssistant{configErr: errAbsent}}}).sharedStateSnapshot(withToken("the-token"), nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES)
 	if failedModelConfig.GetError() == "" || failedModelConfig.GetState() != nil {
@@ -2009,6 +2094,41 @@ func TestThePlannersCallsOnANodeWithoutOneAndOnOneThatFails(t *testing.T) {
 	}
 }
 
+func TestGetChatReturnsMessagesAndToolCalls(t *testing.T) {
+	assistant := &chatMessagesAssistant{messages: []ai.Message{
+		{Role: ai.User, Content: "question"},
+		{Role: ai.Assistant, Content: "answer", Calls: []ai.Call{{
+			Name: "lookup", Arguments: []byte(`{"q":"question"}`),
+		}}},
+	}}
+	s := &localService{cfg: LocalConfig{Token: "the-token", Assistant: assistant}}
+	req := &nodepb.GetChatRequest{ChatId: "chat-1"}
+
+	if _, err := s.GetChat(context.Background(), req); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("GetChat without the node token = %v; want permission denied", err)
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer the-token"))
+	got, err := s.GetChat(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assistant.chatID != "chat-1" {
+		t.Fatalf("Chat called with %q; want chat-1", assistant.chatID)
+	}
+	if len(got.GetMessages()) != 2 || got.GetMessages()[0].GetRole() != ai.User || got.GetMessages()[0].GetContent() != "question" {
+		t.Fatalf("chat messages = %v; want user question and assistant response", got.GetMessages())
+	}
+	answer := got.GetMessages()[1]
+	if answer.GetRole() != ai.Assistant || answer.GetContent() != "answer" || len(answer.GetCalls()) != 1 {
+		t.Fatalf("assistant message = %v; want answer with one tool call", answer)
+	}
+	call := answer.GetCalls()[0]
+	if call.GetName() != "lookup" || call.GetArguments() != `{"q":"question"}` {
+		t.Fatalf("tool call = %v; want lookup with the original arguments", call)
+	}
+}
+
 func TestListNetworkInterfacesRequiresNodeTokenAndReturnsUsableAddresses(t *testing.T) {
 	service := &localService{cfg: LocalConfig{Token: "the-token"}}
 	if _, err := service.ListNetworkInterfaces(context.Background(), &nodepb.ListNetworkInterfacesRequest{}); status.Code(err) != codes.PermissionDenied {
@@ -2137,6 +2257,61 @@ type sharedModelStateAssistant struct {
 	mu       sync.Mutex
 	config   nodedb.ModelConfig
 	profiles map[string]nodedb.ModelProfile
+}
+
+type sharedChatsAssistant struct {
+	Assistant
+	mu       sync.Mutex
+	chats    []nodedb.Chat
+	config   nodedb.ModelConfig
+	profiles []nodedb.ModelProfile
+}
+
+type chatMessagesAssistant struct {
+	Assistant
+	messages []ai.Message
+	chatID   string
+}
+
+func (a *chatMessagesAssistant) Chat(id string) ([]ai.Message, error) {
+	a.chatID = id
+	return a.messages, nil
+}
+
+func (a *sharedChatsAssistant) Chats() ([]nodedb.Chat, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]nodedb.Chat(nil), a.chats...), nil
+}
+
+func (a *sharedChatsAssistant) DeleteChat(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.chats = slices.DeleteFunc(a.chats, func(chat nodedb.Chat) bool { return chat.ID == id })
+	return nil
+}
+
+func (a *sharedChatsAssistant) Ask(_ context.Context, chatID, text string, _ func(string, planner.Event)) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if chatID == "" {
+		chatID = "shared-chat"
+		a.chats = append(a.chats, nodedb.Chat{ID: chatID, Title: text, Created: time.Now()})
+	}
+	for i := range a.chats {
+		if a.chats[i].ID == chatID {
+			a.chats[i].Revision++
+		}
+	}
+	return chatID, nil
+}
+
+func (a *sharedChatsAssistant) ModelConfig() (nodedb.ModelConfig, bool, error) {
+	return a.config, a.config.Provider != "", nil
+}
+
+func (a *sharedChatsAssistant) ModelProfiles() ([]nodedb.ModelProfile, error) {
+	return a.profiles, nil
 }
 
 func (a *sharedModelStateAssistant) ModelConfig() (nodedb.ModelConfig, bool, error) {
