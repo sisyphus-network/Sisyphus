@@ -56,6 +56,12 @@ message Hello {
   // the precision its owner chose. Absent if the owner shares only the
   // country, or nothing, or has given no location.
   SharedLocation shared_location = 7;
+  // Set when the worker's owner does not let it take new tasks as it
+  // connects: it is paused, or shares only while its owner is away and
+  // they are not. The coordinator gives it none until a heartbeat says
+  // otherwise. A coordinator from before this was said gives it tasks
+  // regardless, and the worker runs them.
+  bool unavailable = 8;
 }
 
 message Heartbeat {
@@ -70,6 +76,10 @@ message Heartbeat {
   // Set when what the worker's owner lets the pool see of where it is has
   // changed since the worker last said. Absent, it is as it was.
   LocationUpdate location = 5;
+  // Whether the worker's owner lets it take new tasks now, as for
+  // Hello.unavailable. Every heartbeat says it. Tasks the worker is
+  // running when it is set carry on.
+  bool unavailable = 6;
 }
 
 message Labels { repeated string labels = 1; }

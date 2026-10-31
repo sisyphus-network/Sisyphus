@@ -332,8 +332,11 @@ type worker struct {
 	remove  sync.Once
 
 	capabilities *pb.NodeCapabilities
-	connectedAt  time.Time
-	lastSeen     time.Time
+	// unavailable is whether the worker's owner keeps it from taking new
+	// tasks now, as it last said: it is given none while it is.
+	unavailable bool
+	connectedAt time.Time
+	lastSeen    time.Time
 	// send holds the messages waiting to go out on the worker's stream.
 	send    *outbox
 	running map[string]assignment // by task ID
@@ -1250,6 +1253,7 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 		location:       sharedLocation(hello.GetSharedLocation()),
 		holds:          make(map[string]struct{}),
 		capabilities:   capabilities,
+		unavailable:    hello.GetUnavailable(),
 		connectedAt:    now,
 		lastSeen:       now,
 		send:           newOutbox(),
@@ -1312,6 +1316,12 @@ func (c *Coordinator) Connect(stream grpc.BidiStreamingServer[pb.WorkerMessage, 
 					labels := labelsOf(w.id, w.name, changed.GetLabels())
 					workerStateChanged = workerStateChanged || !slices.Equal(w.capabilities.GetLabels(), labels)
 					w.capabilities.Labels = labels
+					c.scheduleLocked()
+				}
+				if unavailable := kind.Heartbeat.GetUnavailable(); unavailable != w.unavailable {
+					w.unavailable = unavailable
+					workerStateChanged = true
+					// Its free slots may be what a waiting job needs.
 					c.scheduleLocked()
 				}
 				if moved := kind.Heartbeat.GetLocation(); moved != nil {
@@ -2215,7 +2225,8 @@ func (c *Coordinator) handLocked(w *worker, a assignment) {
 }
 
 // pickWorkerLocked returns the worker with the most free slots that supports
-// the workload, or nil if none has a free slot. held reports a nil that is
+// the workload and whose owner lets it take new tasks now, or nil if none
+// has a free slot. held reports a nil that is
 // only the task waiting for a busy worker while one it went wrong on is free. A worker that has a copy of
 // the task, or has returned a result for it, is passed over: only a task of
 // a verified job has such workers while it waits for another.
@@ -2236,7 +2247,10 @@ func (c *Coordinator) pickWorkerLocked(job *jobmodel.Job, task *jobmodel.Task) (
 	var bestRank, againRank rank
 	elsewhere := false
 	for _, w := range c.workers {
-		if !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) || c.besideLocked(task, w.id) {
+		// A worker its owner keeps from new tasks is passed over as though
+		// it were not there, so that a task does not wait for it when it
+		// could go back to one it went wrong on.
+		if w.unavailable || !suits(w.capabilities, job.Workload, job.MinMemory, job.MinGPUs, job.Needs) || task.Asked(w.id) || c.besideLocked(task, w.id) {
 			continue
 		}
 		r := rank{free: w.freeFor(job.Cards), id: w.id}

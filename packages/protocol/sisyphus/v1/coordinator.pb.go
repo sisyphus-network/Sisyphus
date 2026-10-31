@@ -226,8 +226,14 @@ type Hello struct {
 	// the precision its owner chose. Absent if the owner shares only the
 	// country, or nothing, or has given no location.
 	SharedLocation *SharedLocation `protobuf:"bytes,7,opt,name=shared_location,json=sharedLocation,proto3" json:"shared_location,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Set when the worker's owner does not let it take new tasks as it
+	// connects: it is paused, or shares only while its owner is away and
+	// they are not. The coordinator gives it none until a heartbeat says
+	// otherwise. A coordinator from before this was said gives it tasks
+	// regardless, and the worker runs them.
+	Unavailable   bool `protobuf:"varint,8,opt,name=unavailable,proto3" json:"unavailable,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Hello) Reset() {
@@ -302,6 +308,13 @@ func (x *Hello) GetSharedLocation() *SharedLocation {
 	return nil
 }
 
+func (x *Hello) GetUnavailable() bool {
+	if x != nil {
+		return x.Unavailable
+	}
+	return false
+}
+
 type Heartbeat struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	RunningTasks uint32                 `protobuf:"varint,1,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
@@ -314,7 +327,11 @@ type Heartbeat struct {
 	Labels *Labels `protobuf:"bytes,4,opt,name=labels,proto3" json:"labels,omitempty"`
 	// Set when what the worker's owner lets the pool see of where it is has
 	// changed since the worker last said. Absent, it is as it was.
-	Location      *LocationUpdate `protobuf:"bytes,5,opt,name=location,proto3" json:"location,omitempty"`
+	Location *LocationUpdate `protobuf:"bytes,5,opt,name=location,proto3" json:"location,omitempty"`
+	// Whether the worker's owner lets it take new tasks now, as for
+	// Hello.unavailable. Every heartbeat says it. Tasks the worker is
+	// running when it is set carry on.
+	Unavailable   bool `protobuf:"varint,6,opt,name=unavailable,proto3" json:"unavailable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -382,6 +399,13 @@ func (x *Heartbeat) GetLocation() *LocationUpdate {
 		return x.Location
 	}
 	return nil
+}
+
+func (x *Heartbeat) GetUnavailable() bool {
+	if x != nil {
+		return x.Unavailable
+	}
+	return false
 }
 
 type Labels struct {
@@ -1299,20 +1323,22 @@ const file_sisyphus_v1_coordinator_proto_rawDesc = "" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12\x1a\n" +
 	"\bprogress\x18\x03 \x01(\x01R\bprogress\x12\x10\n" +
-	"\x03log\x18\x04 \x03(\tR\x03log\"\xa1\x02\n" +
+	"\x03log\x18\x04 \x03(\tR\x03log\"\xc3\x02\n" +
 	"\x05Hello\x12A\n" +
 	"\fcapabilities\x18\x02 \x01(\v2\x1d.sisyphus.v1.NodeCapabilitiesR\fcapabilities\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12#\n" +
 	"\rserve_address\x18\x04 \x01(\tR\fserveAddress\x12'\n" +
 	"\x0frelay_addresses\x18\x05 \x03(\tR\x0erelayAddresses\x12'\n" +
 	"\x0fdialled_address\x18\x06 \x01(\tR\x0edialledAddress\x12D\n" +
-	"\x0fshared_location\x18\a \x01(\v2\x1b.sisyphus.v1.SharedLocationR\x0esharedLocationJ\x04\b\x01\x10\x02\"\xec\x01\n" +
+	"\x0fshared_location\x18\a \x01(\v2\x1b.sisyphus.v1.SharedLocationR\x0esharedLocation\x12 \n" +
+	"\vunavailable\x18\b \x01(\bR\vunavailableJ\x04\b\x01\x10\x02\"\x8e\x02\n" +
 	"\tHeartbeat\x12#\n" +
 	"\rrunning_tasks\x18\x01 \x01(\rR\frunningTasks\x12/\n" +
 	"\x13relayed_connections\x18\x02 \x01(\x04R\x12relayedConnections\x12#\n" +
 	"\rrelayed_bytes\x18\x03 \x01(\x04R\frelayedBytes\x12+\n" +
 	"\x06labels\x18\x04 \x01(\v2\x13.sisyphus.v1.LabelsR\x06labels\x127\n" +
-	"\blocation\x18\x05 \x01(\v2\x1b.sisyphus.v1.LocationUpdateR\blocation\" \n" +
+	"\blocation\x18\x05 \x01(\v2\x1b.sisyphus.v1.LocationUpdateR\blocation\x12 \n" +
+	"\vunavailable\x18\x06 \x01(\bR\vunavailable\" \n" +
 	"\x06Labels\x12\x16\n" +
 	"\x06labels\x18\x01 \x03(\tR\x06labels\"V\n" +
 	"\x0eLocationUpdate\x12D\n" +

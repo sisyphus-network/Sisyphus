@@ -29,6 +29,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/apps/sisyphusd/blobclient"
 	"github.com/sisyphus-network/Sisyphus/packages/geo"
 	"github.com/sisyphus-network/Sisyphus/packages/hardware"
+	"github.com/sisyphus-network/Sisyphus/packages/idle"
 	pb "github.com/sisyphus-network/Sisyphus/packages/protocol/sisyphus/v1"
 	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 	"github.com/sisyphus-network/Sisyphus/packages/sealed"
@@ -68,6 +69,17 @@ type Worker struct {
 	// worker tells its coordinator of only those, and refuses a task of any
 	// other. The zero value takes all but the opt-in ones.
 	Accepts runtime.Acceptance
+	// Sharing, if set, is when the node's owner lets it take new tasks:
+	// always, only while they are away from the machine, or never. Nil is
+	// always. While it may not, the worker tells its coordinator so, which
+	// then gives it none, and the tasks it is running carry on.
+	Sharing *idle.Policy
+	// Throttle, if set, is called with true while Sharing keeps the worker
+	// from new tasks, so that the tasks running give way to the owner's
+	// work, and with false while it does not: as each connection to the
+	// coordinator begins, and whenever that changes. With Sharing nil it is
+	// never called.
+	Throttle func(ctx context.Context, low bool)
 	// Blobs is the stored data this node's tasks can read and write.
 	Blobs runtime.Blobs
 	// Hardware is what the machine has that its owner offers to the pool.
@@ -196,12 +208,29 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 	// Only the heartbeat below reads or changes shared once the Hello is
 	// sent.
 	shared := w.sharedLocation()
+	// Whether the owner lets the worker take new tasks goes with the Hello
+	// and every heartbeat. It is read as a heartbeat is sent, so that the
+	// last one sent always says what it is now.
+	var unavailable atomic.Bool
+	reason := w.availability(ctx)
+	unavailable.Store(reason != idle.Free)
+	if w.sharesSometimes() {
+		w.sayAvailability(reason, 0)
+		w.throttle(ctx, reason != idle.Free)
+	}
+	heartbeat := func(heartbeat *pb.Heartbeat) {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		heartbeat.Unavailable = unavailable.Load()
+		stream.Send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: heartbeat}})
+	}
 	send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Hello{Hello: &pb.Hello{
 		Name:         w.Name,
 		Capabilities: hello,
 		ServeAddress: w.ServeAddress, RelayAddresses: w.RelayAddresses,
 		DialledAddress: dialled(stream.Context()),
 		SharedLocation: shared,
+		Unavailable:    unavailable.Load(),
 	}}})
 
 	var running atomic.Int32
@@ -247,9 +276,7 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 		if !slices.Equal(now, offered) {
 			offered = now
 			w.storeOffered(now)
-			send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: &pb.Heartbeat{
-				RunningTasks: uint32(running.Load()), Labels: &pb.Labels{Labels: now},
-			}}})
+			heartbeat(&pb.Heartbeat{RunningTasks: uint32(running.Load()), Labels: &pb.Labels{Labels: now}})
 		}
 		return false
 	}
@@ -265,25 +292,32 @@ func (w *Worker) session(ctx context.Context) (welcomed bool, err error) {
 		for {
 			select {
 			case <-ticker.C:
-				heartbeat := &pb.Heartbeat{RunningTasks: uint32(running.Load())}
+				beat := &pb.Heartbeat{RunningTasks: uint32(running.Load())}
 				if w.Relayed != nil {
-					heartbeat.RelayedConnections, heartbeat.RelayedBytes = w.Relayed()
+					beat.RelayedConnections, beat.RelayedBytes = w.Relayed()
 				}
-				send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: heartbeat}})
+				heartbeat(beat)
 			case <-w.changes():
 				refresh()
 			case <-w.movedChanges():
 				if now := w.sharedLocation(); !proto.Equal(now, shared) {
 					shared = now
-					send(&pb.WorkerMessage{Kind: &pb.WorkerMessage_Heartbeat{Heartbeat: &pb.Heartbeat{
-						RunningTasks: uint32(running.Load()), Location: &pb.LocationUpdate{SharedLocation: now},
-					}}})
+					heartbeat(&pb.Heartbeat{RunningTasks: uint32(running.Load()), Location: &pb.LocationUpdate{SharedLocation: now}})
 				}
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+
+	if w.watchesOwner() {
+		tasks.Go(func() {
+			w.watchOwner(ctx, reason, running.Load, func(free bool) {
+				unavailable.Store(!free)
+				heartbeat(&pb.Heartbeat{RunningTasks: uint32(running.Load())})
+			})
+		})
+	}
 
 	for {
 		msg, err := stream.Recv()
