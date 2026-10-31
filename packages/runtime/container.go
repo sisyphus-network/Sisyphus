@@ -451,6 +451,12 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 	for _, key := range sortedKeys(task.Env) {
 		args = append(args, "--env", key+"="+task.Env[key])
 	}
+	// While the machine's owner is using it, a container starts with a low
+	// share of the processor, and one running is given it; see Throttle.
+	if containers.start(name, engine) {
+		args = append(args, "--cpu-shares", lowShares)
+	}
+	defer containers.stop(name)
 	args = append(append(args, task.Image), task.Command...)
 
 	// What the command prints is the task's log as it goes, and stdout is

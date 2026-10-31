@@ -1,0 +1,4 @@
+      2 1000 ada       seat0 tty2   active  no  -
+     14 1000 ada       -     pts/1  active  yes 12min ago
+     c1  120 gdm       seat0 tty1   active  yes 3h ago
+    187 1000 ada       -     -      active  no  -

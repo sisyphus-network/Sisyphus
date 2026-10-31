@@ -627,7 +627,7 @@ func (g *guestWork) work(ctx context.Context, id, addr string) error {
 	log := g.template.Log
 	creds := credentials.NewTLS(g.ident.ClientTLS(id))
 	w := &worker.Worker{
-		Name: g.template.Name, Slots: g.template.Slots, Workloads: g.template.Workloads, Accepts: g.template.Accepts, Limit: g.template.Limit, Pool: id, Log: log, Hardware: g.template.Hardware,
+		Name: g.template.Name, Slots: g.template.Slots, Workloads: g.template.Workloads, Accepts: g.template.Accepts, Sharing: g.template.Sharing, Throttle: g.template.Throttle, Limit: g.template.Limit, Pool: id, Log: log, Hardware: g.template.Hardware,
 		Location:    g.template.Location,
 		Coordinator: addr, Credentials: creds,
 	}

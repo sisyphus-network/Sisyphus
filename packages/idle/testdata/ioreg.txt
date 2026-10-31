@@ -1,0 +1,10 @@
++-o Root  <class IORegistryEntry, id 0x100000100, retain 31>
+  +-o J314sAP  <class IOPlatformExpertDevice, id 0x100000226, registered, matched, active, busy 0 (2101 ms), retain 39>
+    +-o AppleARMPE  <class AppleARMPE, id 0x100000227, registered, matched, active, busy 0 (2089 ms), retain 22>
+      +-o IOHIDSystem  <class IOHIDSystem, id 0x10000052a, registered, matched, active, busy 0 (0 ms), retain 34>
+          {
+            "IOClass" = "IOHIDSystem"
+            "HIDIdleTime" = 421337000000
+            "HIDScrollAcceleration" = 20480
+            "IOProviderClass" = "IOResources"
+          }

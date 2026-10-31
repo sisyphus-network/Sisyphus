@@ -48,6 +48,7 @@ import (
 	"github.com/sisyphus-network/Sisyphus/packages/geo/citytable"
 	"github.com/sisyphus-network/Sisyphus/packages/hardware"
 	"github.com/sisyphus-network/Sisyphus/packages/identity"
+	"github.com/sisyphus-network/Sisyphus/packages/idle"
 	"github.com/sisyphus-network/Sisyphus/packages/ipfscluster"
 	"github.com/sisyphus-network/Sisyphus/packages/kubo"
 	"github.com/sisyphus-network/Sisyphus/packages/names"
@@ -104,6 +105,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	maxConnections := fs.Int("max-connections", 0, "how many connections to take at once from other nodes and their command lines, on --listen; 0 takes as many as half the files the system lets this program have open, which on most machines is far more than a pool needs. An eighth of them, and at least 256, may come from one address")
 	allowWorkloads := fs.String("allow-workloads", "", "worker role: the workloads this machine takes, separated by commas: workload names, such as primes or transcode, and groups of them: default (every workload but the opt-in ones), containers (those that run in containers) and models (those that use --models-from). An opt-in workload is taken only if it, or a group it is in other than default, is named here. Empty takes the default group")
 	denyWorkloads := fs.String("deny-workloads", "", "worker role: workloads and groups, named as for --allow-workloads, that this machine never takes, even if allowed there")
+	share := fs.String("share", "always", "worker role: when this machine takes new tasks: always; idle, only once nobody has used its keyboard or mouse for --idle-after and while it is not running on battery; or paused, never. In idle mode, tasks running when someone comes back to the machine finish, with a low share of the processor if they run in containers. Where the machine cannot tell when it was last used, idle takes no tasks")
+	idleAfter := fs.Duration("idle-after", 5*time.Minute, "worker role, with --share idle: how long nobody must have used the machine before it takes new tasks")
 	containers := fs.Bool("containers", false, "worker role: run container images for the pool's jobs, with Docker. This lets whoever may submit jobs to the pool run what they like on this machine")
 	maxMemory := fs.Uint64("offer-memory-mb", 0, "worker role: tell the pool this node has no more than this much memory, in mebibytes; 0 offers all it has")
 	maxGPUs := fs.Int("offer-gpus", -1, "worker role: tell the pool this node has no more than this many graphics cards; -1 offers all it has")
@@ -301,6 +304,15 @@ func runDaemon(ctx context.Context, args []string) error {
 	acceptance, err := runtime.Accept(workloads, listOf(*allowWorkloads), listOf(*denyWorkloads))
 	if err != nil {
 		return fmt.Errorf("--allow-workloads, --deny-workloads: %w", err)
+	}
+	sharing, err := sharingFrom(fs, *share, *idleAfter, isWorker)
+	if err != nil {
+		return err
+	}
+	if sharing != nil && sharing.Mode == idle.WhenIdle {
+		if _, known := sharing.Detector.Idle(ctx); !known {
+			log.Warn("--share idle: this machine cannot tell when it was last used, so it takes it to be in use and takes no tasks until it can tell. On Linux that is told by logind, on macOS by IOKit and on Windows by GetLastInputInfo, which a node run as a service cannot use")
+		}
 	}
 	if *containers {
 		if err := checkContainers(ctx, confined); err != nil {
@@ -925,6 +937,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		w := &worker.Worker{
 			Name: *name, Coordinator: *join, Credentials: creds,
 			Slots: *slots, Workloads: runsAs(*name, runs), Accepts: acceptance, Blobs: blobs, Log: log,
+			Sharing: sharing, Throttle: runtime.Throttle,
 			ServeAddress: *advertise,
 			// What the machine has, as far as its owner offers it.
 			Hardware:          machine.Offer(*maxMemory<<20, *maxGPUs),
@@ -2533,6 +2546,35 @@ func replayFilePinsOnChanges(ctx context.Context, planning *assistant, retryInte
 type garbageCollectionOptions struct {
 	enabled  bool
 	interval time.Duration
+}
+
+// idleDetector and onBattery are what a node started with --share idle asks
+// of whether its owner is using it. Tests put fakes in their place.
+var (
+	idleDetector = idle.System
+	onBattery    = idle.RunsOnBattery
+)
+
+// sharingFrom is when a worker's owner lets it take new tasks, as --share
+// and --idle-after say: nil for always.
+func sharingFrom(fs *flag.FlagSet, share string, after time.Duration, isWorker bool) (*idle.Policy, error) {
+	mode, err := idle.ParseMode(share)
+	if err != nil {
+		return nil, fmt.Errorf("--share: %w", err)
+	}
+	given := false
+	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "idle-after" })
+	switch {
+	case (mode != idle.Always || given) && !isWorker:
+		return nil, errors.New("--share and --idle-after say when a worker takes tasks, and need the worker role")
+	case given && mode != idle.WhenIdle:
+		return nil, errors.New("--idle-after is how long the machine must go unused with --share idle, and needs it")
+	case after <= 0:
+		return nil, errors.New("--idle-after must be more than 0")
+	case mode == idle.Always:
+		return nil, nil
+	}
+	return &idle.Policy{Mode: mode, After: after, Detector: idleDetector(), OnBattery: onBattery}, nil
 }
 
 func garbageCollectionOptionsFrom(fs *flag.FlagSet, interval time.Duration) garbageCollectionOptions {
