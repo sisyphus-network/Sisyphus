@@ -94,7 +94,7 @@ func TestWhatAnOwnerAllowsAndDenies(t *testing.T) {
 		{name: "a group", allow: []string{GroupModels}, want: []string{"chat", "embed", "prompts"}},
 		{name: "a name and a group", allow: []string{"primes", GroupContainers}, want: []string{"container", "forecast", "forecasts", "images", "md", "ocr", "prep", "primes", "qchem", "render", "traj", "transcode", "transcribe"}},
 		{name: "deny a name", deny: []string{"chat"}, want: without("fake-mining", "mining", "chat")},
-		{name: "deny a group", deny: []string{GroupContainers, GroupModels}, want: []string{"fake-heavy", "primes", "wordcount"}},
+		{name: "deny a group", deny: []string{GroupContainers, GroupModels}, want: []string{"fake-heavy", "primes", "vanity", "wordcount"}},
 		{name: "deny wins over allowing the same name", allow: []string{"primes", "wordcount"}, deny: []string{"primes"}, want: []string{"wordcount"}},
 		{name: "deny of a group wins over allowing a name in it", allow: []string{"transcode", "primes"}, deny: []string{GroupContainers}, want: []string{"primes"}},
 		{name: "deny of a name wins over allowing its group", allow: []string{GroupModels}, deny: []string{"embed"}, want: []string{"chat", "prompts"}},
@@ -158,10 +158,10 @@ func TestDenyingContainersKeepsForecastsImagesOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ContainersConfined(Confinement{}).Accepted(a).Names(); !slices.Equal(got, []string{"chat", "embed", "primes", "prompts", "wordcount"}) {
+	if got := ContainersConfined(Confinement{}).Accepted(a).Names(); !slices.Equal(got, []string{"chat", "embed", "primes", "prompts", "vanity", "wordcount"}) {
 		t.Errorf("a node that runs containers takes %v", got)
 	}
-	if got := Builtin().Accepted(a).Names(); !slices.Equal(got, []string{"forecast", "forecasts", "primes", "wordcount"}) {
+	if got := Builtin().Accepted(a).Names(); !slices.Equal(got, []string{"forecast", "forecasts", "primes", "vanity", "wordcount"}) {
 		t.Errorf("a node that does not takes %v", got)
 	}
 }

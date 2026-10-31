@@ -27,8 +27,8 @@ func TestAWorkerIsNeverGivenAWorkloadItsOwnerRefuses(t *testing.T) {
 	addr := freeAddr(t)
 	startDaemon(t, "--listen", addr, "--name", "rig", "--deny-workloads", "primes,forecasts")
 	nodes := waitForOutput(t, "rig", "nodes", "--addr", addr)
-	if got := workloadsOf(t, nodes, "rig"); got != "forecast,wordcount" {
-		t.Errorf("rig offers %s, want forecast,wordcount:\n%s", got, nodes)
+	if got := workloadsOf(t, nodes, "rig"); got != "forecast,vanity,wordcount" {
+		t.Errorf("rig offers %s, want forecast,vanity,wordcount:\n%s", got, nodes)
 	}
 
 	id := strings.TrimSpace(mustCLI(t, "job", "submit", "--addr", addr, "--detach", "--workload", "primes", "--tasks", "2", "--params", `{"from":1,"to":1000}`))
@@ -58,7 +58,7 @@ func TestTheWorkloadsAnOwnerNamesMustExist(t *testing.T) {
 		{[]string{"--role", "coordinator", "--deny-workloads", "containers"}, "--allow-workloads and --deny-workloads say what a worker takes, and need the worker role"},
 		{[]string{"--role", "coordinator", "--allow-workloads", "primes"}, "need the worker role"},
 		// Nothing left to take.
-		{[]string{"--deny-workloads", "default"}, "they leave this worker nothing to take of what it can run (forecast, forecasts, primes, wordcount)"},
+		{[]string{"--deny-workloads", "default"}, "they leave this worker nothing to take of what it can run (forecast, forecasts, primes, vanity, wordcount)"},
 		{[]string{"--allow-workloads", "transcode,models"}, "nothing to take"},
 		{[]string{"--allow-workloads", "primes", "--deny-workloads", "primes"}, "nothing to take"},
 	} {

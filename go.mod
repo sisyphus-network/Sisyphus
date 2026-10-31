@@ -8,6 +8,7 @@ require (
 	connectrpc.com/connect/v2 v2.0.1
 	connectrpc.com/vanguard v0.5.0
 	github.com/anthropics/anthropic-sdk-go v1.82.0
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/gofrs/flock v0.13.1
 	github.com/ipfs/boxo v0.43.0
 	github.com/ipfs/go-block-format v0.2.4
@@ -23,6 +24,7 @@ require (
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multihash v0.2.3
 	go.uber.org/fx v1.24.0
+	golang.org/x/crypto v0.57.0
 	golang.org/x/sys v0.48.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
@@ -40,7 +42,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf // indirect
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/dunglas/httpsfv v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/filecoin-project/go-clock v0.1.0 // indirect
@@ -156,7 +157,6 @@ require (
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.60.0 // indirect

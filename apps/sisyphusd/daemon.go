@@ -125,6 +125,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	maxStore := fs.Uint64("max-store-bytes", 0, "coordinator role: refuse uploads once stored data uses this much disk; 0 means no limit")
 	maxUploadPerAttempt := fs.Uint64("max-upload-bytes-per-attempt", 0, "coordinator role: the most a worker may upload here for one attempt at a task, across all the attempt's uploads; an upload that would take it past is refused. 0 means no limit. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
 	maxStorePerClient := fs.Uint64("max-store-bytes-per-client", 0, "coordinator role: the most one client may keep here, its uploads, pins and jobs' data counted as pool members shows; uploads and pins past it are refused, and so is a task of its job whose outputs would take it past, which fails the job. 0 means no limit. What workers upload for its jobs' attempts while they run counts towards it too, shared between them. The node's own are not counted. An explicitly supplied value overrides the saved setting; if omitted, the saved value is used")
+	vanityMaxTries := fs.Uint64("vanity-max-tries", runtime.DefaultVanityMaxTries, "coordinator role: the hardest vanity job taken, in the keys it is expected to have to try on average; a harder pattern is refused when submitted")
 	maxCache := fs.Uint64("max-cache-bytes", 0, "worker-only node: evict the least recently used cached blobs once the cache uses this much disk; 0 means no limit")
 	s3Endpoint := fs.String("s3-endpoint", "", "coordinator: keep stored data in a bucket of the S3-style object store at this address, such as https://s3.wasabisys.com or http://127.0.0.1:9000, instead of on this machine's disk")
 	s3Bucket := fs.String("s3-bucket", "", "the bucket, which must exist")
@@ -323,7 +324,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	}
 	// A graph is a job of jobs, which a coordinator carries out itself: no
 	// worker runs one, so only what takes jobs in knows of it.
-	workloads = workloads.With(runtime.Graph{})
+	workloads = workloads.With(runtime.Graph{}, runtime.Vanity{MaxTries: *vanityMaxTries})
 
 	// The node's key lives beside its data and is created on first run.
 	ident, err := loadIdentity(*dataDir)
