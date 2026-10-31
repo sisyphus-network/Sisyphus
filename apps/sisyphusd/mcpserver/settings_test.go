@@ -72,6 +72,8 @@ func (n *node) SetWebAccessConfig(_ context.Context, req *nodepb.SetWebAccessCon
 func (n *node) RequestActionConfirmation(_ context.Context, req *nodepb.RequestActionConfirmationRequest, _ ...grpc.CallOption) (*nodepb.RequestActionConfirmationResponse, error) {
 	n.webAccessCalls = append(n.webAccessCalls, "approve")
 	n.webAccessAction = req.GetAction()
+	n.webAccessRequesterName = req.GetRequesterClientName()
+	n.webAccessRequesterVersion = req.GetRequesterClientVersion()
 	if n.webAccessChangeOnApproval != nil {
 		n.webAccess = n.webAccessChangeOnApproval
 	}
@@ -225,6 +227,9 @@ func TestWebAccessExpansionsWaitForTheNodeOwner(t *testing.T) {
 	}
 	if want := []string{"get", "approve", "get", "set"}; !slices.Equal(n.webAccessCalls, want) {
 		t.Fatalf("node calls = %v, want %v", n.webAccessCalls, want)
+	}
+	if n.webAccessRequesterName != "t" || n.webAccessRequesterVersion != "1" {
+		t.Fatalf("reported MCP requester = %q@%q, want t@1", n.webAccessRequesterName, n.webAccessRequesterVersion)
 	}
 	for _, want := range []string{"enabled=true", "192.168.1.5:7443", "192.168.1.6:7443", "https://node.example.test:7443", "browser UI and API"} {
 		if !strings.Contains(n.webAccessAction, want) {

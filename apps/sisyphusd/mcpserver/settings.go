@@ -103,7 +103,9 @@ func (s *server) setters(out *mcp.Server) {
 	add(s, out, admin, &mcp.Tool{Name: "save_model_profile",
 		Description: "Saves one of the model services the planner can be switched between, and with active switches the planner to it. A profile already saved changes only in what is given; a new one needs a name and a provider. No key is ever given: the saved one is kept while the provider and address stay the same, and has_api_key in the answer says whether one is set. The base_url list_model_profiles shows, credentials masked, can be given back as url as it is."}, doing(s, s.saveModelProfile))
 	add(s, out, admin, &mcp.Tool{Name: "set_web_access",
-		Description: "Changes this node's HTTPS browser access: whether it is enabled, which local interface addresses it listens on, and the HTTPS origin browsers use. Read get_web_access and list_network_interfaces first. Enabling access, adding a listener address while enabled, or changing its advertised URL waits for the node owner's approval in the Sisyphus app; disabling access or removing addresses is immediate. Client-side approval hints are not trusted."}, doing(s, s.setWebAccess))
+		Description: "Changes this node's HTTPS browser access: whether it is enabled, which local interface addresses it listens on, and the HTTPS origin browsers use. Read get_web_access and list_network_interfaces first. Enabling access, adding a listener address while enabled, or changing its advertised URL waits for the node owner's approval in the Sisyphus app; disabling access or removing addresses is immediate. Client-side approval hints are not trusted."}, func(ctx context.Context, req *mcp.CallToolRequest, args webAccessArgs) (*mcp.CallToolResult, any, error) {
+		return shown(s.setWebAccess(ctx, req, args))
+	})
 	add(s, out, admin, &mcp.Tool{Name: "download_city_table",
 		Description: "Downloads the month's free city table from DB-IP, a few hundred megabytes, so that the node can find the city of an address and not only its country. Returns when it is installed."}, doing(s, func(ctx context.Context, _ none) (any, error) {
 		return reply(s.Node.DownloadCityTable(ctx, &nodepb.DownloadCityTableRequest{}))
@@ -116,7 +118,7 @@ type webAccessArgs struct {
 	PublicURL       *string   `json:"public_url,omitempty" jsonschema:"the HTTPS origin browsers use, such as https://node.example.net:50052; changing it while enabled requires owner approval"`
 }
 
-func (s *server) setWebAccess(ctx context.Context, args webAccessArgs) (any, error) {
+func (s *server) setWebAccess(ctx context.Context, req *mcp.CallToolRequest, args webAccessArgs) (any, error) {
 	if args.Enabled == nil && args.ListenAddresses == nil && args.PublicURL == nil {
 		return nil, fmt.Errorf("give at least one of enabled, listen_addresses or public_url")
 	}
@@ -150,9 +152,7 @@ func (s *server) setWebAccess(ctx context.Context, args webAccessArgs) (any, err
 		if err := validateApprovalURL(next.GetPublicUrl()); err != nil {
 			return nil, err
 		}
-		decision, err := s.Node.RequestActionConfirmation(s.as(ctx), &nodepb.RequestActionConfirmationRequest{
-			Action: webAccessApprovalAction(next),
-		})
+		decision, err := s.requestActionApproval(ctx, req, webAccessApprovalAction(next))
 		if err != nil {
 			return nil, err
 		}

@@ -235,6 +235,9 @@ func (a *browserAccess) authorizeRequest(cookie string, parent context.Context) 
 		return nil, nil, false
 	}
 	ctx, cancel := context.WithCancel(parent)
+	ctx = withActionApprovalActor(ctx, actionApprovalActor{
+		kind: "paired_browser", id: device.ID, name: device.Name, verified: true,
+	})
 	a.nextCall++
 	callID := a.nextCall
 	if a.active[id] == nil {
@@ -470,6 +473,13 @@ func newWebAppHandlerWithBrowserAccess(cfg LocalConfig, origins []string, ui fs.
 		if !bearerAuthenticated && !sessionAuthenticated {
 			refuseWeb(w, http.StatusUnauthorized, "every call from a web page needs the node's API token, which is in api.token in its data directory")
 			return
+		}
+		if _, ok := actionApprovalActorFromContext(r.Context()); !ok {
+			actor := actionApprovalActor{kind: "unknown", name: "Authenticated API client"}
+			if sessionAuthenticated && !bearerAuthenticated {
+				actor = actionApprovalActor{kind: "web_session", name: "Web session"}
+			}
+			r = r.WithContext(withActionApprovalActor(r.Context(), actor))
 		}
 		// Browser cookies are attached automatically. Require an exact same-origin
 		// Origin (or Referer fallback) for cookie-authenticated mutations so a

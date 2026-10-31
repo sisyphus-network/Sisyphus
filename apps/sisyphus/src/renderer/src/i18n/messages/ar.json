@@ -138,7 +138,7 @@
   "browserAuthTokenLabel": "رمز API للعقدة",
   "browserAuthConnect": "وصّل المتصفح",
   "browserPairCodeTab": "رمز الاقتران",
-  "pendingActionConfirmation": { "title": "الإجراء بانتظار موافقتك", "description": "طلب وكيل إجراء تغيير على هذه العقدة. راجع التفاصيل قبل اتخاذ القرار.", "deny": "رفض", "approve": "الموافقة على الإجراء", "queued": "هناك {count} أخرى قيد الانتظار", "loadFailed": "تعذر تحميل طلبات الموافقة المعلقة", "resolveFailed": "تعذر حفظ قرارك" },
+  "pendingActionConfirmation": { "title": "الإجراء بانتظار موافقتك", "description": "طلب وكيل إجراء تغيير على هذه العقدة. راجع التفاصيل قبل اتخاذ القرار.", "requestedBy": "عميل MCP الذي طلب الإجراء", "unknownRequester": "عميل MCP غير معروف", "clientReported": "مُبلّغ من العميل · غير موثّق", "deny": "رفض", "approve": "الموافقة على الإجراء", "queued": "هناك {count} أخرى قيد الانتظار", "loadFailed": "تعذر تحميل طلبات الموافقة المعلقة", "resolveFailed": "تعذر حفظ قرارك" },
   "browserPairCodeLabel": "رمز لمرة واحدة من ثمانية أرقام",
   "browserPair": "اقتران هذا المتصفح",
   "browserTokenAlternative": "استخدم رمز API للعقدة بدلاً من ذلك",

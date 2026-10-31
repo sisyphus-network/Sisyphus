@@ -7,7 +7,15 @@ import type { getMessages } from '@/i18n/messages'
 import { toast } from 'sonner'
 
 type Messages = ReturnType<typeof getMessages>
-type PendingAction = { id: string; action: string; requestedAtUnixMillis: number | string; expiresAtUnixMillis: number | string }
+type PendingAction = {
+  id: string
+  action: string
+  requestedAtUnixMillis: number | string
+  expiresAtUnixMillis: number | string
+  requesterClientName?: string
+  requesterClientVersion?: string
+  requesterClientInfoReported?: boolean
+}
 
 export function PendingActionApprovals({ messages, direction, enabled }: { messages: Messages; direction: 'ltr' | 'rtl'; enabled: boolean }) {
   const [actions, setActions] = useState<PendingAction[]>([])
@@ -78,6 +86,14 @@ export function PendingActionApprovals({ messages, direction, enabled }: { messa
   >
     {current ? <>
       <div dir="ltr" className="rounded-xl border border-[var(--app-line)] bg-[var(--app-wash)] px-4 py-3 text-left text-sm leading-6 text-[var(--app-ink)] [unicode-bidi:plaintext]">{current.action}</div>
+      <div className="mt-3 flex min-w-0 flex-col gap-1 text-center text-xs">
+        <span className="text-[var(--app-muted)]">{labels.requestedBy}</span>
+        <span className="break-words font-medium text-[var(--app-ink)]">
+          {current.requesterClientName || labels.unknownRequester}
+          {current.requesterClientVersion ? ` · ${current.requesterClientVersion}` : ''}
+        </span>
+        {current.requesterClientInfoReported ? <span className="text-[var(--app-muted)]">{labels.clientReported}</span> : null}
+      </div>
       {actions.length > 1 ? <p className="mt-3 text-center text-xs text-[var(--app-muted)]">{labels.queued.replace('{count}', String(actions.length - 1))}</p> : null}
       <div className="mt-5 grid min-w-0 gap-2 sm:grid-cols-2">
         <Button type="button" variant="outline" size="lg" disabled={resolving} onClick={() => void resolve(false)} className="order-2 h-12 w-full rounded-xl sm:order-1">

@@ -138,7 +138,7 @@
   "browserAuthTokenLabel": "Node API token",
   "browserAuthConnect": "Connect browser",
   "browserPairCodeTab": "Pairing code",
-  "pendingActionConfirmation": { "title": "Action needs your approval", "description": "An agent requested a change to this node. Review the details before deciding.", "deny": "Deny", "approve": "Approve action", "queued": "{count} more waiting", "loadFailed": "Could not load pending approvals", "resolveFailed": "Could not record your decision" },
+  "pendingActionConfirmation": { "title": "Action needs your approval", "description": "An agent requested a change to this node. Review the details before deciding.", "requestedBy": "Requesting MCP client", "unknownRequester": "Unknown MCP client", "clientReported": "Reported by the client · not verified", "deny": "Deny", "approve": "Approve action", "queued": "{count} more waiting", "loadFailed": "Could not load pending approvals", "resolveFailed": "Could not record your decision" },
   "browserPairCodeLabel": "Eight-digit one-time code",
   "browserPair": "Pair this browser",
   "browserTokenAlternative": "Use the node API token instead",

@@ -1151,6 +1151,10 @@ message WatchPairedBrowsersRequest {}
 
 message RequestActionConfirmationRequest {
   string action = 1;
+  // MCP client information is supplied from its initialize handshake. It is
+  // useful context for the owner, but is self-reported and is not an identity.
+  string requester_client_name = 2;
+  string requester_client_version = 3;
 }
 
 message RequestActionConfirmationResponse {
@@ -1164,6 +1168,9 @@ message PendingActionConfirmation {
   string action = 2;
   int64 requested_at_unix_millis = 3;
   int64 expires_at_unix_millis = 4;
+  string requester_client_name = 5;
+  string requester_client_version = 6;
+  bool requester_client_info_reported = 7;
 }
 
 message PendingActionConfirmationsState {

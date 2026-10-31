@@ -8095,10 +8095,14 @@ func (*WatchPairedBrowsersRequest) Descriptor() ([]byte, []int) {
 }
 
 type RequestActionConfirmationRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Action string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
+	// MCP client information is supplied from its initialize handshake. It is
+	// useful context for the owner, but is self-reported and is not an identity.
+	RequesterClientName    string `protobuf:"bytes,2,opt,name=requester_client_name,json=requesterClientName,proto3" json:"requester_client_name,omitempty"`
+	RequesterClientVersion string `protobuf:"bytes,3,opt,name=requester_client_version,json=requesterClientVersion,proto3" json:"requester_client_version,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *RequestActionConfirmationRequest) Reset() {
@@ -8134,6 +8138,20 @@ func (*RequestActionConfirmationRequest) Descriptor() ([]byte, []int) {
 func (x *RequestActionConfirmationRequest) GetAction() string {
 	if x != nil {
 		return x.Action
+	}
+	return ""
+}
+
+func (x *RequestActionConfirmationRequest) GetRequesterClientName() string {
+	if x != nil {
+		return x.RequesterClientName
+	}
+	return ""
+}
+
+func (x *RequestActionConfirmationRequest) GetRequesterClientVersion() string {
+	if x != nil {
+		return x.RequesterClientVersion
 	}
 	return ""
 }
@@ -8219,13 +8237,16 @@ func (*WatchPendingActionConfirmationsRequest) Descriptor() ([]byte, []int) {
 }
 
 type PendingActionConfirmation struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	Id                    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Action                string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
-	RequestedAtUnixMillis int64                  `protobuf:"varint,3,opt,name=requested_at_unix_millis,json=requestedAtUnixMillis,proto3" json:"requested_at_unix_millis,omitempty"`
-	ExpiresAtUnixMillis   int64                  `protobuf:"varint,4,opt,name=expires_at_unix_millis,json=expiresAtUnixMillis,proto3" json:"expires_at_unix_millis,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	state                       protoimpl.MessageState `protogen:"open.v1"`
+	Id                          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Action                      string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	RequestedAtUnixMillis       int64                  `protobuf:"varint,3,opt,name=requested_at_unix_millis,json=requestedAtUnixMillis,proto3" json:"requested_at_unix_millis,omitempty"`
+	ExpiresAtUnixMillis         int64                  `protobuf:"varint,4,opt,name=expires_at_unix_millis,json=expiresAtUnixMillis,proto3" json:"expires_at_unix_millis,omitempty"`
+	RequesterClientName         string                 `protobuf:"bytes,5,opt,name=requester_client_name,json=requesterClientName,proto3" json:"requester_client_name,omitempty"`
+	RequesterClientVersion      string                 `protobuf:"bytes,6,opt,name=requester_client_version,json=requesterClientVersion,proto3" json:"requester_client_version,omitempty"`
+	RequesterClientInfoReported bool                   `protobuf:"varint,7,opt,name=requester_client_info_reported,json=requesterClientInfoReported,proto3" json:"requester_client_info_reported,omitempty"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *PendingActionConfirmation) Reset() {
@@ -8284,6 +8305,27 @@ func (x *PendingActionConfirmation) GetExpiresAtUnixMillis() int64 {
 		return x.ExpiresAtUnixMillis
 	}
 	return 0
+}
+
+func (x *PendingActionConfirmation) GetRequesterClientName() string {
+	if x != nil {
+		return x.RequesterClientName
+	}
+	return ""
+}
+
+func (x *PendingActionConfirmation) GetRequesterClientVersion() string {
+	if x != nil {
+		return x.RequesterClientVersion
+	}
+	return ""
+}
+
+func (x *PendingActionConfirmation) GetRequesterClientInfoReported() bool {
+	if x != nil {
+		return x.RequesterClientInfoReported
+	}
+	return false
 }
 
 type PendingActionConfirmationsState struct {
@@ -9116,17 +9158,22 @@ const file_sisyphus_node_v1_node_proto_rawDesc = "" +
 	"\fpool_members\x18\x15 \x01(\v2%.sisyphus.node.v1.ListMembersResponseH\x00R\vpoolMembers\x12L\n" +
 	"\x0echat_summaries\x18\x16 \x01(\v2#.sisyphus.node.v1.ListChatsResponseH\x00R\rchatSummariesB\a\n" +
 	"\x05state\"\x1c\n" +
-	"\x1aWatchPairedBrowsersRequest\":\n" +
+	"\x1aWatchPairedBrowsersRequest\"\xa8\x01\n" +
 	" RequestActionConfirmationRequest\x12\x16\n" +
-	"\x06action\x18\x01 \x01(\tR\x06action\"?\n" +
+	"\x06action\x18\x01 \x01(\tR\x06action\x122\n" +
+	"\x15requester_client_name\x18\x02 \x01(\tR\x13requesterClientName\x128\n" +
+	"\x18requester_client_version\x18\x03 \x01(\tR\x16requesterClientVersion\"?\n" +
 	"!RequestActionConfirmationResponse\x12\x1a\n" +
 	"\bapproved\x18\x01 \x01(\bR\bapproved\"(\n" +
-	"&WatchPendingActionConfirmationsRequest\"\xb1\x01\n" +
+	"&WatchPendingActionConfirmationsRequest\"\xe4\x02\n" +
 	"\x19PendingActionConfirmation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\x127\n" +
 	"\x18requested_at_unix_millis\x18\x03 \x01(\x03R\x15requestedAtUnixMillis\x123\n" +
-	"\x16expires_at_unix_millis\x18\x04 \x01(\x03R\x13expiresAtUnixMillis\"\x84\x01\n" +
+	"\x16expires_at_unix_millis\x18\x04 \x01(\x03R\x13expiresAtUnixMillis\x122\n" +
+	"\x15requester_client_name\x18\x05 \x01(\tR\x13requesterClientName\x128\n" +
+	"\x18requester_client_version\x18\x06 \x01(\tR\x16requesterClientVersion\x12C\n" +
+	"\x1erequester_client_info_reported\x18\a \x01(\bR\x1brequesterClientInfoReported\"\x84\x01\n" +
 	"\x1fPendingActionConfirmationsState\x12E\n" +
 	"\aactions\x18\x01 \x03(\v2+.sisyphus.node.v1.PendingActionConfirmationR\aactions\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x04R\brevision\"N\n" +

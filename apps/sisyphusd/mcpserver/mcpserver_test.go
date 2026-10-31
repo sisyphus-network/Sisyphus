@@ -47,6 +47,8 @@ type node struct {
 	webAccess                 *nodepb.WebAccessConfig
 	webAccessApproval         bool
 	webAccessAction           string
+	webAccessRequesterName    string
+	webAccessRequesterVersion string
 	webAccessRequest          *nodepb.SetWebAccessConfigRequest
 	webAccessCalls            []string
 	webAccessChangeOnApproval *nodepb.WebAccessConfig

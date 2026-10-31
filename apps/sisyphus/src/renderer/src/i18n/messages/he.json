@@ -138,7 +138,7 @@
   "browserAuthTokenLabel": "אסימון API של הצומת",
   "browserAuthConnect": "חבר דפדפן",
   "browserPairCodeTab": "קוד קישור",
-  "pendingActionConfirmation": { "title": "הפעולה ממתינה לאישור שלך", "description": "סוכן ביקש לשנות הגדרה בצומת. בדוק את הפרטים לפני ההחלטה.", "deny": "דחייה", "approve": "אישור הפעולה", "queued": "עוד {count} ממתינות", "loadFailed": "לא ניתן לטעון בקשות לאישור", "resolveFailed": "לא ניתן לשמור את ההחלטה שלך" },
+  "pendingActionConfirmation": { "title": "הפעולה ממתינה לאישור שלך", "description": "סוכן ביקש לשנות הגדרה בצומת. בדוק את הפרטים לפני ההחלטה.", "requestedBy": "לקוח MCP שביקש את הפעולה", "unknownRequester": "לקוח MCP לא ידוע", "clientReported": "דווח על ידי הלקוח · לא מאומת", "deny": "דחייה", "approve": "אישור הפעולה", "queued": "עוד {count} ממתינות", "loadFailed": "לא ניתן לטעון בקשות לאישור", "resolveFailed": "לא ניתן לשמור את ההחלטה שלך" },
   "browserPairCodeLabel": "קוד חד־פעמי בן שמונה ספרות",
   "browserPair": "קישור הדפדפן",
   "browserTokenAlternative": "התחברות עם אסימון ה־API במקום זאת",

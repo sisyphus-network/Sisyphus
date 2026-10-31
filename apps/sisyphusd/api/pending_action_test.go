@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"testing"
@@ -34,7 +36,9 @@ func TestPendingActionConfirmationTravelsThroughLocalAPI(t *testing.T) {
 	result := make(chan *nodepb.RequestActionConfirmationResponse, 1)
 	requestErr := make(chan error, 1)
 	go func() {
-		response, err := n.client.RequestActionConfirmation(withToken("the-token"), &nodepb.RequestActionConfirmationRequest{Action: "remove saved profile"})
+		response, err := n.client.RequestActionConfirmation(withToken("the-token"), &nodepb.RequestActionConfirmationRequest{
+			Action: "remove saved profile", RequesterClientName: "mcp-client", RequesterClientVersion: "1.2.3",
+		})
 		result <- response
 		requestErr <- err
 	}()
@@ -44,6 +48,9 @@ func TestPendingActionConfirmationTravelsThroughLocalAPI(t *testing.T) {
 	}
 	if created.GetRevision() <= initial.GetRevision() || created.GetActions()[0].GetId() == "" || created.GetActions()[0].GetExpiresAtUnixMillis() <= created.GetActions()[0].GetRequestedAtUnixMillis() {
 		t.Fatalf("pending action metadata is invalid: %#v", created)
+	}
+	if created.GetActions()[0].GetRequesterClientName() != "mcp-client" || created.GetActions()[0].GetRequesterClientVersion() != "1.2.3" || !created.GetActions()[0].GetRequesterClientInfoReported() {
+		t.Fatalf("pending requester = %#v; want reported MCP client details", created.GetActions()[0])
 	}
 	if _, err := n.client.ResolveActionConfirmation(withToken("the-token"), &nodepb.ResolveActionConfirmationRequest{Id: created.GetActions()[0].GetId(), Approved: true}); err != nil {
 		t.Fatal(err)
@@ -280,6 +287,82 @@ func TestPendingActionConfirmationRequiresTokenAndAllowsRemoteOwner(t *testing.T
 	}
 	if response, err := <-result, <-errCh; err != nil || !response.GetApproved() {
 		t.Fatalf("remote action result = %#v, %v; want approved", response, err)
+	}
+}
+
+func TestPendingActionRequesterSanitizationAndDecisionAudit(t *testing.T) {
+	if missing := pendingActionRequesterFromRequest(nil); missing.reported || missing.clientName != "" {
+		t.Fatalf("nil request was treated as a known client: %#v", missing)
+	}
+	requester := pendingActionRequesterFromRequest(&nodepb.RequestActionConfirmationRequest{
+		RequesterClientName: "  trusted\nname\u202e  ", RequesterClientVersion: strings.Repeat("v", 40),
+	})
+	if requester.clientName != "trustedname" || len(requester.clientVersion) != 32 || !requester.reported {
+		t.Fatalf("sanitized requester = %#v", requester)
+	}
+	if missing := pendingActionRequesterFromRequest(&nodepb.RequestActionConfirmationRequest{RequesterClientName: "\u202e"}); missing.reported || missing.clientName != "" {
+		t.Fatalf("missing requester was treated as a known client: %#v", missing)
+	}
+
+	var output bytes.Buffer
+	service := &localService{cfg: LocalConfig{Token: "the-token", Logger: slog.New(slog.NewTextHandler(&output, nil))}}
+	manager := service.actionConfirmations()
+	_, unsubscribe := manager.subscribe()
+	defer unsubscribe()
+	for _, tc := range []struct {
+		approved bool
+		name     string
+		version  string
+		actor    *actionApprovalActor
+	}{
+		{approved: true, name: "agent-ui", version: "4.5", actor: &actionApprovalActor{kind: "paired_browser", id: "device-123", name: "Owner phone", verified: true}},
+		{approved: false},
+	} {
+		result := make(chan *nodepb.RequestActionConfirmationResponse, 1)
+		errCh := make(chan error, 1)
+		go func() {
+			response, err := service.RequestActionConfirmation(incomingToken("the-token"), &nodepb.RequestActionConfirmationRequest{
+				Action: "private action description", RequesterClientName: tc.name, RequesterClientVersion: tc.version,
+			})
+			result <- response
+			errCh <- err
+		}()
+		var action *nodepb.PendingActionConfirmation
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			if actions := manager.snapshot().GetActions(); len(actions) == 1 {
+				action = actions[0]
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if action == nil {
+			t.Fatal("action was not queued for audit test")
+		}
+		ctx := incomingToken("the-token")
+		if tc.actor != nil {
+			ctx = withActionApprovalActor(ctx, *tc.actor)
+		}
+		if _, err := service.ResolveActionConfirmation(ctx, &nodepb.ResolveActionConfirmationRequest{Id: action.GetId(), Approved: tc.approved}); err != nil {
+			t.Fatal(err)
+		}
+		response, err := <-result, <-errCh
+		if err != nil || response.GetApproved() != tc.approved {
+			t.Fatalf("approval result = %#v, %v; want approved=%t", response, err, tc.approved)
+		}
+	}
+	logged := output.String()
+	for _, expected := range []string{
+		"owner action decision", "requester_client_name=agent-ui", "requester_client_info_reported=true",
+		"resolver_kind=paired_browser", "resolver_name=\"Owner phone\"", "resolver_id=device-123", "resolver_identity_verified=true",
+		"resolver_kind=unknown", "resolver_name=\"Authenticated API client\"", "resolver_identity_verified=false", "approved=true", "approved=false",
+	} {
+		if !strings.Contains(logged, expected) {
+			t.Errorf("audit log missing %q: %s", expected, logged)
+		}
+	}
+	if strings.Contains(logged, "private action description") {
+		t.Fatal("audit log included the action text instead of keeping it private")
 	}
 }
 

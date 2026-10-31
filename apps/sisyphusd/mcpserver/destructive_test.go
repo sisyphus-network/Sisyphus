@@ -194,6 +194,8 @@ type destructiveNode struct {
 	called             []string
 	failing            string
 	actionConfirmation string
+	requesterClient    string
+	requesterVersion   string
 	confirmationToken  string
 	approveInApp       bool
 }
@@ -207,6 +209,8 @@ func (n *destructiveNode) result(name string) error {
 
 func (n *destructiveNode) RequestActionConfirmation(ctx context.Context, req *nodepb.RequestActionConfirmationRequest, _ ...grpc.CallOption) (*nodepb.RequestActionConfirmationResponse, error) {
 	n.actionConfirmation = req.GetAction()
+	n.requesterClient = req.GetRequesterClientName()
+	n.requesterVersion = req.GetRequesterClientVersion()
 	if md, ok := metadata.FromOutgoingContext(ctx); ok {
 		n.confirmationToken = strings.Join(md.Get("authorization"), "")
 	}
@@ -338,8 +342,8 @@ func TestDestructiveCallsFallBackToOwnerConfirmationInApp(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if n.actionConfirmation != "stop keeping stored file file-cid; it may be deleted when the store next clears unpinned data" || n.confirmationToken != "Bearer token" {
-				t.Fatalf("desktop confirmation request = %q, token %q", n.actionConfirmation, n.confirmationToken)
+			if n.actionConfirmation != "stop keeping stored file file-cid; it may be deleted when the store next clears unpinned data" || n.confirmationToken != "Bearer token" || n.requesterClient != "test" || n.requesterVersion != "1" {
+				t.Fatalf("desktop confirmation request = %q, client %q@%q, token %q", n.actionConfirmation, n.requesterClient, n.requesterVersion, n.confirmationToken)
 			}
 			if result.IsError != !tc.wantCall {
 				t.Fatalf("result error=%t, want error=%t: %#v", result.IsError, !tc.wantCall, result)

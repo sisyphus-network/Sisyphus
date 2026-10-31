@@ -29,11 +29,15 @@ func TestRevokingPairedBrowserCancelsActiveRequests(t *testing.T) {
 	const deviceID, token = "browser-id", "browser-secret"
 	store := &volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}
 	hash := sha256.Sum256([]byte(token))
-	store.devices[deviceID] = nodedb.BrowserDevice{ID: deviceID, TokenHash: hash[:], ExpiresAt: time.Now().Add(time.Hour)}
+	store.devices[deviceID] = nodedb.BrowserDevice{ID: deviceID, Name: "Owner phone", TokenHash: hash[:], ExpiresAt: time.Now().Add(time.Hour)}
 	devices := newBrowserAccess(store, "")
 	ctx, finish, ok := devices.authorizeRequest(deviceID+"."+token, context.Background())
 	if !ok {
 		t.Fatal("paired browser request was not authorized")
+	}
+	actor, ok := actionApprovalActorFromContext(ctx)
+	if !ok || !actor.verified || actor.kind != "paired_browser" || actor.id != deviceID || actor.name != "Owner phone" {
+		t.Fatalf("paired browser approval actor = %#v, %t", actor, ok)
 	}
 	defer finish()
 	if err := devices.revoke(deviceID); err != nil {

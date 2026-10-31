@@ -347,7 +347,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	// local is what the desktop client on this machine is told and may do.
 	sharedStateChanges := api.NewNodeInfoChanges()
 	local := api.LocalConfig{
-		NodeID: ident.ID(), Version: version, Workloads: workloads,
+		NodeID: ident.ID(), Version: version, Workloads: workloads, Logger: log,
 		NodeInfoChanges: sharedStateChanges, BrowserDeviceChanges: sharedStateChanges, JoinedPoolChanges: sharedStateChanges,
 	}
 
