@@ -102,6 +102,8 @@ func runDaemon(ctx context.Context, args []string) error {
 	hardenedContainers := fs.Bool("containers-hardened", false, "coordinator: give container jobs only to workers that run them hardened, with a sandboxing --container-runtime and --containers-read-only with a --containers-tmp-mb; such a job waits while none is connected. For a pool that takes container work from strangers")
 	distinctAddresses := fs.Bool("verify-distinct-addresses", false, "coordinator: for jobs submitted with --verify, hand each task's copies only to workers at different network addresses, so that two workers on one machine or behind one router cannot vouch for each other. For a pool with strangers in it: in a pool whose workers share an address it leaves too few to verify with")
 	maxConnections := fs.Int("max-connections", 0, "how many connections to take at once from other nodes and their command lines, on --listen; 0 takes as many as half the files the system lets this program have open, which on most machines is far more than a pool needs. An eighth of them, and at least 256, may come from one address")
+	allowWorkloads := fs.String("allow-workloads", "", "worker role: the workloads this machine takes, separated by commas: workload names, such as primes or transcode, and groups of them: default (every workload but the opt-in ones), containers (those that run in containers) and models (those that use --models-from). An opt-in workload is taken only if it, or a group it is in other than default, is named here. Empty takes the default group")
+	denyWorkloads := fs.String("deny-workloads", "", "worker role: workloads and groups, named as for --allow-workloads, that this machine never takes, even if allowed there")
 	containers := fs.Bool("containers", false, "worker role: run container images for the pool's jobs, with Docker. This lets whoever may submit jobs to the pool run what they like on this machine")
 	maxMemory := fs.Uint64("offer-memory-mb", 0, "worker role: tell the pool this node has no more than this much memory, in mebibytes; 0 offers all it has")
 	maxGPUs := fs.Int("offer-gpus", -1, "worker role: tell the pool this node has no more than this many graphics cards; -1 offers all it has")
@@ -290,6 +292,16 @@ func runDaemon(ctx context.Context, args []string) error {
 		}
 	}
 	workloads, runs := runtime.WithContainers(), runtime.Builtin()
+	// Which of what it can run the node's owner lets it take, checked
+	// against every workload it knows of, so that a misspelt name is an
+	// error rather than a workload taken that was meant to be refused.
+	if (*allowWorkloads != "" || *denyWorkloads != "") && !isWorker {
+		return errors.New("--allow-workloads and --deny-workloads say what a worker takes, and need the worker role")
+	}
+	acceptance, err := runtime.Accept(workloads, listOf(*allowWorkloads), listOf(*denyWorkloads))
+	if err != nil {
+		return fmt.Errorf("--allow-workloads, --deny-workloads: %w", err)
+	}
 	if *containers {
 		if err := checkContainers(ctx, confined); err != nil {
 			return fmt.Errorf("--containers: %w", err)
@@ -521,6 +533,17 @@ func runDaemon(ctx context.Context, args []string) error {
 		local.LiveLending = runtime.NewModelServer(lent.URL, runtime.OwnerFromSettings(lent.Only, lent.GPULayers, lent.Threads, lent.Context, lent.KeepAlive))
 		runs = runs.With(runtime.WithLiveModels(local.LiveLending)...)
 	}
+	if isWorker {
+		// Allowing what the node cannot run takes nothing, which its owner
+		// may not have meant; refusing everything it can run leaves a
+		// worker with no work, which is a mistake.
+		if unmatched := acceptance.Unmatched(runs); len(unmatched) > 0 {
+			log.Warn("--allow-workloads names workloads or groups this node was not started able to run, so they are not taken", "names", strings.Join(unmatched, ","))
+		}
+		if len(runs.Accepted(acceptance).Names()) == 0 {
+			return fmt.Errorf("--allow-workloads, --deny-workloads: they leave this worker nothing to take of what it can run (%s)", strings.Join(runs.Names(), ", "))
+		}
+	}
 	local.Lending, local.Lent, local.LentByFlags = db, lent, *modelsFrom != ""
 	// host is the node's libp2p host, started below according to its role.
 	var host *p2p.Host
@@ -636,7 +659,7 @@ func runDaemon(ctx context.Context, args []string) error {
 		// another worker returned for it.
 		var audits *runtime.Registry
 		if isWorker {
-			audits = runs
+			audits = runs.Accepted(acceptance)
 		}
 		pruneChanges := make(chan struct{}, 1)
 		coord = coordinator.New(coordinator.Config{
@@ -901,7 +924,7 @@ func runDaemon(ctx context.Context, args []string) error {
 	if isWorker {
 		w := &worker.Worker{
 			Name: *name, Coordinator: *join, Credentials: creds,
-			Slots: *slots, Workloads: runsAs(*name, runs), Blobs: blobs, Log: log,
+			Slots: *slots, Workloads: runsAs(*name, runs), Accepts: acceptance, Blobs: blobs, Log: log,
 			ServeAddress: *advertise,
 			// What the machine has, as far as its owner offers it.
 			Hardware:          machine.Offer(*maxMemory<<20, *maxGPUs),
