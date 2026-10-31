@@ -53,8 +53,6 @@ func startFakePool(t *testing.T) *fakePool {
 	return p
 }
 
-func (p *fakePool) addr() string { return p.listener.Addr().String() }
-
 func (p *fakePool) serve(conn net.Conn) {
 	defer conn.Close()
 	lines := bufio.NewScanner(conn)
