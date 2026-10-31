@@ -315,6 +315,49 @@ func TestWatchSharedStateStreamsChatSummariesToIndependentClients(t *testing.T) 
 	}
 }
 
+func TestWatchSharedStateStreamsCityTableToIndependentClients(t *testing.T) {
+	table := &memoryCityTable{}
+	client := serveLocal(t, LocalConfig{CityTable: table, NodeInfoChanges: NewNodeInfoChanges()})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE}}
+	ctx1, cancel1 := context.WithCancel(withToken("the-token"))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken("the-token"))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || event.GetCityTable() == nil || event.GetCityTable().GetInstalled() {
+			t.Fatalf("initial city-table snapshot = %v, %v", event, err)
+		}
+	}
+	if _, err := client.DownloadCityTable(withToken("the-token"), &nodepb.DownloadCityTableRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || !event.GetCityTable().GetInstalled() || event.GetCityTable().GetEdition() != "2026-10" {
+			t.Fatalf("downloaded city-table update = %v, %v", event, err)
+		}
+	}
+	if _, err := client.RemoveCityTable(withToken("the-token"), &nodepb.RemoveCityTableRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 3 || event.GetSnapshot() || event.GetCityTable().GetInstalled() {
+			t.Fatalf("removed city-table update = %v, %v", event, err)
+		}
+	}
+}
+
 func TestPeerPermissionChangesNotifySharedPeerWatchers(t *testing.T) {
 	const peerID = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
 	changes := NewNodeInfoChanges()
@@ -802,7 +845,7 @@ func TestChatRevisionSharedAcrossLocalServices(t *testing.T) {
 
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
-	if err != nil || len(all) != 13 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS || all[12] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES {
+	if err != nil || len(all) != 14 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS || all[12] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES || all[13] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE {
 		t.Fatalf("default shared-state domains = %v, %v", all, err)
 	}
 	unique, err := sharedStateDomains([]nodepb.SharedStateDomain{
@@ -816,14 +859,14 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_UNSPECIFIED}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unspecified shared-state domain error = %v, want InvalidArgument", err)
 	}
-	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(14)}); status.Code(err) != codes.InvalidArgument {
+	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(15)}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown shared-state domain error = %v, want InvalidArgument", err)
 	}
 
 	store := &failingBrowserAccessStore{devices: []nodedb.BrowserDevice{{ID: "device", Name: "Phone"}}}
 	service := &localService{cfg: LocalConfig{
 		NodeID: "node", Token: "the-token", Peers: func() []*nodepb.Peer { return []*nodepb.Peer{peerEntry("peer", true, true)} },
-		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store, Lending: newFileList(t), Files: newFileList(t), Store: storage.NewMemory(), PoolLimits: &memoryPoolLimits{}, LocationDiscovery: &memoryDiscovery{}, WebAccess: &webAccessControllerStub{},
+		Jobs: &office{nodes: []*pb.NodeInfo{{NodeId: "worker"}}}, BrowserAccess: store, Lending: newFileList(t), Files: newFileList(t), Store: storage.NewMemory(), PoolLimits: &memoryPoolLimits{}, LocationDiscovery: &memoryDiscovery{}, WebAccess: &webAccessControllerStub{}, CityTable: &memoryCityTable{},
 		Pool:       NewPoolAdmin(Config{Identity: newIdentity(t), Access: newList(t), Coordinator: newCoordinator(t)}),
 		JoinedPool: func() *nodepb.JoinedPool { return &nodepb.JoinedPool{CoordinatorId: "coordinator"} },
 		Assistant:  &sharedChatsAssistant{config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}, profiles: []nodedb.ModelProfile{{ID: "local", Name: "Local", Config: nodedb.ModelConfig{Provider: "ollama", Model: "llama3.1"}}}},
@@ -879,6 +922,16 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	failedChatSummaries := (&localService{cfg: LocalConfig{Assistant: absent{}}}).sharedStateSnapshot(ownerContext, nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES)
 	if failedChatSummaries.GetError() == "" || failedChatSummaries.GetState() != nil {
 		t.Fatalf("failed chat-summary snapshot = %v; want per-domain error", failedChatSummaries)
+	}
+}
+
+func TestSharedStateSnapshotsReportUnavailableDomains(t *testing.T) {
+	ctx := withToken("the-token")
+	service := &localService{cfg: LocalConfig{Token: "the-token"}}
+	domain := nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE
+	event := service.sharedStateSnapshot(ctx, domain)
+	if event.GetError() == "" || event.GetState() != nil {
+		t.Fatalf("snapshot for unavailable %s = %v; want a typed error", domain, event)
 	}
 }
 

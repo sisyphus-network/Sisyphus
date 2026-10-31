@@ -476,12 +476,13 @@ func sharedStateDomains(requested []nodepb.SharedStateDomain) ([]nodepb.SharedSt
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE,
 		}, nil
 	}
 	seen := make(map[nodepb.SharedStateDomain]struct{}, len(requested))
 	domains := make([]nodepb.SharedStateDomain, 0, len(requested))
 	for _, domain := range requested {
-		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES {
+		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE {
 			return nil, status.Errorf(codes.InvalidArgument, "unsupported shared-state domain %s", domain)
 		}
 		if _, ok := seen[domain]; ok {
@@ -587,6 +588,13 @@ func (s *localService) sharedStateSnapshot(ctx context.Context, domain nodepb.Sh
 			event.Error = err.Error()
 		} else {
 			event.State = &nodepb.SharedStateEvent_ChatSummaries{ChatSummaries: state}
+		}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE:
+		state, err := s.GetCityTable(ctx, &nodepb.GetCityTableRequest{})
+		if err != nil {
+			event.Error = err.Error()
+		} else {
+			event.State = &nodepb.SharedStateEvent_CityTable{CityTable: state}
 		}
 	}
 	return event
