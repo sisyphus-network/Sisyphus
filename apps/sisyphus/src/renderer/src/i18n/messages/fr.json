@@ -138,7 +138,7 @@
   "browserAuthTokenLabel": "Jeton API du nœud",
   "browserAuthConnect": "Connecter le navigateur",
   "browserPairCodeTab": "Code d’association",
-  "pendingActionConfirmation": { "title": "Cette action nécessite votre accord", "description": "Un agent a demandé une modification de ce nœud. Examinez les détails avant de décider.", "deny": "Refuser", "approve": "Approuver l’action", "queued": "Encore {count} en attente", "loadFailed": "Impossible de charger les demandes en attente", "resolveFailed": "Impossible d’enregistrer votre décision" },
+  "pendingActionConfirmation": { "title": "Cette action nécessite votre accord", "description": "Un agent a demandé une modification de ce nœud. Examinez les détails avant de décider.", "requestedBy": "Client MCP à l’origine de la demande", "unknownRequester": "Client MCP inconnu", "clientReported": "Déclaré par le client · non vérifié", "deny": "Refuser", "approve": "Approuver l’action", "queued": "Encore {count} en attente", "loadFailed": "Impossible de charger les demandes en attente", "resolveFailed": "Impossible d’enregistrer votre décision" },
   "browserPairCodeLabel": "Code à usage unique à huit chiffres",
   "browserPair": "Associer ce navigateur",
   "browserTokenAlternative": "Utiliser plutôt le jeton API du nœud",

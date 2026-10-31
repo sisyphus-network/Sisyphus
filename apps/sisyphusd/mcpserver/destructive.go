@@ -103,7 +103,7 @@ func confirmDestructiveContext(s *server, ctx context.Context, req *mcp.CallTool
 	if s.Node == nil {
 		return nil, false, errors.New(noConfirmation)
 	}
-	decision, err := s.Node.RequestActionConfirmation(s.as(ctx), &nodepb.RequestActionConfirmationRequest{Action: action})
+	decision, err := s.requestActionApproval(ctx, req, action)
 	if err != nil {
 		return nil, false, errors.New(status.Convert(err).Message())
 	}

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -26,10 +27,44 @@ const (
 type pendingAction struct {
 	id          string
 	action      string
+	requester   pendingActionRequester
 	requestedAt time.Time
 	expiresAt   time.Time
 	decision    chan bool
 	approved    bool
+}
+
+type pendingActionRequester struct {
+	clientName    string
+	clientVersion string
+	reported      bool
+}
+
+type actionApprovalActor struct {
+	kind     string
+	id       string
+	name     string
+	verified bool
+}
+
+type actionApprovalActorContextKey struct{}
+
+func withActionApprovalActor(ctx context.Context, actor actionApprovalActor) context.Context {
+	return context.WithValue(ctx, actionApprovalActorContextKey{}, actor)
+}
+
+func actionApprovalActorFromContext(ctx context.Context) (actionApprovalActor, bool) {
+	actor, ok := ctx.Value(actionApprovalActorContextKey{}).(actionApprovalActor)
+	return actor, ok
+}
+
+type pendingActionAuditEvent struct {
+	requestID string
+	requester pendingActionRequester
+	requested time.Time
+	resolved  time.Time
+	approved  bool
+	resolver  actionApprovalActor
 }
 
 // pendingActionManager holds one-time decisions requested by agents and
@@ -42,6 +77,7 @@ type pendingActionManager struct {
 	revision    uint64
 	random      io.Reader
 	lifetime    time.Duration
+	audit       func(pendingActionAuditEvent)
 }
 
 func newPendingActionManager() *pendingActionManager {
@@ -51,7 +87,34 @@ func newPendingActionManager() *pendingActionManager {
 	}
 }
 
-func (m *pendingActionManager) request(ctx context.Context, action string) (bool, error) {
+func pendingActionRequesterFromRequest(req *nodepb.RequestActionConfirmationRequest) pendingActionRequester {
+	if req == nil {
+		return pendingActionRequester{}
+	}
+	name := cleanReportedClientInfo(req.GetRequesterClientName(), 96)
+	if name == "" {
+		return pendingActionRequester{}
+	}
+	return pendingActionRequester{
+		clientName: name, clientVersion: cleanReportedClientInfo(req.GetRequesterClientVersion(), 32), reported: true,
+	}
+}
+
+func cleanReportedClientInfo(value string, maxBytes int) string {
+	var clean strings.Builder
+	for _, r := range strings.TrimSpace(value) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		if clean.Len()+utf8.RuneLen(r) > maxBytes {
+			break
+		}
+		clean.WriteRune(r)
+	}
+	return strings.TrimSpace(clean.String())
+}
+
+func (m *pendingActionManager) request(ctx context.Context, action string, requesters ...pendingActionRequester) (bool, error) {
 	if action == "" || len(action) > maxPendingActionText || strings.IndexFunc(action, func(r rune) bool {
 		return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
 	}) >= 0 {
@@ -62,8 +125,12 @@ func (m *pendingActionManager) request(ctx context.Context, action string) (bool
 		return false, status.Error(codes.Internal, "could not create a pending action")
 	}
 	now := time.Now()
+	var requester pendingActionRequester
+	if len(requesters) > 0 {
+		requester = requesters[0]
+	}
 	item := &pendingAction{
-		id: base64.RawURLEncoding.EncodeToString(nonce), action: action,
+		id: base64.RawURLEncoding.EncodeToString(nonce), action: action, requester: requester,
 		requestedAt: now, expiresAt: now.Add(m.lifetime), decision: make(chan bool, 1),
 	}
 	m.mu.Lock()
@@ -92,7 +159,7 @@ func (m *pendingActionManager) request(ctx context.Context, action string) (bool
 	}
 }
 
-func (m *pendingActionManager) resolve(id string, approved bool) error {
+func (m *pendingActionManager) resolve(id string, approved bool, resolvers ...actionApprovalActor) error {
 	m.mu.Lock()
 	item, ok := m.pending[id]
 	if !ok {
@@ -107,6 +174,16 @@ func (m *pendingActionManager) resolve(id string, approved bool) error {
 	}
 	delete(m.pending, id)
 	item.approved = approved
+	if m.audit != nil {
+		var resolver actionApprovalActor
+		if len(resolvers) > 0 {
+			resolver = resolvers[0]
+		}
+		m.audit(pendingActionAuditEvent{
+			requestID: item.id, requester: item.requester, requested: item.requestedAt,
+			resolved: time.Now(), approved: approved, resolver: resolver,
+		})
+	}
 	item.decision <- approved
 	m.changedLocked()
 	m.mu.Unlock()
@@ -161,6 +238,8 @@ func (m *pendingActionManager) snapshot() *nodepb.PendingActionConfirmationsStat
 		state.Actions = append(state.Actions, &nodepb.PendingActionConfirmation{
 			Id: item.id, Action: item.action,
 			RequestedAtUnixMillis: item.requestedAt.UnixMilli(), ExpiresAtUnixMillis: item.expiresAt.UnixMilli(),
+			RequesterClientName: item.requester.clientName, RequesterClientVersion: item.requester.clientVersion,
+			RequesterClientInfoReported: item.requester.reported,
 		})
 	}
 	return state

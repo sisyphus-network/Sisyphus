@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"log/slog"
 	"net"
 	"net/netip"
 	"sort"
@@ -111,6 +112,8 @@ type LocalConfig struct {
 	Join func(ctx context.Context, address, invitation string) (id string, role access.Role, err error)
 	// Token is what a caller must present to change anything.
 	Token string
+	// Logger records privacy-conscious owner-approval outcomes.
+	Logger *slog.Logger
 	// BrowserAccess keeps one-time pairing codes and revocable browser
 	// credentials in the node database. Nil uses volatile storage (tests only).
 	BrowserAccess BrowserAccessStore
@@ -257,7 +260,29 @@ type localService struct {
 }
 
 func (s *localService) actionConfirmations() *pendingActionManager {
-	s.pendingOnce.Do(func() { s.pendingQueue = newPendingActionManager() })
+	s.pendingOnce.Do(func() {
+		manager := newPendingActionManager()
+		logger := s.cfg.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		manager.audit = func(event pendingActionAuditEvent) {
+			logger.Info("owner action decision",
+				slog.String("request_id", event.requestID),
+				slog.Bool("approved", event.approved),
+				slog.Time("requested_at", event.requested.UTC()),
+				slog.Time("resolved_at", event.resolved.UTC()),
+				slog.String("requester_client_name", event.requester.clientName),
+				slog.String("requester_client_version", event.requester.clientVersion),
+				slog.Bool("requester_client_info_reported", event.requester.reported),
+				slog.String("resolver_kind", event.resolver.kind),
+				slog.String("resolver_name", event.resolver.name),
+				slog.String("resolver_id", event.resolver.id),
+				slog.Bool("resolver_identity_verified", event.resolver.verified),
+			)
+		}
+		s.pendingQueue = manager
+	})
 	return s.pendingQueue
 }
 
@@ -649,7 +674,7 @@ func (s *localService) RequestActionConfirmation(ctx context.Context, req *nodep
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "an action description is required")
 	}
-	approved, err := s.actionConfirmations().request(ctx, strings.TrimSpace(req.GetAction()))
+	approved, err := s.actionConfirmations().request(ctx, strings.TrimSpace(req.GetAction()), pendingActionRequesterFromRequest(req))
 	if err != nil {
 		return nil, err
 	}
@@ -695,7 +720,11 @@ func (s *localService) ResolveActionConfirmation(ctx context.Context, req *nodep
 	if req == nil || strings.TrimSpace(req.GetId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "a pending action ID is required")
 	}
-	if err := s.actionConfirmations().resolve(req.GetId(), req.GetApproved()); err != nil {
+	resolver, ok := actionApprovalActorFromContext(ctx)
+	if !ok {
+		resolver = actionApprovalActor{kind: "unknown", name: "Authenticated API client"}
+	}
+	if err := s.actionConfirmations().resolve(req.GetId(), req.GetApproved(), resolver); err != nil {
 		return nil, err
 	}
 	return &nodepb.ResolveActionConfirmationResponse{}, nil
