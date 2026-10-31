@@ -190,8 +190,7 @@ export function AgentChat({ snapshot, messages, direction, historyOpen, setHisto
     pendingChatRefreshRef.current = null
     if (pending && pending === chatIdRef.current) void refreshOpenChat(pending)
   }, [isBusy])
-  // Workspace can switch between its desktop and compact layouts. If that
-  // remounts this view, restore the selected conversation from its owner.
+  // Restore an initial conversation selection supplied by the workspace.
   useEffect(() => {
     if (activeChatId) void openChat(activeChatId)
   }, [])
