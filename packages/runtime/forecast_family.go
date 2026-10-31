@@ -203,7 +203,7 @@ func (f Forecast) Offers(context.Context) []string {
 // modelChoices are the kinds a form offers: a family's only where the
 // node can run it.
 func (f Forecast) modelChoices() []string {
-	choices := append([]string{"all"}, forecastKinds...)
+	choices := append([]string{"all"}, goKinds()...)
 	for _, fam := range f.runnable() {
 		choices = append(choices, fam.kinds()...)
 	}
@@ -211,11 +211,12 @@ func (f Forecast) modelChoices() []string {
 }
 
 func (f Forecast) modelsHelp() string {
+	help := "Which kind of model to try, or all of them. Damped, Holt's smoothing with a damped trend, is tried only when asked for."
 	families := f.runnable()
 	if len(families) == 0 {
-		return "Which kind of model to try, or all of them."
+		return help
 	}
-	return "Which kind of model to try, or all of them. The " + familyNames(families) + " models are pretrained, run in an image on workers that run containers, and are tried only when asked for."
+	return help + " The " + familyNames(families) + " models are pretrained, run in an image on workers that run containers, and are tried only when asked for too."
 }
 
 // Varies says that, with a family's candidate, two honest workers' outputs

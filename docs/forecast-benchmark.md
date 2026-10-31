@@ -92,6 +92,16 @@ Some changes were measured and not kept:
 
 A damped trend is a good model, and on its own it scores well, but here it has to earn one of the four places in the median. As a kind of its own it often does, pushing out a kind, often theta or the autoregression, whose errors differ more from the others' and so do more to cancel them; the median of four similar trend-following forecasts is no better than one of them. As settings of Holt's smoothing it cannot push anything out, but it gives the backtest twenty-four Holt candidates to choose among instead of six, and with more to choose from the one that looks best on a few windows is more often the luckiest rather than the best. Both are the same lesson: what helps a combination is models that are wrong in different ways, and fewer, sounder choices. The others changed too little to be worth their cost.
 
+### Damped trend, on request
+
+Damped-trend smoothing can still be asked for by name, as `damped` among the `models` of `forecast` or `forecasts`. It is Gardner and McKenzie's damped form of Holt's smoothing: the trend is multiplied by φ at each step, so the forecast h steps ahead is the level plus φ + φ² + … + φ^h times the trend, and far ahead it levels off at the level plus φ/(1 − φ) times the trend, where Holt's goes on climbing. With φ of 1 it is Holt's, to the bit. It is a sound choice for a series whose growth is expected to slow, and a job that asks for it alone gets its best candidate's forecast.
+
+It is not among the defaults, and `all` does not include it, because of the measurements above: as another kind among the defaults it scored an overall OWA of 0.894, and as settings of Holt's smoothing 0.882, both worse than the 0.874 of the defaults without it. `all` means the defaults, as it does for Chronos-Bolt and TimesFM, so that a job written as `all` forecasts the same as before. A job that names `damped` beside other kinds lets it compete for one of the four places in the median like any other kind.
+
+It has nine candidates: α of 0.2, 0.5 and 0.8, as Holt's has, β of 0.1, and φ of 0.8, 0.9 and 0.98. That is kept small for the same reason as above: with more settings to choose from, the one that looks best on a few backtest windows is more often the luckiest, and twenty-four Holt candidates in place of six did worse. Like the other kinds written in Go, it gives the same bits on every run and every processor, so two workers' outputs are compared exactly.
+
+To measure it on M4, name it with the others, as `SISYPHUS_M4_MODELS=naive,mean,drift,snaive,ses,holt,holtwinters,ar,theta,damped`. The figures above are from when damped trends were first tried, and their settings are not recorded here, so this kind's own figure is still to be measured that way.
+
 ### What to try next
 
 - **Daily series**, the one frequency where the workload is not better than Naive2. They are long and close to a random walk, which is hard to beat; a model chosen from the last few months rather than years of history may do better.

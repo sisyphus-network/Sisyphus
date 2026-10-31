@@ -87,7 +87,7 @@ func TestChronosWiringGivesTheKnownAnswer(t *testing.T) {
 	}
 	put("image", ChronosImage)
 	put("label", ChronosLabel)
-	const want = "e494ee4eddc608b2af52bc798a8fe0e7bea82352ad6d59c2a4f4aa4123e5048c"
+	const want = "1a8b2aa750d5d0c10732d15ec53fb739a09d8fe7af30e11b013c58ec4b411214"
 	if got := hex.EncodeToString(digest.Sum(nil)); got != want {
 		t.Errorf("the Chronos wiring hashes to %s, want %s", got, want)
 	}

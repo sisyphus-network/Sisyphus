@@ -70,6 +70,18 @@ type ForecastParams struct {
 // tried.
 var forecastKinds = []string{"naive", "mean", "drift", "snaive", "ses", "holt", "holtwinters", "ar", "theta"}
 
+// askedKinds are kinds of model written in Go that a job must ask for by
+// name: "all" does not include them, as it does not include a family's.
+// Damped-trend smoothing is one: added to the default kinds, it made the
+// forecast worse on the M4 competition's series, since it often takes a
+// place in the median from a kind whose errors differ more from the
+// others'; see docs/forecast-benchmark.md.
+var askedKinds = []string{"damped"}
+
+// goKinds are every kind of model written in Go, in the order their
+// candidates are tried.
+func goKinds() []string { return slices.Concat(forecastKinds, askedKinds) }
+
 const (
 	maxForecastBytes   = 16 << 20
 	maxForecastPoints  = 200_000
@@ -94,10 +106,12 @@ const (
 
 // forecastModel is one candidate: a kind of model and its settings.
 type forecastModel struct {
-	Kind   string  `json:"kind"`
-	Alpha  float64 `json:"alpha,omitempty"`
-	Beta   float64 `json:"beta,omitempty"`
-	Gamma  float64 `json:"gamma,omitempty"`
+	Kind  string  `json:"kind"`
+	Alpha float64 `json:"alpha,omitempty"`
+	Beta  float64 `json:"beta,omitempty"`
+	Gamma float64 `json:"gamma,omitempty"`
+	// Phi is how much of its trend a damped-trend model keeps each step.
+	Phi    float64 `json:"phi,omitempty"`
 	Order  int     `json:"order,omitempty"`
 	Season int     `json:"season,omitempty"`
 	// Variant is which model of its family a family's candidate is, as
@@ -117,6 +131,7 @@ func (m forecastModel) Name() string {
 	setting("alpha", m.Alpha)
 	setting("beta", m.Beta)
 	setting("gamma", m.Gamma)
+	setting("phi", m.Phi)
 	setting("order", float64(m.Order))
 	setting("season", float64(m.Season))
 	if m.Variant != "" {
@@ -132,7 +147,7 @@ func (m forecastModel) fewest() int {
 		return m.Season
 	case "holtwinters":
 		return 2 * m.Season
-	case "drift", "holt", "theta":
+	case "drift", "holt", "damped", "theta":
 		return 2
 	case "ar":
 		return 3*m.Order + 2
@@ -160,6 +175,8 @@ func (m forecastModel) invalid() string {
 		ok = rate(m.Alpha) && (m.Season == 0 || season)
 	case "holt":
 		ok = rate(m.Alpha) && rate(m.Beta)
+	case "damped":
+		ok = rate(m.Alpha) && rate(m.Beta) && rate(m.Phi)
 	case "holtwinters":
 		ok = season && rate(m.Alpha) && rate(m.Beta) && rate(m.Gamma)
 	case "ar":
@@ -169,9 +186,9 @@ func (m forecastModel) invalid() string {
 		if !family {
 			return fmt.Sprintf("no such kind of model as %q", m.Kind)
 		}
-		ok = slices.Contains(fam.variants, m.Variant) && m.Alpha == 0 && m.Beta == 0 && m.Gamma == 0 && m.Order == 0 && m.Season == 0
+		ok = slices.Contains(fam.variants, m.Variant) && m.Alpha == 0 && m.Beta == 0 && m.Gamma == 0 && m.Phi == 0 && m.Order == 0 && m.Season == 0
 	}
-	if !ok || (!m.varies() && m.Variant != "") {
+	if !ok || (!m.varies() && m.Variant != "") || (m.Kind != "damped" && m.Phi != 0) {
 		return fmt.Sprintf("%s is not a model with settings it can take", m.Name())
 	}
 	return ""
@@ -265,7 +282,7 @@ type ForecastResult struct {
 func (Forecast) Name() string { return "forecast" }
 
 func (Forecast) Describe() string {
-	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, or timesfm-200m, the pretrained TimesFM model, which "all" does not include}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
+	return `Forecasts a time series: fits naive, mean, drift, seasonal naive, exponential smoothing (simple, Holt's trend, Holt-Winters seasonal), autoregressive and theta models with a range of settings, backtests each on the last windows of the series, a few candidates on each worker, and forecasts with the median, step by step, of the best candidate of each of the four best kinds. Parameters: {"input": "<CID of a CSV file with a value on each line, in the last column, oldest first>", "horizon": <steps ahead, default 12>, "season": <steps in the series' cycle, 0 for none>, "folds": <backtest windows, by default as many as fit, up to 8>, "models": "all" or one or more of naive, mean, drift, snaive, ses, holt, holtwinters, ar, theta, separated by commas, as well as damped, Holt's smoothing with a damped trend, and on a pool whose workers run containers chronos-tiny, chronos-mini, chronos-small or chronos-base, the pretrained Chronos-Bolt models, or timesfm-200m, the pretrained TimesFM model, which "all" does not include}. Result: {"best": {"model", "mae", "rmse"}, "chosen": {"model": "median of …", "mae", "rmse"}, "forecast": [{"step", "value", "lo80", "hi80", "lo95", "hi95"}], "candidates": [every candidate's scores, best first], "forecast_table": "<CID of the forecast as CSV>", "scores_table": "<CID of the scores as CSV>"}.`
 }
 
 func (f Forecast) Form() []Field {
@@ -302,8 +319,8 @@ func (p ForecastParams) kinds() ([]string, error) {
 	var kinds []string
 	for _, kind := range strings.Split(p.Models, ",") {
 		kind = strings.TrimSpace(kind)
-		if !slices.Contains(forecastKinds, kind) && !slices.Contains(familyKinds(), kind) {
-			return nil, fmt.Errorf("models: %q is none of %s", kind, strings.Join(slices.Concat(forecastKinds, familyKinds()), ", "))
+		if !slices.Contains(goKinds(), kind) && !slices.Contains(familyKinds(), kind) {
+			return nil, fmt.Errorf("models: %q is none of %s", kind, strings.Join(slices.Concat(goKinds(), familyKinds()), ", "))
 		}
 		if !slices.Contains(kinds, kind) {
 			kinds = append(kinds, kind)
@@ -316,7 +333,7 @@ func (p ForecastParams) kinds() ([]string, error) {
 // fitted to every backtest window of a series of the given length.
 func forecastCandidates(kinds []string, season, shortest int) []forecastModel {
 	var models []forecastModel
-	for _, kind := range forecastKinds {
+	for _, kind := range goKinds() {
 		if !slices.Contains(kinds, kind) {
 			continue
 		}
@@ -333,6 +350,15 @@ func forecastCandidates(kinds []string, season, shortest int) []forecastModel {
 			for _, a := range []float64{0.2, 0.5, 0.8} {
 				for _, b := range []float64{0.05, 0.2} {
 					models = append(models, forecastModel{Kind: kind, Alpha: a, Beta: b})
+				}
+			}
+		case "damped":
+			// Few settings, as for Holt's: with more to choose from, the
+			// candidate that looks best on a few backtest windows is more
+			// often the luckiest; see docs/forecast-benchmark.md.
+			for _, a := range []float64{0.2, 0.5, 0.8} {
+				for _, phi := range []float64{0.8, 0.9, 0.98} {
+					models = append(models, forecastModel{Kind: kind, Alpha: a, Beta: 0.1, Phi: phi})
 				}
 			}
 		case "holtwinters":
@@ -500,6 +526,26 @@ func fitForecast(m forecastModel, y []float64, h int) ([]float64, error) {
 		}
 		for k := range f {
 			f[k] = level + float64(float64(k+1)*trend)
+		}
+	case "damped":
+		// Gardner and McKenzie's damped trend: Holt's smoothing, but the
+		// trend is multiplied by phi at each step, so that the forecast
+		// h steps ahead adds phi + phi² + … + phi^h of it and levels off
+		// at level + trend·phi/(1-phi). With phi 1 it is Holt's, to the
+		// bit.
+		level, trend := y[0], y[1]-y[0]
+		for _, v := range y[1:] {
+			before := level
+			damped := float64(m.Phi * trend)
+			ahead := level + damped
+			level = ahead + float64(m.Alpha*(v-ahead))
+			trend = damped + float64(m.Beta*((level-before)-damped))
+		}
+		power, sum := 1.0, 0.0
+		for k := range f {
+			power = float64(power * m.Phi)
+			sum += power
+			f[k] = level + float64(sum*trend)
 		}
 	case "holtwinters":
 		s := m.Season
