@@ -387,5 +387,6 @@ func (s *localService) JoinPool(ctx context.Context, req *nodepb.JoinPoolRequest
 	if err != nil {
 		return nil, asError(err)
 	}
+	s.notifySharedStateChanged()
 	return &nodepb.JoinPoolResponse{PeerId: id, Role: toLocalRole[role]}, nil
 }

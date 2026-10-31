@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
@@ -843,9 +844,85 @@ func TestChatRevisionSharedAcrossLocalServices(t *testing.T) {
 	}
 }
 
+func TestWatchSharedStateStreamsBootstrapPeersToIndependentClients(t *testing.T) {
+	const token = "the-token"
+	book := &book{}
+	client := serveLocal(t, LocalConfig{
+		Token: token, Book: book, NodeInfoChanges: NewNodeInfoChanges(),
+		Bootstrap: func(context.Context, []string) {},
+		Connect:   func(context.Context, string) error { return nil },
+	})
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS}}
+	ctx1, cancel1 := context.WithCancel(withToken(token))
+	defer cancel1()
+	ctx2, cancel2 := context.WithCancel(withToken(token))
+	defer cancel2()
+	first, err := client.WatchSharedState(ctx1, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.WatchSharedState(ctx2, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchers := []nodepb.NodeService_WatchSharedStateClient{first, second}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		if err != nil || event.GetRevision() != 1 || !event.GetSnapshot() || event.GetError() != "" || event.GetBootstrapPeers() == nil || len(event.GetBootstrapPeers().GetPeers()) != 0 {
+			t.Fatalf("initial bootstrap-peer snapshot = %v, %v", event, err)
+		}
+	}
+
+	const peerID = "12D3KooWAMv5mPojCf7tz1PH9F3VCPzqCyc8t2onRa6ihxoPh7TK"
+	address := "/ip4/10.0.0.9/tcp/7700/p2p/" + peerID
+	if _, err := client.SetBootstrapPeers(withToken(token), &nodepb.SetBootstrapPeersRequest{Peers: []*nodepb.BootstrapPeer{{PeerId: peerID, Address: address}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		peers := event.GetBootstrapPeers().GetPeers()
+		if err != nil || event.GetRevision() != 2 || event.GetSnapshot() || event.GetError() != "" || len(peers) != 1 || peers[0].GetPeerId() != peerID || peers[0].GetAddress() != address {
+			t.Fatalf("updated bootstrap-peer event = %v, %v", event, err)
+		}
+	}
+
+	const connectedPeerID = "12D3KooWGMC9eNSqjbuxQN5gg7emLLsXsBxYAanwqcmCUALXtquU"
+	connectedAddress := "/ip4/10.0.0.10/tcp/7700/p2p/" + connectedPeerID
+	if _, err := client.ConnectPeer(withToken(token), &nodepb.ConnectPeerRequest{Address: connectedAddress}); err != nil {
+		t.Fatal(err)
+	}
+	for _, watcher := range watchers {
+		event, err := watcher.Recv()
+		peers := event.GetBootstrapPeers().GetPeers()
+		if err != nil || event.GetRevision() != 3 || event.GetSnapshot() || event.GetError() != "" || len(peers) != 2 || peers[1].GetPeerId() != connectedPeerID || peers[1].GetAddress() != connectedAddress {
+			t.Fatalf("connected bootstrap-peer event = %v, %v", event, err)
+		}
+	}
+}
+
+func TestJoinPoolNotifiesSharedStateAfterSuccess(t *testing.T) {
+	changes := NewNodeInfoChanges()
+	service := &localService{cfg: LocalConfig{
+		Token: "the-token", NodeInfoChanges: changes,
+		Join: func(context.Context, string, string) (string, access.Role, error) {
+			return "coordinator", access.Worker, nil
+		},
+	}}
+	updates, cancel := changes.subscribe()
+	defer cancel()
+	if _, err := service.JoinPool(incomingToken("the-token"), &nodepb.JoinPoolRequest{Address: "coordinator", Invitation: "invitation"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-updates:
+	default:
+		t.Fatal("successful pool join did not notify shared-state watchers")
+	}
+}
+
 func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	all, err := sharedStateDomains(nil)
-	if err != nil || len(all) != 14 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS || all[12] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES || all[13] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE {
+	if err != nil || len(all) != 15 || all[0] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || all[4] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_JOINED_POOL || all[5] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_PROFILES || all[6] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_MODEL_LENDING || all[7] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_FILES || all[8] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_LIMITS || all[9] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_LOCATION_DISCOVERY || all[10] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_WEB_ACCESS || all[11] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS || all[12] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES || all[13] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE || all[14] != nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS {
 		t.Fatalf("default shared-state domains = %v, %v", all, err)
 	}
 	unique, err := sharedStateDomains([]nodepb.SharedStateDomain{
@@ -859,7 +936,7 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_UNSPECIFIED}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unspecified shared-state domain error = %v, want InvalidArgument", err)
 	}
-	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(15)}); status.Code(err) != codes.InvalidArgument {
+	if _, err := sharedStateDomains([]nodepb.SharedStateDomain{nodepb.SharedStateDomain(16)}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown shared-state domain error = %v, want InvalidArgument", err)
 	}
 
@@ -922,6 +999,10 @@ func TestSharedStateDomainsAndSnapshots(t *testing.T) {
 	failedChatSummaries := (&localService{cfg: LocalConfig{Assistant: absent{}}}).sharedStateSnapshot(ownerContext, nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES)
 	if failedChatSummaries.GetError() == "" || failedChatSummaries.GetState() != nil {
 		t.Fatalf("failed chat-summary snapshot = %v; want per-domain error", failedChatSummaries)
+	}
+	failedBootstrapPeers := (&localService{cfg: LocalConfig{Book: &book{err: errors.New("bootstrap peer book unavailable")}}}).sharedStateSnapshot(ownerContext, nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS)
+	if failedBootstrapPeers.GetError() == "" || failedBootstrapPeers.GetState() != nil {
+		t.Fatalf("failed bootstrap-peer snapshot = %v; want per-domain error", failedBootstrapPeers)
 	}
 }
 
@@ -1008,6 +1089,47 @@ func TestWatchSharedStateStopsOnSendFailureOrCancellation(t *testing.T) {
 	stream := &sharedStateTestStream{ctx: ctx, afterSend: func(int) { cancel() }}
 	if err := (&localService{cfg: LocalConfig{Token: "the-token"}}).WatchSharedState(request, stream); err != nil || len(stream.sent) != 1 {
 		t.Fatalf("cancelled shared-state watch = %v, sent %d events; want clean stop after baseline", err, len(stream.sent))
+	}
+}
+
+func TestWatchSharedStateStopsWhenPairedBrowserIsRevoked(t *testing.T) {
+	const deviceID, deviceToken, apiToken = "browser-id", "browser-secret", "the-token"
+	store := &volatileBrowserAccess{devices: make(map[string]nodedb.BrowserDevice)}
+	deviceHash := sha256.Sum256([]byte(deviceToken))
+	store.devices[deviceID] = nodedb.BrowserDevice{ID: deviceID, TokenHash: deviceHash[:], ExpiresAt: time.Now().Add(time.Hour)}
+	manager := NewBrowserAccessManager(LocalConfig{Token: apiToken, BrowserAccess: store})
+	ctx, finish, ok := manager.devices.authorizeRequest(deviceID+"."+deviceToken, context.Background())
+	if !ok {
+		t.Fatal("paired browser request was not authorized")
+	}
+	defer finish()
+	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("authorization", "Bearer "+apiToken))
+	started := make(chan struct{})
+	stream := &sharedStateTestStream{ctx: ctx, afterSend: func(sent int) {
+		if sent == 1 {
+			close(started)
+		}
+	}}
+	request := &nodepb.WatchSharedStateRequest{Domains: []nodepb.SharedStateDomain{nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE}}
+	done := make(chan error, 1)
+	go func() {
+		done <- (&localService{cfg: LocalConfig{Token: apiToken}}).WatchSharedState(request, stream)
+	}()
+	select {
+	case <-started:
+	case <-time.After(eventualWait):
+		t.Fatal("shared-state stream did not send its baseline")
+	}
+	if err := manager.devices.revoke(deviceID); err != nil {
+		t.Fatalf("revoke paired browser: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil || len(stream.sent) != 1 {
+			t.Fatalf("revoked shared-state stream = %v after %d events; want clean stop after baseline", err, len(stream.sent))
+		}
+	case <-time.After(eventualWait):
+		t.Fatal("revoking the paired browser did not stop its shared-state stream")
 	}
 }
 

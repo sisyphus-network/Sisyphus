@@ -477,12 +477,13 @@ func sharedStateDomains(requested []nodepb.SharedStateDomain) ([]nodepb.SharedSt
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_POOL_MEMBERS,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CHAT_SUMMARIES,
 			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE,
+			nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS,
 		}, nil
 	}
 	seen := make(map[nodepb.SharedStateDomain]struct{}, len(requested))
 	domains := make([]nodepb.SharedStateDomain, 0, len(requested))
 	for _, domain := range requested {
-		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_CITY_TABLE {
+		if domain < nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_NODE || domain > nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS {
 			return nil, status.Errorf(codes.InvalidArgument, "unsupported shared-state domain %s", domain)
 		}
 		if _, ok := seen[domain]; ok {
@@ -595,6 +596,13 @@ func (s *localService) sharedStateSnapshot(ctx context.Context, domain nodepb.Sh
 			event.Error = err.Error()
 		} else {
 			event.State = &nodepb.SharedStateEvent_CityTable{CityTable: state}
+		}
+	case nodepb.SharedStateDomain_SHARED_STATE_DOMAIN_BOOTSTRAP_PEERS:
+		state, err := s.GetBootstrapPeers(ctx, &nodepb.GetBootstrapPeersRequest{})
+		if err != nil {
+			event.Error = err.Error()
+		} else {
+			event.State = &nodepb.SharedStateEvent_BootstrapPeers{BootstrapPeers: state}
 		}
 	}
 	return event
@@ -1104,6 +1112,7 @@ func (s *localService) SetBootstrapPeers(ctx context.Context, req *nodepb.SetBoo
 	if err := s.cfg.Book.SetBootstrapPeers(entries); err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
+	s.notifySharedStateChanged()
 	// Whoever answers, answers in its own time; the book is saved already.
 	go s.cfg.Bootstrap(context.WithoutCancel(ctx), addresses)
 	saved, _ := s.cfg.Book.BootstrapPeers() // just written, so readable
@@ -1137,7 +1146,9 @@ func (s *localService) ConnectPeer(ctx context.Context, req *nodepb.ConnectPeerR
 	}
 	if s.cfg.Book != nil {
 		// The node is connected whether or not that can be written down.
-		s.cfg.Book.AddBootstrapPeer(nodedb.BootstrapPeer{PeerID: info.ID.String(), Address: req.GetAddress()})
+		if err := s.cfg.Book.AddBootstrapPeer(nodedb.BootstrapPeer{PeerID: info.ID.String(), Address: req.GetAddress()}); err == nil {
+			s.notifySharedStateChanged()
+		}
 	}
 	return &nodepb.ConnectPeerResponse{PeerId: info.ID.String()}, nil
 }
