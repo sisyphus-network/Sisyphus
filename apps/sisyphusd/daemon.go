@@ -533,6 +533,17 @@ func runDaemon(ctx context.Context, args []string) error {
 		local.LiveLending = runtime.NewModelServer(lent.URL, runtime.OwnerFromSettings(lent.Only, lent.GPULayers, lent.Threads, lent.Context, lent.KeepAlive))
 		runs = runs.With(runtime.WithLiveModels(local.LiveLending)...)
 	}
+	if isWorker {
+		// Allowing what the node cannot run takes nothing, which its owner
+		// may not have meant; refusing everything it can run leaves a
+		// worker with no work, which is a mistake.
+		if unmatched := acceptance.Unmatched(runs); len(unmatched) > 0 {
+			log.Warn("--allow-workloads names workloads or groups this node was not started able to run, so they are not taken", "names", strings.Join(unmatched, ","))
+		}
+		if len(runs.Accepted(acceptance).Names()) == 0 {
+			return fmt.Errorf("--allow-workloads, --deny-workloads: they leave this worker nothing to take of what it can run (%s)", strings.Join(runs.Names(), ", "))
+		}
+	}
 	local.Lending, local.Lent, local.LentByFlags = db, lent, *modelsFrom != ""
 	// host is the node's libp2p host, started below according to its role.
 	var host *p2p.Host

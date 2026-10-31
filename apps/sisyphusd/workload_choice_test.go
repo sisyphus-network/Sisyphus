@@ -54,10 +54,29 @@ func TestTheWorkloadsAnOwnerNamesMustExist(t *testing.T) {
 		{[]string{"--allow-workloads", "default,mining"}, `"mining" is neither a workload nor a group`},
 		{[]string{"--role", "coordinator", "--deny-workloads", "containers"}, "--allow-workloads and --deny-workloads say what a worker takes, and need the worker role"},
 		{[]string{"--role", "coordinator", "--allow-workloads", "primes"}, "need the worker role"},
+		// Nothing left to take.
+		{[]string{"--deny-workloads", "default"}, "they leave this worker nothing to take of what it can run (forecast, forecasts, primes, wordcount)"},
+		{[]string{"--allow-workloads", "transcode,models"}, "nothing to take"},
+		{[]string{"--allow-workloads", "primes", "--deny-workloads", "primes"}, "nothing to take"},
 	} {
 		_, err := cli(t, append([]string{"run", "--data-dir", t.TempDir(), "--listen", freeAddr(t)}, tc.args...)...)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%v: %v, want %q", tc.args, err, tc.want)
 		}
+	}
+}
+
+// Allowing what the node was not started able to run takes nothing, and the
+// node says so in its log.
+func TestANodeWarnsOfWhatItIsAllowedButCannotRun(t *testing.T) {
+	logs := captureLogs(t)
+	addr := freeAddr(t)
+	startDaemon(t, "--listen", addr, "--name", "rig", "--allow-workloads", "primes,transcode,models")
+	nodes := waitForOutput(t, "rig", "nodes", "--addr", addr)
+	if got := workloadsOf(t, nodes, "rig"); got != "primes" {
+		t.Errorf("rig offers %s, want primes:\n%s", got, nodes)
+	}
+	if !strings.Contains(logs.String(), "names=transcode,models") || !strings.Contains(logs.String(), "not started able to run") {
+		t.Errorf("no warning of what cannot run in:\n%s", logs.String())
 	}
 }

@@ -13,7 +13,9 @@ const (
 	// takes when its owner says nothing.
 	GroupDefault = "default"
 	// GroupContainers is the workloads whose tasks run in containers: any
-	// image a job names, or a fixed one given a stranger's input.
+	// image a job names, or a fixed one given a stranger's input. On a node
+	// that runs containers, forecast and forecasts are in it too, since
+	// there they run the pretrained families' images.
 	GroupContainers = "containers"
 	// GroupModels is the workloads that ask the worker's model server.
 	GroupModels = "models"
@@ -42,6 +44,13 @@ func (Chat) modelGroup() string    { return GroupModels }
 func (Prompts) modelGroup() string { return GroupModels }
 func (Embed) modelGroup() string   { return GroupModels }
 
+// containerBacked is a workload that runs container images only on a node
+// that runs containers, and is in GroupContainers there.
+type containerBacked interface{ runsImages() bool }
+
+func (f Forecast) runsImages() bool  { return f.Containers }
+func (f Forecasts) runsImages() bool { return f.Containers }
+
 // optIn reports whether a worker takes w only when its owner says so.
 func optIn(w Workload) bool {
 	o, ok := w.(OptIn)
@@ -56,6 +65,9 @@ func GroupsOf(w Workload) []string {
 		groups = append(groups, GroupDefault)
 	}
 	if _, ok := w.(contained); ok {
+		groups = append(groups, GroupContainers)
+	}
+	if c, ok := w.(containerBacked); ok && c.runsImages() {
 		groups = append(groups, GroupContainers)
 	}
 	if m, ok := w.(modelled); ok {
@@ -125,4 +137,22 @@ func (r *Registry) Accepted(a Acceptance) *Registry {
 		}
 	}
 	return NewRegistry(kept...)
+}
+
+// Unmatched returns those of the names and groups a allows that answer to
+// none of r's workloads: workloads the node knows of but was not started
+// able to run, as transcode is without containers, and groups with none of
+// those in them. Allowing them takes nothing.
+func (a Acceptance) Unmatched(r *Registry) []string {
+	var unmatched []string
+	for _, name := range a.allow {
+		matched := false
+		for _, w := range r.workloads {
+			matched = matched || w.Name() == name || slices.Contains(GroupsOf(w), name)
+		}
+		if !matched {
+			unmatched = append(unmatched, name)
+		}
+	}
+	return unmatched
 }

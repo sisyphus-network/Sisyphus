@@ -29,6 +29,11 @@ func TestTheGroupsAWorkloadIsIn(t *testing.T) {
 		{Primes{}, []string{GroupDefault}},
 		{Container{}, []string{GroupDefault, GroupContainers}},
 		{Images{}, []string{GroupDefault, GroupContainers}},
+		// Forecasts run images only on a node that runs containers.
+		{Forecast{}, []string{GroupDefault}},
+		{Forecasts{}, []string{GroupDefault}},
+		{Forecast{Containers: true}, []string{GroupDefault, GroupContainers}},
+		{Forecasts{Containers: true}, []string{GroupDefault, GroupContainers}},
 		{Chat{}, []string{GroupDefault, GroupModels}},
 		{Prompts{}, []string{GroupDefault, GroupModels}},
 		{Embed{}, []string{GroupDefault, GroupModels}},
@@ -87,9 +92,9 @@ func TestWhatAnOwnerAllowsAndDenies(t *testing.T) {
 		{name: "the default group is the same", allow: []string{GroupDefault}, want: without("fake-mining")},
 		{name: "names alone", allow: []string{"primes", "wordcount"}, want: []string{"primes", "wordcount"}},
 		{name: "a group", allow: []string{GroupModels}, want: []string{"chat", "embed", "prompts"}},
-		{name: "a name and a group", allow: []string{"primes", GroupContainers}, want: []string{"container", "images", "md", "ocr", "prep", "primes", "qchem", "render", "traj", "transcode", "transcribe"}},
+		{name: "a name and a group", allow: []string{"primes", GroupContainers}, want: []string{"container", "forecast", "forecasts", "images", "md", "ocr", "prep", "primes", "qchem", "render", "traj", "transcode", "transcribe"}},
 		{name: "deny a name", deny: []string{"chat"}, want: without("fake-mining", "chat")},
-		{name: "deny a group", deny: []string{GroupContainers, GroupModels}, want: []string{"fake-heavy", "forecast", "forecasts", "primes", "wordcount"}},
+		{name: "deny a group", deny: []string{GroupContainers, GroupModels}, want: []string{"fake-heavy", "primes", "wordcount"}},
 		{name: "deny wins over allowing the same name", allow: []string{"primes", "wordcount"}, deny: []string{"primes"}, want: []string{"wordcount"}},
 		{name: "deny of a group wins over allowing a name in it", allow: []string{"transcode", "primes"}, deny: []string{GroupContainers}, want: []string{"primes"}},
 		{name: "deny of a name wins over allowing its group", allow: []string{GroupModels}, deny: []string{"embed"}, want: []string{"chat", "prompts"}},
@@ -136,5 +141,41 @@ func TestAnAcceptanceKeepsItsOwnLists(t *testing.T) {
 	allow[0], deny[0] = "wordcount", "primes"
 	if !a.Accepts(Primes{}) || a.Accepts(WordCount{}) {
 		t.Error("the acceptance changed with the lists it was made of")
+	}
+}
+
+// A containers denial keeps every container off a node that runs them,
+// forecasts' images too; on one that does not, forecasts run in the daemon
+// and are taken.
+func TestDenyingContainersKeepsForecastsImagesOff(t *testing.T) {
+	a, err := Accept(WithContainers(), nil, []string{GroupContainers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ContainersConfined(Confinement{}).Accepted(a).Names(); !slices.Equal(got, []string{"chat", "embed", "primes", "prompts", "wordcount"}) {
+		t.Errorf("a node that runs containers takes %v", got)
+	}
+	if got := Builtin().Accepted(a).Names(); !slices.Equal(got, []string{"forecast", "forecasts", "primes", "wordcount"}) {
+		t.Errorf("a node that does not takes %v", got)
+	}
+}
+
+func TestWhatAnOwnerAllowsThatANodeCannotRun(t *testing.T) {
+	known := WithContainers().With(fakeMining{})
+	for _, tc := range []struct {
+		allow []string
+		want  []string
+	}{
+		{nil, nil},
+		{[]string{GroupDefault, "primes"}, nil},
+		{[]string{"primes", "transcode", GroupContainers, GroupModels, "fake-mining", "forecast"}, []string{"transcode", GroupContainers, GroupModels, "fake-mining"}},
+	} {
+		a, err := Accept(known, tc.allow, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := a.Unmatched(Builtin()); !slices.Equal(got, tc.want) {
+			t.Errorf("allowing %v on a plain node: unmatched %v, want %v", tc.allow, got, tc.want)
+		}
 	}
 }
