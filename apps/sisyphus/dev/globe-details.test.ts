@@ -9,6 +9,14 @@ const dictionaries = Object.fromEntries(locales.map((locale) => [locale, JSON.pa
 const labels = dictionaries.en.globeDetails
 const ltr: RenderOptions = { direction: 'ltr', locale: 'en' }
 
+test('the details body can omit its title when the interface renders a custom heading', () => {
+  const details = peerDetails('peer-123')
+  const html = renderDetailsHtml(details, labels, { ...ltr, pinned: true, includeTitle: false })
+  assert.ok(!html.includes('globe-card__title'))
+  assert.ok(html.includes('peer-123'))
+  assert.ok(renderDetailsHtml(details, labels, ltr).includes('globe-card__title'))
+})
+
 // What a ListWorkers reply looks like from the Electron client: 64-bit
 // numbers as strings.
 const rig = {

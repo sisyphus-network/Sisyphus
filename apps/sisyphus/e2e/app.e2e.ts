@@ -748,8 +748,20 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
       await until('the zoom step to end', async () => await globe.getAttribute('data-zooming') === 'false')
     }
     const step = async (button: typeof zoomIn, activate: () => Promise<unknown>) => {
+      if (await globe.getAttribute('data-morphing') === 'true') {
+        await until('the globe/map transition to finish', async () => await globe.getAttribute('data-morphing') === 'false')
+      }
       const previous = await zoomStep()
       if (!await button.isEnabled()) return false
+      if (await globe.getAttribute('data-local-map') === 'true') {
+        const previousZoom = await zoom()
+        await activate()
+        // Map zooms use the pane camera directly instead of the globe's
+        // pointOfView animation counter. Zooming out past its bound returns
+        // to the globe, where the displayed zoom is refreshed at transition end.
+        await until('the local map zoom to change', async () => await zoom() !== previousZoom)
+        return true
+      }
       try {
         await activate()
       } catch (error) {
@@ -758,8 +770,12 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
         if (!await button.isEnabled() && await globe.getAttribute('data-zooming') === 'false' && await zoomStep() === previous) return false
         throw error
       }
-      await until('a zoom step to start or the limit to be reached', async () =>
-        await zoomStep() > previous || (!await button.isEnabled() && await globe.getAttribute('data-zooming') === 'false'))
+      await until('a zoom step or map transition to start, or the limit to be reached', async () =>
+        await zoomStep() > previous || await globe.getAttribute('data-morphing') === 'true' || (!await button.isEnabled() && await globe.getAttribute('data-zooming') === 'false'))
+      if (await globe.getAttribute('data-morphing') === 'true') {
+        await until('the globe/map transition to finish', async () => await globe.getAttribute('data-morphing') === 'false')
+        return true
+      }
       if (await zoomStep() === previous) return false
       await stepped(previous)
       return true
@@ -803,10 +819,14 @@ test('the globe zooms with its buttons and the wheel, and shows region lines onc
     assert.equal(await zoomIn.isEnabled(), true)
 
     // Out as far as it goes, from the keyboard: the region lines go.
-    await zoomOut.focus()
     for (let presses = 0; presses < 30; presses++) {
       const before = await zoom()
-      if (!await step(zoomOut, () => page.keyboard.press('Enter'))) break
+      // The button is disabled during each animation step, which can blur it.
+      // Restore focus before each key press so every iteration tests Enter.
+      if (!await step(zoomOut, async () => {
+        await zoomOut.focus()
+        await page.keyboard.press('Enter')
+      })) break
       assert.ok(await zoom() <= before, 'zooming out brought the globe in')
     }
     assert.equal(await zoomOut.isEnabled(), false, 'zooming out did not reach its limit')
@@ -993,18 +1013,20 @@ test('a collapsed workspace panel reopens by dragging its visible handle', async
     await handle.waitFor()
     const slot = page.locator('.workspace-topology-slot')
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const direction = await page.locator('html').getAttribute('dir')
+    const towardChat = direction === 'rtl' ? -1 : 1
     const box = await handle.boundingBox()
     assert.ok(box)
     // Pull toward chat beyond the closing threshold. Pointer capture must keep
     // the same drag alive even though the handle/panel geometry changes.
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
     await page.mouse.down()
-    await page.mouse.move(box.x + box.width / 2 + 430, box.y + box.height / 2, { steps: 12 })
+    await page.mouse.move(box.x + box.width / 2 + towardChat * 430, box.y + box.height / 2, { steps: 12 })
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
     const closedHandle = await handle.boundingBox()
     assert.ok(closedHandle, 'the collapsed resize handle disappeared')
     // Keep holding the original pointer and drag back across the handle to reopen.
-    await page.mouse.move(closedHandle.x + closedHandle.width / 2 - 220, closedHandle.y + closedHandle.height / 2, { steps: 10 })
+    await page.mouse.move(closedHandle.x + closedHandle.width / 2 - towardChat * 220, closedHandle.y + closedHandle.height / 2, { steps: 10 })
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
     await page.mouse.up()
     await page.waitForTimeout(400)
@@ -1017,6 +1039,77 @@ test('a collapsed workspace panel reopens by dragging its visible handle', async
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
     await handle.press('Enter')
     await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('resizing the topology pane pauses and resumes the globe smoothly', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the topology canvas no WebGL')
+    }
+    await wide(app, page)
+    const handle = page.getByRole('separator', { name: 'Resize topology panel' })
+    const slot = page.locator('.workspace-topology-slot')
+    const canvas = slot.locator('.network-globe-canvas canvas')
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    await canvas.waitFor()
+    await page.waitForTimeout(450)
+
+    const direction = await page.locator('html').getAttribute('dir')
+    const growToward = direction === 'rtl' ? 1 : -1
+    const handleBox = await handle.boundingBox()
+    const paneBox = await slot.boundingBox()
+    const initialBuffer = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
+    assert.ok(handleBox && paneBox && initialBuffer.width > 0 && initialBuffer.height > 0)
+
+    const x = handleBox.x + handleBox.width / 2
+    const y = handleBox.y + handleBox.height / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + growToward * 120, y, { steps: 8 })
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-resizing') === 'true')
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('.workspace-topology-slot .network-globe-canvas')
+      return canvas?.getAttribute('data-active') === 'true' && canvas.getAttribute('data-rotation-paused') === 'true'
+    })
+
+    const dragTransition = await slot.evaluate((element) => getComputedStyle(element).transitionDuration)
+    assert.match(dragTransition, /0s/, 'the pane should track the pointer directly without lagging transitions')
+    await page.waitForTimeout(150)
+    const resizedBox = await slot.boundingBox()
+    const dragBuffer = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
+    assert.ok(resizedBox && resizedBox.width > paneBox.width + 40, 'the pane did not follow the drag')
+    assert.notDeepEqual(dragBuffer, initialBuffer, 'the drawing buffer did not follow the pane while the pointer was held')
+    const centeredDuringDrag = await page.evaluate(() => {
+      const visual = document.querySelector('.network-visual')?.getBoundingClientRect()
+      const stage = document.querySelector('.network-globe-stage')?.getBoundingClientRect()
+      const canvas = document.querySelector('.network-globe-stage canvas')?.getBoundingClientRect()
+      if (!visual || !stage || !canvas) return false
+      const visualCenterX = visual.left + visual.width / 2
+      const visualCenterY = visual.top + visual.height / 2
+      return Math.abs(stage.left + stage.width / 2 - visualCenterX) <= 2
+        && Math.abs(stage.top + stage.height / 2 - visualCenterY) <= 2
+        && Math.abs(canvas.left + canvas.width / 2 - visualCenterX) <= 2
+        && Math.abs(canvas.top + canvas.height / 2 - visualCenterY) <= 2
+    })
+    assert.ok(centeredDuringDrag, 'the globe stage or canvas drifted away from the pane center during the drag')
+
+    await page.mouse.up()
+    await page.waitForFunction(() => {
+      const slot = document.querySelector('.workspace-topology-slot')
+      const canvas = document.querySelector('.workspace-topology-slot .network-globe-canvas')
+      return slot?.getAttribute('data-resizing') === 'false' && canvas?.getAttribute('data-active') === 'true' && canvas.getAttribute('data-rotation-paused') === 'false'
+    })
+    await page.waitForFunction(([width, height]) => {
+      const element = document.querySelector<HTMLCanvasElement>('.workspace-topology-slot .network-globe-canvas canvas')
+      return element && (element.width !== width || element.height !== height)
+    }, [initialBuffer.width, initialBuffer.height])
   } finally {
     await app.close()
     profile.remove()
@@ -1229,6 +1322,54 @@ test('the topology canvas stays fitted through live window resizes', async (t) =
     const final = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
     assert.ok(final.width > 0 && final.height > 0)
     assert.ok(observedBufferResize, 'the WebGL drawing buffer never responded to any intermediate window size')
+  } finally {
+    await app.close()
+    profile.remove()
+  }
+})
+
+test('the topology pane animates around a centered globe without resizing its canvas mid-transition', async (t) => {
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    if (!await hasWebgl(page)) {
+      assert.ok(!process.env.CI, 'the window was given no WebGL, though it was started with WebGL drawn in software')
+      return t.skip('this machine gives the topology canvas no WebGL')
+    }
+    await wide(app, page, { native: true })
+    const handle = page.getByRole('separator', { name: 'Resize topology panel' })
+    const slot = page.locator('.workspace-topology-slot')
+    const canvas = slot.locator('canvas')
+    await canvas.waitFor()
+
+    for (let transition = 0; transition < 2; transition++) {
+      const before = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
+      await handle.focus()
+      await page.keyboard.press('Enter')
+      await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-transitioning') === 'true')
+      await page.waitForTimeout(100)
+      const during = await canvas.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }))
+      assert.deepEqual(during, before, 'the WebGL drawing buffer resized during the pane animation')
+      await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-transitioning') === 'false')
+
+      if (transition === 0) {
+        await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'false')
+      }
+    }
+
+    await page.waitForFunction(() => document.querySelector('.workspace-topology-slot')?.getAttribute('data-open') === 'true')
+    const centered = await page.evaluate(() => {
+      const pane = document.querySelector('.workspace-network')?.getBoundingClientRect()
+      const stage = document.querySelector('.network-globe-stage')?.getBoundingClientRect()
+      const canvas = document.querySelector('.network-globe-stage canvas')?.getBoundingClientRect()
+      if (!pane || !stage || !canvas) return false
+      const centeredInPane = Math.abs((stage.left + stage.width / 2) - (pane.left + pane.width / 2)) <= 2
+        && Math.abs((stage.top + stage.height / 2) - (pane.top + pane.height / 2)) <= 2
+      const centeredInStage = Math.abs((canvas.left + canvas.width / 2) - (stage.left + stage.width / 2)) <= 2
+        && Math.abs((canvas.top + canvas.height / 2) - (stage.top + stage.height / 2)) <= 2
+      return centeredInPane && centeredInStage
+    })
+    assert.ok(centered, 'the globe canvas is not centered inside the expanded pane')
   } finally {
     await app.close()
     profile.remove()

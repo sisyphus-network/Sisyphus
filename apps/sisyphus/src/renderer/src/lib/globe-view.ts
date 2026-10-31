@@ -6,6 +6,18 @@
 // quarter of the radius above the surface, and the farthest twice the fit,
 // the globe at half its size.
 export type ZoomLimits = { min: number; max: number; fit: number }
+// Both projections share the full pane. Fit the globe to its narrower axis.
+export function globeFitDistance(radius: number, verticalFovDegrees: number, aspect = 1): number {
+  const halfVertical = verticalFovDegrees * Math.PI / 360
+  const halfHorizontal = Math.atan(Math.tan(halfVertical) * Math.max(0.001, aspect))
+  return radius / Math.sin(Math.min(halfVertical, halfHorizontal)) * 1.08
+}
+
+// Soften intermediate outlines without making the entire map disappear.
+export function projectionLineOpacity(morph: number): number {
+  const progress = Math.max(0, Math.min(1, morph))
+  return 1 - 0.3 * Math.sin(Math.PI * progress) ** 2
+}
 export function zoomLimits(radius: number, fit: number): ZoomLimits {
   return { min: radius * 1.25, max: Math.max(fit * 2, radius * 3.5), fit }
 }
@@ -33,6 +45,88 @@ export function zoomState(distance: number, limits: ZoomLimits): ZoomState {
     regions: distance < limits.fit * 0.85,
     percent: Math.round(limits.fit / distance * 100),
   }
+}
+
+// Switch to the local map at the same threshold where detailed region lines
+// first appear, so the globe never has to render both heavy views together.
+export function localMapThresholdReached(distance: number, fit: number): boolean {
+  return distance < fit * 0.85
+}
+
+export function mercatorLatitude(latitude: number): number {
+  const radians = Math.max(-85, Math.min(85, latitude)) * Math.PI / 180
+  return Math.log(Math.tan(Math.PI / 4 + radians / 2))
+}
+
+// Convert the centre of a panned map back into the place the globe should face.
+export function mapLocationAtOffset(center: { lat: number; lng: number }, x: number, y: number, scale: number): { lat: number; lng: number } {
+  const longitude = center.lng + x / scale * 180 / Math.PI
+  const lng = ((longitude + 180) % 360 + 360) % 360 - 180
+  const mercatorY = mercatorLatitude(center.lat) + y / scale
+  const lat = Math.max(-85, Math.min(85, (2 * Math.atan(Math.exp(mercatorY)) - Math.PI / 2) * 180 / Math.PI))
+  return { lat, lng }
+}
+
+export function mapUnitsPerPixel(distance: number, fov: number, height: number): number {
+  return 2 * distance * Math.tan(fov * Math.PI / 360) / height
+}
+
+// Keep the viewport inside the projected world. If a viewport is wider or
+// taller than the world, center that axis instead of allowing empty-space pan.
+export function clampMapCenter(x: number, y: number, centerLatitude: number, scale: number, halfWidth: number, halfHeight: number): { x: number; y: number } {
+  const latitudeOffset = mercatorLatitude(centerLatitude)
+  const minX = -Math.PI * scale
+  const maxX = Math.PI * scale
+  const minY = (mercatorLatitude(-85) - latitudeOffset) * scale
+  const maxY = (mercatorLatitude(85) - latitudeOffset) * scale
+  const clampAxis = (value: number, min: number, max: number, halfViewport: number) => {
+    if (halfViewport * 2 >= max - min) return (min + max) / 2
+    return Math.max(min + halfViewport, Math.min(max - halfViewport, value))
+  }
+  return { x: clampAxis(x, minX, maxX, halfWidth), y: clampAxis(y, minY, maxY, halfHeight) }
+}
+
+// Keep the geographic point under the cursor stationary while changing zoom.
+export function mapZoomAnchorShift(distance: number, nextDistance: number, fov: number, height: number, cursorX: number, cursorY: number): { x: number; y: number } {
+  const share = mapUnitsPerPixel(distance, fov, height) * (1 - nextDistance / distance)
+  return { x: cursorX * share, y: -cursorY * share }
+}
+
+export function nearestMapPoint<T extends { x: number; y: number }>(points: readonly T[], x: number, y: number, radius = 16): T | undefined {
+  let nearest: T | undefined
+  let shortest = radius * radius
+  for (const point of points) {
+    const distance = (point.x - x) ** 2 + (point.y - y) ** 2
+    if (distance <= shortest) {
+      shortest = distance
+      nearest = point
+    }
+  }
+  return nearest
+}
+
+// The regional map only needs boundaries near its centre. Keep the scan cheap,
+// then simplify retained lines before handing them to the SVG path generator.
+export function nearbyRegionLines(lines: Array<Array<[number, number]>>, center: { lat: number; lng: number }, radiusDegrees = 78): Array<Array<[number, number]>> {
+  const radians = Math.PI / 180
+  const centerLat = center.lat * radians
+  const centerLng = center.lng * radians
+  const minCosine = Math.cos(radiusDegrees * radians)
+  const local: Array<Array<[number, number]>> = []
+  for (const line of lines) {
+    let near = false
+    for (let index = 0; index < line.length; index += 4) {
+      const [lat, lng] = line[index]
+      const pointLat = lat * radians
+      const deltaLng = (lng * radians) - centerLng
+      const cosine = Math.sin(centerLat) * Math.sin(pointLat) + Math.cos(centerLat) * Math.cos(pointLat) * Math.cos(deltaLng)
+      if (cosine >= minCosine) { near = true; break }
+    }
+    if (!near) continue
+    const simplified = line.filter((_, index) => index % 3 === 0 || index === line.length - 1)
+    if (simplified.length > 1) local.push(simplified)
+  }
+  return local
 }
 
 // How fast the globe turns by itself, slower as it is brought in, so the
