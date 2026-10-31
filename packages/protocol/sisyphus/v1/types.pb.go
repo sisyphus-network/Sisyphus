@@ -380,7 +380,7 @@ func (x *Gpu) GetMemoryBytes() uint64 {
 // known of it is empty or zero.
 type Accelerator struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// "npu", "edgetpu" or "fpga".
+	// "npu", "accel", "edgetpu" or "fpga".
 	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
 	// Who makes it, as "Intel", "AMD", "Apple", "Xilinx", "Google" or
 	// "Qualcomm", or as the node's system names them otherwise.

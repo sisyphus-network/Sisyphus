@@ -561,19 +561,20 @@ bin/sisyphusd job submit --min-memory-mb 8192 --gpus 1 ...       # a job that ne
 
 ### Accelerators: NPUs, Edge TPUs and FPGAs
 
-A worker also looks for accelerators besides its processor and graphics cards, and reports each with its kind (`npu`, `edgetpu` or `fpga`), maker, model and driver, as far as the system says; memory is left unknown for now. `sisyphusd nodes` lists them below its table, one line per node:
+A worker also looks for accelerators besides its processor and graphics cards, and reports each with its kind (`npu`, `accel`, `edgetpu` or `fpga`), maker, model and driver, as far as the system says; memory is left unknown for now. `sisyphusd nodes` lists them below its table, one line per node:
 
 ```
 laptop: accelerators: npu Intel NPU (Meteor Lake) [intel_vpu]; edgetpu Google Coral USB Accelerator
 ```
 
-The desktop's worker list (`ListWorkers`) and the MCP server's pool status carry them too. Each also gives the worker labels, its kind and its kind with its maker, which a workload's `Needs` can ask for like any other: `npu`, `npu-intel`, `npu-amd`, `npu-apple`, `npu-qualcomm`, `edgetpu`, `edgetpu-google`, `fpga`, `fpga-xilinx`, `fpga-intel`. No workload uses them yet ([#777](https://github.com/sisyphus-network/Sisyphus/issues/777)), and they are offered whenever found: there is no `--offer-` flag for them.
+The desktop's worker list (`ListWorkers`) and the MCP server's pool status carry them too. Each also gives the worker labels, its kind and its kind with its maker, which a workload's `Needs` can ask for like any other: `npu`, `npu-intel`, `npu-amd`, `npu-apple`, `npu-qualcomm`, `npu-rockchip`, `accel`, `accel-qualcomm`, `accel-habanalabs`, `edgetpu`, `edgetpu-google`, `fpga`, `fpga-xilinx`, `fpga-intel`. No workload uses them yet ([#777](https://github.com/sisyphus-network/Sisyphus/issues/777)), and they are offered whenever found: there is no `--offer-` flag for them.
 
 Nothing is installed or loaded to look: files are read, and on macOS and Windows a built-in tool is asked, within a few seconds. What is found, and where:
 
 | System | Kind | How it is found |
 | --- | --- | --- |
-| Linux | NPU | Each device of the compute accelerator class, `/sys/class/accel/accel*`. Its driver and PCI ID are read from `device/uevent`: `intel_vpu` is Intel's NPU, `amdxdna` AMD's XDNA (Ryzen AI); any other (such as Qualcomm's `qaic`) is reported as an NPU of the maker its PCI ID names. Known Intel and AMD NPUs are named; others are given as `PCI device vvvv:dddd`. |
+| Linux | NPU | The devices of the compute accelerator class, `/sys/class/accel/accel*`, that an NPU's driver drives. The driver and PCI ID are read from `device/uevent`: `intel_vpu` is Intel's NPU, `amdxdna` AMD's XDNA (Ryzen AI), `rocket` Rockchip's NPU. Known Intel and AMD NPUs are named; others are given as `PCI device vvvv:dddd`. |
+| Linux | accel | Every other device of the class. The kernel puts any compute accelerator that is not a graphics card there, not only NPUs, so one whose driver is not known to be an NPU's is reported as `accel`, never `npu`: Qualcomm's Cloud AI 100 (`qaic`), a datacenter inference card, and Habana's Gaudi (`habanalabs`) among them, of the maker its PCI ID or driver names. |
 | Linux | Edge TPU | A Coral on PCIe, each `/dev/apex_*` (the `apex` driver); a Coral on USB, each device in `/sys/bus/usb/devices` with the ID `1a6e:089a` (before its firmware is loaded) or `18d1:9302` (after). |
 | Linux | FPGA | AMD/Xilinx cards under XRT: each render node in `/sys/class/drm` whose driver is `xocl` (a card's user function), or, where none is, each `/dev/xclmgmt*` (its management function), so a card is not counted twice. Cards managed by Linux's FPGA subsystem, as Intel's OPAE (DFL) cards and Xilinx's Zynq are: each `/sys/class/fpga_manager/*`, its maker taken from its name or driver, or where there is no manager, each `/sys/class/fpga_region/*`. |
 | macOS | NPU | Apple's Neural Engine, on every Apple silicon Mac: reported when the daemon is built for arm64, or when `sysctl hw.optional.arm64` says it runs under Rosetta on one, named after the chip (`Apple M2 Neural Engine`). No private framework is asked. |

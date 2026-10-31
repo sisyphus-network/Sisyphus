@@ -476,7 +476,7 @@ message WorkerGpu {
 // An accelerator a worker has besides its processor and graphics cards.
 // What is not known of it is empty or zero.
 message WorkerAccelerator {
-  // "npu", "edgetpu" or "fpga".
+  // "npu", "accel", "edgetpu" or "fpga".
   string kind = 1;
   string vendor = 2;
   string model = 3;

@@ -40,7 +40,7 @@ message Gpu {
 // An accelerator besides the processor and graphics cards. What is not
 // known of it is empty or zero.
 message Accelerator {
-  // "npu", "edgetpu" or "fpga".
+  // "npu", "accel", "edgetpu" or "fpga".
   string kind = 1;
   // Who makes it, as "Intel", "AMD", "Apple", "Xilinx", "Google" or
   // "Qualcomm", or as the node's system names them otherwise.

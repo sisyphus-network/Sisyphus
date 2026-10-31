@@ -23,7 +23,8 @@ type Info struct {
 	// MemoryBytes is how much memory the machine has, or zero if unknown.
 	MemoryBytes uint64
 	GPUs        []GPU
-	// Accelerators are the machine's NPUs, Edge TPUs and FPGAs.
+	// Accelerators are the machine's NPUs, other compute accelerators, Edge
+	// TPUs and FPGAs.
 	Accelerators []Accelerator
 }
 

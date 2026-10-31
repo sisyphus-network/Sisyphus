@@ -15,9 +15,14 @@ import (
 // graphics cards.
 const (
 	// KindNPU is a neural processing unit: Intel's NPU, AMD's XDNA (Ryzen
-	// AI), Apple's Neural Engine, Qualcomm's Hexagon, and other devices
-	// Linux lists as compute accelerators.
+	// AI), Rockchip's NPU, Apple's Neural Engine and Qualcomm's Hexagon.
 	KindNPU = "npu"
+	// KindAccel is a compute accelerator that is not known to be an NPU:
+	// a device of Linux's compute accelerator class whose driver is not
+	// one of an NPU's, such as Qualcomm's Cloud AI 100 (qaic) or Habana's
+	// Gaudi (habanalabs). The class holds any device that computes and is
+	// not a graphics card, so what one of them is good for is not known.
+	KindAccel = "accel"
 	// KindEdgeTPU is a Google Coral Edge TPU, on PCIe or USB.
 	KindEdgeTPU = "edgetpu"
 	// KindFPGA is a field-programmable gate array: an AMD/Xilinx card run
@@ -29,7 +34,7 @@ const (
 // Accelerator is a device besides the processor and graphics cards that
 // work could be done on. What is not known of it is left empty.
 type Accelerator struct {
-	// Kind is one of KindNPU, KindEdgeTPU and KindFPGA.
+	// Kind is one of KindNPU, KindAccel, KindEdgeTPU and KindFPGA.
 	Kind string
 	// Vendor is who makes it, as "Intel", "AMD", "Apple", "Xilinx",
 	// "Google" or "Qualcomm", or as the system names them otherwise.
@@ -188,7 +193,10 @@ var pciModels = map[string]string{
 }
 
 // driverVendors are the makers of devices whose drivers only theirs use.
-var driverVendors = map[string]string{"intel_vpu": "Intel", "amdxdna": "AMD", "xocl": "Xilinx", "xclmgmt": "Xilinx"}
+var driverVendors = map[string]string{
+	"intel_vpu": "Intel", "amdxdna": "AMD", "rocket": "Rockchip", "qaic": "Qualcomm",
+	"habanalabs": "Habana Labs", "xocl": "Xilinx", "xclmgmt": "Xilinx",
+}
 
 // device is what Linux says of the device behind a class entry dir, in its
 // device/uevent file: its driver, and its maker and model if it is on PCI.
@@ -232,13 +240,23 @@ func entries(root fs.FS, dir, prefix string) []string {
 	return names
 }
 
-// accelDevices are the devices of Linux's compute accelerator class, which
-// NPUs are: Intel's (intel_vpu), AMD's (amdxdna) and others.
+// npuDrivers are the drivers of Linux's compute accelerator class that
+// drive only NPUs: Intel's NPU (intel_vpu), AMD's XDNA (amdxdna) and
+// Rockchip's NPU (rocket).
+var npuDrivers = map[string]bool{"intel_vpu": true, "amdxdna": true, "rocket": true}
+
+// accelDevices are the devices of Linux's compute accelerator class. The
+// class is for any device that computes and is not a graphics card, so
+// only those an NPU's driver drives are NPUs; the rest are KindAccel.
 func accelDevices(root fs.FS) []Accelerator {
 	var found []Accelerator
 	for _, name := range entries(root, "sys/class/accel", "accel") {
 		driver, vendor, model := device(root, path.Join("sys/class/accel", name))
-		found = append(found, Accelerator{Kind: KindNPU, Vendor: vendor, Model: model, Driver: driver})
+		kind := KindAccel
+		if npuDrivers[driver] {
+			kind = KindNPU
+		}
+		found = append(found, Accelerator{Kind: kind, Vendor: vendor, Model: model, Driver: driver})
 	}
 	return found
 }

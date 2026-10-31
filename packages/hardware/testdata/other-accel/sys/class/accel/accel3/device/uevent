@@ -1,0 +1,2 @@
+DRIVER=habanalabs
+PCI_ID=1DA3:1020

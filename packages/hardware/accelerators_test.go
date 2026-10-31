@@ -13,12 +13,15 @@ func TestLinuxListsItsAccelerators(t *testing.T) {
 	for name, want := range map[string][]Accelerator{
 		"intel-npu": {{Kind: KindNPU, Vendor: "Intel", Model: "Intel NPU (Meteor Lake)", Driver: "intel_vpu"}},
 		"amd-xdna":  {{Kind: KindNPU, Vendor: "AMD", Model: "AMD XDNA 2 NPU (Strix, Krackan)", Driver: "amdxdna"}},
-		// An accelerator of a maker it knows only by its PCI ID, one on no
-		// PCI bus with a driver of its own, and one that says nothing.
+		// Devices of the accelerator class an NPU's driver does not drive
+		// are not taken for NPUs: Qualcomm's Cloud AI 100, of a maker it
+		// knows only by its PCI ID; one that says nothing; and Habana's
+		// Gaudi. Rockchip's NPU, on no PCI bus, is one.
 		"other-accel": {
-			{Kind: KindNPU, Vendor: "Qualcomm", Model: "PCI device 17cb:a100", Driver: "qaic"},
-			{Kind: KindNPU, Driver: "rocket"},
-			{Kind: KindNPU},
+			{Kind: KindAccel, Vendor: "Qualcomm", Model: "PCI device 17cb:a100", Driver: "qaic"},
+			{Kind: KindNPU, Vendor: "Rockchip", Driver: "rocket"},
+			{Kind: KindAccel},
+			{Kind: KindAccel, Vendor: "Habana Labs", Model: "PCI device 1da3:1020", Driver: "habanalabs"},
 		},
 		"coral-pcie": {
 			{Kind: KindEdgeTPU, Vendor: "Google", Model: "Coral Edge TPU (PCIe)", Driver: "apex"},
@@ -125,6 +128,15 @@ func TestOtherSystemsHaveNoAcceleratorsFound(t *testing.T) {
 	}
 }
 
+// A compute accelerator that is not known to be an NPU is not labelled as
+// one, so that a job that needs an NPU is not sent to it.
+func TestOnlyAnNPUsDriverMakesAnAcceleratorAnNPU(t *testing.T) {
+	got := Info{Accelerators: linuxAccelerators(os.DirFS(filepath.Join("testdata", "other-accel")))}.Labels()
+	if want := []string{"accel", "accel-habanalabs", "accel-qualcomm", "npu", "npu-rockchip"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("labels %v, want %v", got, want)
+	}
+}
+
 func TestAcceleratorsGiveLabels(t *testing.T) {
 	for _, tt := range []struct {
 		has  []Accelerator
@@ -132,7 +144,7 @@ func TestAcceleratorsGiveLabels(t *testing.T) {
 	}{
 		{nil, nil},
 		{[]Accelerator{{Kind: KindNPU, Vendor: "Apple"}}, []string{"npu", "npu-apple"}},
-		{[]Accelerator{{Kind: KindNPU, Vendor: "Habana Labs"}, {Kind: KindNPU}}, []string{"npu", "npu-habanalabs"}},
+		{[]Accelerator{{Kind: KindAccel, Vendor: "Habana Labs"}, {Kind: KindAccel}}, []string{"accel", "accel-habanalabs"}},
 		{[]Accelerator{{Kind: KindEdgeTPU, Vendor: "Google"}, {Kind: KindEdgeTPU, Vendor: "Google"}}, []string{"edgetpu", "edgetpu-google"}},
 		{[]Accelerator{{Kind: KindFPGA, Vendor: "Xilinx"}, {Kind: KindFPGA, Vendor: "Intel"}, {Kind: KindNPU, Vendor: "AMD"}}, []string{"fpga", "fpga-intel", "fpga-xilinx", "npu", "npu-amd"}},
 		{[]Accelerator{{Kind: KindFPGA, Vendor: "X-1 & Co."}}, []string{"fpga", "fpga-x1co"}},

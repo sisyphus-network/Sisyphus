@@ -2619,7 +2619,7 @@ func (x *WorkerGpu) GetMemoryBytes() uint64 {
 // What is not known of it is empty or zero.
 type WorkerAccelerator struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// "npu", "edgetpu" or "fpga".
+	// "npu", "accel", "edgetpu" or "fpga".
 	Kind          string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
 	Vendor        string `protobuf:"bytes,2,opt,name=vendor,proto3" json:"vendor,omitempty"`
 	Model         string `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`

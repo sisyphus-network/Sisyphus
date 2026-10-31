@@ -1041,7 +1041,7 @@ export const WorkerGpuSchema: GenMessage<WorkerGpu> = /*@__PURE__*/
  */
 export type WorkerAccelerator = Message<"sisyphus.node.v1.WorkerAccelerator"> & {
   /**
-   * "npu", "edgetpu" or "fpga".
+   * "npu", "accel", "edgetpu" or "fpga".
    *
    * @generated from field: string kind = 1;
    */
