@@ -727,7 +727,7 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
     if (from?.isConnected) from.focus()
   }, [])
   const pinnedDetails = pinnedPoint ? details.get(pinnedPoint) : undefined
-  const globeActive = visible && topologyOpen && (!compact || mobileView === 'network')
+  const globeActive = visible && (compact ? mobileView === 'network' : topologyOpen)
   const zoomLabels = useMemo(() => ({ group: messages.globeZoom.group, in: messages.globeZoom.in, out: messages.globeZoom.out }), [messages.globeZoom])
   const countrySource = snapshot.info?.countrySource
   const countryPosition = countryCode ? countryCentroids.get(countryCode) : undefined
@@ -741,26 +741,16 @@ export function WorkspacePage({ snapshot, messages, direction, visible = true }:
           </div>
     </section>
   return <div className={`workspace-shell ${compact ? 'workspace-shell--compact' : ''}`}>
-    {compact ? <>
-      <div className="workspace-mobile-stage">
-        <motion.div aria-hidden={mobileView !== 'chat'} className="workspace-mobile-pane" data-active={mobileView === 'chat'} animate={reduceMotion ? undefined : { opacity: mobileView === 'chat' ? 1 : 0, x: mobileView === 'chat' ? 0 : -24 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: mobileView === 'chat' ? 2 : 1, pointerEvents: mobileView === 'chat' ? 'auto' : 'none' }}>
-          {chatPane}
-        </motion.div>
-        {topologyAvailable && <motion.div aria-hidden={mobileView !== 'network'} className="workspace-mobile-pane" data-active={mobileView === 'network'} animate={reduceMotion ? undefined : { opacity: mobileView === 'network' ? 1 : 0, x: mobileView === 'network' ? 0 : 24 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: mobileView === 'network' ? 2 : 1, pointerEvents: mobileView === 'network' ? 'auto' : 'none' }}>
-          {networkPane}
-        </motion.div>}
-      </div>
-      {visible && paneItems.length > 1 && createPortal(<nav className="workspace-mobile-dock" aria-label={messages.workspace}><LiquidGlassDock items={paneItems} label={messages.workspace} onNavigate={(id) => setMobileView(id as 'chat' | 'network')} /></nav>, document.body)}
-    </> : <div ref={desktopStageRef} className="workspace-desktop-stage">
+    <div ref={desktopStageRef} className={`workspace-desktop-stage ${compact ? 'workspace-mobile-stage' : ''}`}>
     <div data-open={historyOpen} data-resizing={historyResizing} aria-hidden={!historyOpen} style={{ flexBasis: historyOpen ? visibleHistoryWidth : 0 }} className="workspace-history-slot"><div ref={setHistoryPanelHost} className="workspace-history-host" /></div>
     <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeHistory} aria-valuemin={0} aria-valuemax={Math.round(historyMaxWidth)} aria-valuenow={Math.round(visibleHistoryWidth)} onPointerDown={startHistoryResize} onPointerMove={moveHistoryResize} onPointerUp={finishHistoryResize} onPointerCancel={finishHistoryResize} onKeyDown={keyHistoryResize} className="workspace-history-resize-handle" />
-    <div className="workspace-chat-desktop-pane">{chatPane}</div>
+    <motion.div aria-hidden={compact && mobileView !== 'chat'} className="workspace-chat-desktop-pane workspace-mobile-pane" data-active={!compact || mobileView === 'chat'} initial={false} animate={reduceMotion ? undefined : { opacity: !compact || mobileView === 'chat' ? 1 : 0, x: compact && mobileView !== 'chat' ? -24 : 0 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ zIndex: compact ? mobileView === 'chat' ? 2 : 1 : undefined, pointerEvents: compact && mobileView !== 'chat' ? 'none' : 'auto' }}>{chatPane}</motion.div>
     {topologyAvailable && <>
     <button type="button" role="separator" aria-orientation="vertical" aria-label={messages.resizeTopology} aria-valuemin={0} aria-valuemax={Math.round(topologyMaxWidth)} aria-valuenow={Math.round(topologyWidth)} onPointerDown={startTopologyResize} onPointerMove={moveTopologyResize} onPointerUp={finishTopologyResize} onPointerCancel={finishTopologyResize} onKeyDown={keyTopologyResize} className="workspace-topology-resize-handle"><span /></button>
-    <div data-open={topologyOpen} data-resizing={topologyResizing} aria-hidden={!topologyOpen} style={{ flexBasis: topologyWidth }} className="workspace-topology-slot">{networkPane}</div>
+    <motion.div data-open={compact ? mobileView === 'network' : topologyOpen} data-active={!compact || mobileView === 'network'} data-resizing={topologyResizing} aria-hidden={compact ? mobileView !== 'network' : !topologyOpen} initial={false} animate={reduceMotion ? undefined : { opacity: !compact || mobileView === 'network' ? 1 : 0, x: compact && mobileView !== 'network' ? 24 : 0 }} transition={reduceMotion ? { duration: 0 } : { type: 'tween', duration: 0.24, ease: [0.22, 1, 0.36, 1] }} style={{ flexBasis: compact ? '100%' : topologyWidth, zIndex: compact ? mobileView === 'network' ? 2 : 1 : undefined, pointerEvents: compact && mobileView !== 'network' ? 'none' : 'auto' }} className="workspace-topology-slot workspace-mobile-pane">{networkPane}</motion.div>
     </>}
     </div>
-    }
+    {compact && visible && paneItems.length > 1 && createPortal(<nav className="workspace-mobile-dock" aria-label={messages.workspace}><LiquidGlassDock items={paneItems} label={messages.workspace} onNavigate={(id) => setMobileView(id as 'chat' | 'network')} /></nav>, document.body)}
   </div>
 }
 
