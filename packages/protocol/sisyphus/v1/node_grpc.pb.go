@@ -26,6 +26,7 @@ const (
 	NodeService_CancelJob_FullMethodName      = "/sisyphus.v1.NodeService/CancelJob"
 	NodeService_WatchJobEvents_FullMethodName = "/sisyphus.v1.NodeService/WatchJobEvents"
 	NodeService_GetJobRecord_FullMethodName   = "/sisyphus.v1.NodeService/GetJobRecord"
+	NodeService_GetAccounting_FullMethodName  = "/sisyphus.v1.NodeService/GetAccounting"
 )
 
 // NodeServiceClient is the client API for NodeService service.
@@ -51,6 +52,11 @@ type NodeServiceClient interface {
 	// GetJobRecord returns the record of a job that is over, read from the
 	// coordinator's store.
 	GetJobRecord(ctx context.Context, in *GetJobRecordRequest, opts ...grpc.CallOption) (*JobRecord, error)
+	// GetAccounting totals what each machine did and what was done of each
+	// workload, over the jobs that ended in a span of time and that the
+	// coordinator still holds. A client admitted to the pool is told of its
+	// own jobs only.
+	GetAccounting(ctx context.Context, in *GetAccountingRequest, opts ...grpc.CallOption) (*Accounting, error)
 }
 
 type nodeServiceClient struct {
@@ -149,6 +155,16 @@ func (c *nodeServiceClient) GetJobRecord(ctx context.Context, in *GetJobRecordRe
 	return out, nil
 }
 
+func (c *nodeServiceClient) GetAccounting(ctx context.Context, in *GetAccountingRequest, opts ...grpc.CallOption) (*Accounting, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Accounting)
+	err := c.cc.Invoke(ctx, NodeService_GetAccounting_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
@@ -172,6 +188,11 @@ type NodeServiceServer interface {
 	// GetJobRecord returns the record of a job that is over, read from the
 	// coordinator's store.
 	GetJobRecord(context.Context, *GetJobRecordRequest) (*JobRecord, error)
+	// GetAccounting totals what each machine did and what was done of each
+	// workload, over the jobs that ended in a span of time and that the
+	// coordinator still holds. A client admitted to the pool is told of its
+	// own jobs only.
+	GetAccounting(context.Context, *GetAccountingRequest) (*Accounting, error)
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -202,6 +223,9 @@ func (UnimplementedNodeServiceServer) WatchJobEvents(*WatchJobEventsRequest, grp
 }
 func (UnimplementedNodeServiceServer) GetJobRecord(context.Context, *GetJobRecordRequest) (*JobRecord, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetJobRecord not implemented")
+}
+func (UnimplementedNodeServiceServer) GetAccounting(context.Context, *GetAccountingRequest) (*Accounting, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAccounting not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
 func (UnimplementedNodeServiceServer) testEmbeddedByValue()                     {}
@@ -336,6 +360,24 @@ func _NodeService_GetJobRecord_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeService_GetAccounting_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAccountingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServiceServer).GetAccounting(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeService_GetAccounting_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServiceServer).GetAccounting(ctx, req.(*GetAccountingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -362,6 +404,10 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetJobRecord",
 			Handler:    _NodeService_GetJobRecord_Handler,
+		},
+		{
+			MethodName: "GetAccounting",
+			Handler:    _NodeService_GetAccounting_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -218,6 +218,7 @@ A worker node without the client role is answered `FAILED_PRECONDITION`. While i
 
 - **Choosing the key** private files are sealed with, or having more than one.
 - **Reading a job's record.** The API gives its ID in `record_cid`. The record itself is read with `sisyphusd job record <job-id>`, or `GetJobRecord` on the pool's own API.
+- **Accounting.** The totals by machine and by workload are read with `sisyphusd accounting`, or `GetAccounting` on the pool's own API. A page for them in the app is to follow (#21).
 
 ## Changing the API
 

@@ -73,6 +73,7 @@ var allowed = map[string][]Role{
 	pb.NodeService_WatchJobEvents_FullMethodName: {Client},
 	pb.NodeService_GetJobRecord_FullMethodName:   {Client},
 	pb.NodeService_ListNodes_FullMethodName:      {Client},
+	pb.NodeService_GetAccounting_FullMethodName:  {Client},
 }
 
 // anyone stands for a node that has no role yet.
