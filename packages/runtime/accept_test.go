@@ -60,7 +60,7 @@ func TestAnOwnerNamesOnlyWorkloadsAndGroupsThatExist(t *testing.T) {
 		{allow: []string{GroupModels}},
 		{allow: []string{"primse"}, bad: "primse"},
 		{deny: []string{"container", "gpu"}, bad: "gpu"},
-		{deny: []string{"mining"}, bad: "mining"},
+		{deny: []string{"minnig"}, bad: "minnig"},
 		{allow: []string{"Primes"}, bad: "Primes"},
 	} {
 		_, err := Accept(known, tc.allow, tc.deny)
@@ -88,18 +88,23 @@ func TestWhatAnOwnerAllowsAndDenies(t *testing.T) {
 		allow, deny []string
 		want        []string
 	}{
-		{name: "saying nothing takes all but the opt-in", want: without("fake-mining")},
-		{name: "the default group is the same", allow: []string{GroupDefault}, want: without("fake-mining")},
+		{name: "saying nothing takes all but the opt-in", want: without("fake-mining", "mining")},
+		{name: "the default group is the same", allow: []string{GroupDefault}, want: without("fake-mining", "mining")},
 		{name: "names alone", allow: []string{"primes", "wordcount"}, want: []string{"primes", "wordcount"}},
 		{name: "a group", allow: []string{GroupModels}, want: []string{"chat", "embed", "prompts"}},
 		{name: "a name and a group", allow: []string{"primes", GroupContainers}, want: []string{"container", "forecast", "forecasts", "images", "md", "ocr", "prep", "primes", "qchem", "render", "traj", "transcode", "transcribe"}},
-		{name: "deny a name", deny: []string{"chat"}, want: without("fake-mining", "chat")},
+		{name: "deny a name", deny: []string{"chat"}, want: without("fake-mining", "mining", "chat")},
 		{name: "deny a group", deny: []string{GroupContainers, GroupModels}, want: []string{"fake-heavy", "primes", "wordcount"}},
 		{name: "deny wins over allowing the same name", allow: []string{"primes", "wordcount"}, deny: []string{"primes"}, want: []string{"wordcount"}},
 		{name: "deny of a group wins over allowing a name in it", allow: []string{"transcode", "primes"}, deny: []string{GroupContainers}, want: []string{"primes"}},
 		{name: "deny of a name wins over allowing its group", allow: []string{GroupModels}, deny: []string{"embed"}, want: []string{"chat", "prompts"}},
 		{name: "deny everything", deny: []string{GroupDefault}, want: nil},
-		{name: "an opt-in workload by name", allow: []string{GroupDefault, "fake-mining"}, want: all},
+		{name: "an opt-in workload by name", allow: []string{GroupDefault, "fake-mining"}, want: without("mining")},
+		// Allowing a group an opt-in workload is in, but not one of its
+		// own, does not allow it: mining runs in containers, and allowing
+		// containers does not allow mining.
+		{name: "an opt-in workload by a group not its own", allow: []string{GroupContainers}, want: []string{"container", "forecast", "forecasts", "images", "md", "ocr", "prep", "qchem", "render", "traj", "transcode", "transcribe"}},
+		{name: "an opt-in workload in containers by its own group", allow: []string{GroupMining}, want: []string{"mining"}},
 		{name: "an opt-in workload by its group", allow: []string{"fake-miners"}, want: []string{"fake-heavy", "fake-mining"}},
 		{name: "an opt-in workload alone", allow: []string{"fake-mining"}, want: []string{"fake-mining"}},
 		{name: "an opt-in workload allowed and denied", allow: []string{"fake-mining"}, deny: []string{"fake-miners"}, want: nil},
@@ -126,7 +131,8 @@ func TestWhatAnOwnerAllowsAndDenies(t *testing.T) {
 // changes nothing for the workloads there are, and takes no opt-in one.
 func TestTheZeroAcceptanceTakesAllButOptIn(t *testing.T) {
 	known := WithContainers().With(fakeMining{})
-	if got, want := known.Accepted(Acceptance{}).Names(), WithContainers().Names(); !slices.Equal(got, want) {
+	want := slices.DeleteFunc(WithContainers().Names(), func(name string) bool { return name == "mining" })
+	if got := known.Accepted(Acceptance{}).Names(); !slices.Equal(got, want) {
 		t.Errorf("accepted %v, want %v", got, want)
 	}
 }

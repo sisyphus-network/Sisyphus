@@ -1,0 +1,145 @@
+{
+ "id": "",
+ "worker_id": "249220c51bd0",
+ "uptime": 20,
+ "restricted": true,
+ "resources": {
+  "memory": {
+   "free": 181763981312,
+   "total": 270381629440,
+   "resident_set_memory": 278208512
+  },
+  "load_average": [
+   18.62,
+   20.48,
+   20.63
+  ],
+  "hardware_concurrency": 32
+ },
+ "features": [
+  "api",
+  "asm",
+  "http",
+  "hwloc",
+  "tls"
+ ],
+ "results": {
+  "diff_current": 10,
+  "shares_good": 61,
+  "shares_total": 61,
+  "avg_time": 0,
+  "avg_time_ms": 328,
+  "hashes_total": 610,
+  "best": [
+   653,
+   311,
+   140,
+   125,
+   105,
+   95,
+   92,
+   89,
+   87,
+   71
+  ]
+ },
+ "algo": "rx/0",
+ "connection": {
+  "pool": "pool.fake.test:3333",
+  "ip": "127.0.0.1",
+  "uptime": 20,
+  "uptime_ms": 20008,
+  "ping": 1,
+  "failures": 0,
+  "tls": null,
+  "tls-fingerprint": null,
+  "algo": "rx/0",
+  "diff": 10,
+  "accepted": 61,
+  "rejected": 0,
+  "avg_time": 0,
+  "avg_time_ms": 328,
+  "hashes_total": 610
+ },
+ "version": "6.26.0",
+ "kind": "miner",
+ "ua": "XMRig/6.26.0 (Linux x86_64) libuv/1.48.0 gcc/13.2.1",
+ "cpu": {
+  "brand": "Intel(R) Xeon(R) CPU E5-2660 0 @ 2.20GHz",
+  "family": 6,
+  "model": 45,
+  "stepping": 7,
+  "proc_info": 132823,
+  "aes": true,
+  "avx2": false,
+  "x64": true,
+  "64_bit": true,
+  "l2": 4194304,
+  "l3": 41943040,
+  "cores": 16,
+  "threads": 32,
+  "packages": 2,
+  "nodes": 2,
+  "backend": "hwloc/2.10.0",
+  "msr": "none",
+  "assembly": "intel",
+  "arch": "x86_64",
+  "flags": [
+   "aes",
+   "avx",
+   "osxsave",
+   "pdpe1gb",
+   "sse2",
+   "ssse3",
+   "sse4.1",
+   "popcnt"
+  ]
+ },
+ "donate_level": 0,
+ "paused": false,
+ "algorithms": [
+  "cn/0",
+  "cn/1",
+  "cn/2",
+  "cn/r",
+  "cn/fast",
+  "cn/half",
+  "cn/xao",
+  "cn/rto",
+  "cn/rwz",
+  "cn/zls",
+  "cn/double",
+  "cn/ccx",
+  "cn-lite/0",
+  "cn-lite/1",
+  "cn-heavy/0",
+  "cn-heavy/tube",
+  "cn-heavy/xhv",
+  "cn-pico",
+  "cn-pico/tlo",
+  "cn/upx2",
+  "rx/0",
+  "rx/2",
+  "rx/wow",
+  "rx/arq",
+  "rx/graft",
+  "rx/sfx",
+  "rx/yada",
+  "argon2/chukwa",
+  "argon2/chukwav2",
+  "argon2/ninja",
+  "ghostrider"
+ ],
+ "hashrate": {
+  "total": [
+   34.5,
+   null,
+   null
+  ],
+  "highest": 37.35
+ },
+ "hugepages": [
+  0,
+  129
+ ]
+}
