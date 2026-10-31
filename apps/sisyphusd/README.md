@@ -852,7 +852,7 @@ What it does not do:
 
 **What it is for, and what it is not.**
 
-- **It is for work that gives the same result every time it is run**, or whose workload compares its results [within a tolerance](#within-a-workloads-tolerance) of its own. `primes`, `wordcount`, `forecast`, `forecasts` and a container that is deterministic do. Work that involves a language model (`chat`, `prompts`, `embed`), `transcode`, and containers that use the time, random numbers or the network may not: two honest workers then differ, and the job fails saying so. Such work is comparable only through a workload that says what is the same; `qchem` does, and so do `forecast` and `forecasts` with a [Chronos-Bolt](../../docs/forecast-benchmark.md#chronos-bolt) candidate.
+- **It is for work that gives the same result every time it is run**, or whose workload compares its results [within a tolerance](#within-a-workloads-tolerance) of its own. `primes`, `wordcount`, `forecast`, `forecasts`, `vanity` and a container that is deterministic do. Work that involves a language model (`chat`, `prompts`, `embed`), `transcode`, and containers that use the time, random numbers or the network may not: two honest workers then differ, and the job fails saying so. Such work is comparable only through a workload that says what is the same; `qchem` does, and so do `forecast` and `forecasts` with a [Chronos-Bolt](../../docs/forecast-benchmark.md#chronos-bolt) candidate.
 - **A private job is verified like any other.** Every worker asked is given the job's own key, and sealing gives the same blob for the same key and data, so workers that did the same work stored blobs with the same CIDs. Asking more workers shows the job's data to more of them. In the job's record, what each worker returned is not given by its digest but by a commitment only the job's key can check (`receipts/N/results/M/digest_commitment`), since a digest would tell someone who guessed a task's output that they were right; which workers agreed is still there to read.
 - **It does not protect against workers that agree to lie.** `N` workers that return the same wrong result are believed. Nor does it protect, as it is, against one operator running several nodes: different node IDs are not different people. A coordinator started with `--verify-distinct-addresses` makes that harder; see [below](#workers-at-different-addresses).
 - **It judges workers only this far.** A worker that was outvoted is named in the events and the record, has that result counted in its [standing](#a-workers-standing), and is on probation until ten of its results have agreed. Nothing else happens to it: no score that decides who is given work, no stake and no ban. Removing it is up to the pool's owner (`pool remove`).
@@ -891,6 +891,18 @@ bin/sisyphusd job logs <job-id>                                                 
 - **A private job is audited like any other**: the node has the job's key.
 - **The job's record says what the audits found.** `audit_share` is among what was asked, and the root's `audits` lists each task that was run again: its number, the worker (node ID and name), and the `outcome`. That is `matched`, `caught` (the node got another result, and took its own), or `inconclusive` (the node could not run the task, so the worker's result stands unchecked). A task missing from the list was not audited, and a job with no audits has no list, so its record is the same as before audits were recorded. The entries name tasks and workers and nothing of what either computed, so a private job's record carries them too. The events (`job logs`) still tell the same in words.
 - **A job made of steps** hands its audit share to each step.
+
+### Checked on its own
+
+Some answers are slow to find and quick to check: a key whose address matches a pattern takes millions of tries to find and one to confirm. A workload whose outputs can be checked against their task like that implements `runtime.Checking`:
+
+```go
+Check(payload, output []byte) error
+```
+
+- **Every result is checked as it comes in**, whatever the job asked for, before it is taken, compared or audited. One that fails is a failed attempt, with the reason in the job's events (`task-failed`: `the coordinator checked the result and refused it: ...`) and a warning in the coordinator's log naming the worker, and the task is tried again as after any failure (`coordinator.go`, `handleResult`).
+- **It catches a wrong answer, not a missing one.** A worker that says it found nothing where there was something cannot be caught by looking at its output; `--audit-share` or `--verify` can, by running the task again. `vanity` is the one workload that checks itself so.
+- **It does not count against a worker's standing** yet: the attempt fails, and that is all.
 
 ## A job's record
 
@@ -1145,6 +1157,7 @@ This was checked against a database made by the Rust daemon itself, which is kep
 - **`prep`** prepares Amber systems with AmberTools' tleap, by runs of PDB files across the pool: each protein or nucleic acid given its hydrogens, a box of water, the ions that make it neutral and any salt asked for, as the prmtop and inpcrd `md` takes: see [Amber system preparation](#amber-system-preparation) below.
 - **`images`** edits a batch of pictures with libvips, by runs of pictures across the pool: each optionally upscaled 2, 3 or 4 times with Real-ESRGAN, made to fit a width and height, saved as JPEG, PNG, WebP, TIFF or GIF, and with its metadata taken out: see [Batch image edits](#batch-image-edits) below.
 - **`mining`** is to mine a coin to the requester's own wallet with Sisyphus's own miner, on workers whose owners opted in, each task reaching only the mining pool's address. Not available yet: no miner is built in. See [Mining to your own wallet](#mining-to-your-own-wallet) below.
+- **`vanity`** searches the pool for a wallet address that begins or ends as you choose, without any worker learning a key that can spend from it: see [Vanity addresses](#vanity-addresses) below.
 - **`primes`** counts the primes in `[from, to)`. Parameters and results are a few bytes and travel inline. It is a stand-in that exercises the pool.
 - **`wordcount`** counts word frequencies in a stored file. It exercises the storage path: the input is fetched by CID, each task reads only its byte range, task outputs are stored as blobs, and the result is a blob too. The result's CID is the same however the job is split, so two runs can be compared by CID alone.
 
@@ -1618,6 +1631,107 @@ The result:
 - **Antivirus.** Windows Defender and other antivirus programs flag miners as potentially unwanted software, and may quarantine them. Here the miner is built and run inside a Linux container, and never put on the host, but a scan of Docker's disk may still find it.
 - **Before lending a machine to mining.** The owner pays for the power, and for the heat and the wear; mining on a processor can cost more in electricity than the coins it earns are worth. Mining is restricted or forbidden in some countries, and by many universities', employers' and cloud providers' rules: an owner should be sure they may before naming `mining`. Laptops are better left out: there is no check yet for running on battery, nor a temperature cap.
 - **Tests.** No test reaches a real pool or mines a real coin. The tests run a fake stratum server of their own on the machine's loopback, which hands out a made-up RandomX job and takes every share without checking it, and a fake miner engine that logs in and submits a share through the worker's socket; a test lets that miner reach the loopback through a setting only tests can make, which no job or flag can. They check the parameters, the split, which owners take mining, that no worker offers it with no engine, the address table above, that the forwarder reaches only its one address, the reading of the miner's summary, and that a miner that never reached its pool fails.
+
+### Vanity addresses
+
+```sh
+bin/sisyphusd job submit --workload vanity --params '{"public_key":"02…","prefix":"1Sisy"}'
+bin/sisyphusd job submit --workload vanity --params '{"public_key":"02…","version":60,"prefix":"RSisy"}'
+bin/sisyphusd job submit --workload vanity --params '{"public_key":"02…","kind":"eth","prefix":"0xbeef","suffix":"cafe"}'
+bin/sisyphusd job submit --workload vanity --params '{"public_key":"02…","kind":"p2wpkh","prefix":"bc1qsisy"}'
+```
+
+A vanity address begins or ends with something chosen, `1Sisy…` or `0xbeef…`. There is no way to choose one but to try keys until one fits, which is work a pool shares out well. The difficulty is doing it **without any worker learning the key**, since whoever has the private key of an address can spend from it. `vanity` does it with split keys, the scheme vanitygen's pool mode used:
+
+1. **You** make a key pair on your own machine: a private key `a` and its public key `A = a·G`. You keep `a`. Only `A` goes in the job.
+2. **The pool** searches for a number `b` such that the address of the point `A + b·G` matches. Each task searches its own range of `b`: a random start for the job, and a stretch of the numbers after it for each task. Each step adds `G` to the last point, and the points are brought to affine coordinates 256 at a time with one inversion.
+3. **A worker that finds one** returns `b` and the address. Knowing `b` and `A` tells it nothing of `a`, or of `a + b`, any more than knowing `A` alone does.
+4. **You** add `a + b` (modulo the curve's order) on your own machine. That is the private key of the address found: `(a + b)·G = A + b·G`.
+
+The job's result is `{"offset":"<b, 64 hex digits>","address":"<the address>","tried":<keys searched>}`.
+
+**Combining the keys.** Do this offline, on the machine that holds `a`, and check that the key gives the address the job found before you send anything to it. The desktop app is to do all of this for you ([#780](https://github.com/sisyphus-network/Sisyphus/issues/780)); until then, a few lines of Go with the same library the daemon uses do it, reading the keys from standard input so that they are not left in the shell's history:
+
+```go
+// go run vanitykey.go new        prints a new a (keep it secret) and A (put it in the job)
+// go run vanitykey.go combine    reads a, then b, and prints a + b
+package main
+
+import (
+	"bufio"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "new" {
+		a, _ := secp256k1.GeneratePrivateKey()
+		fmt.Printf("a (secret): %x\nA (public): %x\n", a.Serialize(), a.PubKey().SerializeCompressed())
+		return
+	}
+	in := bufio.NewScanner(os.Stdin)
+	var sum secp256k1.ModNScalar
+	for range 2 {
+		in.Scan()
+		b, err := hex.DecodeString(strings.TrimSpace(in.Text()))
+		var k secp256k1.ModNScalar
+		if err != nil || len(b) != 32 || k.SetByteSlice(b) {
+			panic("not a 64-digit hex key")
+		}
+		sum.Add(&k)
+	}
+	key := secp256k1.NewPrivateKey(&sum)
+	fmt.Printf("private key: %x\npublic key:  %x\n", key.Serialize(), key.PubKey().SerializeCompressed())
+}
+```
+
+The public key it prints is `A + b·G`; its address is the job's. An Ethereum wallet imports the 64 hex digits as they are. A Bitcoin or Ravencoin wallet wants them in wallet import format, compressed unless the job said `"compressed": false`.
+
+| Parameter | Meaning |
+| --- | --- |
+| `public_key` | `A`, in hex: 66 digits beginning `02` or `03`, or 130 beginning `04`. It must be a point of secp256k1. **Never a private key**: 64 hex digits, a key in wallet import format (`5…`, `K…`, `L…`) or an extended private key (`xprv…`) is refused, as is any parameter whose name has `priv`, `secret`, `wif`, `seed`, `mnemonic` or `xprv` in it, with an error that says why. |
+| `kind` | `p2pkh` (the default), a Base58Check address of the key's hash; `p2wpkh`, a native SegWit (Bech32) address; or `eth`, an Ethereum address with EIP-55's mixed-case checksum, which every EVM chain uses. |
+| `version` | `p2pkh` only: the version byte, 0 for Bitcoin (the default, addresses `1…`), 60 for Ravencoin (`R…`), 48 for Litecoin (`L…`), 30 for Dogecoin (`D…`). |
+| `compressed` | `p2pkh` only: whether the address is of the compressed public key, as every wallet made since about 2012 uses. Default `true`. |
+| `hrp` | `p2wpkh` only: what the address begins with, `bc` (the default), `tb` for testnet, `ltc` for Litecoin. |
+| `prefix`, `suffix` | What the address must begin and end with, written as the whole address is: `1Sisy`, `RSisy`, `bc1qsisy`, `0xbeef`. At most 12 characters each. Every character must be one the address can have: Base58 has no `0`, `O`, `I` or `l`; Bech32 has no `1`, `b`, `i` or `o` after its separator; Ethereum's is hex. A prefix that no address of the kind can have, such as `R` for Bitcoin, is refused. |
+| `case_sensitive` | Whether letters must match in case. By default they must for `p2pkh`, where case is part of the address, and need not for `eth`, where it is only a checksum. Bech32 is one case. |
+| `tries` | How many keys to search in all, shared between the tasks. By default three times the expected number, which finds a match 95 times in 100, or the cap if that is less. |
+
+**Difficulty.** Each character a pattern fixes multiplies the keys it takes to find by the size of the alphabet: 16 for hex, 32 for Bech32, about 58 for Base58, and twice that for a hex letter whose case matters. The expected number of tries, one over the chance that one key matches, is worked out when the job is submitted, and a job expected to take more than the coordinator's cap, `--vanity-max-tries` (2⁴⁰, about 1.1 trillion, by default), is refused, saying how many it would take. Some examples:
+
+| Pattern | Kind | Expected tries | On one R620 (32 threads) |
+| --- | --- | --- | --- |
+| `1Ab` | Bitcoin | 1,330 | at once |
+| `1zz` | Bitcoin | 78,500 | at once |
+| `1Sisy` | Bitcoin | 264 million | about a minute |
+| `1Sisyp` | Bitcoin | 15.3 billion | about an hour |
+| `1sisyph`, either case | Bitcoin | 27.8 billion | about 2 hours |
+| `1Sisyph` | Bitcoin | 888 billion | about 2 days, under the default cap |
+| `1Sisyphus` | Bitcoin | 3 quadrillion | refused |
+| `RSisy` | Ravencoin | 4.6 million | seconds |
+| `RSisyp` | Ravencoin | 264 million | about a minute |
+| `bc1qcafe` | SegWit | 1 million | at once |
+| `bc1qcafe00` | SegWit | 1.07 billion | about 3 minutes |
+| `0xbeef` | Ethereum | 65,536 | at once |
+| `0xbeefcafe`, or `0xbeef…cafe` | Ethereum | 4.3 billion | about 10 minutes |
+| `0xBeefCafe`, in that case | Ethereum | 1.1 trillion | about 2 days, at the default cap |
+
+Ravencoin's `RS…` is easy where Bitcoin's `1S…` is hard for the same reason: what comes just after the first character depends on the version byte.
+
+The start of a Base58 address is not even: an address is the 25 bytes of version, hash and checksum read as one number, so the characters just after the version's depend on how that number's range falls against powers of 58. A Bitcoin address's second character is one of `2` to `P` in all but about one address in 23, `Q` is rarer, and `R` to `z` come only in the shorter addresses. So the chance of a Base58 prefix is worked out exactly, as the share of that range whose addresses begin so (`base58PrefixChance`), summing each way of writing it where case does not matter, and checked against sampled hashes in the tests. A suffix is taken as one in 58 a character, and a prefix and a suffix as independent; Bech32 and hex characters are even, and EIP-55's case as if by chance. Where these are approximations, they are a few percent off at most.
+
+**Speed.** One processor thread of a Xeon E5-2660 (2012, no AVX2) tries about 135,000 keys a second for a Bitcoin or Ravencoin address, 175,000 for SegWit and 210,000 for Ethereum, in Go on the processor; so the R620's 32 threads should manage about 4 to 6 million together (worked out from one thread, not measured). The times in the table are the expected ones, on that: half the time it is quicker, and one time in twenty it takes three times as long. Graphics cards would be hundreds of times faster, and are for later. The cap is a fixed number of tries for now; once the pool knows its own speed it is meant to become "about an hour of the whole pool", shown before the job is submitted.
+
+- **Checked on its own.** As each task's result comes in, the coordinator works out the address of `A + b·G` itself, and checks that `b` is in the task's range and that the address matches the pattern ([checked on its own](#checked-on-its-own)). A worker that returns a `b` that does not match fails its attempt, and the task is tried again. A worker that says it found nothing when there was something is not caught so; `--audit-share` and `--verify` catch it, since a task returns the first match in its range and two honest runs return the same bytes.
+- **A job that finds nothing fails**, saying how many keys it searched; submit it again, and it searches from another random start. Every task runs its range to the end or to its first match, so a job takes as long as its slowest task even when another task found a match early ([stopping the rest when one task has found it](https://github.com/sisyphus-network/Sisyphus/issues/780) is to come). `--timeout` bounds it.
+- **What the pool learns.** Every worker sees `A`, the pattern, and, for the task that found it, `b` and the address. So the address is known to the pool before you use it, and is tied to the job and its submitter. That is all: spending from it needs `a + b`, which nobody but you can make.
+- **secp256k1 only.** Bitcoin and its forks, Ravencoin, Litecoin, Dogecoin, Ethereum and the EVM chains. ed25519 coins, Solana among them, clamp their keys in a way that breaks adding them, and Monero has keys of its own: they come later, or not at all. Taproot (`bc1p…`) addresses are not offered yet, nor P2SH-wrapped SegWit (`3…`).
+- **No form yet.** The desktop app's form, which is to make `a` for you, show the expected time on the pool before you submit, and put `a + b` together at the end, is the next step.
 
 ## Layout
 

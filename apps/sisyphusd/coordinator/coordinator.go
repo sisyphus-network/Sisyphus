@@ -1518,6 +1518,14 @@ func (c *Coordinator) handleResult(w *worker, result *pb.TaskResult) {
 		// Every blob named is noted with the job and pinned for it.
 		result = &pb.TaskResult{Outcome: &pb.TaskResult_Error{Error: fmt.Sprintf("the worker named %d blobs as read and stored by the task, and a task may have %d", named, maxTaskBlobs)}}
 	}
+	if output, ok := result.GetOutcome().(*pb.TaskResult_Output); ok {
+		// A workload that can check an output on its own does, whatever
+		// the job asked: a wrong one fails the attempt.
+		if err := c.workloads.Check(a.job.Workload, a.task.Payload, output.Output); err != nil {
+			c.log.Warn("a worker returned a result that does not stand up to checking", "task", a.task.ID, "node", w.id, "error", err)
+			result = &pb.TaskResult{Outcome: &pb.TaskResult_Error{Error: "the coordinator checked the result and refused it: " + err.Error()}}
+		}
+	}
 	switch outcome := result.GetOutcome().(type) {
 	case *pb.TaskResult_Output:
 		c.log.Info("task returned", "task", a.task.ID, "worker", w.name, "took", now.Sub(a.started).Round(time.Millisecond).String())

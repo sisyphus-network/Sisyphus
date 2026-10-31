@@ -195,6 +195,28 @@ func Checkable(w Workload) bool {
 	return !varies || !varying.Varies() || compares
 }
 
+// Checking is a workload whose outputs can be checked on their own, against
+// the payload of their task, without running it again: a search whose
+// answer is quick to confirm once it is found. The coordinator checks each
+// output so as it comes in, whether or not the job asked to be verified,
+// and an output that fails is a failed attempt, tried again as any other.
+type Checking interface {
+	// Check says what is wrong with an output of the task with this
+	// payload, or nil if nothing is. It must not fail on outputs it
+	// cannot read: those are wrong.
+	Check(payload, output []byte) error
+}
+
+// Check checks an output of a task of the named workload against the
+// task's payload, if the workload is Checking; otherwise there is nothing
+// to check, and it is nil.
+func (r *Registry) Check(name string, payload, output []byte) error {
+	if c, ok := r.workloads[name].(Checking); ok {
+		return c.Check(payload, output)
+	}
+	return nil
+}
+
 // Needy is a workload whose tasks cannot run on just any worker that has
 // the workload: they need something more of it, which depends on the job.
 type Needy interface {
@@ -329,7 +351,7 @@ func NewRegistry(workloads ...Workload) *Registry {
 // Builtin returns the workloads shipped with the daemon that any node can
 // run, having nothing to run them with but itself.
 func Builtin() *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Forecast{}, Forecasts{})
+	return NewRegistry(Primes{}, WordCount{}, Forecast{}, Forecasts{}, Vanity{})
 }
 
 // WithContainers returns the built-in workloads and those that run in
@@ -344,7 +366,7 @@ func WithContainers() *Registry {
 // ContainersConfined returns what WithContainers does, with the containers
 // held in as a worker's owner asked.
 func ContainersConfined(confined Confinement) *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Forecast{Containers: true, Confined: confined}, Forecasts{Containers: true, Confined: confined}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}, Transcribe{Confined: confined}, Qchem{Confined: confined}, OCR{Confined: confined}, Traj{Confined: confined}, Prep{Confined: confined}, Images{Confined: confined}, Mining{Confined: confined}).With(WithModels("", Owner{})...)
+	return NewRegistry(Primes{}, WordCount{}, Vanity{}, Forecast{Containers: true, Confined: confined}, Forecasts{Containers: true, Confined: confined}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}, Transcribe{Confined: confined}, Qchem{Confined: confined}, OCR{Confined: confined}, Traj{Confined: confined}, Prep{Confined: confined}, Images{Confined: confined}, Mining{Confined: confined}).With(WithModels("", Owner{})...)
 }
 
 // WithModels returns the workloads that use the language models of the

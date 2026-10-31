@@ -286,6 +286,7 @@ Sisyphus is an early prototype. The network loop works without AI: a coordinator
 - A desktop app that shows a node and its pool, plans with it and admits or removes workers, packaged with the logo as a Windows installer, a macOS disk image and a Linux AppImage.
 - A first real workload, `transcode`: a video is cut into stretches, encoded by ffmpeg on different workers, and joined.
 - Container images as jobs: a worker whose owner allows it runs any image, one copy for each task, with its output stored and its log followed live.
+- Vanity wallet addresses found by the pool with split keys, so that no worker ever holds a key that can spend from the address: Bitcoin and its forks, Ravencoin and Ethereum ([`vanity`](apps/sisyphusd/README.md#vanity-addresses)).
 - Two stand-in workloads, `primes` and `wordcount`, that exercise the network rather than compute anything valuable.
 - Tests that execute every statement of hand-written code, enforced in CI, and release builds of the node for Linux (eight processors, RISC-V and IBM Z among them), macOS, Windows, the BSDs and Android, and of the desktop app for Linux, Windows and macOS on x64 and arm64, with the workloads' answers checked on each system.
 

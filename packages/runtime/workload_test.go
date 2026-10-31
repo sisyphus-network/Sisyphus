@@ -53,7 +53,7 @@ func TestWorkloadsReportOnThemselves(t *testing.T) {
 
 func TestWorkloadsDescribeThemselves(t *testing.T) {
 	r := Builtin()
-	for _, name := range []string{"primes", "wordcount"} {
+	for _, name := range []string{"primes", "wordcount", "vanity"} {
 		if got := r.Describe(name); len(got) < 40 || !strings.Contains(got, "Parameters:") {
 			t.Errorf("%s describes itself as %q", name, got)
 		}
@@ -73,7 +73,7 @@ func TestWhichWorkloadsSayTheirResultsVary(t *testing.T) {
 			t.Errorf("%s does not say its results vary", w.Name())
 		}
 	}
-	for _, w := range []Workload{Primes{}, WordCount{}, Transcode{}, Graph{}} {
+	for _, w := range []Workload{Primes{}, WordCount{}, Transcode{}, Graph{}, Vanity{}} {
 		if _, ok := w.(Varying); ok {
 			t.Errorf("%s says its results vary", w.Name())
 		}

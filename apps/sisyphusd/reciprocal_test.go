@@ -648,7 +648,7 @@ func TestWorkingForAnotherNodeBesideOnesOwnPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := listed.GetNodes()[0].GetCapabilities().GetWorkloads(); !slices.Equal(got, []string{"forecast", "primes", "wordcount"}) {
+	if got := listed.GetNodes()[0].GetCapabilities().GetWorkloads(); !slices.Equal(got, []string{"forecast", "primes", "vanity", "wordcount"}) {
 		t.Errorf("the guest worker offers %v, want all but forecasts", got)
 	}
 	// What its tasks fetch is kept apart, under the other node's name.
