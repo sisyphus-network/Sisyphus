@@ -1,0 +1,2 @@
+DRIVER=xocl
+PCI_ID=10EE:5001

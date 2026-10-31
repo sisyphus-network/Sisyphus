@@ -1,5 +1,6 @@
 // Package hardware finds out what a machine has to offer: its processor,
-// its memory, and its graphics cards. What it cannot find out it leaves
+// its memory, its graphics cards, and its other accelerators (NPUs, Edge
+// TPUs and FPGAs). What it cannot find out it leaves
 // unknown rather than guess, and it never fails: a node on a system it does
 // not know how to look at is a node with less known about it.
 package hardware
@@ -22,6 +23,8 @@ type Info struct {
 	// MemoryBytes is how much memory the machine has, or zero if unknown.
 	MemoryBytes uint64
 	GPUs        []GPU
+	// Accelerators are the machine's NPUs, Edge TPUs and FPGAs.
+	Accelerators []Accelerator
 }
 
 // GPU is a graphics card that can be computed on.
@@ -37,30 +40,34 @@ var (
 		return exec.CommandContext(ctx, name, args...).Output()
 	}
 	system = runtime.GOOS
+	arch   = runtime.GOARCH
+	// sysfs is the machine's file system from its root, where Linux lists
+	// its devices.
+	sysfs = os.DirFS("/")
 )
 
 // What Windows is asked for, through the shell it always has: the memory
 // in bytes on one line, and the processor's name on the next.
 const askWindows = "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory; (Get-CimInstance Win32_Processor | Select-Object -First 1).Name"
 
-// Detect looks at this machine. It takes a moment at most: a tool that
+// Detect looks at this machine. It takes a few seconds at most: a tool that
 // does not answer promptly is taken to have nothing to say.
 func Detect(ctx context.Context) Info {
 	var info Info
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	look, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// Linux says what it has in two files. macOS and Windows each have a
 	// tool to ask. On anything else the processor and memory stay unknown.
 	switch system {
 	case "darwin":
-		if memory, err := run(ctx, "sysctl", "-n", "hw.memsize"); err == nil {
+		if memory, err := run(look, "sysctl", "-n", "hw.memsize"); err == nil {
 			info.MemoryBytes, _ = strconv.ParseUint(strings.TrimSpace(string(memory)), 10, 64)
 		}
-		if cpu, err := run(ctx, "sysctl", "-n", "machdep.cpu.brand_string"); err == nil {
+		if cpu, err := run(look, "sysctl", "-n", "machdep.cpu.brand_string"); err == nil {
 			info.CPUModel = strings.TrimSpace(string(cpu))
 		}
 	case "windows":
-		if said, err := run(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", askWindows); err == nil {
+		if said, err := run(look, "powershell", "-NoProfile", "-NonInteractive", "-Command", askWindows); err == nil {
 			memory, cpu, _ := strings.Cut(strings.TrimSpace(string(said)), "\n")
 			// Anything but a number first is the shell complaining.
 			if bytes, err := strconv.ParseUint(strings.TrimSpace(memory), 10, 64); err == nil {
@@ -76,9 +83,14 @@ func Detect(ctx context.Context) Info {
 		}
 	}
 	// NVIDIA's tool is the same on every system that has one of its cards.
-	if listed, err := run(ctx, "nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"); err == nil {
+	if listed, err := run(look, "nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"); err == nil {
 		info.GPUs = nvidiaGPUs(string(listed))
 	}
+	// Other accelerators are looked for after, with time of their own: on
+	// Windows that is a second shell to start.
+	look, cancel = context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	info.Accelerators = accelerators(look, info.CPUModel)
 	return info
 }
 

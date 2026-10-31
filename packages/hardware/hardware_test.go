@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"testing/fstest"
 )
 
 const (
@@ -16,9 +17,9 @@ const (
 // machine puts a pretend machine in place of the real one for a test.
 func machine(t *testing.T, files map[string]string, tool string, toolErr error) {
 	t.Helper()
-	oldRead, oldRun, oldSystem := readFile, run, system
-	t.Cleanup(func() { readFile, run, system = oldRead, oldRun, oldSystem })
-	system = "linux"
+	oldRead, oldRun, oldSystem, oldArch, oldSysfs := readFile, run, system, arch, sysfs
+	t.Cleanup(func() { readFile, run, system, arch, sysfs = oldRead, oldRun, oldSystem, oldArch, oldSysfs })
+	system, arch, sysfs = "linux", "amd64", fstest.MapFS{}
 	readFile = func(name string) ([]byte, error) {
 		if content, ok := files[name]; ok {
 			return []byte(content), nil

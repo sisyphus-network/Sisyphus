@@ -587,6 +587,9 @@ func (w *Worker) capabilities() *pb.NodeCapabilities {
 	for _, gpu := range w.Hardware.GPUs {
 		capabilities.Gpus = append(capabilities.Gpus, &pb.Gpu{Name: gpu.Name, MemoryBytes: gpu.MemoryBytes})
 	}
+	for _, a := range w.Hardware.Accelerators {
+		capabilities.Accelerators = append(capabilities.Accelerators, &pb.Accelerator{Kind: a.Kind, Vendor: a.Vendor, Model: a.Model, Driver: a.Driver, MemoryBytes: a.MemoryBytes})
+	}
 	return capabilities
 }
 
@@ -698,13 +701,15 @@ func (w *Worker) storeOffered(labels []string) {
 }
 
 // labels is what the worker has that a job may ask for by name: itself,
-// and whatever its workloads offer. Who it is the coordinator decides for
+// its accelerators (such as "npu" and "npu-intel"), and whatever its
+// workloads offer. Who it is the coordinator decides for
 // itself, from the key the worker connected with; the name is sent for a
 // coordinator from before it did.
 func (w *Worker) labels() []string { return w.labelsWithin(context.Background()) }
 
 func (w *Worker) labelsWithin(ctx context.Context) []string {
-	return append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.accepted().Offers(ctx)...)
+	labels := append([]string{runtime.WorkerLabel + w.Name, runtime.SealingLabel}, w.Hardware.Labels()...)
+	return append(labels, w.accepted().Offers(ctx)...)
 }
 
 // accepted is those of the worker's workloads its owner lets it take.

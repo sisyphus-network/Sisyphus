@@ -27,11 +27,28 @@ message NodeCapabilities {
   // What else the node has that a job's tasks may need, as plain labels. A
   // node serving language models has "model:<name>" for each.
   repeated string labels = 10;
+  // The node's other accelerators: NPUs, Edge TPUs and FPGAs. Each also
+  // gives labels, such as "npu" and "npu-intel".
+  repeated Accelerator accelerators = 11;
 }
 
 message Gpu {
   string name = 1;
   uint64 memory_bytes = 2;
+}
+
+// An accelerator besides the processor and graphics cards. What is not
+// known of it is empty or zero.
+message Accelerator {
+  // "npu", "edgetpu" or "fpga".
+  string kind = 1;
+  // Who makes it, as "Intel", "AMD", "Apple", "Xilinx", "Google" or
+  // "Qualcomm", or as the node's system names them otherwise.
+  string vendor = 2;
+  string model = 3;
+  // The operating system's driver for it.
+  string driver = 4;
+  uint64 memory_bytes = 5;
 }
 
 message NodeInfo {

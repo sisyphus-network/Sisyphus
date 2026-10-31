@@ -216,7 +216,8 @@ func TestEveryToolSaysSoWhenTheNodeFailsIt(t *testing.T) {
 func TestThePoolIsDescribedWithItsCardsAndTheTokenIsShown(t *testing.T) {
 	n := &node{workers: []*nodepb.Worker{
 		{Name: "rig", TaskSlots: 4, RunningTasks: 1, Workloads: []string{"primes"}, Gpus: []*nodepb.WorkerGpu{{Name: "RTX 5090"}}, Models: []string{"llama3.1:8b", "qwen3:8b"},
-			LoadedModels: []*nodepb.LoadedModel{{Name: "llama3.1:8b", OnCardPercent: 75}}, VerifiedAgreed: 12, VerifiedOutvoted: 1, Probation: 7},
+			LoadedModels: []*nodepb.LoadedModel{{Name: "llama3.1:8b", OnCardPercent: 75}}, VerifiedAgreed: 12, VerifiedOutvoted: 1, Probation: 7,
+			Accelerators: []*nodepb.WorkerAccelerator{{Kind: "edgetpu", Vendor: "Google", Model: "Coral USB Accelerator"}}},
 		{Name: "laptop", TaskSlots: 2},
 	}}
 	got, err := serving(n).status(serving(n).as(context.Background()))
@@ -229,6 +230,9 @@ func TestThePoolIsDescribedWithItsCardsAndTheTokenIsShown(t *testing.T) {
 		workers[0]["models"].([]string)[0] != "llama3.1:8b" || workers[1]["models"] != nil ||
 		workers[0]["loaded_models"].(map[string]uint32)["llama3.1:8b"] != 75 || workers[1]["loaded_models"] != nil {
 		t.Errorf("pool = %v", pool)
+	}
+	if shown, _ := json.Marshal(workers[0]["accelerators"]); string(shown) != `[{"driver":"","kind":"edgetpu","model":"Coral USB Accelerator","vendor":"Google"}]` || workers[1]["accelerators"] != nil {
+		t.Errorf("accelerators shown as %s and %v", shown, workers[1]["accelerators"])
 	}
 	// A worker is shown with its standing once verified tasks have given
 	// it one.

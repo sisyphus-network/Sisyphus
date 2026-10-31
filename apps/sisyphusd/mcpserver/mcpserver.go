@@ -155,6 +155,14 @@ func (s *server) status(ctx context.Context) (any, error) {
 		if cards != nil {
 			worker["gpus"] = cards
 		}
+		// Its NPUs, Edge TPUs and FPGAs.
+		var accelerators []map[string]any
+		for _, a := range w.GetAccelerators() {
+			accelerators = append(accelerators, map[string]any{"kind": a.GetKind(), "vendor": a.GetVendor(), "model": a.GetModel(), "driver": a.GetDriver()})
+		}
+		if accelerators != nil {
+			worker["accelerators"] = accelerators
+		}
 		if models := w.GetModels(); models != nil {
 			worker["models"] = models
 		}

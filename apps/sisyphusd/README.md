@@ -547,7 +547,7 @@ bin/sisyphusd blob unpin-remote --service https://pins.example.com/psa --key-fil
 
 ## What each machine has
 
-A worker looks at the machine it runs on and tells its coordinator what it finds: the processor, how much memory, and any NVIDIA graphics cards. `sisyphusd nodes` shows it.
+A worker looks at the machine it runs on and tells its coordinator what it finds: the processor, how much memory, any NVIDIA graphics cards, and any [other accelerators](#accelerators-npus-edge-tpus-and-fpgas) (NPUs, Edge TPUs, FPGAs). `sisyphusd nodes` shows it.
 
 ```sh
 bin/sisyphusd run --offer-memory-mb 16384 --offer-gpus 1 ...     # offer the pool less than the machine has
@@ -558,6 +558,29 @@ bin/sisyphusd job submit --min-memory-mb 8192 --gpus 1 ...       # a job that ne
 - **The owner decides what to offer.** `--offer-memory-mb` and `--offer-gpus` cap what the node says it has. They do not hold a workload to it: nothing yet stops a task using more memory than its node offered.
 - **What is found, and where.** Processor and memory are read from `/proc` on Linux, asked of `sysctl` on macOS and of PowerShell on Windows. Where none of those answers they are left unknown, and such a worker is given no job that asks for memory unless its owner says how much to offer. Graphics cards are found wherever NVIDIA's `nvidia-smi` is installed; other makes are not looked for.
 - **A requirement is a count, not a choice.** A task that asks for a graphics card is sent to a machine with one. Which card it then uses, and keeping two tasks off the same one, is the workload's business for now.
+
+### Accelerators: NPUs, Edge TPUs and FPGAs
+
+A worker also looks for accelerators besides its processor and graphics cards, and reports each with its kind (`npu`, `edgetpu` or `fpga`), maker, model and driver, as far as the system says; memory is left unknown for now. `sisyphusd nodes` lists them below its table, one line per node:
+
+```
+laptop: accelerators: npu Intel NPU (Meteor Lake) [intel_vpu]; edgetpu Google Coral USB Accelerator
+```
+
+The desktop's worker list (`ListWorkers`) and the MCP server's pool status carry them too. Each also gives the worker labels, its kind and its kind with its maker, which a workload's `Needs` can ask for like any other: `npu`, `npu-intel`, `npu-amd`, `npu-apple`, `npu-qualcomm`, `edgetpu`, `edgetpu-google`, `fpga`, `fpga-xilinx`, `fpga-intel`. No workload uses them yet ([#777](https://github.com/sisyphus-network/Sisyphus/issues/777)), and they are offered whenever found: there is no `--offer-` flag for them.
+
+Nothing is installed or loaded to look: files are read, and on macOS and Windows a built-in tool is asked, within a few seconds. What is found, and where:
+
+| System | Kind | How it is found |
+| --- | --- | --- |
+| Linux | NPU | Each device of the compute accelerator class, `/sys/class/accel/accel*`. Its driver and PCI ID are read from `device/uevent`: `intel_vpu` is Intel's NPU, `amdxdna` AMD's XDNA (Ryzen AI); any other (such as Qualcomm's `qaic`) is reported as an NPU of the maker its PCI ID names. Known Intel and AMD NPUs are named; others are given as `PCI device vvvv:dddd`. |
+| Linux | Edge TPU | A Coral on PCIe, each `/dev/apex_*` (the `apex` driver); a Coral on USB, each device in `/sys/bus/usb/devices` with the ID `1a6e:089a` (before its firmware is loaded) or `18d1:9302` (after). |
+| Linux | FPGA | AMD/Xilinx cards under XRT: each render node in `/sys/class/drm` whose driver is `xocl` (a card's user function), or, where none is, each `/dev/xclmgmt*` (its management function), so a card is not counted twice. Cards managed by Linux's FPGA subsystem, as Intel's OPAE (DFL) cards and Xilinx's Zynq are: each `/sys/class/fpga_manager/*`, its maker taken from its name or driver, or where there is no manager, each `/sys/class/fpga_region/*`. |
+| macOS | NPU | Apple's Neural Engine, on every Apple silicon Mac: reported when the daemon is built for arm64, or when `sysctl hw.optional.arm64` says it runs under Rosetta on one, named after the chip (`Apple M2 Neural Engine`). No private framework is asked. |
+| Windows | NPU | The devices of the ComputeAccelerator class, which Windows 11 puts NPUs in (Intel AI Boost, AMD's NPU, Qualcomm's Hexagon NPU on Windows on Arm), from PowerShell's `Get-PnpDevice`, with each one's name, maker and driver service. A system without the class reports none. |
+| Others | none | FreeBSD, OpenBSD and other systems are not looked at. |
+
+Not found yet: Edge TPUs and FPGAs on macOS and Windows; NPUs that Linux does not put in the accelerator class (such as Hailo's `/dev/hailo*` and Rockchip's RKNPU on older kernels); which runtime an accelerator can be used through (OpenVINO, Core ML, ONNX Runtime, XRT, OPAE), its memory, and its driver's version. Mining ASICs are network devices with their own controllers rather than devices in the machine, and are left to the mining workload ([#776](https://github.com/sisyphus-network/Sisyphus/issues/776)).
 
 ### Which workloads a machine takes
 
@@ -1599,7 +1622,7 @@ The result:
 | `apps/sisyphusd/mcpserver` | The node offered to AI agents as a Model Context Protocol server. |
 | `apps/sisyphusd/pinning` | The IPFS Pinning Service API: the node as a service, and as a client of one. |
 | `packages/ai` | Talking to language models: Ollama, OpenAI-style services and Anthropic. |
-| `packages/hardware` | Finding out what a machine has: processor, memory, graphics cards. |
+| `packages/hardware` | Finding out what a machine has: processor, memory, graphics cards, and NPUs, Edge TPUs and FPGAs. |
 | `packages/idle` | Telling whether a machine's owner is using it, per system, and when a worker that shares only while they are away takes new tasks. |
 | `packages/identity` | Node keys, IDs, and the TLS settings built from them. |
 | `packages/names` | The signed records behind names: making, checking and comparing them. |
