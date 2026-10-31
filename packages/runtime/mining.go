@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,17 +21,21 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/ipfs/go-cid"
 )
 
 // Mining lends the worker's processor to someone who mines a coin to their
-// own wallet: XMRig, built from source with no donation to its authors,
-// connects to the mining pool the job names and submits shares under the
-// payout address the job gives, for as long as the job's time box. The
-// pool pays that address. Sisyphus holds no keys and no coins and is never
-// in the money's path: a payout address is public, and nothing secret is
-// taken.
+// own wallet: a miner connects to the mining pool the job names and
+// submits shares under the payout address the job gives, for as long as
+// the job's time box, and the pool pays that address. Sisyphus holds no
+// keys and no coins and is never in the money's path: a payout address is
+// public, and nothing secret is taken.
+//
+// The miner itself is an engine: an image of Sisyphus's own miner, from
+// sisyphus-network/sisyphus-miner, built on the worker as the other fixed
+// images are, which keeps to the contract MinerEngine sets out. No engine
+// is built in yet, so for now no worker offers mining and a job of it is
+// refused: everything around the miner is here, ready for it, and nothing
+// mines.
 //
 // It is opt-in: a worker takes it only if its owner names it, or a group
 // of its own, among the workloads to allow (see OptIn), since mining costs
@@ -70,32 +73,97 @@ const (
 	GroupMiningRandomX = "mining-randomx"
 )
 
-// MiningEgressLabel marks a worker that can hold a miner to its pool's one
-// address: one on Linux, whose containers run with Docker's own runtime. A
-// Unix socket is how the worker reaches into a container that has no
-// network; gVisor's and Kata's runtimes do not let a container connect to
-// one on the machine, and nor does Docker Desktop, whose containers run in
-// a virtual machine.
+// MiningEgressLabel marks a worker that can run a miner held to its pool's
+// one address: one on Linux, whose containers run with Docker's own
+// runtime, with a miner engine for the job's algorithm. A Unix socket is
+// how the worker reaches into a container that has no network; gVisor's
+// and Kata's runtimes do not let a container connect to one on the
+// machine, and nor does Docker Desktop, whose containers run in a virtual
+// machine.
 const MiningEgressLabel = "mining-egress"
 
-// miningAlgorithms are the algorithms a job may mine with, by XMRig's
-// names: RandomX for Monero.
+// miningAlgorithms are the algorithms a job may name: RandomX for Monero.
+// A job is taken only for one a miner engine mines.
 var miningAlgorithms = []string{"rx/0"}
+
+// MinerEngine is an image of a miner that a worker can run for a mining
+// task, and the algorithms it mines. The worker builds it from Dockerfile
+// the first time it is needed and tags it Image, which carries a hash of
+// what it is made from, as the other fixed images' names do.
+//
+// The contract an engine keeps. Its image's own command is run, with no
+// network, as the node's user with every capability dropped, and its root
+// read-only where the owner asks. It is told, in its environment:
+//
+//   - SISYPHUS_POOL_SOCKET, the Unix socket (in /run/sisyphus-pool) its one
+//     connection to the pool goes through: each connection made to it is
+//     joined to the pool's address and port, and nothing else is reachable;
+//   - SISYPHUS_POOL_HOST and SISYPHUS_POOL_PORT, the pool's name or address
+//     and port as the job gave them, and SISYPHUS_POOL_TLS, true for
+//     stratum+ssl, in which case the engine speaks TLS over the socket and
+//     names SISYPHUS_POOL_HOST to the pool;
+//   - SISYPHUS_ALGORITHM, SISYPHUS_ADDRESS (the payout address),
+//     SISYPHUS_PASS (the pool's password field, never a secret) and
+//     SISYPHUS_WORKER (the name to mine under);
+//   - SISYPHUS_THREADS, how many threads to mine with, 0 for its own
+//     choice; SISYPHUS_MEMORY_MB, the memory it is held to, 0 for no limit;
+//     and SISYPHUS_DURATION, the seconds to mine for, after which it stops.
+//
+// It mines for the time box with no fee to anyone, and then prints, as
+// the last line of its standard output, one JSON object (MinerSummary)
+// and exits 0. What else it prints, on either stream, is the task's log.
+type MinerEngine struct {
+	Image      string
+	Dockerfile string
+	Algorithms []string
+}
+
+// MinerSummary is what an engine says of its time box, on its last line.
+type MinerSummary struct {
+	Algorithm string `json:"algorithm"`
+	// Hashrate is hashes a second over the last HashrateWindow seconds,
+	// and Highest the most it reached; nil if not measured.
+	Hashrate       *float64 `json:"hashrate"`
+	HashrateWindow int      `json:"hashrate_window"`
+	Highest        *float64 `json:"hashrate_highest"`
+	// Accepted and Rejected count the shares the pool took and refused,
+	// and Connected is how many seconds it was connected to the pool.
+	Accepted  uint64 `json:"accepted"`
+	Rejected  uint64 `json:"rejected"`
+	Connected int64  `json:"connected_seconds"`
+	// FeePercent is the share of the time box mined for anyone but the
+	// job's address, which must be said, and be 0.
+	FeePercent *float64 `json:"fee_percent"`
+}
+
+// minerEngines are the miner engines this build of Sisyphus has. There
+// are none yet: Sisyphus's own miner is to come from
+// sisyphus-network/sisyphus-miner. Tests add a fake one.
+var minerEngines []MinerEngine
+
+// minerEngine returns the engine that mines algorithm, if there is one.
+func minerEngine(algorithm string) (MinerEngine, bool) {
+	for _, e := range minerEngines {
+		if slices.Contains(e.Algorithms, algorithm) {
+			return e, true
+		}
+	}
+	return MinerEngine{}, false
+}
 
 // Bounds of a mining job: the shortest and longest a task may mine for,
 // the longest a worker name and a pool password may be, and how long a
 // task is given beyond its time box to start, say what it did and stop.
-// Tests shorten the shortest and the grace.
-var (
-	miningShortest = time.Minute
-	miningGrace    = 2 * time.Minute
-)
+// Tests shorten the grace.
+var miningGrace = 2 * time.Minute
 
 const (
-	miningLongest   = 24 * time.Hour
-	miningMostName  = 32
-	miningMostPass  = 64
-	miningRelayPort = "3333"
+	miningShortest = time.Minute
+	miningLongest  = 24 * time.Hour
+	miningMostName = 32
+	miningMostPass = 64
+	// miningSocket is where the pool's socket is in the container.
+	miningSocket = "/run/sisyphus-pool/pool.sock"
 )
 
 // MiningParams are a mining job's parameters.
@@ -145,20 +213,19 @@ type miningTask struct {
 	Index  int    `json:"index"`
 }
 
-// MiningOutput is what one task says it did. Every number is XMRig's own,
-// read from its local API at the end of the time box: self-reported.
+// MiningOutput is what one task says it did. Every number is its miner's
+// own: self-reported.
 type MiningOutput struct {
 	Index     int    `json:"index"`
 	Worker    string `json:"worker"`
 	Algorithm string `json:"algorithm"`
 	// Pool is the one address and port the task could reach.
 	Pool string `json:"pool"`
-	// Seconds is the time box it mined for, and Connected how long it had
-	// been connected to the pool at the end of it.
+	// Seconds is the time box it mined for, and Connected how long it was
+	// connected to the pool.
 	Seconds   int   `json:"seconds"`
 	Connected int64 `json:"connected_seconds"`
-	// Hashrate is hashes a second over the last HashrateWindow seconds, the
-	// longest of XMRig's windows (10 s, 60 s, 15 min) it had measured,
+	// Hashrate is hashes a second over the last HashrateWindow seconds,
 	// and Highest the most it reached. Nil is not measured.
 	Hashrate       *float64 `json:"hashrate"`
 	HashrateWindow int      `json:"hashrate_window,omitempty"`
@@ -183,82 +250,10 @@ type MiningResult struct {
 	Rejected uint64  `json:"rejected"`
 }
 
-// miningDockerfile is the image a miner runs in: XMRig 6.26.0, built from
-// its source at the release's commit, b2ca7248, fetched from GitHub and
-// checked against its SHA-256. One change is made to it first: the
-// donation level, which XMRig's own releases hold at a least of 1%, mining
-// one minute in each hundred for XMRig's authors whatever --donate-level
-// says, is made 0 by default and at least, so that a job's miner mines for
-// the job alone. The build stops if that change does not take. It is
-// built for the processor only, without CUDA, OpenCL, the MSR mod (which
-// needs root) or the DMI reader. Beside it in the image are socat, which
-// joins the miner's connection to the worker's socket, and XMRig's
-// licence, the GPL 3.
-const miningDockerfile = `FROM alpine:3.20 AS build
-RUN apk add --no-cache build-base cmake curl hwloc-dev libuv-dev linux-headers openssl-dev
-RUN curl -fsSLo /xmrig.tar.gz https://github.com/xmrig/xmrig/archive/b2ca72480c58d197e18c885d9fc1a0c8d517e60a.tar.gz \
- && echo "f8bfbd3ed3e371f51bb40e9df1b236338e5aadfa42c5bccffd59132dac7ce0a9  /xmrig.tar.gz" | sha256sum -c - \
- && mkdir /xmrig && tar -xzf /xmrig.tar.gz -C /xmrig --strip-components 1
-WORKDIR /xmrig
-RUN sed -i -e 's/kDefaultDonateLevel = 1;/kDefaultDonateLevel = 0;/' -e 's/kMinimumDonateLevel = 1;/kMinimumDonateLevel = 0;/' src/donate.h \
- && grep -q 'kDefaultDonateLevel = 0;' src/donate.h && grep -q 'kMinimumDonateLevel = 0;' src/donate.h
-RUN mkdir build && cd build \
- && cmake .. -DCMAKE_BUILD_TYPE=Release -DWITH_OPENCL=OFF -DWITH_CUDA=OFF -DWITH_NVML=OFF -DWITH_ADL=OFF -DWITH_MSR=OFF -DWITH_DMI=OFF -DWITH_BENCHMARK=OFF \
- && nice -n 19 make -j"$(nproc)" \
- && install -m 0755 xmrig /usr/local/bin/xmrig \
- && install -D -m 0644 ../LICENSE /usr/local/share/licenses/xmrig/LICENSE \
- && install -m 0644 ../src/donate.h /usr/local/share/licenses/xmrig/donate.h
-FROM alpine:3.20
-RUN apk add --no-cache hwloc libstdc++ libuv openssl socat
-COPY --from=build /usr/local/bin/xmrig /usr/local/bin/xmrig
-COPY --from=build /usr/local/share/licenses/xmrig /usr/local/share/licenses/xmrig
-RUN xmrig --version
-`
-
-// MiningImage names that image, by what it is made from.
-var MiningImage = func() string {
-	sum := sha256.Sum256([]byte(miningDockerfile))
-	return "sisyphus-mining:" + hex.EncodeToString(sum[:6])
-}()
-
-// miningScript is what each task runs. socat listens on the container's
-// own loopback and joins each connection to the worker's socket at
-// /run/sisyphus-pool/pool.sock. XMRig connects to the pool by its name,
-// which the container's hosts file says is that loopback address, so TLS
-// is spoken to the pool's own name; it mines with no donation, with its
-// local API on loopback too. At the end of the time box the script reads
-// XMRig's summary from that API into /output/summary.json and stops it.
-// A miner that stops before then fails the task.
-const miningScript = `set -eu
-socat TCP-LISTEN:` + miningRelayPort + `,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/run/sisyphus-pool/pool.sock &
-relay=$!
-set -- --url "$POOL_HOST:` + miningRelayPort + `" --user "$ADDRESS" --pass "$PASS" --rig-id "$WORKER" --algo "$ALGORITHM" \
-	--donate-level 0 --no-color --print-time 60 --retry-pause 5 --randomx-mode "$RANDOMX_MODE" \
-	--http-enabled --http-host 127.0.0.1 --http-port 18080
-if [ "$TLS" = true ]; then set -- "$@" --tls; fi
-if [ "$THREADS" != 0 ]; then set -- "$@" --threads "$THREADS"; fi
-echo "mining $ALGORITHM as $WORKER for $DURATION seconds" >&2
-xmrig "$@" >&2 &
-miner=$!
-end=$(( $(date +%s) + DURATION ))
-while kill -0 "$miner" 2>/dev/null && [ "$(date +%s)" -lt "$end" ]; do sleep 1; done
-if ! kill -0 "$miner" 2>/dev/null; then
-	status=0
-	wait "$miner" || status=$?
-	kill "$relay" 2>/dev/null || true
-	echo "XMRig stopped before its $DURATION seconds were up, with status $status" >&2
-	exit 1
-fi
-wget -q -O /output/summary.json http://127.0.0.1:18080/2/summary
-kill "$miner" "$relay" 2>/dev/null || true
-wait "$miner" || true
-echo "mined for $DURATION seconds" >&2
-`
-
 func (Mining) Name() string { return "mining" }
 
 func (Mining) Describe() string {
-	return `Mines a coin to the requester's own wallet with XMRig, built from source with no donation, on the processor: each task connects to the mining pool the job names and submits shares under the payout address it gives, for the time box, and the pool pays that address. Nothing secret is taken and no coins pass through the pool of computers. Only workers whose owners opted in to mining take it, and each task can reach the mining pool's one address and nothing else; a pool on a private, loopback, link-local or CGNAT address is refused. Parameters: {"algorithm": "<rx/0 (RandomX, Monero), the default>", "pool": "<stratum+tcp://host:port, or stratum+ssl://host:port for TLS>", "address": "<the public Monero address the pool pays>", "worker": "<optional name prefix, letters, digits, dots, dashes and underscores, default sisyphus; each task adds -<job>-<n>>", "pass": "<optional pool password field, default x; never a secret>", "duration": "<how long each task mines, 1m to 24h, as 90m or 2h>", "tasks": <optional number of tasks>}. Result: {"self_reported": true, "algorithm": "rx/0", "tasks": [{"index": <n>, "worker": "<name>", "algorithm": "rx/0", "pool": "<address:port reached>", "seconds": <time box>, "connected_seconds": <n>, "hashrate": <hashes a second, or null>, "hashrate_window": <seconds it is over>, "hashrate_highest": <n or null>, "accepted": <shares>, "rejected": <shares>}], "hashrate": <sum>, "accepted": <n>, "rejected": <n>}. The numbers are each miner's own; the pool's statistics for the address are the real check.`
+	return `Mines a coin to the requester's own wallet, on the processor, with Sisyphus's own miner: each task connects to the mining pool the job names and submits shares under the payout address it gives, for the time box, with no fee to anyone, and the pool pays that address. Nothing secret is taken and no coins pass through the pool of computers. Not available yet: no miner is built in, so no worker offers it and a job of it is refused. Only workers whose owners opted in to mining will take it, and each task can reach the mining pool's one address and nothing else; a pool on a private, loopback, link-local or CGNAT address is refused. Parameters: {"algorithm": "<rx/0 (RandomX, Monero), the default>", "pool": "<stratum+tcp://host:port, or stratum+ssl://host:port for TLS>", "address": "<the public Monero address the pool pays>", "worker": "<optional name prefix, letters, digits, dots, dashes and underscores, default sisyphus; each task adds -<job>-<n>>", "pass": "<optional pool password field, default x; never a secret>", "duration": "<how long each task mines, 1m to 24h, as 90m or 2h>", "tasks": <optional number of tasks>}. Result: {"self_reported": true, "algorithm": "rx/0", "tasks": [{"index": <n>, "worker": "<name>", "algorithm": "rx/0", "pool": "<address:port reached>", "seconds": <time box>, "connected_seconds": <n>, "hashrate": <hashes a second, or null>, "hashrate_window": <seconds it is over>, "hashrate_highest": <n or null>, "accepted": <shares>, "rejected": <shares>}], "hashrate": <sum>, "accepted": <n>, "rejected": <n>}. The numbers are each miner's own; the pool's statistics for the address are the real check.`
 }
 
 // OptIn says a worker takes mining only when its owner says so.
@@ -271,12 +266,14 @@ func (Mining) Groups() []string { return []string{GroupMining, GroupMiningCPU, G
 // running it again.
 func (Mining) Varies() bool { return true }
 
-// Needs says a mining task needs a worker that can hold it to its pool.
+// Needs says a mining task needs a worker that can run a miner held to its
+// pool.
 func (Mining) Needs([]byte) []string { return []string{MiningEgressLabel} }
 
-// Offers is holding a miner to its pool, where this worker can.
+// Offers is running a miner held to its pool, where this worker can and
+// has a miner engine to run: nowhere yet.
 func (m Mining) Offers(context.Context) []string {
-	if m.canHold() {
+	if m.canHold() && len(minerEngines) > 0 {
 		return []string{MiningEgressLabel}
 	}
 	return nil
@@ -301,6 +298,11 @@ func (Mining) Split(_ context.Context, _ Blobs, params []byte, parts int) ([][]b
 	settings, err := p.settings()
 	if err != nil {
 		return nil, fmt.Errorf("mining parameters: %w", err)
+	}
+	// Until there is a miner to run, a job of mining is refused here
+	// rather than left waiting for a worker that offers it.
+	if _, ok := minerEngine(settings.Algorithm); !ok {
+		return nil, fmt.Errorf("mining parameters: mining %s is not available yet: Sisyphus's own miner, from sisyphus-network/sisyphus-miner, is not built in", settings.Algorithm)
 	}
 	worker := cmp.Or(p.Worker, "sisyphus")
 	if err := checkMiningWorker(worker); err != nil {
@@ -420,22 +422,14 @@ func moneroAddress(address string) bool {
 	return !strings.ContainsFunc(address, func(r rune) bool { return !strings.ContainsRune(moneroAlphabet, r) })
 }
 
-// env is the settings as a task's environment.
+// env is the settings as a task's environment, as MinerEngine says.
 func (t miningTask) env(confined Confinement) map[string]string {
-	host := t.Host
-	if _, err := netip.ParseAddr(host); err == nil {
-		host = "127.0.0.1"
-	}
-	// RandomX's fast mode holds a 2 GiB dataset in memory; with less than
-	// 3 GiB allowed a task, it runs in light mode, with a 256 MiB cache.
-	mode := "auto"
-	if confined.MemoryMB > 0 && confined.MemoryMB < 3072 {
-		mode = "light"
-	}
 	return map[string]string{
-		"ALGORITHM": t.Algorithm, "POOL_HOST": host, "TLS": strconv.FormatBool(t.Scheme == "stratum+ssl"),
-		"ADDRESS": t.Address, "PASS": t.Pass, "WORKER": t.Worker, "DURATION": strconv.Itoa(t.Seconds),
-		"RANDOMX_MODE": mode, "THREADS": strconv.Itoa(int(math.Ceil(confined.CPUs))),
+		"SISYPHUS_POOL_SOCKET": miningSocket, "SISYPHUS_POOL_HOST": t.Host, "SISYPHUS_POOL_PORT": strconv.Itoa(int(t.Port)),
+		"SISYPHUS_POOL_TLS": strconv.FormatBool(t.Scheme == "stratum+ssl"), "SISYPHUS_ALGORITHM": t.Algorithm,
+		"SISYPHUS_ADDRESS": t.Address, "SISYPHUS_PASS": t.Pass, "SISYPHUS_WORKER": t.Worker,
+		"SISYPHUS_THREADS": strconv.Itoa(int(math.Ceil(confined.CPUs))), "SISYPHUS_MEMORY_MB": strconv.Itoa(confined.MemoryMB),
+		"SISYPHUS_DURATION": strconv.Itoa(t.Seconds),
 	}
 }
 
@@ -455,13 +449,17 @@ func (m Mining) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byt
 	if !m.canHold() {
 		return nil, errors.New("this worker cannot hold a miner to its pool's address: that needs Docker's own runtime on Linux")
 	}
+	engine, ok := minerEngine(task.Algorithm)
+	if !ok {
+		return nil, fmt.Errorf("this worker has no miner for %s", task.Algorithm)
+	}
 	box := time.Duration(task.Seconds)*time.Second + miningGrace
 	if m.Confined.Timeout > 0 && box > m.Confined.Timeout {
 		return nil, fmt.Errorf("the task would mine for %s, and this worker's owner allows a task %s", time.Duration(task.Seconds)*time.Second, m.Confined.Timeout)
 	}
-	engine := m.Engine
-	if engine == nil {
-		engine = docker
+	run := m.Engine
+	if run == nil {
+		run = docker
 	}
 	// The pool's address is found once, before anything is run or built,
 	// and the task reaches that and nothing else.
@@ -479,7 +477,7 @@ func (m Mining) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	if err := haveImage(ctx, engine, MiningImage, miningDockerfile, "mining"); err != nil {
+	if err := haveImage(ctx, run, engine.Image, engine.Dockerfile, "mining"); err != nil {
 		return nil, err
 	}
 	dir, err := os.MkdirTemp(m.Confined.TaskDir, "sisyphus-pool-")
@@ -487,35 +485,39 @@ func (m Mining) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byt
 		return nil, fmt.Errorf("make the directory of the miner's socket: %w", err)
 	}
 	defer os.RemoveAll(dir)
-	run, cancel := context.WithTimeout(ctx, box)
+	boxed, cancel := context.WithTimeout(ctx, box)
 	defer cancel()
-	forwarder, err := forwardPool(run, filepath.Join(dir, "pool.sock"), to, dial)
+	forwarder, err := forwardPool(boxed, filepath.Join(dir, filepath.Base(miningSocket)), to, dial)
 	if err != nil {
 		return nil, err
 	}
 	report := Report(ctx)
 	report.Log(fmt.Sprintf("mining %s as %s for %d seconds, reaching the pool %s at %s and nothing else", task.Algorithm, task.Worker, task.Seconds, task.Host, to))
-	extra := []string{"--volume", dir + ":/run/sisyphus-pool"}
-	if _, err := netip.ParseAddr(task.Host); err != nil {
-		extra = append(extra, "--add-host", task.Host+":127.0.0.1")
+	// What the miner prints is kept here too, for its last line.
+	var printed capped
+	keeping := func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+		return run(ctx, args, io.MultiWriter(stdout, &printed), stderr)
 	}
-	raw, err := Container{Engine: engine, Confined: m.Confined, extra: extra}.Execute(run, blobs, mustJSON(containerTask{
-		ContainerParams: ContainerParams{Image: MiningImage, Command: []string{"sh", "-c", miningScript}, Env: task.env(m.Confined)},
+	_, err = Container{Engine: keeping, Confined: m.Confined, extra: []string{"--volume", dir + ":" + filepath.Dir(miningSocket)}}.Execute(boxed, blobs, mustJSON(containerTask{
+		ContainerParams: ContainerParams{Image: engine.Image, Env: task.env(m.Confined)},
 		Index:           task.Index, Count: 1,
 	}))
 	made, failed := forwarder.stop()
 	report.Log(fmt.Sprintf("the miner made %d connections to its pool, and %d could not be made", made, failed))
 	if err != nil {
-		if run.Err() != nil && ctx.Err() == nil {
+		if boxed.Err() != nil && ctx.Err() == nil {
 			return nil, fmt.Errorf("the miner did not stop within %s of its time box, and was stopped", miningGrace)
 		}
 		return nil, err
 	}
-	var out ContainerOutput
-	json.Unmarshal(raw, &out) // Container's own
-	summary, err := readMiningSummary(ctx, blobs, out.Files["summary.json"])
+	summary, err := readMinerSummary(printed.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("the miner's summary: %w", err)
+	}
+	// A miner that never reached its pool mined for no one: the task
+	// fails, rather than say it hashed for nothing.
+	if made == 0 || summary.Connected <= 0 {
+		return nil, fmt.Errorf("the miner never connected to its pool %s at %s (%d connections made, %d could not be made)", task.Host, to, made, failed)
 	}
 	output, err := summary.output(task)
 	if err != nil {
@@ -525,72 +527,41 @@ func (m Mining) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]byt
 	return mustJSON(output), nil
 }
 
-// xmrigSummary is what XMRig's local API says of itself at /2/summary, as
-// far as a task reads it.
-type xmrigSummary struct {
-	DonateLevel *int `json:"donate_level"`
-	Hashrate    struct {
-		Total   []*float64 `json:"total"`
-		Highest *float64   `json:"highest"`
-	} `json:"hashrate"`
-	Connection struct {
-		Algo     string `json:"algo"`
-		Uptime   int64  `json:"uptime"`
-		Accepted uint64 `json:"accepted"`
-		Rejected uint64 `json:"rejected"`
-	} `json:"connection"`
-}
-
-// xmrigWindows are the seconds XMRig's hashrates are taken over, in the
-// order it gives them.
-var xmrigWindows = []int{10, 60, 900}
-
-// readMiningSummary reads the summary a task left.
-func readMiningSummary(ctx context.Context, blobs Blobs, id string) (xmrigSummary, error) {
-	c, err := cid.Decode(id)
-	if err != nil {
-		return xmrigSummary{}, errors.New("the task left none")
-	}
-	blob, err := blobs.Open(ctx, c)
-	if err != nil {
-		return xmrigSummary{}, err
-	}
-	defer blob.Close()
-	var summary xmrigSummary
-	if err := json.NewDecoder(io.LimitReader(blob, 1<<20)).Decode(&summary); err != nil {
-		return xmrigSummary{}, err
+// readMinerSummary reads the summary on the last line a miner printed.
+func readMinerSummary(printed []byte) (MinerSummary, error) {
+	lines := strings.Split(strings.TrimSpace(string(printed)), "\n")
+	var summary MinerSummary
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &summary); err != nil {
+		return MinerSummary{}, fmt.Errorf("its last line is not its summary: %w", err)
 	}
 	return summary, nil
 }
 
-// output makes a task's output of what XMRig said, refusing what an XMRig
-// built as the image builds it would not say: a donation, another
-// algorithm, or a hashrate that is no number of hashes.
-func (s xmrigSummary) output(task miningTask) (MiningOutput, error) {
+// output makes a task's output of what its miner said, refusing what an
+// engine that keeps to its contract would not say: a fee, another
+// algorithm, or numbers that are no numbers of hashes or seconds.
+func (s MinerSummary) output(task miningTask) (MiningOutput, error) {
 	switch {
-	case s.DonateLevel == nil || *s.DonateLevel != 0:
-		return MiningOutput{}, errors.New("XMRig does not say it donates nothing, which the image's XMRig does")
-	case s.Connection.Algo != "" && s.Connection.Algo != task.Algorithm:
-		return MiningOutput{}, fmt.Errorf("XMRig mined %s, and the job asks for %s", s.Connection.Algo, task.Algorithm)
-	case len(s.Hashrate.Total) > len(xmrigWindows):
-		return MiningOutput{}, fmt.Errorf("XMRig gives %d hashrates, and has %d windows", len(s.Hashrate.Total), len(xmrigWindows))
+	case s.FeePercent == nil || *s.FeePercent != 0:
+		return MiningOutput{}, errors.New("the miner does not say it mined with no fee")
+	case s.Algorithm != task.Algorithm:
+		return MiningOutput{}, fmt.Errorf("the miner mined %q, and the job asks for %s", s.Algorithm, task.Algorithm)
+	case s.Hashrate != nil && (s.HashrateWindow <= 0 || s.HashrateWindow > task.Seconds):
+		return MiningOutput{}, fmt.Errorf("the miner gives a hashrate over %d seconds of a time box of %d", s.HashrateWindow, task.Seconds)
+	case s.Connected < 0 || s.Connected > int64(task.Seconds)+int64(miningGrace/time.Second):
+		return MiningOutput{}, fmt.Errorf("the miner says it was connected for %d seconds of a time box of %d", s.Connected, task.Seconds)
+	}
+	for _, rate := range []*float64{s.Hashrate, s.Highest} {
+		if rate != nil && !(*rate >= 0 && *rate < 1e15) {
+			return MiningOutput{}, fmt.Errorf("the miner says it hashed %v times a second", *rate)
+		}
 	}
 	out := MiningOutput{
-		Index: task.Index, Worker: task.Worker, Algorithm: task.Algorithm, Seconds: task.Seconds,
-		Connected: s.Connection.Uptime, Highest: s.Hashrate.Highest, Accepted: s.Connection.Accepted, Rejected: s.Connection.Rejected,
+		Index: task.Index, Worker: task.Worker, Algorithm: task.Algorithm, Seconds: task.Seconds, Connected: s.Connected,
+		Hashrate: s.Hashrate, Highest: s.Highest, Accepted: s.Accepted, Rejected: s.Rejected,
 	}
-	for i, rate := range s.Hashrate.Total {
-		if rate != nil {
-			out.Hashrate, out.HashrateWindow = rate, xmrigWindows[i]
-		}
-	}
-	for _, rate := range []*float64{out.Hashrate, out.Highest} {
-		if rate != nil && !(*rate >= 0 && *rate < 1e15) {
-			return MiningOutput{}, fmt.Errorf("XMRig says it hashed %v times a second", *rate)
-		}
-	}
-	if out.Connected < 0 || out.Connected > int64(task.Seconds)+int64(miningGrace/time.Second) {
-		return MiningOutput{}, fmt.Errorf("XMRig says it was connected for %d seconds of a time box of %d", out.Connected, task.Seconds)
+	if s.Hashrate != nil {
+		out.HashrateWindow = s.HashrateWindow
 	}
 	return out, nil
 }
