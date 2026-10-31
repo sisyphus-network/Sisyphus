@@ -254,6 +254,7 @@ func (s *poolService) SetWorkFor(_ context.Context, req *pb.SetWorkForRequest) (
 	if err := s.workFor.Set(req.GetNodeId(), req.GetWilling()); err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
+	s.notifyMembersChanged()
 	return &pb.SetWorkForResponse{}, nil
 }
 
