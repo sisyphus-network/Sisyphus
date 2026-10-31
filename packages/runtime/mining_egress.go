@@ -132,6 +132,11 @@ type poolForwarder struct {
 	open   map[net.Conn]bool
 	closed bool
 	done   sync.WaitGroup
+	// Slots counts the connections to the pool being made or open. A slot
+	// is taken before the pool is dialed, so that no more than
+	// poolMostConnections dials are ever made at once, and given back when
+	// the dial fails or the connection it made is closed.
+	slots int
 	// Made counts the connections made to the pool, and Failed those that
 	// could not be.
 	made, failed int
@@ -184,16 +189,37 @@ func (f *poolForwarder) accept(ctx context.Context) {
 	}
 }
 
-// hold keeps a connection among those open, unless there are as many as
-// there may be, or the forwarder is closed.
-func (f *poolForwarder) hold(c net.Conn) bool {
+// hold keeps a miner's connection among those open and takes a slot for
+// the connection to the pool it will be joined to, unless every slot is
+// taken or the forwarder is closed.
+func (f *poolForwarder) hold(in net.Conn) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.closed || len(f.open) >= 2*poolMostConnections {
+	if f.closed || f.slots >= poolMostConnections {
 		return false
 	}
-	f.open[c] = true
+	f.slots++
+	f.open[in] = true
 	return true
+}
+
+// keep keeps a connection made to the pool among those open, unless the
+// forwarder is closed. Its slot was taken when the miner's was held.
+func (f *poolForwarder) keep(out net.Conn) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return false
+	}
+	f.open[out] = true
+	return true
+}
+
+// free gives back the slot a held connection took.
+func (f *poolForwarder) free() {
+	f.mu.Lock()
+	f.slots--
+	f.mu.Unlock()
 }
 
 // let forgets an open connection, and closes it.
@@ -205,9 +231,12 @@ func (f *poolForwarder) let(c net.Conn) {
 }
 
 // join connects to the pool and copies bytes between it and in, both
-// ways, until either side closes.
+// ways, until either side closes. in holds a slot, which join gives back
+// once the connection to the pool is closed or could not be made, and
+// before in is closed.
 func (f *poolForwarder) join(ctx context.Context, in net.Conn) {
 	defer f.let(in)
+	defer f.free()
 	dialing, cancel := context.WithTimeout(ctx, 20*time.Second)
 	out, err := f.dial(dialing, "tcp", f.to.String())
 	cancel()
@@ -221,7 +250,7 @@ func (f *poolForwarder) join(ctx context.Context, in net.Conn) {
 	if err != nil {
 		return
 	}
-	if !f.hold(out) {
+	if !f.keep(out) {
 		out.Close()
 		return
 	}

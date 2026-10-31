@@ -226,7 +226,7 @@ func TestTheForwarderHoldsOnlySoMuch(t *testing.T) {
 	mu.Lock()
 	refusing = false
 	mu.Unlock()
-	most := 2 * poolMostConnections
+	most := poolMostConnections
 	dialing.Add(most)
 	var held []net.Conn
 	for range most {
@@ -289,5 +289,166 @@ func TestAConnectionMadeAsTheForwarderStopsIsClosed(t *testing.T) {
 	}
 	if _, err := out.Write([]byte("x")); err == nil {
 		t.Error("the connection to the pool was kept")
+	}
+}
+
+// countedConn is a connection to the pool that says when it is closed.
+type countedConn struct {
+	net.Conn
+	once   sync.Once
+	closed func()
+}
+
+func (c *countedConn) Close() error {
+	c.once.Do(c.closed)
+	return c.Conn.Close()
+}
+
+// No more than poolMostConnections connections to the pool are ever being
+// made or open at once, however many miners connect at the same time: a
+// slot is taken before the pool is dialed, and given back when the dial
+// fails or the connection it made is closed.
+func TestTheForwarderNeverDialsMoreThanItsMost(t *testing.T) {
+	ctx := context.Background()
+	var mu sync.Mutex
+	busy, most := 0, 0 // dials being made and connections open, and the most there were
+	started := make(chan struct{}, 64)
+	outcome := make(chan bool) // whether a dial being made succeeds
+	var pools []net.Conn
+	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		mu.Lock()
+		busy++
+		most = max(most, busy)
+		mu.Unlock()
+		started <- struct{}{}
+		if !<-outcome {
+			mu.Lock()
+			busy--
+			mu.Unlock()
+			return nil, errors.New("connection refused")
+		}
+		ours, pool := net.Pipe()
+		mu.Lock()
+		pools = append(pools, pool)
+		mu.Unlock()
+		return &countedConn{Conn: ours, closed: func() {
+			mu.Lock()
+			busy--
+			mu.Unlock()
+		}}, nil
+	}
+	socket := filepath.Join(t.TempDir(), "pool.sock")
+	f, err := forwardPool(ctx, socket, netip.MustParseAddrPort("1.1.1.1:3333"), dial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// connect connects n miners at once, and says which of them were
+	// closed at once, through closed.
+	connect := func(n int) (conns []net.Conn, closed chan net.Conn) {
+		closed = make(chan net.Conn, n)
+		var connecting sync.WaitGroup
+		var cmu sync.Mutex
+		for range n {
+			connecting.Add(1)
+			go func() {
+				defer connecting.Done()
+				conn, err := net.Dial("unix", socket)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				cmu.Lock()
+				conns = append(conns, conn)
+				cmu.Unlock()
+				go func() {
+					conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+					if _, err := conn.Read(make([]byte, 1)); errors.Is(err, io.EOF) {
+						closed <- conn
+					}
+				}()
+			}()
+		}
+		connecting.Wait()
+		return conns, closed
+	}
+	wait := func(n int, c chan struct{}) {
+		for range n {
+			select {
+			case <-c:
+			case <-time.After(10 * time.Second):
+				t.Fatal("a dial was not started")
+			}
+		}
+	}
+	waitClosed := func(n int, c chan net.Conn) {
+		for range n {
+			select {
+			case <-c:
+			case <-time.After(10 * time.Second):
+				t.Fatal("a connection past the most was not closed")
+			}
+		}
+	}
+	slotsFree := func() {
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
+			f.mu.Lock()
+			slots := f.slots
+			f.mu.Unlock()
+			if slots == 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%d slots were not given back", slots)
+			}
+		}
+	}
+
+	// Three times as many miners as may dial connect at once; only the
+	// most may dial, and the rest are closed while they still are.
+	first, closed := connect(3 * poolMostConnections)
+	wait(poolMostConnections, started)
+	waitClosed(2*poolMostConnections, closed)
+	// Dials that fail give back their slots.
+	for range poolMostConnections {
+		outcome <- false
+	}
+	waitClosed(poolMostConnections, closed)
+	slotsFree()
+	for _, conn := range first {
+		conn.Close()
+	}
+
+	// So the most may dial again, and this time are connected; while they
+	// are, one more is closed at once.
+	second, _ := connect(poolMostConnections)
+	wait(poolMostConnections, started)
+	for range poolMostConnections {
+		outcome <- true
+	}
+	_, closed = connect(1)
+	waitClosed(1, closed)
+	// Connections that close give back their slots.
+	for _, conn := range second {
+		conn.Close()
+	}
+	slotsFree()
+	_, closed = connect(1)
+	wait(1, started)
+	outcome <- false
+	waitClosed(1, closed)
+
+	if made, failed := f.stop(); made != poolMostConnections || failed != poolMostConnections+1 {
+		t.Errorf("made %d, failed %d", made, failed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if most > poolMostConnections {
+		t.Errorf("%d connections to the pool were being made or open at once; the most is %d", most, poolMostConnections)
+	}
+	if busy != 0 {
+		t.Errorf("%d connections to the pool were left open", busy)
+	}
+	for _, pool := range pools {
+		pool.Close()
 	}
 }
