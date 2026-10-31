@@ -185,7 +185,7 @@
     will-change: height, opacity, transform;
   }
   .workspace-shell--compact .sisyphus-composer-suggestions {
-    max-height: 3rem;
+    max-height: 10rem;
     transition: max-height 240ms cubic-bezier(0.22, 1, 0.36, 1), margin 240ms ease, opacity 160ms ease, transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
     will-change: max-height, opacity, transform;
   }

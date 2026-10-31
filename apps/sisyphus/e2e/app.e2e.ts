@@ -1394,6 +1394,88 @@ test('an active conversation survives desktop and compact workspace remounts', a
   }
 })
 
+// Phone and touch-tablet regressions from the #98 retest: the suggestion
+// chips fit a 390px screen and take a tap, a long unbroken line in an answer
+// wraps instead of being cut off (code blocks still scroll), and a History
+// delete button is hidden until hover only where there is a hover.
+test('the chat fits a phone and keeps History delete visible without hover', async () => {
+  const record = `{"cid":"bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi${'a'.repeat(160)}"}`
+  const model = await standInModel(`The record is ${record}\n\n\`\`\`json\n${record}\n\`\`\``)
+  planWith(node, model)
+  const profile = testProfile()
+  const { app, page } = await launch(node, profile)
+  try {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForFunction(() => window.innerWidth === 390)
+    await page.locator('.workspace-shell--compact').waitFor()
+    const chips = page.locator('.sisyphus-composer-suggestions:visible button')
+    await chips.nth(1).waitFor()
+    await page.waitForTimeout(400)
+    const fit = await page.evaluate(() => {
+      const row = [...document.querySelectorAll<HTMLElement>('.sisyphus-composer-suggestions')].find((element) => element.offsetParent)!
+      return {
+        viewport: window.innerWidth,
+        clipped: row.scrollHeight - row.clientHeight,
+        chips: [...row.querySelectorAll('button')].map((chip) => {
+          const box = chip.getBoundingClientRect()
+          return { left: box.left, right: box.right, tapped: chip.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)) }
+        }),
+      }
+    })
+    assert.equal(fit.chips.length, 2, JSON.stringify(fit))
+    for (const chip of fit.chips) {
+      assert.ok(chip.left >= 0 && chip.right <= fit.viewport, `a suggestion chip leaves the 390px screen: ${JSON.stringify(fit)}`)
+      assert.ok(chip.tapped, `a tap on a suggestion chip lands on something else: ${JSON.stringify(fit)}`)
+    }
+    assert.ok(fit.clipped <= 1, `the suggestion row cuts its chips off: ${JSON.stringify(fit)}`)
+
+    await page.waitForFunction(() => [...document.querySelectorAll<HTMLButtonElement>('.sisyphus-composer-suggestions button')].every((chip) => !chip.disabled))
+    await chips.nth(1).click()
+    const answer = page.locator('.is-assistant').filter({ hasText: 'The record is' }).last()
+    await answer.locator('pre').waitFor({ timeout: 30000 })
+    const wrapped = await answer.evaluate((element) => {
+      const scroll = element.closest('.sisyphus-chat-scroll')!
+      const line = [...element.querySelectorAll('p')].find((paragraph) => paragraph.textContent?.includes('bafybei'))!
+      const pre = element.querySelector('pre')!
+      return {
+        scroll: { width: scroll.scrollWidth, client: scroll.clientWidth, right: scroll.getBoundingClientRect().right },
+        line: { right: line.getBoundingClientRect().right, wrap: getComputedStyle(line).overflowWrap },
+        pre: { width: pre.scrollWidth, client: pre.clientWidth, whiteSpace: getComputedStyle(pre).whiteSpace, scrolls: ['auto', 'scroll'].includes(getComputedStyle(pre).overflowX) || ['auto', 'scroll'].includes(getComputedStyle(pre.parentElement!).overflowX) },
+      }
+    })
+    assert.equal(wrapped.line.wrap, 'anywhere', JSON.stringify(wrapped))
+    assert.ok(wrapped.line.right <= wrapped.scroll.right + 1, `a long line in an answer runs past the chat: ${JSON.stringify(wrapped)}`)
+    assert.ok(wrapped.scroll.width <= wrapped.scroll.client + 1, `the chat is wider than the phone: ${JSON.stringify(wrapped)}`)
+    assert.ok(wrapped.pre.whiteSpace.startsWith('pre') && !wrapped.pre.whiteSpace.includes('wrap') && wrapped.pre.width > wrapped.pre.client && wrapped.pre.scrolls, `a code block should scroll, not wrap: ${JSON.stringify(wrapped)}`)
+
+    // A touch tablet: md and up, with no hover.
+    await page.setViewportSize({ width: 820, height: 1180 })
+    await page.waitForFunction(() => window.innerWidth === 820)
+    const media = await page.context().newCDPSession(page)
+    const deleteOpacity = async (hover: 'none' | 'hover') => {
+      // Touch emulation is what makes Chromium answer (hover: none), as a
+      // touch-only tablet does. The page is reloaded so that its styles are
+      // matched against the new media from the start.
+      await media.send('Emulation.setTouchEmulationEnabled', { enabled: hover === 'none', maxTouchPoints: 1 })
+      await page.reload()
+      await page.waitForFunction((hover) => window.innerWidth === 820 && matchMedia(`(hover: ${hover})`).matches, hover)
+      await page.getByRole('button', { name: 'Open conversation history' }).click()
+      const remove = page.getByRole('button', { name: /^Delete conversation: / }).first()
+      await remove.waitFor()
+      // The button fades its opacity, so let that settle before reading it.
+      await page.waitForTimeout(500)
+      return remove.evaluate((button) => getComputedStyle(button).opacity)
+    }
+    assert.equal(await deleteOpacity('none'), '1', 'with no hover, the History delete button must be visible')
+    assert.equal(await deleteOpacity('hover'), '0', 'with a mouse, the History delete button stays hidden until hover')
+    await media.detach()
+  } finally {
+    await app.close()
+    profile.remove()
+    await model.close()
+  }
+})
+
 // Every advanced route shares one header, which sits beside the sidebar at
 // the top of the window, with the page's content directly under it (#99).
 test('each advanced page has the one shared header beside the sidebar, with no band between it and the content, in LTR and RTL', async () => {
