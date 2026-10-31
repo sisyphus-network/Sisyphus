@@ -45,6 +45,9 @@ type Container struct {
 	// Confined is how much further than the worker's usual the containers
 	// are held in.
 	Confined Confinement
+	// extra is more of the engine's options, put before the image: a
+	// workload's own, never a job's.
+	extra []string
 }
 
 // Confinement is what a worker's owner asks of the containers that run the
@@ -457,7 +460,7 @@ func (c Container) Execute(ctx context.Context, blobs Blobs, payload []byte) ([]
 		args = append(args, "--cpu-shares", lowShares)
 	}
 	defer containers.stop(name)
-	args = append(append(args, task.Image), task.Command...)
+	args = append(append(append(args, c.extra...), task.Image), task.Command...)
 
 	// What the command prints is the task's log as it goes, and stdout is
 	// also kept as its output.

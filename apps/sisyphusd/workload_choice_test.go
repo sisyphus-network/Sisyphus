@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/sisyphus-network/Sisyphus/packages/runtime"
 )
 
 // workloadsOf returns the WORKLOADS column of a node's row in a `nodes`
@@ -51,7 +54,7 @@ func TestTheWorkloadsAnOwnerNamesMustExist(t *testing.T) {
 		want string
 	}{
 		{[]string{"--deny-workloads", "prmes"}, `--allow-workloads, --deny-workloads: "prmes" is neither a workload nor a group`},
-		{[]string{"--allow-workloads", "default,mining"}, `"mining" is neither a workload nor a group`},
+		{[]string{"--allow-workloads", "default,minning"}, `"minning" is neither a workload nor a group`},
 		{[]string{"--role", "coordinator", "--deny-workloads", "containers"}, "--allow-workloads and --deny-workloads say what a worker takes, and need the worker role"},
 		{[]string{"--role", "coordinator", "--allow-workloads", "primes"}, "need the worker role"},
 		// Nothing left to take.
@@ -78,5 +81,26 @@ func TestANodeWarnsOfWhatItIsAllowedButCannotRun(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "names=transcode,models") || !strings.Contains(logs.String(), "not started able to run") {
 		t.Errorf("no warning of what cannot run in:\n%s", logs.String())
+	}
+}
+
+// Mining is opt-in: a worker that runs containers does not take it unless
+// its owner names it, or a group of its own, on this machine. Allowing
+// every container workload is not naming it. There is no flag of the
+// coordinator's, and no job, that turns it on.
+func TestOnlyAWorkerWhoseOwnerNamesMiningMines(t *testing.T) {
+	old := checkContainers
+	checkContainers = func(context.Context, runtime.Confinement) error { return nil }
+	defer func() { checkContainers = old }()
+	addr := freeAddr(t)
+	startDaemon(t, "--listen", addr, "--name", "rig", "--containers", "--allow-workloads", "default,containers")
+	nodes := waitForOutput(t, "rig", "nodes", "--addr", addr)
+	if got := workloadsOf(t, nodes, "rig"); strings.Contains(got, "mining") || !strings.Contains(got, "images") {
+		t.Errorf("rig, which runs containers and did not name mining, offers %s:\n%s", got, nodes)
+	}
+	startDaemon(t, "--role", "worker", "--coordinator", addr, "--name", "miner", "--containers", "--allow-workloads", "mining-cpu")
+	nodes = waitForOutput(t, "miner", "nodes", "--addr", addr)
+	if got := workloadsOf(t, nodes, "miner"); got != "mining" {
+		t.Errorf("miner, whose owner named mining-cpu, offers %s:\n%s", got, nodes)
 	}
 }

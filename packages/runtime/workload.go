@@ -250,6 +250,7 @@ func (o OCR) confinement() Confinement        { return o.Confined }
 func (t Traj) confinement() Confinement       { return t.Confined }
 func (p Prep) confinement() Confinement       { return p.Confined }
 func (im Images) confinement() Confinement    { return im.Confined }
+func (m Mining) confinement() Confinement     { return m.Confined }
 
 // InContainers reports whether the named workload runs its tasks in
 // containers: on a stranger's image, or on a stranger's input.
@@ -343,7 +344,7 @@ func WithContainers() *Registry {
 // ContainersConfined returns what WithContainers does, with the containers
 // held in as a worker's owner asked.
 func ContainersConfined(confined Confinement) *Registry {
-	return NewRegistry(Primes{}, WordCount{}, Forecast{Containers: true, Confined: confined}, Forecasts{Containers: true, Confined: confined}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}, Transcribe{Confined: confined}, Qchem{Confined: confined}, OCR{Confined: confined}, Traj{Confined: confined}, Prep{Confined: confined}, Images{Confined: confined}).With(WithModels("", Owner{})...)
+	return NewRegistry(Primes{}, WordCount{}, Forecast{Containers: true, Confined: confined}, Forecasts{Containers: true, Confined: confined}, Container{Confined: confined}, Transcode{Confined: confined}, MD{Confined: confined}, Render{Confined: confined}, Transcribe{Confined: confined}, Qchem{Confined: confined}, OCR{Confined: confined}, Traj{Confined: confined}, Prep{Confined: confined}, Images{Confined: confined}, Mining{Confined: confined}).With(WithModels("", Owner{})...)
 }
 
 // WithModels returns the workloads that use the language models of the

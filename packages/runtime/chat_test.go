@@ -195,9 +195,12 @@ func TestAWorkerOffersItsModelsAndAJobNeedsTheOneItNames(t *testing.T) {
 	}
 	// One that only takes such jobs in offers no model, only the
 	// Chronos-Bolt and TimesFM images its containers run (and whether it
-	// can upscale pictures, which images_test.go covers); nor does one
-	// whose server is not there or has no address to speak of offer any.
-	upscale := func(label string) bool { return label == ImagesUpscaleLabel || label == ImagesUpscaleGPULabel }
+	// can upscale pictures, which images_test.go covers, or hold a miner
+	// to its pool, which mining_test.go does); nor does one whose server
+	// is not there or has no address to speak of offer any.
+	upscale := func(label string) bool {
+		return label == ImagesUpscaleLabel || label == ImagesUpscaleGPULabel || label == MiningEgressLabel
+	}
 	if got := slices.DeleteFunc(WithContainers().Offers(ctx), upscale); !slices.Equal(got, []string{ChronosLabel, TimesFMLabel}) {
 		t.Errorf("a node with no model server offers %v", got)
 	}

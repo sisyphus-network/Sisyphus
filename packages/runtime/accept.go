@@ -108,13 +108,17 @@ func Accept(known *Registry, allow, deny []string) (Acceptance, error) {
 	return Acceptance{allow: slices.Clone(allow), deny: slices.Clone(deny)}, nil
 }
 
-// Accepts reports whether a worker takes tasks of w.
+// Accepts reports whether a worker takes tasks of w. An opt-in workload is
+// allowed only by its name or a group of its own: allowing containers, say,
+// does not allow mining, though mining runs in containers, since its owner
+// may not have meant to lend the machine's power to it. Any group it is in
+// denies it.
 func (a Acceptance) Accepts(w Workload) bool {
-	named := func(list []string) bool {
+	named := func(list, groups []string) bool {
 		if slices.Contains(list, w.Name()) {
 			return true
 		}
-		for _, group := range GroupsOf(w) {
+		for _, group := range groups {
 			if slices.Contains(list, group) {
 				return true
 			}
@@ -125,7 +129,14 @@ func (a Acceptance) Accepts(w Workload) bool {
 	if len(allow) == 0 {
 		allow = []string{GroupDefault}
 	}
-	return named(allow) && !named(a.deny)
+	allowedBy := GroupsOf(w)
+	if optIn(w) {
+		allowedBy = nil
+		if g, ok := w.(Grouped); ok {
+			allowedBy = g.Groups()
+		}
+	}
+	return named(allow, allowedBy) && !named(a.deny, GroupsOf(w))
 }
 
 // Accepted returns the registry of those of r's workloads that a accepts.

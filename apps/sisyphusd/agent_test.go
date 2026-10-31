@@ -112,7 +112,7 @@ func TestAnAgentUsesThePoolThroughTheNode(t *testing.T) {
 		// The one worker runs no containers and serves no models, and
 		// the agent is told so.
 		want := float64(1)
-		if slices.Contains([]any{"container", "transcode", "md", "render", "transcribe", "qchem", "ocr", "traj", "prep", "images", "chat", "prompts", "embed"}, w["name"]) {
+		if slices.Contains([]any{"container", "transcode", "md", "render", "transcribe", "qchem", "ocr", "traj", "prep", "images", "mining", "chat", "prompts", "embed"}, w["name"]) {
 			want = 0
 		}
 		if w["name"] == "graph" {
